@@ -1,10 +1,15 @@
 //! Opt-in AG-UI event-dump normalization, without capture or outcome inference.
 
+mod capture_asset;
 mod file;
 mod observations;
+pub(crate) use capture_asset::{collect_capture_asset_erases, owe_capture_asset_erase_in_txn};
 pub use file::{
     AG_UI_FILE_PREDICATE, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt,
     AgUiFileView,
+};
+pub(crate) use file::{
+    StoredAgUiCapture, ag_ui_capture_holds_in_txn, standing_ag_ui_captures_in_txn,
 };
 pub use observations::{
     AgUiAppObservation, AgUiCustomMapping, AgUiObservationKind, AgUiRepairLink,

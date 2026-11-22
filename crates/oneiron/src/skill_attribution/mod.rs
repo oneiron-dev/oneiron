@@ -41,6 +41,8 @@ pub use self::calibration::{
 mod causes;
 pub use self::causes::AttributionCauseRecord;
 pub(crate) use self::causes::attempt_attribution_causes;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::causes::receipt_key_for_test as cause_receipt_key_for_test;
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 pub(crate) mod health_review;
@@ -84,6 +86,8 @@ mod outcome_source;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
 pub(crate) use late_credit::late_credit_receipt_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use late_credit::receipt_id_for_test;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };
@@ -115,8 +119,9 @@ use oneiron_skill_attribution::types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, UnclearContext, unclear_attributions};
 pub(crate) use self::unclear::{
-    delete_unclear_in_txn, erase_unclear_entity_in_txn, erase_unclear_source_in_txn,
-    put_unclear_in_txn, unclear_key, unclear_page_in_txn, unclear_row_in_txn,
+    delete_gate_receipt_unclear_in_txn, delete_unclear_in_txn, erase_unclear_entity_in_txn,
+    erase_unclear_source_in_txn, put_unclear_in_txn, release_gate_receipt_unclear_in_txn,
+    unclear_key, unclear_page_in_txn, unclear_row_in_txn,
 };
 
 pub use self::audit::{

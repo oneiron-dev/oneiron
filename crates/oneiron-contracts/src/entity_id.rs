@@ -1,6 +1,7 @@
 //! `EntityId` + world-id newtypes + id parsing/hex.
 
 use crate::registry::short_id_prefix;
+use oneiron_fingerprint::{LegacyDigest, LegacyHash, LegacyPurpose, TagMode};
 use rand_core::RngCore;
 
 /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
@@ -92,6 +93,44 @@ impl EntityId {
         derive_with(domain, parts, is_reserved_entity_id_bytes)
     }
 
+    /// The legacy material rule, for ids that vaults already hold (PLAN-UC-04's K
+    /// door; it moves here from the store's `entity_id_from_hash_material` in stage
+    /// 2.2, and stage 9 folds it into [`EntityId::derive`] at the launch reset).
+    ///
+    /// Plain BLAKE3: the purpose's tag first, then a u64 little-endian salt, then each
+    /// part as its u64 little-endian length and its bytes. The first 16 bytes are the
+    /// id, with no version-8 stamp; a result in the reserved sentinel range takes the
+    /// next salt. A purpose that is not BLAKE3 with its tag hashed first is refused
+    /// with [`Error::InvariantViolation`](crate::error::Error::InvariantViolation).
+    /// Engine seam: `pub` only so `oneiron-store` and `oneiron` can call it across the
+    /// crate split.
+    #[doc(hidden)]
+    pub fn derive_legacy_material(
+        purpose: LegacyPurpose,
+        parts: &[&[u8]],
+    ) -> crate::error::Result<Self> {
+        if purpose.hash() != LegacyHash::Blake3 || purpose.tag_mode() != TagMode::HashedFirst {
+            return Err(crate::error::Error::InvariantViolation(
+                "a legacy material id takes a BLAKE3 purpose whose tag is hashed first",
+            ));
+        }
+        for salt in 0_u64..=u64::MAX {
+            let mut digest = LegacyDigest::new(purpose);
+            digest.raw(&salt.to_le_bytes());
+            for part in parts {
+                digest.len_u64_le(part.len()).raw(part);
+            }
+            let mut bytes = [0_u8; ENTITY_ID_LEN];
+            bytes.copy_from_slice(&digest.finish()[..ENTITY_ID_LEN]);
+            if !is_reserved_entity_id_bytes(&bytes) {
+                return Ok(Self(bytes));
+            }
+        }
+        Err(crate::error::Error::InvariantViolation(
+            "a legacy material id exhausted the salt space",
+        ))
+    }
+
     /// Whether this id carries the version and variant stamp every
     /// [`EntityId::derive`] output has. A minted id can carry it by chance, so
     /// the stamp only rules derivation out: it never proves it.
@@ -139,6 +178,15 @@ impl EntityId {
     /// Parses a 32-char hex string (case-insensitive) into an EntityId.
     pub fn from_hex(s: &str) -> crate::error::Result<Self> {
         let bytes = oneiron_hex::decode_any_case::<16>(s).ok_or(crate::error::Error::InvalidKey)?;
+        Self::from_bytes(bytes)
+    }
+
+    /// Parses exactly the 32 lowercase hex characters [`Self::to_hex`] writes,
+    /// the spelling of an id in a stored or wire form (HEX-CASE-POLICY = A).
+    /// Upper case, a sign and any other length are refused, as are the
+    /// sentinel patterns [`Self::from_bytes`] refuses.
+    pub fn from_lower_hex(s: &str) -> crate::error::Result<Self> {
+        let bytes = oneiron_hex::decode::<16>(s).ok_or(crate::error::Error::InvalidKey)?;
         Self::from_bytes(bytes)
     }
 }

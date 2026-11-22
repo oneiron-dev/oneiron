@@ -8,10 +8,15 @@ use crate::side_table::CodecError;
 use crate::{EntityId, Error};
 
 use super::super::replay::{
-    CODE_RUN_REPLAY_HASH_LEN, CodeRunReplayGeneration, CodeRunReplayRecord,
+    CODE_RUN_REPLAY_HASH_LEN, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
 };
 use super::super::support::{fixed_binary, invalid_code_run_replay, u64_value};
 use super::held::{array_len, key_index, map_len, read, skip_values, walk};
+use super::{
+    decode_code_run_replay_unvalidated, encode_binding, encode_bridge_call, encode_raw_output,
+    encode_step_checkpoint, encode_value, replay_record_value_with,
+    validate_code_run_replay_record, validate_pending_step,
+};
 
 /// One of the four families whose elements live in item rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,7 +230,7 @@ impl ReplayHead {
                 .map_err(|_| Error::ArithmeticOverflow("code-run binding count"))?,
         ];
         let generation = CodeRunReplayGeneration::for_record(record)?;
-        let shell = super::encode_code_run_replay_shell(record).map_err(|error| match error {
+        let shell = encode_code_run_replay_shell(record).map_err(|error| match error {
             CodecError::Value(error) => error,
             CodecError::Row(problem) => crate::side_table::CODE_RUN_REPLAY.row_error(problem),
         })?;
@@ -333,7 +338,7 @@ impl crate::side_table::RawValue for ReplayHead {
             fixed_binary(&last_state_hash, "replay head last state hash")?;
         let pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN] =
             fixed_binary(&pending_digest, "replay head pending digest")?;
-        super::validate_code_run_replay_shell(shell, counts[0])?;
+        validate_code_run_replay_shell(shell, counts[0])?;
         Ok(Self {
             counts,
             last_state_hash,
@@ -341,4 +346,86 @@ impl crate::side_table::RawValue for ReplayHead {
             shell: shell.to_vec(),
         })
     }
+}
+
+/// `record`'s four family arrays as the whole encoding holds them, in
+/// [`ReplayFamily::ALL`] order.
+pub(super) fn family_values(record: &CodeRunReplayRecord) -> [Value; 4] {
+    [
+        Value::Array(record.bridge_calls.iter().map(encode_bridge_call).collect()),
+        Value::Array(
+            record
+                .step_checkpoints
+                .iter()
+                .map(encode_step_checkpoint)
+                .collect(),
+        ),
+        Value::Array(record.outputs.iter().map(encode_raw_output).collect()),
+        Value::Array(record.bindings.iter().map(encode_binding).collect()),
+    ]
+}
+
+/// The record's shell: the same map with the four families as empty arrays.
+/// No validation: the caller validates the full record, and a shell fails
+/// the pending-step check when a pending step names calls.
+fn encode_code_run_replay_shell(
+    record: &CodeRunReplayRecord,
+) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+    let value = replay_record_value_with(record, std::array::from_fn(|_| Value::Array(Vec::new())));
+    Ok(encode_value(
+        &value,
+        "code-run replay shell MessagePack encode failed",
+    )?)
+}
+
+/// One family's element as it sits inside the whole encoding: the
+/// per-element encoding of `record`'s `index`th `family` member.
+pub(crate) fn encode_code_run_replay_item(
+    record: &CodeRunReplayRecord,
+    family: ReplayFamily,
+    index: usize,
+) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+    let value = match family {
+        ReplayFamily::BridgeCalls => record.bridge_calls.get(index).map(encode_bridge_call),
+        ReplayFamily::StepCheckpoints => record
+            .step_checkpoints
+            .get(index)
+            .map(encode_step_checkpoint),
+        ReplayFamily::Outputs => record.outputs.get(index).map(encode_raw_output),
+        ReplayFamily::Bindings => record.bindings.get(index).map(encode_binding),
+    }
+    .ok_or_else(|| invalid_code_run_replay("code-run replay item index is past its family"))?;
+    Ok(encode_value(
+        &value,
+        "code-run replay item MessagePack encode failed",
+    )?)
+}
+
+/// One bridge call as it sits inside the whole encoding, for a stored item an append rewrites.
+pub(crate) fn encode_code_run_bridge_call_bytes(
+    call: &CodeRunBridgeCall,
+) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
+    Ok(encode_value(
+        &encode_bridge_call(call),
+        "code-run replay item MessagePack encode failed",
+    )?)
+}
+
+/// Checks a replay head's `shell` as the whole decode checks a record's own
+/// fields: every field decodes and validates as there (an ABI check against
+/// its layout hash, the live run's lease owner), its four families are empty,
+/// and its pending step lies inside the head's `bridge_calls` calls.
+fn validate_code_run_replay_shell(shell: &[u8], bridge_calls: u64) -> crate::Result<()> {
+    let mut record = decode_code_run_replay_unvalidated(shell)?;
+    if !(record.bridge_calls.is_empty()
+        && record.step_checkpoints.is_empty()
+        && record.outputs.is_empty()
+        && record.bindings.is_empty())
+    {
+        return Err(invalid_code_run_replay("replay shell family is not empty"));
+    }
+    if let Some(pending) = record.pending_step.take() {
+        validate_pending_step(&pending, bridge_calls)?;
+    }
+    validate_code_run_replay_record(&record)
 }

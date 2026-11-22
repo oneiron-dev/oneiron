@@ -608,6 +608,16 @@ impl Vault {
         for record in &eligible {
             self.store
                 .delete_gate_decision_record_in_txn(&mut txn, record)?;
+            // Its unclear row leaves the Coach's clustering with it, and a
+            // label proposal that copied its notes and waits on its owner is
+            // withdrawn; one a hold keeps stays, so a hold on a proposal
+            // stops no sweep (FIX
+            // [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+            crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                &mut txn,
+                std::slice::from_ref(&record.decision_id),
+            )?;
         }
         // Commit the intent WITH row removal, then touch exterior keys.
         // A crash before commit leaves readable rows; a crash after commit

@@ -86,8 +86,10 @@ impl LaunchUsdPrices for LaunchUsdQuote {
         target: UsdPriceTarget<'_>,
         unit: &LeaseUnit,
     ) -> oneiron::Result<Option<UsdUnitPrice>> {
-        let UsdPriceTarget::Agent { model: planned, .. } = target else {
-            return Ok(None);
+        let planned = match target {
+            UsdPriceTarget::Agent { model, .. } => model,
+            UsdPriceTarget::HeldRun => None,
+            UsdPriceTarget::PeerConsult(_) => return Ok(None),
         };
         // A price never blocks a statement: a binding or row that does not
         // read quotes nothing.

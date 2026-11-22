@@ -4,7 +4,7 @@
 //! may change (6.6b's holder doors), each a host door:
 //! `vault.consolidation.selection_timing.set`,
 //! `vault.consolidation.strength.set`, `vault.curator.cadence.set`,
-//! `vault.proactivity.period.set`, `vault.evaluation.retune_thresholds.set`,
+//! `vault.evaluation.retune_thresholds.set`,
 //! `vault.stewardship.rules.period.set`, `vault.dreamer.projector.set`,
 //! `vault.sieve.budgets.lower`, `vault.free_time.schedule.set`, and (6.6f)
 //! `vault.settings.snapshot_read.lower`.
@@ -36,8 +36,7 @@ use crate::{EntityId, Error, Result, Vault};
 pub use oneiron_verb_wire::verbs::engine_controls::{
     ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, FreeTimeScheduleSetRequest,
-    ProactivityPeriodSetRequest, RetuneThresholdsSetRequest, SieveBudgetsLowerRequest,
-    StewardshipRulePeriodSetRequest,
+    RetuneThresholdsSetRequest, SieveBudgetsLowerRequest, StewardshipRulePeriodSetRequest,
 };
 
 /// The receipt the engine-control door wrote under `id`.
@@ -162,35 +161,6 @@ pub fn set_curator_cadence_embedded(
 ) -> MemoryResult<EngineControlChangeEntry> {
     as_controller(memory, "vault.curator.cadence.set", |vault, actor| {
         set_curator_cadence_as(vault, actor, input)
-    })
-}
-
-/// `vault.proactivity.period.set` as `actor`.
-///
-/// # Errors
-///
-/// An actor that is neither the owner nor a live holder; a period of 0;
-/// store failures.
-pub fn set_proactivity_period_as(
-    vault: &Vault,
-    actor: EngineControlActor<'_>,
-    input: ProactivityPeriodSetRequest,
-) -> Result<EngineControlChangeEntry> {
-    let id = vault.set_proactivity_period_by(actor, input.period_secs)?;
-    receipt(vault, id)
-}
-
-/// `vault.proactivity.period.set` on a bound handle.
-///
-/// # Errors
-///
-/// As [`set_proactivity_period_as`].
-pub fn set_proactivity_period_embedded(
-    memory: &Memory<'_>,
-    input: ProactivityPeriodSetRequest,
-) -> MemoryResult<EngineControlChangeEntry> {
-    as_controller(memory, "vault.proactivity.period.set", |vault, actor| {
-        set_proactivity_period_as(vault, actor, input)
     })
 }
 

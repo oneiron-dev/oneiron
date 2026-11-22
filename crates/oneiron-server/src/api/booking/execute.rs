@@ -79,16 +79,12 @@ async fn execute(
     // A request that books only a published page (an anonymous visitor, a
     // credential caller, a stale owner sign-in: FIX 5327) never reaches the
     // owner's own page resolver below.
-    let (public_authority, listed) = if transport.requires_publication {
-        let (page_ref, publication, rows) =
-            public::resolve_public_booking_page_listing(server, page_token)?;
-        let authority = oneiron::booking::publication::PublicBookingAuthority {
-            page_ref,
-            publication,
-        };
-        (Some(authority), Some(rows))
+    let (public_authority, listed, personal_link) = if transport.requires_publication {
+        let (authority, rows, personal_link) =
+            public::public_attempt_authority(server, page_token, &transport.destination)?;
+        (Some(authority), Some(rows), personal_link)
     } else {
-        (None, None)
+        (None, None, None)
     };
     let page_ref = match &public_authority {
         Some(authority) => authority.page_ref,
@@ -99,6 +95,11 @@ async fn execute(
     }
     let anonymous = transport.credential.is_none();
     validate_operation_shape(&request, anonymous)?;
+    // A personal link books its recipient alone, on every transport that
+    // presents it (BK-PERSONAL-LINKS).
+    if let Some(link) = &personal_link {
+        public::check_personal_link_recipient(link, &request)?;
+    }
     if anonymous {
         validate::validate_anonymous_intake_count(&request)?;
     } else {
@@ -123,7 +124,16 @@ async fn execute(
     });
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
-    let mut turn = turn::Turn::new(server, &transport);
+    // A hold, the one request that can wait, first takes its place in its
+    // page session's line: an authenticated hold runs admission only once
+    // every hold on that session that came first is answered (ARCH-0062
+    // #booking-turn-divergence); an anonymous hold takes an empty line or is
+    // answered "retry after" before any admission (`turn::Turn::line_up`).
+    let mut turn = turn::Turn::new(server, transport.credential.is_some());
+    if let BookingOperationRequest::Book(BookingBookInput::Hold(input)) = &request {
+        turn.line_up(session_key(page_ref, &input.session_ref))
+            .await?;
+    }
     let caller = transport.caller();
     // A confirm's email domain is looked up once per request, not per turn.
     let mut email_domain = None;
@@ -175,16 +185,72 @@ async fn execute(
         return Ok((response, listed));
     }
 
+    let viewer = granted_viewer(&transport);
+
     if let Some((response, sources)) = cache {
-        public_availability::recheck(server, public_authority.as_ref())?;
-        let listed = listed.zip(sources).map(|(mut rows, sources)| {
+        public_availability::recheck(server, public_authority.as_ref())
+            .map_err(|error| public::dead_link_or(server, page_token, error))?;
+        let mut listed = listed.zip(sources).map(|(mut rows, sources)| {
             rows.extend(sources);
             rows
         });
+        // The cached answer is caller-free; the view is judged now, for this
+        // caller, and never cached.
+        let response = match (&request, viewer) {
+            (BookingOperationRequest::Availability(input), Some(viewer)) => {
+                let (view, reads) =
+                    public_availability::granted_view(server, page_ref, input, viewer, now)?;
+                if let Some(rows) = listed.as_mut() {
+                    rows.extend(reads);
+                }
+                public_availability::with_granted_view(response, view)
+            }
+            _ => response,
+        };
         return Ok((response, listed));
     }
 
-    // ── 3, 4, 5. parse, dispatch, project ───────────────────────────────
+    // A personal link that ended while the attempt ran stopped it at a
+    // writer's recheck; its caller gets a dead link's 404 (BK-PERSONAL-LINKS).
+    let (response, rows) = dispatch(
+        server,
+        request,
+        transport,
+        page_ref,
+        now,
+        public_authority,
+        turn,
+    )
+    .await
+    .map_err(|error| public::dead_link_or(server, page_token, error))?;
+    Ok((response, with_reads(listed, rows)))
+}
+
+/// The caller whose own live calendar grants an availability answer shows
+/// beside its slots (ARCH-0062 #grant-view): an authenticated caller other
+/// than the owner. An anonymous visitor and a stale owner sign-in with no
+/// live member or guest grant have no principal, and get the public view.
+fn granted_viewer(transport: &BookingAdmissionContext) -> Option<EntityId> {
+    transport
+        .principal
+        .filter(|_| !transport.owner_grade)
+        .map(|principal| principal.entity_ref())
+}
+
+// ── 3, 4, 5. parse, dispatch, project ───────────────────────────────────
+/// The answer, beside the rows its solve or writer read, which the caller
+/// joins to the publication's listed rows. `turn` holds the request's line
+/// place until it returns; a hold's write takes it.
+async fn dispatch(
+    server: &Arc<SyncServer>,
+    request: BookingOperationRequest,
+    transport: BookingAdmissionContext,
+    page_ref: EntityId,
+    now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
+    mut turn: turn::Turn<'_>,
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
+    let viewer = granted_viewer(&transport);
     match request {
         BookingOperationRequest::Availability(mut input) => {
             // Free text is parsed first; only its object reaches the oracle.
@@ -209,43 +275,50 @@ async fn execute(
                     input.visitor_tz = visitor_tz;
                 }
             }
-            let (response, sources) = public_availability::solve(
+            let granted = viewer
+                .map(|viewer| {
+                    public_availability::granted_view(server, page_ref, &input, viewer, now)
+                })
+                .transpose()?;
+            let (response, mut rows) = public_availability::solve(
                 server,
                 page_ref,
                 input,
                 now,
                 public_authority.as_ref(),
             )?;
-            let listed = listed.map(|mut rows| {
-                rows.extend(sources);
-                rows
-            });
-            Ok((response, listed))
+            // `solve` cached the caller-free answer; the view goes on after.
+            match granted {
+                Some((view, reads)) => {
+                    rows.extend(reads);
+                    Ok((public_availability::with_granted_view(response, view), rows))
+                }
+                None => Ok((response, rows)),
+            }
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            let (response, sources) =
-                execute_hold(server, page_ref, input, now, public_authority).await?;
-            let listed = listed.map(|mut rows| {
-                rows.extend(sources);
-                rows
-            });
-            Ok((response, listed))
+            // The hold's write holds its place in the line until it returns.
+            let place = turn.take_place();
+            execute_hold(
+                server,
+                page_ref,
+                input,
+                now,
+                public_authority,
+                transport.owner_verified,
+                place,
+            )
+            .await
         }
         BookingOperationRequest::Book(BookingBookInput::Confirm(mut input)) => {
             admission::strip_form_honeypot(&transport, &mut input.intake);
-            let (response, reads) =
-                execute_confirm(server, page_ref, input, now, public_authority).await?;
-            Ok((response, with_reads(listed, reads)))
+            execute_confirm(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Reschedule(input) => {
-            let (response, reads) =
-                execute_reschedule(server, page_ref, input, now, public_authority).await?;
-            Ok((response, with_reads(listed, reads)))
+            execute_reschedule(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Cancel(input) => {
-            let (response, reads) =
-                execute_cancel(server, page_ref, input, now, public_authority).await?;
-            Ok((response, with_reads(listed, reads)))
+            execute_cancel(server, page_ref, input, now, public_authority).await
         }
     }
 }

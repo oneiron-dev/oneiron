@@ -18,6 +18,7 @@
 //! text ([`contract`]), and the engine's own pass runs due regens after a
 //! contract change ([`pass`]).
 
+mod adoption;
 mod contract;
 mod enact;
 mod history;
@@ -34,15 +35,16 @@ pub use pass::HookRegenPassReport;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{
-    HookSelector, PackHookBinding, PackInstallDisposition, PackSource,
+    HookAuthor, HookSelector, PackHookBinding, PackInstallDisposition, PackSource,
 };
-use crate::{EntityId, Error, Result, Vault, WriteActor};
+use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 use super::body::HookBodyRuntime;
 use super::replay::{self, HookReplayEntry, HookReplayResult};
@@ -75,12 +77,8 @@ impl HookContractStamp {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            verb_table: blake3::hash(contract::VERB_TABLE.as_bytes())
-                .to_hex()
-                .to_string(),
-            sandbox: blake3::hash(contract::HOOK_WORLD.as_bytes())
-                .to_hex()
-                .to_string(),
+            verb_table: ContentHash::of(contract::VERB_TABLE.as_bytes()).to_hex(),
+            sandbox: ContentHash::of(contract::HOOK_WORLD.as_bytes()).to_hex(),
         }
     }
 }
@@ -473,23 +471,36 @@ impl Vault {
     ///
     /// Storage errors as they occur.
     pub fn hooks_due_for_regen(&self) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        self.hooks_due_for_regen_in_txn(&txn)
+    }
+
+    /// [`Self::hooks_due_for_regen`] in the caller's snapshot, so a check
+    /// the caller made in `txn` holds for the list it reads there.
+    pub(crate) fn hooks_due_for_regen_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EntityId>> {
         let current = HookContractStamp::current();
         let mut due = Vec::new();
-        for (id, binding) in self.pack_hook_bindings()? {
-            if !binding.enabled || !self.own_pack(&binding.pack)? {
+        for (id, binding) in self.pack_hook_bindings_in_txn(txn)? {
+            if !binding.enabled || !self.own_pack_in_txn(txn, &binding.pack)? {
                 continue;
             }
-            if self.hook_regen_record(id)?.is_some_and(|record| {
-                record.stamp != current
-                    && record.declined.as_ref() != Some(&current)
-                    && !matches!(
-                        &record.pending,
-                        Some(
-                            HookRegenOutcome::AutoAdopt { target, .. }
-                                | HookRegenOutcome::NeedsHumanStamp { target, .. }
-                        ) if *target == current
-                    )
-            }) {
+            if self
+                .hook_regen_record_in_txn(txn, id)?
+                .is_some_and(|record| {
+                    record.stamp != current
+                        && record.declined.as_ref() != Some(&current)
+                        && !matches!(
+                            &record.pending,
+                            Some(
+                                HookRegenOutcome::AutoAdopt { target, .. }
+                                    | HookRegenOutcome::NeedsHumanStamp { target, .. }
+                            ) if *target == current
+                        )
+                })
+            {
                 due.push(id);
             }
         }
@@ -503,7 +514,16 @@ impl Vault {
     /// Storage errors as they occur.
     pub fn hook_regen_record(&self, binding: EntityId) -> Result<Option<HookRegenRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        REGEN.get(&self.store, &rtxn, &binding)
+        self.hook_regen_record_in_txn(&rtxn, binding)
+    }
+
+    /// [`Self::hook_regen_record`] in the caller's snapshot.
+    pub(crate) fn hook_regen_record_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: EntityId,
+    ) -> Result<Option<HookRegenRecord>> {
+        REGEN.get(&self.store, txn, &binding)
     }
 
     /// Runs `binding`'s intent again against this engine's contract and
@@ -674,73 +694,16 @@ impl Vault {
         })
     }
 
-    /// Enacts `binding`'s pending regen as the owner: the candidate replaces
-    /// the hook's body in its pack, through the owner's own put, or, for a
-    /// hook an agent authored, through that agent's own put of the `local`
-    /// pack, so the hook stays the agent's, at its ceiling, its grant carried
-    /// (FIX 4692). `candidate_hash` names the candidate its caller read
-    /// ([`HookRegenRecord::candidate_hash`]); only that pending candidate
-    /// enacts. An AutoAdopt needs no question; a NeedsHumanStamp adopts only
-    /// with `stamped`, the owner's stamp. Only a put that installs the
-    /// candidate advances the record, to the new body under the target
-    /// contract. A Candidate or Blocked put leaves the last good body and the
-    /// pending decision as they were, and is answered as it is.
-    ///
-    /// # Errors
-    ///
-    /// No regen is pending, it is not the candidate named, or it needs a
-    /// stamp it lacks; and the put's own refusals.
-    pub fn adopt_hook_regen(
-        &self,
-        owner: &AuthenticatedOwner,
-        binding: EntityId,
-        candidate_hash: &str,
-        stamped: bool,
-    ) -> Result<PackInstallDisposition> {
-        let actor = owner.revalidate(self)?;
-        self.enact_hook_regen(
-            HookPut::Owner(owner),
-            &HookRegenActor::Owner { actor },
-            binding,
-            candidate_hash,
-            stamped,
-        )
-    }
-
-    /// Enacts the regen pending on a hook `agent` authored, as that agent,
-    /// through its own put of the `local` pack (FIX 4692): the hook stays the
-    /// agent's, at its ceiling, its grant carried. An agent carries no
-    /// owner's stamp, so only an AutoAdopt enacts; a candidate whose golden
-    /// replay differs waits for the owner.
-    ///
-    /// # Errors
-    ///
-    /// A hook the agent did not author, no AutoAdopt pending or not the one
-    /// named, and the put's own refusals.
-    pub fn adopt_hook_regen_as_agent(
-        &self,
-        agent: &WriteActor,
-        binding: EntityId,
-        candidate_hash: &str,
-    ) -> Result<PackInstallDisposition> {
-        self.enact_hook_regen(
-            HookPut::Agent {
-                agent: *agent,
-                owner: None,
-            },
-            &HookRegenActor::Agent {
-                agent: agent.entity_ref(),
-            },
-            binding,
-            candidate_hash,
-            false,
-        )
-    }
-
     /// Whether `pack` is installed as a vault's own pack.
     fn own_pack(&self, pack: &str) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.own_pack_in_txn(&txn, pack)
+    }
+
+    /// [`Self::own_pack`] in the caller's snapshot.
+    fn own_pack_in_txn(&self, txn: &heed::RoTxn<'_>, pack: &str) -> Result<bool> {
         Ok(self
-            .installed_pack(pack)?
+            .installed_pack_in_txn(txn, pack)?
             .is_some_and(|receipt| receipt.hub_ref == OWN_PACK_REF))
     }
 }

@@ -2,6 +2,7 @@
 //! any size is served a page at a time, the rest through the page's
 //! continuation, and the ask counted against its row (rule 5).
 use super::*;
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::scan_check::{EngineScan, ScanCount};
 
 /// The rows one room thread list renders at most; a larger ask renders this
@@ -26,6 +27,27 @@ pub(in crate::workspace_roster) fn served_page_size(
     Ok(requested.min(max))
 }
 
+/// The page size a room page asking `requested` rows is served at, under
+/// the refusing rule ([`page_limit_zero_refused`]) at [`PAGE_LIMIT`]: a zero
+/// ask is refused, a larger one is served [`PAGE_LIMIT`] rows, the rest
+/// through the page's continuation, and the ask is counted against the
+/// room's requested-rows row (rule 5, [`served_page_size`]).
+pub(in crate::workspace_roster) fn served_room_page_size(
+    vault: &Vault,
+    room: EntityId,
+    requested: usize,
+) -> Result<usize> {
+    let page = page_limit_zero_refused(Some(requested), PAGE_LIMIT, PAGE_LIMIT)
+        .map_err(|ZeroLimitRefused| invalid())?;
+    served_page_size(
+        vault,
+        EngineScan::RoomRequestedPageRows,
+        room,
+        requested,
+        page.rows,
+    )
+}
+
 impl Memory<'_> {
     /// One page of the turns this reader may read. A withheld turn never
     /// fills a slot or becomes the cursor, and a cursor must be a turn the
@@ -36,17 +58,8 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
         // A larger ask is served a page at a time through `next_after`.
-        let limit = served_page_size(
-            self.vault(),
-            EngineScan::RoomRequestedPageRows,
-            room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = served_room_page_size(self.vault(), room, limit)?;
         let scope = self.room_read_scope(room)?;
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -192,16 +205,7 @@ impl Memory<'_> {
     /// The page size a find asking for `limit` roots is served at: positive,
     /// at most [`PAGE_LIMIT`], the rest through its cursor.
     fn find_page_size(&self, room: EntityId, limit: usize) -> MemoryResult<usize> {
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
-        Ok(served_page_size(
-            self.vault(),
-            EngineScan::RoomRequestedPageRows,
-            room,
-            limit,
-            PAGE_LIMIT,
-        )?)
+        Ok(served_room_page_size(self.vault(), room, limit)?)
     }
 
     /// [`Self::rooms_find_threads`] at its served page size `limit`.

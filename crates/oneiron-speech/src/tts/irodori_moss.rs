@@ -1,0 +1,531 @@
+//! Experimental Irodori/MOSS-local submission and PCM normalization only.
+//! No model loading, provider SDK, HTTP, runner, persistence or latency measurement.
+//! Hosts supply concrete pins, boot identity, capabilities and a bounded queue. These
+//! are host assertions, not verified installation/boot evidence. Queue calls run outside
+//! the cascade session lock; scheduling and model/network work stay with the host.
+//! Released endpoints are NOT assumed incremental. Buffered responses are never sliced.
+//! Each adapter owns one generation. The cascade alone owns epoch policy: forward PCM
+//! through `filter_pcm` and recheck at playback. Hosts dispatch cancellation and discard
+//! queued audio on stop. Dropping an adapter cannot cancel remote work.
+//! Nothing is refused for its size or for room (Rule 5): text past [`MAX_TEXT_BYTES`]
+//! goes as several submissions, in order, and buffered responses past
+//! `MAX_PENDING_RESPONSES` wait in the adapter until earlier audio drains.
+
+use std::collections::VecDeque;
+
+use oneiron::{Error, Result};
+
+use oneiron::voice_cascade::{
+    GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable_pieces,
+};
+
+mod adapter;
+// One incremental Text's unsent rest, kept across a refused send (FIX 10213).
+mod submissions;
+use submissions::PendingTextSubmission;
+
+/// The most text one submission carries; a longer text goes as several.
+pub const MAX_TEXT_BYTES: usize = 8 * 1024;
+pub const MAX_VOICE_BYTES: usize = 4096;
+const MAX_PIN_BYTES: usize = 512;
+/// Buffered responses in flight at once; the rest wait for audio to drain.
+const MAX_PENDING_RESPONSES: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    Irodori,
+    MossLocal,
+}
+
+impl Provider {
+    #[must_use]
+    pub fn model(self) -> &'static str {
+        match self {
+            Self::Irodori => "Irodori-TTS-600M-v3-VoiceDesign",
+            Self::MossLocal => "MOSS-TTS-Local-Transformer-v1.5",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamingCapability {
+    RequestBuffered,
+    /// Host attests negotiation with this pinned runtime, not a model-name guess.
+    Incremental {
+        runtime_negotiation: String,
+    },
+}
+
+/// Required concrete host pins. No default coordinates or implicit downloads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePins {
+    pub checkpoint: String,
+    pub runtime: String,
+    /// Host-reported boot identity; this adapter does not observe a runtime boot.
+    pub boot_id: String,
+}
+
+/// Ephemeral, host-resolved references, subject to host access/consent gates. Never
+/// supply audio/encoded audio, credentials or secret URLs. No loading or serialization.
+#[derive(Clone, PartialEq, Eq)]
+pub enum VoiceReference {
+    CompanionMetadata {
+        reference_id: String,
+        transcript: Option<String>,
+        language: Option<String>,
+    },
+    /// Non-secret token into host-owned runtime state, not a bearer credential.
+    RuntimeHandle(String),
+}
+
+/// Typed constructor input; no optional-key parser or persisted voice schema here.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct VoiceContext {
+    pub reference: Option<VoiceReference>,
+    pub register: Option<String>,
+    pub caption: Option<String>,
+    pub nonverbal_tags: Vec<String>,
+    pub seed: Option<u64>,
+}
+
+#[derive(Clone)]
+pub struct ProviderConfig {
+    pub pins: RuntimePins,
+    /// Actual mono PCM16 output rate promised by the pinned host runtime.
+    pub sample_rate: u32,
+    pub streaming: StreamingCapability,
+    pub voice: VoiceContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderMetadata {
+    pub provider: Provider,
+    pub model: &'static str,
+    pub pins: RuntimePins,
+    pub sample_rate: u32,
+    pub streaming: StreamingCapability,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum ProviderOperation {
+    Start {
+        metadata: ProviderMetadata,
+        voice: Box<VoiceContext>,
+    },
+    /// Only submitted with an explicit Incremental negotiation.
+    Text(String),
+    /// Some(text): one complete synthesis request. None: incremental boundary.
+    Flush {
+        buffered_text: Option<String>,
+    },
+    /// Atomically submit any final buffered text AND close input. None closes
+    /// without synthesizing again. The host later reports generation-level done.
+    End {
+        buffered_text: Option<String>,
+    },
+    Cancel,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProviderWork {
+    pub provider: Provider,
+    pub generation: GenerationEpoch,
+    /// Contiguous queue-admission sequence, starting at zero. Echo on buffered PCM.
+    pub sequence: u64,
+    pub operation: ProviderOperation,
+}
+
+/// Host-owned bounded queue, NOT a provider implementation. Return immediately;
+/// never perform model/network work or create an orchestrator. Ok admits one FIFO
+/// item; Err MUST admit nothing. Hosts own capacity, retries and provider invocation.
+/// Start applies every voice control or reports UnsupportedConfiguration. Cancel
+/// must also be idempotent at the runtime. Ambiguous queue acceptance is forbidden.
+pub trait TransportQueue {
+    fn try_submit(&mut self, work: ProviderWork) -> Result<()>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioDelivery {
+    /// Entire unsliced response to this Flush/End submission, delivered in FIFO order.
+    BufferedResponse { submission: u64 },
+    /// A chunk actually emitted by the negotiated runtime, never WAV slicing.
+    IncrementalChunk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioEncoding {
+    Pcm16Le,
+    Float32Le,
+    Wav,
+}
+
+pub struct ProviderAudio<'a> {
+    pub generation: GenerationEpoch,
+    /// Contiguous output sequence across the generation, starting at zero.
+    pub chunk_index: u64,
+    pub delivery: AudioDelivery,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub encoding: AudioEncoding,
+    pub bytes: &'a [u8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderOrigin {
+    pub metadata: ProviderMetadata,
+    pub delivery: AudioDelivery,
+    pub chunk_index: u64,
+}
+
+/// One transient normalized result. The adapter retains no PCM queue.
+#[must_use = "filter and forward PCM, or explicitly discard it"]
+pub struct NormalizedPcm {
+    frame: PcmFrame,
+    pub origin: ProviderOrigin,
+}
+
+impl NormalizedPcm {
+    /// The existing cascade is the authority, including session identity. Repeat
+    /// that check at playback; local normalization is not permission to play audio.
+    #[must_use]
+    pub fn filter_pcm(self, session: &VoiceCascadeSession) -> Option<(PcmFrame, ProviderOrigin)> {
+        session
+            .filter_pcm(self.frame)
+            .map(|frame| (frame, self.origin))
+    }
+}
+
+/// Bounded, sanitized host error classification; raw provider errors stay with host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderFailure {
+    RuntimeFailure,
+    UnsupportedConfiguration,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Fresh,
+    Open,
+    Ended,
+    CancelPending,
+    Cancelled,
+    Done,
+    Failed,
+}
+
+struct Adapter<Q> {
+    queue: Q,
+    metadata: ProviderMetadata,
+    voice: VoiceContext,
+    generation: Option<GenerationEpoch>,
+    phase: Phase,
+    sequence: u64,
+    chunk_index: u64,
+    text_bytes: usize,
+    buffer: String,
+    dirty: bool,
+    pending: VecDeque<u64>,
+    /// Buffered text split at a boundary and not sent yet, in order.
+    held: VecDeque<String>,
+    /// End was asked for and goes out with, or after, the last held piece.
+    end_owed: bool,
+    /// An incremental Text the queue took part of; its rest goes first.
+    pending_text: Option<PendingTextSubmission>,
+}
+
+fn invalid(message: &str) -> Error {
+    Error::InvalidConfig(format!("experimental TTS: {message}"))
+}
+
+fn bounded(value: &str, limit: usize) -> Result<()> {
+    if value.len() > limit || value.trim().is_empty() {
+        return Err(invalid("empty or oversized configuration field"));
+    }
+    Ok(())
+}
+
+impl ProviderConfig {
+    fn validate(&self) -> Result<()> {
+        for pin in [
+            &self.pins.checkpoint,
+            &self.pins.runtime,
+            &self.pins.boot_id,
+        ] {
+            bounded(pin, MAX_PIN_BYTES)?;
+        }
+        if !(8000..=192_000).contains(&self.sample_rate) {
+            return Err(invalid("unsupported output rate bound"));
+        }
+        if let StreamingCapability::Incremental {
+            runtime_negotiation,
+        } = &self.streaming
+        {
+            bounded(runtime_negotiation, MAX_PIN_BYTES)?;
+        }
+        if self.voice.nonverbal_tags.len() > 16 {
+            return Err(invalid("too many nonverbal tags"));
+        }
+        let mut remaining = MAX_VOICE_BYTES;
+        let mut field = |value: &str| -> Result<()> {
+            bounded(value, remaining)?;
+            remaining -= value.len();
+            Ok(())
+        };
+        match &self.voice.reference {
+            Some(VoiceReference::CompanionMetadata {
+                reference_id,
+                transcript,
+                language,
+            }) => {
+                field(reference_id)?;
+                for value in transcript.iter().chain(language.iter()) {
+                    field(value)?;
+                }
+            }
+            Some(VoiceReference::RuntimeHandle(handle)) => field(handle)?,
+            None => {}
+        }
+        for value in self.voice.register.iter().chain(self.voice.caption.iter()) {
+            field(value)?;
+        }
+        for tag in &self.voice.nonverbal_tags {
+            bounded(tag, 128)?;
+            field(tag)?;
+        }
+        Ok(())
+    }
+}
+
+macro_rules! adapter {
+    ($name:ident, $provider:expr) => {
+        /// Single-generation experimental adapter. Queue admission is its only side effect.
+        pub struct $name<Q>(Adapter<Q>);
+
+        impl<Q: TransportQueue> $name<Q> {
+            pub fn new(config: ProviderConfig, queue: Q) -> Result<Self> {
+                Adapter::new($provider, config, queue).map(Self)
+            }
+
+            #[must_use]
+            pub fn metadata(&self) -> &ProviderMetadata {
+                &self.0.metadata
+            }
+
+            /// Supply a real runtime result; no PCM is retained by the adapter.
+            pub fn handle_pcm(&mut self, audio: ProviderAudio<'_>) -> Result<NormalizedPcm> {
+                self.0.handle_pcm(audio)
+            }
+
+            /// Generation-level runtime completion, NOT a playback-drained acknowledgement.
+            pub fn handle_done(&mut self, generation: GenerationEpoch) -> Result<()> {
+                self.0.handle_done(generation)
+            }
+
+            /// Host must surface the failure and stop/discard its queued output.
+            pub fn handle_error(
+                &mut self,
+                generation: GenerationEpoch,
+                failure: ProviderFailure,
+            ) -> Result<ProviderFailure> {
+                self.0.handle_error(generation, failure)
+            }
+        }
+
+        impl<Q: TransportQueue> TtsSeamClient for $name<Q> {
+            fn submit(&mut self, command: TtsCommand) -> Result<()> {
+                self.0.submit(command)
+            }
+        }
+    };
+}
+
+adapter!(IrodoriAdapter, Provider::Irodori);
+adapter!(MossLocalAdapter, Provider::MossLocal);
+
+// The cases mint generation tokens through oneiron's test door, so they build
+// only under `--cfg oneiron_test_support` (the test command sets it).
+#[cfg(all(test, oneiron_test_support))]
+mod tests {
+    use super::*;
+
+    // Captured queue traffic and fixture PCM are unit evidence, not runtime proof.
+    #[derive(Default)]
+    struct Capture {
+        commands: Vec<ProviderWork>,
+        fail_next: bool,
+    }
+
+    impl TransportQueue for Capture {
+        fn try_submit(&mut self, work: ProviderWork) -> Result<()> {
+            if std::mem::take(&mut self.fail_next) {
+                return Err(invalid("unit queue full: nothing admitted"));
+            }
+            self.commands.push(work);
+            Ok(())
+        }
+    }
+
+    fn epoch(session: u128) -> GenerationEpoch {
+        oneiron::test_doors::voice_generation_epoch::generation_epoch(session, 1)
+    }
+
+    fn config(incremental: bool) -> ProviderConfig {
+        ProviderConfig {
+            pins: RuntimePins {
+                checkpoint: "unit-checkpoint-not-live".into(),
+                runtime: "unit-runtime-not-live".into(),
+                boot_id: "unit-boot-not-observed".into(),
+            },
+            sample_rate: 24_000,
+            streaming: if incremental {
+                StreamingCapability::Incremental {
+                    runtime_negotiation: "unit-handshake".into(),
+                }
+            } else {
+                StreamingCapability::RequestBuffered
+            },
+            voice: VoiceContext::default(),
+        }
+    }
+
+    fn open(provider: Provider, incremental: bool) -> Adapter<Capture> {
+        let mut a = Adapter::new(provider, config(incremental), Capture::default()).unwrap();
+        let generation = epoch(1);
+        a.submit(TtsCommand::Start { generation }).unwrap();
+        a
+    }
+
+    fn text(a: &mut Adapter<Capture>, text: &str) -> Result<()> {
+        a.submit(TtsCommand::Text {
+            generation: epoch(1),
+            text: text.into(),
+        })
+    }
+
+    fn audio<'a>(delivery: AudioDelivery) -> ProviderAudio<'a> {
+        ProviderAudio {
+            generation: epoch(1),
+            chunk_index: 0,
+            delivery,
+            sample_rate: 24_000,
+            channels: 1,
+            encoding: AudioEncoding::Pcm16Le,
+            bytes: &[1, 0, 255, 255],
+        }
+    }
+
+    #[test]
+    fn start_text_and_cancel_admission_failures_are_retry_safe_and_fail_closed() {
+        let mut a = Adapter::new(Provider::MossLocal, config(true), Capture::default()).unwrap();
+        let generation = epoch(1);
+        assert!(text(&mut a, "before Start").is_err());
+        a.queue.fail_next = true;
+        assert!(a.submit(TtsCommand::Start { generation }).is_err());
+        assert!(a.generation.is_none());
+        a.submit(TtsCommand::Start { generation }).unwrap();
+        a.queue.fail_next = true;
+        assert!(text(&mut a, "retry").is_err());
+        assert_eq!(a.text_bytes, 0);
+        text(&mut a, "retry").unwrap();
+        assert_eq!(generation.value(), epoch(2).value());
+        assert!(
+            a.submit(TtsCommand::Cancel {
+                generation: epoch(2)
+            })
+            .is_err()
+        );
+        a.queue.fail_next = true;
+        assert!(a.submit(TtsCommand::Cancel { generation }).is_err());
+        assert!(
+            a.handle_pcm(audio(AudioDelivery::IncrementalChunk))
+                .is_err()
+        );
+        assert!(text(&mut a, "late").is_err());
+        a.submit(TtsCommand::Cancel { generation }).unwrap();
+        a.submit(TtsCommand::Cancel { generation }).unwrap();
+        assert_eq!(a.queue.commands.len(), 3);
+        assert!(a.handle_done(generation).is_err());
+        assert!(
+            a.handle_error(generation, ProviderFailure::RuntimeFailure)
+                .is_err()
+        );
+        assert!(a.submit(TtsCommand::Start { generation }).is_err());
+    }
+
+    #[test]
+    fn provider_callbacks_check_pcm_identity_order_and_mode_without_slicing() {
+        // 1505c0fe737 (Rule 5, #2686) removed the PCM byte cap; the old value
+        // seeds the admitted oversized input below.
+        const OLD_MAX_PCM_BYTES: usize = 2 * 1024 * 1024;
+        for provider in [Provider::Irodori, Provider::MossLocal] {
+            for incremental in [false, true] {
+                let mut a = open(provider, incremental);
+                let generation = epoch(1);
+                text(&mut a, "unit text").unwrap();
+                let delivery = if incremental {
+                    AudioDelivery::IncrementalChunk
+                } else {
+                    AudioDelivery::BufferedResponse { submission: 1 }
+                };
+                if !incremental {
+                    a.submit(TtsCommand::End { generation }).unwrap();
+                }
+                // Ruled refusal removed (Rule 5, PCM is never refused for
+                // length): the old 2 MiB cap's input is admitted whole.
+                let oversized = vec![0; OLD_MAX_PCM_BYTES + 2];
+                let mut big = open(provider, incremental);
+                text(&mut big, "unit text").unwrap();
+                if !incremental {
+                    big.submit(TtsCommand::End { generation }).unwrap();
+                }
+                let mut input = audio(delivery);
+                input.bytes = &oversized;
+                let pcm = big
+                    .handle_pcm(input)
+                    .expect("PCM is not refused for its length");
+                assert_eq!(pcm.frame.samples.len(), (OLD_MAX_PCM_BYTES + 2) / 2);
+                for bad in 0..9 {
+                    let mut input = audio(delivery);
+                    match bad {
+                        0 => input.generation = epoch(2),
+                        1 => input.sample_rate = 48_000,
+                        2 => input.bytes = &[0],
+                        3 => input.channels = 2,
+                        4 => input.encoding = AudioEncoding::Wav,
+                        5 => input.encoding = AudioEncoding::Float32Le,
+                        6 => input.bytes = &[],
+                        7 => input.chunk_index = 1,
+                        _ => input.delivery = AudioDelivery::BufferedResponse { submission: 99 },
+                    }
+                    assert!(a.handle_pcm(input).is_err());
+                }
+                if !incremental {
+                    assert!(
+                        a.handle_pcm(audio(AudioDelivery::IncrementalChunk))
+                            .is_err()
+                    );
+                    assert!(a.handle_done(generation).is_err());
+                }
+                let pcm = a.handle_pcm(audio(delivery)).unwrap();
+                assert_eq!(pcm.frame.generation, generation);
+                assert_eq!(pcm.frame.samples, vec![1, -1]);
+                assert_eq!(pcm.origin.delivery, delivery);
+                assert_eq!(pcm.origin.metadata.streaming, config(incremental).streaming);
+                assert!(a.handle_pcm(audio(delivery)).is_err());
+                if incremental {
+                    let mut next = audio(delivery);
+                    next.chunk_index = 1;
+                    assert_eq!(a.handle_pcm(next).unwrap().frame.samples, vec![1, -1]);
+                }
+                a.submit(TtsCommand::End { generation }).unwrap();
+                a.handle_done(generation).unwrap();
+                assert!(a.handle_pcm(audio(delivery)).is_err());
+            }
+        }
+        let mut a = open(Provider::MossLocal, false);
+        let failure = ProviderFailure::RuntimeFailure;
+        assert!(a.handle_error(epoch(2), failure).is_err());
+        assert_eq!(a.handle_error(epoch(1), failure).unwrap(), failure);
+        assert!(text(&mut a, "late").is_err());
+    }
+}

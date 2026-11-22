@@ -8,23 +8,23 @@
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
+use super::erased::decode_held;
 use super::{carrier_key, decode, named};
+use crate::room_codec::offer_parts::{self, OfferManifest};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::is_part_key;
-use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified};
+use crate::sync::carrier_parts::join_parts_from;
+use crate::sync::checkpoint_payload::{Holder, PartLookup, Placement, SyncUnclassified};
 use crate::workspace_roster::RoomSideRow;
 
 /// A side row's actors and handles.
 const SIDE_ROW_ACTORS: &str = "a room side row names actors or a platform handle";
 
-/// Where the side row under `key` goes.
+/// Where the side row under `key` goes. A whole row filed under another
+/// row's key is a key mismatch, placed under no one.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
-    // FIX 11790: a part goes with the manifest that lists it, and a manifest
-    // as its joined row goes, under the entity its key names: every key
-    // spells that entity second.
-    if is_part_key(key) {
-        return Placement::Part;
-    }
+    // FIX 11790: a manifest goes as its joined row goes, under the entity
+    // its key names: every key spells that entity second (a part, with the
+    // manifest that lists it: the map's row places it).
     if let Some(parts) = crate::sync::room_parts::manifest(value) {
         return match key.split('/').nth(1).and_then(named) {
             Some(rides) => Placement::Manifest {
@@ -37,7 +37,8 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     }
     let row = match decode(value) {
         Ok(row) if carrier_key(&row, value) == key => row,
-        _ => return Placement::unclassified(None, SyncUnclassified::Undecodable),
+        Ok(_) => return Placement::unclassified(None, SyncUnclassified::KeyMismatch),
+        Err(_) => return Placement::unclassified(None, SyncUnclassified::Undecodable),
     };
     let rides = match &row {
         RoomSideRow::HostPin { room, .. } | RoomSideRow::Handle { room, .. } => Some(*room),
@@ -52,4 +53,21 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         rides.map(|id| OwnerRef::entity(&id)),
         SyncUnclassified::ActorSplit(SIDE_ROW_ACTORS),
     )
+}
+
+/// Whether the side row manifest `value` under `key` is the row its key
+/// names, its parts joined through `part` (UC-10 PR 1), as the merge reads
+/// a joined row: `Some(true)` when the joined row rides under its own key,
+/// `Some(false)` when it is another row. `None` for a value that is no
+/// manifest, for one whose parts do not all join, and for joined bytes
+/// that read as no side row: they prove no other row.
+pub(in crate::sync) fn bound(key: &str, value: &[u8], part: PartLookup<'_>) -> Option<bool> {
+    let joined = if offer_parts::is_manifest(value) {
+        OfferManifest::parse(value)?.joined_from(part)?
+    } else {
+        join_parts_from(&crate::sync::room_parts::generic_manifest(value)?, part)?
+    };
+    decode_held(&joined)
+        .ok()
+        .map(|row| carrier_key(&row, &joined) == key)
 }

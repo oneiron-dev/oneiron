@@ -268,6 +268,7 @@ fn join_room(vault: &Vault, owen: EntityId, room: EntityId, agent: EntityId) -> 
             offer_id: card.offer_id.clone(),
             action: OfferAnswer::Join,
             intent_key: format!("{FIXTURE_PATH}:answer:{}", agent.to_hex()),
+            check_in_ref: None,
         })?;
     let join = accepted.join.ok_or("the host's answer carries no join")?;
     if join.decision.state != JoinDecision::Ready {
@@ -452,6 +453,7 @@ fn exchange(fixture: &RoomFixture, placement: ReplySitting) -> TestResult<Exchan
             conversation_ref: fixture.room.to_hex(),
             turn_ref: Some(reply_turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::Companion,
@@ -522,6 +524,7 @@ fn answer_retry(
             conversation_ref: action.conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::Companion,
@@ -618,7 +621,9 @@ fn an_agents_retry_lands_when_its_reads_omit_its_own_sitting() -> TestResult {
     answer_retry_lands(&fixture, &exchange, &action)
 }
 
-/// Red on main, as above: the chat host's reply sits in owen's sitting.
+/// Red on main at source trust, as on a default vault: the Retry's TURN
+/// pended on `gate.pending.source_trust`, while the `/session` reference
+/// check passed. The chat host's reply sits in owen's sitting.
 #[test]
 fn an_agents_retry_lands_when_its_reply_sat_in_the_callers_sitting() -> TestResult {
     let (fixture, exchange, action) = narrowed_retry(ReplySitting::CallersBoundByTheChatHost)?;

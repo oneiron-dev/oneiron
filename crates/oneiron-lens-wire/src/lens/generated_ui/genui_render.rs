@@ -1,7 +1,9 @@
 //! Flat render validation, segment framing and reassembly, and segment wire validators.
 
 use super::genui_app_catalog::catalog_version_or_kit;
-use super::genui_state::validate_generated_ui_interactivity;
+use super::genui_state::{
+    validate_generated_ui_interactivity, validate_generated_ui_state_bindings,
+};
 use super::{
     GENERATED_UI_WIRE_VERSION, GeneratedUiActionDeclaration, GeneratedUiCardLifecycle,
     GeneratedUiCardReady, GeneratedUiCardStatePatch, GeneratedUiCardStateSnapshot,
@@ -291,6 +293,38 @@ impl GeneratedUiRender {
             &self.actions,
             &self.state,
         )
+    }
+
+    /// Carries `previous`, the `$state` of the card this render replaces,
+    /// into this render's `$state`, key by key (GENUI-STATE-PERSIST, Engine
+    /// ruling 14 Nov 05:40): a live re-render of the same subscription keeps
+    /// what the person set. A key carries where this render declares it
+    /// with a value of the same kind and every `$bind` on the card accepts
+    /// the carried value, so a control never draws an option it no longer
+    /// offers or a step off its grid. Any other key keeps this render's
+    /// initial value, and a key only `previous` holds is dropped. Answers
+    /// how many keys carried.
+    pub fn carry_state(&mut self, previous: &GeneratedUiStateSnapshot) -> usize {
+        let elements = LensElementRef::collect_flat(&self.nodes);
+        let mut state = self.state.clone();
+        let mut carried = 0;
+        for (key, value) in previous.values() {
+            let Some(declared) = state.get(key) else {
+                continue;
+            };
+            if std::mem::discriminant(declared) != std::mem::discriminant(value) {
+                continue;
+            }
+            let mut values = state.values().clone();
+            values.insert(key.clone(), value.clone());
+            let candidate: GeneratedUiStateSnapshot = values.into_iter().collect();
+            if validate_generated_ui_state_bindings(&elements, &candidate).is_ok() {
+                state = candidate;
+                carried += 1;
+            }
+        }
+        self.state = state;
+        carried
     }
 }
 

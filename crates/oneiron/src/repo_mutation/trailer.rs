@@ -275,7 +275,7 @@ fn require_closed_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> 
 fn require_lower_hex(entries: &[(Value, Value)], key: &str, len: usize) -> Result<()> {
     let value = require_unique_msgpack_key(entries, key)?;
     match value.as_str() {
-        Some(text) if text.len() == len && is_lower_hex(text) => Ok(()),
+        Some(text) if oneiron_hex::is_lower_hex(text, Some(len)) => Ok(()),
         _ => Err(invalid_value(
             "an owner request's provenance hash is lower-hex of its length",
         )),
@@ -287,14 +287,9 @@ fn require_entity_hex(entries: &[(Value, Value)], key: &str) -> Result<EntityId>
     let value = require_unique_msgpack_key(entries, key)?;
     value
         .as_str()
-        .filter(|text| text.len() == 32 && is_lower_hex(text))
+        .filter(|text| oneiron_hex::is_lower_hex(text, Some(32)))
         .and_then(|text| EntityId::from_hex(text).ok())
         .ok_or_else(|| invalid_value("an owner request's provenance id is 32 lower-hex characters"))
-}
-
-fn is_lower_hex(text: &str) -> bool {
-    text.bytes()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn invalid_value(reason: &'static str) -> Error {

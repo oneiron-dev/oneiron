@@ -18,7 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/mod.rs` | src | s | 1 mod | — | — |
 | `src/connector_key/tool_remember.rs` | src | s | 1 struct | ConnectorToolRememberContext | Moved from `crates/oneiron/src/connector_key/tool_remember.rs` (core split slice 2: consent state below core) |
 | `src/consent/bypass.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const | BypassExtent, BypassScope | Moved from `crates/oneiron/src/consent/bypass.rs` (core split slice 2: consent state below core) |
-| `src/consent/code_wait_state.rs` | src | s | 1 struct · 3 enum · 6 fn · 1 const | CodeConsentCallSite, CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState | Moved from `crates/oneiron/src/consent/code_wait_state.rs` (core split slice 2: consent state below core) |
+| `src/consent/code_wait_state.rs` | src | s | 1 struct · 3 enum · 4 fn · 1 const | CodeConsentCallSite, CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState | Moved from `crates/oneiron/src/consent/code_wait_state.rs` (core split slice 2: consent state below core) |
 | `src/consent/codec.rs` | src | m | 8 fn · 15 const | — | Moved from `crates/oneiron/src/consent/codec.rs` (core split slice 2: consent state below core) |
 | `src/consent/effect.rs` | src | s | 1 struct · 2 enum · 10 fn | CatastropheClass, EffectFacts, UndoFidelity | Moved from `crates/oneiron/src/consent/effect.rs` (core split slice 2: consent state below core) |
 | `src/consent/grant.rs` | src | m | 6 struct · 4 enum · 1 trait · 14 fn · 11 const | ActionGrant, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal +3 | Moved from `crates/oneiron/src/consent/grant.rs` (core split slice 2: consent state below core) |
@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/mod.rs` | src | s | 8 mod | — | — |
 | `src/consent/support.rs` | src | s | 1 struct · 5 fn · 2 const | ApproveOnceMarker | Moved from `crates/oneiron/src/consent/support.rs` (core split slice 2: consent state below core) |
 | `src/consent/tool_scope.rs` | src | s | 1 enum · 3 fn | DataClass | Moved from `crates/oneiron/src/consent/tool_scope.rs` (core split slice 2: consent state below core) |
-| `src/gate/code_consent_settlement.rs` | src | s | 2 struct · 2 enum · 3 fn | CodeConsentSettlementEligibility, CodeConsentSettlementOrigin, CodeConsentSettlementSource, ResolvedCodeConsentSettlement | Moved from `crates/oneiron/src/gate/code_consent_settlement.rs` (core split slice 2: consent state below core) |
+| `src/gate/code_consent_settlement.rs` | src | s | 2 struct · 2 enum · 2 fn | CodeConsentSettlementEligibility, CodeConsentSettlementOrigin, CodeConsentSettlementSource, ResolvedCodeConsentSettlement | Moved from `crates/oneiron/src/gate/code_consent_settlement.rs` (core split slice 2: consent state below core) |
 | `src/gate/mod.rs` | src | s | 1 mod | — | — |
 | `src/lib.rs` | src | s | 8 mod | — | Consent state below core (core split slice 2): the consent grant, marker, bypass, effect and tool-scope… |
 | `src/llm/entity_refs.rs` | src | s | 4 fn · 1 mod | — | Validated entity-reference wire encoding for model policy DTOs |
@@ -37,6 +37,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/verb/credential.rs` | src | s | 3 struct · 2 enum · 1 fn · 2 crate-vis | VerbAskCredentialRef, VerbAskCredentialSource, VerbAskDoor, VerbAskInstrument, VerbAskMcpCeiling | Moved from `crates/oneiron/src/runtime_hooks/verb/credential.rs` (core split slice 2: consent state below… |
 | `src/runtime_hooks/verb/mod.rs` | src | s | 1 mod | — | — |
 | `src/verbs/mod.rs` | src | s | 1 mod | — | — |
-| `src/verbs/voice_records/consent.rs` | src | s | 2 enum · 3 fn | VoiceConsentBasis, VoiceConsentState | Moved from `crates/oneiron/src/verbs/voice_records/consent.rs` (core split slice 2: consent state below core) |
+| `src/verbs/voice_records/consent.rs` | src | s | 2 enum · 2 fn | VoiceConsentBasis, VoiceConsentState | Moved from `crates/oneiron/src/verbs/voice_records/consent.rs` (core split slice 2: consent state below core) |
 | `src/verbs/voice_records/mod.rs` | src | s | 2 mod | — | — |
 | `src/verbs/voice_records/model.rs` | src | s | 9 struct · 1 enum | VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsent, VoiceRenderDecision, VoiceRenderGrant +2 | Moved from `crates/oneiron/src/verbs/voice_records/model.rs` (core split slice 2: consent state below core) |
+| `tests/consent_state_register_names.rs` | test | s | — | — | The names of 4 name lists in `oneiron-consent-state`, one line per row, generated from… |

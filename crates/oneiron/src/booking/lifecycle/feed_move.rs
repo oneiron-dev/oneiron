@@ -18,19 +18,18 @@
 //! feed keeps that item's update owed and lands every other item of the pass
 //! (Engine ruling 16:10, 12 Nov).
 
-use serde::{Deserialize, Serialize};
-
 use super::claim::{encode_event_body, read_booking_facts};
-use super::door::attempt_failure_reason;
+use super::door::{attempt_failure_reason, takes_booking_write_in_txn};
 use super::emergency::emergency_current_revision_in;
 use super::occurrence::inclusive_occurrence;
 use super::passport::supersede_outbound_passport;
 use super::storage::{
-    booking_writer, calendar_wrap, engine_failure, refused, revision_receipt_key, write_receipt,
+    booking_writer, calendar_wrap, engine_failure, read_txn, refused, revision_receipt_key,
+    write_receipt,
 };
 use super::transition::booking_read_rows;
 use super::types::{BOOKING_PASSPORT_SYSTEM, BookingStatus, CalendarRevision};
-use super::{BookingContent, LifecycleReceiptRow};
+use super::{BookingContent, CalendarCancellation, LifecycleReceiptRow};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt, RequeueAttempt,
@@ -57,44 +56,50 @@ const REVISION_INVITE_DISPATCH_ATTEMPTS: u32 = 5;
 /// again.
 const REVISION_INVITE_RETRY_SECONDS: u64 = 300;
 
-/// The payload of one [`BOOKING_REVISION_INVITE_ATTEMPT_KIND`] row: the
-/// revision whose invite is owed. The invite's recipient, organizer and
-/// times are read from committed state when it is sent, never from here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BookingRevisionInvitePayload {
-    /// The booking's EVENT, lowercase hex.
-    pub event_ref: String,
-    /// The booking's outbound UID.
-    pub uid: String,
-    /// The SEQUENCE the revision committed.
-    pub sequence: u32,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::lifecycle::feed_move::BookingRevisionInvitePayload;
 
 /// What one feed update did to the booking its EVENT carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FeedMoveOutcome {
-    /// The EVENT carries no confirmed, uncancelled booking: the feed writes
-    /// it as it writes any other EVENT.
+    /// The EVENT carries no confirmed booking, or one its own status
+    /// cancelled: the feed writes it as it writes any other EVENT.
     NotBooking,
     /// The feed reports no new slot: the slot the booking already sits at
     /// (the echo of our own revised invite included), or no bounded
-    /// interval. Nothing is written.
+    /// interval. Or a calendar's cancellation stands on a booking its own
+    /// status still confirms: the EVENT keeps its booked slot. Nothing is
+    /// written.
     Unchanged,
     /// The booking moved to the feed's slot under this revision.
     Moved(CalendarRevision),
     /// A pending emergency delivery fences the booking's current revision,
-    /// so the passport cannot take the next SEQUENCE. Nothing is written:
-    /// the feed keeps this item's update owed and reads it again on its next
-    /// poll, and every other item of the pass lands.
+    /// so the passport cannot take the next SEQUENCE, or this node does not
+    /// take booking writes (a home move froze its booking rows, or its
+    /// election names another node home). Nothing is written: the feed keeps
+    /// this item's update owed and reads it again on its next poll, and every
+    /// other item of the pass lands.
     HeldBack,
 }
 
 /// Moves the booking on `event_ref` to `feed_slot`, the half-open
 /// `[DTSTART, DTEND)` a calendar feed now reports for it.
 ///
-/// A held, partial or cancelled booking is [`FeedMoveOutcome::NotBooking`]:
-/// only a confirmed, uncancelled booking has a slot its booker relies on.
+/// A held or partial booking, or one its own status cancelled, is
+/// [`FeedMoveOutcome::NotBooking`]: only a confirmed booking has a slot its
+/// booker relies on. A confirmed booking a calendar's cancellation stands on
+/// is [`FeedMoveOutcome::Unchanged`]: the EVENT keeps its booked slot, so a
+/// live VEVENT of a calendar the booking was written to (undated, or at
+/// another slot) never moves the start its deposit's host-cancel rule and
+/// CAL-07 measure a later cancellation against. That cancellation may come
+/// from a calendar that moves no money (RULING DEPOSIT-HOST-CANCEL-SOURCE =
+/// A). An omission's cancellation is no bar: this live VEVENT ends it, so
+/// the booking moves as a live one, and the move retracts it in its own
+/// transaction, so the revised invite it queues never reads the booking
+/// cancelled (review round 1 of #9677). Calendar ingest screens the VEVENT's
+/// body before it asks for the move, so a body its admission would refuse
+/// moves nothing and ends no omission (review round 2 of #9677).
+///
 /// The move does not consult the solver: a clash with another booking is two
 /// overlapping EVENTs, as any feed drift makes.
 ///
@@ -122,14 +127,25 @@ pub(crate) fn move_booking_by_feed(
             Err(BookingError::InvalidConstraint(_)) => return Ok(FeedMoveOutcome::NotBooking),
             Err(error) => return Err(error),
         };
-        if booking.effective_status() == BookingStatus::Cancelled {
+        if booking.status == BookingStatus::Cancelled {
             return Ok(FeedMoveOutcome::NotBooking);
         }
+        if booking.calendar_cancellation == CalendarCancellation::Standing {
+            return Ok(FeedMoveOutcome::Unchanged);
+        }
+        let ends_omission = booking.calendar_cancellation == CalendarCancellation::Omission;
         let Some(slot) = feed_slot.filter(|range| range.start < range.end) else {
             return Ok(FeedMoveOutcome::Unchanged);
         };
         if slot == booking.slot {
             return Ok(FeedMoveOutcome::Unchanged);
+        }
+        // A node that does not take booking writes writes no revision (review round 2 of
+        // #10060): after a freeze the new home holds the booking, and a move back drops a
+        // receipt written here meanwhile. The item waits as an emergency fence's does, and
+        // lands here if the move is cancelled. Read in this writer, as the lifecycle's fence.
+        if !takes_booking_write_in_txn(vault, &*wtxn)? {
+            return Ok(FeedMoveOutcome::HeldBack);
         }
         // The one refusal the ruling holds back per item: every other item
         // of the feed still lands, and this one is read again. The fence is
@@ -181,9 +197,30 @@ pub(crate) fn move_booking_by_feed(
                 reads,
             },
         )?;
+        // This live VEVENT ends the omission's cancellation. Calendar ingest
+        // retracts it after the move too, but a drain between the two would
+        // read the booking cancelled and settle its revised invite unsent.
+        if ends_omission {
+            crate::calendar::ingest::clear_absence_cancellation_in_txn(
+                vault, wtxn, event_ref, now_utc,
+            )
+            .map_err(|error| engine_failure("omission cancellation retract", error))?;
+        }
         enqueue_revision_invite_in(vault, wtxn, &revision, now_utc)?;
         Ok(FeedMoveOutcome::Moved(revision))
     })
+}
+
+/// Whether `event_ref` is a booking's EVENT ([`carries_outbound_passport`]),
+/// whatever the booking's status. Calendar ingest asks it before a feed's
+/// cancellation would rewrite the EVENT: a booking's EVENT keeps its booked
+/// slot.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] on a store failure.
+pub(crate) fn is_booking_event(vault: &Vault, event_ref: &EntityId) -> Result<bool, BookingError> {
+    carries_outbound_passport(vault, &read_txn(vault)?, event_ref)
 }
 
 /// Whether the EVENT carries an admitted outbound booking passport: the one

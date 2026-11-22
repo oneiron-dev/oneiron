@@ -1,3 +1,9 @@
+pub use crate::store::attempt_record::AttemptLeaseExpiry;
+pub use crate::store::attempt_record::AttemptPlacement;
+pub use crate::store::attempt_record::AttemptTerminalExhaust;
+pub use crate::store::attempt_record::PlannedBinding;
+pub use crate::store::attempt_record::PlannedExactness;
+pub use crate::store::attempt_record::RequeuedFailure;
 pub use oneiron_store::attempt_cleanup::AttemptQueueCleanupMetricsSnapshot;
 pub use oneiron_store::attempt_cleanup::AttemptQueueCleanupReport;
 pub use oneiron_store::attempt_cleanup::AttemptQueueRetryReason;
@@ -24,4 +30,7 @@ pub use oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint;
 pub use oneiron_wake_contract::store::attempt_cancel::LandingTrigger;
 
 pub mod hold_override;
+pub mod maintenance_predicate;
 pub mod run_tree_view;
+pub mod turn_action_kind;
+pub mod types;

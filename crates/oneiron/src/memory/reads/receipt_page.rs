@@ -16,6 +16,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::family_receipt;
@@ -29,8 +30,10 @@ use crate::receipt::{
     ReceiptScanPosition,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::request_limits::{PageLimit, ZeroLimitRefused, page_limit_zero_refused};
 use crate::settings::ReadDestination;
 use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::verb_names::VAULT_RECEIPTS_LIMIT_DEFAULT;
 
 /// Who reads `vault.receipts`, and through what (FIX 7355): the vault, where
 /// the read's rows go, the content its served forms are read from, the
@@ -62,6 +65,12 @@ pub(crate) trait ReceiptReader {
     /// Whether this reader is the vault owner, who reads the world names on
     /// his own notices (FIX 5493).
     fn reads_owner_notices(&self) -> bool;
+    /// The actor this reader reads as, when it is one: a verb hook's
+    /// receipt reaches a bound reader only when it made the call. `None`
+    /// (a room's key) reads no verb hook's receipt.
+    fn receipt_reader_actor(&self) -> Option<EntityId> {
+        None
+    }
 }
 
 impl ReceiptReader for Memory<'_> {
@@ -89,6 +98,10 @@ impl ReceiptReader for Memory<'_> {
         self.secret_sight()
             .is_ok_and(|sight| sight == crate::secret_custody::SecretSight::Owner)
     }
+
+    fn receipt_reader_actor(&self) -> Option<EntityId> {
+        Some(self.actor)
+    }
 }
 
 /// One page of `vault.receipts`, newest first.
@@ -100,7 +113,9 @@ pub struct VaultReceiptsPage {
     pub next_after: Option<String>,
     /// The requested number of receipts this page could hold.
     pub effective_limit: usize,
-    /// Whether the page lowered the requested count; always false.
+    /// Whether the requested count was over the page's maximum and cut to
+    /// it, as the list's limit rule reports it. Both ledgers have no maximum
+    /// (#5059), so this is false: the page holds the requested count.
     #[serde(default)]
     pub limit_clamped: bool,
     /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
@@ -153,7 +168,7 @@ impl FamilyCursor {
         let mut parts = text.splitn(3, ':');
         Some(Self {
             occurred_at: parts.next()?.parse().ok()?,
-            kind: ReceiptKind::parse(parts.next()?)?,
+            kind: ReceiptKind::named(parts.next()?)?,
             receipt_id: parts.next()?.to_owned(),
         })
     }
@@ -171,7 +186,7 @@ fn foreign_cursor() -> MemoryError {
 fn family_query(limit: usize, kinds: &[String]) -> MemoryResult<ReceiptQuery> {
     let mut query = ReceiptQuery::new(limit);
     for name in kinds {
-        let kind = ReceiptKind::parse(name.trim()).ok_or_else(|| {
+        let kind = ReceiptKind::named(name.trim()).ok_or_else(|| {
             MemoryError::bad_request_with(
                 format!("unknown receipt kind {name:?}"),
                 &[
@@ -221,6 +236,23 @@ impl Memory<'_> {
         receipts_of_kinds_for(self, limit, kinds)
     }
 
+    /// The family receipts of `kinds` a verb hook chain's receipt tail holds
+    /// for this handle's actor (`runtime_hooks::verb::chain::tail`): the
+    /// newest `limit` this handle reads, less every receipt the vault owner
+    /// alone reads ([`owner_kept_receipts`]), on the owner's own call too. A
+    /// hook is not that reader: its grant may read as someone else, and the
+    /// receipt its body writes names no row of such a receipt, so no row
+    /// screen could judge a copy of it. The read walks past the receipts it
+    /// leaves out ([`hook_tail_receipts_for`]), so no number of them empties
+    /// a tail that older receipts could fill.
+    pub(crate) fn hook_tail_receipts(
+        &self,
+        limit: usize,
+        kinds: &[String],
+    ) -> MemoryResult<Vec<MemoryReceipt>> {
+        hook_tail_receipts_for(self, limit, kinds)
+    }
+
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
     /// receipts after `after`, up to the full requested `limit` on either ledger.
     ///
@@ -262,13 +294,14 @@ pub(crate) fn receipts_of_kinds_for(
     let vault = reader.receipt_vault();
     let content = reader.receipt_content();
     // A credential cut refills past withheld receipts like the off-device
-    // one (FIX 9955): an unbound handle keeps its single fetch.
+    // one (FIX 9955), and so does the owner's: an unbound handle that every
+    // receipt reaches keeps its single fetch.
     let mut fetch = limit;
     let mut kept = loop {
         let query = family_query(fetch, kinds)?;
         let receipts = vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
         let exhausted = receipts.len() < fetch;
-        let filtered = credential_kept_receipts(reader, receipts)?;
+        let filtered = reader_kept_receipts(reader, receipts)?;
         if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
             break filtered;
         }
@@ -280,11 +313,89 @@ pub(crate) fn receipts_of_kinds_for(
     Ok(kept.into_iter().map(family_receipt).collect())
 }
 
+/// [`Memory::hook_tail_receipts`] for `reader`: the newest `limit` family
+/// receipts of `kinds` it reads, less every receipt the vault owner alone
+/// reads, whoever `reader` is. It walks the family in raw source windows, as
+/// a page does ([`family_page`]): each window starts after the last raw
+/// receipt the one before walked, kept or left out, so the walk passes any
+/// number of receipts it leaves out and ends only on a full tail or the end
+/// of the family; no scan cap cuts it short of receipts that would fill it.
+/// A window that did not fill the tail is followed by one twice as long, up
+/// to the family's window cap ([`MAX_RECEIPT_QUERY_SCAN`]).
+fn hook_tail_receipts_for(
+    reader: &impl ReceiptReader,
+    limit: usize,
+    kinds: &[String],
+) -> MemoryResult<Vec<MemoryReceipt>> {
+    let vault = reader.receipt_vault();
+    let content = reader.receipt_content();
+    let mut query = family_query(limit, kinds)?;
+    let mut kept = Vec::new();
+    let mut fetch = limit;
+    while kept.len() < limit {
+        let pass = ReceiptQuery {
+            limit: fetch,
+            ..query.clone()
+        };
+        let (mut read, walked, exhausted) =
+            vault.receipts_window_for_caller(pass, reader.receipt_destination(), content)?;
+        read.retain(|receipt| {
+            !crate::dreamer_prefilter::prefilter_receipt_read_message_rows(receipt)
+        });
+        kept.extend(reader_kept_receipts(reader, read)?);
+        if exhausted {
+            break;
+        }
+        // The full raw window advances even when every screen kept none.
+        query.after = walked;
+        fetch = fetch.saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
+    }
+    kept.truncate(limit);
+    // A world's name on the owner's own share receipt is his (FIX 5493).
+    crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut kept);
+    Ok(kept.into_iter().map(family_receipt).collect())
+}
+
+/// `receipts` cut to what `reader` reads, before any page cut: the receipts
+/// only the vault owner reads leave first ([`owner_kept_receipts`]), then
+/// the ones `reader`'s credential does not read
+/// ([`credential_kept_receipts`]).
+fn reader_kept_receipts(
+    reader: &impl ReceiptReader,
+    receipts: Vec<ReceiptRecord>,
+) -> MemoryResult<Vec<ReceiptRecord>> {
+    credential_kept_receipts(reader, owner_kept_receipts(reader, receipts))
+}
+
+/// `receipts` less the ones only the vault owner reads, for any other
+/// reader, bound to a credential or not: a prefilter receipt of a round whose
+/// screen asked for a turn's words from its MESSAGE rows
+/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]). A
+/// turn's novelty axis, and so its score and its round's counts, stand on
+/// the words of turns the round scored before it and on MESSAGE rows read
+/// as the Dreamer. A turn's receipt names its own TURN alone and the
+/// rollup names no row, so a reader of that TURN would learn of words it
+/// may not read. The owner is asked for only when such a receipt is among
+/// the ones fetched.
+fn owner_kept_receipts(
+    reader: &impl ReceiptReader,
+    mut receipts: Vec<ReceiptRecord>,
+) -> Vec<ReceiptRecord> {
+    let owner_only = crate::dreamer_prefilter::prefilter_receipt_read_message_rows;
+    if receipts.iter().any(owner_only) && !reader.reads_owner_notices() {
+        receipts.retain(|receipt| !owner_only(receipt));
+    }
+    receipts
+}
+
 /// `receipts` cut to what `reader`'s credential reads, before any page cut
 /// (OF-172 D2). Triggers and a prepared guest window's private source world
-/// and rows must all pass the same lane read. For a reader that screens
-/// served forms, its ASSET and ASSET_TEXT are judged the same way. Pure
-/// metadata stays; an unbound handle keeps its actor's receipt behavior.
+/// and rows must all pass the same lane read. A Hook receipt is judged on
+/// the rows it names, as the off-device screen reads them
+/// ([`crate::receipt::referenced_rows`]), withheld when they cannot be
+/// known. For a reader that screens served forms, its ASSET and ASSET_TEXT
+/// are judged the same way. Pure metadata stays; an unbound handle keeps
+/// its actor's receipt behavior.
 fn credential_kept_receipts(
     reader: &impl ReceiptReader,
     receipts: Vec<ReceiptRecord>,
@@ -295,7 +406,31 @@ fn credential_kept_receipts(
     let screens_forms = reader.screens_served_form_rows();
     let mut named = Vec::with_capacity(receipts.len());
     for receipt in receipts {
-        let mut rows: Vec<EntityId> = trigger_row_of(&receipt).into_iter().collect();
+        // A verb hook's receipt can carry its call's own words (a `note` or
+        // `reason` its body drew from the call's input), so it reaches only
+        // the actor that made the call (review of #9535).
+        if crate::receipt::is_verb_hook_receipt(&receipt) {
+            let caller = receipt.on_behalf_of.as_deref();
+            let reader_actor = reader.receipt_reader_actor().map(|actor| actor.to_hex());
+            if caller.is_none() || caller != reader_actor.as_deref() {
+                continue;
+            }
+        }
+        // A Hook receipt's real rows, not its trigger alone: a verb hook's
+        // invocation trigger names no row, and an unknown or unkept run
+        // withholds it (HOOKS-04). A verb run's rows include its input's (the
+        // rows its call showed or named), so a narrower credential of the
+        // same actor reads no text drawn from a row it cannot read (review
+        // round 2 of #9535). Every other family keeps `trigger_row_of`.
+        let mut rows: Vec<EntityId> = if receipt.receipt_kind == ReceiptKind::Hook {
+            let Some(rows) = crate::receipt::referenced_rows(reader.receipt_vault(), &receipt)?
+            else {
+                continue;
+            };
+            rows
+        } else {
+            trigger_row_of(&receipt).into_iter().collect()
+        };
         if screens_forms && receipt.receipt_kind == ReceiptKind::ServedForm {
             rows.extend(crate::receipt::served_form_rows(&receipt));
         }
@@ -348,13 +483,19 @@ pub(crate) fn receipts_page_for(
     kinds: &[String],
     after: Option<&str>,
 ) -> MemoryResult<VaultReceiptsPage> {
-    if limit == 0 {
-        return Err(MemoryError::bad_request_with(
-            "limit must be at least 1",
-            &["Request one receipt or more and continue from next_after."],
-        ));
-    }
-    let page = limit;
+    // The list's limit rule: zero is refused, and no ceiling cuts the ask
+    // (#5059), so the page reports no clamp.
+    let PageLimit {
+        rows: page,
+        clamped: limit_clamped,
+    } = page_limit_zero_refused(Some(limit), VAULT_RECEIPTS_LIMIT_DEFAULT, usize::MAX).map_err(
+        |ZeroLimitRefused| {
+            MemoryError::bad_request_with(
+                "limit must be at least 1",
+                &["Request one receipt or more and continue from next_after."],
+            )
+        },
+    )?;
     let (receipts, next_after) = if kinds.is_empty() {
         gate_page(reader, after, page)?
     } else {
@@ -364,7 +505,7 @@ pub(crate) fn receipts_page_for(
         receipts,
         next_after,
         effective_limit: page,
-        limit_clamped: false,
+        limit_clamped,
         undecodable: reader
             .receipt_vault()
             .undecodable_send_receipts_for_kinds(kinds)?,
@@ -440,7 +581,7 @@ fn family_page(
         };
         let (read, walked, exhausted) =
             vault.receipts_window_for_caller(pass, reader.receipt_destination(), content)?;
-        records.extend(credential_kept_receipts(reader, read)?);
+        records.extend(reader_kept_receipts(reader, read)?);
         if records.len() > page || exhausted {
             break;
         }

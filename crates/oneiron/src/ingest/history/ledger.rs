@@ -12,10 +12,12 @@
 //! Erasing an imported MESSAGE takes its text's hash out of every row that
 //! holds it ([`erase_message_in_txn`]). The row keeps the MESSAGE's id in its
 //! place, an id the vault's erasure record names too, so a later copy of the
-//! same words is not landed again; the texts still in the vault keep theirs.
+//! same words is not landed again, whoever the copy says spoke them; the
+//! texts still in the vault keep theirs.
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::{HistoryMessage, HistoryRole, HistorySource, UNKNOWN_SPEAKER};
@@ -70,8 +72,7 @@ impl LedgerRow {
 
     /// Whether this text of the message landed and was erased since: under
     /// the message's id or its alias, its words derive one of the row's
-    /// erased MESSAGEs. Words of an unknown speaker are matched by the same
-    /// words with the speaker known too, as [`holds`] matches them.
+    /// erased MESSAGEs as any speaker said them ([`erasure_hashes`]).
     pub(super) fn held_erased(
         &self,
         source: HistorySource,
@@ -80,10 +81,7 @@ impl LedgerRow {
         if self.erased.is_empty() {
             return Ok(false);
         }
-        let mut texts = vec![hash(message, false)];
-        if message.said_by == Some(UNKNOWN_SPEAKER) {
-            texts.push(hash(message, true));
-        }
+        let texts = erasure_hashes(message);
         for native_id in std::iter::once(&message.native_id).chain(&message.alias) {
             for text in &texts {
                 let id = super::land::derive(
@@ -135,35 +133,103 @@ fn key(source: HistorySource, native_id: &str) -> String {
     }
 }
 
-/// What a re-import compares: the speaker's side and the words, and whether
-/// the source left the speaker unknown ([`UNKNOWN_SPEAKER`]). Words of an
-/// unknown speaker hash apart from the same words with the speaker known.
+/// Who a message's hash says spoke it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Speaker {
+    /// The message's side tells it: the owner's own words, or a speaker the
+    /// source names by a fixed word.
+    ByRole,
+    /// A Slack member ([`super::slack::SPEAKER_PREFIX`]): the member map
+    /// decides whether the words are the owner's or a contact's.
+    SlackMember,
+    /// No speaker the source names ([`UNKNOWN_SPEAKER`]).
+    Unknown,
+}
+
+impl Speaker {
+    fn of(message: &HistoryMessage) -> Self {
+        match message.said_by.as_deref() {
+            Some(UNKNOWN_SPEAKER) => Self::Unknown,
+            Some(said_by) if said_by.starts_with(super::slack::SPEAKER_PREFIX) => Self::SlackMember,
+            _ => Self::ByRole,
+        }
+    }
+}
+
+/// What a re-import compares: the speaker's side and the words, whether the
+/// source left the speaker unknown ([`UNKNOWN_SPEAKER`]), and whether a Slack
+/// member said them. Words of an unknown speaker hash apart from the same
+/// words with the speaker known. A Slack member's words hash apart from the
+/// owner's, so a re-import whose member map moves a member to or from the
+/// owner lands the words again, as a revision under their new author. Every
+/// other source's words hash as before.
 pub(super) fn content_hash(message: &HistoryMessage) -> String {
-    hash(message, message.said_by == Some(UNKNOWN_SPEAKER))
+    hash(message, Speaker::of(message))
 }
 
 /// Whether `landed`, the [`content_hash`]es of what landed of one message,
-/// holds `message`. Words of an unknown speaker are held by the same words
-/// with the speaker known too, so a later copy never lands them as unknown
-/// again; words with the speaker known are not held by the same words of an
-/// unknown speaker, so the import that knows who said them lands them, as a
-/// revision the Dreamer reads.
+/// holds `message` ([`holding_hashes`]).
 pub(super) fn holds(landed: &[String], message: &HistoryMessage) -> bool {
-    let held = |unknown| landed.contains(&hash(message, unknown));
-    held(false) || (message.said_by == Some(UNKNOWN_SPEAKER) && held(true))
+    holding_hashes(message)
+        .iter()
+        .any(|held| landed.contains(held))
 }
 
-fn hash(message: &HistoryMessage, unknown_speaker: bool) -> String {
-    let mut hasher = blake3::Hasher::new();
-    if unknown_speaker {
-        hasher.update(b"unknown\0");
+/// The [`content_hash`]es that hold `message`: its own, and for words of an
+/// unknown speaker the same words with the speaker known too, as the owner's
+/// side or as a Slack member's. A later copy never lands words of an unknown
+/// speaker again; words with the speaker known are not held by the same
+/// words of an unknown speaker, so the import that knows who said them lands
+/// them, as a revision the Dreamer reads.
+fn holding_hashes(message: &HistoryMessage) -> Vec<String> {
+    match Speaker::of(message) {
+        Speaker::Unknown => vec![
+            hash(message, Speaker::ByRole),
+            hash(message, Speaker::SlackMember),
+            hash(message, Speaker::Unknown),
+        ],
+        speaker => vec![hash(message, speaker)],
     }
-    hasher.update(match message.role {
+}
+
+/// The [`content_hash`]es an erasure of `message`'s words holds: its side
+/// and words as each speaker said them. Unlike [`holding_hashes`], words with
+/// the speaker known are held too by the same words erased under another
+/// speaker, so a re-import whose member map moves a member to or from the
+/// owner never lands erased words again.
+fn erasure_hashes(message: &HistoryMessage) -> [String; 3] {
+    [Speaker::ByRole, Speaker::SlackMember, Speaker::Unknown].map(|speaker| hash(message, speaker))
+}
+
+/// The hash of `message`'s side and words as `speaker` said them. A message
+/// whose side tells its speaker hashes as it did before Slack members were
+/// told apart, so no stored ledger row changes meaning. The ledger stores this
+/// hash and a re-import compares it, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6.2).
+fn hash(message: &HistoryMessage, speaker: Speaker) -> String {
+    let mut digest = LegacyDigest::new(purposes::ingest::HISTORY_MESSAGE);
+    match speaker {
+        Speaker::ByRole => {}
+        Speaker::SlackMember => {
+            digest.raw(b"slack-member\0");
+        }
+        Speaker::Unknown => {
+            digest.raw(b"unknown\0");
+        }
+    }
+    digest.raw(match message.role {
         HistoryRole::User => b"user\0",
         HistoryRole::Assistant => b"asst\0",
     });
-    hasher.update(message.text.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    digest.raw(message.text.as_bytes());
+    oneiron_hex::encode(&digest.finish())
+}
+
+/// A message's hashes as each speaker said it: by role, as a Slack member,
+/// unknown ([`erasure_hashes`]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn history_message_hashes_for_test(message: &HistoryMessage) -> [String; 3] {
+    erasure_hashes(message)
 }
 
 pub(super) fn get(

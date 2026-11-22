@@ -89,33 +89,49 @@ fn designed_captured_and_generated_packs_belong_to_a_vault_identity() -> Result<
     Ok(())
 }
 
+/// Withdrawing the voice print's consent withdraws recognition only
+/// (VOICE-WITHDRAW-ENGINE-WIPE-RENDER-GAPS; canon arch-0061: "Withdrawing
+/// voice consent deletes the voiceprint and its samples, and keeps the
+/// consent record"). The render bank stays under its own consent: the
+/// identity, its packs, the target pointer, the render grant and its
+/// history. Its own withdrawal is what drops the pointer, and it hands the
+/// pointer back so the host can delete the vendor's clone.
 #[test]
-fn withdrawing_owner_deletes_identity_packs_and_target_pointers() -> Result<()> {
+fn withdrawing_recognition_keeps_the_render_bank_until_its_own_withdrawal() -> Result<()> {
     let (_dir, vault) = open();
     let owner = EntityId::now();
+    let render =
+        |event_id: &str, occurred_at: u64, state: oneiron::voice_identity::VoiceConsentState| {
+            VoiceRenderDecision {
+                event_id: event_id.into(),
+                voice_id: "voice".into(),
+                subject: owner,
+                subject_kind: VoiceRefSubjectKind::Person,
+                recorded_by: owner,
+                occurred_at,
+                reach: ModelLocality::OwnServer,
+                basis: Some(
+                    oneiron::voice_identity::VoiceConsentBasis::ConversationalNotice {
+                        notice: event_id.into(),
+                    },
+                ),
+                state,
+            }
+        };
     // A captured pack is banked under the subject's current render grant,
     // which names the farthest target its refs may reach.
-    vault.record_voice_render_consent(&VoiceRenderDecision {
-        event_id: "grant-owner".into(),
-        voice_id: "voice".into(),
-        subject: owner,
-        subject_kind: VoiceRefSubjectKind::Person,
-        recorded_by: owner,
-        occurred_at: 1,
-        reach: ModelLocality::OwnServer,
-        basis: Some(
-            oneiron::voice_identity::VoiceConsentBasis::ConversationalNotice {
-                notice: "grant".into(),
-            },
-        ),
-        state: oneiron::voice_identity::VoiceConsentState::Granted,
-    })?;
+    let grant = render(
+        "grant-owner",
+        1,
+        oneiron::voice_identity::VoiceConsentState::Granted,
+    );
+    vault.record_voice_render_consent(&grant)?;
     let captured = VoiceRefOrigin::Captured {
         consent_event_ref: "grant-owner".into(),
     };
     vault.store_voice_ref_pack(&pack("source", "voice", owner, captured))?;
     let request = vault.prepare_voice_clone("voice", "host", false, ModelLocality::OwnServer)?;
-    vault.record_voice_target_clone(&request, "provider-id", 1, false)?;
+    let target = vault.record_voice_target_clone(&request, "provider-id", 1, false)?;
     vault.withdraw_voice_consent(&oneiron::voice_identity::VoiceWithdrawalRequest {
         event_id: "withdraw-owner".into(),
         subject_ref: owner,
@@ -126,12 +142,22 @@ fn withdrawing_owner_deletes_identity_packs_and_target_pointers() -> Result<()> 
             notice: "withdraw".into(),
         },
     })?;
-    assert!(vault.voice_identity("voice")?.is_none());
-    assert!(vault.voice_ref_pack("source")?.is_none());
-    assert!(
+    assert!(vault.voice_identity("voice")?.is_some());
+    assert!(vault.voice_ref_pack("source")?.is_some());
+    assert_eq!(
         vault
             .voice_target_clone("voice", "host", false, ModelLocality::OwnServer)?
-            .is_none()
+            .map(|(record, _)| record),
+        Some(target.clone())
     );
+    // The grant's event is still in the render history: recorded again, it
+    // replays its stored receipt.
+    assert!(vault.record_voice_render_consent(&grant)?.replayed);
+    let withdrawn = vault.record_voice_render_consent(&render(
+        "withdraw-render",
+        20,
+        oneiron::voice_identity::VoiceConsentState::Withdrawn,
+    ))?;
+    assert_eq!(withdrawn.newly_evicted, vec![target]);
     Ok(())
 }

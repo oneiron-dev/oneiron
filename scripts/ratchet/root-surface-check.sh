@@ -13,19 +13,21 @@
 # never regenerate just to make the check pass.
 #
 # Extraction contract (matches the curation audit that produced the pin):
-# the surface is the name set of every top-level `pub use crate::...;`
+# the surface is the name set of every top-level `pub use <path>;`
 # statement in crates/oneiron/src/lib.rs — flat brace groups only,
 # cfg-gated statements included, `pub mod` lines excluded (modules are
-# namespace, not root surface). A top-level `pub use <module>::...;`
-# re-export of a module declared in the same file counts the same way,
-# normalized to the `crate::` form before `emit`.
+# namespace, not root surface). The path may start anywhere: `crate::`, a
+# module declared in the file (`pub use gate::policy_manifest_doors;`), or
+# another crate. The lib split moved modules into lower crates and left
+# `pub use oneiron_store::config;` in place of `pub mod config;`; that line
+# is a `pub use`, so it pins `config`. A statement pins its last path
+# segment, or each member of its brace group.
 #
 # Fails CLOSED: a missing lib.rs or baseline, an empty extraction, an
 # unterminated statement, a nested brace group, a `{self, ...}` group, a
-# top-level `pub use` in any form other than `pub use crate::...;` or a
-# declared module's `pub use <module>::...;` re-export, or any
-# token that is not a plain identifier is ROOT-SURFACE-ERROR (exit 1),
-# never a silent pass.
+# top-level `pub use` whose path has a single segment (`pub use name;`),
+# or any token that is not a plain identifier (a glob, an `as` rename) is
+# ROOT-SURFACE-ERROR (exit 1), never a silent pass.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || { echo "ROOT-SURFACE-ERROR: cannot cd to repo root"; exit 1; }
 LIB="crates/oneiron/src/lib.rs"
@@ -48,7 +50,7 @@ extract() {
       print name
     }
     function emit(stmt,   n, parts, i, name, opens) {
-      sub(/^pub use crate::/, "", stmt)
+      sub(/^pub use /, "", stmt)
       sub(/;[[:space:]]*$/, "", stmt)
       opens = gsub(/\{/, "&", stmt)
       if (opens > 1) fail("nested brace group: " stmt)
@@ -66,41 +68,22 @@ extract() {
         check_print(trim(parts[n]))
       }
     }
-    function countable(stmt,   line, m) {
-      line = stmt
-      if (line ~ /^pub use crate::/) return line
-      if (line ~ /^pub use [A-Za-z_][A-Za-z0-9_]*::/) {
-        m = line; sub(/^pub use /, "", m); sub(/::.*$/, "", m)
-        if (m in mods) {
-          sub(/^pub use [A-Za-z_][A-Za-z0-9_]*::/, "pub use crate::" m "::", line)
-          return line
-        }
-      }
-      return ""
-    }
-    FNR == NR {
-      if ($0 ~ /^(pub(\([^)]*\))? )?mod [A-Za-z_][A-Za-z0-9_]*;/) {
-        m = $0; sub(/^.*mod /, "", m); sub(/;.*$/, "", m); mods[m] = 1
-      }
-      next
-    }
     inblk {
       stmt = stmt " " $0
       if ($0 ~ /;[[:space:]]*$/) { emit(stmt); inblk = 0 }
       next
     }
     /^pub use / {
-      rewrite = countable($0)
-      if (rewrite == "") fail("unsupported top-level pub use form (only `pub use crate::...;` and a declared module re-export of form `pub use <module>::...;` are countable): " $0)
-      if (rewrite ~ /;[[:space:]]*$/) emit(rewrite)
-      else { stmt = rewrite; inblk = 1 }
+      if ($0 !~ /^pub use [A-Za-z_][A-Za-z0-9_]*::/) fail("unsupported top-level pub use form (the path needs two or more segments, `pub use <root>::...;`): " $0)
+      if ($0 ~ /;[[:space:]]*$/) emit($0)
+      else { stmt = $0; inblk = 1 }
       next
     }
     END {
       if (failed) exit 3
       if (inblk) { printf "EXTRACT-ERROR: unterminated pub use statement\n" > "/dev/stderr"; exit 3 }
     }
-  ' "$LIB" "$LIB"
+  ' "$LIB"
 }
 
 current="$(extract | LC_ALL=C sort -u)"

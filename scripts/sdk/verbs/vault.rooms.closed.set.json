@@ -1,0 +1,17 @@
+{
+  "name": "vault.rooms.closed.set",
+  "description": "Closes or opens a room; every add to a closed room asks the room's owner, whoever adds. Only a person who owns the room sets it.",
+  "input": "crate::workspace_roster::RoomClosedSet",
+  "output": "crate::workspace_roster::RoomClosedSet",
+  "call": "memory.rooms_closed_set(&input)?",
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

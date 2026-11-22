@@ -26,6 +26,7 @@ use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
 use crate::receipt::{LensApproval, LensProposalReceipt};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{PackInstallReceipt, PackInstallStatus};
 use crate::{EntityId, Error, Result, Vault};
@@ -37,8 +38,6 @@ pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =
 /// The owner's selected revision per pack/skill slot. Key: [`slot_key`].
 pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
     SideTable::new(&side_table::LENS_SLOT);
-/// The most rows one `vault.lenses.list` page returns.
-pub const LENS_LIST_MAX_PAGE: usize = 200;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::lens::proposal::{LensListRequest, LensSlot};
@@ -83,6 +82,13 @@ pub(super) struct LensProposalRecord {
     /// The `lens/intent` NOTE the lens row was born from.
     pub(super) prompt_ref: String,
     pub(super) proposed_by: String,
+    /// The run attempt the proposing handle wrote from, lowercase hex, when
+    /// its host bound one: a dispatch at the dispatcher's own ceiling pins no
+    /// delegation parent on the child, so the run carries the lineage its id
+    /// does not (DEC-0006). Absent on an owner's proposal, a run-less call's,
+    /// and every row stored before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) proposed_by_run_attempt: Option<String>,
     pub(super) proposed_at: u64,
     /// Where the lens is read: where its prompt NOTE is placed (FIX 2136).
     pub(super) scope: LensScope,
@@ -114,7 +120,9 @@ impl LensProposalRecord {
     }
 }
 
-/// The owner's stored selection for one slot.
+/// The stored selection for one slot: the owner's, or an agent's the owner's
+/// `lens.slot.agent_select` row admitted (its `authenticated_under` is then
+/// `grant:<hex>`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LensSlotRecord {
@@ -184,6 +192,7 @@ impl Memory<'_> {
         let lens_ref = EntityId::now();
         let prompt_ref = EntityId::now();
         let vault = self.vault();
+        let writer = self.write_actor();
         let mut record = LensProposalRecord {
             pack_name: input.slot.pack_name,
             skill_id: skill_id.to_hex(),
@@ -191,10 +200,12 @@ impl Memory<'_> {
             compiled_hash: lens_hash(&compiled_json),
             prompt_ref: prompt_ref.to_hex(),
             proposed_by: self.actor().to_hex(),
+            proposed_by_run_attempt: writer
+                .run_attempt()
+                .map(|attempt| oneiron_hex::encode(&attempt)),
             proposed_at: crate::unix_seconds_now(),
             scope: LensScope::default(),
         };
-        let writer = self.write_actor();
         let trigger = input.trigger;
         self.with_verified_actor_write_txn(|txn| {
             let live = vault.live_pack_skill_in_txn(txn, &record.pack_name, &skill_id)?;
@@ -240,11 +251,19 @@ impl Memory<'_> {
     /// history once its pack is gone, where its read admits the lens's scope,
     /// else its row alone while it reads the slot's SKILL and live pack
     /// source (FIX 2136).
+    ///
+    /// A page holds at most the owner's `lenses.list.page_max` rows (200 by
+    /// default), which an absent `limit` asks for.
     pub fn lenses_list(&self, input: LensListRequest) -> MemoryResult<LensListPage> {
-        let limit = input
-            .limit
-            .map_or(LENS_LIST_MAX_PAGE, |limit| limit as usize)
-            .clamp(1, LENS_LIST_MAX_PAGE);
+        let page_max = super::setting_keys::vault_value(
+            self.vault(),
+            &super::setting_keys::LENSES_LIST_PAGE_MAX,
+        )?
+        .get();
+        let page_max = usize::try_from(page_max).unwrap_or(usize::MAX);
+        let limit =
+            page_limit_zero_as_one(input.limit.map(|limit| limit as usize), page_max, page_max)
+                .rows;
         let after = input
             .after
             .as_deref()

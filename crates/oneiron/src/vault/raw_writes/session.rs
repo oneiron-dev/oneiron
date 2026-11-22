@@ -65,8 +65,13 @@ pub(super) enum RawOp<'a> {
         tgt: EntityId,
         weight: f32,
     },
-    /// An entity's vector.
-    Vector { id: EntityId, vector: &'a [f32] },
+    /// An entity's vector, with the device and runtime that computed it when
+    /// its host marked it.
+    Vector {
+        id: EntityId,
+        vector: &'a [f32],
+        provenance: Option<&'a crate::embed::EmbeddingProvenance>,
+    },
 }
 
 impl Memory<'_> {
@@ -188,7 +193,11 @@ impl Memory<'_> {
                     };
                     (src, at, now, op)
                 }
-                RawOp::Vector { id, vector } => {
+                RawOp::Vector {
+                    id,
+                    vector,
+                    provenance,
+                } => {
                     if let Some(error) = Error::invalid_vector_component(vector) {
                         return Err(error.into());
                     }
@@ -196,7 +205,7 @@ impl Memory<'_> {
                         id,
                         vector: vector.to_vec(),
                         pending_embedding_token: None,
-                        provenance: None,
+                        provenance: provenance.cloned(),
                     };
                     (id, at, now, op)
                 }
@@ -229,6 +238,15 @@ impl Memory<'_> {
                 RawOp::Edge { .. } | RawOp::Vector { .. } => None,
             })
             .collect();
+        // A staged vector replaces the row's vector and device mark in the
+        // room's reads: judged as on base (review of #10218).
+        let vector_ids: Vec<EntityId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                RawOp::Vector { id, .. } => Some(*id),
+                RawOp::Put(_) | RawOp::Edge { .. } => None,
+            })
+            .collect();
         let mut refusal = None;
         let staged = session.overlay_write_routed(&route, |wtxn, apply| {
             let proven = self
@@ -238,7 +256,9 @@ impl Memory<'_> {
                 refusal = Some(error);
                 return Err(Error::InvariantViolation("a bound raw write was refused"));
             }
-            if !lane.admits_puts_in(wtxn, &put_ids)? {
+            if !lane.admits_puts_in(wtxn, &put_ids)?
+                || !lane.admits_vectors_in(wtxn, &vector_ids)?
+            {
                 return Err(Error::EntityNotFound);
             }
             // A put that changes or drops the source audience an identity
@@ -350,12 +370,9 @@ impl Memory<'_> {
         };
         let mut refusal = None;
         let staged = session.overlay_write_routed(&route, |wtxn, apply| {
-            if let Err(error) = crate::memory::verify_deletion_authority_in_txn(
-                self.vault(),
-                wtxn,
-                self.actor(),
-                self.actor_class(),
-            ) {
+            // A credential handed on to another key deletes nothing as the
+            // owner (HANDED-ON-SLIP-PERSON; Astra review on #8434, F3).
+            if let Err(error) = self.verify_own_deletion_authority_in(wtxn) {
                 refusal = Some(error);
                 return Err(Error::InvariantViolation("a bound raw delete was refused"));
             }
@@ -394,7 +411,12 @@ impl Memory<'_> {
         session: &OffRecordSession<'_>,
         put: RawEntityPut<'_>,
     ) -> MemoryResult<Option<RoomGateDecision>> {
-        crate::batch::validate_staged_raw_put(put.entity_type, put.data, put.learned_at)?;
+        crate::batch::validate_staged_raw_put(
+            put.entity_type,
+            put.data,
+            put.learned_at,
+            self.vault().store.clock.now_recorded_at(),
+        )?;
         if put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && let Some(envelope) = self.raw_claim_envelope(put.data)?
         {

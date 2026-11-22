@@ -13,7 +13,9 @@
 //! `engine_executor::host`.
 
 use super::super::host::DeadlineReplay;
-use super::super::store::SCRIPT_OUTPUT_DIR;
+use super::super::host::resume_preflight::ResumePreflightReport;
+use super::super::store::{SCRIPT_OUTPUT_DIR, bridge_result_output_path};
+use super::super::types::EngineExecutorError;
 use super::*;
 use crate::code_run::{ExecutorWireRepairs, PendingCodeStep};
 use crate::code_sandbox::SandboxBoundaryContract;
@@ -21,16 +23,22 @@ use crate::store::result_manifest::invalid_code_run_replay;
 
 const FRONTIER_MOVED: &str = "the run's record moved past its pending step's frontier";
 const DETERMINISM_CHANGED: &str = "the pending step's frozen clock or RNG seed changed";
-const GUEST_ABI_CHANGED: &str = "the pending step's guest boundary changed";
 const SCRIPT_CHANGED: &str = "the pending step's stored program changed";
-const PREPARATION_CHANGED: &str = "the pending step's program prepares to other JavaScript";
-const UNREACHED: &str = "the resumed program ended before every call its pending step recorded";
 
 /// What a pending step taken off its run's record runs in this entry: the
 /// program it runs again, and the replay of the calls it already made.
 pub(super) struct ResumedProgram<'p> {
     pub(super) program: StepProgram<'p>,
     pub(super) replay: DeadlineReplay,
+    /// Whether the guest boundary changed since the step parked: a preflight flag (L8-23).
+    pub(super) boundary_changed: bool,
+}
+
+/// How a deadline slice ends that parks: its status, and the preflight report of the pending
+/// step it resumed, when it resumed one (L8-23).
+pub(super) struct DeadlineSliceEnd {
+    pub(super) status: EngineExecutorStatus,
+    pub(super) resume_preflight: Option<ResumePreflightReport>,
 }
 
 /// What a park keeps of the program a step ran (FIX 7703).
@@ -63,6 +71,19 @@ fn pending_speech_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.pending-speech.txt")
 }
 
+/// Drops the kept bridge-result outputs a refire replaces (L8-23): the live call writes its own
+/// body at the same path, however the step ends.
+pub(super) fn drop_refired_outputs(record: &mut CodeRunReplayRecord, refired: &[u64]) {
+    if refired.is_empty() {
+        return;
+    }
+    record.outputs.retain(|output| {
+        !refired
+            .iter()
+            .any(|seq| output.path == bridge_result_output_path(*seq))
+    });
+}
+
 /// The digest of the guest boundary a step's program runs against: its WIT
 /// world and the imports it links, in their order (FIX 7703).
 pub(super) fn guest_abi_digest(boundary: &SandboxBoundaryContract) -> [u8; 32] {
@@ -75,30 +96,28 @@ pub(super) fn guest_abi_digest(boundary: &SandboxBoundaryContract) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// Holds a resumed step whose program prepares to other JavaScript than
-/// the program its pending step ran (FIX 8276, FIX 7703).
-pub(super) fn check_pending_preparation(
+/// Whether a resumed step's program prepares to other JavaScript than the program its
+/// pending step ran (FIX 8276, FIX 7703): a preflight flag, no longer a refusal (L8-23).
+pub(super) fn pending_preparation_changed(
     pending: &PendingCodeStep,
     prepared: &PreparedSource<'_>,
-) -> EngineExecutorResult<()> {
-    if prepared.transpiled().map(TranspiledSource::identity) != pending.prepared_identity {
-        return Err(invalid_code_run_replay(PREPARATION_CHANGED).into());
-    }
-    Ok(())
+) -> bool {
+    prepared.transpiled().map(TranspiledSource::identity) != pending.prepared_identity
 }
 
 impl EngineNativeExecutor<'_> {
     /// The program of `pending`, the pending step the caller took off
     /// `record` (FIX 7703): its stored program, checked against the step
-    /// (its position, frontiers, frozen clock and RNG seed, guest boundary
-    /// and program digest), and the rows its program made, taken off the
-    /// record so the step's next commit writes them again with the rest of
-    /// its calls. The record holds no pending step from here: that commit,
-    /// whatever it is, replaces the stored one under the record's
-    /// generation. A step that does not check out holds: the entry fails
-    /// with the replay error and commits nothing, so the stored step, its
-    /// rows and its frontier stay as they were. The entry's own lease, seat
-    /// and storage binding checks ran before this.
+    /// (its position, frontiers, frozen clock and RNG seed, and program
+    /// digest), and the rows its program made, taken off the record so the
+    /// step's next commit writes them again with the rest of its calls. A
+    /// changed guest boundary is a preflight flag, not a refusal (L8-23).
+    /// The record holds no pending step from here: that commit, whatever it
+    /// is, replaces the stored one under the record's generation. A step that
+    /// does not check out holds: the entry fails with the replay error and
+    /// commits nothing, so the stored step, its rows and its frontier stay as
+    /// they were. The entry's own lease, seat and storage binding checks ran
+    /// before this.
     ///
     /// The program carries the correction record of the reply that wrote
     /// it, with the model, answering model and repairs its pending step
@@ -128,9 +147,7 @@ impl EngineNativeExecutor<'_> {
         if pending.determinism != config.determinism {
             return Err(invalid_code_run_replay(DETERMINISM_CHANGED).into());
         }
-        if pending.guest_abi != guest_abi_digest(boundary) {
-            return Err(invalid_code_run_replay(GUEST_ABI_CHANGED).into());
-        }
+        let boundary_changed = pending.guest_abi != guest_abi_digest(boundary);
         // Once an erase of the run's actor took its replies (FIX 5718), the
         // step's rows answer nothing, and nothing is sent again.
         if self.storage.code_run_response_erased(record.run_id)? {
@@ -151,9 +168,33 @@ impl EngineNativeExecutor<'_> {
             None
         };
         let rows = record.bridge_calls.split_off(bridge_start);
+        // The parked step's rows run again, and its commit may put another
+        // call at each of their places (L8-23): each is a prefix call this
+        // mutation touched, which the commit's append compares with its
+        // stored item (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT).
+        for index in bridge_start..bridge_start.saturating_add(rows.len()) {
+            let index = u64::try_from(index)
+                .map_err(|_| Error::ArithmeticOverflow("executor bridge position"))?;
+            record.note_changed_call(index);
+        }
         record.invalidate_verb_rows();
+        let mut replay = DeadlineReplay::new(
+            rows,
+            pending.guest_calls.clone(),
+            config.run_id,
+            pending.step_seq,
+            pending.bridge_frontier,
+        );
+        // The owner's answer to this step's ask, when the run's row still waits on it (L8-23).
+        if let Some(ask) = self.storage.resume_divergence_ask(config.run_id)?
+            && ask.step_seq == pending.step_seq
+            && let Some(choice) = ask.answer
+        {
+            replay = replay.with_answer(ask.report, choice);
+        }
         Ok(ResumedProgram {
-            replay: DeadlineReplay::new(rows, pending.guest_calls.clone()),
+            replay,
+            boundary_changed,
             program: StepProgram {
                 request_hash: pending.request_hash,
                 script,
@@ -179,9 +220,13 @@ impl EngineNativeExecutor<'_> {
     /// declined its TASK), with a resumed step's rows whole in its host.
     ///
     /// A resumed program that did not meet its recorded calls holds, as
-    /// does one that ended before reaching them all: the entry fails with
-    /// the replay error, or the cancel that stopped it, and commits nothing.
-    /// A step its runtime stopped at its deadline parks.
+    /// does one whose walk turned dry: the entry fails with the replay error
+    /// or the walk's report, or the cancel that stopped it, and commits
+    /// nothing. A program that ended with recorded calls unreached drops a
+    /// pure tail and commits, and holds an effect tail with the report
+    /// (L8-23). A step its runtime stopped at its deadline parks. A pass that
+    /// re-fired a call live parks where it would hold, to keep the live row,
+    /// and a left tail commits with its kept rows (L8-23).
     pub(super) fn end_deadline_slice(
         &self,
         config: &EngineExecutorConfig,
@@ -189,7 +234,7 @@ impl EngineNativeExecutor<'_> {
         expected: Option<CodeRunReplayGeneration>,
         host: &mut RecordingJsHost<'_, '_>,
         slice: SliceProgram<'_>,
-    ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
+    ) -> EngineExecutorResult<Option<DeadlineSliceEnd>> {
         let cancelled = || Error::Code(crate::error::CodeError::CodeStepCancelled);
         if let Some(why) = host.pending_replay_held() {
             if slice.cancelled {
@@ -197,18 +242,80 @@ impl EngineNativeExecutor<'_> {
             }
             return Err(invalid_code_run_replay(why).into());
         }
-        if slice.ran && !slice.cancelled && host.parks_at_deadline() {
-            return self
-                .park_pending_step(config, record, expected, host, slice)
-                .map(Some);
+        // A dry replay never parks at its deadline, nor does a left one turn dry (L8-23).
+        let parks_at_deadline = slice.ran && !slice.cancelled && host.parks_at_deadline();
+        // A program that ended before its recorded tail meets the owner's answer there as at a
+        // later call: a refire drops the approved tail, a leave keeps it, and an unapproved effect
+        // tail turns the walk dry (L8-23).
+        if slice.ran && !slice.cancelled && !parks_at_deadline {
+            host.answer_unreached_tail();
+        }
+        // A pass that re-fired a call live parks where it would hold: committing nothing would
+        // lose the record of an effect that fired (L8-23). No ask is raised here: the next entry
+        // meets the refired row free and asks about the drift left. A cancelled pass parks too,
+        // with its live rows and the recorded calls it did not reach, and its entry still fails
+        // on the cancel.
+        if !parks_at_deadline && !host.pending_replay_left() && !host.refired_seqs().is_empty() {
+            if slice.cancelled {
+                self.park_pending_step(config, record, expected, host, slice)?;
+                return Err(cancelled().into());
+            }
+            if let Some(report) = host.preflight_report_for_park() {
+                let status = self.park_pending_step(config, record, expected, host, slice)?;
+                return Ok(Some(DeadlineSliceEnd {
+                    status,
+                    resume_preflight: Some(report),
+                }));
+            }
+        }
+        if let Some(report) = host.dry_preflight_report() {
+            if slice.cancelled {
+                return Err(cancelled().into());
+            }
+            return Err(self.resume_divergence_hold(config, report));
+        }
+        if parks_at_deadline {
+            let resume_preflight = host.pending_preflight_report();
+            let status = self.park_pending_step(config, record, expected, host, slice)?;
+            return Ok(Some(DeadlineSliceEnd {
+                status,
+                resume_preflight,
+            }));
+        }
+        // A left tail commits with its kept rows (L8-23).
+        if host.pending_replay_left() {
+            if slice.cancelled {
+                return Err(cancelled().into());
+            }
+            host.commit_left_tail();
+            return Ok(None);
         }
         if host.pending_replay_unreached() {
             if slice.cancelled {
                 return Err(cancelled().into());
             }
-            return Err(invalid_code_run_replay(UNREACHED).into());
+            if let Some(report) = host.effect_tail_preflight_report() {
+                return Err(self.resume_divergence_hold(config, report));
+            }
         }
         Ok(None)
+    }
+
+    /// The hold a drifted resume takes (L8-23): raises the owner's ask once per drift, then holds
+    /// with the walk's report. A raise that fails returns its error instead; the entry still
+    /// commits nothing.
+    fn resume_divergence_hold(
+        &self,
+        config: &EngineExecutorConfig,
+        report: ResumePreflightReport,
+    ) -> EngineExecutorError {
+        if let Err(error) = self
+            .storage
+            .raise_resume_divergence_ask(config.run_id, &report)
+        {
+            return error.into();
+        }
+        EngineExecutorError::ResumeDivergence(Box::new(report))
     }
 
     /// Parks the step as the run's pending step (FIX 7703): its rows, its
@@ -233,6 +340,8 @@ impl EngineNativeExecutor<'_> {
             u64::try_from(at).map_err(|_| Error::ArithmeticOverflow("executor bridge position"))
         };
         let callable_rows = host.result_rows();
+        // Read before the replay leaves the host with its unreached calls (L8-23).
+        drop_refired_outputs(record, host.refired_seqs());
         let (rows, guest_calls) = host.take_parked_calls();
         // A write the step already made is in its rows, so no later step
         // makes it again under a fresh receipt.

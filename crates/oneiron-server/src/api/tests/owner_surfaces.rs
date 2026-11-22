@@ -695,7 +695,7 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
             ),
         ]);
         let body = Value::Map(vec![
-            (Value::from("schema_version"), Value::from(1_u64)),
+            (Value::from("schema_version"), Value::from(3_u64)),
             (Value::from("name"), Value::from("graph-fs-secret")),
             (Value::from("class"), Value::from("custody-portable")),
             (Value::from("device_only"), Value::from(false)),
@@ -711,6 +711,7 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
             (Value::from("manifest_ref"), Value::from("")),
             (Value::from("declared_paths"), Value::Array(vec![])),
             (Value::from("policy_floor_snapshot"), floor),
+            (Value::from("model_reveal_allowed"), Value::from(false)),
         ]);
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &body).unwrap();
@@ -1302,10 +1303,10 @@ async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
     assert!(collector.join().unwrap().starts_with("post /ingest"));
 }
 
-/// Two owners of one shared vault preview the same bundle and send it with the
-/// same preview second: each approval names its owner, so each send is its
-/// own, neither owner can send on the other's preview, and one owner's repeat
-/// is still that owner's one send.
+/// Two owners of one shared vault preview the same bundle and each send it with
+/// their own preview's timestamp and approval. Each approval names its owner,
+/// so each send is its own, neither owner can send on the other's preview, and
+/// one owner's repeat is still that owner's one send.
 #[tokio::test]
 async fn two_owners_sending_one_bundle_are_two_sends() {
     use oneiron::federation::{FederationGrantRole, InitialSharedMember};
@@ -1332,6 +1333,7 @@ async fn two_owners_sending_one_bundle_are_two_sends() {
     vault
         .initialize_shared_vault(&proof, 42, None, &owners, 1)
         .unwrap();
+    accept_founding_invitation(vault, second, 42);
     let recipes = [
         owner_recipe(&server),
         test_bearer(&format!(
@@ -1355,13 +1357,12 @@ async fn two_owners_sending_one_bundle_are_two_sends() {
     }
     assert_eq!(previews[0]["digest"], previews[1]["digest"]);
     assert_ne!(previews[0]["approval"], previews[1]["approval"]);
-    let previewed_at = previews[0]["previewed_at"].clone();
     let send_body = |preview: &Value| {
         json!({
             "category": "bug",
             "digest": preview["digest"],
             "approval": preview["approval"],
-            "previewed_at": previewed_at,
+            "previewed_at": preview["previewed_at"],
         })
     };
     let mut sent = Vec::new();

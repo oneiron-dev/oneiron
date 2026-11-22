@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use oneiron::store::ports::StoreClock;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -17,8 +18,16 @@ pub(crate) const TEST_SECRET: &str = "ai-host-test-host-secret";
 /// fixture keystore holds for [`TEST_SECRET`], so a server opened over it
 /// with that secret loads the same root.
 pub(crate) fn rooted_vault() -> (tempfile::TempDir, Arc<Vault>) {
+    rooted_vault_on(StoreClock::default())
+}
+
+/// [`rooted_vault`] on `store_clock`, the clock its writes and reads take
+/// their time from.
+pub(crate) fn rooted_vault_on(store_clock: StoreClock) -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock;
+    let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
     crate::test_credentials::install_fixture_keystore(&vault, TEST_SECRET.as_bytes());
     let issuer = vault.bootstrap_host_slip_issuer().unwrap();
     vault.ensure_host_root_slip(&issuer).unwrap();
@@ -100,6 +109,16 @@ pub(crate) fn models(base_url: &str, extra: &str) -> ModelsConfig {
     ))
 }
 
+/// Keep the configured own-server routes, but meter their simulated account
+/// work: a keyless own-server provider is free work (9ef0dfa3a17, FIX 9482),
+/// an unmetered lease no budget line can deny.
+pub(crate) fn metered_models(mut config: ModelsConfig) -> ModelsConfig {
+    for provider in config.providers.values_mut() {
+        provider.payer = oneiron::llm::run_admission::Payer::CustomerAccount;
+    }
+    config
+}
+
 /// `[models]` as written in `oneiron.toml`.
 pub(crate) fn models_toml(text: &str) -> ModelsConfig {
     let file: ModelsFile = toml::from_str(text).unwrap();
@@ -137,9 +156,28 @@ pub(crate) fn capture_user_turn(vault: &Vault, text: &str) -> EntityId {
     turn
 }
 
-/// An extraction answer citing the first turn the transcript shows, as a
-/// real model would: the fake reads the source id out of the request.
-pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
+/// A PERSON whose stored name is an identity hint, so a turn that says the
+/// name lists it to the extraction call (FIX 7506: the call names each
+/// entity by a call-local label, and a reply names only what it listed).
+pub(crate) fn seed_named_person(vault: &Vault, name: &str) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({ "name": name })).unwrap(),
+        )
+        .unwrap();
+    id
+}
+
+/// An extraction answer naming `value` as the `profile.name` of the listed
+/// entity called `value`, quoted from the first turn the transcript shows,
+/// as a real model would: the fake reads both call-local labels (`P1`,
+/// `T1`) out of the request (FIX 7506).
+pub(crate) fn extraction_reply(value: &str) -> Reply {
     let value = value.to_owned();
     Reply::Computed(Arc::new(move |request: &Value| {
         let transcript = request["messages"]
@@ -148,6 +186,14 @@ pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
             .and_then(|message| message["content"].as_str())
             .unwrap_or_default()
             .to_owned();
+        let named = json!(value).to_string();
+        let subject = transcript
+            .lines()
+            .find_map(|line| {
+                let (label, name) = line.strip_prefix("entity ")?.split_once(' ')?;
+                (name == named).then(|| label.to_owned())
+            })
+            .unwrap_or_default();
         let source = transcript
             .split('[')
             .nth(1)
@@ -155,11 +201,11 @@ pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
             .unwrap_or_default()
             .to_owned();
         json!({"candidates": [{
-            "subject": subject.to_hex(),
+            "subject": subject,
             "predicate": "profile.name",
             "value": value,
             "confidence": 0.9,
-            "evidence_refs": [{"source_id": source, "byte_range": [0, 4]}],
+            "evidence_refs": [{"source": source, "quote": value}],
         }]})
         .to_string()
     }))

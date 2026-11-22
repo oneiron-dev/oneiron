@@ -24,6 +24,13 @@
 //! file (`<dir>.rs` or `<dir>/mod.rs`), where a new `mod tables;` has to be declared. Not the
 //! directories: Cargo scans a watched directory recursively, so any edit in `src` would rerun the
 //! scan. An edit to any other file does not rerun it.
+//!
+//! It assembles the setting catalogue the same way (DESIGN 15-setting-primitive, stage 0.1): every
+//! `setting_keys!` row in a module's `setting_keys.rs` names one key, and the script writes
+//! `$OUT_DIR/setting_catalogue.rs`, included by `setting::catalogue`: `SETTING_CATALOGUE`, a
+//! reference to every key, sorted by its dotted name. A name that is not dotted lowercase ASCII,
+//! or that two rows share, fails the build. Rows under `test_doors` exist only under
+//! `--cfg oneiron_test_support`, so their entries carry that cfg.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -65,9 +72,16 @@ fn main() {
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
     let src = manifest.join("src");
     println!("cargo:rerun-if-changed=build.rs");
-    let (mut files, mut dirs) = (Vec::new(), Vec::new());
-    collect_row_files(&src, &src.join(DECLS_DIR), &mut files, &mut dirs);
+    let (mut files, mut key_files, mut dirs) = (Vec::new(), Vec::new(), Vec::new());
+    collect_row_files(
+        &src,
+        &src.join(DECLS_DIR),
+        &mut files,
+        &mut key_files,
+        &mut dirs,
+    );
     files.sort();
+    key_files.sort();
     dirs.sort();
     // A new `tables.rs` (or decl file) is declared in its directory's module file, so watching the
     // module files sees it without watching the directories themselves.
@@ -96,16 +110,41 @@ fn main() {
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"))
         .join("side_table_catalogue.rs");
-    let generated = render(rows);
-    if fs::read_to_string(&out).ok().as_deref() != Some(generated.as_str()) {
-        fs::write(&out, generated)
-            .unwrap_or_else(|error| panic!("writing {}: {error}", out.display()));
+    write_if_changed(&out, &render(rows));
+    let mut keys = Vec::new();
+    for file in &key_files {
+        println!("cargo:rerun-if-changed={}", file.display());
+        let text = fs::read_to_string(file)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", file.display()));
+        let rel = file
+            .strip_prefix(&src)
+            .expect("a scanned file is under src")
+            .to_string_lossy()
+            .replace('\\', "/");
+        read_key_invocations(&rel, &tokens(&text, &rel), &mut keys);
+    }
+    let out =
+        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set")).join("setting_catalogue.rs");
+    write_if_changed(&out, &render_keys(keys));
+}
+
+/// Writes `text` to `out` unless it holds it already, so an unchanged catalogue keeps its mtime.
+fn write_if_changed(out: &Path, text: &str) {
+    if fs::read_to_string(out).ok().as_deref() != Some(text) {
+        fs::write(out, text).unwrap_or_else(|error| panic!("writing {}: {error}", out.display()));
     }
 }
 
 /// Every file a row may live in under `dir`: each `tables.rs`, and each `.rs` file under `decls`
-/// (nested ones too, so `module_of` refuses them). Every directory below `dir` goes to `dirs`.
-fn collect_row_files(dir: &Path, decls: &Path, out: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) {
+/// (nested ones too, so `module_of` refuses them); each `setting_keys.rs` goes to `keys`. Every
+/// directory below `dir` goes to `dirs`.
+fn collect_row_files(
+    dir: &Path,
+    decls: &Path,
+    out: &mut Vec<PathBuf>,
+    keys: &mut Vec<PathBuf>,
+    dirs: &mut Vec<PathBuf>,
+) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|error| panic!("listing {}: {error}", dir.display()));
     for entry in entries {
@@ -114,7 +153,12 @@ fn collect_row_files(dir: &Path, decls: &Path, out: &mut Vec<PathBuf>, dirs: &mu
             .path();
         if path.is_dir() {
             dirs.push(path.clone());
-            collect_row_files(&path, decls, out, dirs);
+            collect_row_files(&path, decls, out, keys, dirs);
+        } else if path
+            .file_name()
+            .is_some_and(|name| name == "setting_keys.rs")
+        {
+            keys.push(path);
         } else if path.extension().is_some_and(|extension| extension == "rs")
             && (path.starts_with(decls) || path.file_name().is_some_and(|name| name == "tables.rs"))
         {
@@ -511,6 +555,138 @@ fn render(mut rows: Vec<Row>) -> String {
     .expect("writing to a String");
     for row in &rows {
         writeln!(out, "    &crate::{}::{},", row.module, row.name).expect("writing to a String");
+    }
+    out.push_str("];\n");
+    out
+}
+
+/// One `setting_keys!` row: what the setting catalogue needs to place it.
+struct KeyRow {
+    /// The dotted key name.
+    key: String,
+    /// The static's path, `crate::<module>::setting_keys::NAME`.
+    path: String,
+    /// Whether the row exists only under `--cfg oneiron_test_support`.
+    test_only: bool,
+    at: String,
+}
+
+/// Every `setting_keys!` invocation in a `setting_keys.rs` file's tokens: its rows.
+fn read_key_invocations(rel: &str, toks: &[Token], keys: &mut Vec<KeyRow>) {
+    let Some(dir) = rel.strip_suffix("/setting_keys.rs") else {
+        panic!("{rel}: setting keys live in a module's setting_keys.rs");
+    };
+    let module = format!("{}::setting_keys", dir.replace('/', "::"));
+    let test_only = dir == "test_doors" || dir.starts_with("test_doors/");
+    let mut i = 0;
+    while i < toks.len() {
+        let is_call = toks[i] == Token::Ident("setting_keys".to_owned())
+            && toks.get(i + 1) == Some(&Token::Punct("!".to_owned()));
+        if !is_call {
+            i += 1;
+            continue;
+        }
+        let Some(Token::Open('{')) = toks.get(i + 2) else {
+            panic!("{rel}: setting_keys! takes a braced list");
+        };
+        let (body, end) = group(toks, i + 2, '{', '}', rel);
+        let (mut depth, mut start) = (0usize, 0usize);
+        for (index, tok) in body.iter().enumerate() {
+            match tok {
+                Token::Open(_) => depth += 1,
+                Token::Close(_) => depth -= 1,
+                Token::Punct(p) if p == ";" && depth == 0 => {
+                    keys.push(read_key_row(rel, &module, test_only, &body[start..index]));
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            body[start..].is_empty(),
+            "{rel}: a setting_keys! row does not end with `;`"
+        );
+        i = end;
+    }
+}
+
+/// `#[doc ..]* VIS NAME: TYPE = "dotted.name" { .. };`
+fn read_key_row(rel: &str, module: &str, test_only: bool, row: &[Token]) -> KeyRow {
+    let mut i = 0;
+    while row.get(i) == Some(&Token::Punct("#".to_owned())) {
+        let (Some(Token::Open('[')), Some(Token::Ident(attribute))) =
+            (row.get(i + 1), row.get(i + 2))
+        else {
+            panic!("{rel}: a setting_keys! row has a malformed attribute");
+        };
+        assert!(
+            attribute == "doc",
+            "{rel}: a setting_keys! row carries #[{attribute} ..]: only doc attributes are allowed"
+        );
+        i = group(row, i + 1, '[', ']', rel).1;
+    }
+    if row.get(i) == Some(&Token::Ident("pub".to_owned())) {
+        i += 1;
+        if row.get(i) == Some(&Token::Open('(')) {
+            i = group(row, i, '(', ')', rel).1;
+        }
+    }
+    let at = format!("{rel}, row {:?}", row.get(i));
+    let (Some(Token::Ident(name)), Some(Token::Punct(colon))) = (row.get(i), row.get(i + 1)) else {
+        panic!("{at}: cannot read `NAME: TYPE = \"name\"`");
+    };
+    assert!(colon == ":", "{at}: expected `:` after the static's name");
+    let equals = row[i..]
+        .iter()
+        .position(|tok| *tok == Token::Punct("=".to_owned()))
+        .unwrap_or_else(|| panic!("{at}: expected `= \"name\"` after the type"));
+    let Some(Token::Literal(literal)) = row.get(i + equals + 1) else {
+        panic!("{at}: the key name is a string literal after `=`");
+    };
+    let key = literal
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_else(|| panic!("{at}: the key name is a plain string, not {literal}"))
+        .to_owned();
+    let dotted = !key.is_empty()
+        && key.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        });
+    assert!(
+        dotted,
+        "{at}: a setting key is dotted lowercase ASCII, not {key:?}"
+    );
+    KeyRow {
+        key,
+        path: format!("crate::{module}::{name}"),
+        test_only,
+        at,
+    }
+}
+
+fn render_keys(mut keys: Vec<KeyRow>) -> String {
+    keys.sort_by(|a, b| a.key.cmp(&b.key));
+    for pair in keys.windows(2) {
+        assert!(
+            pair[0].key != pair[1].key,
+            "{}: the setting key {} is declared twice",
+            pair[1].at,
+            pair[1].key
+        );
+    }
+    let mut out = String::from(
+        "// @generated by crates/oneiron/build.rs from every `setting_keys!` row in src: do not edit.\n\n\
+         /// Every catalogue key, sorted by its dotted name: the catalogue.\n\
+         pub(crate) static SETTING_CATALOGUE: &[&dyn crate::setting::SettingKey] = &[\n",
+    );
+    for key in &keys {
+        if key.test_only {
+            out.push_str("    #[cfg(oneiron_test_support)]\n");
+        }
+        writeln!(out, "    &{},", key.path).expect("writing to a String");
     }
     out.push_str("];\n");
     out

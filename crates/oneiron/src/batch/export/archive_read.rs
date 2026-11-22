@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Seek};
 
+use oneiron_contracts::fingerprint::ContentHasher;
 use serde::de::DeserializeOwned;
 
 use super::archive_index::{ArchiveIndex, ArchiveSpool, IndexedArchive, Section};
@@ -86,7 +87,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
             .map_err(|_| invalid("archive file listed but absent"))?;
         let mut file = CheckedMember {
             member: member.take(bytes.saturating_add(1)),
-            hasher: blake3::Hasher::new(),
+            hasher: ContentHasher::new(),
             count: 0,
             failed: false,
         };
@@ -94,7 +95,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
         if std::io::copy(&mut file, &mut std::io::sink()).is_err() || file.failed {
             return Err(invalid("unreadable whole-vault archive member"));
         }
-        let digest = crate::entity_id::bytes_to_hex_lower(file.hasher.finalize().as_bytes());
+        let digest = crate::entity_id::bytes_to_hex_lower(file.hasher.finish().as_bytes());
         if file.count != bytes || digest != blake3 {
             return Err(invalid("archive file does not match its digest"));
         }
@@ -107,7 +108,7 @@ impl<R: Read + Seek> ArchiveFiles for ArchiveFileSource<R> {
 /// failed by any read error but an interrupted read's.
 struct CheckedMember<M> {
     member: M,
-    hasher: blake3::Hasher,
+    hasher: ContentHasher,
     count: u64,
     failed: bool,
 }
@@ -128,14 +129,19 @@ impl<M: Read> Read for CheckedMember<M> {
     }
 }
 
-/// Reads `source` into the import's row index in `scratch` (FIX 3678): every
-/// member is checked against the manifest first, then each record row is
-/// checked as it is read and spooled. No row stays in memory.
-pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
-    vault: &Vault,
-    scratch: &'e crate::store::ScratchEnv,
-    source: R,
-) -> Result<IndexedArchive<'e, R>> {
+/// An archive whose every member was checked against its manifest: the open
+/// archive, its manifest, and each listed file's length by its BLAKE3.
+struct CheckedArchive<R> {
+    archive: zip::ZipArchive<R>,
+    manifest: WholeVaultDocumentManifest,
+    listed: BTreeMap<String, u64>,
+}
+
+/// The member pass over `source` (FIX 2766, rule 5): the manifest is read
+/// whole, then every member it lists is checked against it (length and
+/// BLAKE3) in one streaming pass, and the archive holds no member it does
+/// not list.
+fn checked_archive<R: Read + Seek>(source: R) -> Result<CheckedArchive<R>> {
     let mut archive =
         zip::ZipArchive::new(source).map_err(|_| invalid("invalid whole-vault archive"))?;
     let mut members = BTreeSet::new();
@@ -215,7 +221,35 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
             "whole-vault archive member {stray:?} is not in its manifest"
         )));
     }
+    Ok(CheckedArchive {
+        archive,
+        manifest,
+        listed,
+    })
+}
 
+/// The manifest of the archive `source` once every member is checked against
+/// it ([`checked_archive`]): a verdict on this manifest speaks for these
+/// members as they read now (OPUS-SECREAD-A N1 on L2-23). Reads no row.
+pub(crate) fn checked_archive_manifest<R: Read + Seek>(
+    source: R,
+) -> Result<WholeVaultDocumentManifest> {
+    Ok(checked_archive(source)?.manifest)
+}
+
+/// Reads `source` into the import's row index in `scratch` (FIX 3678): every
+/// member is checked against the manifest first, then each record row is
+/// checked as it is read and spooled. No row stays in memory.
+pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
+    vault: &Vault,
+    scratch: &'e crate::store::ScratchEnv,
+    source: R,
+) -> Result<IndexedArchive<'e, R>> {
+    let CheckedArchive {
+        archive,
+        manifest,
+        listed,
+    } = checked_archive(source)?;
     let files = ArchiveFileSource {
         archive: RefCell::new(archive),
         listed,
@@ -228,7 +262,16 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
         let member = archive
             .by_name(&records.path)
             .map_err(|_| invalid("archive record file listed but absent"))?;
-        let mut lines = BufReader::new(member);
+        // The rows spooled are the bytes hashed on this read: a source
+        // rewritten between the digest pass above and this one fails below,
+        // so the manifest (and its L2-23 signature) never vouches for rows it
+        // does not bind.
+        let mut lines = BufReader::new(CheckedMember {
+            member: member.take(records.bytes.saturating_add(1)),
+            hasher: ContentHasher::new(),
+            count: 0,
+            failed: false,
+        });
         let mut count = 0;
         let mut line = Vec::new();
         spool.begin_member();
@@ -257,6 +300,14 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
             count += 1;
         }
         spool.end_member(records.kind);
+        let reread = lines.into_inner();
+        if reread.failed
+            || reread.count != records.bytes
+            || crate::entity_id::bytes_to_hex_lower(reread.hasher.finish().as_bytes())
+                != records.blake3
+        {
+            return Err(invalid("archive record file does not match its digest"));
+        }
         if count != records.rows {
             return Err(invalid("archive record file row count disagrees"));
         }
@@ -463,7 +514,7 @@ fn member_digest<R: Read + Seek>(
         .by_name(path)
         .map_err(|_| invalid("invalid whole-vault archive member"))?;
     let declared = member.size();
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = ContentHasher::new();
     let mut read = 0_u64;
     let mut chunk = vec![0_u8; 64 * 1024];
     loop {
@@ -481,7 +532,7 @@ fn member_digest<R: Read + Seek>(
     }
     Ok((
         read,
-        crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes()),
+        crate::entity_id::bytes_to_hex_lower(hasher.finish().as_bytes()),
     ))
 }
 

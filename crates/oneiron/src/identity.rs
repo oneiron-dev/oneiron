@@ -40,16 +40,17 @@
 use ed25519_dalek::SigningKey;
 
 use crate::error::{Error, Result};
-use crate::side_table;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::install_identity::{DEVICE_PK, MACHINE_ID, MACHINE_PK};
 use crate::vault::Vault;
 
 pub(crate) use crate::store::install_identity::{
     DeviceIdentity, InstallSigner, cache_machine_pk, load_or_mint_client_id,
     load_or_mint_client_id_in_txn, load_or_mint_machine_id_in_txn, put_or_check_device_pk_in_txn,
-    read_client_id_from, read_client_id_in_txn, read_device_verifying_key_in_txn,
-    read_machine_id_in_txn, read_machine_verifying_key_in_store_txn,
-    read_machine_verifying_key_in_txn,
+    put_restored_from_image_in_txn, read_client_id_from, read_client_id_in_txn,
+    read_device_verifying_key_in_txn, read_machine_id_in_txn,
+    read_machine_verifying_key_in_store_txn, read_machine_verifying_key_in_txn,
+    read_restored_from_image_in_txn,
 };
 
 /// `m:client_id` sync_state row (u64 LE, 8 bytes).
@@ -114,17 +115,92 @@ pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
 /// seed. The pinned root goes with them too:
 /// a new machine trusts no root until a pin door on its own install pins one,
 /// so an old image never rolls trust back to an older root, and an image a
-/// host made never arrives pinned to the host's.
+/// host made never arrives pinned to the host's. The owner's dismissals of
+/// held machine answers go with them: each is the mark of the install he
+/// made it on. So does the image's own restored-from mark: the restore
+/// writes its own (row RESTORED-COPIES-ENROL-EACH-OTHER).
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
     key == side_table::IDENTITY_CLIENT_ID.prefix
         || key == side_table::IDENTITY_MACHINE_ID.prefix
+        || key == side_table::IDENTITY_RESTORED_FROM.prefix
         || key == side_table::IDENTITY_DEVICE_PK.prefix
         || key == side_table::IDENTITY_MACHINE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
+        || crate::authority::is_dismissed_held_answer_row(key)
+}
+
+/// This machine's residence mode and its world pick (`sync::residence`): choices about the
+/// install that made them, which go with its machine identity (DESIGN 15-setting-primitive 1.6,
+/// "Restore"). Their rows are declared in every build, so a build without `sync` leaves them
+/// behind too.
+const RESIDENCE_CHOICES: [SideTable<(), Vec<u8>, Raw>; 2] = [
+    SideTable::new(&side_table::SYNC_RESIDENCE_DEVICE_MODE),
+    SideTable::new(&side_table::SYNC_RESIDENCE_DEVICE_WORLDS),
+];
+
+/// Whether `key`, a `sync_state` key, is one of this machine's two residence rows (`rs:mode`,
+/// `rs:worlds`; [`RESIDENCE_CHOICES`]). A direct restore leaves an image's behind with its
+/// machine identity.
+pub(crate) fn is_residence_choice_row(key: &[u8]) -> bool {
+    key == side_table::SYNC_RESIDENCE_DEVICE_MODE.prefix
+        || key == side_table::SYNC_RESIDENCE_DEVICE_WORLDS.prefix
+}
+
+/// Refuses to publish `replacement`, a restore made for `store`'s place, when a choice about
+/// this install moved after the replacement carried it from `store`: a `sync: install` setting
+/// row of the table a restore carries from the live vault (`setting::live_install_rows_in`), or
+/// the residence mode or world pick ([`RESIDENCE_CHOICES`]). The replacement becomes this
+/// machine holding the choices as they stood when it was made, and the vault it replaces drops
+/// its own when the owner activates it ([`drop_machine_identity_in_txn`]), so a choice made in
+/// between would be in neither (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). Read in `txn`,
+/// under `store`'s writer, before the swap; the replacement is sealed from before this read until
+/// the swap is over, so the choices read here are the ones the exchange publishes.
+///
+/// # Errors
+///
+/// `InvalidConfig` when a choice moved; storage errors.
+pub(crate) fn refuse_moved_install_choices(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    replacement: &crate::store::Store,
+) -> Result<()> {
+    let their_txn = replacement.env.read_txn()?;
+    if install_choices_in(store, txn)? == install_choices_in(replacement, &their_txn)? {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "this install's settings or residence choice changed after the restore was \
+             prepared; prepare it again"
+                .into(),
+        ))
+    }
+}
+
+/// The choices about this install that a restore made for its place carries from it, as
+/// stored: its live `sync: install` setting rows, and its residence mode and world pick.
+fn install_choices_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, [Option<Vec<u8>>; 2])> {
+    let [mode, worlds] = RESIDENCE_CHOICES;
+    Ok((
+        crate::setting::live_install_rows_in(store, txn)?,
+        [
+            mode.get_bytes(store, txn, &())?,
+            worlds.get_bytes(store, txn, &())?,
+        ],
+    ))
 }
 
 /// Forgets this install's client id, machine and pin, so the vault joins as a new
-/// one: another live vault keeps the machine it was.
+/// one: another live vault keeps the machine it was. The install's
+/// restored-from mark stays: a machine born of a restore that mints a new id
+/// here is still born of that restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
+/// The choices about the install it was go with them, as a direct restore
+/// leaves an image's behind: its `sync: install` settings and its residence
+/// mode and world pick, so the new machine starts at the defaults (DESIGN
+/// 15-setting-primitive 1.5 and 1.6, "Restore"; rows
+/// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS, SETTING-RESIDENCE-DEVICE-MODE-RIDES-IMAGE).
 pub(crate) fn drop_machine_identity_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -133,7 +209,13 @@ pub(crate) fn drop_machine_identity_in_txn(
     MACHINE_ID.delete(store, wtxn, &())?;
     DEVICE_PK.delete(store, wtxn, &())?;
     MACHINE_PK.delete(store, wtxn, &())?;
-    crate::authority::drop_pinned_root_in_txn(store, wtxn)
+    crate::authority::drop_held_answer_dismissals_in_txn(store, wtxn)?;
+    crate::authority::drop_pinned_root_in_txn(store, wtxn)?;
+    crate::setting::drop_install_rows_in_txn(store, wtxn)?;
+    for table in RESIDENCE_CHOICES {
+        table.delete(store, wtxn, &())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

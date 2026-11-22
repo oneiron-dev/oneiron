@@ -28,7 +28,7 @@ pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
 /// The wallet a body names; none when the key is absent. A malformed value
 /// refuses the body.
 pub(super) fn decode_body_entry(entries: &[(Value, Value)]) -> Result<Option<WalletRef>> {
-    optional_value(entries, KEY_WALLET_REF)
+    optional_value(entries, KEY_WALLET_REF)?
         .map(|value| decode_wallet_ref_value(value).ok_or_else(invalid_grant))
         .transpose()
 }

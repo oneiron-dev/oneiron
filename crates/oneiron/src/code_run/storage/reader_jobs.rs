@@ -32,17 +32,18 @@ use super::wait_delivery::deliver_wait_listing_in_txn;
 use crate::agent_def::AgentPowerTarget;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
-use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, OriginsUnion, ReaderActor, ReaderFindingRef,
     ReaderJob, ReaderJobKind, ReaderJobState, ReaderParent, ReaderQueueCursor, ReaderQueuePage,
     ReaderRoute, ReaderRunEnd, ResultOrigins, SpawnHostSeat, SpawnParentBinding, TaskWaitSet,
     TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
 };
+use crate::code_run::{CodeRunRawOutput, ResultRead};
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
 };
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::lifecycle::{Lifecycle, LifecycleWords};
 
 /// One row per child, keyed by its task.
 const JOBS: SideTable<EntityId, ReaderJob, Raw> = SideTable::new(&side_table::CODE_RUN_READER_JOB);
@@ -360,11 +361,22 @@ impl ReaderTxn<'_, '_> {
         }
         self.delete_index(&due_key(job.binding.child_cutoff_unix_ms, job.task))?;
         if job.binding.spend.scope().is_some() {
-            self.spend
-                .spend()
-                .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+            // An agent run's code-run id is its attempt's (census L9-37): the
+            // reader's tokens go to the read-shape stamp of the try that
+            // spawned it, which may have ended or been retried by now.
+            let spend = self.spend.spend();
+            if let Ok(spawner) = AttemptId::from_bytes(job.binding.parent_run.as_bytes()) {
+                spend.settle_spawned_child_in_txn(
+                    self.txn,
+                    &job.attempt,
+                    spawner,
+                    now_ms / 1000,
+                )?;
+            } else {
+                spend.settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+            }
         }
-        job.state = state;
+        job.state.transition_to(state)?;
         job.finding = finding;
         job.settled_at_ms = Some(now_ms);
         self.put_job(&job)?;
@@ -832,7 +844,7 @@ impl ExecutorStorage<'_> {
                 }
             }
             tx.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
-            job.state = ReaderJobState::Active;
+            job.state.transition_to(ReaderJobState::Active)?;
             job.generation = job.generation.saturating_add(1);
             // Each claim's witness starts empty (FIX 7735).
             job.delivery_witness = None;
@@ -877,7 +889,7 @@ impl ExecutorStorage<'_> {
                     parent.queued = parent.queued.saturating_add(1);
                     tx.put_parent(parent_run, &parent)?;
                 }
-                job.state = ReaderJobState::Queued;
+                job.state.transition_to(ReaderJobState::Queued)?;
                 job.generation = job.generation.saturating_add(1);
                 tx.put_index(&parked_key(job.task), &[])?;
                 tx.put_job(&job)?;
@@ -930,7 +942,7 @@ impl ExecutorStorage<'_> {
                     parent.queued = parent.queued.saturating_add(1);
                     tx.put_parent(parent_run, &parent)?;
                 }
-                job.state = ReaderJobState::Queued;
+                job.state.transition_to(ReaderJobState::Queued)?;
                 job.generation = job.generation.saturating_add(1);
                 tx.put_index(&queued_key(job.enqueued_at_ms, job.task), &[])?;
                 tx.put_job(&job)?;
@@ -1063,14 +1075,14 @@ impl ExecutorStorage<'_> {
             for (key, value) in &due {
                 let id = id_at(key, 9)?;
                 if value.as_slice() == DUE_JOB {
-                    if let Some(job) = tx.job(id)?.filter(|job| !job.state.is_settled()) {
+                    if let Some(job) = tx.job(id)?.filter(|job| !job.state.is_terminal()) {
                         tx.settle_at_cutoff(job, now_ms)?;
                     }
                 } else if let Some(set) = tx.wait(id)? {
                     for (_, job) in tx.set_jobs(&set)? {
                         if let Some(job) = job.filter(|job| {
                             job.binding.parent_run == set.parent_run
-                                && !job.state.is_settled()
+                                && !job.state.is_terminal()
                                 && job.binding.child_cutoff_unix_ms <= now_ms
                         }) {
                             tx.settle_at_cutoff(job, now_ms)?;
@@ -1157,8 +1169,9 @@ impl ExecutorStorage<'_> {
 
     /// Every member of summary job `task`, read as a child's `src` read is
     /// while the job is live at `generation`: in its owner's committed
-    /// record, clean now, inside its range. Members past `max_bytes`
-    /// together are refused unread.
+    /// record, inside its range, as its reads show it now (a tainted body
+    /// through its redacted view). Members past `max_bytes` together are
+    /// refused unread.
     pub(crate) fn summary_job_members(
         &self,
         task: EntityId,
@@ -1188,35 +1201,50 @@ impl ExecutorStorage<'_> {
             let Some(output) = self.recorded(member.owner, &member.path, &member.handle)? else {
                 return refused("member_gone");
             };
-            if self
-                .code_run_result_taint(Some(member.owner), &output)?
-                .0
-                .is_tainted()
-            {
-                return refused("tainted");
-            }
-            let (start, end) = member.range;
-            if start > end || end > output.raw_len {
-                return refused("member_gone");
-            }
-            let len = usize::try_from(end - start)
-                .map_err(|_| Error::ArithmeticOverflow("summary member length"))?;
-            let bytes = self
-                .read_code_run_raw_output_range(&output, start, len)?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            // A body stored before its scan read every rule may hold a secret
-            // no mark names (OF-067); the model is shown none of it.
-            if crate::batch::secret_scan::write_payload_hit(&bytes).is_some() {
-                return refused("tainted");
-            }
+            let text = match self.summary_member_text(member.owner, output, member.range)? {
+                Ok(text) => text,
+                Err(reason) => return refused(reason),
+            };
             read.push(SummaryMember {
                 handle: member.handle,
                 range: member.range,
                 rows: member.rows,
-                text: String::from_utf8_lossy(&bytes).into_owned(),
+                text,
             });
         }
         Ok(SummaryRead::Members(read))
+    }
+
+    /// The text a summarizer is shown of one member: bytes `range` of the
+    /// body `output` holds in run `owner`, read as [`ResultRead`] shows them
+    /// now. Refused with its reason: `member_gone` for a range outside the
+    /// body, `tainted` for a body no read shows.
+    pub(crate) fn summary_member_text(
+        &self,
+        owner: EntityId,
+        output: CodeRunRawOutput,
+        range: (u64, u64),
+    ) -> Result<std::result::Result<String, &'static str>> {
+        let (start, end) = range;
+        if start > end || end > output.raw_len {
+            return Ok(Err("member_gone"));
+        }
+        let len = usize::try_from(end - start)
+            .map_err(|_| Error::ArithmeticOverflow("summary member length"))?;
+        let Ok(read) = ResultRead::new(self, owner, output, None, None, true)? else {
+            return Err(Error::InvariantViolation(
+                "a whole-body result read refuses no range",
+            ));
+        };
+        let Some(bytes) = read.read_shown(self, start, len)? else {
+            return Ok(Err("tainted"));
+        };
+        // A body stored before its scan read every rule may hold a secret
+        // no mark names (OF-067); the model is shown none of it.
+        if crate::batch::secret_scan::write_payload_hit(&bytes).is_some() {
+            return Ok(Err("tainted"));
+        }
+        Ok(Ok(String::from_utf8_lossy(&bytes).into_owned()))
     }
 }
 

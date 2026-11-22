@@ -72,7 +72,10 @@ pub fn render_code_semantic_diff(changes: &[CodeSemanticChange]) -> String {
         out.push_str(&format!("@@ {}::{} @@\n", change.path, change.symbol));
         for (prefix, version) in [("-", &change.before), ("+", &change.after)] {
             if let Some(version) = version {
-                out.push_str(&format!("{prefix} hash:{}\n", hex(&version.content_hash)));
+                out.push_str(&format!(
+                    "{prefix} hash:{}\n",
+                    oneiron_hex::encode(&version.content_hash)
+                ));
                 for line in version.text.split_inclusive('\n') {
                     out.push_str(prefix);
                     out.push_str(line);
@@ -90,10 +93,6 @@ pub fn code_text_diff(path: &str, old: &str, new: &str) -> Result<String> {
     Ok(render_code_semantic_diff(&semantic_code_diff(
         path, old, new,
     )?))
-}
-
-fn hex(hash: &[u8; 32]) -> String {
-    hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 type Units = BTreeMap<String, ([u8; 32], CodeContentVersion)>;

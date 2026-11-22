@@ -28,14 +28,13 @@ use crate::federation::Scope;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// The byte a header row's key ends with, after the run.
-const HEADER_TAG: u8 = 0;
+#[doc(hidden)]
+pub use oneiron_records::code_run::storage::read_worlds::ReadWorldUnknown;
+#[doc(hidden)]
+use oneiron_records::code_run::storage::read_worlds::{HEADER_TAG, ROW_TAG, row_scope_prefix};
 
 /// The byte a world row's key carries between the run and the world.
 const SEEN_TAG: u8 = 1;
-
-/// The byte a served row's scope proof carries between the run and the row.
-const ROW_TAG: u8 = 2;
 
 /// Header rows. Key: [`HeaderKey`].
 const HEADERS: SideTable<HeaderKey, ReadWorldHeader, Named> =
@@ -134,50 +133,11 @@ impl SideKey for RowScopeKey {
     }
 }
 
-/// The key bytes every scope proof of `row` served to `run` starts with.
-fn row_scope_prefix(run: EntityId, row: EntityId) -> Vec<u8> {
-    let mut prefix = run.as_bytes().to_vec();
-    prefix.push(ROW_TAG);
-    prefix.extend_from_slice(row.as_bytes());
-    prefix
-}
-
 /// The key bytes every scope proof served to `run` starts with.
 fn scopes_prefix(run: EntityId) -> Vec<u8> {
     let mut prefix = run.as_bytes().to_vec();
     prefix.push(ROW_TAG);
     prefix
-}
-
-/// Why a run's ledger misses rows it was served (FIX 6130). Any one of them
-/// keeps the ledger from reading complete, for good.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReadWorldUnknown {
-    /// The run had a record before its ledger began: a continuation's copied
-    /// prefix its source's ledger does not prove (FIX 7085), or a run from
-    /// before the ledger.
-    NotFromStart,
-    /// The run's task is its host's, which may carry rows no capture noted.
-    HostTask,
-    /// A call was answered from a read no capture covers.
-    Uncaptured,
-    /// A verb hook showed the guest a view of its own in place of a call's
-    /// answer.
-    HookView,
-    /// A callable skill ran inside a call, from the stored skill it loaded.
-    CallableSkill,
-    /// The run read a result another run kept.
-    RetainedResult,
-    /// A wait's reply reached the run.
-    WaitReply,
-    /// A self-written summary carried words from its home's rows into the
-    /// run (FIX 7087).
-    SelfWrittenSummary,
-    /// A served row's world could not be proved in the read that served it.
-    Unproved,
-    /// A ledger write failed.
-    WriteFailed,
 }
 
 /// What a run's ledger knows of itself.

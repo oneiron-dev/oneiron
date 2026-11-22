@@ -269,13 +269,35 @@ pub(crate) fn served_worlds_in(
     kind: u8,
     data: &[u8],
 ) -> Result<Option<BTreeSet<EntityId>>> {
+    let base = crate::claim::base_world_id();
+    Ok(every_world_in(store, txn, id, kind, data)?.map(|worlds| {
+        if worlds.contains(&base) {
+            BTreeSet::from([base])
+        } else {
+            worlds
+        }
+    }))
+}
+
+/// Every world the stored row `id` of `kind`, with body `data`, sits in now,
+/// base reality by its own id: a row that [`takes_live_worlds`] by its live
+/// worlds, base reality among others kept beside them (where
+/// [`served_worlds_in`] notes base alone); any other row where
+/// [`super::record_world_in`] places it. `None` where the row proves no
+/// world, a NOTE whose edges did not read among them.
+pub(crate) fn every_world_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<BTreeSet<EntityId>>> {
     let base = ScopeId(crate::claim::base_world_id());
     if !takes_live_worlds(kind) {
         return Ok(super::record_world_in(store, txn, id, kind, data)?
             .map(|world| BTreeSet::from([world.unwrap_or(base.0)])));
     }
     Ok(match live_worlds_in(store, txn, id, kind) {
-        NoteWorlds::In(worlds) if worlds.contains(&base) => Some(BTreeSet::from([base.0])),
         NoteWorlds::In(worlds) => Some(worlds.into_iter().map(|world| world.0).collect()),
         NoteWorlds::NoSingleWorld => None,
     })
@@ -403,11 +425,53 @@ pub(crate) fn blob_scope_held_at(
     raw: &[u8],
     ceilings: &[&ScopeAxis<ScopeId>],
 ) -> Result<Option<Scope>> {
+    blob_scope_held_at_with_history(store, store, txn, id, raw, ceilings)
+}
+
+/// [`blob_scope_held_at`] with each history control's scope read from
+/// `history` ([`super::scope_for_blob_with_history`]).
+pub(crate) fn blob_scope_held_at_with_history(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    history: &impl MachineHistoryScope,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Result<Option<Scope>> {
     let kind = EntityMetadataHeader::parse(raw)
         .ok_or(crate::error::Error::CorruptedIndex("record header"))?
         .entity_type;
-    Ok(super::scope_for_blob(store, txn, id, raw)?
-        .map(|scope| held_at(store, txn, id, kind, &scope, ceilings)))
+    Ok(
+        super::scope_for_blob_with_history(store, history, txn, id, raw)?
+            .map(|scope| held_at(store, txn, id, kind, &scope, ceilings)),
+    )
+}
+
+/// [`blob_scope_held_at`] for a CLAIM body served apart from its stored row,
+/// such as a pinned revision a pack hydrates: that body's own scope, read as
+/// [`super::scope_for_parts`] reads a stored CLAIM's, held as [`held_at`]
+/// holds the row.
+pub(crate) fn claim_body_scope_held_at(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &crate::claim::ClaimBody,
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Result<Option<Scope>> {
+    let scope = match store.machine_history_scope(txn, body)? {
+        Some(effective) => effective,
+        None => Some(crate::claim::ClaimRecordScope::record_scope(body, "read")),
+    };
+    Ok(scope.map(|scope| {
+        held_at(
+            store,
+            txn,
+            id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            &scope,
+            ceilings,
+        )
+    }))
 }
 
 /// [`super::scope_for_blob`] of the stored row `raw` of `id` as an

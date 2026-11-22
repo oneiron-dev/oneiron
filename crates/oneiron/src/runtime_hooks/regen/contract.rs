@@ -53,13 +53,17 @@ impl HookContractText {
 
 /// A line's leading identifier: `name` of `name: {`, `name(`, `declare const
 /// name:`, `declare namespace name {`, `declare function name(` or a
-/// namespace member's `const name:`.
+/// namespace member's `const name:`, `function name(` or `namespace name {`
+/// (a `self` member the code-run host also declares, such as
+/// `self.report_blocked` and `self.think`).
 fn leading_name(line: &str) -> Option<&str> {
     let line = line
         .strip_prefix("declare const ")
         .or_else(|| line.strip_prefix("declare namespace "))
         .or_else(|| line.strip_prefix("declare function "))
         .or_else(|| line.strip_prefix("const "))
+        .or_else(|| line.strip_prefix("function "))
+        .or_else(|| line.strip_prefix("namespace "))
         .unwrap_or(line);
     let end = line
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -176,4 +180,37 @@ fn verb_declarations(globs: &[String]) -> (String, bool) {
         }
     }
     (out, truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verb_declarations;
+
+    /// `self.report_blocked` and `self.think.aloud` sit at `self` members the
+    /// code-run host also declares, so the verb table writes them as a
+    /// function and a namespace member; a hook on either still gets its
+    /// declaration.
+    #[test]
+    fn self_members_the_host_also_declares_keep_their_verb_declarations() {
+        let (text, truncated) = verb_declarations(&[
+            "self.report_blocked".to_owned(),
+            "self.think.aloud".to_owned(),
+        ]);
+        assert!(!truncated);
+        let lines: Vec<&str> = text.lines().collect();
+        for (verb, form) in [
+            ("self.report_blocked", "function report_blocked(input: "),
+            ("self.think.aloud", "const aloud: (input: "),
+        ] {
+            let at = lines
+                .iter()
+                .position(|line| *line == format!("// {verb}"))
+                .unwrap_or_else(|| panic!("no {verb} in\n{text}"));
+            let declaration = lines[at + 1..]
+                .iter()
+                .find(|line| !line.starts_with("/**"))
+                .unwrap_or_else(|| panic!("no declaration of {verb} in\n{text}"));
+            assert!(declaration.starts_with(form), "{verb}: {declaration}");
+        }
+    }
 }

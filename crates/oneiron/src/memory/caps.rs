@@ -61,8 +61,36 @@ fn check_unit_interval(label: &str, value: f64) -> Result<f32, MemoryError> {
 pub fn check_witness_turn(turn: &WitnessTurn) -> Result<(), MemoryError> {
     for message in &turn.messages {
         check_payload_bytes("message content", message.content.len())?;
+        // A message's metadata is a JSON object or absent (UC-02 B1a: the
+        // rule napi alone enforced, now the engine's on every door).
+        if message
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| !metadata.is_object())
+        {
+            return Err(MemoryError::bad_request_with(
+                format!(
+                    "metadata must be a JSON object; the message at order {} carries {}",
+                    message.order,
+                    json_kind(message.metadata.as_ref())
+                ),
+                &["Send metadata as a JSON object of named fields, or omit it."],
+            ));
+        }
     }
     Ok(())
+}
+
+/// The JSON kind of a value that is not an object, as a refusal names it.
+fn json_kind(value: Option<&serde_json::Value>) -> &'static str {
+    match value {
+        Some(serde_json::Value::Array(_)) => "an array",
+        Some(serde_json::Value::Null) | None => "null",
+        Some(serde_json::Value::String(_)) => "a string",
+        Some(serde_json::Value::Number(_)) => "a number",
+        Some(serde_json::Value::Bool(_)) => "a boolean",
+        Some(serde_json::Value::Object(_)) => "an object",
+    }
 }
 
 /// Validates a claim's boundary-checkable fields before dispatch: finite

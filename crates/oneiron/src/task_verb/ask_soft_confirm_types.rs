@@ -17,16 +17,8 @@ pub struct TaskAskSoftConfirmNotice {
     pub deadline: u64,
 }
 
-/// Delivery is separate from approval; a pending state never authorizes an effect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskSoftConfirmDelivery {
-    PendingRoute,
-    PendingGate,
-    Failed,
-    Scheduled,
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::ask_soft_confirm_types::TaskAskSoftConfirmDelivery;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::task_verb::ask_soft_confirm_types::{

@@ -32,10 +32,15 @@ pub(crate) struct ValidatedContextPack {
     pub(super) room_id: Option<oneiron::EntityId>,
     pub(super) room: Option<RoomAudience>,
     pub(super) interlocutors: Option<oneiron::InterlocutorSet>,
+    /// The home of the conversation the pack serves (DEC-0006
+    /// `#home-clearance`).
+    pub(super) home: oneiron::ConversationHome,
     pub(super) media: Option<DecodedMediaQuery>,
     pub(super) skill_reliability: Option<oneiron::skill_reliability::SkillReliabilityQuery>,
     pub(super) candidate_limit: usize,
     pub(super) query_affect: Option<oneiron::Vad>,
+    /// The epoch summary the request rehydrates from (`packet_id`).
+    pub(super) packet: Option<oneiron::EntityId>,
     pub(super) ranking: ContextPackRanking,
     pub(super) time: ContextPackTimeWindow,
     pub(super) signals: Option<ContextPackSignalRequest>,
@@ -117,10 +122,12 @@ fn validated_inputs(
         .into_borrowed(&server.vault)
         .map_err(|_| ApiError::internal_server_error("context-pack reader return failed"))?;
     let query = non_empty_query(req.query.as_deref());
-    // A media query seeds the pack on its own; a vector beside it is still
-    // checked.
+    // A media query or a phonetic vector seeds the pack on its own; a query
+    // vector beside it is still checked.
     validate_core_query_seeds(
-        query.or(req.media.as_ref().map(|_| "media")),
+        query
+            .or(req.media.as_ref().map(|_| "media"))
+            .or(req.phonetic_vector.as_ref().map(|_| "phonetic_vector")),
         req.query_vector.as_deref(),
     )?;
     let media = req
@@ -158,9 +165,20 @@ fn validated_inputs(
         .query_affect
         .map(ContextPackQueryAffect::vad)
         .transpose()?;
+    let packet = req
+        .packet_id
+        .as_deref()
+        .map(|packet| parse_entity_id_param(packet, "packet_id"))
+        .transpose()?;
     let ranking = ContextPackRanking::checked(req.policy.as_ref())?;
     let time = ContextPackTimeWindow::checked(req.time.as_ref())?;
     let signals = ContextPackSignalRequest::checked(auth, &req, room_id)?;
+    let home = super::core_conversation_home(
+        &server.vault,
+        auth,
+        room_id,
+        req.conversation_home.as_deref(),
+    )?;
     Ok(ValidatedContextPack {
         read: transferred(server, scoped_read)?,
         req,
@@ -168,10 +186,12 @@ fn validated_inputs(
         room_id,
         room,
         interlocutors,
+        home,
         media,
         skill_reliability,
         candidate_limit,
         query_affect,
+        packet,
         ranking,
         time,
         signals,

@@ -18,7 +18,19 @@
 //! agent's delete under a delete Grant, and the two typed refusals
 //! (`not_owner_of_item`, `no_delete_grant`). Guards (pass on main too): the
 //! owner's delete, a person with no role keeping the owner refusal though it
-//! presents a credential, and a Member with no credential keeping it.
+//! presents a credential, and a Member with no credential keeping it. UC-03
+//! PR 5b: the owner's delete row reads `approved` (red on its base, which
+//! wrote `allow`), and a Member's admitted delete row keeps `allow`.
+//!
+//! DELEGATE-PERSON-DELETE (the lead, 21 Nov: "the 10 Nov act table wins. A
+//! person whose Delegate grant names delete may delete within its scope.
+//! Erase stays manual, as DEL-2 also says"). A person who holds only a
+//! Delegate grant the Owner gave it: red on main, which judged that person
+//! by membership alone and kept the owner refusal: its delete under a grant
+//! that names `delete` and holds the NOTE lands; a grant that names no
+//! `delete`, or whose worlds do not hold the NOTE, is refused
+//! `no_delete_grant`. Guard (passes on main too): the same person's erase of
+//! the NOTE is refused, and the NOTE stays.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test delete_authority`.
 #![cfg(oneiron_test_support)]
@@ -30,12 +42,15 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, VerifiedSlip};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::ScopeId;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, SafeDeleteReason,
+    EraseOptions, EraseReason, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MemoryError, SafeDeleteReason,
 };
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::temporal::TimeRange;
@@ -217,6 +232,70 @@ impl Shared {
             .expect("a verified credential")
     }
 
+    /// The Owner's membership grant: the parent of the Delegate grants here
+    /// (the shipped Admin row names no `delete`, so an Admin's Delegate grant
+    /// never does).
+    fn owner_grant(&self) -> EntityId {
+        self.vault
+            .entities_by_type(ENTITY_TYPE_FEDERATION_GRANT)
+            .expect("grants")
+            .into_iter()
+            .find(|id| {
+                self.vault
+                    .get(id)
+                    .expect("grant row")
+                    .and_then(|body| oneiron::federation::decode_federation_grant_body(&body).ok())
+                    .is_some_and(|grant| {
+                        grant.member_ref == self.owner && grant.role == Role::Owner
+                    })
+            })
+            .expect("the Owner's membership grant")
+    }
+
+    /// The owner's policy lets a Delegate grant name `delete` beside `read`
+    /// (its shipped row names `read` alone).
+    fn delegate_default_names_delete(&self) {
+        let ids = self
+            .vault
+            .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("policy rows");
+        assert_eq!(ids.len(), 1, "a fresh vault has one seeded policy manifest");
+        let id = ids[0];
+        let mut manifest: serde_json::Value =
+            rmp_serde::from_slice(&self.vault.get(&id).expect("policy").expect("seeded policy"))
+                .expect("decode seeded policy");
+        let row = manifest["federation_grant_rows"]
+            .as_array_mut()
+            .expect("grant policy rows")
+            .iter_mut()
+            .find(|row| row["kind"] == "role_default" && row["role"] == "delegate")
+            .expect("the Delegate role default");
+        let mut scope: Scope = serde_json::from_value(row["scope"].clone()).expect("scope");
+        scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "delete".to_owned()]));
+        row["scope"] = serde_json::to_value(scope).expect("scope");
+        self.vault
+            .install_owner_policy_manifest(
+                &proof(&self.vault, self.owner),
+                id,
+                rmp_serde::to_vec_named(&manifest).expect("encode policy"),
+                self.vault.now_recorded_at(),
+            )
+            .expect("the owner installs the policy");
+    }
+
+    /// The Owner gives `person` a Delegate grant narrowed to `requested`.
+    fn delegate(&self, person: EntityId, requested: &Scope) {
+        self.vault
+            .create_scoped_federation_delegate(
+                &proof(&self.vault, self.owner),
+                self.owner_grant(),
+                person,
+                requested,
+                self.vault.now_recorded_at() + 3_600,
+            )
+            .expect("the Owner's Delegate grant");
+    }
+
     /// `person` deletes `note` over its own credential.
     fn delete_with_credential(&self, person: EntityId, note: &str) -> Result<bool, MemoryError> {
         let credential = self.credential(person);
@@ -287,6 +366,54 @@ fn the_owner_deletes_any_note_as_before() {
         .unwrap_or_else(|error| panic!("the owner deletes anything: {error:?}"));
     assert!(existed);
     assert!(deleted(&fx.vault, &note), "the NOTE is a deleted shell");
+}
+
+/// UC-03 PR 5b (D2): the owner's own delete is the owner's yes, so its Gate
+/// row reads `approved`; a Member's delete the delete authority admitted is
+/// the rule letting it go and keeps `allow`. Red on the base for the owner's
+/// row (it read `allow`); the Member's row is a guard.
+#[test]
+fn the_owner_delete_row_reads_approved_and_an_admitted_delete_row_allow() {
+    let fx = shared();
+    let member_note = fx.member_note();
+    let owner_note = fx.member_note();
+    let member_deleted = fx
+        .delete_with_credential(fx.member_a, &member_note)
+        .unwrap_or_else(|error| panic!("a Member deletes its own NOTE: {error:?}"));
+    assert!(member_deleted);
+    let owner_deleted = delete_as(&fx.vault, fx.owner, &owner_note)
+        .unwrap_or_else(|error| panic!("the owner deletes the NOTE: {error:?}"));
+    assert!(owner_deleted);
+    let rows: Vec<(Option<String>, String, Vec<String>)> = fx
+        .vault
+        .gate_decisions(64)
+        .expect("gate decisions")
+        .into_iter()
+        .filter(|row| row.content_kind == "deletion")
+        .map(|row| (row.actor_ref, row.outcome, row.reason_codes))
+        .collect();
+    let rows_of = |actor: EntityId| -> Vec<(String, Vec<String>)> {
+        rows.iter()
+            .filter(|(actor_ref, _, _)| actor_ref.as_deref() == Some(actor.to_hex().as_str()))
+            .map(|(_, outcome, reasons)| (outcome.clone(), reasons.clone()))
+            .collect()
+    };
+    assert_eq!(
+        rows_of(fx.owner),
+        [(
+            "approved".to_owned(),
+            vec!["gate.allow.owner_delete".to_owned()]
+        )],
+        "the owner's delete row: {rows:?}"
+    );
+    assert_eq!(
+        rows_of(fx.member_a),
+        [(
+            "allow".to_owned(),
+            vec!["gate.allow.delete_member".to_owned()]
+        )],
+        "the Member's admitted delete row: {rows:?}"
+    );
 }
 
 #[test]
@@ -435,4 +562,81 @@ fn an_agent_without_a_delete_grant_is_refused() {
         "the refusal names its reason: {error:?}"
     );
     assert!(!deleted(&fx.vault, &note), "the refused NOTE is untouched");
+}
+
+/// `verbs` over every world.
+fn delegate_scope(verbs: &[&str]) -> Scope {
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
+    scope
+}
+
+/// `refused` is the typed `no_delete_grant` refusal, and `note` stands.
+fn assert_no_delete_grant(fx: &Shared, refused: Result<bool, MemoryError>, note: &str) {
+    let error = refused.expect_err("the Delegate's delete is refused");
+    assert_eq!(error.code, MEMORY_CODE_FORBIDDEN, "{error:?}");
+    assert!(
+        error.message.starts_with("no_delete_grant:"),
+        "the refusal names its reason: {error:?}"
+    );
+    assert!(!deleted(&fx.vault, note), "the refused NOTE is untouched");
+}
+
+#[test]
+fn a_persons_delegate_grant_that_names_delete_deletes_in_scope() {
+    let fx = shared();
+    fx.delegate_default_names_delete();
+    fx.delegate(fx.stranger, &delegate_scope(&["read", "delete"]));
+    let note = fx.member_note();
+    let existed = fx
+        .delete_with_credential(fx.stranger, &note)
+        .unwrap_or_else(|error| panic!("a Delegate grant that names delete deletes: {error:?}"));
+    assert!(existed, "the NOTE existed");
+    assert!(deleted(&fx.vault, &note), "the NOTE is a deleted shell");
+}
+
+#[test]
+fn a_persons_delegate_grant_that_names_no_delete_is_refused() {
+    let fx = shared();
+    fx.delegate(fx.stranger, &delegate_scope(&["read"]));
+    let note = fx.member_note();
+    assert_no_delete_grant(&fx, fx.delete_with_credential(fx.stranger, &note), &note);
+}
+
+#[test]
+fn a_persons_delegate_grant_out_of_scope_is_refused() {
+    let fx = shared();
+    fx.delegate_default_names_delete();
+    let mut elsewhere = delegate_scope(&["read", "delete"]);
+    elsewhere.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(EntityId::now())]));
+    fx.delegate(fx.stranger, &elsewhere);
+    let note = fx.member_note();
+    assert_no_delete_grant(&fx, fx.delete_with_credential(fx.stranger, &note), &note);
+}
+
+#[test]
+fn a_persons_delegate_grant_does_not_erase() {
+    let fx = shared();
+    fx.delegate_default_names_delete();
+    fx.delegate(fx.stranger, &delegate_scope(&["read", "delete"]));
+    let note = fx.member_note();
+    let credential = fx.credential(fx.stranger);
+    let memory = fx
+        .vault
+        .memory(fx.stranger, EdgeActorClass::Human)
+        .with_transport_invocation()
+        .with_read_proof(&credential);
+    let id = EntityId::from_hex(&note).expect("note id");
+    let erased = memory.preview_entity_delete(&id).and_then(|preview| {
+        memory.confirm_entity_erase(
+            &preview,
+            EraseOptions {
+                reason: EraseReason::OwnerErase,
+                also_same_bytes: false,
+                veto_starter: None,
+            },
+        )
+    });
+    assert!(erased.is_err(), "erase stays the Owner's own act");
+    assert!(!deleted(&fx.vault, &note), "the NOTE stands");
 }

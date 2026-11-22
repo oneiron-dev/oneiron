@@ -22,6 +22,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::MemoryError;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 
 use super::ask_types::{TaskAskEvidenceReason, TaskAskOptionId, TaskAskResult, TaskAskSource};
@@ -45,8 +46,6 @@ pub(crate) const SETTLEMENT_ANCHOR_WORLD_PROOF: &str = "world_proof";
 /// The call a settled row an anchor keeps records: a report, as a
 /// reporter's settled row does.
 const SETTLED_CALL: &str = "report";
-/// The outcome of a review decision the owner approved.
-const APPROVED_OUTCOME: &str = "approved";
 
 /// TASK → the review decision its owner accepted while no write had settled
 /// it, which its settlement names. The first accepted review is kept, as a
@@ -156,8 +155,22 @@ pub(crate) fn anchor_accepted_review_in_txn(
     decision: &GateDecisionRecord,
     job: Option<AttemptId>,
 ) -> Result<()> {
-    if decision.outcome != APPROVED_OUTCOME {
-        return Ok(());
+    match decision.gate_outcome() {
+        Some(GateReceiptOutcome::Approved) => {}
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => return Ok(()),
     }
     let Some(owner) = decision
         .actor_ref

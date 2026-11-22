@@ -5,6 +5,7 @@
 //! The receipt rides the pass's signed run. It records; it decides nothing,
 //! and the numbers are the ones the detectors read.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +54,7 @@ impl ManifestTripwireBounds {
         let origin = origin.get_or_insert_with(TripwireBoundsOrigin::default);
         let source = TripwirePolicySource {
             manifest,
-            revision: *blake3::hash(body).as_bytes(),
+            revision: *ContentHash::of(body).as_bytes(),
         };
         if let Err(at) = origin.sources.binary_search(&source) {
             origin.sources.insert(at, source);

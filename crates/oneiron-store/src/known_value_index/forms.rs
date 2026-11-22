@@ -210,9 +210,7 @@ fn unicode_escape(rest: &[u8]) -> Option<(char, u8)> {
 }
 
 fn hex_digit(byte: u8) -> Option<u8> {
-    char::from(byte)
-        .to_digit(16)
-        .and_then(|digit| u8::try_from(digit).ok())
+    oneiron_hex::nibble_any_case(byte)
 }
 
 fn base64_byte(byte: u8) -> bool {

@@ -59,33 +59,21 @@ pub trait MediaBackend: Send + Sync {
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse>;
 
-    /// [`Self::run`], keeping what a call stopped part way completed (FIX
-    /// 9517): a backend that sends one call as several physical requests
-    /// answers the usage of each that answered beside the error that
-    /// stopped the rest. The default is [`Self::run`], whose failure
-    /// completed nothing. A backend that wraps another forwards this too.
-    fn run_progress<'a>(
-        &'a self,
-        request: MediaRequest,
-        lease: &'a BudgetLease,
-    ) -> MediaProgressFuture<'a> {
-        Box::pin(async move {
-            self.run(request, lease)
-                .await
-                .map_err(InterruptedMediaCall::nothing)
-        })
-    }
-
-    /// [`Self::run_progress`] with a caller's final release check. Backends
-    /// without transport retries keep the old path.
+    /// [`Self::run`] under the caller's release, keeping what a call stopped
+    /// part way completed (FIX 9517). Every physical request the call sends
+    /// re-checks `release` first, and a refusal sends nothing more: it
+    /// answers the release's own error with what completed before it. A
+    /// backend that sends one call as several physical requests answers the
+    /// usage of each that answered beside the error that stopped the rest. A
+    /// backend that wraps another forwards this too. There is no default: a
+    /// backend that sends one request and never resends it takes
+    /// [`run_once_released`].
     fn run_progress_released<'a>(
         &'a self,
         request: MediaRequest,
         lease: &'a BudgetLease,
-        _release: Option<DispatchRelease<'a>>,
-    ) -> MediaProgressFuture<'a> {
-        self.run_progress(request, lease)
-    }
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a>;
 
     /// Starts one long call as a provider job; returns the provider's job id.
     /// `key` is the job's idempotency key (FIX 2248). A wire may forward it
@@ -199,6 +187,38 @@ impl MediaBackend for ImageMedia {
             Ok::<_, LlmError>(MediaResponse::from_image(response))
         })
     }
+
+    /// An image backend takes no release, so the call is checked once
+    /// before it is handed over.
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        run_once_released(self, request, lease, release)
+    }
+}
+
+/// [`MediaBackend::run_progress_released`] for a backend whose call is one
+/// request that is never resent: `release` is checked, then [`MediaBackend::run`]
+/// sends it, so a refused release sends nothing. Its failure completed
+/// nothing.
+pub fn run_once_released<'a, B: MediaBackend + ?Sized>(
+    backend: &'a B,
+    request: MediaRequest,
+    lease: &'a BudgetLease,
+    release: Option<DispatchRelease<'a>>,
+) -> MediaProgressFuture<'a> {
+    Box::pin(async move {
+        if let Some(release) = release {
+            release().map_err(InterruptedMediaCall::nothing)?;
+        }
+        backend
+            .run(request, lease)
+            .await
+            .map_err(InterruptedMediaCall::nothing)
+    })
 }
 
 /// The host's door for one engine media call: it admits the call under its

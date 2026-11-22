@@ -62,7 +62,7 @@ impl EngineNativeExecutor<'_> {
                 };
                 let key = wait_key(record, &wait);
                 if !self.storage.park_wait(&key)? {
-                    return Ok(TurnProgram::Ended(EngineExecutorStatus::Waiting(wait)));
+                    return self.turn_hook_wait_ended(record, wait);
                 }
                 // The ask settled before the park: the turn's hooks take
                 // its answer now, and any stop then ends the entry.
@@ -99,7 +99,7 @@ impl EngineNativeExecutor<'_> {
                     };
                     let key = wait_key(record, &wait);
                     if !self.storage.park_wait(&key)? {
-                        return Ok(TurnProgram::Ended(EngineExecutorStatus::Waiting(wait)));
+                        return self.turn_hook_wait_ended(record, wait);
                     }
                     // The ask settled before the park: retry the same sealed
                     // invocation once, with its fold marks still pending.
@@ -170,6 +170,9 @@ impl EngineNativeExecutor<'_> {
         // speaks for: each verb call it makes carries the name (OF-560).
         self.gated_write
             .observe_model_provider(response.usage.served_provider());
+        // L2-37: the prefix this answer left cached, priced by the model
+        // that answered it; an answer that confirmed none clears it.
+        self.cache_horizon = crate::idle_fold::CachedPrefixHorizon::of_answer(&response.usage);
         // The reply as the provider gave it, kept apart from the program
         // healed out of it: evidence, never executed.
         record_reply_evidence(&self.storage, record, completed_steps, &response.message)?;
@@ -211,5 +214,20 @@ impl EngineNativeExecutor<'_> {
             correction,
             interrupts,
         }))
+    }
+
+    /// The status a turn hook's ask that stays pending ends the entry
+    /// with: the run stops on its wait before the turn's model request,
+    /// after its last committed step, so a person's pause pending then is
+    /// taken there and the run returns paused (FIX
+    /// PAUSE-BOUNDARY-PARKED-RUN); Waiting otherwise.
+    fn turn_hook_wait_ended<'c>(
+        &self,
+        record: &CodeRunReplayRecord,
+        wait: SelfDurableWait,
+    ) -> EngineExecutorResult<TurnProgram<'c>> {
+        let status = EngineExecutorStatus::Waiting(wait);
+        let status = self.pause_at_wait(record, &status)?.unwrap_or(status);
+        Ok(TurnProgram::Ended(status))
     }
 }

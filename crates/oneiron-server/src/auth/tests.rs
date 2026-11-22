@@ -39,6 +39,26 @@ impl Fixture {
             _dir: dir,
         }
     }
+    /// A vault rooted by this install's own issuer seed, the one the fixture
+    /// keystore holds for [`SECRET`] (FIX-LIST 3018): a server opened over it
+    /// with that secret serves the same root instead of serving rootless.
+    fn served() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
+        let issuer = vault.bootstrap_host_slip_issuer().unwrap();
+        let root = vault.ensure_host_root_slip(&issuer).unwrap();
+        Self {
+            vault,
+            issuer,
+            root,
+            holder: SigningKey::from_bytes(&[82; 32]),
+            actor: oneiron::EntityId::now(),
+            config: config_with_secret(SECRET),
+            _dir: dir,
+        }
+    }
     fn mint(&self, configure: impl FnOnce(&mut SlipClaims)) -> CapabilitySlip {
         let mut claims = self.root.claims.clone();
         claims.slip_id = *blake3::hash(oneiron::EntityId::now().as_bytes()).as_bytes();
@@ -535,9 +555,13 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
             timestamp: u64,
             nonce: &[u8],
             signature: &[u8],
-        ) -> Result<oneiron::authority::VerifiedSlip, ()> {
-            let fold = self.fixture.vault.authority_fold().map_err(drop)?;
-            let nonce = std::str::from_utf8(nonce).map_err(drop)?;
+        ) -> Result<oneiron::authority::VerifiedSlip, SlipVerifyError> {
+            let fold = self
+                .fixture
+                .vault
+                .authority_fold()
+                .map_err(|_| SlipVerifyError::Refused)?;
+            let nonce = std::str::from_utf8(nonce).map_err(|_| SlipVerifyError::Refused)?;
             let challenge = format!("oneiron-request:{timestamp}:{nonce}");
             slip.verify(
                 &self.fixture.issuer.public_key(),
@@ -546,7 +570,7 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
                 challenge.as_bytes(),
                 signature,
             )
-            .map_err(drop)
+            .map_err(|_| SlipVerifyError::Refused)
         }
     }
     let fixture = Fixture::new();
@@ -605,4 +629,29 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         first.idempotency_principal(),
         narrowed_auth.idempotency_principal()
     );
+}
+
+#[test]
+fn a_stored_grant_body_that_does_not_decode_is_a_store_fault_not_a_refusal() {
+    // A grant-bound slip's stored FEDERATION_GRANT row whose body does not
+    // decode is this server's fault, as an unreadable entity header is: the
+    // caller is answered 500, never 401 as if its credential failed.
+    let undecodable =
+        oneiron::Error::Record(oneiron::error::RecordError::InvalidFederationGrantBody(
+            "federation grant body failed validation",
+        ));
+    assert!(slip_verification_store_fault(&undecodable));
+    assert!(slip_verification_store_fault(
+        &oneiron::Error::CorruptedIndex("entity header")
+    ));
+}
+
+#[test]
+fn a_damaged_authority_clock_floor_is_a_store_fault_not_a_refusal() {
+    // An ordinary slip judged over a persisted authority clock floor that
+    // does not decode fails the fold with AuthorityClockCorrupt: the vault
+    // cannot answer, so the caller is answered 500, never 401.
+    assert!(slip_verification_store_fault(&oneiron::Error::Record(
+        oneiron::error::RecordError::AuthorityClockCorrupt
+    )));
 }

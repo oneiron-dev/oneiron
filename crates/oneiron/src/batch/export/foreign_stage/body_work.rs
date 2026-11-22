@@ -34,8 +34,8 @@ use super::export_foreign_receipt::{CONTENT, Hex64, STAMPS};
 const BODY_WORK: SideTable<Hex64, Vec<u8>, Raw> =
     SideTable::new(&side_table::VAULT_IMPORT_BODY_WORK);
 
-const WORK_VERSION: u8 = 1;
-const WORK_LABEL: &str = "staged import body work";
+#[doc(hidden)]
+use oneiron_records::batch::export::foreign_stage::body_work::{WORK_LABEL, WORK_VERSION};
 
 /// One confirmed staged import's owed bodies and the rows its kept content
 /// carries.

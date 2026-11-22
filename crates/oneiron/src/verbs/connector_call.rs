@@ -111,6 +111,12 @@ pub fn connector_call_error(error: IntentLedgerError) -> MemoryError {
     match error {
         IntentLedgerError::Engine(error) => MemoryError::from(error),
         IntentLedgerError::InvalidInput(message) => MemoryError::bad_request(message),
+        // A tool named `calendar.invite` meets the calendar invite admission
+        // (FIX CALENDAR-COLD-INVITE-INVALID-STATE): its refusal stays a bad
+        // request, as the InvalidInput it was before.
+        IntentLedgerError::Calendar(
+            refusal @ crate::calendar::CalendarError::InviteRefused { .. },
+        ) => MemoryError::bad_request(refusal.to_string()),
         other => MemoryError::new(
             MEMORY_CODE_INTERNAL,
             other.to_string(),

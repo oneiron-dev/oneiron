@@ -37,9 +37,8 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ClaimError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::temporal::TimeRange;
 use crate::{
     agent_inbox_lens::AgentInboxLensItem,
@@ -49,9 +48,12 @@ use crate::{
 
 use super::evidence::KEY_AT;
 use super::invalid;
-use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
+use super::rows::{
+    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, actor_note_max_bytes_in_txn,
+};
 use super::validate::{actor_claim_lineage, native_actor_source};
 use super::write::{actor_claim_facet_in_txn, require_actor_entity, scope_with_lineage};
+use oneiron_contracts::RecordedSeconds;
 
 const KEY_LANE: &str = "lane";
 const KEY_ATTEMPT: &str = "attempt";
@@ -112,6 +114,15 @@ impl CraftVerdict {
         match self {
             Self::Approved => "approved",
             Self::Rejected => "rejected",
+        }
+    }
+
+    /// The outcome of this verdict's Gate receipt, the word [`Self::as_str`]
+    /// spells.
+    const fn gate_outcome(self) -> GateReceiptOutcome {
+        match self {
+            Self::Approved => GateReceiptOutcome::Approved,
+            Self::Rejected => GateReceiptOutcome::Rejected,
         }
     }
 
@@ -194,10 +205,11 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
     }
     let evidence = candidate_evidence(attempt, at);
     let scope = scope_with_lineage(None, ClaimSource::Generated);
+    let max_bytes = actor_note_max_bytes_in_txn(vault, wtxn)?;
     let mut written = Vec::new();
     for candidate in candidates {
         let predicate = candidate.predicate();
-        for part in note_parts(candidate.text()) {
+        for part in note_parts(candidate.text(), max_bytes) {
             if !standing.insert((predicate.to_owned(), part.clone())) {
                 continue;
             }
@@ -394,33 +406,25 @@ fn answer_in_txn(
 
     let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let verdict_id = vault.store.clock.entity_id()?;
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: at,
-        outcome: verdict.as_str().to_owned(),
-        reason_codes: vec![format!("{CRAFT_REVIEW_REASON}.{}", verdict.as_str())],
-        receipt_reasons: Vec::new(),
-        system_notices: GateSystemNoticeRecord::receipt_details(
-            CRAFT_REVIEW_CONTENT_KIND,
-            vec![
-                format!("{KEY_CANDIDATE}:{}", card.candidate_id),
-                format!("{KEY_CANDIDATE_HASH}:{}", card.content_hash),
-                format!("verdict_claim:{}", verdict_id.to_hex()),
-                format!("resident:{}", card.resident),
-            ],
-        ),
-        actor_class: "human".to_owned(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: CRAFT_REVIEW_CONTENT_KIND.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*candidate.as_bytes()),
-        grant_ref: None,
-        diff_handle: hash.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt),
-        redacted_at: None,
-    };
+    let mut receipt = GateReceipt::new(
+        verdict.gate_outcome(),
+        CRAFT_REVIEW_CONTENT_KIND,
+        format!("{CRAFT_REVIEW_REASON}.{}", verdict.as_str()),
+        ReceiptActor::human(actor),
+        hash.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = Some(candidate);
+    receipt.details = vec![
+        format!("{KEY_CANDIDATE}:{}", card.candidate_id),
+        format!("{KEY_CANDIDATE_HASH}:{}", card.content_hash),
+        format!("verdict_claim:{}", verdict_id.to_hex()),
+        format!("resident:{}", card.resident),
+    ];
+    receipt.context = decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt);
+    // The row, the verdict claim and the view keep one second.
+    receipt.decided_at = Some(RecordedSeconds::from_secs(at));
+    let record = vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     let receipt_ref = crate::receipt::gate_decision_receipt(&record).receipt_id;
     let Some(Value::Map(mut evidence)) = body.evidence.clone() else {
         return Err(Error::EntityNotFound);
@@ -613,7 +617,7 @@ fn candidate_card(
 }
 
 /// What an owner's verdict row says, read back from its evidence.
-struct VerdictStamp {
+pub(crate) struct VerdictStamp {
     candidate: String,
     candidate_hash: String,
     verdict: CraftVerdict,
@@ -625,7 +629,7 @@ struct VerdictStamp {
 /// whose evidence is exactly the candidate's dreaming evidence plus the
 /// candidate, its hash, the verdict its approval says, the owner and the
 /// receipt, each once.
-fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
+pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     if !matches!(
         body.predicate.as_str(),
         PREDICATE_ACTOR_LESSON | PREDICATE_ACTOR_FAILURE_MODE
@@ -642,7 +646,9 @@ fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     let Some(Value::Map(entries)) = body.evidence.as_ref() else {
         return None;
     };
-    let id_hex = |text: Option<&str>| text.is_some_and(|hex| is_hex(hex, 2 * ENTITY_ID_LEN));
+    let id_hex = |text: Option<&str>| {
+        text.is_some_and(|hex| oneiron_hex::is_lower_hex(hex, Some(2 * ENTITY_ID_LEN)))
+    };
     let (mut candidate, mut candidate_hash, mut receipt) = (None, None, None);
     let mut seen = 0_u8;
     for (key, value) in entries {
@@ -651,7 +657,9 @@ fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
             KEY_AT if value.as_u64().is_some() => 1,
             KEY_LANE if text == Some(LANE_RESIDENT_DREAM) => 2,
             KEY_ATTEMPT
-                if text.is_some_and(|hex| is_hex(hex, 2 * std::mem::size_of::<AttemptId>())) =>
+                if text.is_some_and(|hex| {
+                    oneiron_hex::is_lower_hex(hex, Some(2 * std::mem::size_of::<AttemptId>()))
+                }) =>
             {
                 4
             }
@@ -659,7 +667,9 @@ fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
                 candidate = text;
                 8
             }
-            KEY_CANDIDATE_HASH if text.is_some_and(|hex| is_hex(hex, 64)) => {
+            KEY_CANDIDATE_HASH
+                if text.is_some_and(|hex| oneiron_hex::is_lower_hex(hex, Some(64))) =>
+            {
                 candidate_hash = text;
                 16
             }
@@ -668,7 +678,7 @@ fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
             KEY_RECEIPT
                 if text
                     .and_then(|text| text.strip_prefix(RECEIPT_PREFIX))
-                    .is_some_and(|hex| is_hex(hex, 32)) =>
+                    .is_some_and(|hex| oneiron_hex::is_lower_hex(hex, Some(32))) =>
             {
                 receipt = text;
                 128
@@ -691,11 +701,6 @@ fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     })
 }
 
-/// Whether `text` is exactly `len` hex digits.
-fn is_hex(text: &str, len: usize) -> bool {
-    text.len() == len && text.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// Where `id`'s envelope starts.
 fn occurred_start_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<u64> {
     let raw = vault
@@ -712,11 +717,7 @@ fn occurred_start_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -
 /// (its durable model step and landed diary entry are that attempt's) and
 /// when.
 fn candidate_evidence(attempt: AttemptId, at: u64) -> Value {
-    let hex: String = attempt
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let hex = oneiron_hex::encode(attempt.as_bytes());
     Value::Map(vec![
         (Value::from(KEY_AT), Value::from(at)),
         (Value::from(KEY_LANE), Value::from(LANE_RESIDENT_DREAM)),
@@ -724,19 +725,20 @@ fn candidate_evidence(attempt: AttemptId, at: u64) -> Value {
     ])
 }
 
-/// `text` whitespace-folded, in consecutive parts a note row holds, split at
-/// word boundaries (a single word longer than a row splits at a character
+/// `text` whitespace-folded, in consecutive parts of at most `max_bytes` (the
+/// owner's cap, at least 128 bytes, so above one UTF-8 character), split at word
+/// boundaries (a single word longer than a row splits at a character
 /// boundary). Nothing is dropped; a blank note has no parts.
-fn note_parts(text: &str) -> Vec<String> {
+fn note_parts(text: &str, max_bytes: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut part = String::new();
     for word in text.split_whitespace() {
-        if !part.is_empty() && part.len() + 1 + word.len() > ACTOR_NOTE_MAX_BYTES {
+        if !part.is_empty() && part.len() + 1 + word.len() > max_bytes {
             parts.push(std::mem::take(&mut part));
         }
         let mut word = word;
-        while word.len() > ACTOR_NOTE_MAX_BYTES {
-            let mut cut = ACTOR_NOTE_MAX_BYTES;
+        while word.len() > max_bytes {
+            let mut cut = max_bytes;
             while !word.is_char_boundary(cut) {
                 cut -= 1;
             }

@@ -3,12 +3,11 @@
 
 use crate::policy_model::verdict::PolicyClassifyDecision;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_policy_vocabulary::policy_model::contract::PolicyOutputContract;
 use oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRule;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 pub const HOSTED_LEGAL_CATEGORY_PREFIX: &str = "hosted_legal/";
 
@@ -200,8 +199,7 @@ impl HostedLegalPolicy {
     /// precompute or compare one without registering.
     #[must_use]
     pub fn derive_policy_hash(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(b"oneiron.policy_model.hosted_legal.policy.v3");
+        let mut hasher = LegacyDigest::new(purposes::policy_model::HOSTED_LEGAL_POLICY);
         hash_field(&mut hasher, "jurisdiction", &self.jurisdiction);
         hash_field(&mut hasher, "version", &self.version);
         hash_field(
@@ -228,7 +226,7 @@ impl HostedLegalPolicy {
             hash_field(&mut hasher, "rule_category", &rule.category);
             hash_field(&mut hasher, "rule_role", rule.role.as_str());
         }
-        bytes_to_hex_lower(&hasher.finalize())
+        bytes_to_hex_lower(&hasher.finish())
     }
 
     /// Whether `label` is a category this policy publishes — the check a
@@ -283,29 +281,29 @@ pub fn parse_hosted_category_label(label: &str) -> Option<&str> {
     label.strip_prefix(HOSTED_LEGAL_CATEGORY_PREFIX)
 }
 
-/// Every length in the digest is encoded as a FIXED eight bytes.
+/// One labelled field of the policy hash: the label, a NUL, the value's length, the
+/// value and `0xff`.
 ///
-/// `usize::to_be_bytes` is four bytes on a 32-bit target and eight on a 64-bit
-/// one, so hashing it directly makes the policy hash architecture-dependent —
-/// and the hash is what a receipt attests, so a 32-bit relay and a 64-bit
-/// vault would never agree that they had seen the same policy and the
-/// attestation would fail closed forever. `gate::hash_len` already casts for
-/// the same reason.
-pub fn hash_len_bytes(len: usize) -> [u8; 8] {
-    (len as u64).to_be_bytes()
+/// Every length is a FIXED eight bytes (a u64, big-endian), never a bare `usize`: that
+/// is four bytes on a 32-bit target and eight on a 64-bit one, so the policy hash would
+/// depend on the word size of whoever computed it. The hash is what a receipt attests,
+/// so a 32-bit relay and a 64-bit vault would never agree that they had seen the same
+/// policy, and the attestation would fail closed forever.
+fn hash_field(hasher: &mut LegacyDigest, label: &str, value: &str) {
+    hasher
+        .raw(label.as_bytes())
+        .raw(&[0])
+        .len_u64_be(value.len())
+        .raw(value.as_bytes())
+        .raw(&[0xff]);
 }
 
-pub fn hash_field(hasher: &mut Sha256, label: &str, value: &str) {
-    hasher.update(label.as_bytes());
-    hasher.update([0]);
-    hasher.update(hash_len_bytes(value.len()));
-    hasher.update(value.as_bytes());
-    hasher.update([0xff]);
-}
-
-pub fn hash_len(hasher: &mut Sha256, label: &str, len: usize) {
-    hasher.update(label.as_bytes());
-    hasher.update([0]);
-    hasher.update(hash_len_bytes(len));
-    hasher.update([0xff]);
+/// One labelled list count of the policy hash: the label, a NUL, the count (a u64,
+/// big-endian, as in [`hash_field`]) and `0xff`.
+fn hash_len(hasher: &mut LegacyDigest, label: &str, len: usize) {
+    hasher
+        .raw(label.as_bytes())
+        .raw(&[0])
+        .len_u64_be(len)
+        .raw(&[0xff]);
 }

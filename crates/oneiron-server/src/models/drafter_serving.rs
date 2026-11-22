@@ -69,10 +69,6 @@ const VAULT_DRAFT_IDENTITY_PREFIX: &str = "load-set-blake3:";
 /// SHA-256 of the draft's install record follows, in hex.
 const STOCK_DRAFT_IDENTITY_PREFIX: &str = "manifest-sha256:";
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// A vault drafter version's load set, materialised in the vault's private
 /// `drafter-serving/` directory and verified there. Only the drafter
 /// serving seam makes one; no config file names it.
@@ -98,7 +94,7 @@ impl VaultLoadSet {
     pub(super) fn identity(&self) -> String {
         format!(
             "{VAULT_DRAFT_IDENTITY_PREFIX}{}",
-            hex(&self.load_set_blake3)
+            oneiron_hex::encode(&self.load_set_blake3)
         )
     }
 

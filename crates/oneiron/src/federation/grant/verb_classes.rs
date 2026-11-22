@@ -32,7 +32,7 @@ pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
 /// The verb classes a body names; none when the key is absent. A malformed
 /// value refuses the body.
 pub(super) fn decode_body_entry(entries: &[(Value, Value)]) -> Result<BTreeSet<String>> {
-    optional_value(entries, KEY_VERB_CLASSES)
+    optional_value(entries, KEY_VERB_CLASSES)?
         .map(|value| decode_verb_classes_value(value).ok_or_else(invalid_grant))
         .transpose()
         .map(Option::unwrap_or_default)

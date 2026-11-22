@@ -2,9 +2,14 @@
 //! Entry: `RecordingJsHost::read_result`.
 //! `RecordingJsHost` and `ResolvedResult` are defined by `engine_executor::host`.
 
+mod names;
+mod source_rows;
+
 use super::*;
 use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
+
+use super::deadline_replay::RESUME_PREFLIGHT_HELD;
 
 /// The ordinal of a stored-value path (`store_result_output_path`'s shape),
 /// for the replay of the store that made it: `None` for any other path.
@@ -15,132 +20,6 @@ fn stored_path_ordinal(path: &str) -> Option<usize> {
 }
 
 impl RecordingJsHost<'_, '_> {
-    /// The run's live result names, oldest first: this step's binds over
-    /// the record's.
-    pub(super) fn live_bindings(&self) -> Vec<&CodeRunResultBinding> {
-        let mut live: Vec<_> = self
-            .bindings
-            .iter()
-            .filter(|binding| !self.bound.iter().any(|held| held.name == binding.name))
-            .collect();
-        live.extend(&self.bound);
-        live
-    }
-
-    /// The next free automatic name: `r<n>`, counting from one past the
-    /// live names, past any name taken.
-    pub(super) fn next_auto_name(&self) -> String {
-        let live = self.live_bindings();
-        (live.len() + 1..)
-            .map(|n| format!("r{n}"))
-            .find(|name| !live.iter().any(|binding| binding.name == *name))
-            .unwrap_or_default()
-    }
-
-    /// Binds `name` to the result `handle` at its occurrence `path` for the
-    /// record; a rebind replaces the name's entry in place.
-    pub(super) fn bind(&mut self, name: String, handle: String, path: String) {
-        let binding = CodeRunResultBinding::new(name, handle, path);
-        match self.bound.iter_mut().find(|held| held.name == binding.name) {
-            Some(held) => *held = binding,
-            None => self.bound.push(binding),
-        }
-    }
-
-    /// The run's result a reference names, and the live name bound to it.
-    /// Only this run's results resolve: a handle names nothing else.
-    pub(super) fn resolve_result(
-        &self,
-        reference: &JsResultRef,
-    ) -> Option<(CodeRunRawOutput, Option<String>)> {
-        crate::code_run::resolve_result(
-            self.run_id,
-            self.results.iter().chain(&self.captured),
-            &self.live_bindings(),
-            reference,
-        )
-    }
-
-    /// The refusal for a reference to no result of this run, with the live
-    /// names it could have meant.
-    pub(super) fn unknown_handle(&self) -> serde_json::Value {
-        crate::code_run::unknown_handle(&self.live_bindings())
-    }
-
-    /// The rows the run's results were served from: the conservative union
-    /// of every row its recorded and this step's verb answers were served
-    /// from, each stored skill its callables loaded and the rows of each
-    /// other run's result they read (FIX 5460), or none known when one kept
-    /// no set.
-    pub(in crate::engine_executor) fn result_rows(&self) -> Option<Vec<EntityId>> {
-        let (skills, read) = &self.callable_rows;
-        self.verb_rows()
-            .zip(read.as_deref())
-            .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
-    }
-
-    /// The records whose words the run's recorded and this step's fold
-    /// answers copy, each once (FIX 18924): known dependencies of what the
-    /// run stores, apart from its input rows.
-    fn fold_sources(&self) -> Vec<EntityId> {
-        let step = crate::code_run::recorded_fold_words(&self.bridge_calls);
-        let mut sources: Vec<EntityId> = step
-            .into_iter()
-            .flat_map(|word| word.sources)
-            .chain(self.recorded_fold_sources.iter().copied())
-            .collect();
-        sources.sort_unstable();
-        sources.dedup();
-        sources
-    }
-
-    /// The rows the run's recorded and this step's verb answers were served
-    /// from, or none known when one answer kept no set.
-    pub(super) fn verb_rows(&self) -> Option<Vec<EntityId>> {
-        self.recorded_rows
-            .as_ref()
-            .zip(agent_verb_rows_of(&self.bridge_calls))
-            .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat())
-    }
-
-    /// The rows of an own occurrence's fixed bytes. Unknown provenance uses
-    /// the live union; act gates retain their verb-only row set.
-    fn occurrence_rows(&self, output: &CodeRunRawOutput, callable: bool) -> Option<Vec<EntityId>> {
-        if callable {
-            output.input_rows.clone().or_else(|| self.result_rows())
-        } else {
-            self.verb_rows()
-        }
-    }
-
-    /// Whether the run's results stay on this device for its door's caller
-    /// now (DEC-0005), by [`Self::result_rows`].
-    pub(super) fn withholds_results(&self) -> Result<bool> {
-        self.withholds_rows(self.result_rows())?
-            .map_err(|code| Error::InvalidConfig(format!("stored result read refused: {code}")))
-    }
-
-    /// Whether a result served from `rows` stays on this device for the
-    /// door's caller now. A scoped child's door that refuses the read on its
-    /// authority answers that refusal's code (`scoped_child_authority_lapsed`
-    /// or `scoped_child_parent_lease_lost`, FIX 7734), for the read to name;
-    /// any other refusal is an error, as before.
-    pub(super) fn withholds_rows(
-        &self,
-        rows: Option<Vec<EntityId>>,
-    ) -> Result<std::result::Result<bool, &'static str>> {
-        match self.gated_write.withholds_retained(rows.as_deref()) {
-            Ok(withheld) => Ok(Ok(withheld)),
-            Err(refusal) => match scoped_child_read_refusal(&refusal.code) {
-                Some(code) => Ok(Err(code)),
-                None => Err(Error::InvalidConfig(format!(
-                    "stored result read refused: {}",
-                    refusal.code
-                ))),
-            },
-        }
-    }
-
     /// `store(value, name?)`: the value the program just streamed, stored as
     /// a result of the run and bound to a name. Not gated: the value is the
     /// run's own, as a file it writes is. A halted bridge, or a run whose
@@ -160,10 +39,15 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        let sink = self
+        let mut sink = self
             .streamed
             .take_store()
             .ok_or(Error::InvalidConfig("store sent no body".into()))?;
+        // A dry walk stores nothing (L8-23): its body and occurrence would
+        // commit before the entry holds with the walk's report.
+        if self.pending_replay_dry() {
+            return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+        }
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(result_refusal("host_bridge_halted"));
         }
@@ -193,6 +77,9 @@ impl RecordingJsHost<'_, '_> {
             },
             None => None,
         };
+        if self.new_output_holds_walk(&mut sink, false)? {
+            return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+        }
         let (output, mut card) = self.bind_stored_with(storage, sink, name, &inherit)?;
         if let Some(mut receipt) = receipt.take() {
             receipt.folded = OccurrenceRef::new(self.run_id, &output.path, &output.handle)?;
@@ -217,23 +104,53 @@ impl RecordingJsHost<'_, '_> {
         Ok(self.bind_stored_with(storage, sink, name, &[])?.1)
     }
 
+    /// The path of the earliest recorded store of `digest` no store of this
+    /// step reused yet: `None` when this step stored no such bytes before.
+    fn recorded_store_path(&self, digest: &[u8; 32]) -> Option<String> {
+        let needle = format!("store/{}", crate::entity_id::bytes_to_hex_lower(digest));
+        self.results
+            .iter()
+            .map(|output| output.path.clone())
+            .find(|path| {
+                path.contains(needle.as_str())
+                    && !self.replayed_stores.iter().any(|held| held == path)
+            })
+    }
+
     /// The ordinal of the earliest recorded store of `digest` no store of
     /// this step reused yet, consuming it: `None` when this step stored no
     /// such bytes before, so the store allocates a fresh ordinal. Each
     /// recorded store is consumed once, in order, so the same bytes stored
     /// twice replay as two outputs with their original ordinals.
     fn replayed_store_ordinal(&mut self, digest: &[u8; 32]) -> Option<usize> {
-        let needle = format!("store/{}", crate::entity_id::bytes_to_hex_lower(digest));
-        let path = self
-            .results
-            .iter()
-            .map(|output| output.path.clone())
-            .find(|path| {
-                path.contains(needle.as_str())
-                    && !self.replayed_stores.iter().any(|held| held == path)
-            })?;
+        let path = self.recorded_store_path(digest)?;
         self.replayed_stores.push(path.clone());
         stored_path_ordinal(&path)
+    }
+
+    /// Whether the body `sink` holds may not publish now, because the pass
+    /// holds (L8-23). While a resumed step's walk has recorded calls ahead, a
+    /// body no recorded store holds ends the walk first (a `record_only`
+    /// body, a live call's spilled view, is always new): a tail holding an
+    /// effect step turns the walk dry and the body publishes nowhere, since
+    /// the entry then holds and commits nothing; a pure tail is dropped and
+    /// the body publishes. Bytes a recorded store holds publish as that
+    /// store's output again.
+    pub(super) fn new_output_holds_walk(
+        &mut self,
+        sink: &mut BodySink,
+        record_only: bool,
+    ) -> Result<bool> {
+        if !self.pending_walk_open() {
+            return Ok(self.pending_replay_dry());
+        }
+        if !record_only {
+            sink.finalize_sweep()?;
+            if self.recorded_store_path(&sink.digest()?).is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(self.end_walk_at_new_output())
     }
 
     /// [`Self::bind_stored`], the body first marked with the taint of every
@@ -250,17 +167,21 @@ impl RecordingJsHost<'_, '_> {
         self.bind_stored_sourced(storage, sink, name, inherit, input_rows)
     }
 
-    /// Binds a native value whose producer supplied its actual source rows.
-    /// All publishing, masking, marks, names and occurrence allocation stay
-    /// on the ordinary stored-result path.
-    pub(super) fn bind_stored_sourced(
+    /// Publishes the body `sink` wrote as a stored value of the run, as a
+    /// dependent of `input_rows` and with the marks of `inherit`, and captures
+    /// it for the record: the publish half of [`Self::bind_stored_sourced`],
+    /// with no name and no bind. `record_only` places a body a verb hook's
+    /// view stands in for at its call's record-only path, which no read of
+    /// the run's results resolves; `None` names a stored value by its digest
+    /// and ordinal. A record-only spill cards it with no name.
+    pub(super) fn publish_stored_sourced(
         &mut self,
         storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
-        name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
-    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        record_only: Option<String>,
+    ) -> Result<CodeRunRawOutput> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
         sink.finalize_sweep()?;
@@ -270,10 +191,12 @@ impl RecordingJsHost<'_, '_> {
         // replayed store keeps its occurrence and ref (a parked summarize
         // of its card still matches its settled request); only a store of
         // new bytes allocates a fresh ordinal.
-        let ordinal = self
-            .replayed_store_ordinal(&digest)
-            .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
-        let path = store_result_output_path(&digest, ordinal);
+        let path = record_only.unwrap_or_else(|| {
+            let ordinal = self
+                .replayed_store_ordinal(&digest)
+                .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
+            store_result_output_path(&digest, ordinal)
+        });
         let producing_step_start = self
             .results
             .iter()
@@ -300,6 +223,21 @@ impl RecordingJsHost<'_, '_> {
         {
             self.captured.push(output.clone());
         }
+        Ok(output)
+    }
+
+    /// Binds a native value whose producer supplied its actual source rows.
+    /// All publishing, masking, marks, names and occurrence allocation stay
+    /// on the ordinary stored-result path.
+    pub(super) fn bind_stored_sourced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        let output = self.publish_stored_sourced(storage, sink, inherit, input_rows, None)?;
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone(), output.path.clone());
         let card = result_card(storage, self.run_id, &output, Some(name.as_str()))?;
@@ -346,6 +284,10 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
+        // A dry walk reads nothing live (L8-23).
+        if self.pending_replay_dry() {
+            return Ok(Err(result_refusal(RESUME_PREFLIGHT_HELD)));
+        }
         self.admit_result_read(storage)?;
         let own = if callable {
             self.result_rows()
@@ -628,9 +570,12 @@ impl RecordingJsHost<'_, '_> {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {
-                let sink = sink.ok_or(Error::InvariantViolation(
+                let mut sink = sink.ok_or(Error::InvariantViolation(
                     "a result read spilled with no sink",
                 ))?;
+                if self.new_output_holds_walk(&mut sink, false)? {
+                    return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+                }
                 let card = self.bind_stored_with(storage, sink, None, &[parent])?.1;
                 let mut output = json!({"derived": card, "count": count, "done": next.is_none()});
                 if let Some(next) = next {
@@ -653,9 +598,7 @@ impl RecordingJsHost<'_, '_> {
         // the first with its bytes. A path without an occurrence keeps the
         // legacy meaning (the first occurrence with those bytes).
         let found = parse_result_read_path(path).and_then(|(wanted, occurrence, offset)| {
-            self.results
-                .iter()
-                .chain(&self.captured)
+            self.readable_outputs()
                 .find(|output| {
                     output.output_ref() == wanted
                         && occurrence.as_ref().is_none_or(|occurrence| {
@@ -691,23 +634,32 @@ impl RecordingJsHost<'_, '_> {
                 "stored result offset exceeds its body".into(),
             ));
         }
-        // A raw chunk is the occurrence's bytes: a tainted occurrence
-        // (a secret mark reads tainted) refuses here, as its facets do.
-        if storage
-            .code_run_result_taint(Some(self.run_id), output)?
-            .0
-            .is_tainted()
-        {
+        // A raw chunk is the bytes the occurrence's reads show, as its
+        // facets read them; one no read shows refuses here.
+        let Ok(read) = ResultRead::new(storage, self.run_id, output.clone(), None, None, false)?
+        else {
+            return Err(Error::InvariantViolation(
+                "a whole-body result read refuses no range",
+            ));
+        };
+        // A scoped child reads the chunk only before its live cutoff,
+        // checked again before the chunk is released (FIX 8233). The read
+        // carries the cutoff too, so building a redacted view (a read of
+        // the whole body) stops at it, and answers this read's refusal.
+        let read = read.with_live_cutoff(self.live_cutoff());
+        self.check_live_cutoff("stored result")?;
+        let shown = match read.read_shown(storage, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES) {
+            Ok(shown) => shown,
+            Err(error) => {
+                self.check_live_cutoff("stored result")?;
+                return Err(error);
+            }
+        };
+        let Some(bytes) = shown else {
             return Err(Error::InvalidConfig(
                 "stored result read refused: tainted".into(),
             ));
-        }
-        // A scoped child reads the chunk only before its live cutoff,
-        // checked again before the chunk is released (FIX 8233).
-        self.check_live_cutoff("stored result")?;
-        let bytes = storage
-            .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
-            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        };
         // A body stored before its scan read every rule may hold a
         // secret no mark names: a chunk showing one is withheld like a
         // card or answer showing one is.
@@ -730,6 +682,10 @@ impl RecordingJsHost<'_, '_> {
             |code: &str| Error::InvalidConfig(format!("recorded output read refused: {code}"));
         if self.hard_failure.is_some() || self.left_a_gap {
             return Err(refused("host_bridge_halted"));
+        }
+        // A dry walk reads nothing live (L8-23).
+        if self.pending_replay_dry() {
+            return Err(refused(RESUME_PREFLIGHT_HELD));
         }
         if self.declined.is_some() {
             return Err(refused("task_declined"));

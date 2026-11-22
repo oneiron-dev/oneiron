@@ -27,7 +27,6 @@ use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault, WriteActor};
-use serde::{Deserialize, Serialize};
 
 mod doors;
 mod log;
@@ -74,27 +73,8 @@ pub enum DiaryEntryAdmission {
     Held(DiaryReadHold),
 }
 
-/// What a finished gate did for one agent's diary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DiaryAgentRead {
-    pub agent: EntityId,
-    /// The read logged for the entries admitted, if any were.
-    pub read: Option<EntityId>,
-    pub entries: u64,
-    /// The entries held, by why.
-    pub held: Vec<(DiaryReadHold, u64)>,
-    /// The review request standing for this reader's reason, if one does.
-    pub request: Option<EntityId>,
-    /// Whether a Grant covers the agent's whole diary.
-    pub whole_diary: bool,
-}
-
-/// What a finished gate logged and held, one row per agent read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DiaryReadReceipt {
-    pub reason: String,
-    pub agents: Vec<DiaryAgentRead>,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::diary_read::{DiaryAgentRead, DiaryReadReceipt, DiaryReadsView};
 
 /// The one decision point for diary reads. `admit` is a pure read inside the
 /// caller's snapshot; `finish` writes what the admissions mean.
@@ -380,23 +360,34 @@ pub(crate) fn agent_reviews_diary_reads_in_txn(
 }
 
 /// The live diary entries `agent` wrote, oldest first, with their current
-/// text and the time each was written.
+/// text and the time each was written: those an import brought back count
+/// once the owner's review made the restored agent stand
+/// ([`crate::note::diary_author_in`]).
 pub(crate) fn diary_entries_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
 ) -> Result<Vec<(EntityId, NoteBody, u64)>> {
-    let mut entries = Vec::new();
-    for id in vault.filtered_edge_peers(
+    let mut candidates = std::collections::BTreeSet::new();
+    candidates.extend(vault.filtered_edge_peers(
         txn,
         EdgeDirection::In,
         &agent,
         EdgeKind::AuthoredBy,
         Some(ENTITY_TYPE_NOTE),
-    )? {
+    )?);
+    // An imported entry has no `AuthoredBy` edge: a restored agent's listing
+    // finds its own by their stored source author.
+    if crate::agent_def::restored_diary::restored_agent_stands_in(&vault.store, txn, &agent)? {
+        candidates.extend(
+            crate::agent_def::restored_diary::imported_diary_entries_in_txn(vault, txn, &agent)?,
+        );
+    }
+    let mut entries = Vec::new();
+    for id in candidates {
         if let Some((note, learned_at)) = live_note_in_txn(vault, txn, &id)?
             && note.kind == NoteKind::Diary
-            && note.author_ref.is(agent)
+            && crate::note::diary_author_in(&vault.store, txn, note.author_ref)? == Some(agent)
         {
             entries.push((id, note, learned_at));
         }
@@ -411,8 +402,12 @@ fn live_note_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(NoteBody, u64)>> {
+    // A record kept under a use limit (a legal hold or a cooperative review
+    // restriction) reads to no one, as `Vault::read_imported_note` and every
+    // ordinary read refuse it (REVIEW-9994 round 1).
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
         || vault.archive_tombstone_in_txn(txn, id)?.is_some()
+        || crate::store::legal_hold::use_limit_in_txn(&vault.store, txn, id)?.is_some()
     {
         return Ok(None);
     }
@@ -433,18 +428,6 @@ fn live_note_in_txn(
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )?;
     Ok(Some((note, header.learned_at)))
-}
-
-/// `self.memory.diary.reads`'s answer: who read the agent's diary and why,
-/// newest first, and the readers' reasons its review holds.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiaryReadsView {
-    /// Whether the agent reviews each read first.
-    pub review: bool,
-    pub reads: Vec<DiaryReadRecord>,
-    /// The persisted review requests, newest first: pending, approved or
-    /// declined, and spent ones too when the input asked with `include_used`.
-    pub requests: Vec<DiaryReadRequest>,
 }
 
 /// One reader a `diary.read` Grant admits to an agent's diary.
@@ -492,4 +475,33 @@ fn coach_reads_pads_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, agent: &EntityI
 pub struct DiaryReaderList {
     pub diary: Vec<DiaryReader>,
     pub sealed_pads: Vec<SealedPadReader>,
+}
+
+impl Vault {
+    /// Files a pending review of `reader`'s read of `agent`'s diary, stating
+    /// `reason`, as a person's read of a diary whose agent reviews files one
+    /// (the door of `tests/resident_busy_wakes.rs`). Returns its request.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn file_pending_diary_review(
+        &self,
+        agent: EntityId,
+        reader: EntityId,
+        reason: &str,
+    ) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            let row = DiaryReadRequest {
+                request: self.store.clock.entity_id()?,
+                reader,
+                reader_class: crate::EdgeActorClass::Human.gate_actor_class().to_owned(),
+                reason: reason.to_owned(),
+                asked_at: self.store.clock.now_recorded_at(),
+                state: DiaryReviewState::Pending,
+                answered_at: None,
+                read: None,
+                ruled_reader: None,
+            };
+            DIARY_READ_REQUEST.put(&self.store, txn, &(agent, row.request), &row)?;
+            Ok(row.request)
+        })
+    }
 }

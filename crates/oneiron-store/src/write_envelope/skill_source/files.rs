@@ -19,7 +19,9 @@ impl HubFile {
 }
 
 /// How source fields relate to native metadata. Neither variant grants trust.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillPackageFormat {
     /// Required name, description and version come from scalar SKILL.md frontmatter.

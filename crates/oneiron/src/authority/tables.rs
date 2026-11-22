@@ -30,6 +30,12 @@ crate::side_table::side_tables! {
     /// never synced, and dropped wherever the machine id is. Key: ().
     IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A held machine answer whose ask the owner dismissed on this install (row
+    /// CARRIER-OWNER-PROOF): presence only, an empty value. Local like the machine id: never
+    /// synced, and dropped wherever the machine id is, so the answer stays held and his other
+    /// devices still ask. Key: hex64 (the held answer's log entry).
+    AUTHORITY_HELD_ANSWER_DISMISSED: SyncState b"authority:held-answer-dismissed:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// What this home's root signed for a linked machine's own checkpoint image (FIX 5195): the
     /// image id, the posture and policy it was made under, the attestation and the local second
     /// the machine last asked for it. A reply cache, so a last part whose answer the machine's RPC
@@ -50,6 +56,14 @@ crate::side_table::side_tables! {
     /// (FIX 2989): no held history, admitting nothing; it leaves when a put of it lands. Key:
     /// hash32. Value: the row's canonical signed bytes.
     AUTHORITY_HISTORY_PENDING: VaultMeta b"authority.history.pending.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One signed authority row the owner's history import kept as evidence instead of storing
+    /// it, because the store door held it at the owner's reserve under the fold's memory floor,
+    /// or it stands on such a row (FIX [OWNER-RESERVE-IMPORT-PARTIAL]): no held history,
+    /// admitting nothing; imported again after each write of the floor row, it leaves when an
+    /// import of it lands or refuses it for something other than the reserve. Key: hash32.
+    /// Value: the row's canonical signed bytes.
+    AUTHORITY_HISTORY_RESERVE_HELD: VaultMeta b"authority.history.reserve-held.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.

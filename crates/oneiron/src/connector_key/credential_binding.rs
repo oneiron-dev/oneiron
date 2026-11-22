@@ -6,8 +6,10 @@
 //! or a fingerprint, never a value), a monotonic generation, and the
 //! concrete (key, row) set that depends on it. Its baseline comes only from
 //! an authenticated observation. A later observation of another issuer at
-//! the binding's generation first records a durable transition, then drafts
-//! a forced delta slate that re-asks every dependent row. Until the owner
+//! the binding's generation, or the engine's detection that the connector's
+//! protected-resource metadata no longer lists the bound issuer (L5-11),
+//! first records a durable transition, then drafts a forced delta slate
+//! that re-asks every dependent row. Until the owner
 //! accepts that revision at the generation, calls on exactly those rows
 //! hold, live and on replay. Unrelated keys, actors, credentials and rows
 //! keep running, and the shared catalog is never suspended for a subset. A
@@ -49,6 +51,27 @@ pub use oneiron_records::connector_key::credential_binding::{
 #[doc(hidden)]
 pub use oneiron_verb_wire::connector_key::credential_binding::ConnectorIssuerHaltView;
 
+/// A change from `binding`'s issuer to `new_issuer`, detected now at its
+/// generation, halting every row the binding names.
+fn detected_transition(
+    binding: &ConnectorCredentialBinding,
+    new_issuer: &str,
+    proposed_credential_ref: &str,
+    witness: &str,
+    at: u64,
+) -> ConnectorIssuerTransition {
+    ConnectorIssuerTransition {
+        old_issuer: binding.issuer.clone(),
+        new_issuer: new_issuer.to_owned(),
+        proposed_credential_ref: proposed_credential_ref.to_owned(),
+        witness: witness.to_owned(),
+        detected_at: at,
+        expected_generation: binding.generation,
+        dependents: binding.dependents.clone(),
+        state: ConnectorIssuerTransitionState::Detected,
+    }
+}
+
 /// An authenticated observation of the issuer a credential slot answers for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorIssuerObservation {
@@ -62,6 +85,21 @@ pub struct ConnectorIssuerObservation {
     pub expected_generation: u64,
     /// The keys and rows that depend on the slot; empty keeps the binding's.
     pub dependents: Vec<ConnectorBindingDependent>,
+    pub witness: String,
+}
+
+/// The engine's own reading, at a refused send, of the authorization
+/// servers a connector's protected resource accepts tokens from (RFC 9728
+/// `authorization_servers`; L5-11). No owner act: a change it finds only
+/// holds rows, and the owner's stamp still accepts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectorIssuerDetection {
+    /// The key the refused call presented under: a catalog key or one
+    /// derived from it.
+    pub key_ref: EntityId,
+    /// The issuers the metadata lists, in its order.
+    pub authorization_servers: Vec<String>,
+    /// What the engine read and where, in its own words: never a credential.
     pub witness: String,
 }
 
@@ -235,7 +273,6 @@ fn append_binding_op(
     catalog_key: &EntityId,
     op: &'static str,
     catalog: &ConnectorKeyRecord,
-    at: u64,
 ) -> Result<()> {
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     append_connector_key_op_record(
@@ -245,7 +282,6 @@ fn append_binding_op(
         op,
         catalog,
         policy.read_frontier_hash()?,
-        at,
     )
 }
 
@@ -358,10 +394,41 @@ pub(super) fn accept_issuer_in_txn(
             &binding.catalog_key,
             "gate.connector_key.issuer_accepted",
             &catalog,
-            crate::unix_seconds_now(),
         )?;
     }
     Ok(binding.catalog_key)
+}
+
+/// Opens `transition` on `binding`, with its `issuer_changed` record, unless
+/// an open one already names the same new issuer and credential: one rule
+/// for every recorded change. An authenticated observation of another
+/// credential for the open issuer replaces the change, so the owner's stamp
+/// binds the credential observed and not one the engine carried. Answers
+/// whether it opened; the caller puts the binding.
+fn record_issuer_transition_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    catalog: &ConnectorKeyRecord,
+    binding: &mut ConnectorCredentialBinding,
+    transition: ConnectorIssuerTransition,
+) -> Result<bool> {
+    let already_open = binding.transition.as_ref().is_some_and(|open| {
+        open.halts()
+            && open.new_issuer == transition.new_issuer
+            && open.proposed_credential_ref == transition.proposed_credential_ref
+    });
+    if already_open {
+        return Ok(false);
+    }
+    binding.transition = Some(transition);
+    append_binding_op(
+        store,
+        txn,
+        &binding.catalog_key,
+        "gate.connector_key.issuer_changed",
+        catalog,
+    )?;
+    Ok(true)
 }
 
 impl Vault {
@@ -425,7 +492,6 @@ impl Vault {
                     &catalog_key,
                     "gate.connector_key.issuer_bound",
                     &catalog,
-                    at,
                 )?;
                 return Ok(binding);
             };
@@ -442,28 +508,20 @@ impl Vault {
                 binding
                     .credential_ref
                     .clone_from(&observation.credential_ref);
-            } else if binding
-                .transition
-                .as_ref()
-                .is_none_or(|open| !open.halts() || open.new_issuer != observation.issuer)
-            {
-                binding.transition = Some(ConnectorIssuerTransition {
-                    old_issuer: binding.issuer.clone(),
-                    new_issuer: observation.issuer.clone(),
-                    proposed_credential_ref: observation.credential_ref.clone(),
-                    witness: observation.witness.clone(),
-                    detected_at: at,
-                    expected_generation: binding.generation,
-                    dependents: binding.dependents.clone(),
-                    state: ConnectorIssuerTransitionState::Detected,
-                });
-                append_binding_op(
+            } else {
+                let transition = detected_transition(
+                    &binding,
+                    &observation.issuer,
+                    &observation.credential_ref,
+                    &observation.witness,
+                    at,
+                );
+                record_issuer_transition_in_txn(
                     &self.store,
                     txn,
-                    &catalog_key,
-                    "gate.connector_key.issuer_changed",
                     &catalog,
-                    at,
+                    &mut binding,
+                    transition,
                 )?;
             }
             BINDINGS.put(&self.store, txn, &binding_ref, &binding)?;
@@ -477,6 +535,96 @@ impl Vault {
             return self.draft_issuer_revision(binding.binding_ref);
         }
         Ok(binding)
+    }
+
+    /// The engine's detection of an issuer change at a refused send (L5-11;
+    /// ARCH-0072 #drift: "every row that depended on the old issuer"). Each
+    /// binding of the call's catalog connector whose issuer the metadata no
+    /// longer lists records a change, in this writer first so a failed
+    /// draft loses no evidence, then drafts the forced re-ask of its
+    /// dependent rows. The new issuer is the first one listed, with the
+    /// binding's own custody pointer (the engine saw no new credential), or
+    /// an open change's own new issuer and credential while the list still
+    /// names that issuer, so a detection never undoes an observation. A
+    /// listed issuer is not drift, a connector with no binding records
+    /// nothing (the baseline stays an owner act), and a key that no longer
+    /// resolves meets none. Answers each binding found drifted, as it
+    /// stands after its draft.
+    pub fn detect_connector_credential_issuer(
+        &self,
+        detection: &ConnectorIssuerDetection,
+    ) -> Result<Vec<ConnectorCredentialBinding>> {
+        let blank = detection.witness.trim().is_empty()
+            || detection
+                .authorization_servers
+                .iter()
+                .any(|issuer| issuer.trim().is_empty());
+        if blank {
+            return Err(invalid_body(
+                "an issuer detection names its witness and every issuer it lists",
+            ));
+        }
+        let Some(first_listed) = detection.authorization_servers.first() else {
+            return Ok(Vec::new());
+        };
+        let listed = |issuer: &str| {
+            detection
+                .authorization_servers
+                .iter()
+                .any(|server| server == issuer)
+        };
+        let at = crate::unix_seconds_now();
+        let drifted = self.with_write_txn_grouped(|txn| {
+            let Some(key) = read_connector_key_in_txn(&self.store, txn, &detection.key_ref)? else {
+                return Ok(Vec::new());
+            };
+            let catalog_key =
+                catalog_of_in_txn(&self.store, txn, &key)?.unwrap_or(detection.key_ref);
+            let Some(catalog) = read_connector_key_in_txn(&self.store, txn, &catalog_key)? else {
+                return Ok(Vec::new());
+            };
+            let mut drifted = Vec::new();
+            for (binding_ref, mut binding) in BINDINGS.scan(&self.store, txn)? {
+                if binding.catalog_key != catalog_key || listed(&binding.issuer) {
+                    continue;
+                }
+                let (new_issuer, proposed_credential_ref) = binding
+                    .transition
+                    .as_ref()
+                    .filter(|open| open.halts() && listed(&open.new_issuer))
+                    .map_or_else(
+                        || (first_listed.clone(), binding.credential_ref.clone()),
+                        |open| {
+                            (
+                                open.new_issuer.clone(),
+                                open.proposed_credential_ref.clone(),
+                            )
+                        },
+                    );
+                let transition = detected_transition(
+                    &binding,
+                    &new_issuer,
+                    &proposed_credential_ref,
+                    &detection.witness,
+                    at,
+                );
+                if record_issuer_transition_in_txn(
+                    &self.store,
+                    txn,
+                    &catalog,
+                    &mut binding,
+                    transition,
+                )? {
+                    BINDINGS.put(&self.store, txn, &binding_ref, &binding)?;
+                }
+                drifted.push(binding_ref);
+            }
+            Ok(drifted)
+        })?;
+        drifted
+            .into_iter()
+            .map(|binding_ref| self.draft_issuer_revision(binding_ref))
+            .collect()
     }
 
     /// Drafts a detected issuer change's forced re-ask of the catalog slate,

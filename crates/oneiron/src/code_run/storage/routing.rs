@@ -1,5 +1,7 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
+use std::sync::Arc;
+
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -23,6 +25,7 @@ use super::speech_identity::{
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::result_memory::ResultShare;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::store::known_value_index::KnownValues;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
@@ -186,7 +189,9 @@ impl SessionBinding<'_> {
 
     /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
     /// marks of every occurrence in `from` join those of `owner`'s
-    /// occurrence of `output`.
+    /// occurrence of `output`. A secret named twice keeps its lowest
+    /// recorded generation, as on the vault, so a merge across a rotation
+    /// stays storable.
     fn inherit_marks(
         &self,
         owner: EntityId,
@@ -201,17 +206,21 @@ impl SessionBinding<'_> {
             Ok::<_, crate::Error>((key, refs.unwrap_or_default(), secret))
         };
         let (key, mut refs, mut secret) = get_marks(owner, output)?;
-        let (own_refs, own_secret) = (refs.len(), secret.is_some());
+        let (own_refs, own_secret) = (refs.clone(), secret.is_some());
         for (source, held) in from {
             let (_, more, marked) = get_marks(*source, held)?;
             for taint in more {
-                if !refs.contains(&taint) {
-                    refs.push(taint);
+                match refs
+                    .iter_mut()
+                    .find(|held| held.secret_ref == taint.secret_ref)
+                {
+                    Some(held) => held.generation = held.generation.min(taint.generation),
+                    None => refs.push(taint),
                 }
             }
             secret = secret.or(marked);
         }
-        if refs.len() > own_refs {
+        if refs != own_refs {
             self.answered(|| {
                 self.session
                     .side_table_put_routed(&self.route, &RAW_OUTPUT_TAINTS, &key, &refs)
@@ -289,8 +298,10 @@ impl SessionBinding<'_> {
 /// accessors route by mode — overlay while `OffRecord`, ordinary base after
 /// the room flips `OnRecord`. Adding a method here is adding a way for the
 /// executor to reach storage, so the set below is closed: identity, policy,
-/// search, and the four replay/raw-output accessors. The memory-write verbs
-/// are NOT here; they route inside their own dispatch bodies.
+/// search, the four replay/raw-output accessors, the known values a replay
+/// compares its rows with, and the two resume-divergence ask accessors
+/// (L8-23). The memory-write verbs are NOT here; they route inside their own
+/// dispatch bodies.
 pub(crate) enum ExecutorStorage<'a> {
     Canonical(&'a Vault),
     Session(SessionBinding<'a>),
@@ -372,6 +383,21 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.vault_id(),
             Self::Session(binding) => binding.session.vault_id(),
+        }
+    }
+
+    /// The values the owning vault's custody holds now, which a replay
+    /// compares a recorded row with (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+    /// session's too, whose rows are read over base. A matcher; neither
+    /// arm hands out the store it was read from.
+    ///
+    /// # Errors
+    ///
+    /// The custody read's.
+    pub(crate) fn base_known_values(&self) -> Result<Option<Arc<KnownValues>>> {
+        match self {
+            Self::Canonical(vault) => vault.known_values_now(),
+            Self::Session(binding) => binding.session.base_known_values(),
         }
     }
 
@@ -923,6 +949,17 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// The owner's `code_run.result_search.max_context` on the vault this
+    /// run's storage is on.
+    pub(crate) fn result_search_max_context(&self) -> Result<usize> {
+        match self {
+            Self::Canonical(vault) => {
+                crate::code_run::setting_keys::result_search_max_context(vault)
+            }
+            Self::Session(binding) => binding.session.result_search_max_context(),
+        }
+    }
+
     /// Wall milliseconds from the owning vault's injected clock.
     pub(crate) fn now_recorded_ms(&self) -> u64 {
         match self {
@@ -993,6 +1030,42 @@ impl<'a> ExecutorStorage<'a> {
                 line,
                 credit,
             ),
+        }
+    }
+
+    /// One run's resume-divergence ask (L8-23): the held step, the walk's report and the owner's
+    /// answer. A session-bound run reads none: an off-record run never writes an ask into the base
+    /// vault, so its divergence stays a plain hold.
+    pub(crate) fn resume_divergence_ask(
+        &self,
+        run: EntityId,
+    ) -> Result<Option<crate::engine_executor::resume_divergence::ResumeDivergenceAsk>> {
+        match self {
+            Self::Canonical(vault) => {
+                let txn = vault.store.env.read_txn()?;
+                crate::engine_executor::resume_divergence::read_resume_divergence_ask_in_txn(
+                    vault, &txn, run,
+                )
+            }
+            Self::Session(_) => Ok(None),
+        }
+    }
+
+    /// Raises the owner's ask on `report`'s drift, in one write on the canonical vault (L8-23).
+    /// A session-bound run writes none: an off-record run never writes an ask into the base vault,
+    /// so its divergence stays a plain hold.
+    pub(crate) fn raise_resume_divergence_ask(
+        &self,
+        run: EntityId,
+        report: &crate::engine_executor::ResumePreflightReport,
+    ) -> Result<()> {
+        match self {
+            Self::Canonical(vault) => vault.with_write_txn_grouped(|wtxn| {
+                crate::engine_executor::resume_divergence::raise_resume_divergence_ask_in_txn(
+                    vault, wtxn, run, report,
+                )
+            }),
+            Self::Session(_) => Ok(()),
         }
     }
 }

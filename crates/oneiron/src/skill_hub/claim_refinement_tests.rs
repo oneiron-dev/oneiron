@@ -615,6 +615,7 @@ fn native_claim_erase_matrix_keeps_the_id_fenced_after_reopen() -> Result<()> {
                         crate::registry::ENTITY_TYPE_CLAIM,
                         at(11),
                         11,
+                        None,
                         &encode_claim_body(&attempted)?
                     )
                     .commit()
@@ -644,6 +645,7 @@ fn replicated_refinement_origin_without_control_cannot_publish_approved_claim() 
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at(10),
                 10,
+                None,
                 &encode_claim_body(&forged)?
             )
             .commit()
@@ -673,6 +675,7 @@ fn replay_claim_refinement_entity(
                 entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                 occurred: at(stamp),
                 learned_at: stamp,
+                row_version: 0,
                 body: &data,
             },
             crate::sync::client::ImportTier::OwnDevice,
@@ -687,6 +690,7 @@ fn replay_claim_refinement_entity(
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at(stamp),
                 stamp,
+                None,
                 &data,
             )
             .commit()

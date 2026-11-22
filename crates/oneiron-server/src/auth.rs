@@ -32,6 +32,7 @@ mod seat_model_door;
 mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
+    door_refusal,
 };
 pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
@@ -88,6 +89,39 @@ const CORE_TOKEN_JTI_LEN: usize = 32;
 /// One key per revoked `jti`; the key IS the fact, so the value is empty.
 const REVOKED_TOKEN_JTI_PREFIX: &str = "auth:revoked-token-jti:";
 
+/// What [`RevokedTokenJtis::verify_slip`] refusing means: the credential
+/// does not verify, or the vault could not be read while judging it. A
+/// store fault is this server's failure, never the credential's: the
+/// caller answers it 500, not 401.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlipVerifyError {
+    /// The slip or its holder proof does not verify.
+    Refused,
+    /// The vault could not be read while judging the slip.
+    StoreFault,
+}
+
+/// Whether `error` from judging a slip is the vault failing to answer,
+/// not the credential failing to verify: a storage, index or IO fault, a
+/// stored grant row whose body does not decode, or a damaged authority
+/// clock floor. Any other failure stays the credential's refusal, as
+/// before. Only ordinary slip verification and admission read this; the
+/// clock repair and restriction-only doors keep their own answers.
+pub(crate) fn slip_verification_store_fault(error: &oneiron::Error) -> bool {
+    matches!(
+        error,
+        oneiron::Error::Storage(_)
+            | oneiron::Error::CorruptedIndex(_)
+            | oneiron::Error::MapFull
+            | oneiron::Error::Io(_)
+            | oneiron::Error::Store(_)
+            | oneiron::Error::Record(
+                oneiron::error::RecordError::InvalidFederationGrantBody(_)
+                    | oneiron::error::RecordError::AuthorityClockCorrupt
+            )
+    )
+}
+
 /// The revoked-token registry the verify path consults.
 ///
 /// Revocation is its own explicit act: a `jti` lands here only because an
@@ -110,8 +144,8 @@ pub(crate) trait RevokedTokenJtis {
         _timestamp: u64,
         _nonce: &[u8],
         _signature: &[u8],
-    ) -> Result<oneiron::authority::VerifiedSlip, ()> {
-        Err(())
+    ) -> Result<oneiron::authority::VerifiedSlip, SlipVerifyError> {
+        Err(SlipVerifyError::Refused)
     }
     /// Keeps the instrument [`Self::verify_slip`] admitted, for work the
     /// request queues. `Err` from a registry that keeps none: that request
@@ -154,9 +188,18 @@ impl RevokedTokenJtis for oneiron::Vault {
         timestamp: u64,
         nonce: &[u8],
         signature: &[u8],
-    ) -> Result<oneiron::authority::VerifiedSlip, ()> {
+    ) -> Result<oneiron::authority::VerifiedSlip, SlipVerifyError> {
+        // The log names the check that refused (FIX 23748): a reason dropped
+        // here cost hours of a trace.
         self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
-            .map_err(drop)
+            .map_err(|error| {
+                tracing::info!(%error, "slip request refused at admission");
+                if slip_verification_store_fault(&error) {
+                    SlipVerifyError::StoreFault
+                } else {
+                    SlipVerifyError::Refused
+                }
+            })
     }
 
     fn bind_invocation_slip(
@@ -494,7 +537,7 @@ impl CoreAuth {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn from_oauth_relay(subject: String, scopes: BTreeSet<CoreScope>) -> Self {
         Self {
             principal: format!("oauth-relay:{subject}"),
@@ -540,6 +583,25 @@ impl CoreAuth {
 
     pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
         self.verified_slip.as_ref()
+    }
+
+    /// The write actor `(actor, class)` as this request's credential writes:
+    /// marked handed on when its slip was handed on to another key
+    /// ([`oneiron::authority::VerifiedSlip::is_transferred`]), the person's
+    /// own other device key included. A marked Human writer acts as its key
+    /// holder, never as the person it names: it passes no person gate and
+    /// stamps no person's provenance (HANDED-ON-SLIP-PERSON, 15 Nov: Q1 = A,
+    /// Q2 = A), as the engine's `Memory::write_actor` marks it.
+    pub(crate) fn write_actor(
+        &self,
+        actor: oneiron::EntityId,
+        class: oneiron::EdgeActorClass,
+    ) -> oneiron::WriteActor {
+        let writer = oneiron::WriteActor::new(actor, class);
+        match self.verified_slip() {
+            Some(slip) if slip.is_transferred() => writer.with_handed_on_credential(),
+            _ => writer,
+        }
     }
 
     /// The managed owner this request was attested as
@@ -897,7 +959,7 @@ pub(crate) fn mint_core_token_v2(auth_secret: &str, claims: &str) -> String {
     format!("{CORE_TOKEN_V2_PREFIX}{claims}.{}", mac.to_hex())
 }
 
-fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
     let Some(value) = headers.get(AUTHORIZATION) else {
         return Ok(None);
     };

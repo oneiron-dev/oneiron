@@ -33,11 +33,15 @@ impl Vault {
     /// `regenerator_for` gives each hook its own regenerator (its own budget);
     /// `owner` is the owner's proof the host holds, if any; `keep_going` is
     /// asked before each hook, so a stopping host starts no further regen.
+    /// A copy restored and not joined regenerates none: the image's hooks
+    /// wait for the join (row RESTORED-UNJOINED-STARTS-NO-WORK), and the
+    /// host's first pass after it runs them.
     ///
     /// # Errors
     ///
-    /// Storage errors reading the due list. A hook's own failure is counted
-    /// in the report and the pass goes on.
+    /// Storage errors reading the due list; [`Self::restored_unjoined`]'s
+    /// errors. A hook's own failure is counted in the report and the pass
+    /// goes on.
     pub fn run_hook_regen_pass<R: HookRegenerator>(
         &self,
         runtime: &dyn HookBodyRuntime,
@@ -45,8 +49,11 @@ impl Vault {
         owner: Option<&AuthenticatedOwner>,
         keep_going: impl Fn() -> bool,
     ) -> Result<HookRegenPassReport> {
-        let current = HookContractStamp::current();
         let mut report = HookRegenPassReport::default();
+        if self.restored_unjoined()? {
+            return Ok(report);
+        }
+        let current = HookContractStamp::current();
         for binding in self.hooks_due_for_regen()? {
             if !keep_going() {
                 break;
@@ -116,6 +123,7 @@ impl Vault {
             (Some(HookAuthor::Agent { agent }), _) => Some(HookPut::Agent {
                 agent: WriteActor::new(agent, EdgeActorClass::Agent),
                 owner: None,
+                admit: None,
             }),
             (Some(_), Some(owner)) => Some(HookPut::Owner(owner)),
             _ => None,
