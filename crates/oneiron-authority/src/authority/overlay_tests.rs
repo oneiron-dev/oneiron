@@ -10,6 +10,7 @@ use super::*;
 
 /// Census Part A, minus whole overlay leaves and their descendants.
 /// Empty paths name op-map roots; `*` names any array or tuple element.
+/// `PROVISIONAL:` marks paths awaiting an overlay classification decision.
 const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
     ("slip_mint", &[], "operation map"),
     ("slip_mint", &["kind"], "operation discriminator"),
@@ -782,6 +783,11 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
         &["seen_world_edits", "*"],
         "Observed edit hash",
     ),
+    (
+        "machine_profile",
+        &["restored_from"],
+        "Opaque restored checkpoint image id",
+    ),
     ("machine_profile", &["carrier"], "Opaque carrier id"),
     (
         "machine_profile",
@@ -1010,6 +1016,36 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
         "residence_directive",
         &["worlds", "*"],
         "scaffold under the owner ruling",
+    ),
+    (
+        "residence_directive",
+        &["window_budget"],
+        "PROVISIONAL: Window limit the owner can choose for each prediction",
+    ),
+    (
+        "residence_directive",
+        &["document_budget"],
+        "PROVISIONAL: Document limit the owner can choose for each prediction",
+    ),
+    (
+        "residence_directive",
+        &["parent"],
+        "Opaque parent directive id",
+    ),
+    (
+        "residence_directive",
+        &["set_digest"],
+        "Digest of the separately stored prediction set",
+    ),
+    (
+        "residence_directive",
+        &["window_count"],
+        "Predicted window count",
+    ),
+    (
+        "residence_directive",
+        &["document_count"],
+        "Predicted document count",
     ),
     ("residence_result", &[], "operation map"),
     ("residence_result", &["kind"], "operation discriminator"),
@@ -2028,9 +2064,164 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
         &["machine"],
         "Opaque signer/carrier machine id",
     ),
-    ("policy_setting", &["setting"], "Closed setting selector"),
+    (
+        "policy_setting",
+        &["setting"],
+        "PROVISIONAL: Legacy selector or catalogue setting key name, not a closed tag",
+    ),
     ("policy_setting", &["prior"], "Prior settings commitment"),
     ("policy_setting", &["value"], "Opaque value commitment"),
+    (
+        "policy_setting",
+        &["slot"],
+        "PROVISIONAL: Encoded row key can include a named family item or scope",
+    ),
+    (
+        "policy_setting",
+        &["inline"],
+        "PROVISIONAL: JSON bytes of the chosen setting value",
+    ),
+    (
+        "policy_setting",
+        &["more"],
+        "Array of additional batch rows",
+    ),
+    ("policy_setting", &["more", "*"], "Batch row map"),
+    (
+        "policy_setting",
+        &["more", "*", "setting"],
+        "PROVISIONAL: Catalogue setting key name, not a closed tag",
+    ),
+    (
+        "policy_setting",
+        &["more", "*", "seen"],
+        "Revision commitment",
+    ),
+    (
+        "policy_setting",
+        &["more", "*", "prior"],
+        "Prior value commitment",
+    ),
+    (
+        "policy_setting",
+        &["more", "*", "value"],
+        "Opaque value commitment",
+    ),
+    (
+        "policy_setting",
+        &["more", "*", "slot"],
+        "PROVISIONAL: Encoded row key can include a named family item or scope",
+    ),
+    (
+        "policy_setting",
+        &["more", "*", "inline"],
+        "PROVISIONAL: JSON bytes of the chosen setting value",
+    ),
+    ("setting_copy", &[], "operation map"),
+    ("setting_copy", &["kind"], "operation discriminator"),
+    (
+        "setting_copy",
+        &["machine"],
+        "Opaque signer/carrier machine id",
+    ),
+    ("setting_copy", &["rows"], "Array of copied row maps"),
+    ("setting_copy", &["rows", "*"], "Copied row map"),
+    (
+        "setting_copy",
+        &["rows", "*", "slot"],
+        "PROVISIONAL: Encoded destination row key can include a named family item",
+    ),
+    (
+        "setting_copy",
+        &["rows", "*", "seen"],
+        "Revision commitment",
+    ),
+    (
+        "setting_copy",
+        &["rows", "*", "names"],
+        "Array of source row and act references",
+    ),
+    (
+        "setting_copy",
+        &["rows", "*", "names", "*"],
+        "Source row and act reference map",
+    ),
+    (
+        "setting_copy",
+        &["rows", "*", "names", "*", "slot"],
+        "PROVISIONAL: Encoded source row key can include a named family item or pack",
+    ),
+    (
+        "setting_copy",
+        &["rows", "*", "names", "*", "act"],
+        "Source authority entry hash",
+    ),
+    ("setting_pack_head", &[], "operation map"),
+    ("setting_pack_head", &["kind"], "operation discriminator"),
+    (
+        "setting_pack_head",
+        &["machine"],
+        "Opaque signer/carrier machine id",
+    ),
+    (
+        "setting_pack_head",
+        &["pack"],
+        "PROVISIONAL: Name of the pack whose defaults are tracked",
+    ),
+    (
+        "setting_pack_head",
+        &["version"],
+        "Version of the shipped pack, not an owner-entered value",
+    ),
+    ("setting_pack_head", &["digest"], "Defaults table digest"),
+    (
+        "setting_pack_head",
+        &["held"],
+        "PROVISIONAL: Array of setting names held at their earlier values",
+    ),
+    (
+        "setting_pack_head",
+        &["held", "*"],
+        "PROVISIONAL: Name of a setting held at its earlier value",
+    ),
+    ("setting_pack_head", &["seen"], "Revision commitment"),
+    ("setting_pack_head", &["act"], "Owner act map"),
+    ("setting_pack_head", &["act", "owner"], "Opaque owner id"),
+    (
+        "setting_pack_head",
+        &["act", "by"],
+        "Closed owner/agent selector",
+    ),
+    ("setting_pack_head", &["act", "agent"], "Opaque agent id"),
+    (
+        "setting_pack_head",
+        &["act", "grant"],
+        "Opaque grant reference",
+    ),
+    (
+        "setting_pack_head",
+        &["act", "surface"],
+        "Closed surface selector",
+    ),
+    (
+        "setting_pack_head",
+        &["act", "surface_machine"],
+        "Opaque linked machine id",
+    ),
+    ("setting_pack_head", &["act", "act"], "Closed action rule"),
+    ("setting_pack_head", &["act", "target"], "Opaque target id"),
+    ("setting_pack_head", &["act", "seen"], "Revision commitment"),
+    ("setting_pack_head", &["act", "answer"], "Opaque answer id"),
+    (
+        "setting_pack_head",
+        &["accepted"],
+        "PROVISIONAL: Array of setting names whose defaults the owner accepted",
+    ),
+    (
+        "setting_pack_head",
+        &["accepted", "*"],
+        "PROVISIONAL: Name of a setting whose default the owner accepted",
+    ),
     ("export_act", &[], "operation map"),
     ("export_act", &["kind"], "operation discriminator"),
     ("export_act", &["act"], "scaffold under the owner ruling"),
@@ -2335,6 +2526,303 @@ const SCAFFOLD_PATHS: &[(&str, &[&str], &str)] = &[
         "membership_execution",
         &["handover", "retired_own_device_grants", "*"],
         "Opaque grant id",
+    ),
+    ("root_appointment", &[], "operation map"),
+    ("root_appointment", &["kind"], "operation discriminator"),
+    ("root_appointment", &["root"], "Opaque recovery root id"),
+    (
+        "root_appointment",
+        &["successor"],
+        "Successor key verification map",
+    ),
+    (
+        "root_appointment",
+        &["successor", "key"],
+        "Verification key map",
+    ),
+    (
+        "root_appointment",
+        &["successor", "key", "suite"],
+        "Closed crypto-suite tag",
+    ),
+    (
+        "root_appointment",
+        &["successor", "key", "public_key"],
+        "Public verification bytes",
+    ),
+    (
+        "root_appointment",
+        &["successor", "transport_key_binding"],
+        "Fixed zero transport binding",
+    ),
+    (
+        "root_appointment",
+        &["successor", "attestation"],
+        "Proof-of-possession map",
+    ),
+    (
+        "root_appointment",
+        &["successor", "attestation", "kind"],
+        "Fixed successor proof kind",
+    ),
+    (
+        "root_appointment",
+        &["successor", "attestation", "evidence"],
+        "Raw successor possession signature, not device evidence",
+    ),
+    (
+        "root_appointment",
+        &["successor", "tier"],
+        "Closed authority tier",
+    ),
+    (
+        "root_appointment",
+        &["successor", "roles"],
+        "Fixed successor role bits",
+    ),
+    ("restored_machine_join", &[], "operation map"),
+    (
+        "restored_machine_join",
+        &["kind"],
+        "operation discriminator",
+    ),
+    ("restored_machine_join", &["act"], "Owner act map"),
+    (
+        "restored_machine_join",
+        &["act", "owner"],
+        "Opaque owner id",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "by"],
+        "Closed owner/agent selector",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "agent"],
+        "Opaque agent id",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "grant"],
+        "Opaque grant reference",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "surface"],
+        "Closed surface selector",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "surface_machine"],
+        "Opaque linked machine id",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "act"],
+        "Closed action rule",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "target"],
+        "Opaque target id",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "seen"],
+        "Revision commitment",
+    ),
+    (
+        "restored_machine_join",
+        &["act", "answer"],
+        "Opaque answer id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment"],
+        "Held enrolment entry hash",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile"],
+        "Inline machine profile map",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "kind"],
+        "Nested machine profile discriminator",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "machine"],
+        "Opaque machine id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "owner"],
+        "Opaque owner id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "machine_key"],
+        "Install public verification key",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "device_class"],
+        "Closed machine class",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "encryption_suite"],
+        "Crypto-suite selector",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "encryption_key"],
+        "Public encryption key",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "role"],
+        "Closed machine role",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "revision"],
+        "Revision sequence",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "machine_proof"],
+        "Proof of possession",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "seen_world_edits"],
+        "Array of observed edit hashes",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "seen_world_edits", "*"],
+        "Observed edit hash",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "restored_from"],
+        "Opaque restored checkpoint image id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "carrier"],
+        "Opaque carrier id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act"],
+        "Owner act map",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "owner"],
+        "Opaque owner id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "by"],
+        "Closed owner/agent selector",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "agent"],
+        "Opaque agent id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "grant"],
+        "Opaque grant reference",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "surface"],
+        "Closed surface selector",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "surface_machine"],
+        "Opaque linked machine id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "act"],
+        "Closed action rule",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "target"],
+        "Opaque target id",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "seen"],
+        "Revision commitment",
+    ),
+    (
+        "restored_machine_join",
+        &["enrolment_profile", "act", "answer"],
+        "Opaque answer id",
+    ),
+    ("recovery_hold", &[], "operation map"),
+    ("recovery_hold", &["kind"], "operation discriminator"),
+    ("recovery_hold", &["owner"], "Opaque owner id"),
+    (
+        "recovery_hold",
+        &["enrolment"],
+        "Successor enrolment verification map",
+    ),
+    (
+        "recovery_hold",
+        &["enrolment", "machine"],
+        "Opaque successor machine id",
+    ),
+    (
+        "recovery_hold",
+        &["enrolment", "public_key"],
+        "Successor public verification key",
+    ),
+    (
+        "recovery_hold",
+        &["enrolment", "proof"],
+        "Raw successor possession signature",
+    ),
+    (
+        "recovery_hold",
+        &["lost"],
+        "Array of lost verification keys",
+    ),
+    ("recovery_hold", &["lost", "*"], "Verification key map"),
+    (
+        "recovery_hold",
+        &["lost", "*", "suite"],
+        "Closed crypto-suite tag",
+    ),
+    (
+        "recovery_hold",
+        &["lost", "*", "public_key"],
+        "Public verification bytes",
+    ),
+    ("recovery_hold", &["lands_at"], "Landing timestamp"),
+    ("recovery_hold_answer", &[], "operation map"),
+    ("recovery_hold_answer", &["kind"], "operation discriminator"),
+    (
+        "recovery_hold_answer",
+        &["hold"],
+        "Recovery hold entry hash",
+    ),
+    (
+        "recovery_hold_answer",
+        &["answer"],
+        "Closed cancel/confirm enum",
     ),
 ];
 
