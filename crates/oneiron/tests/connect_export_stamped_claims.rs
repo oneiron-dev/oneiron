@@ -21,8 +21,7 @@
 //! - A causally admitted MACHINE-signed private claim in the granted world
 //!   is withheld, while the plain private claim still rides.
 //! - A summary in the granted world whose covered claim is use-limited (a
-//!   privacy erase a standing customer hold refused) is withheld, as the
-//!   claim itself is.
+//!   cooperative review restriction) is withheld, as the claim itself is.
 //! - The Connect guest's own envelope fetch (`vault.guests.export_envelope`)
 //!   reads what the export selects under its grant: the private claim at the
 //!   ceiling, not the sensitive one above it. E2E FEDERATION-04 (20 Nov
@@ -47,17 +46,13 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
-use oneiron::authority::{
-    CausalWriteDisposition, HostSlipIssuer, MachineRole, PeerMachine, VerifiedSlip,
-};
+use oneiron::authority::{CausalWriteDisposition, HostSlipIssuer, PeerMachine, VerifiedSlip};
 use oneiron::claim::CallerLocality;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::federation::{
     FederationDirectionScope, FederationGrantRole, FederationGrantScope, Scope, ScopeAxis, ScopeId,
     Sensitivity, SensitivityCeiling,
 };
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::settings::ReadDestination;
 use oneiron::store::GateDecisionId;
@@ -70,14 +65,14 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
     ConnectExportRequest, SyncClient, SyncSelector, SyncSelectorWorld, filtered_window_doc_for_peer,
 };
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::test_doors::disclosure_word_sources::install_shipped_policy_with_ordinary_predicate;
 use oneiron::test_doors::membership::stand_member_grant;
-use oneiron::test_doors::owner_key_release::bind_owner_with_owner_key;
 use oneiron::write_envelope::MachineWriteSignature;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
-    WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
 use oneiron_store::conversation_summary::conversation_summary_covers;
 use rmpv::Value;
@@ -349,22 +344,12 @@ fn connect_export_with<T>(
         &Claims,
     ) -> TestResult<T>,
 ) -> TestResult<(LoroDoc, Claims, T)> {
-    connect_export_from(VaultConfig::default(), ceiling, prepare)
-}
-
-/// As `connect_export_with`, from a source vault opened with `config`.
-fn connect_export_from<T>(
-    config: VaultConfig,
-    ceiling: Sensitivity,
-    prepare: impl FnOnce(
-        &Vault,
-        &AuthenticatedOwner,
-        &HostSlipIssuer,
-        EntityId,
-        &Claims,
-    ) -> TestResult<T>,
-) -> TestResult<(LoroDoc, Claims, T)> {
-    pact_window_from(config, ceiling, prepare, connect_window_update)
+    pact_window_from(
+        VaultConfig::default(),
+        ceiling,
+        prepare,
+        connect_window_update,
+    )
 }
 
 /// The source side of an accepted Connect pact over its world `world`.
@@ -615,27 +600,15 @@ fn a_connect_grant_carries_a_summary_whose_words_come_from_its_world() -> TestRe
 }
 
 /// Pins the use limit on a stamped word source (review round 2 of #9526). A
-/// privacy erase that a standing customer hold refuses keeps the covered
-/// claim stored but use-limited (only where Oneiron hosts the bytes, so the
-/// source vault is Hosted), and the export withholds the claim itself; a
-/// summary in W quoting it must be withheld too. On main 9622dba76276 the
-/// LEAK assertion passes, but the private-carry FIXTURE fails. On dcb16249
-/// the LEAK fails; with the round-2 fix both pass.
+/// cooperative review restriction use-limits the covered claim, and the
+/// export withholds the claim itself; a summary in W quoting it must be
+/// withheld too. On main 9622dba76276 the LEAK assertion passes, but the
+/// private-carry FIXTURE fails. On dcb16249 the LEAK fails; with the round-2
+/// fix both pass.
 #[test]
 fn a_connect_grant_withholds_a_summary_whose_words_come_from_a_use_limited_claim() -> TestResult {
-    let mut hosted = VaultConfig::default();
-    hosted.privacy.posture = HostingPrivacyPosture::Hosted;
-    let (doc, claims, (summary, covered)) = connect_export_from(
-        hosted,
-        Sensitivity::Private,
-        |vault, owner, issuer, world, _| {
-            // A Hosted root binds no person, and the erase below needs the
-            // owner's binding: the owner binds with this install's owner key,
-            // whose enrolment needs a keystore and a serving install profile.
-            vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-            vault.ensure_serving_install_profile(issuer, MachineRole::Unanswered)?;
-            let actor = vault.ensure_embedded_owner_actor()?;
-            bind_owner_with_owner_key(vault, owner, issuer, actor)?;
+    let (doc, claims, (summary, covered)) =
+        connect_export_with(Sensitivity::Private, |vault, _, _, world, _| {
             let subject = put_person(vault, "kenji")?;
             let covered = put_claim(
                 vault,
@@ -646,38 +619,9 @@ fn a_connect_grant_withholds_a_summary_whose_words_come_from_a_use_limited_claim
                 "lighthouse keeper".into(),
             )?;
             let summary = put_summary(vault, world, covered)?;
-            let hold = vault.place_legal_hold(
-                owner,
-                vec![LegalHoldTarget::Record(covered)],
-                Some("matter-9526".to_owned()),
-            )?;
-            assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-            let memory = vault.memory(actor, EdgeActorClass::Human);
-            let preview = memory
-                .preview_entity_delete(&covered)
-                .expect("FIXTURE: preview the covered claim's erase");
-            let outcome = memory
-                .confirm_entity_erase(
-                    &preview,
-                    EraseOptions {
-                        reason: EraseReason::GdprDelete,
-                        also_same_bytes: false,
-                        veto_starter: None,
-                    },
-                )
-                .expect("FIXTURE: the privacy erase runs");
-            assert_eq!(
-                outcome.first.reason.as_str(),
-                "privacy_erase_kept",
-                "FIXTURE: the held privacy erase is kept: {outcome:?}"
-            );
-            assert!(
-                vault.legal_hold_use_limit(&covered)?.is_some(),
-                "FIXTURE: the kept erase use-limits the covered claim"
-            );
+            restrict_record(vault, covered)?;
             Ok((summary, covered))
-        },
-    )?;
+        })?;
     assert!(
         carries(&doc, claims.private),
         "FIXTURE: the Connect export carries the plain private claim in W"

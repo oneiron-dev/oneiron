@@ -10,13 +10,12 @@
 //!
 //! Two Grants never combine: Grants that hold the position only together,
 //! or a Grant whose facets miss the position's facet, show nothing. A
-//! revoked Grant shows nothing, and so does a Grant once a legal use limit
-//! keeps the stored claim for storage alone (a hosted vault, where the
-//! owner's customer hold refuses its privacy erase; review round 2).
-//! The use limit hides the decision from a reader's own floor too: a
+//! revoked Grant shows nothing, and so does a Grant once a cooperative
+//! review restriction keeps the stored claim for storage alone (review round
+//! 2). The use limit hides the decision from a reader's own floor too: a
 //! paired agent, which reads by the envelope of the owner's Grants that
-//! name it, sees nothing once the claim is kept for storage alone, as the
-//! named-row gate refuses the claim to it (FIX-LIST
+//! name it, sees nothing once the claim is restricted for storage alone, as
+//! the named-row gate refuses the claim to it (FIX-LIST
 //! LOOP-KEPT-POSITION-USE-LIMIT-FLOOR).
 //!
 //! The decision is the agent's own refused applied-maintenance decision
@@ -47,10 +46,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{PairingPrincipal, VerifiedSlip, pairing_binding_transcript_pinned};
 use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::memory::{EraseOptions, EraseReason, Memory};
+use oneiron::memory::Memory;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM};
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::test_doors::loop_kept_position::record_kept_position_receipt;
 use oneiron::test_doors::steward::owner as owner_proof;
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
@@ -215,8 +214,8 @@ impl Fixture {
         Self::open_in(VaultConfig::device())
     }
 
-    /// [`Self::open`] on a hosted vault, where a refused privacy erase keeps
-    /// a record as storage only.
+    /// [`Self::open`] on a hosted vault, where a cooperative review
+    /// restriction use-limits a record.
     fn open_hosted() -> Self {
         let mut config = VaultConfig::device();
         config.privacy.posture = HostingPrivacyPosture::Hosted;
@@ -393,47 +392,11 @@ impl Fixture {
         .is_ok_and(|read| read.get("value").is_some_and(|value| !value.is_null()))
     }
 
-    /// The owner places a customer hold on the stored claim and runs its
-    /// privacy erase, which the hold refuses: the claim stays stored, kept
-    /// for storage alone under a legal use limit (C6).
-    fn keep_the_claim_use_limited(&self) {
+    /// The owner restricts the stored claim under a cooperative review: the
+    /// claim stays stored, kept for storage alone under a use limit.
+    fn restrict_the_claim(&self) {
         let claim = EntityId::from_hex(&self.claim).expect("the claim id");
-        let proof = owner_proof(&self.vault).expect("the owner's proof");
-        let hold = self
-            .vault
-            .place_legal_hold(
-                &proof,
-                vec![LegalHoldTarget::Record(claim)],
-                Some("matter-kept-position".to_owned()),
-            )
-            .expect("FIXTURE: the owner places a customer hold on the claim");
-        assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-        let owner = self.owner();
-        let preview = owner
-            .preview_entity_delete(&claim)
-            .expect("FIXTURE: the owner previews the claim's privacy erase");
-        let outcome = owner
-            .confirm_entity_erase(
-                &preview,
-                EraseOptions {
-                    reason: EraseReason::GdprDelete,
-                    also_same_bytes: false,
-                    veto_starter: None,
-                },
-            )
-            .expect("FIXTURE: the claim's privacy erase runs");
-        assert_eq!(
-            outcome.first.reason.as_str(),
-            "privacy_erase_kept",
-            "FIXTURE: the held privacy erase is kept: {outcome:?}"
-        );
-        assert!(
-            self.vault
-                .legal_hold_use_limit(&claim)
-                .expect("FIXTURE: the use limit reads")
-                .is_some(),
-            "FIXTURE: the kept erase use-limits the claim"
-        );
+        restrict_record(&self.vault, claim).expect("FIXTURE: restrict the claim");
     }
 
     /// The fixture's own facts: the candidate never landed, and the owner
@@ -538,9 +501,10 @@ fn a_grant_whose_facets_miss_the_kept_positions_facet_shows_nothing() {
     );
 }
 
-/// Review round 2 of #10040: a stored claim a legal use limit keeps for
-/// storage alone is absent to every ordinary reader on the named-row route,
-/// so one Grant alone never shows a decision through its kept position.
+/// Review round 2 of #10040: a stored claim a cooperative review restriction
+/// keeps for storage alone is absent to every ordinary reader on the
+/// named-row route, so one Grant alone never shows a decision through its kept
+/// position.
 #[test]
 fn a_grant_shows_no_decision_kept_at_a_use_limited_claim() {
     let fixture = Fixture::open_hosted();
@@ -553,24 +517,24 @@ fn a_grant_shows_no_decision_kept_at_a_use_limited_claim() {
     let report = fixture.agent_admissions();
     assert!(
         decision_item(&report, &fixture.decision).is_some(),
-        "FIXTURE: the agent's one Grant shows its decision before the hold: {report:#}"
+        "FIXTURE: the agent's one Grant shows its decision before the restriction: {report:#}"
     );
 
-    fixture.keep_the_claim_use_limited();
+    fixture.restrict_the_claim();
     let reads_claim = fixture.agent_reads_the_claim();
     let report = fixture.agent_admissions();
     assert!(
         decision_item(&report, &fixture.decision).is_none(),
-        "a legal use limit keeps the claim at the kept position for storage alone (the agent \
-         reads it on vault.get: {reads_claim}), yet its one Grant still shows the decision kept \
-         there: {report:#}"
+        "a cooperative review restriction keeps the claim at the kept position for storage alone \
+         (the agent reads it on vault.get: {reads_claim}), yet its one Grant still shows the \
+         decision kept there: {report:#}"
     );
 }
 
 /// A paired agent reads by its own floor, the envelope of the owner's
-/// Grants that name it, not by one Grant alone: the legal use limit hides
-/// the decision kept at the claim's position from that floor too, as the
-/// named-row gate refuses the claim to it (FIX-LIST
+/// Grants that name it, not by one Grant alone: the cooperative review
+/// restriction hides the decision kept at the claim's position from that
+/// floor too, as the named-row gate refuses the claim to it (FIX-LIST
 /// LOOP-KEPT-POSITION-USE-LIMIT-FLOOR).
 #[test]
 fn a_paired_agents_own_floor_shows_no_decision_kept_at_a_use_limited_claim() {
@@ -585,16 +549,16 @@ fn a_paired_agents_own_floor_shows_no_decision_kept_at_a_use_limited_claim() {
     let report = fixture.agent_admissions();
     assert!(
         decision_item(&report, &fixture.decision).is_some(),
-        "FIXTURE: the paired agent sees its decision before the hold: {report:#}"
+        "FIXTURE: the paired agent sees its decision before the restriction: {report:#}"
     );
 
-    fixture.keep_the_claim_use_limited();
+    fixture.restrict_the_claim();
     let reads_claim = fixture.agent_reads_the_claim();
     let report = fixture.agent_admissions();
     assert!(
         decision_item(&report, &fixture.decision).is_none(),
-        "a legal use limit keeps the claim at the kept position for storage alone (the paired \
-         agent reads it on vault.get: {reads_claim}), yet its own floor still shows the decision \
-         kept there: {report:#}"
+        "a cooperative review restriction keeps the claim at the kept position for storage alone \
+         (the paired agent reads it on vault.get: {reads_claim}), yet its own floor still shows \
+         the decision kept there: {report:#}"
     );
 }

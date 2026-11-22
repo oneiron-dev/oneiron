@@ -1,27 +1,27 @@
-//! A row a refused privacy erase keeps for storage only leaves the owner's full window and the
-//! owner's text lane (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; FIX
-//! USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS (e)/(f)).
+//! A row a cooperative review restriction keeps for storage only leaves the owner's full window
+//! and the owner's text lane (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov
+//! 21:19; FIX USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS (e)/(f)).
 //!
-//! The ruling: "a C6 row packs as withheld in the owner window (like a device-only row) and
-//! export_owner refuses it, so devices drop it the way they drop an erased row." The hosted vault
-//! keeps its stored copy for the hold.
+//! The ruling: "a use-limited row packs as withheld in the owner window (like a device-only row)
+//! and export_owner refuses it, so devices drop it the way they drop an erased row." The hosted
+//! vault keeps its stored copy for the restriction.
 //!
 //! * `a_kept_row_leaves_the_owner_window_and_the_device_holds_it_back`: a hosted hub and an own
-//!   device share a window that carries two rows. A customer hold refuses the privacy erase of
+//!   device share a window that carries two rows. A cooperative review restriction use-limits
 //!   one. The hub's next export takes its carrier out of the window and files a withholding
 //!   marker; the device lands both, so its window no longer carries the row (a restore from the
 //!   device's window lacks it), the row reads to no one there, and the device's own packing never
 //!   sends it back (an edit the device makes to it stays local). The other row rides as before.
-//! * `a_peer_behind_the_kept_row_takes_a_replacement_without_it`: after the keep, the hub answers a
-//!   peer that holds nothing of the window with a replacement snapshot, and a fresh device synced
-//!   through the doors holds the other row and no byte of the kept one.
+//! * `a_peer_behind_the_kept_row_takes_a_replacement_without_it`: after the restriction, the hub
+//!   answers a peer that holds nothing of the window with a replacement snapshot, and a fresh
+//!   device synced through the doors holds the other row and no byte of the kept one.
 //! * `the_owner_lane_sends_no_text_of_a_kept_note`: a hosted vault's owner-lane export of a NOTE
-//!   answers before the keep and refuses after it, and a frame queued before the keep is withheld
-//!   at release.
-//! * `a_send_queued_before_the_keep_is_withheld_at_release` (REVIEW-9846 P1 1): window bytes that
-//!   insert the row's carrier, queued before the keep and released after it, are withheld at the
-//!   door that sends them; the hub's scrubbed export, which carries the withholding marker,
-//!   still sends.
+//!   answers before the restriction and refuses after it, and a frame queued before the
+//!   restriction is withheld at release.
+//! * `a_send_queued_before_the_restriction_is_withheld_at_release` (REVIEW-9846 P1 1): window
+//!   bytes that insert the row's carrier, queued before the restriction and released after it,
+//!   are withheld at the door that sends them; the hub's scrubbed export, which carries the
+//!   withholding marker, still sends.
 //! * `an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window` (REVIEW-9846 P1 5, round 2
 //!   P1 2): a window carries an edge to the kept row, whose own carrier rides in another month's
 //!   window. The hub's next export of it takes the edge out and files no marker there, since a
@@ -33,9 +33,9 @@
 //! * `a_device_holding_a_kept_note_back_never_packs_it_again` (round 2 P1 4): a device that landed
 //!   the marker for a kept NOTE still stores the NOTE and holds no use limit; its own NOTE refresh
 //!   never packs the NOTE into its window again.
-//! * `a_kept_notes_pending_fork_text_leaves_the_window` (REVIEW-9846 P1 3): before the keep, the
-//!   window packs a NOTE's undecided fork text; after it, the export carries no byte of that text
-//!   and no carrier of the NOTE, and files the marker.
+//! * `a_kept_notes_pending_fork_text_leaves_the_window` (REVIEW-9846 P1 3): before the
+//!   restriction, the window packs a NOTE's undecided fork text; after it, the export carries no
+//!   byte of that text and no carrier of the NOTE, and files the marker.
 //!
 //! Named limits, not tested here: a whole-vault export run on the device still carries the held
 //! row's bytes (its egress asks off-record and the device's own use limits, not the source
@@ -62,16 +62,13 @@ mod sync_harness;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, VersionVector};
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::note::NoteProgramEdit;
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::{Materializer, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, UpdateVerdict, WindowExport};
 use oneiron::sync::{WindowManager, documents};
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::test_doors::source_audience_binding;
 use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, HostingPrivacyPosture, Vad, Vault, VaultConfig, WriteActor,
@@ -96,15 +93,6 @@ fn hosted_config() -> VaultConfig {
     config
 }
 
-fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: owner proof")
-}
-
 /// Mints this install's machine id, as a paired machine holds one: a withholding marker names
 /// the machine that filed it, and a holder lifts a marker that names itself.
 fn mint_machine_id(vault: &Vault) {
@@ -116,50 +104,14 @@ fn mint_machine_id(vault: &Vault) {
         .expect("FIXTURE: mint the machine id");
 }
 
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited on this hosted vault.
-fn keep_use_limited(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-owner-window".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record, and the owner's window withholds its carrier.
+fn restrict(vault: &Vault, record: EntityId) {
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
-/// A hosted hub and an own device whose shared window carries a row the hub then keeps under a
-/// use limit, and another row.
+/// A hosted hub and an own device whose shared window carries a row the hub then restricts under
+/// a use limit, and another row.
 struct Shared {
     hub: TestNode,
     device: TestNode,
@@ -193,10 +145,10 @@ fn shared_then_kept() -> Shared {
             .get_raw(&kept)
             .expect("FIXTURE: read the device row")
             .is_some(),
-        "FIXTURE: the device holds the row before the keep"
+        "FIXTURE: the device holds the row before the restriction"
     );
 
-    keep_use_limited(&hub.vault, kept);
+    restrict(&hub.vault, kept);
     Shared {
         hub,
         device,
@@ -252,13 +204,6 @@ fn a_kept_row_leaves_the_owner_window_and_the_device_holds_it_back() {
     assert!(
         !carries(&hub, &kept),
         "the hub's window no longer carries the kept row"
-    );
-    assert!(
-        hub.vault
-            .legal_hold_use_limit(&kept)
-            .expect("read the use limit")
-            .is_some(),
-        "the hub keeps its stored copy under the use limit"
     );
     assert!(
         withheld_marker(&hub, &kept),
@@ -360,13 +305,13 @@ fn the_owner_lane_sends_no_text_of_a_kept_note() {
     let nothing = VersionVector::default().encode();
     let frame = manager
         .export_owner_document(note, &nothing)
-        .expect("FIXTURE: the owner lane exports the NOTE before the keep");
+        .expect("FIXTURE: the owner lane exports the NOTE before the restriction");
     assert!(
         !documents::document_frame_withheld(&source, &frame),
-        "FIXTURE: the NOTE's frame releases before the keep"
+        "FIXTURE: the NOTE's frame releases before the restriction"
     );
 
-    keep_use_limited(&source, note);
+    restrict(&source, note);
 
     let refused = manager
         .export_owner_document(note, &nothing)
@@ -377,7 +322,7 @@ fn the_owner_lane_sends_no_text_of_a_kept_note() {
     );
     assert!(
         documents::document_frame_withheld(&source, &frame),
-        "a frame queued before the keep is withheld at release"
+        "a frame queued before the restriction is withheld at release"
     );
 }
 
@@ -469,10 +414,11 @@ fn a_device_holding_a_kept_note_back_never_packs_it_again() {
                 .get_raw(&note)
                 .expect("FIXTURE: read the device's NOTE")
                 .is_some(),
-        "FIXTURE: the device's window carries the NOTE and the device stores it before the keep"
+        "FIXTURE: the device's window carries the NOTE and the device stores it before the \
+         restriction"
     );
 
-    keep_use_limited(&hub.vault, note);
+    restrict(&hub.vault, note);
     deliver_window(&hub, &mut device, &month);
     let device_owner = device
         .vault
@@ -546,7 +492,7 @@ fn holds_text(doc: &LoroDoc, text: &str) -> bool {
 }
 
 #[test]
-fn a_send_queued_before_the_keep_is_withheld_at_release() {
+fn a_send_queued_before_the_restriction_is_withheld_at_release() {
     let mut hub = TestNode::with_config("hub", 2, hosted_config());
     mint_machine_id(&hub.vault);
     hub.open_window(WINDOW);
@@ -574,15 +520,15 @@ fn a_send_queued_before_the_keep_is_withheld_at_release() {
     assert_eq!(
         window::raw_update_verdict(&manager, WINDOW, &queued),
         UpdateVerdict::Portable,
-        "FIXTURE: the send releases before the keep"
+        "FIXTURE: the send releases before the restriction"
     );
 
-    keep_use_limited(&hub.vault, kept);
+    restrict(&hub.vault, kept);
 
     assert_eq!(
         window::raw_update_verdict(&manager, WINDOW, &queued),
         UpdateVerdict::Withheld,
-        "a send queued before the keep ships no carrier of the kept row after it"
+        "a send queued before the restriction ships no carrier of the kept row after it"
     );
     let key = WindowKey::new(WINDOW);
     let nothing = VersionVector::default().encode();
@@ -637,7 +583,7 @@ fn an_edge_naming_a_kept_row_carried_elsewhere_leaves_the_window() {
         "FIXTURE: the window carries the edge, and the kept row's carrier rides elsewhere"
     );
 
-    keep_use_limited(&hub.vault, kept);
+    restrict(&hub.vault, kept);
     let key = WindowKey::new(WINDOW);
     let nothing = VersionVector::default().encode();
     window::export_window_updates_since(&hub.vault, &key, hub.doc(WINDOW), &nothing)
@@ -701,15 +647,15 @@ fn a_kept_notes_pending_fork_text_leaves_the_window() {
     let window = manager.open_window(&key).expect("FIXTURE: open the window");
     let nothing = VersionVector::default().encode();
     window::export_window_updates_since(&vault, &key, &window.doc, &nothing)
-        .expect("FIXTURE: the export door answers before the keep");
+        .expect("FIXTURE: the export door answers before the restriction");
     assert!(
         holds_text(&window.doc, FORK_TEXT),
-        "FIXTURE: before the keep the window packs the undecided fork's text"
+        "FIXTURE: before the restriction the window packs the undecided fork's text"
     );
 
-    keep_use_limited(&vault, note);
+    restrict(&vault, note);
     window::export_window_updates_since(&vault, &key, &window.doc, &nothing)
-        .expect("the export door answers after the keep");
+        .expect("the export door answers after the restriction");
 
     assert!(
         !holds_text(&window.doc, FORK_TEXT),

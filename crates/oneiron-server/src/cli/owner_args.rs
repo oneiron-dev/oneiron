@@ -581,8 +581,8 @@ pub struct RecoverWindowArgs {
 
     /// Also re-bootstrap the window (a pathological history): its CRDT state
     /// becomes the rebuilt state with no history behind it, and every device
-    /// behind it resyncs from a replacement. Refused while a legal hold names
-    /// any row the window carries.
+    /// behind it resyncs from a replacement. Refused while a cooperative
+    /// restriction names any row the window carries.
     #[arg(long)]
     pub rebootstrap: bool,
 
@@ -1200,14 +1200,17 @@ pub enum LegalHoldsCommand {
     List(Box<ServeOnlyArgs>),
     /// The hold log, oldest first: ids, times and reason codes.
     Log(Box<ServeOnlyArgs>),
-    /// Place a hold. Deletes of what it names then fail for agents, timers,
-    /// members and you alike; every other verb keeps working.
+    /// Place a hold. It seals a separate copy outside the vault; deletes
+    /// and erases of what it names keep working.
     Place(Box<LegalHoldPlaceArgs>),
     /// Add records or partitions to one of your standing holds.
     Widen(Box<LegalHoldWidenArgs>),
-    /// "Lift the hold and erase?": lift your holds on these records and
-    /// erase them. Prints the confirm's prompt, and acts only with `--yes`.
-    LiftAndErase(Box<LegalHoldLiftArgs>),
+    /// Lift one of your holds. Destroys its sealed copy; nothing in the
+    /// vault is erased by it.
+    Lift(Box<LegalHoldLiftArgs>),
+    /// Re-seal one of your standing holds to a named recipient public key.
+    /// The access is logged.
+    Produce(Box<LegalHoldProduceArgs>),
 }
 
 /// What a hold names.
@@ -1233,6 +1236,11 @@ pub struct LegalHoldPlaceArgs {
     #[arg(long)]
     pub matter_ref: Option<String>,
 
+    /// Also hold future messages until this recorded time (seconds):
+    /// every new vault MESSAGE joins the copy.
+    #[arg(long)]
+    pub future_messages_until: Option<u64>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -1251,21 +1259,28 @@ pub struct LegalHoldWidenArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct LegalHoldLiftArgs {
-    /// The records to lift and erase, 32 hex each.
-    #[arg(
-        required_unless_present = "claim_free_partition",
-        value_name = "RECORD"
-    )]
-    pub records: Vec<String>,
+    /// The hold to lift, 32 hex, as `list` names it.
+    #[arg(long, value_name = "HEX")]
+    pub hold: String,
 
-    /// Also release every customer hold on the claim-free gate-decision
-    /// partition, the one the retention-horizon sweep ages (FIX 9782).
-    #[arg(long)]
-    pub claim_free_partition: bool,
-
-    /// You have read the prompt and confirm it.
+    /// You have read the hold this lift prints and confirm it. Without it
+    /// the hold is shown and nothing is lifted.
     #[arg(long)]
     pub yes: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldProduceArgs {
+    /// The standing hold to produce, 32 hex, as `list` names it.
+    #[arg(long, value_name = "HEX")]
+    pub hold: String,
+
+    /// The recipient public key, STANDARD base64 of its bytes.
+    #[arg(long, value_name = "BASE64")]
+    pub recipient_key: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

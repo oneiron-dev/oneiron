@@ -1,29 +1,30 @@
-//! Legal holds across a restore and against backup expiry (OF-470;
-//! ARCH-0038 #legal-hold: every path that destroys bytes reads a hold).
+//! Legal holds across a restore and the vault-deletion guard against backup
+//! expiry (OF-470).
 //!
 //! A host order and its host-only log are runtime rows no image's canonical
 //! rows carry (`tiers`), so an owner's backup never holds one. A restore that
 //! takes a live vault's place, or makes a copy beside it, takes on that
-//! vault's whole host-order family: rows, target index, log and erase links,
-//! so an order Oneiron must keep never lapses because content came back from
-//! an image. A restore with no live vault (a clean host, a wake, a migration)
-//! has nowhere to read them: the host carries them itself, from
+//! vault's whole host-order family: rows and log, so an order Oneiron must
+//! keep never lapses because content came back from an image. A restore with
+//! no live vault (a clean host, a wake, a migration) has nowhere to read
+//! them: the host carries them itself, from
 //! [`Vault::carried_host_order_holds`] before to
 //! [`Vault::install_carried_host_order_holds`] after. Where the source is
 //! gone, a hosted vault's checkpoint carries the family itself, sealed to its
 //! host's recipient and never to the owner (`seal`, FIX 6598).
 //!
-//! A backup holds every record its image carries, so while a customer hold
-//! stands none expires ([`Vault::legal_hold_keeps_backups`]). A host order
-//! keeps no backup: what it covers is copied into the host's separate
-//! legal-hold store (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05), so
-//! only that clone and its custody outlive the vault's own expiry.
-//! An expiry that unlinks reads the holds under the LMDB writer and unlinks
-//! inside it ([`Vault::with_backup_hold_exclusion`]): a hold placed meanwhile
-//! commits before the read or after the unlink, never between (FIX 1488).
-//! Each committed release, and each maintenance pass, bumps one content-free
-//! counter ([`Vault::backup_hold_rechecks`]), so a delete a hold deferred
-//! asks again.
+//! A backup holds every record its image carries, but no legal hold keeps a
+//! backup any more (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling):
+//! every hold keeps its sealed copy outside the vault, and ordinary backup
+//! expiry runs as it would without one. Only that clone and its custody
+//! outlive the vault's own expiry.
+//! An expiry that unlinks reads whether the vault's Owners deleted it under
+//! the LMDB writer and unlinks inside it
+//! ([`Vault::with_backup_hold_exclusion`]): a deletion commits before the
+//! read or after the unlink, never between (FIX 1488, FIX 11432). Each
+//! committed release, and each maintenance pass, bumps one content-free
+//! counter ([`Vault::backup_hold_rechecks`]), so a deferred delete asks
+//! again.
 
 mod seal;
 
@@ -125,35 +126,17 @@ impl Vault {
         })
     }
 
-    /// Whether a standing customer hold keeps every backup of this vault: one
-    /// that expires a backup asks first, and keeps them all while it does. A
-    /// host order keeps none ([`crate::deletion::LegalHold::keeps_vault_data`]).
-    pub fn legal_hold_keeps_backups(&self) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        Ok(backup_holds_in_txn(self, &txn)?.keeps_backups())
-    }
-
-    /// How many holds keep this vault's data, read as
-    /// [`Self::legal_hold_keeps_backups`] reads them: the standing customer
-    /// holds, what a host asks before it erases the whole vault. A host order
-    /// is not counted: its clone lives in the host's own legal-hold store,
-    /// which the host consults itself. A count, nothing of any hold.
-    pub fn standing_legal_holds(&self) -> Result<u64> {
-        let txn = self.store.env.read_txn()?;
-        Ok(backup_holds_in_txn(self, &txn)?.standing)
-    }
-
-    /// Runs `expire` with the standing holds that keep this vault's backups,
-    /// read as [`Self::legal_hold_keeps_backups`] reads them, while this
-    /// call holds the LMDB writer (FIX 1488). A hold writer commits before
-    /// the read or after `expire` returns, never between, so an expiry that
-    /// unlinks and syncs its directory inside `expire` never destroys a copy
-    /// a hold placed meanwhile keeps. Nothing is written: the transaction is
-    /// dropped. `expire` must not open a write transaction on this vault.
+    /// Runs `expire` with whether the vault's Owners deleted it, read while
+    /// this call holds the LMDB writer (FIX 1488, FIX 11432). A deletion
+    /// commits before the read or after `expire` returns, never between, so
+    /// an expiry that unlinks and syncs its directory inside `expire` never
+    /// destroys a copy a deletion placed meanwhile spares. Nothing is
+    /// written: the transaction is dropped. `expire` must not open a write
+    /// transaction on this vault.
     ///
     /// # Errors
     ///
-    /// The writer or the holds could not be read; `expire` did not run.
+    /// The writer or the deletion could not be read; `expire` did not run.
     pub fn with_backup_hold_exclusion<R>(
         &self,
         expire: impl FnOnce(&BackupHolds) -> R,
@@ -166,9 +149,9 @@ impl Vault {
     }
 
     /// A content-free counter that moves after each committed legal-hold
-    /// release and each hold maintenance pass on this open vault: a delete a
-    /// standing hold deferred asks [`Self::with_backup_hold_exclusion`] again
-    /// when it moves (FIX 1488).
+    /// release and each hold maintenance pass on this open vault: a deferred
+    /// delete asks [`Self::with_backup_hold_exclusion`] again when it moves
+    /// (FIX 1488).
     #[must_use]
     pub fn backup_hold_rechecks(&self) -> tokio::sync::watch::Receiver<u64> {
         self.store.backup_hold_rechecks.subscribe()
@@ -183,38 +166,18 @@ impl Vault {
     }
 }
 
-/// The holds that keep this vault's backups, as an expiry reads them: every
-/// standing customer hold. A host order keeps no backup. A count, nothing of
-/// any hold.
+/// What an expiry reads under [`Vault::with_backup_hold_exclusion`]:
+/// whether the vault's Owners deleted it. No hold keeps a backup
+/// (LEGAL-HOLD-USE = B).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackupHolds {
-    /// How many legal holds stand.
-    pub standing: u64,
-    /// How the standing holds show to the owner, read in the same walk;
-    /// `None` when none stands.
-    held_visibility: Option<BackupHoldVisibility>,
     /// Whether the vault's Owners deleted it, read in the same transaction
     /// (FIX 11432): under [`Vault::with_backup_hold_exclusion`] no deletion
     /// commits while it is read.
     vault_deleted: bool,
 }
 
-/// How the holds that keep a vault's backups show to its owner, coarse on
-/// purpose (FIX 9500): no order, issuer, count, date or ordering.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BackupHoldVisibility {
-    /// A hold the owner may see stands. Only customer holds keep backups, and
-    /// the owner sees each one.
-    Visible,
-}
-
 impl BackupHolds {
-    /// Whether a standing hold keeps every backup: none may expire.
-    #[must_use]
-    pub fn keeps_backups(&self) -> bool {
-        self.standing > 0
-    }
-
     /// Whether the vault's Owners deleted it, as the same transaction read
     /// it: a caller that spares a deleted vault's backups until their
     /// retention ends reads it here, where no deletion commits meanwhile
@@ -223,25 +186,10 @@ impl BackupHolds {
     pub fn vault_deleted(&self) -> bool {
         self.vault_deleted
     }
-
-    /// How the standing holds show to the owner at the read
-    /// (`LegalHold::owner_may_see`), `None` when none stands. Which holds
-    /// keep the backups does not change.
-    #[must_use]
-    pub const fn held_visibility(&self) -> Option<BackupHoldVisibility> {
-        self.held_visibility
-    }
 }
 
 fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
-    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
-        .iter()
-        .filter(|hold| hold.keeps_vault_data())
-        .count() as u64;
-    let held_visibility = (standing > 0).then_some(BackupHoldVisibility::Visible);
     Ok(BackupHolds {
-        standing,
-        held_visibility,
         vault_deleted: vault.shared_vault_deletion_in_txn(txn)?.is_some(),
     })
 }

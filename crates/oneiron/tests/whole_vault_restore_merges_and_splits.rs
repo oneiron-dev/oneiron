@@ -38,8 +38,8 @@
 //!   the restore and keeps its machine; each decision is `SigningUnavailable`
 //!   (REVIEW-9756 round 2 P1-2).
 //! * `a_whole_vault_export_names_no_use_limited_merge`: the manifest names a
-//!   current merge only when the archive carries its record; a held privacy
-//!   erase keeps one out (REVIEW-9756 round 2 P1-3).
+//!   current merge only when the archive carries its record; a cooperative
+//!   review restriction keeps one out (REVIEW-9756 round 2 P1-3).
 //! * `a_whole_vault_export_carries_no_part_of_a_use_limited_multipart_merge`:
 //!   an operation part goes out only where its decision's row goes.
 //!
@@ -60,8 +60,9 @@
 //! use-limited merge. The credential and two-part tests pass there and guard
 //! what the fix keeps nulled.
 //!
-//! Vaults in tempdirs, every step through public doors. Source and
-//! destination each sign with their own in-memory install keystore. Each
+//! Vaults in tempdirs, every step through public doors beside the
+//! `oneiron::test_doors` cooperative restriction. Source and destination each
+//! sign with their own in-memory install keystore. Each
 //! destination opens at least one wall-clock second after its source (sleep
 //! 1100 ms), as in `whole_vault_restore_seeds.rs`. Run with `cargo test
 //! --locked -p oneiron --all-features --test
@@ -75,20 +76,17 @@ use oneiron::batch::export::{
     IdentityTopologyNotRestored, IdentityTopologyRestoreKind, WholeVaultImportReceipt,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::edge::EdgeKind;
 use oneiron::identity_topology::{
     EngineCause, EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
     IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp, SurvivorshipPlan, TopologySeal,
 };
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
-use oneiron::{
-    ClaimSource, EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
-    WriteActor,
-};
+#[cfg(oneiron_test_support)]
+use oneiron::test_doors::campaign_member_index::restrict_record;
+use oneiron::{ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -797,63 +795,17 @@ fn owner_restore_into_a_fresh_vault_with_an_unheld_machine_seed_keeps_its_machin
     );
 }
 
-/// A hosted vault that signs with its own in-memory install keystore, so a
-/// held privacy erase keeps its record use-limited.
-fn open_hosted_signing_vault() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
-    let mut config = VaultConfig::default();
-    config.privacy.posture = HostingPrivacyPosture::Hosted;
-    let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
-    load_signing_keys(&vault);
-    (dir, vault)
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the
-/// hold refuses: the record stays stored and use-limited, and a whole-vault
-/// export keeps it out.
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record, and a whole-vault export keeps it out.
+#[cfg(oneiron_test_support)]
 fn use_limit(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-topology".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let actor = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 #[test]
+#[cfg(oneiron_test_support)]
 fn a_whole_vault_export_names_no_use_limited_merge() {
-    let (_dir, source) = open_hosted_signing_vault();
+    let (_dir, source) = open_signing_vault();
     let carried = apply(
         &source,
         merge(put_person(&source), put_person(&source)),
@@ -889,8 +841,9 @@ fn a_whole_vault_export_names_no_use_limited_merge() {
 }
 
 #[test]
+#[cfg(oneiron_test_support)]
 fn a_whole_vault_export_carries_no_part_of_a_use_limited_multipart_merge() {
-    let (_dir, source) = open_hosted_signing_vault();
+    let (_dir, source) = open_signing_vault();
     let (carried, ..) = apply_wide_merge(&source, "one person under many records", 200);
     let (held, ..) = apply_wide_merge(&source, "another person under many records", 210);
     use_limit(&source, held);

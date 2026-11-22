@@ -7,21 +7,45 @@ use crate::entity_id::EntityId;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::deletion::legal_hold::types::{
-    ErasePendingReason, EraseWithdrawal, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
-    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldReason,
-    LegalHoldTarget,
+    HoldCloneCapture, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
+    LegalHoldFutureMessages, LegalHoldKind, LegalHoldReason, LegalHoldTarget, MessageSelector,
 };
-
-/// What an owner erase shows until its deletion receipt completes or its
-/// shared vault's veto window clears (C4).
-pub const ERASE_COMPLETION_PENDING: &str = "erase confirmed; completion pending";
-
-/// The named refusal a delete of a held record fails with.
-pub const LEGAL_HOLD_REFUSAL: &str = "legal hold: a hold names this record, so it is not deleted";
 
 /// How long a hold's log rows outlive the hold, in calendar months (C3: the
 /// hold's life, then 24 months).
 pub const LEGAL_HOLD_LOG_RETENTION_MONTHS: u32 = 24;
+
+/// The owner's production of a standing customer hold's sealed copy
+/// (`vault.legal_holds.produce`, PRODUCE = A): each capture's sealed frames
+/// byte for byte, plus the hold's 32-byte seed sealed to the recipient's
+/// public key. No plaintext leaves the engine, and nothing is re-encrypted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegalHoldProduction {
+    /// The hold produced.
+    pub hold_id: EntityId,
+    /// This production's own id, bound into its sealed key.
+    pub production_id: EntityId,
+    /// The blake3 of the recipient public key's bytes.
+    pub recipient_fingerprint: [u8; 32],
+    /// The hold's seed, sealed to the recipient's public key.
+    pub sealed_hold_key: Vec<u8>,
+    /// The hold's captures, oldest first.
+    pub captures: Vec<ProducedHoldCapture>,
+}
+
+/// One produced capture: its sealed frames byte for byte, so its
+/// fingerprint equals the one the hold row and its `Placed` / `ScopeChanged`
+/// event logged. The recipient opens the frames with the hold's key pair,
+/// rebuilt from the production's sealed seed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProducedHoldCapture {
+    /// The capture's id.
+    pub capture: EntityId,
+    /// The capture's fingerprint, as the hold row names it.
+    pub fingerprint: [u8; 32],
+    /// The capture file's bytes.
+    pub frames: Vec<u8>,
+}
 
 /// A host order to hold records (C1). Placed only where Oneiron hosts the
 /// bytes, through the host-only door.
@@ -46,60 +70,16 @@ pub struct HostOrderHold {
     /// Who issued the order, as an opaque ref.
     pub issuing_authority_ref: Option<String>,
     /// The order's own terms also forbid using what it keeps (C6), recorded
-    /// as its term. A refused hosted privacy erasure keeps the record under a
-    /// use limit while any hold stands, whether this is set or not (FIX 8849).
+    /// as the order's data; no vault path reads it; never set on a customer
+    /// hold.
     pub requires_non_use: bool,
 }
-
-/// What the owner's one confirm did to one record. One rule wherever the
-/// bytes live (WILL-PLAN L01 row 04).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiftAndEraseStatus {
-    /// The hold is lifted and the record erased: its deletion receipt is
-    /// complete, its signed final row appended once the hard purge, the
-    /// historical sweep and every custody retirement the erase bound had
-    /// finished (C4, FIX 5844). No receipt when nothing was there to erase.
-    Erased { receipt_ref: Option<String> },
-    /// "Erase confirmed; completion pending" ([`ERASE_COMPLETION_PENDING`]):
-    /// the erase still waits on its receipt's `reason` or on its shared
-    /// vault's veto window.
-    CompletionPending {
-        receipt_ref: Option<String>,
-        reason: Option<ErasePendingReason>,
-    },
-    /// The hold was lifted, then the erase failed; a plain delete retries it.
-    Failed { message: String },
-}
-
-/// The owner's one confirm's result.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiftAndEraseOutcome {
-    /// The customer holds lifted, or narrowed to what is left.
-    pub holds: Vec<EntityId>,
-    pub records: Vec<(EntityId, LiftAndEraseStatus)>,
-    /// What the owner confirmed is not what the vault holds now: nothing was
-    /// lifted or erased, and this is what the confirm shows now, to confirm
-    /// again in one step (FIX 1462).
-    pub changed: Option<super::LiftAndEraseShownState>,
-    /// The check-in decision the confirm ran on (2k2; P25-SHAPE Q1 = A): the
-    /// Owner on their own proof, and the approved check-in of another asker
-    /// it applied, with its requester. Each `erase` act a veto window starts
-    /// records it too. None when nothing was lifted or erased (`changed`).
-    pub check_in: Option<crate::check_in::CheckInDecision>,
-}
-
-#[doc(hidden)]
-pub use oneiron_records::deletion::legal_hold::types::LegalHoldUseLimit;
 
 /// One legal-hold maintenance pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LegalHoldMaintenance {
     /// Host orders whose end date passed, now lifted.
     pub lapsed: u64,
-    /// Confirmed erases run now that nothing holds their records.
-    pub erased: u64,
-    /// Refusals written to the hold logs.
-    pub refusals: u64,
     /// Log rows and released holds past their retention.
     pub expired: u64,
 }

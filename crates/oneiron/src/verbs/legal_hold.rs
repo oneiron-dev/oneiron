@@ -1,96 +1,90 @@
 //! The inputs and answers of the owner's legal-hold rows (OF-470):
-//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift_and_erase`
-//! and `.withdraw_erase`, each a host door. Each fn passes the engine exactly
-//! what it asks for, under the vault owner's proof: a server mints it from
-//! the request, as `/v1/owner` does; an embedded handle acts as the vault's
-//! embedded owner. Oneiron's host-order doors have no row here, since no
-//! owner, member or agent surface may route to them.
+//! `vault.legal_holds.place`, `.widen`, `.list`, `.log`, `.lift` and `.produce`,
+//! each a host door. Each fn passes
+//! the engine exactly what it asks for, under the vault owner's proof: a
+//! server mints it from the request, as `/v1/owner` does; an embedded handle
+//! acts as the vault's embedded owner. Oneiron's host-order doors have no row
+//! here, since no owner, member or agent surface may route to them.
+use base64::Engine as _;
+use oneiron_crypto::HybridPublicKey;
 use serde::{Deserialize, Serialize};
 
 use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{
-    LegalHold, LegalHoldEvent, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
-};
-use crate::memory::MemoryResult;
+use crate::deletion::{LegalHold, LegalHoldEvent, LegalHoldProduction};
+use crate::entity_id::bytes_to_hex_lower;
+use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::verbs::legal_hold::{
-    LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldErasesWithdrawn, LegalHoldPlaceRequest,
-    LegalHoldWidenRequest, LegalHoldWithdrawEraseRequest, LegalHoldWithdrawnErase,
-};
+pub use oneiron_verb_wire::verbs::legal_hold::{LegalHoldPlaceRequest, LegalHoldWidenRequest};
 
-/// `vault.legal_holds.lift_and_erase`'s input: the records the owner's one
-/// "Lift the hold and erase?" confirm names, whether it releases the
-/// claim-free gate-decision partition too (FIX 9782), and the confirm the
-/// shared preview returned for this call (FIX 1462).
+/// `vault.legal_holds.lift`'s input: the owner's customer hold to lift. The
+/// lift destroys its sealed copy; nothing in the vault is erased by it. It
+/// is one-way, so it takes the owner's confirm of its preview (DEC-0006
+/// #undo-class).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct LegalHoldLiftAndEraseRequest {
-    pub records: Vec<EntityId>,
-    /// Also release every customer hold on the claim-free partition, the
-    /// one the retention-horizon sweep ages. A host order on it stays.
-    #[serde(default)]
-    pub claim_free_partition: bool,
+pub struct LegalHoldLiftRequest {
+    pub hold_id: EntityId,
     /// The confirm `vault.owner_confirm.preview` returned for this call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm: Option<String>,
-    /// An asker's approved check-in for this confirm, 32 hex
-    /// (`legal_hold_erase_effect_digest`): the Owner applies it on their own
-    /// proof, and the answer names its asker.
-    #[serde(default)]
-    pub check_in_ref: Option<String>,
 }
 
-impl From<LiftAndEraseStatus> for LegalHoldEraseState {
-    fn from(status: LiftAndEraseStatus) -> Self {
-        match status {
-            LiftAndEraseStatus::Erased { receipt_ref } => Self::Erased { receipt_ref },
-            LiftAndEraseStatus::CompletionPending {
-                receipt_ref,
-                reason,
-            } => Self::CompletionPending {
-                receipt_ref,
-                reason,
-            },
-            LiftAndEraseStatus::Failed { message } => Self::Failed { message },
-        }
-    }
+/// `vault.legal_holds.produce`'s input: the standing customer hold to
+/// re-seal, and the recipient public key the owner names.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldProduceRequest {
+    pub hold_id: EntityId,
+    /// The recipient's `HybridPublicKey::to_bytes`, as STANDARD base64.
+    pub recipient_public_key: String,
 }
 
-/// `vault.legal_holds.lift_and_erase`'s answer: the customer holds lifted or
-/// narrowed to what is left, and each named record's state.
+/// One produced capture: its sealed frames, as STANDARD base64.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct LegalHoldLiftAndErased {
-    pub holds: Vec<EntityId>,
-    pub records: Vec<LegalHoldErasedRecord>,
-    /// What the confirm shows now, when it is not what the owner was shown:
-    /// nothing was lifted or erased; confirm again with this (FIX 1462).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub changed: Option<LiftAndEraseShownState>,
-    /// The check-in decision the confirm ran on (2k2): the Owner on their
-    /// own proof, and the approved check-in of another asker it applied,
-    /// with its requester. None when nothing was lifted or erased.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub check_in: Option<crate::check_in::CheckInDecision>,
+pub struct LegalHoldProducedCapture {
+    pub capture: EntityId,
+    /// The capture's fingerprint, as 64 hex.
+    pub fingerprint: String,
+    /// The capture file's bytes.
+    pub frames: String,
 }
 
-impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
-    fn from(outcome: LiftAndEraseOutcome) -> Self {
+/// `vault.legal_holds.produce`'s answer: the hold's seed sealed to the named
+/// recipient, and each capture's sealed frames byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldProduced {
+    pub hold_id: EntityId,
+    pub production_id: EntityId,
+    /// The blake3 of the recipient public key's bytes, as 64 hex.
+    pub recipient_fingerprint: String,
+    /// The hold's seed sealed to the recipient, as STANDARD base64.
+    pub sealed_hold_key: String,
+    /// The hold's captures, oldest first.
+    pub captures: Vec<LegalHoldProducedCapture>,
+}
+
+impl From<LegalHoldProduction> for LegalHoldProduced {
+    fn from(production: LegalHoldProduction) -> Self {
         Self {
-            holds: outcome.holds,
-            records: outcome
-                .records
+            hold_id: production.hold_id,
+            production_id: production.production_id,
+            recipient_fingerprint: bytes_to_hex_lower(&production.recipient_fingerprint),
+            sealed_hold_key: base64::engine::general_purpose::STANDARD
+                .encode(&production.sealed_hold_key),
+            captures: production
+                .captures
                 .into_iter()
-                .map(|(record, status)| LegalHoldErasedRecord {
-                    record,
-                    status: status.into(),
+                .map(|capture| LegalHoldProducedCapture {
+                    capture: capture.capture,
+                    fingerprint: bytes_to_hex_lower(&capture.fingerprint),
+                    frames: base64::engine::general_purpose::STANDARD.encode(&capture.frames),
                 })
                 .collect(),
-            changed: outcome.changed,
-            check_in: outcome.check_in,
         }
     }
 }
@@ -101,7 +95,12 @@ pub fn place_legal_hold_as(
     owner: &AuthenticatedOwner,
     input: LegalHoldPlaceRequest,
 ) -> MemoryResult<LegalHold> {
-    Ok(vault.place_legal_hold(owner, input.targets, input.matter_ref)?)
+    Ok(vault.place_legal_hold(
+        owner,
+        input.targets,
+        input.matter_ref,
+        input.future_messages,
+    )?)
 }
 
 /// `vault.legal_holds.widen`: adds targets to the owner's standing hold.
@@ -111,6 +110,58 @@ pub fn widen_legal_hold_as(
     input: LegalHoldWidenRequest,
 ) -> MemoryResult<LegalHold> {
     Ok(vault.widen_legal_hold(owner, input.hold_id, input.targets)?)
+}
+
+/// What `vault.legal_holds.lift` takes, as its owner confirm shows it: the
+/// standing customer hold `hold_id`, whole, as it stands now. A widen after
+/// the preview changes it, so that confirm no longer admits the lift.
+pub(crate) fn lift_legal_hold_view(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    hold_id: &EntityId,
+) -> MemoryResult<LegalHold> {
+    read_legal_holds(vault, owner)?
+        .into_iter()
+        .find(|hold| {
+            hold.hold_id == *hold_id
+                && hold.kind == crate::deletion::LegalHoldKind::Customer
+                && hold.stands()
+        })
+        .ok_or_else(|| MemoryError::bad_request("no standing legal hold has this hold_id"))
+}
+
+/// `vault.legal_holds.lift`: lifts the owner's customer hold and destroys
+/// its sealed copy. Nothing in the vault is erased by it. The lift is
+/// one-way: it acts only on the owner's live confirm of the hold as it
+/// stands now (DEC-0006 #undo-class, ONEWAY-CONFIRM = A).
+pub fn lift_legal_hold_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: LegalHoldLiftRequest,
+) -> MemoryResult<LegalHold> {
+    let ask = owner_confirm::asked("vault.legal_holds.lift", &input)?;
+    let shown = lift_legal_hold_view(vault, owner, &input.hold_id)?;
+    owner_confirm::admit(vault, owner, ask, &shown)?;
+    Ok(vault.lift_legal_hold(owner, input.hold_id)?)
+}
+
+/// `vault.legal_holds.produce`: re-seals the standing customer hold's sealed
+/// copy to the recipient public key the owner names, and logs the access. A
+/// key that does not decode or parse is the caller's error.
+pub fn produce_legal_hold_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: LegalHoldProduceRequest,
+) -> MemoryResult<LegalHoldProduced> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(input.recipient_public_key.as_bytes())
+        .map_err(|_| MemoryError::bad_request("recipient_public_key must be standard base64"))?;
+    let recipient = HybridPublicKey::from_bytes(&decoded).map_err(|_| {
+        MemoryError::bad_request("recipient_public_key is not a recipient public key")
+    })?;
+    Ok(vault
+        .produce_legal_hold(owner, input.hold_id, &recipient)?
+        .into())
 }
 
 /// `vault.legal_holds.list`: every hold the owner may see.
@@ -124,49 +175,4 @@ pub fn read_legal_hold_log(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<LegalHoldEvent>> {
     Ok(vault.legal_hold_log(owner)?)
-}
-
-/// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
-/// erase?" confirm over `input.records`, and the claim-free partition with
-/// `input.claim_free_partition`. The engine reads what the confirm shows
-/// now, admits the call only on the shared confirm of that same state, and
-/// checks the state again inside its own txn: one press, no expiry
-/// (`PreviewKeep::UntilUsed`), and nothing here prepares a state the owner
-/// was not shown (FIX 1462). With `input.check_in_ref` the Owner applies an
-/// asker's approved check-in for this confirm (2k2).
-pub fn lift_legal_hold_and_erase_as(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: LegalHoldLiftAndEraseRequest,
-) -> MemoryResult<LegalHoldLiftAndErased> {
-    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
-    let ask = owner_confirm::asked("vault.legal_holds.lift_and_erase", &input)?;
-    let shown =
-        vault.lift_and_erase_shown_state(owner, &input.records, input.claim_free_partition)?;
-    owner_confirm::admit(vault, owner, ask, &shown)?;
-    Ok(vault
-        .confirm_lift_legal_hold_and_erase_with_check_in(
-            owner,
-            &input.records,
-            input.claim_free_partition,
-            &shown,
-            check_in_ref,
-        )?
-        .into())
-}
-
-/// `vault.legal_holds.withdraw_erase`: the owner withdraws the erase that
-/// waits on each of `input.records`, under the owner proof the confirm
-/// takes (FIX 10401). A hold the confirm lifted stays lifted.
-pub fn withdraw_legal_hold_erase_as(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: LegalHoldWithdrawEraseRequest,
-) -> MemoryResult<LegalHoldErasesWithdrawn> {
-    let records = vault
-        .withdraw_waiting_erases(owner, &input.records)?
-        .into_iter()
-        .map(|(record, status)| LegalHoldWithdrawnErase { record, status })
-        .collect();
-    Ok(LegalHoldErasesWithdrawn { records })
 }

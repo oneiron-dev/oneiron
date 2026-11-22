@@ -29,7 +29,6 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::EntityId;
 use crate::deletion::decode_tombstone_value;
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::selector::encode_sync_selector;
@@ -272,9 +271,10 @@ pub(crate) async fn refresh_followed_tombstones(
 /// own index no longer does (review round 2 of #9924). No delete marker is
 /// written: a soft delete may be restored, and the next index fetch lists a
 /// restored item again. A copy fetched from another window stays, and so
-/// does another window's index row; everything stays for an item a legal
-/// hold names, or a cached pad whose world a hold names, as a prune keeps
-/// them (OF-470, FIX 3061). Whether a copy or an index row was dropped.
+/// does another window's index row. A cooperative restriction on the item
+/// fails the drop with absence, and a cached pad whose world a restriction
+/// keeps stays, as a prune keeps it (OF-470, FIX 3061); no legal hold keeps
+/// either (LEGAL-HOLD-USE = B). Whether a copy or an index row was dropped.
 fn drop_soft_deleted_thin_copy(
     vault: &crate::Vault,
     window: &WindowKey,
@@ -292,14 +292,9 @@ fn drop_soft_deleted_thin_copy(
         if !indexed && !cached {
             return Ok(false);
         }
-        match vault
-            .store
-            .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
-        {
-            Ok(()) => {}
-            Err(error) if is_hold_refusal(&error) => return Ok(false),
-            Err(error) => return Err(error),
-        }
+        // No legal hold refuses (LEGAL-HOLD-USE = B); a cooperative
+        // restriction answers with absence, which fails the tick, as it did.
+        vault.store.reject_restricted_records_in_txn(txn, &[item])?;
         if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{hex}"))?
             && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?
         {

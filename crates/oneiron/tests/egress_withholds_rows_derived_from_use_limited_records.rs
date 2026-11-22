@@ -7,17 +7,18 @@
 //! use-limited CLAIM left in an owner archive or on the owner's devices while the claim itself
 //! stayed home.
 //!
-//! Public doors only; neutral fixtures; vaults in tempdirs.
+//! Public doors beside the `oneiron::test_doors` cooperative restriction; neutral fixtures;
+//! vaults in tempdirs.
 //!
 //! * `a_whole_vault_export_keeps_out_a_profile_of_a_use_limited_claim`: on a hosted vault a
-//!   PERSON has two CLAIMs, held and kept, and a PSYCH_PROFILE citing each. A customer hold then
-//!   refuses held's privacy erase, which keeps it stored and use-limited. The export carries
-//!   neither held nor the profile citing it, and still carries the PERSON, kept and kept's
+//!   PERSON has two CLAIMs, restricted and carried, and a PSYCH_PROFILE citing each. A
+//!   cooperative review restriction then use-limits restricted. The export carries neither
+//!   restricted nor the profile citing it, and still carries the PERSON, carried and carried's
 //!   profile.
 //! * `a_profile_of_a_use_limited_claim_leaves_the_owner_window`: a hosted hub's window carries
-//!   both profiles. After the keep, the hub's next export takes the held profile's carrier out of
-//!   the window under a withholding marker, and a peer that holds nothing of the window lands no
-//!   carrier of it; kept's profile rides as before.
+//!   both profiles. After the restriction, the hub's next export takes the restricted profile's
+//!   carrier out of the window under a withholding marker, and a peer that holds nothing of the
+//!   window lands no carrier of it; carried's profile rides as before.
 //!
 //! Both run red at main a1dc3dd3c27, whose doors ask each row's own use limit alone, and green at
 //! the fix.
@@ -31,19 +32,16 @@ mod sync_harness;
 use std::collections::BTreeSet;
 
 use loro::{LoroDoc, VersionVector};
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::store::GateDecisionId;
 use oneiron::store::revision_ref::RevisionRef;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId,
     HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
 };
 use rmpv::Value;
@@ -52,7 +50,7 @@ use crate::sync_harness::{TestNode, WINDOW, map_get_bytes, test_config};
 
 const AT: u64 = 100;
 
-/// The text tier of the profile citing the claim the hold keeps.
+/// The text tier of the profile citing the claim the restriction keeps.
 const HELD_PROFILE_TEXT: &str = "Copied prose from the held claim.";
 /// The text tier of the profile citing the claim no limit touches.
 const KEPT_PROFILE_TEXT: &str = "Copied prose from the kept claim.";
@@ -61,55 +59,10 @@ fn range() -> TimeRange {
     TimeRange { start: AT, end: AT }
 }
 
-fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: owner proof")
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited on this hosted vault.
-fn keep_use_limited(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-derived-rows".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record.
+fn restrict(vault: &Vault, record: EntityId) {
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 fn put_person(vault: &Vault) -> EntityId {
@@ -169,7 +122,7 @@ fn put_profile_from(vault: &Vault, person: EntityId, claim: EntityId, text: &str
     id
 }
 
-/// A PERSON, two CLAIMs about it, held and kept, and a PSYCH_PROFILE citing each.
+/// A PERSON, two CLAIMs about it, restricted and carried, and a PSYCH_PROFILE citing each.
 struct Profiled {
     person: EntityId,
     held: EntityId,
@@ -191,16 +144,12 @@ fn put_profiled(vault: &Vault) -> Profiled {
     }
 }
 
-/// A hosted vault with a device keystore, so a held privacy erase keeps its record
-/// use-limited.
+/// A hosted vault.
 fn open_hosted_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
     let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     (dir, vault)
 }
 
@@ -230,24 +179,24 @@ fn a_whole_vault_export_keeps_out_a_profile_of_a_use_limited_claim() {
     let before = carried_ids(&vault);
     for (what, id) in [
         ("the PERSON", rows.person),
-        ("the held claim", rows.held),
+        ("the restricted claim", rows.held),
         ("the kept claim", rows.kept),
-        ("the held claim's profile", rows.held_profile),
+        ("the restricted claim's profile", rows.held_profile),
         ("the kept claim's profile", rows.kept_profile),
     ] {
         assert!(
             before.contains(&id.to_hex()),
-            "FIXTURE: before the hold the export carries {what}"
+            "FIXTURE: before the restriction the export carries {what}"
         );
     }
 
-    keep_use_limited(&vault, rows.held);
+    restrict(&vault, rows.held);
     assert!(
         vault
             .get_entity_type(&rows.held_profile)
             .expect("FIXTURE: read the profile's type")
             .is_some(),
-        "FIXTURE: the kept erase leaves the profile citing the claim stored"
+        "FIXTURE: the restriction leaves the profile citing the claim stored"
     );
 
     let after = carried_ids(&vault);
@@ -344,10 +293,10 @@ fn a_profile_of_a_use_limited_claim_leaves_the_owner_window() {
     let before = export_to_empty_peer(&hub);
     assert!(
         carries(&before, &rows.held_profile) && carries(&before, &rows.kept_profile),
-        "FIXTURE: before the hold the window carries both profiles to a peer"
+        "FIXTURE: before the restriction the window carries both profiles to a peer"
     );
 
-    keep_use_limited(&hub.vault, rows.held);
+    restrict(&hub.vault, rows.held);
 
     let peer = export_to_empty_peer(&hub);
     assert!(
