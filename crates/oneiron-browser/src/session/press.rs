@@ -2,16 +2,18 @@
 //!
 //! The vault's grants are read again at each classified send, where the
 //! host gives a live read of them ([`PressGrants`]): a grant revoked during
-//! the run covers no later send. The sends a reviewed batch's budget paid
-//! stay on the session, which every door of the run shares: a door that
-//! binds it again, or a grant read again, never refills the budget.
+//! the run covers no later send. A reviewed batch is the budgeted standing
+//! grant its owner pressed when minting it (Engine ruling
+//! L4-03-BROWSER-BATCH = A). The sends its budget paid stay on the session,
+//! which every door of the run shares: a door that binds it again, or a
+//! grant read again, never refills the budget.
 //!
 //! A control a send's words name, on a page whose URL path names a payment
 //! step (`payment_page_policy`, CALLS row), is a payment: it takes the pay
 //! class's own path, a person's press, never a send grant.
 
 use super::BrowserSession;
-use crate::{EFFECT_PAY, EFFECT_SEND, PressMode, SendPolicy};
+use crate::{EFFECT_PAY, EFFECT_SEND, SendPolicy};
 use std::collections::BTreeMap;
 
 /// The host's live read of the vault's grants, as the press policy they
@@ -33,14 +35,12 @@ pub trait PressGrants: Send {
     }
 }
 
-/// The session's book of presses: the grants' policy as last read, the
-/// sends a person's press over a reviewed batch covers, and the sends a
-/// batch press already paid, per class. A desktop session keeps the same
-/// book (FIX 12133).
+/// The session's book of presses: the grants' policy as last read, and the
+/// sends a batch press already paid, per class. A desktop session keeps the
+/// same book (FIX 12133).
 #[derive(Default)]
 pub(crate) struct PressBook {
     granted: SendPolicy,
-    approved: BTreeMap<String, u32>,
     spent: BTreeMap<String, u32>,
     live: Option<Box<dyn PressGrants>>,
 }
@@ -80,17 +80,9 @@ impl PressBook {
     }
 
     /// The policy the sends run under now: the grants' modes, each batch's
-    /// budget with a person's approved sends, less the sends it paid.
+    /// budget less the sends it paid.
     pub(crate) fn policy(&self) -> SendPolicy {
         let mut policy = self.granted.clone();
-        for (class, count) in &self.approved {
-            let mode = policy.modes.entry(class.clone()).or_default();
-            if *mode == PressMode::PerSend {
-                *mode = PressMode::PerBatch;
-            }
-            let left = policy.batch.entry(class.clone()).or_default();
-            *left = left.saturating_add(*count);
-        }
         for (class, left) in &mut policy.batch {
             *left = left.saturating_sub(self.spent.get(class).copied().unwrap_or_default());
         }
@@ -110,14 +102,6 @@ impl BrowserSession {
     /// refills them (FIX 4615).
     pub fn set_policy(&mut self, policy: SendPolicy) {
         self.presses.set_granted(policy);
-        self.policy = self.presses.policy();
-    }
-
-    /// Records a person's press over a reviewed batch of `count` sends of
-    /// `class`. Its sends then run without a press each until spent.
-    pub fn approve_batch(&mut self, class: &str, count: u32) {
-        let approved = self.presses.approved.entry(class.to_owned()).or_default();
-        *approved = approved.saturating_add(count);
         self.policy = self.presses.policy();
     }
 

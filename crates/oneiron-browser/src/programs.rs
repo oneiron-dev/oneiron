@@ -121,6 +121,12 @@ pub const EFFECT_CLASSES: &[&str] = &[
     EFFECT_DESTRUCTIVE,
 ];
 
+/// The effect classes that are sends under the person's account, act class
+/// `outbound_send` (ARCH-0046 #check-in-roles-20261110; PLAN L4-03 D1): the
+/// vault's send grant sets their press before any standing grant does. A
+/// payment, an account change and a destructive act are not sends.
+pub const SEND_CLASSES: &[&str] = &[EFFECT_SEND, EFFECT_PUBLISH];
+
 /// The class a click's receipt names when its target names none: a point on
 /// no row, or a row with no name. The click runs as any unclassified one
 /// (DEC-0006 #6, biased-permissive), and its trail shows it was blind. No
@@ -136,7 +142,8 @@ pub enum PressMode {
     PerSend,
     /// One press covered a reviewed batch; sends run until it is spent.
     PerBatch,
-    /// The standing grant covers the class; no press.
+    /// No press: the vault's send grant or a standing grant covers the
+    /// class.
     None,
 }
 
@@ -152,19 +159,38 @@ impl PressMode {
 }
 
 /// The press each effect class runs under for one session, resolved by the
-/// host from the vault's standing grants. Unnamed classes need a press per
-/// send. A payment stays with a natural person whatever this says.
+/// host from the vault's send grant and standing grants. Unnamed classes
+/// need a press per send. A payment stays with a natural person whatever
+/// this says.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SendPolicy {
     pub modes: BTreeMap<String, PressMode>,
     /// Sends still covered by a reviewed batch's press, per class.
     pub batch: BTreeMap<String, u32>,
+    /// What set each class's mode where it is not the floor (PLAN L4-03
+    /// D4): the vault's send grant, `check_in:row:<ref>` or
+    /// `check_in:role:<role>`, or a standing grant, `grant:<digest>`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, String>,
 }
 
 impl SendPolicy {
     #[must_use]
     pub fn mode_for(&self, class: &str) -> PressMode {
         self.modes.get(class).copied().unwrap_or_default()
+    }
+
+    /// What set `press`, the press an effect of `class` ran under, where
+    /// this policy gave it: its class's source. `None` for a person's press
+    /// per send, an effect no class marks, and a press this policy did not
+    /// give.
+    #[must_use]
+    pub fn source_of(&self, class: Option<&str>, press: PressMode) -> Option<&str> {
+        let class = class?;
+        if press == PressMode::PerSend || self.mode_for(class) != press {
+            return None;
+        }
+        self.sources.get(class).map(String::as_str)
     }
 
     /// Classes no grant moves off a person's press: the agent fills the

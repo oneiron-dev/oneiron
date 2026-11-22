@@ -616,6 +616,10 @@ impl BrowserSession {
             rebound: left.rebound,
             effect_class: effect.class.map(str::to_owned),
             press: effect.press.as_str().to_owned(),
+            press_source: self
+                .policy
+                .source_of(effect.class, effect.press)
+                .map(str::to_owned),
             screenshot,
             capture_id,
             screenshot_evidence: None,
