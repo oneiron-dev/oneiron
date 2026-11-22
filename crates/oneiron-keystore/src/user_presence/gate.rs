@@ -2,7 +2,7 @@
 //! with the window one confirm opens, counts wrong typed secrets, and
 //! watches the screen lock.
 
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use std::{io, thread};
 
@@ -61,6 +61,11 @@ fn wait_left_ms(since: PresenceInstant, now: PresenceInstant) -> u64 {
 
 const NO_SCREEN_LOCK_WATCH: &str = "the screen-lock watch could not start";
 
+/// Why the gate of a Windows host cannot ask ([`PresenceGate::process_wide`]).
+#[cfg(windows)]
+const WINDOWS_HOSTS_DO_NOT_ASK_YET: &str =
+    "Windows hosts do not ask yet: the Windows Hello dialog has not run on a device";
+
 impl PresenceGate {
     /// A gate that asks through `presence` and keeps `window`. The window
     /// tells `presence` each time it ends ([`UserPresence::window_ended`]).
@@ -92,16 +97,51 @@ impl PresenceGate {
         Self::new(platform_user_presence(), PresenceWindow::system())
     }
 
-    /// This process's one gate over the platform's prompt
-    /// ([`Self::platform`]), made at the first call. Every later call
-    /// answers that same gate. A host installs it on each vault handle it
-    /// opens, so one confirm serves them all, acts that arrive together
-    /// share one prompt, and one screen-lock watch runs. The gate lives as
-    /// long as the process.
+    /// This process's one gate for a host to install on each vault handle it
+    /// opens: every call in one process answers the same gate, made at the
+    /// first call. One confirm serves all its handles, acts that arrive
+    /// together share one prompt, and one screen-lock watch runs. The gate
+    /// lives as long as the process.
+    ///
+    /// A child that `fork` made is another process: its first call makes a
+    /// gate of its own, with a closed window and its own watch, since the
+    /// parent's watch thread does not exist in it. Two copies of this crate
+    /// loaded into one process each hold a gate of their own.
     #[must_use]
     pub fn process_wide() -> Arc<Self> {
-        static PROCESS_WIDE: OnceLock<Arc<PresenceGate>> = OnceLock::new();
-        Arc::clone(PROCESS_WIDE.get_or_init(|| Arc::new(Self::platform())))
+        static PROCESS_WIDE: Mutex<Option<(u32, Arc<PresenceGate>)>> = Mutex::new(None);
+        let process = std::process::id();
+        let mut held = PROCESS_WIDE.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((made_in, gate)) = held.as_ref()
+            && *made_in == process
+        {
+            return Arc::clone(gate);
+        }
+        let gate = Arc::new(Self::for_hosts());
+        *held = Some((process, Arc::clone(&gate)));
+        gate
+    }
+
+    /// The gate a host asks through: this platform's prompt
+    /// ([`Self::platform`]).
+    #[cfg(not(windows))]
+    fn for_hosts() -> Self {
+        Self::platform()
+    }
+
+    /// The gate a host asks through. On Windows it cannot ask yet, so an
+    /// important act stands there as it does on a device with no prompt:
+    /// the Windows Hello dialog has not run on a device, and a host with
+    /// neither a console window nor a foreground window would be refused
+    /// every time (the pre-release line OWNER-CONFIRM-SHEET-DEVICE-PROBE-WINDOWS
+    /// and FIX row WINDOWS-PRESENCE-NO-OWNER-WINDOW-REFUSES-AS-PROMPT-FAILED).
+    /// [`Self::platform`] is the Hello gate itself; the device probe runs it.
+    #[cfg(windows)]
+    fn for_hosts() -> Self {
+        Self::new(
+            Arc::new(NoPromptPresence::new(WINDOWS_HOSTS_DO_NOT_ASK_YET)),
+            PresenceWindow::system(),
+        )
     }
 
     /// A gate over `presence` on the system's clocks, with its watch started

@@ -502,11 +502,7 @@ fn open_vault_at(path: &std::path::Path) -> Result<Arc<Vault>, Box<dyn std::erro
     std::fs::create_dir_all(path)?;
     let vault = Vault::open(path, VaultConfig::device())?;
     // Signing doors (delete receipts) need this install's keys from the keystore.
-    // No presence gate goes on this handle: the device link serves this
-    // vault's other machines on it (`start_device_sync`), and a verb call a
-    // peer sends must not raise this Mac's unlock prompt. The recorder's own
-    // prompt joins the gate with row OWNER-CONFIRM-SHEET, PR 6.
-    vault.install_default_keystore_without_presence_gate(path);
+    vault.install_default_keystore(path);
     Ok(Arc::new(vault))
 }
 

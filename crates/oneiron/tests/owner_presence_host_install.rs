@@ -1,10 +1,8 @@
 //! Row OWNER-CONFIRM-SHEET, PR 4b-5: a host whose caller is at the device
-//! puts the process's one presence gate on its vault handle, so an important
-//! owner act asks through the device's own unlock prompt. Every handle of
-//! the process takes the same gate, a gate installed before stays, and the
-//! default keystore install leaves the gate beside the keystore. A host
-//! whose handle also answers other machines installs the keystore with no
-//! gate.
+//! puts the process's one presence gate on its vault handle
+//! (`Vault::install_process_presence_gate`), so an important owner act asks
+//! through the device's own unlock prompt. Every handle of the process takes
+//! the same gate, and a gate installed before stays.
 #![cfg(feature = "test-support")]
 
 use std::sync::Arc;
@@ -80,45 +78,6 @@ fn a_gate_installed_before_stays() {
         .owner_presence(OwnerActImportance::Important, REASON)
         .expect("the host's own prompt says yes");
     assert_eq!(witness.basis(), OwnerPresenceBasis::Prompted);
-}
-
-/// The call of a host that opens the vault in its own process (the embedded
-/// clients, the C ABI, the macOS recorder). It needs a platform keystore:
-/// on Linux a key directory under `XDG_STATE_HOME` or `HOME`.
-#[test]
-fn the_default_keystore_install_leaves_the_process_gate_beside_the_keystore() {
-    let (vault, dir) = open_vault();
-    vault.install_default_keystore(dir.path());
-    assert!(
-        vault.device_keystore_assurance().is_some(),
-        "this test needs the platform's default keystore: on Linux, XDG_STATE_HOME or HOME"
-    );
-    assert!(Arc::ptr_eq(
-        &installed_gate(&vault),
-        &PresenceGate::process_wide()
-    ));
-}
-
-#[test]
-fn the_default_keystore_install_keeps_a_gate_installed_before() {
-    let (vault, dir) = open_vault();
-    let (gate, _presence) = install_scripted_gate(&vault);
-    vault.install_default_keystore(dir.path());
-    assert!(Arc::ptr_eq(&gate, &installed_gate(&vault)));
-}
-
-/// The call of a host whose handle also answers other machines (the macOS
-/// recorder's device link): the same keystore, and no gate, so a caller on
-/// another machine raises no prompt on this device.
-#[test]
-fn the_default_keystore_install_without_a_gate_leaves_none() {
-    let (vault, dir) = open_vault();
-    vault.install_default_keystore_without_presence_gate(dir.path());
-    assert!(
-        vault.device_keystore_assurance().is_some(),
-        "this test needs the platform's default keystore: on Linux, XDG_STATE_HOME or HOME"
-    );
-    assert!(vault.presence_gate().is_none());
 }
 
 /// On a platform with no prompt the process's gate answers as a device that

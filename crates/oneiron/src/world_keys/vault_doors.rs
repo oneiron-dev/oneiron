@@ -44,34 +44,7 @@ impl Vault {
     /// `KeystoreUnavailable`; reads and sync go on. True when the keys loaded.
     /// Once they load, this install's enrolled owner signing key is held for
     /// the device sync's checkpoint pass (FIX 4921).
-    ///
-    /// Beside an installed keystore the handle takes the process's presence
-    /// gate ([`Vault::install_process_presence_gate`]): such a host opened
-    /// the vault in its own process, so its caller is at this device, and an
-    /// important owner act asks through the device's own unlock prompt. A
-    /// host whose handle also answers other machines calls
-    /// [`Vault::install_default_keystore_without_presence_gate`].
     pub fn install_default_keystore(&self, vault_dir: &Path) -> bool {
-        let Some(loaded) = self.default_keystore_installed(vault_dir) else {
-            return false;
-        };
-        self.install_process_presence_gate();
-        loaded
-    }
-
-    /// [`Vault::install_default_keystore`] with no presence gate: the call
-    /// for a host whose handle also answers other machines, as the macOS
-    /// recorder's does through its device link. A caller on another machine
-    /// is not at this device's screen, so its act must not raise this
-    /// device's prompt. True when the keys loaded.
-    pub fn install_default_keystore_without_presence_gate(&self, vault_dir: &Path) -> bool {
-        self.default_keystore_installed(vault_dir).unwrap_or(false)
-    }
-
-    /// Installs the platform's default keystore and loads this install's
-    /// signing keys from it. `None` when the platform has no keystore or it
-    /// refuses, which is logged; else whether the keys loaded.
-    fn default_keystore_installed(&self, vault_dir: &Path) -> Option<bool> {
         match oneiron_keystore::default_platform_keystore(&[vault_dir]) {
             Ok(keystore) => {
                 self.install_device_keystore(keystore);
@@ -79,14 +52,14 @@ impl Vault {
                 if loaded {
                     self.hold_device_owner_signer_logged();
                 }
-                Some(loaded)
+                loaded
             }
             Err(error) => {
                 tracing::warn!(
                     reason = %error,
                     "no this-device-only keystore; signing and world-key doors are unavailable"
                 );
-                None
+                false
             }
         }
     }
