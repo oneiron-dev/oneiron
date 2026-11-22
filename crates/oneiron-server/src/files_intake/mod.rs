@@ -25,7 +25,7 @@ pub(crate) use reader::{
 };
 pub(crate) use source::{Rescanned, canonical_folder, files_attached, files_rescan, rescanned};
 #[cfg(unix)]
-pub(crate) use worker::spawn_rescans;
+pub(crate) use worker::{DriveSourceWakes, spawn_rescans};
 
 /// What an import passed over or crossed, and why; the rest of it landed.
 #[derive(Serialize)]

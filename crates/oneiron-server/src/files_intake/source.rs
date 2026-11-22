@@ -13,9 +13,9 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::note::{
-    DriveStepBudget, FileFacts, FileOriginal, FilesWorld, FolderFile, FolderFileState,
-    FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile, ImportedFile, ImportedNote,
-    ImportedNoteStanding, NameOnlyFile, NameOnlyReason,
+    DriveStepBudget, DriveStepReport, FileFacts, FileOriginal, FilesWorld, FolderFile,
+    FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile,
+    ImportedFile, ImportedNote, ImportedNoteStanding, NameOnlyFile, NameOnlyReason,
 };
 use oneiron::task_verb::sdk::{
     self, FilesLimitCrossed, FilesOriginalsUnkept, FilesRescanView, FilesSourceAttachAnswer,
@@ -142,6 +142,16 @@ pub(crate) fn files_attached(
     })
 }
 
+/// One step of the Drive source `source`, over this host's HTTPS: a
+/// rescan of it, with when the host steps it next.
+pub(crate) fn drive_step(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    source: &FolderSource,
+) -> anyhow::Result<DriveStepReport> {
+    Ok(vault.drive_source_sync_step(owner, &source.folder, DriveStepBudget::default())?)
+}
+
 /// Whether a rescan skips the read and hash of a file whose size and mtime
 /// both match the last scan's record for that path (FIX 1365): an mtime
 /// shortcut, never a watcher. A content change that keeps both size and
@@ -159,9 +169,7 @@ pub(crate) fn rescan(
     source: &FolderSource,
 ) -> anyhow::Result<(FolderRescanReport, Vec<ImportWarning>)> {
     if source.drive.is_some() {
-        let step =
-            vault.drive_source_sync_step(owner, &source.folder, DriveStepBudget::default())?;
-        return Ok((step.rescan, Vec::new()));
+        return Ok((drive_step(vault, owner, source)?.rescan, Vec::new()));
     }
     let folder = Path::new(&source.folder);
     // An unmounted or moved folder retracts nothing.
