@@ -105,7 +105,15 @@ async fn row_hooks_pre_decided(
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
         };
         let session = resume.session;
-        let credential = resume.credential;
+        // A verb whose answer no invocation claim keeps (a personal link's
+        // raw token, an inquiry edge's pact key) saves no credential beside
+        // its ask: settlement's drain would run it and save that answer in
+        // the ask's row for the retry. Its caller's retry under the same
+        // invocation runs it once the ask settles, and the answer goes only
+        // to that retry (review round 2 of #8571).
+        let credential = resume
+            .credential
+            .filter(|_| super::invocations::verb_reply_is_kept(&verb));
         let run = || match &session {
             Some(session) => {
                 verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)

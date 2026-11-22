@@ -18,6 +18,7 @@ pub mod disclosure_rung;
 pub mod emergency_reschedule;
 pub mod invite_grant;
 pub mod lifecycle;
+pub mod personal_link;
 pub mod public_lens;
 pub mod publication;
 mod reminder;
@@ -106,6 +107,13 @@ pub use lifecycle::{
     BookingDepositReturned, BookingOwnerCard, BookingOwnerCardCalendarHold,
     BookingOwnerCardDeposit, BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
     CALENDAR_HOLD_RECONNECT_VERB,
+};
+pub use personal_link::{
+    MAX_PERSONAL_LINK_EMAIL_BYTES, MAX_PERSONAL_LINK_NAME_CHARS, PERSONAL_LINK_NOTICE_PRODUCER,
+    PERSONAL_LINK_TOKEN_PREFIX, PersonalBookingLink, PersonalLinkEnd, PersonalLinkEndReason,
+    PersonalLinkMint, PersonalLinkRecipient, is_personal_link_token, mint_personal_booking_link,
+    normalize_booker_email, personal_booking_links, resolve_personal_booking_link,
+    revoke_personal_booking_link, void_personal_booking_link,
 };
 pub use public_lens::{
     BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,

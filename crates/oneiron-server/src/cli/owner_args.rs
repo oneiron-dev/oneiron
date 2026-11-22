@@ -1263,6 +1263,11 @@ pub struct LegalHoldLiftArgs {
     #[arg(long, value_name = "HEX")]
     pub hold: String,
 
+    /// You have read the hold this lift prints and confirm it. Without it
+    /// the hold is shown and nothing is lifted.
+    #[arg(long)]
+    pub yes: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

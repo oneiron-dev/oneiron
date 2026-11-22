@@ -98,7 +98,9 @@ impl Memory<'_> {
         verb: AgentVerb,
         params: &serde_json::Value,
     ) -> MemoryResult<(CanVerbGate, Vec<String>)> {
-        let person = self.actor_class == EdgeActorClass::Human;
+        // A credential handed on to another key is no person's proof
+        // (HANDED-ON-SLIP-PERSON).
+        let person = self.acts_as_own_person();
         // An owner door that also admits the owner's delegate (restriction
         // wave 11): an agent its Setting key and one live Grant admit takes
         // it; any other caller that is not a person meets the owner's proof,

@@ -77,6 +77,10 @@ pub use self::park_release::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::park_release::park_release_notice_source;
 pub(crate) use self::program::PROGRAM_TIMER_JOB;
+// The owner's Stop writer's step for a try's sends, for the integration test doors
+// (`test_doors::remote_task_cancel`, L8-29).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program::stop_sends_in_own_writer;
 pub use self::program::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
