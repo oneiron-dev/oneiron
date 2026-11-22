@@ -161,6 +161,7 @@ fn a_revoke_above_a_fenced_row_is_stored_and_ends_the_grant() {
                     seen_world_edits: BTreeSet::new(),
                     carrier: None,
                     act: None,
+                    restored_from: None,
                 }),
                 authority_key_from_ed(&old),
                 2,
