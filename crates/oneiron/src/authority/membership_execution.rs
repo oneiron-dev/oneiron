@@ -12,6 +12,15 @@
 //! intent; any other fault fails the caller's writer, so an intent is never
 //! cleared without the record the fold counted.
 //!
+//! The writer of the vault owner's own change lends the record that write,
+//! revalidated there ([`crate::consent::OwnerAuthoredWrite`]): the record,
+//! and the install join before it, then carry the owner key's proof this
+//! install holds ([`Vault::owner_act_proof_signer`], row
+//! OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS), which buys the record room
+//! past another install's owner reserve and nothing in any fold. A change an
+//! Admin or Deputy holder or a leaving member made, and a record a later
+//! pass carries, have no such write, and are carried unproven.
+//!
 //! The fold withdraws every slip minted under each Grant the record names,
 //! now and when a replica's mint merges later, as a `SlipGrantRevoke` does.
 //! Whether the person could make the change is the writer's to judge: the
@@ -37,7 +46,7 @@ const NOT_COUNTED: &str =
 /// The `MembershipExecution` transition, after the shape, signature,
 /// retired, sequence-floor, parent-merge and vault checks and before any
 /// roster check: its signer is a machine's install key, never a roster key
-/// (FIX 2222), and some chain of the machine must name the key. While
+/// (FIX 2222), and the machine's roster chain must name the key. While
 /// that machine is a live carrier at the record's parents, under the one
 /// carrier rule in the roster view, it withdraws every slip minted under
 /// each Grant the record names, in `state.slips`, one merged in later
@@ -50,9 +59,6 @@ pub(super) fn apply_membership_execution(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -100,7 +106,10 @@ impl Vault {
     /// is, in `txn`, naming the main-log heads alone; returns its entry hash
     /// only once the fold in `txn` counted it. `None`, with nothing written,
     /// when this install cannot carry for the vault now: no machine identity,
-    /// no install key loaded, or no live profile of it under that key.
+    /// no install key loaded, or no live profile of it under that key. The
+    /// record and its join carry the owner key's proof this install holds
+    /// when `owner_authored` is the vault owner's own write of the change
+    /// ([`Self::owner_act_proof_signer`]), picked once, before the join.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for more heads than
@@ -110,6 +119,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: impl FnOnce(EntityId) -> MembershipExecution,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     ) -> Result<Option<AuthorityEntryHash>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let (machine, key) = match self.owner_work_carrier_in_txn(txn, &fold) {
@@ -122,8 +132,9 @@ impl Vault {
         record.validate()?;
         // The writer clears its intent only once these withdrawals land.
         let withdrawn_grants = record.withdrawn_grants.clone();
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -134,13 +145,14 @@ impl Vault {
             return Err(authority_refused(TOO_MANY_HEADS));
         }
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
             parents,
             AuthorityOp::MembershipExecution(record),
             now,
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

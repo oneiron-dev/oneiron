@@ -174,8 +174,8 @@ pub struct RetrievalMeta {
     /// model whose scores ordered the top block, or why it was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerank: Option<RerankReport>,
-    /// The request's `limit` was past the ceiling (1,000 rows) and was
-    /// served at it.
+    /// Whether this door lowered the requested result count; recall serves
+    /// the whole limit, so this is always false.
     #[serde(default, skip_serializing_if = "is_false")]
     pub limit_clamped: bool,
 }

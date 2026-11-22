@@ -1,5 +1,6 @@
 //! A waiting proposal as a review surface lists it.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::{PendingBody, PendingRow};
@@ -97,7 +98,7 @@ impl PendingRow {
                 // descriptor, never read (FIX 20812).
                 match &self.new_file {
                     Some(file) => hash_hex(&file.body.blake3),
-                    None => hash_hex(blake3::hash(&self.new_bytes).as_bytes()),
+                    None => hash_hex(ContentHash::of(&self.new_bytes).as_bytes()),
                 }
             },
             byte_len: usize::try_from(self.payload_len()).unwrap_or(usize::MAX),

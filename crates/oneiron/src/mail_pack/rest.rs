@@ -98,13 +98,13 @@ pub(super) fn https_client() -> Result<reqwest::blocking::Client> {
 }
 
 /// [`https_client`], on a managed (hosted) node (`guard` is its egress
-/// guard): every name the client connects to resolves through the guard,
-/// so a name answering with hosted infrastructure or with a private
-/// address no operator origin admits fails its connection before it is
-/// made, and no proxy resolves a name elsewhere. With no guard, the plain
-/// client a self-hosted node fetches with, exactly as before. An address
-/// literal reaches no resolver: the caller checks it with the guard before
-/// the request, as the ICS wire does.
+/// guard): every name the client connects to resolves through the guard, so a
+/// name answering with hosted infrastructure or with a private address no
+/// operator network or origin admits fails its connection before it is made,
+/// and no proxy resolves a name elsewhere. With no guard, the plain client a
+/// self-hosted node fetches with, exactly as before. An address literal
+/// reaches no resolver: the caller checks it with the guard before the
+/// request, as the ICS wire does.
 pub(super) fn https_client_with_hosted_guard(
     guard: Option<Arc<HostedEgressGuard>>,
 ) -> Result<reqwest::blocking::Client> {

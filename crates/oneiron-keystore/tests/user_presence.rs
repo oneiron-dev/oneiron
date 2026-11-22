@@ -590,6 +590,45 @@ fn each_windows_hello_answer_keeps_its_own_meaning() {
 }
 
 #[test]
+fn only_a_windows_without_the_consent_interop_reads_as_a_device_that_cannot_ask() {
+    // E_NOINTERFACE (a Windows before build 22000) and REGDB_E_CLASSNOTREG:
+    // Windows says the interop is not there.
+    const E_NOINTERFACE: i32 = 0x8000_4002_u32.cast_signed();
+    const REGDB_E_CLASSNOTREG: i32 = 0x8004_0154_u32.cast_signed();
+    let refusal = PresenceError::from_consent_interop_activation;
+    for hresult in [E_NOINTERFACE, REGDB_E_CLASSNOTREG] {
+        assert!(
+            matches!(refusal(hresult), PresenceError::NoPrompt(_)),
+            "hresult {hresult:#x}: {:?}",
+            refusal(hresult)
+        );
+    }
+    assert_eq!(refusal(E_NOINTERFACE), refusal(REGDB_E_CLASSNOTREG));
+    // E_OUTOFMEMORY, E_FAIL, E_ACCESSDENIED, CO_E_NOTINITIALIZED,
+    // RPC_E_DISCONNECTED, E_NOTIMPL, and numbers that name no known code:
+    // the activation failed this once. A caller lets an act stand on
+    // `NoPrompt`, so none of them may read as it.
+    for hresult in [
+        0x8007_000E_u32.cast_signed(),
+        0x8000_4005_u32.cast_signed(),
+        0x8007_0005_u32.cast_signed(),
+        0x8004_01F0_u32.cast_signed(),
+        0x8001_0108_u32.cast_signed(),
+        0x8000_4001_u32.cast_signed(),
+        0,
+        1,
+        i32::MIN,
+        i32::MAX,
+    ] {
+        assert_eq!(
+            refusal(hresult),
+            PresenceError::Platform("user consent verifier activation", i64::from(hresult)),
+            "hresult {hresult:#x}"
+        );
+    }
+}
+
+#[test]
 fn each_windows_hello_availability_says_whether_the_device_can_ask() {
     let capability = PresenceCapability::from_user_consent_availability;
     // Available, DeviceBusy: the device has a prompt.

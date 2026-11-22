@@ -11,6 +11,7 @@
 //! reference rows are the BlobStore's; nothing here counts holders.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 
 use super::{BODY_BLAKE3, BODY_MEDIA_TYPE, EntityId, MemoryError, MemoryResult, TimeRange};
@@ -60,7 +61,7 @@ impl AssetBlobRef {
     /// `bytes` when they are the ones this reference names: its hash and
     /// its size.
     fn names(&self, bytes: &[u8]) -> bool {
-        bytes.len() as u64 == self.byte_size && blake3::hash(bytes).as_bytes() == &self.hash
+        bytes.len() as u64 == self.byte_size && ContentHash::of(bytes).as_bytes() == &self.hash
     }
 }
 

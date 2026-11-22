@@ -203,10 +203,13 @@ impl BookingPageLens {
         let mut root = Self::root(model)?;
         // Shape checks prevent an internal identifier or URL from being emitted
         // as an action argument. They do not resolve or authorize credentials.
+        // A personal link's actions carry the personal token, so its page
+        // keeps the recipient's lock (BK-PERSONAL-LINKS).
         if !page_token
             .0
             .strip_prefix("bkp_")
             .is_some_and(|value| opaque_hex(value, 32))
+            && !crate::booking::is_personal_link_token(&page_token.0)
         {
             return Err(Error::InvalidConfig(
                 "public booking page token shape".to_owned(),
@@ -344,7 +347,7 @@ fn model_field(name: &str, value: &impl Serialize) -> Result<LensNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::booking::{RankedSlot, SolveRequest, SolveResult, slot_mask};
+    use crate::booking::{EventTypeKey, RankedSlot, SolveRequest, SolveResult, slot_mask};
     use crate::temporal::TimeRange;
     use serde_json::json;
 
@@ -357,6 +360,7 @@ mod tests {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         };
         let mask = slot_mask(
             &request,
@@ -377,8 +381,10 @@ mod tests {
                 event_types: vec![EventTypeCard {
                     key: request.event_type,
                     title: "Introduction".to_owned(),
+                    deposit: None,
                     duration_min: 10,
                     description: "Fixture description".to_owned(),
+                    allowed_durations_min: Vec::new(),
                 }],
                 constraint_field: ConstraintFieldConfig {
                     enabled: false,

@@ -4,8 +4,6 @@
 mod approval;
 mod context;
 mod proposal;
-// FIX [LIBTEST-QUARANTINE-DREAMER-RUNNER-MAINTENANCE-REPRESENTATION-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

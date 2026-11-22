@@ -999,6 +999,8 @@ fn an_answer_that_waits_for_room_never_goes_once_its_grant_is_revoked() {
         "--revoked-while-full".into(),
         signals.path().as_os_str().to_owned(),
     ];
+    // Its fence lets it note an answer in the signals dir.
+    full_spec.write_dirs = vec![signals.path().to_owned()];
     full_spec.verbs = vec!["organ.echo".into()];
     // The revocation's cancel waits for the writer up to the grace.
     let host = OrganHost::new(HostConfig {
@@ -1074,6 +1076,8 @@ fn a_reply_before_the_deadline_stands_while_its_handler_overruns() {
         "--reply-while-handled".into(),
         signals.path().as_os_str().to_owned(),
     ];
+    // Its fence lets it note a cancel in the signals dir.
+    replying.write_dirs = vec![signals.path().to_owned()];
     replying.verbs = vec!["organ.echo".into()];
     let host = host(replying);
     host.warm("probe").expect("warm");

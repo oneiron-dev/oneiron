@@ -87,8 +87,9 @@ pub enum GrantFamily {
     HouseLink,
     /// A Connect inquiry edge: its owner's mint and every rewrite of its terms in place.
     InquiryEdge,
-    /// A Connect guest Grant that is no inquiry edge, given by the vault's owner. It confers
-    /// only while one Active operative pact with its peer binds it, too.
+    /// A Connect guest Grant that is no inquiry edge, given by the vault's owner, or, an inquiry
+    /// seat's company half, by the member whose live seat approves it (L7-04-COMPANY-HALF = A).
+    /// It confers only while one Active operative pact with its peer binds it, too.
     Connect,
     /// An Ask guest Grant, given with its ask: its decider is the live owner whose recorded
     /// consent the guest's disclosure stands on.

@@ -35,6 +35,16 @@ const TARGETS: SideTable<VoiceRowKey, VoiceTargetRecord, Named> =
 const RENDER_CONSENT: SideTable<String, VoiceRenderConsent, Named> =
     SideTable::new(&side_table::VOICE_REF_RENDER_CONSENT);
 
+/// The voice subject a stored render decision's value bytes name, whose erase drops the
+/// decision; `None` for bytes that do not read as a decision. The whole-vault export withholds
+/// the decision of a subject it keeps out.
+pub(crate) fn render_consent_subject(value: &[u8]) -> Option<EntityId> {
+    RENDER_CONSENT
+        .decode_value(value)
+        .ok()
+        .map(|consent| consent.decision.subject)
+}
+
 /// Every render decision recorded for a voice, kept once and never rewritten
 /// (FIX 4396). Key: voice id `\0` event id.
 const RENDER_EVENTS: SideTable<VoiceRowKey, VoiceRenderEventReceipt, Named> =
@@ -815,6 +825,8 @@ mod target_verification;
 // Every render decision, kept once beside the current one (FIX 4396).
 #[path = "ref_bank/render_history.rs"]
 mod render_history;
+// The archive landing asks the writer's identity check before it installs a decision.
+pub(super) use render_history::banked_identity_admits_decision_in;
 // The bank's rows in checkpoint images, erased with its subject (FIX 8972).
 #[path = "ref_bank/checkpoint_response.rs"]
 mod checkpoint_response;
@@ -838,8 +850,6 @@ pub use render_history::{
 use render_history::{read_render_consent, record_render_consent_in};
 use target_verification::VendorClone;
 
-// FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-REF-BANK-TESTS]: the lib test target's type check fails here (10 errors: E0061 x6, E0533 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "ref_bank/tests.rs"]
 mod tests;

@@ -8,11 +8,10 @@ use super::support::{cosign_ed, ed_key, genesis_entry};
 use super::world_chain_reads::{edit, fold_under, hash, seeing};
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, kit_seed, set};
 use super::world_privacy::world_row;
+use super::world_reissue::with_predecessor;
 use super::*;
 use crate::HostingPrivacyPosture::SelfHostLocal;
 use crate::world_keys::{RecoveryRoot, RecoveryRootSeed};
-
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 
 /// What two installs must agree on: the machine, the roster, the roots, the
 /// world's read and the valid entries.
@@ -39,10 +38,11 @@ fn agreed(
 fn forty_foreign_roots_never_crowd_a_root_door() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
-        .activate_owner_root(&host.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let world = world_row(&host);
     set(&host, world, ReadLocation::MyMachines);
@@ -75,14 +75,14 @@ fn forty_foreign_roots_never_crowd_a_root_door() {
         owner,
         ..
     } = fresh_install(&host);
-    let restore = fresh.restore_world_keys(&owner, HERE, &seed, None).unwrap();
+    let restore = fresh.restore_world_keys(&owner, &seed, None).unwrap();
     assert_eq!(restore.usable, vec![key]);
     assert!(fresh.local_machine().unwrap().unwrap().mine);
 
     let next = host.vault.prepare_owner_root(&host.owner).unwrap();
     let next_root = next.seed().public(&host.vault_id).unwrap().id;
     host.vault
-        .activate_owner_root(&host.owner, HERE, next, &BTreeSet::new())
+        .activate_owner_root(&host.owner, next, &BTreeSet::new())
         .unwrap();
     assert_eq!(
         host.vault.owner_root_view(None, 0).unwrap().pinned,

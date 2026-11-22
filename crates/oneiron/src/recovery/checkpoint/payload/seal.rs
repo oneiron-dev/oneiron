@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use getrandom::SysRng;
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::backup::{ARTIFACT_SEAL_EPOCH as EPOCH, ARTIFACT_SEAL_SUITE as AEAD};
 use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, SealKey, SealParams, WrapType, seal,
@@ -342,7 +343,7 @@ pub(super) fn seal_bundles(
             pieces.push(Piece {
                 position: stream.len() as u64,
                 len: envelope.len() as u64,
-                digest: *blake3::hash(&envelope).as_bytes(),
+                digest: *ContentHash::of(&envelope).as_bytes(),
             });
             stream.extend_from_slice(&envelope);
         }
@@ -397,7 +398,7 @@ pub(in crate::recovery::checkpoint) fn open_bundle(
             .checked_add(len)
             .and_then(|end| stream.get(start..end))
             .ok_or_else(corrupt)?;
-        if *blake3::hash(envelope).as_bytes() != piece.digest {
+        if *ContentHash::of(envelope).as_bytes() != piece.digest {
             return Err(corrupt());
         }
         let at = u32::try_from(at).map_err(|_| corrupt())?;

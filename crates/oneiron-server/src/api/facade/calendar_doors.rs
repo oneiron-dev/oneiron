@@ -149,6 +149,7 @@ pub(crate) async fn calendar_connector_pull(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -205,6 +206,7 @@ pub(crate) async fn calendar_connector_write(
                 Arc::clone(server.vault()),
                 owner,
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -365,4 +367,36 @@ pub(crate) async fn vault_calendar_check_in_answer(
         move |_, memory, owner| meeting::check_in_answer(&memory, &owner, &input),
     )
     .await
+}
+
+/// `calendar.connector.release_hold` (PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A): the owner's own
+/// proof, as every owner door takes it, which the release's write revalidates in its snapshot,
+/// and the owner's confirm of its preview; an agent's credential, a delegate's or a visitor's
+/// token releases nothing. It lists the booking's EVENT (`host_door_lists`), the one row its
+/// answer names; a refusal lists none.
+pub(crate) async fn calendar_connector_release_hold(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::calendar::connectors::door::CalendarConnectorReleaseHoldRequest,
+) -> Listed<oneiron::calendar::connectors::door::CalendarConnectorReleaseHoldReceipt> {
+    const VERB: &str = "calendar.connector.release_hold";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || {
+        match oneiron::task_verb::sdk::release_calendar_hold_as(server.vault(), &owner, &input) {
+            Ok(receipt) => {
+                let rows = oneiron::EntityId::from_hex(&receipt.event_ref)
+                    .ok()
+                    .into_iter()
+                    .collect();
+                (Ok(receipt), rows)
+            }
+            Err(error) => refused(error),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| refused(super::host_doors::support::internal(VERB)))
 }

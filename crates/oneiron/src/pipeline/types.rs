@@ -201,6 +201,31 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// audience may not read takes no channel slot. `None` with the owner
     /// alone or outside a pack.
     pub(super) disclosure: Option<&'a crate::disclosure::DisclosureContext>,
+    /// The vault a bounded result channel's admission walks under
+    /// `disclosure` for the sources of a row's words
+    /// (`retained_copies::clamp_admits`), so a row whose words come from a
+    /// row the audience may not read takes no place in a vector, text,
+    /// temporal or typed media fetch
+    /// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). Set by
+    /// `PipelineBuilder::bounded_result_filters`; for the phonetic sound
+    /// match and learned walk, `PipelineBuilder::phonetic_candidate_admits`;
+    /// and for a narrowed PPR walk's visibility, `pipeline_ppr_visibility`
+    /// (REVIEW-10215 round 1). `None` in the run's shared config, whose other
+    /// reads keep the row's own test (`retained_copies::clamp_prefilter_admits`).
+    pub(super) disclosure_word_sources: Option<&'a crate::Vault>,
+    /// The call's `made_by` slice (Rule A, OF-466) at a bounded result
+    /// channel's admission, so a row the call drops takes no place in a
+    /// vector, text, temporal or typed media fetch
+    /// (`PipelineBuilder::bounded_result_filters`).
+    /// The run's shared config holds `MadeByPredicate::All`: the narrowed
+    /// walk's visibility, the TURN fold, the reranker's words, L2 evidence
+    /// and the trace judge rows that are not results, and admit as before.
+    /// A PPR walk's result list takes the slice after entity-type authority
+    /// narrows it (`PipelineBuilder::retain_made_by_slice`), and the phonetic
+    /// code rung's list the whole bounded config there
+    /// (`PipelineBuilder::retain_phonetic_hits_in_scope`); the post-blend
+    /// filter still sweeps every candidate.
+    pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
 }
 
 #[derive(Default)]

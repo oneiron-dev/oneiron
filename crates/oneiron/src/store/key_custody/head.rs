@@ -47,6 +47,8 @@ mod pad_scope;
 mod scope;
 mod wire;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::carried_pads::custody_head_digest_for_test;
 pub(super) use self::carried_pads::{CARRIED_PREFIX, CarriedWorldPad, carried_set_digest};
 
 #[allow(

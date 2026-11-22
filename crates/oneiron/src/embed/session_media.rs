@@ -25,6 +25,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::device::media_device_row_key;
 use super::media::{
@@ -64,14 +65,14 @@ impl SessionMediaRefusals {
     fn holds(&self, room: &str, space: &str, document: &PendingMedia) -> bool {
         self.refused.get(room).is_some_and(|rows| {
             rows.get(&(space.to_owned(), document.id))
-                .is_some_and(|print| *print == *blake3::hash(&document.bytes).as_bytes())
+                .is_some_and(|print| *print == *ContentHash::of(&document.bytes).as_bytes())
         })
     }
 
     fn record(&mut self, room: &str, space: &str, document: &PendingMedia) {
         self.refused.entry(room.to_owned()).or_default().insert(
             (space.to_owned(), document.id),
-            *blake3::hash(&document.bytes).as_bytes(),
+            *ContentHash::of(&document.bytes).as_bytes(),
         );
     }
 
@@ -381,7 +382,7 @@ impl Vault {
                 &vector,
                 Some(PassRead {
                     text_hash: document.text_hash,
-                    copy: Some(*blake3::hash(&document.bytes).as_bytes()),
+                    copy: Some(*ContentHash::of(&document.bytes).as_bytes()),
                 }),
                 Some(&provenance),
             ) {

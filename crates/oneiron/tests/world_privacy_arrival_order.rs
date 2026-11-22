@@ -126,6 +126,7 @@ fn yours_mark(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     })
 }
 

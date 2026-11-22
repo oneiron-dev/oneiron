@@ -103,8 +103,14 @@ where
     if !walks {
         return search_text_admitting_in_rank_order(store, rtxn, config, &terms, limit, options);
     }
-    let mut best =
-        scoring::score_query_terms(store, rtxn, config, &terms, options.scope.recency, |id| {
+    let mut best = scoring::score_query_terms(
+        store,
+        rtxn,
+        config,
+        &terms,
+        options.scope.recency,
+        options.scope.hidden_row.as_deref_mut(),
+        |id| {
             if let Some(admit) = admitted.get(id) {
                 return Ok(*admit);
             }
@@ -117,16 +123,18 @@ where
             } && !(walks && scores_for_withdrawn(store, rtxn, id)?);
             admitted.insert(*id, admit);
             Ok(admit)
-        })?;
+        },
+    )?;
     scoring::retain_best(&mut best, limit);
     Ok(scoring::scored_entities(best))
 }
 
 /// [`search_text_bounded`]'s pass when no walk is pending: every posting is
 /// scored, then judged in rank order until `limit` are admitted. A posting's
-/// score never depends on admission (df counts every posting), so the
-/// admitted top `limit` is the list judging every posting first would keep;
-/// the postings below it are never judged.
+/// score never depends on admission (df counts every posting, or under a
+/// clamp every posting of a row its audience could read, whatever the
+/// scope), so the admitted top `limit` is the list judging every posting
+/// first would keep; the postings below it are never judged.
 fn search_text_admitting_in_rank_order<F>(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
@@ -138,10 +146,15 @@ fn search_text_admitting_in_rank_order<F>(
 where
     F: FnMut(&EntityId) -> Result<bool>,
 {
-    let mut ranked =
-        scoring::score_query_terms(store, rtxn, config, terms, options.scope.recency, |_| {
-            Ok(true)
-        })?;
+    let mut ranked = scoring::score_query_terms(
+        store,
+        rtxn,
+        config,
+        terms,
+        options.scope.recency,
+        options.scope.hidden_row.as_deref_mut(),
+        |_| Ok(true),
+    )?;
     scoring::retain_best(&mut ranked, usize::MAX);
     let mut kept = Vec::with_capacity(limit.min(ranked.len()));
     for (id, score) in ranked {
