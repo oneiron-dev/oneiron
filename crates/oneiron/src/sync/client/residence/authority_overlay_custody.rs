@@ -10,7 +10,9 @@ use super::rpc::RpcFault;
 use super::{ResidenceRpc, residence_budgets};
 use crate::Vault;
 use crate::authority::PeerMachine;
-use crate::sync::authority_overlay_custody::{apply_overlay_answer, offer_overlay_page};
+use crate::sync::authority_overlay_custody::{
+    apply_overlay_answer, offer_overlay_page, overlay_peer_trusted_in_txn,
+};
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
     overlay_answer_from_wire, overlay_keys_to_wire, overlay_offer_to_wire,
@@ -83,10 +85,7 @@ pub(crate) async fn exchange_authority_overlay_custody(
             .read_txn()
             .map_err(crate::Error::from)
             .map_err(storage)?;
-        let fold = vault
-            .authority_fold_readonly_in_txn(&txn)
-            .map_err(storage)?;
-        fold.trusted_machine(home).is_some() && fold.machine_proof_key(home) == Some(key)
+        overlay_peer_trusted_in_txn(vault, &txn, home, key).map_err(storage)?
     };
     if !trusted {
         tracing::debug!("authority overlay exchange: this machine does not trust the proven home");
@@ -109,7 +108,15 @@ pub(crate) async fn exchange_authority_overlay_custody(
         let through = answer.through;
         let held = Arc::clone(vault);
         let keys = blocking(move || {
-            apply_overlay_answer(&held, &machine, &home, &offer, &page_session, answer)
+            apply_overlay_answer(
+                &held,
+                &machine,
+                &home,
+                &offer,
+                &page_session,
+                answer,
+                &|txn: &heed::RoTxn<'_>| overlay_peer_trusted_in_txn(&held, txn, home, key),
+            )
         })
         .await?;
         if !keys.is_empty() {

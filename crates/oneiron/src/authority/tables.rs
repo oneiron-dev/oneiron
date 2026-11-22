@@ -76,6 +76,17 @@ crate::side_table::side_tables! {
     /// resumes only from a base folded at the same count. Key: ().
     AUTHORITY_OVERLAY_OPENNESS_EPOCH: VaultMeta b"authority.overlay.openness-epoch.v1" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One subject whose authority attribution was erased here (census L5-22 PR 1b): by the
+    /// owner's erase door, or because another machine of the vault named it erased. It stands
+    /// for good: no later key of the subject installs, and no new row names it. It names no
+    /// row. Key: the subject's entity id. Value: when it first stood (recording clock).
+    AUTHORITY_ERASED_SUBJECT: VaultMeta b"authority.erased-subject.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One sealed authority row whose overlay an erase deleted here, or dropped where it
+    /// arrived (census L5-22 PR 1b): its scaffold still verifies, and verification reports it
+    /// erased. It names no subject. Key: hash32 (the row's entry hash). Value: ().
+    AUTHORITY_ERASED_ROW: VaultMeta b"authority.erased-row.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One signed authority row the owner's history import kept as evidence instead of storing
     /// it, because the store door held it at the owner's reserve under the fold's memory floor,
     /// or it stands on such a row (FIX [OWNER-RESERVE-IMPORT-PARTIAL]): no held history,

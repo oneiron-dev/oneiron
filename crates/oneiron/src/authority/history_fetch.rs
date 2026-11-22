@@ -28,15 +28,16 @@
 //! row counts once it is imported and folded. A row the adopted checkpoint
 //! image covers is attested, and on a vault that adopted one no row counts as
 //! replayed: its fold rests on the attested image, covered rows and tail
-//! alike. `erased` waits for an erasure record, so it stays empty until one
-//! exists.
+//! alike. `erased` names rows whose overlay an erase deleted here, marked
+//! in AUTHORITY_ERASED_ROW: their scaffold verifies, but they are never
+//! replayed. A pass-through row without that mark is unopened, not erased.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use serde::Deserialize;
 
-use super::history_transfer::{DecodedRow, history_in_txn};
+use super::history_transfer::{DecodedRow, history_in_txn, is_genesis_row};
 use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, Vault};
@@ -199,11 +200,13 @@ pub struct AuthorityHistoryVerificationCoverage {
     pub scaffold_verified: BTreeSet<AuthorityEntryHash>,
     /// The local fold replayed its operation from the whole history and
     /// holds it valid. Empty on a vault that adopted a checkpoint image: its
-    /// fold rests on the image.
+    /// fold rests on the image. A pass-through row is never replayed.
     pub semantics_replayed: BTreeSet<AuthorityEntryHash>,
     /// Covered by the verified checkpoint image this vault adopted.
     pub checkpoint_attested: BTreeSet<AuthorityEntryHash>,
-    /// Known erased by an erasure record (none until one exists).
+    /// Verified pass-through rows whose overlay an erase deleted here
+    /// (AUTHORITY_ERASED_ROW). Their scaffold verifies; they are never
+    /// replayed. An unmarked pass-through row is unopened, not erased.
     pub erased: BTreeSet<AuthorityEntryHash>,
     /// Requested and not verified: never erased, never permission.
     pub unavailable: BTreeSet<AuthorityEntryHash>,
@@ -318,26 +321,26 @@ fn authority_history_selection_in_txn(
 }
 
 /// The vault a row belongs to: a genesis is its own, any other names one.
-fn row_vault(hash: &AuthorityEntryHash, entry: &AuthorityLogEntry) -> Option<AuthorityVaultId> {
-    if matches!(entry.op, AuthorityOp::Genesis { .. }) {
+fn row_vault(hash: &AuthorityEntryHash, row: &FoldRow) -> Option<AuthorityVaultId> {
+    if is_genesis_row(row) {
         Some(*hash)
     } else {
-        entry.vault_id
+        row.vault_id()
     }
 }
 
 /// The vault `rows` belong to: their genesis, else the vault they name.
 fn rows_vault<'a>(
-    mut rows: impl Iterator<Item = (&'a AuthorityEntryHash, &'a AuthorityLogEntry)> + Clone,
+    mut rows: impl Iterator<Item = (&'a AuthorityEntryHash, &'a FoldRow)> + Clone,
 ) -> Option<AuthorityVaultId> {
     rows.clone()
-        .find_map(|(hash, entry)| matches!(entry.op, AuthorityOp::Genesis { .. }).then_some(*hash))
-        .or_else(|| rows.find_map(|(_, entry)| entry.vault_id))
+        .find_map(|(hash, row)| is_genesis_row(row).then_some(*hash))
+        .or_else(|| rows.find_map(|(_, row)| row.vault_id()))
 }
 
 /// `selected` so each row follows every selected parent of its, ties by hash.
 fn parents_first(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     selected: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<Vec<AuthorityEntryHash>> {
     let mut waiting: BTreeMap<AuthorityEntryHash, usize> = BTreeMap::new();
@@ -346,9 +349,8 @@ fn parents_first(
     for hash in selected {
         let parents: BTreeSet<AuthorityEntryHash> = history
             .get(hash)
-            .map(|(_, entry)| {
-                entry
-                    .parent_hashes
+            .map(|(_, row)| {
+                row.parent_hashes()
                     .iter()
                     .filter(|parent| selected.contains(*parent))
                     .copied()
@@ -391,17 +393,8 @@ fn authority_history_page_in_txn(
     fetch: &AuthorityHistoryFetch,
     withheld: &BTreeSet<EntityId>,
 ) -> Result<AuthorityHistoryPage> {
-    let history: BTreeMap<_, _> = history_in_txn(vault, txn)?
-        .into_iter()
-        .map(|(hash, (bytes, row))| {
-            let entry = row
-                .open()
-                .cloned()
-                .ok_or_else(authority_overlay_unavailable)?;
-            Ok((hash, (bytes, entry)))
-        })
-        .collect::<Result<_>>()?;
-    let vault_id = rows_vault(history.iter().map(|(hash, (_, entry))| (hash, entry)));
+    let history = history_in_txn(vault, txn)?;
+    let vault_id = rows_vault(history.iter().map(|(hash, (_, row))| (hash, row)));
     if fetch.vault_id.is_some() && vault_id.is_some() && fetch.vault_id != vault_id {
         return Err(invalid_authority());
     }
@@ -426,13 +419,15 @@ fn authority_history_page_in_txn(
         match history.get(&hash) {
             // A withheld world's row is neither served nor named unheld, and
             // its parents are not walked: no main-log row names one.
-            Some((_, entry))
-                if super::world_privacy::side_world(&entry.op)
+            Some((_, row))
+                if row
+                    .op()
+                    .and_then(super::world_privacy::side_world)
                     .is_some_and(|world| withheld.contains(&world)) => {}
-            Some((_, entry)) => {
+            Some((_, row)) => {
                 selected.insert(hash);
                 if fetch.parent_closure {
-                    stack.extend(entry.parent_hashes.iter().copied());
+                    stack.extend(row.parent_hashes().iter().copied());
                 }
             }
             None => {
@@ -483,7 +478,7 @@ fn authority_history_page_in_txn(
 /// Whether `hash` and every ancestor of it are in `rows`, memoized in
 /// `closed`. Walked without recursion: a history may be deep.
 fn ancestry_closed(
-    rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    rows: &BTreeMap<AuthorityEntryHash, FoldRow>,
     hash: AuthorityEntryHash,
     closed: &mut BTreeMap<AuthorityEntryHash, bool>,
 ) -> bool {
@@ -492,21 +487,20 @@ fn ancestry_closed(
         if closed.contains_key(&at) {
             continue;
         }
-        let Some(entry) = rows.get(&at) else {
+        let Some(row) = rows.get(&at) else {
             closed.insert(at, false);
             continue;
         };
         if expanded {
-            let whole = entry
-                .parent_hashes
+            let whole = row
+                .parent_hashes()
                 .iter()
                 .all(|parent| closed.get(parent).copied().unwrap_or(false));
             closed.insert(at, whole);
         } else {
             stack.push((at, true));
             stack.extend(
-                entry
-                    .parent_hashes
+                row.parent_hashes()
                     .iter()
                     .filter(|parent| !closed.contains_key(*parent))
                     .map(|parent| (*parent, false)),
@@ -530,16 +524,10 @@ fn verification_in_txn(
     expected: Option<AuthorityVaultId>,
     page: Vec<DecodedRow>,
 ) -> Result<AuthorityHistoryVerificationCoverage> {
-    let mut rows: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = history_in_txn(vault, txn)?
+    let mut rows: BTreeMap<AuthorityEntryHash, FoldRow> = history_in_txn(vault, txn)?
         .into_iter()
-        .map(|(hash, (_, row))| {
-            let entry = row
-                .open()
-                .cloned()
-                .ok_or_else(authority_overlay_unavailable)?;
-            Ok((hash, entry))
-        })
-        .collect::<Result<_>>()?;
+        .map(|(hash, (_, row))| (hash, row))
+        .collect();
     // The adoption's pin, coverage and archive stand whatever it covers; the
     // fold replays the covered rows itself where the image seeds no fold (it
     // covers a sealed row: census L5-22 1a-iii).
@@ -551,11 +539,7 @@ fn verification_in_txn(
         .or_else(|| adopted.as_ref().map(|adopted| adopted.pin().genesis))
         .or(expected);
     for (hash, _, row) in super::history_repair::staged_rows_in_txn(&vault.store, txn)? {
-        let entry = row
-            .open()
-            .cloned()
-            .ok_or_else(authority_overlay_unavailable)?;
-        rows.entry(hash).or_insert(entry);
+        rows.entry(hash).or_insert(row);
     }
     let mut coverage = AuthorityHistoryVerificationCoverage {
         requested: requested.clone(),
@@ -565,12 +549,8 @@ fn verification_in_txn(
     };
     let mut scope = requested.clone();
     for (hash, _, row) in page {
-        let entry = row
-            .open()
-            .cloned()
-            .ok_or_else(authority_overlay_unavailable)?;
         scope.insert(hash);
-        let Some(names) = row_vault(&hash, &entry) else {
+        let Some(names) = row_vault(&hash, &row) else {
             coverage.refused.insert(hash);
             continue;
         };
@@ -578,7 +558,7 @@ fn verification_in_txn(
             coverage.refused.insert(hash);
             continue;
         }
-        rows.entry(hash).or_insert(entry);
+        rows.entry(hash).or_insert(row);
     }
     for hash in &scope {
         if rows.contains_key(hash) && !coverage.refused.contains(hash) {
@@ -594,6 +574,11 @@ fn verification_in_txn(
     }
     let mut closed = BTreeMap::new();
     for hash in &coverage.scaffold_verified {
+        if matches!(rows.get(hash), Some(FoldRow::PassThrough(_)))
+            && authority_row_erased_in_txn(&vault.store, txn, hash)?
+        {
+            coverage.erased.insert(*hash);
+        }
         if !ancestry_closed(&rows, *hash, &mut closed) {
             coverage.unresolved.insert(*hash);
         }
@@ -609,14 +594,12 @@ fn verification_in_txn(
                     }
                     continue;
                 }
-                let Some(entry) = rows.get(hash) else {
+                let Some(row) = rows.get(hash) else {
                     continue;
                 };
-                if fold.stands_on_retired_key(
-                    hash,
-                    &FoldRow::Open(entry.clone()),
-                    &mut |parent| Ok(rows.get(parent).cloned().map(FoldRow::Open)),
-                )? {
+                if fold
+                    .stands_on_retired_key(hash, row, &mut |parent| Ok(rows.get(parent).cloned()))?
+                {
                     coverage.retired.insert(*hash);
                 }
             }
@@ -689,19 +672,17 @@ impl Vault {
             return Err(refused("a history page served for another selection"));
         }
         let txn = self.store.env.read_txn()?;
-        // This verification reader still needs whole entries (the fetch
-        // route is out of the fold-row reader leg's scope).
         let decoded = page
             .rows
             .iter()
             .map(|bytes| {
-                let entry =
-                    open_carried_authority_body_in_txn(&self.store, &txn, bytes, &page.overlays)?;
-                Ok((
-                    authority_entry_hash(&entry)?,
-                    bytes.clone(),
-                    FoldRow::Open(entry),
-                ))
+                let row = decode_carried_authority_fold_row_in_txn(
+                    &self.store,
+                    &txn,
+                    bytes,
+                    &page.overlays,
+                )?;
+                Ok((row.hash()?, bytes.clone(), row))
             })
             .collect::<Result<Vec<_>>>()?;
         let selection = authority_history_selection_in_txn(self, &txn, &fetch.selection)?;
