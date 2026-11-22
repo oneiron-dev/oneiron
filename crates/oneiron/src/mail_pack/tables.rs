@@ -50,6 +50,16 @@ crate::side_table::side_tables! {
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// An Owner's request for one member's personal mailbox in their next whole-vault export
+    /// (fix list row 15416): the request, the mailbox's person, the Owner, the member's typed
+    /// Ask and whether an export used it; no address, no mail. Key: id16(source) + id16(the
+    /// requesting Owner's PERSON).
+    MAIL_PACK_EXPORT_REQUEST: VaultMeta b"mail_pack:export_request:v1:" Named Engine
+        // Restore class: A request stands only where it was made: no image brings back an open
+        // or approved request, so a restore drops it and the Owner asks again (fix list row
+        // 15416).
+        [restore: not_imaged] [family: not_imaged] [tier: runtime]
+        => crate::mail_pack::erase_export_request_actor_in_txn;
     /// The "Forget too" provider deletes a mail source still owes (fix list row 18084): the
     /// rows of each forgotten message not yet deleted and its thread's CONVERSATION, recorded
     /// before the first row goes. Key: id16(source) + blake3 (32) of the provider id.
@@ -90,6 +100,13 @@ crate::side_table::side_tables! {
     /// provider id.
     MAIL_PACK_OCCURRENCE_ROW: VaultMeta b"mail_pack:occurrence_row:v1:" Named
         [restore: content] [family: structure] [tier: canonical];
+    /// "Owners can export members' mail", off when absent (fix list row 15416): on, a
+    /// person-owned shared vault's whole-vault export carries members' personal mailboxes.
+    /// Key: ().
+    MAIL_PACK_OWNERS_EXPORT_MEMBER_MAIL: VaultMeta b"mail_pack:owners_export_member_mail:v1" Named
+        // Restore class: A restore never turns "Owners can export members' mail" on again once
+        // it was turned off (fix list row 15416).
+        [restore: live] [family: unclassified] [tier: canonical];
     /// A drafted Gmail, Microsoft 365 or IMAP reply's retained message (fix list row 17645): the
     /// exact RFC 5322 bytes its current revision sends, written once at draft and sealed under that
     /// revision's own erasable ConnectorResume key, after the revision (u64be). Key: id16(draft).

@@ -2,7 +2,7 @@
 
 use super::JobSpec;
 
-/// Every job kind, one line each: the engine's 21 sweeps (stage 5a), the deadlines doors note for
+/// Every job kind, one line each: the engine's 22 sweeps (stage 5a), the deadlines doors note for
 /// five of them, the pending check-ins' due transitions, the outage parks' timed resumes, the
 /// model seats' resets, the agent waits' `until`, the watcher TASKs' ticks and the actors' timer
 /// turn programs (stage 5b), the held sends' releases, the paced verb line and the remote task
@@ -22,6 +22,7 @@ static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::SECRET_LIFT_HISTORY_JOB,
     &crate::housekeeping::jobs::CLAIM_VAD_DEBT_JOB,
     &crate::housekeeping::jobs::FOUND_KEY_NOTICES_JOB,
+    &crate::housekeeping::jobs::EXPORT_AUDIT_OWED_JOB,
     &crate::housekeeping::jobs::BODY_LINE_INDEX_REBUILD_JOB,
     &crate::housekeeping::jobs::ANNOTATION_BODY_ANCHORS_JOB,
     &crate::housekeeping::jobs::DRAFTER_CORPUS_SWEEP_JOB,

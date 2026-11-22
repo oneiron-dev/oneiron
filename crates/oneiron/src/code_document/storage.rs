@@ -19,12 +19,14 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
+mod archived_document;
 pub(crate) mod checkpoint;
 mod edit;
 mod lift;
 mod receipt_actor;
 mod replay;
 mod view_fork;
+pub(crate) use self::archived_document::{ArchivedDocumentTable, archive_document_row};
 pub(crate) use self::lift::{CodeDocumentRows, code_document_texts_in_txn};
 pub(crate) use self::receipt_actor::ReceiptActor;
 pub(crate) use self::receipt_actor::{erase_head_actor_in_txn, erase_ingress_actor_in_txn};
@@ -101,6 +103,13 @@ pub(super) struct ReceiptRow {
     custody: Vec<ReceiptCustody>,
 }
 
+/// The Loro commit message a document's birth commits with.
+const BIRTH_STAMP: &str = "oneiron.code_document.birth.v1";
+/// How a text operation's Loro commit message begins ([`op_stamp`]).
+const TEXT_OP_STAMP: &str = "oneiron.code_document.v3";
+/// How the Loro commit message of an operation with a metadata change begins.
+const METADATA_OP_STAMP: &str = "oneiron.code_document.metadata.v1";
+
 /// The Loro commit message of one operation. It binds the ingress identity,
 /// edit and provenance into the document's operation fold. The actor stays on
 /// the receipts, so an actor's erase leaves every fold whole (FIX 3520). An
@@ -118,11 +127,11 @@ fn op_stamp(
     let provenance = crate::entity_id::bytes_to_hex_lower(&hash(&encode(provenance)?));
     Ok(match metadata {
         None => format!(
-            "oneiron.code_document.v3:{operation}:{session}:{peer_id}:{counter_start}:{}:{provenance}",
+            "{TEXT_OP_STAMP}:{operation}:{session}:{peer_id}:{counter_start}:{}:{provenance}",
             crate::entity_id::bytes_to_hex_lower(&hash(&encode(edit)?)),
         ),
         Some(metadata) => format!(
-            "oneiron.code_document.metadata.v1:{operation}:{session}:{peer_id}:{counter_start}:{}:{provenance}",
+            "{METADATA_OP_STAMP}:{operation}:{session}:{peer_id}:{counter_start}:{}:{provenance}",
             crate::entity_id::bytes_to_hex_lower(&hash(&encode(&(edit, metadata))?)),
         ),
     })
@@ -600,7 +609,7 @@ fn genesis_session(
     doc.get_text("body")
         .insert(0, initial)
         .map_err(|_| invalid())?;
-    doc.commit_with(CommitOptions::new().commit_msg("oneiron.code_document.birth.v1"));
+    doc.commit_with(CommitOptions::new().commit_msg(BIRTH_STAMP));
     Ok(CodeDocumentSession {
         doc: doc.fork(),
         repo: repo.to_owned(),

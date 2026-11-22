@@ -35,7 +35,13 @@ pub(super) fn key(prefix: &[u8], id: &[u8; 32]) -> Vec<u8> {
 /// the genesis document-id hash and the rename-generation counter's key, so
 /// those two derivations keep calling this rather than the typed table.
 pub(super) fn path_key(repo: &str, path: &str) -> Vec<u8> {
-    key(b"code_document:path:v1:", &path_hash(repo, path))
+    path_hash_key(&path_hash(repo, path))
+}
+
+/// [`path_key`] of the repo path whose [`path_hash`] is `path`: what a stored
+/// `CODE_DOCUMENT_PATH` row's own key gives back.
+pub(super) fn path_hash_key(path: &[u8; 32]) -> Vec<u8> {
+    key(b"code_document:path:v1:", path)
 }
 
 pub(super) use crate::store::code_document_values::validate_path;

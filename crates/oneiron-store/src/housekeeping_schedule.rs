@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// One sweep the housekeeping pass knows. The engine runs the first
-/// twenty-one; the rest need a host's authority and are reported, never run.
+/// twenty-two; the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -47,6 +47,10 @@ pub enum HousekeepingSweep {
     /// Raises the found-key notices left due past one write's share (OF-560,
     /// FIX 2648), for a vault no later write comes to.
     FoundKeyNotices,
+    /// Writes each export audit an Owner's copy still owes (L5-17): the
+    /// audit row and the private threads' notices whose write did not
+    /// commit when the copy left.
+    ExportAuditOwed,
     /// Rebuilds whole-body line indexes reads found missing or short (FIX
     /// 1186b): a read notes the body, this sweep streams it once and
     /// publishes the derived sidecar.
@@ -137,7 +141,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -152,6 +156,7 @@ impl HousekeepingSweep {
         Self::SecretLiftHistory,
         Self::ClaimVadDebt,
         Self::FoundKeyNotices,
+        Self::ExportAuditOwed,
         Self::BodyLineIndexRebuild,
         Self::AnnotationBodyAnchors,
         Self::DrafterCorpusSweep,
@@ -184,6 +189,7 @@ impl HousekeepingSweep {
             Self::SecretLiftHistory => "secret_lift_history",
             Self::ClaimVadDebt => "claim_vad_debt",
             Self::FoundKeyNotices => "found_key_notices",
+            Self::ExportAuditOwed => "export_audit_owed",
             Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
@@ -220,6 +226,7 @@ impl HousekeepingSweep {
             | Self::SecretLiftHistory
             | Self::ClaimVadDebt
             | Self::FoundKeyNotices
+            | Self::ExportAuditOwed
             | Self::BodyLineIndexRebuild
             | Self::AnnotationBodyAnchors
             | Self::DrafterCorpusSweep

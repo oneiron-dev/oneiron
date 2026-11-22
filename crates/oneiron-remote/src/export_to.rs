@@ -16,9 +16,11 @@ impl OneironClient {
     /// as `vault.export` does: `format` is `archive` (the default) or `okf`.
     /// The answer is the archive's format, length and BLAKE3, with a notice
     /// for each world it carries that the owner's recipient choice would
-    /// keep from where it goes (owner ruling 1-EXPORT = B). Over a server
-    /// the archive streams through a kept transfer, so no ceiling on a reply
-    /// applies to it; the transfer is let go once the sink holds it whole.
+    /// keep from where it goes (owner ruling 1-EXPORT = B), and one for each
+    /// other member's personal mailbox it left out (fix list row 15416).
+    /// Over a server the archive streams through a kept transfer, so no
+    /// ceiling on a reply applies to it; the transfer is let go once the
+    /// sink holds it whole.
     ///
     /// # Errors
     ///
@@ -62,6 +64,7 @@ impl OneironClient {
                         digest: transfer.digest,
                         holder_requests: transfer.holder_requests,
                         notices: transfer.notices,
+                        mailbox_notices: transfer.mailbox_notices,
                         act: None,
                     }),
                     (Err(error), Ok(())) => Err(error),

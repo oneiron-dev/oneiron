@@ -18,7 +18,10 @@
 //!
 //! The org's compliance search ([`compliance`]) is the one reader across
 //! mailboxes: an admin setting, off by default, every use logged before it
-//! answers.
+//! answers. An Owner's whole-vault export carries another member's personal
+//! mailbox only as who owns the shared vault decides ([`export_mailboxes`]),
+//! or once that member approved the Owner's request for it
+//! ([`export_requests`]).
 //!
 //! Each source keeps the owner's "Keep a copy of my mail" setting (all mail,
 //! the default; recent months; search only) and "When I delete at the
@@ -46,6 +49,8 @@ pub(crate) mod compliance;
 mod credential;
 mod dav_xml;
 mod doors;
+mod export_mailboxes;
+mod export_requests;
 mod gmail;
 mod google_calendar;
 mod header_retire;
@@ -109,6 +114,15 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
+pub(crate) use export_mailboxes::{
+    CarriedMemberMailboxes, MemberMailboxPlan, tell_member_mailboxes_in_txn,
+};
+pub use export_mailboxes::{
+    MailExportMemberMailSetRequest, MailExportMemberMailSettingView, MailboxExportNotice,
+    MailboxLeftOutReason,
+};
+pub(crate) use export_requests::erase_export_request_actor_in_txn;
+pub use export_requests::{MailExportRequest, MailExportRequestState, MailExportRequestView};
 pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
