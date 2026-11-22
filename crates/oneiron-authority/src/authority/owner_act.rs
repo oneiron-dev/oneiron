@@ -179,6 +179,13 @@ pub enum OwnerActKind {
     /// Grant names the verb"). No record carries it: the import lands as the
     /// carrying owner's.
     HookTranscriptImport,
+    /// The owner's amend of an organization's stored Admin setup
+    /// (`vault.org_admin.amend`; RULING ORG-ADMIN-AMEND-CONFIRM-RECEIPT = A,
+    /// Engine 16 Nov 02:27). A local typed receipt records it in the write
+    /// that changed the setup, with the Admins and powers it added and took
+    /// away; its `target` is the organization and its `seen` zero. No Grant
+    /// line names it: no Admin or agent amends the setup.
+    OrgAdminAmend,
 }
 
 impl OwnerActKind {
@@ -211,6 +218,7 @@ impl OwnerActKind {
             Self::RestoredMachineJoin => "restored_machine_join",
             Self::RunnerContinue => "runner_continue",
             Self::HookTranscriptImport => "hook_transcript_import",
+            Self::OrgAdminAmend => "org_admin_amend",
         }
     }
 
@@ -243,6 +251,7 @@ impl OwnerActKind {
             "restored_machine_join" => Self::RestoredMachineJoin,
             "runner_continue" => Self::RunnerContinue,
             "hook_transcript_import" => Self::HookTranscriptImport,
+            "org_admin_amend" => Self::OrgAdminAmend,
             _ => return None,
         })
     }
