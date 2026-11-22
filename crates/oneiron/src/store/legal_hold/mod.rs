@@ -33,6 +33,7 @@ pub(crate) use use_limit::{
     records_under_cooperative_restriction_in_txn, rows_keep_record, use_limit_in_txn,
 };
 
+use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
 
 use heed::{RoTxn, RwTxn};
