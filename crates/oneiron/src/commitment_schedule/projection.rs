@@ -34,7 +34,8 @@ use super::{
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::commitment::{
-    CommitmentRecord, CommitmentStatus, commitment_claim_candidate, decode_commitment_claim,
+    CommitmentInstanceState, CommitmentRecord, CommitmentStatus, commitment_claim_candidate,
+    decode_commitment_claim,
 };
 use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;
@@ -352,9 +353,9 @@ impl Vault {
             .iter()
             .any(|entry| entry.window.start == window_start && entry.is_open());
         if open || u32::try_from(slots).unwrap_or(u32::MAX) < count {
-            // The window still owes something. Released and superseded slots
-            // close without counting as completions, and none of them earns a
-            // replacement inside this window.
+            // The window still owes something. Released, superseded and
+            // withdrawn slots close without counting as completions, and none
+            // of them earns a replacement inside this window.
             return Ok(Vec::new());
         }
         if closed_at > closed.occurrence.window.end {
@@ -511,9 +512,23 @@ impl Vault {
                 // its slot. Assuming it open is the conservative reading: it
                 // keeps the occurrence from being minted twice.
                 status: CommitmentStatus::Open,
+                withdrawn: false,
             };
             if let Some(record) = self.instance_occupant_in_txn(txn, &instance_ref)? {
-                entry.status = self.instance_status_in_txn(txn, &instance_ref, record.status)?;
+                match self.commitment_instance_state_in_txn(txn, &instance_ref)? {
+                    // The head's status, once a status change has minted a
+                    // successor for it (FIX 9726).
+                    CommitmentInstanceState::Open(head)
+                    | CommitmentInstanceState::Inert(head)
+                    | CommitmentInstanceState::Closed(head) => entry.status = head.status,
+                    // Its claim closed while its promise was open (FIX 22383):
+                    // closed for the schedule, with the status it stores.
+                    CommitmentInstanceState::Withdrawn => {
+                        entry.status = record.status;
+                        entry.withdrawn = true;
+                    }
+                    CommitmentInstanceState::Missing => entry.status = record.status,
+                }
                 // The membership key carries no window end; the claim does.
                 if let Ok(payload) = CommitmentSchedulePayload::decode(&record.schedule)
                     && let Some(stored) = payload.occurrence
@@ -561,27 +576,6 @@ impl Vault {
         }))
     }
 
-    /// The status an instance holds now: its head's, once a status change
-    /// has minted a successor for it (FIX 9726), else the one it stores.
-    fn instance_status_in_txn(
-        &self,
-        txn: &RoTxn<'_>,
-        instance_ref: &EntityId,
-        stored: CommitmentStatus,
-    ) -> ScheduleResult<CommitmentStatus> {
-        let head = self.commitment_head_in_txn(txn, instance_ref)?;
-        if head == *instance_ref {
-            return Ok(stored);
-        }
-        Ok(self
-            .get_claim_in_txn(txn, &head)?
-            .as_ref()
-            .map(decode_commitment_claim)
-            .transpose()?
-            .flatten()
-            .map_or(stored, |record| record.status))
-    }
-
     /// Whatever commitment claim already sits on a deterministic instance id.
     ///
     /// An id that is occupied by something which does not read back as a
@@ -604,6 +598,24 @@ impl Vault {
             .map_err(|_| ScheduleError::InstanceIdentityCollision)?
             .ok_or(ScheduleError::InstanceIdentityCollision)
             .map(Some)
+    }
+
+    /// The series a CMT-2 instance belongs to. `Ok(None)` when the claim is
+    /// absent, is not a commitment, or carries no instance payload.
+    fn instance_series_ref_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        instance_ref: &EntityId,
+    ) -> ScheduleResult<Option<EntityId>> {
+        let Some(body) = self.get_claim_in_txn(txn, instance_ref)? else {
+            return Ok(None);
+        };
+        let Some(record) = decode_commitment_claim(&body)? else {
+            return Ok(None);
+        };
+        Ok(CommitmentSchedulePayload::decode(&record.schedule)
+            .ok()
+            .and_then(|payload| payload.series_ref))
     }
 
     /// Grounds the close hook's subject: a CMT-2 INSTANCE whose stored terminal

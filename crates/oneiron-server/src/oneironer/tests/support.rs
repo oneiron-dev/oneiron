@@ -480,6 +480,7 @@ pub(super) fn say(
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness");
     EntityId::from_hex(receipt.receipt_ref.trim_start_matches("witness:")).expect("turn id")
@@ -532,6 +533,7 @@ pub(super) fn witness_at(vault: &Vault, content: &str, occurred_at: u64) -> Enti
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness");
     EntityId::from_hex(receipt.receipt_ref.trim_start_matches("witness:")).expect("turn id")

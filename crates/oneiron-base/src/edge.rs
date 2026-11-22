@@ -65,7 +65,8 @@ impl EdgeKind {
             | Self::SpawnedBy
             | Self::AddressedTo
             | Self::RepliesTo
-            | Self::Regenerates => None,
+            | Self::Regenerates
+            | Self::Carries => None,
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
@@ -180,7 +181,8 @@ pub fn edge_value_layout_for_kind(kind: EdgeKind, has_provenance_claim: bool) ->
         | EdgeKind::SameAs
         | EdgeKind::Calls
         | EdgeKind::Imports
-        | EdgeKind::Refs => EdgeValueLayout::Structural,
+        | EdgeKind::Refs
+        | EdgeKind::Carries => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
         | EdgeKind::Supports
@@ -446,9 +448,13 @@ pub fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
 /// `regenerates` joins `same_as` here, and only here (FIX 5972). Its link says
 /// a Retry's reply answers its source again, which only the message stream
 /// proves, so the stream's terminal write is its one creator. On the receive
-/// side a carried link is admitted by [`regeneration_pair`] on the topology
+/// side a carried link is admitted by `regeneration_pair` on the topology
 /// its materializer applies, never by this refusal; on the delete side an
 /// existing link keeps its delete, weight and VAD doors.
+///
+/// `carries` joins them on the same terms: an epoch summary's carried working
+/// set is written by the epoch mint, in the summary's own transaction, and by
+/// no builder. A peer's carried row is admitted as a `derived_from` row is.
 pub fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
     validate_public_edge_kind(kind)?;
     match kind {
@@ -456,6 +462,9 @@ pub fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Resul
             crate::error::RegistryError::ReservedEdgeKind("same_as"),
         )),
         EdgeKind::Regenerates => Err(reserved_regenerates()),
+        EdgeKind::Carries => Err(crate::error::Error::Registry(
+            crate::error::RegistryError::ReservedEdgeKind("carries"),
+        )),
         _ => Ok(()),
     }
 }

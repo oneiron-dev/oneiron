@@ -299,14 +299,13 @@ pub(crate) fn resend_blocked_after(
     let mut key = PREFIX.to_vec();
     key.extend_from_slice(&[0x64; 32]);
     let now_s = vault.store.clock.now_recorded_at();
-    let now_ms = now_s.saturating_mul(1000);
     let request = OutboundCallRequest::new(
         crate::attempt_queue::AttemptId::now(),
         0,
         "mail",
         "send",
         b"{}".to_vec(),
-        now_ms,
+        now_s,
     );
     let mut earlier = IntentLedgerRecord::pending(
         request,
@@ -316,7 +315,7 @@ pub(crate) fn resend_blocked_after(
             budget_class: crate::connector_key::budget_class::BudgetClass::Send,
             matched_rows: Vec::new(),
             sends_debit: 0,
-            accounted_at_ms: now_ms,
+            accounted_at_ms: now_s,
         },
     )?;
     earlier.state = IntentState::Abandoned;

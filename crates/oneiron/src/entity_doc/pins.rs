@@ -118,6 +118,58 @@ pub(super) const ENTITY_DOC_PIN: SideTable<HexPair, CitationPin, Named> =
 pub(super) const ENTITY_DOC_PURGE_RECEIPT: SideTable<HexPair, PurgeReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PURGE_RECEIPT);
 
+/// One pin's fixed fields for the checkpoint-pins door: a pin whose
+/// anchor the door passes as plain values.
+#[cfg(oneiron_test_support)]
+pub(crate) struct PinsCitationPin {
+    /// The quoted document's slot, fixed hex.
+    pub document: String,
+    /// The causal frontier the pin quotes.
+    pub frontier: Vec<u8>,
+    /// The quoted span's cursors.
+    pub start: Vec<u8>,
+    /// The quoted span's end cursor.
+    pub end: Vec<u8>,
+    /// The quoted text.
+    pub quote: String,
+    /// The anchor's quote hash, fixed: no checkpoint path checks it
+    /// against the quote.
+    pub hash: [u8; 32],
+    /// The act the pin records.
+    pub actor: DocActor,
+}
+
+/// Puts a citation pin for the checkpoint-pins door: `citation`'s pin
+/// over `entity`'s document at `pin`'s anchor.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_citation_pin_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    citation: &EntityId,
+    pin: &PinsCitationPin,
+) -> Result<()> {
+    ENTITY_DOC_PIN.put(
+        store,
+        txn,
+        &HexPair(HexId(*entity), HexId(*citation)),
+        &CitationPin {
+            citation: citation.to_hex(),
+            entity: entity.to_hex(),
+            document: pin.document.clone(),
+            anchor: TextAnchor {
+                entity: entity.to_hex(),
+                frontier: pin.frontier.clone(),
+                start: pin.start.clone(),
+                end: pin.end.clone(),
+                hash: pin.hash,
+                quote: pin.quote.clone(),
+            },
+            actor: pin.actor,
+        },
+    )
+}
+
 /// Erasing `actor` from the citation pins (FIX 3520): each pin it made stays,
 /// since its frontier floors the history a purge may drop, with its quote
 /// and its version, and names no one. One-way, in the erase's own
@@ -329,11 +381,15 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<PurgeReceipt> {
-        self.purge_entity_text_history_for(entity, requested, authorization, at, None)
+        self.purge_entity_text_history_for(entity, requested, authorization, at, None, None)
+            .map(|(receipt, _)| receipt)
     }
 
     /// [`Self::purge_entity_text_history`], claiming the completed `erase`
-    /// act `act` in its writer when one admits it.
+    /// act `act` in its writer when one admits it. With `check_in`, another
+    /// asker's approved check-in the owner applies on their own proof, the
+    /// same writer spends it, so a purge that refuses leaves it unspent
+    /// (2k2). Returns the receipt and the decision the purge ran on.
     pub(crate) fn purge_entity_text_history_for(
         &self,
         entity: &EntityId,
@@ -341,7 +397,8 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
         act: Option<&str>,
-    ) -> Result<PurgeReceipt> {
+        check_in: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<(PurgeReceipt, crate::check_in::CheckInDecision)> {
         let DocAuthorization::Owner(owner) = authorization else {
             return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
                 "document purge requires the authenticated owner",
@@ -351,8 +408,14 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let receipt = self.with_write_txn_grouped(|txn| {
+        let (receipt, decision) = self.with_write_txn_grouped(|txn| {
             let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::Erase,
+                check_in,
+            )?;
             // A held record keeps its history, and so does a pad whose world
             // or sealed claim is held (OF-470).
             self.store
@@ -403,10 +466,10 @@ impl Vault {
             if h.owner_kind == storage::DocumentOwnerKind::Entity {
                 crate::batch::queue_committed_rows(self, txn, std::iter::once(*entity).collect());
             }
-            Ok(receipt)
+            Ok((receipt, decision))
         })?;
         registry.remove(entity);
-        Ok(receipt)
+        Ok((receipt, decision))
     }
 
     /// Reads the version at a pin, even after an allowed owner purge.
@@ -459,21 +522,38 @@ impl Vault {
         entity: &EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
+        self.erase_text_history_with_check_in(owner, entity, through, None)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// [`Self::erase_text_history_as`], applying `check_in`, another asker's
+    /// approved check-in for this erase, on the owner's own proof: the
+    /// purge's writer spends it, so a purge that refuses leaves it unspent
+    /// (2k2). Returns the receipt and the decision the erase ran on.
+    pub(crate) fn erase_text_history_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        entity: &EntityId,
+        through: Option<&[u8]>,
+        check_in: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> MemoryResult<(PurgeReceipt, crate::check_in::CheckInDecision)> {
         if entity_type(self, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
             let actor = owner.revalidate(self)?;
             return self
                 .memory(actor, EdgeActorClass::Human)
-                .purge_note_history_as(owner, *entity, through);
+                .purge_note_history_with_check_in(owner, *entity, through, check_in);
         }
         let through = match through {
             Some(bytes) => bytes.to_vec(),
             None => live_frontier_by_owner_kind(self, entity)?,
         };
-        Ok(self.purge_entity_text_history(
+        Ok(self.purge_entity_text_history_for(
             entity,
             &through,
             &DocAuthorization::Owner(owner),
             self.now_recorded_at(),
+            None,
+            check_in,
         )?)
     }
 }

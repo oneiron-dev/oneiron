@@ -7,7 +7,7 @@ mod implementation;
 pub(crate) use implementation::archive_code_memory_tables;
 pub use implementation::*;
 pub(crate) use implementation::{
-    delete_code_memory_rows_for_entity_in_txn, insert_blocks_edge, read_always_on_for_symbol,
-    read_attachments_for_symbol, read_slots_for_symbol, read_transfer_records, remove_blocks_edge,
-    validate_blocks_insert, validate_blocks_retirement,
+    blocks_path_exists, delete_code_memory_rows_for_entity_in_txn, insert_blocks_edge,
+    read_always_on_for_symbol, read_attachments_for_symbol, read_slots_for_symbol,
+    read_transfer_records, remove_blocks_edge, validate_blocks_insert, validate_blocks_retirement,
 };

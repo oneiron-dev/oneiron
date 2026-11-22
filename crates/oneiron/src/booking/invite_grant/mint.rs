@@ -4,7 +4,7 @@ use super::codec::{engine_failure, refused};
 use super::types::PublishBookingPageGrantRequest;
 use crate::Vault;
 use crate::booking::constraint::BookingError;
-use crate::consent::{DerivedGrantOrigin, DerivedGrantSetting};
+use crate::consent::{ConsentGrantRow, DerivedGrantOrigin, DerivedGrantSetting};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_grant::{
@@ -138,6 +138,23 @@ pub(super) fn live_page_invite_grant(
             .find(|grant| grant.is_active() && grant.scope == wanted)
             .map(|grant| (grant.id, grant)),
     )
+}
+
+/// The page and the publisher whose page invite grant `row` is: a standing
+/// outbound grant row, revoked or not, whose scope is one page's invites,
+/// under the id derived from that page, for a principal that names an
+/// entity. `None` for any other row. A home move carries these rows as they
+/// stand (FIX [BK-HOME-MOVE-PAGE-INVITE-GRANT-NOT-CARRIED]).
+pub(crate) fn page_invite_grant_of(row: &ConsentGrantRow) -> Option<(EntityId, EntityId)> {
+    let grant = StandingOutboundGrant::from_row(row)?;
+    let StandingOutboundGrantScope::BookingPageInvites { page_ref } = &grant.scope else {
+        return None;
+    };
+    if page_invite_grant_id(page_ref).ok()? != grant.id {
+        return None;
+    }
+    let principal = EntityId::from_hex(&grant.principal_ref).ok()?;
+    Some((*page_ref, principal))
 }
 
 /// The deterministic grant id one page's invite grant lives at.

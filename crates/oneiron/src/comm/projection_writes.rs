@@ -285,6 +285,17 @@ fn put_comm_claim_with_id_in_txn_inner(
         false,
         true,
     )?;
+    // A head about a PERSON party the cleanup archived is a new mention of
+    // her, whichever door brought its fact (put_claim's projector-only route,
+    // a batch's routed put, a recorded inbound event, a contact writer's
+    // projection): she is restored in this write. Only the cleanup's marker
+    // is lifted, never an owner's archive, a delete or an erase (ARCH-0073
+    // §6; FIX COMM-PROJECTED-CLAIM-SKIPS-ARCHIVED-PERSON-RESTORE, Engine
+    // NOTE 21 Nov 02:07).
+    vault.restore_subjects_of_landed_claims_in_txn(
+        wtxn,
+        &[(id, crate::claim::ClaimSubject::Entity(subject))],
+    )?;
     Ok(id)
 }
 

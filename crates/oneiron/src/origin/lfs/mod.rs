@@ -24,6 +24,8 @@ mod store;
 mod transport;
 mod upload;
 pub(crate) use self::chunks::archive_lfs_tables;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::lfs_ref_key_pin_for_test;
 
 pub use self::batch_client::{
     LFS_BATCH_ANSWER_MAX_BYTES, download_lfs_objects, upload_lfs_objects,
@@ -59,12 +61,8 @@ pub(crate) use lifecycle::{
 pub(crate) use lifecycle::{is_lfs_chunk_asset_in_txn, is_lfs_chunk_blob};
 pub(crate) use scanner::{CredentialStream, find_custody_credential};
 
-// FIX [LIBTEST-QUARANTINE-ORIGIN-LFS-CHUNK-TESTS]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod chunk_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-LFS-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

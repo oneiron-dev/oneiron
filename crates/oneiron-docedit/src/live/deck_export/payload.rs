@@ -141,6 +141,9 @@ pub(super) fn project_payload(
     Ok(())
 }
 
+/// A connector's frame: its origin, extent and flip flags.
+pub(super) type ConnectorSpan = ((i64, i64), (i64, i64), (bool, bool));
+
 /// A connector's frame from its ends' centres, when both name top-level
 /// nodes with own frames: the box between them, flipped to run from the
 /// start to the end.
@@ -148,7 +151,7 @@ pub(super) fn span(
     deck: &LiveDeck,
     start: Option<ConnectorEnd>,
     end: Option<ConnectorEnd>,
-) -> Option<((i64, i64), (i64, i64), (bool, bool))> {
+) -> Option<ConnectorSpan> {
     let centre = |end: Option<ConnectorEnd>| {
         let node = deck.nodes.get(&end?.node)?;
         if deck.nodes.get(&node.parent?)?.kind != NodeKind::Slide {

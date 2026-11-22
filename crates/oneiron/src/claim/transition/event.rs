@@ -10,6 +10,7 @@
 use std::io::Cursor;
 
 use ed25519_dalek::VerifyingKey;
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use crate::edge::EdgeActorClass;
@@ -231,10 +232,9 @@ fn unsigned_value(event: &SignedClaimTransitionEvent) -> Value {
     ])
 }
 
+/// Writing into a Vec cannot fail; kept as a Result for the callers.
 fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|_| invalid())?;
-    Ok(bytes)
+    Ok(msgpack::encode(value))
 }
 
 /// The bytes signed by the host: fixed domain followed by exact canonical

@@ -92,11 +92,7 @@ fn sieve_span(spent: &SpentSpan<'_>) -> Result<SieveSpan> {
         .finalize()
         .as_bytes();
     // The digest the sieve versions a chunk's text by.
-    let source_digest = *blake3::Hasher::new()
-        .update(b"oneiron:dreamer-sieve:chunk:v1")
-        .update(spent.text.as_bytes())
-        .finalize()
-        .as_bytes();
+    let source_digest = super::fingerprint_keep_dreamer_wake_digests::sieve_chunk(spent.text);
     Ok(SieveSpan {
         id,
         turn: spent.turn,

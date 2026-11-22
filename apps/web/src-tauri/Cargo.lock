@@ -4508,3 +4508,7 @@ version = "0.44.0"
 [[patch.unused]]
 name = "pkix-chain"
 version = "0.4.1"
+
+[[patch.unused]]
+name = "pkix-path-builder"
+version = "0.3.2"

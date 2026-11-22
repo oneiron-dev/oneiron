@@ -1,0 +1,17 @@
+{
+  "name": "vault.booking.deposit.mark_refunded_outside",
+  "description": "A host selected at confirmation marks the refund a booking's deposit owes the visitor as paid outside Stripe, for exactly the amount owed: no refund is made after it, and a repeat under the same idempotency key records nothing.",
+  "input": "crate::task_verb::sdk::BookingDepositMarkRefundedOutsideRequest",
+  "output": "crate::task_verb::sdk::BookingDepositMarkRefundedOutsideReceipt",
+  "call": "crate::task_verb::sdk::mark_booking_deposit_refunded_outside(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

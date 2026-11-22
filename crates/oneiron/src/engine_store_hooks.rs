@@ -16,8 +16,6 @@ use crate::deletion::delete_bearing_update::DeleteBearingUpdate;
 use crate::edge::EdgeKind;
 #[cfg(feature = "sync")]
 use crate::store::StoreSyncHooks;
-#[cfg(feature = "sync")]
-use crate::store::window_rows::CarrierRemoval;
 use crate::store::{
     GateDecisionId, GateDecisionRetentionPolicy, Store, StoreActorScrubs, StoreDeleteGuards,
     StoreGateHooks, StoreHooks, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
@@ -464,13 +462,21 @@ impl StoreSyncHooks for EngineSyncHooks {
         crate::sync::window::apply_tombstone_to_window_doc(doc, id, raw_value)
     }
 
-    fn mark_removed_carriers_first(
+    fn suppress_published_carriers_first(
         &self,
         vault: &crate::Vault,
-        path: CarrierRemoval,
         carriers: &[(EntityId, Vec<u8>)],
     ) -> Result<()> {
-        crate::sync::window::mark_removed_carriers_first(vault, path, carriers)
+        crate::sync::window::suppress_published_carriers_first(vault, carriers)
+    }
+
+    fn forget_removed_carrier_records_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        carriers: &[(EntityId, Vec<u8>)],
+    ) -> Result<()> {
+        crate::sync::window::forget_removed_carrier_records_in_txn(vault, wtxn, carriers)
     }
 
     fn push_delete_bearing_in_txn(
