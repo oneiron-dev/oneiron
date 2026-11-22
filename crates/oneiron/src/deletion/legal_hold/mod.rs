@@ -580,6 +580,14 @@ impl Vault {
             }
         }
         let targets = distinct(order.targets)?;
+        if targets
+            .iter()
+            .any(|target| matches!(target, LegalHoldTarget::Inquiry(_)))
+        {
+            return Err(Error::InvalidConfig(
+                "a host order names records, not inquiries".into(),
+            ));
+        }
         self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
             if order.ends_at <= now {

@@ -7,6 +7,7 @@ mod artifact;
 #[cfg(unix)]
 mod auth;
 mod collector;
+mod inquiries;
 pub(super) mod legal_hold_store;
 #[cfg(unix)]
 mod live;
@@ -73,9 +74,12 @@ impl HostLegalConnection {
             )
             .into());
         }
-        // Only an owner's hold names stored records; a host request never
-        // does, so one that decodes them is refused here.
-        if matches!(&request.scope, CaptureScope::Records(_)) {
+        // Only an owner's hold names stored records or inquiries; a host
+        // request never does, so one that decodes them is refused here.
+        if matches!(
+            &request.scope,
+            CaptureScope::Records(_) | CaptureScope::Inquiries(_)
+        ) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "legal capture scope").into());
         }
         let public = HybridPublicKey::from_bytes(&request.recipient)
