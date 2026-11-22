@@ -106,7 +106,7 @@ fn word_presence_in(
 ) -> crate::Result<(OwnerActImportance, &'static str)> {
     Ok(
         match ask_guard::approved_act_in(vault, txn, id, group, word)? {
-            Some(reason) => (OwnerActImportance::Important, reason),
+            Some(_) => (OwnerActImportance::Ordinary, ""),
             None => (OwnerActImportance::Ordinary, ""),
         },
     )
