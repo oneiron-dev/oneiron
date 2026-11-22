@@ -59,6 +59,11 @@ pub struct IdentityAsk {
     /// When a nightly decision abstained and the names were kept separate
     /// for now: the ask is not due until its candidates change.
     pub kept_separate_at: Option<u64>,
+    /// When a member answered "someone new" to an ask some owner cannot
+    /// read: a proposal to the owners, applied when one accepts it
+    /// (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A). Absent on every ask before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub someone_new_proposed_at: Option<u64>,
 }
 
 /// The words answers about a name were given in, summed over the saved

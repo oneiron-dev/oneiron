@@ -8,8 +8,11 @@ use crate::{EntityId, Vault};
 
 /// Marks an id as inside the owner-authorized booking-publication write
 /// transaction. Staged and removed inside that one transaction only, never
-/// committed or accepted from replay. Key: id16; value: the literal marker
-/// `b"owner"` (presence is all any reader checks). Generic byte and candidate
+/// committed or accepted from replay. A home move's adopting transaction
+/// stages it for each publication claim the old home carried, as that
+/// node's owner write stored it ([`land_carried_publication_in_txn`]).
+/// Key: id16; value: the literal marker `b"owner"` (presence is all any
+/// reader checks). Generic byte and candidate
 /// doors cannot mint a publication by copying write-envelope evidence:
 /// `crate::booking::publication::write_index` checks this row's presence.
 pub(crate) const STAGE: SideTable<EntityId, Vec<u8>, Raw> =
@@ -31,6 +34,27 @@ pub(super) fn finish_publication_write(
 ) -> crate::Result<()> {
     STAGE.delete(&vault.store, txn, &id)?;
     Ok(())
+}
+
+/// FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]: runs `put`, the landing
+/// of publication claim `id` as a home move carried it from the old home,
+/// inside the owner write's staging for that one id: the claim is the owner's
+/// write as that node stored it, and the move lands it unchanged, never a new
+/// one. No generic, candidate or replay door reaches this staging.
+///
+/// # Errors
+///
+/// Storage errors, and `put`'s own.
+#[cfg(feature = "sync")]
+pub(crate) fn land_carried_publication_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    put: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::Result<()>,
+) -> crate::Result<()> {
+    stage_publication_write(vault, txn, id)?;
+    put(txn)?;
+    finish_publication_write(vault, txn, id)
 }
 
 pub(crate) fn verify_public_booking_owner_in_txn(

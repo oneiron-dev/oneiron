@@ -39,8 +39,8 @@ pub use self::authorization::{
 pub use self::dispatch::{
     ConfirmInviteOutcome, enqueue_confirm_invite, enqueue_confirm_invite_outcome,
 };
-pub(crate) use self::mint::mint_page_invite_grant_in_txn;
 pub use self::mint::mint_publish_page_invite_grant;
+pub(crate) use self::mint::{mint_page_invite_grant_in_txn, page_invite_grant_of};
 pub use self::types::{
     BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
 };

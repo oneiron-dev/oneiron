@@ -96,6 +96,37 @@ impl Decider<'_> {
         labels: &CallLabelMap,
         spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
+        self.decide_scoped_inner(read, questions, labels, spent, None)
+            .await
+    }
+
+    /// Reads `questions` over `read`'s state as [`Decider::decide_scoped`] does, with the
+    /// ladder deadline lowered to `deadline_ms` when it names fewer milliseconds than the
+    /// pass has left. The step's own deadline never moves: only the ladder's clock reads
+    /// the cap.
+    pub(in crate::dreamer_consolidation) async fn decide_scoped_with_deadline_cap(
+        &self,
+        read: ScopedRead<'_>,
+        questions: &[DecisionQuestion],
+        labels: &CallLabelMap,
+        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
+        deadline_ms: Option<u64>,
+    ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
+        self.decide_scoped_inner(read, questions, labels, spent, deadline_ms)
+            .await
+    }
+
+    /// Implements the shared scoped read behind [`Decider::decide_scoped`] and
+    /// [`Decider::decide_scoped_with_deadline_cap`]: one generated pack through the
+    /// ladder, asked once, kept by question with the read's versions.
+    async fn decide_scoped_inner(
+        &self,
+        read: ScopedRead<'_>,
+        questions: &[DecisionQuestion],
+        labels: &CallLabelMap,
+        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
+        deadline_ms: Option<u64>,
+    ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = read.step.vault;
         let principal = self.actor.entity_ref();
         let asked = questions
@@ -144,6 +175,7 @@ impl Decider<'_> {
         let rungs = LabelledRungs::of(&held, wire);
         let ladder = rungs.ladder(&held);
         let _ = vault.measure_decision_pack(&self.decisions.bands, pack.len());
+        // A bound read may only lower the ladder deadline, never the step's own.
         let decided = ladder
             .run_pack_generated_spent(
                 &rung,
@@ -156,7 +188,10 @@ impl Decider<'_> {
                 Reversibility::ReversibleRead,
                 &RetrievalDeadline::hard(
                     Instant::now(),
-                    Duration::from_millis(read.pass.remaining_ms()),
+                    Duration::from_millis(match deadline_ms {
+                        None => read.pass.remaining_ms(),
+                        Some(cap) => read.pass.remaining_ms().min(cap),
+                    }),
                 ),
                 spent,
                 Some(wire),

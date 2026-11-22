@@ -80,6 +80,16 @@ impl<B: AsRef<[u8]>> PartedRows<B> {
         }
     }
 
+    /// The part filed under `key` of the parted map `root`, as the group
+    /// holds it: a manifest's part, joined by its own map's reader.
+    pub(in crate::sync) fn part(&self, root: &str, key: &str) -> Option<&[u8]> {
+        self.maps
+            .get(root)?
+            .parts
+            .get(key)
+            .map(AsRef::<[u8]>::as_ref)
+    }
+
     /// The first manifest the group proves is not the row its key names:
     /// its map and key. A map with no part held proves none: a manifest
     /// lists at least one part.

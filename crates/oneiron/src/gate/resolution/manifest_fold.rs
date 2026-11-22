@@ -29,6 +29,21 @@ mod snapshot_cache;
 
 pub(crate) use self::snapshot_cache::resolve_policy_manifest;
 
+/// Folds a row a vault holds at most one of into `slot`: the first trusted
+/// manifest's row is kept, the same row again is one configuration written
+/// twice, and a different row has no deterministic answer, so `malformed`
+/// is set and the policy fails closed (each caller says how its reader
+/// fails closed).
+fn fold_one_per_vault<T: PartialEq>(slot: &mut Option<T>, row: Option<T>, malformed: &mut bool) {
+    if let Some(row) = row {
+        match slot {
+            None => *slot = Some(row),
+            Some(existing) if *existing == row => {}
+            Some(_) => *malformed = true,
+        }
+    }
+}
+
 /// The vault ceiling on any project's depth row: the resolved manifest row,
 /// a holder-authored value in place of the shipped fallback (C1). A loaded
 /// malformed manifest fails closed to the most restrictive ceiling

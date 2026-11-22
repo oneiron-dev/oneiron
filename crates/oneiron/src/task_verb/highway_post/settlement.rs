@@ -63,6 +63,66 @@ pub(in crate::task_verb) fn proposer_of(
     Ok(proposer)
 }
 
+/// Whether `person` settles `claim` though he opened it: a vault owner
+/// settles his own composed post (RULING L8-07-OWNER-OPENER = A, 14 Nov
+/// 09:35). Its brief is the engine's local-model draft, under a composer
+/// stamp no caller sets, and he is the person who reads it before it runs.
+/// Every other opener stays refused on his own proposal (DEC-0006), and so
+/// does the owner on any other proposal he opened.
+pub(crate) fn owner_settles_own_composed_post(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &ClaimBody,
+    person: EntityId,
+) -> Result<bool> {
+    let composed = claim.predicate == TASK_CREATE_PROPOSAL_PREDICATE
+        && map_entry(&claim.value, TASK_POST_STAMP_KEY)
+            .and_then(from_value::<PostStamp>)
+            .is_some_and(|stamp| stamp.brief.composed.is_some());
+    Ok(composed
+        && crate::claim::session_claim_producer(claim) == Some(person)
+        && crate::policy_model::owners_in_txn(vault, txn)?.contains(&person))
+}
+
+/// The process a composed post's proposal names in its birth (census L8-07).
+pub(in crate::task_verb) const TASK_COMPOSED_POST_PROCESS: &str = "tasks.create.composed";
+/// The process the TASK a composed post settles into names in its birth.
+pub(in crate::task_verb) const TASK_COMPOSED_SETTLE_PROCESS: &str = "tasks.settle.composed";
+
+/// The birth of a row whose words a composed brief carries (census L8-07):
+/// the local model read each lens row the brief names, so the row names
+/// them as prompt inputs, by ref and never by text, and the worlds they lie
+/// in hold for it on every later read and sync, as for a claim a model wrote
+/// from recalled rows (`settings::device_only`, FIX 8192). A lens ref this
+/// vault never held names no row and is left out. `None` for a brief no
+/// model composed, or one composed from its one-liner alone.
+pub(in crate::task_verb) fn composed_brief_birth_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    brief: &QueueTaskBrief,
+    process: &str,
+    at: u64,
+) -> Result<Option<crate::provenance::birth::RowBirth>> {
+    let Some(stamp) = &brief.composed else {
+        return Ok(None);
+    };
+    let mut held = Vec::with_capacity(stamp.lens_refs.len());
+    for row in &stamp.lens_refs {
+        if crate::provenance::birth::prompted::prompt_input_held_in_txn(&vault.store, txn, row)? {
+            held.push(*row);
+        }
+    }
+    Ok(crate::provenance::birth::RowBirth::prompted(
+        actor,
+        crate::provenance::made_by::MadeByClass::Concluded,
+        process,
+        &held,
+        &[],
+        at,
+    ))
+}
+
 /// The actor class a claim's write envelope stamped into its evidence:
 /// immutable, unlike its subject or any approver.
 pub(in crate::task_verb) fn envelope_actor_class(claim: &ClaimBody) -> Option<EdgeActorClass> {
@@ -106,7 +166,12 @@ pub(super) fn settle_post(
     let stamp: PostStamp = from_value(stamp_value).ok_or(Error::Record(
         crate::error::RecordError::InvalidTaskBody("tasks.proposal.post"),
     ))?;
-    let proposer = proposer_of(claim, approver)?;
+    let proposer = match approver {
+        Some(owner) if owner_settles_own_composed_post(vault, wtxn, claim, owner.entity_ref())? => {
+            owner.entity_ref()
+        }
+        _ => proposer_of(claim, approver)?,
+    };
     let class = class_of(stamp.actor_class)?;
     let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[claim_id.as_bytes()])?;
     if vault.get_raw_in(wtxn, &task_ref)?.is_some() {
@@ -190,6 +255,18 @@ pub(super) fn settle_post(
             copied,
         )
         .map_err(settle_refusal)?;
+    // The TASK carries the composed brief's words, so it names the lens rows
+    // its proposal named as prompt inputs (census L8-07, review #7814 P1).
+    if let Some(birth) = composed_brief_birth_in(
+        vault,
+        wtxn,
+        memory.write_actor(),
+        &post.brief,
+        TASK_COMPOSED_SETTLE_PROCESS,
+        now,
+    )? {
+        crate::provenance::birth::stamp_row_birth_in_txn(&vault.store, wtxn, &task_ref, &birth)?;
+    }
     Ok(())
 }
 

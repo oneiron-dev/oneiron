@@ -31,6 +31,8 @@
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::bundle::denied;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -191,7 +193,7 @@ pub fn home_handoff_commit(
         return saved_ack(&ack, &digest);
     }
     let sealed = home_handoff::staged_sealed(vault, &id)?;
-    if *blake3::hash(&sealed).as_bytes() != digest {
+    if *ContentHash::of(&sealed).as_bytes() != digest {
         return Err(denied());
     }
     let verified = home_handoff::open_handoff(vault, id, &sealed)?;

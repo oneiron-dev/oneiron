@@ -30,14 +30,14 @@ struct HeldConflict {
     conflict: ConflictSet,
     members: Vec<VerifiedCandidate>,
     decisions: Vec<KeptDecision>,
-    now: u64,
+    now_ms: u64,
 }
 
 /// One gap upsert, with what `write_verified_gaps` writes it from.
 struct HeldGaps {
     scope: Scope,
     gaps: Vec<(ReflectionGap, VerifiedEvidenceSet)>,
-    now: u64,
+    now_ms: u64,
 }
 
 impl HeldEscalations {
@@ -60,11 +60,11 @@ impl HeldEscalations {
                 &members,
                 &held.decisions,
                 &resources.write_fence(),
-                held.now,
+                held.now_ms,
             )?;
         }
         for held in self.gaps {
-            resources.write_verified_gaps(&held.scope, held.gaps, held.now)?;
+            resources.write_verified_gaps(&held.scope, held.gaps, held.now_ms)?;
         }
         Ok(())
     }
@@ -98,7 +98,7 @@ impl BranchResources<'_> {
         conflict: &ConflictSet,
         members: &[&VerifiedCandidate],
         decisions: &[KeptDecision],
-        now: u64,
+        now_ms: u64,
     ) -> Result<()> {
         if let Some(held) = self.held.borrow_mut().as_mut() {
             held.conflicts.push(HeldConflict {
@@ -106,7 +106,7 @@ impl BranchResources<'_> {
                 conflict: conflict.clone(),
                 members: members.iter().copied().cloned().collect(),
                 decisions: decisions.to_vec(),
-                now,
+                now_ms,
             });
             return Ok(());
         }
@@ -118,7 +118,7 @@ impl BranchResources<'_> {
             members,
             decisions,
             &self.write_fence(),
-            now,
+            now_ms,
         )?;
         Ok(())
     }
@@ -130,16 +130,16 @@ impl BranchResources<'_> {
         &self,
         scope: &Scope,
         gaps: Vec<(ReflectionGap, VerifiedEvidenceSet)>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<GapQueueDelta> {
         if let Some(held) = self.held.borrow_mut().as_mut() {
             held.gaps.push(HeldGaps {
                 scope: scope.clone(),
                 gaps,
-                now,
+                now_ms,
             });
             return Ok(GapQueueDelta::default());
         }
-        self.write_verified_gaps(scope, gaps, now)
+        self.write_verified_gaps(scope, gaps, now_ms)
     }
 }

@@ -4,9 +4,10 @@
 //! turns and messages, the context board when the call carries it, and the
 //! MESSAGE row the person's own words are witnessed into before the call
 //! when one is written (FIX 7004); an off-record turn's words are no stored
-//! row. A part that names no rows of its own, as a caller's history line or
-//! a log not all pinned, leaves the complete set unknown, never a partial
-//! list. Cached replies separately retain known rows for erase and read checks.
+//! row. A caller's history line is the caller's own text: it names no
+//! world and leaves the set as complete as it was (UNBUILT-RECEIPT-CALLER-TEXT
+//! = A). A part that names no rows of its own, as a log not all pinned,
+//! leaves the complete set unknown, never a partial list. Cached replies separately retain known rows for erase and read checks.
 use oneiron::EntityId;
 use oneiron::attempt_queue::ManifestEntry;
 use oneiron::memory::WitnessReceipt;
@@ -34,6 +35,14 @@ impl TurnSources {
             Some(rows) => self.rows.extend_from_slice(rows),
             None => self.complete = false,
         }
+    }
+
+    /// A part the caller sent, as a history line: the caller's own text is
+    /// no row the vault fed the call, so it names no world and the set
+    /// stays as complete as it was (UNBUILT-RECEIPT-CALLER-TEXT = A, as the
+    /// OpenAI proxy names only the rows it injects).
+    pub(crate) fn caller_text(&mut self) {
+        self.add(Some(&[]));
     }
 
     /// The craft notes the call is shown, each by its claim.

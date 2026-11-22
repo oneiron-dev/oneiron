@@ -155,6 +155,10 @@ pub(crate) struct McpGatewayError {
     pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
     /// The pending check-in, surfaced as `error.data.pending`.
     pub(super) pending: Option<Box<oneiron::memory::MemoryPending>>,
+    /// A reap pause's bound and self-host route (L9-61), surfaced as
+    /// `error.data.bound` and `error.data.self_hosted` as the managed HTTP
+    /// body carries them. Boxed for size, as `effective_scope` is.
+    pub(super) reap_pause: Option<Box<crate::managed::ReapPauseBound>>,
 }
 
 impl McpGatewayError {
@@ -180,6 +184,7 @@ impl McpGatewayError {
             legal_hold: None,
             room_join_hold: None,
             pending: None,
+            reap_pause: None,
         }
     }
 
