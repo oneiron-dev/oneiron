@@ -19,6 +19,23 @@ pub enum FoldKind {
     /// A step's program text. Its speech calls stay in the stub, with
     /// their text; its console stays.
     Program,
+    /// What a connector replied in a step: the console of each step that
+    /// took a connector's reply, and the reply a parked connector call
+    /// resumed with, which shows as its result card. The stub keeps the
+    /// console's handles and names each connector call. A step that took no
+    /// connector's reply keeps its console; the program and its say()
+    /// messages stay.
+    ConnectorResult,
+}
+
+impl FoldKind {
+    /// Whether a fold of this kind folds a step's console: `repl_output`
+    /// and `connector_result` do, and a step either covers shows the stub of
+    /// the first one that landed.
+    #[must_use]
+    pub const fn folds_console(self) -> bool {
+        matches!(self, Self::ReplOutput | Self::ConnectorResult)
+    }
 }
 
 /// One step a fold by kind folded: what its stub keeps.
@@ -33,6 +50,10 @@ pub struct FoldedOutput {
     /// For a folded program, each speech call the step made, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub said: Vec<FoldedSpeech>,
+    /// For a folded connector result, each connector call of the step that
+    /// returned the connector's reply, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connector_calls: Vec<FoldedConnectorCall>,
 }
 
 /// One speech call a folded program made: its verb and the bridge call that
@@ -42,6 +63,18 @@ pub struct FoldedOutput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldedSpeech {
     /// `self.speak`, `self.think` or `self.express`.
+    pub verb: String,
+    /// The call's index in the run's bridge calls.
+    pub call: u64,
+}
+
+/// One connector call whose reply a `connector_result` fold folded: its
+/// verb and its bridge call. The ledger keeps no connector or tool name: the
+/// stub reads them from the run's record each time it renders, masked as
+/// the whole stub is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FoldedConnectorCall {
+    /// `connector.call`, `self.use` or `connector.answer`.
     pub verb: String,
     /// The call's index in the run's bridge calls.
     pub call: u64,

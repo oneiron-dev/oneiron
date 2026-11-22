@@ -1508,6 +1508,21 @@ Each step checkpoint keeps the range of bridge calls its step made
 (`bridge_calls`), which is how the stub finds them. Unfold appends the raw
 programs, labelled `unfolded program from tA–tB`.
 
+`self.fold({kind: "connector_result", ...})` folds what connectors replied.
+A connector's reply reaches the log in two places: the console of the step
+that took it, and the reply a parked connector call resumed with. So the
+fold works on whole steps. A step took a connector's reply when, among its
+own bridge calls, a `connector.call` (or a `self.use` of one) returned the
+tool's reply or the connector's questions, or a `connector.answer` did, or
+when it parked on a connector call and resumed. For each such step, the
+console shows the `repl_output` stub (`⟨f5 · connector_result folded⟩`),
+with one line per connector call that replied (`connector.call
+github/search_issues (call 12)`). The resumed reply shows as its result card,
+never inline. A step that took no connector reply keeps its console. If a
+`repl_output` fold and a `connector_result` fold cover the same step, the
+step shows the stub of the one that landed first. Unfold appends the raw
+consoles and the inline replies.
+
 A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
 field's value, never as its value. `describe("sc12")` says what it names,
 where it was found and whether a reveal would deliver at once, ask the owner

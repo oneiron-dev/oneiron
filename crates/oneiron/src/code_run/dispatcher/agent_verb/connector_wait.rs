@@ -12,6 +12,18 @@ use crate::code_run::types::{
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
 
+/// The prompt of the wait a connector call parks the run on, before the
+/// call's ref: what tells a connector call's reply from another resumed one
+/// (FIX 14541, `connector_result` folds).
+const CONNECTOR_CALL_WAIT_PROMPT: &str = "connector_call:";
+
+/// Whether `wait` is one a connector call parked the run on.
+pub(crate) fn is_connector_call_wait(wait: &SelfDurableWait) -> bool {
+    wait.prompt
+        .as_deref()
+        .is_some_and(|prompt| prompt.starts_with(CONNECTOR_CALL_WAIT_PROMPT))
+}
+
 /// `connector.call`'s answer as the run takes it (ONE-2510): a call held for
 /// consent or governance, or a delivery the same send retries, parks the run
 /// on the call's ref as an outbound-effect wait, which the connector settler
@@ -33,7 +45,7 @@ pub(super) fn connector_call_answer(
         wait_id,
         effect: SelfEffect::AgentVerb,
         reason: SelfDurableWaitReason::OutboundEffect,
-        prompt: Some(format!("connector_call:{}", wait_id.to_hex())),
+        prompt: Some(format!("{CONNECTOR_CALL_WAIT_PROMPT}{}", wait_id.to_hex())),
     })
 }
 

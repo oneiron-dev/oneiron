@@ -10,6 +10,7 @@ mod stored_answer;
 use serde_json::Value;
 
 use self::connector_wait::connector_call_answer;
+pub(crate) use self::connector_wait::is_connector_call_wait;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::consent::consent_request_digest_for_test;
 use crate::EntityId;

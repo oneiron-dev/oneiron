@@ -118,9 +118,10 @@ fn blocked_category_names_are_serde_names() {
 }
 
 /// `FoldKind`: every row as its hand `as_str` table spelled it.
-const FOLD_KIND: [(FoldKind, &str); 2] = [
+const FOLD_KIND: [(FoldKind, &str); 3] = [
     (FoldKind::ReplOutput, "repl_output"),
     (FoldKind::Program, "program"),
+    (FoldKind::ConnectorResult, "connector_result"),
 ];
 
 #[test]

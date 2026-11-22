@@ -1,5 +1,6 @@
 pub use crate::compaction::driver::CompactionWindowMessage;
 pub use crate::compaction::fold_kinds::FoldKind;
+pub use crate::compaction::fold_kinds::FoldedConnectorCall;
 pub use crate::compaction::fold_kinds::FoldedOutput;
 pub use crate::compaction::fold_kinds::FoldedSpeech;
 pub use crate::compaction::folds::FoldCompactInput;

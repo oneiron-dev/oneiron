@@ -13,6 +13,14 @@
 //! with its text and the ids the program names; its console stays.
 //! `self.unfold` brings the programs back.
 //!
+//! A `connector_result` fold folds what connectors replied (FIX 14541):
+//! each step of its span that took a connector's reply shows the stub of a
+//! `repl_output` fold in place of its console, with one line per connector
+//! call that replied, and the reply a parked connector call resumed with
+//! shows as its result card. A step that took no connector's reply keeps its
+//! console. Connector replies reach the log only there, so the step is the
+//! unit: no reply is told apart from the step's other output.
+//!
 //! The engine writes each stub from the step's own typed record, with no
 //! model call, so a fold by kind keeps no summary and no record's words
 //! reach it. Its marks wait and land in one batch with every other mark of
@@ -28,7 +36,9 @@ use crate::entity_id::EntityId;
 use oneiron_contracts::claim::ClaimSource;
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::compaction::fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
+pub use oneiron_verb_wire::compaction::fold_kinds::{
+    FoldKind, FoldedConnectorCall, FoldedOutput, FoldedSpeech,
+};
 
 impl FoldLedger {
     /// The fold by `kind` whose stub step `seq` shows: the first one made
@@ -47,6 +57,28 @@ impl FoldLedger {
         self.folds
             .iter()
             .filter(|fold| fold.kind == Some(kind))
+            .flat_map(|fold| fold.outputs.iter().map(|output| output.step))
+            .collect()
+    }
+
+    /// The fold whose stub step `seq`'s console shows: the first one made,
+    /// of the kinds that fold a console (`repl_output`, `connector_result`),
+    /// that folded it. A later one of either kind keeps the step too, and the
+    /// stub keeps its bytes.
+    #[must_use]
+    pub fn console_covering(&self, seq: u64) -> Option<&FoldRecord> {
+        self.folds.iter().find(|fold| {
+            fold.kind.is_some_and(FoldKind::folds_console)
+                && fold.outputs.iter().any(|output| output.step == seq)
+        })
+    }
+
+    /// Every step whose console some fold folds.
+    #[must_use]
+    pub fn console_folded_steps(&self) -> BTreeSet<u64> {
+        self.folds
+            .iter()
+            .filter(|fold| fold.kind.is_some_and(FoldKind::folds_console))
             .flat_map(|fold| fold.outputs.iter().map(|output| output.step))
             .collect()
     }
@@ -120,29 +152,54 @@ impl FoldRecord {
     pub fn output_stub(&self, seq: u64, with_note: bool) -> Option<String> {
         let kind = self.kind?;
         let output = self.outputs.iter().find(|output| output.step == seq)?;
-        if kind == FoldKind::Program {
-            return self.program_stub(seq, with_note, |_| None);
+        match kind {
+            FoldKind::Program => return self.program_stub(seq, with_note, |_| None),
+            FoldKind::ConnectorResult => return self.connector_stub(seq, with_note, |_| None),
+            FoldKind::ReplOutput => {}
         }
         let mut stub = format!("⟨{} · {} folded⟩", fold_handle(self.fold), kind.as_str());
         if with_note && let Some(note) = &self.note {
             stub.push_str("\nnote: ");
             stub.push_str(&escape_compacted_text(note));
         }
-        for handle in &output.handles {
-            stub.push('\n');
-            stub.push_str(handle);
+        push_handles_and_ids(&mut stub, self.fold, output);
+        Some(stub)
+    }
+
+    /// A folded connector result's stub for step `seq`: the console stub of
+    /// a `repl_output` fold, with one line per connector call that replied
+    /// after its head (and note). `label_of` reads a call's connector and
+    /// tool from the run's record (`name/tool`); a call it cannot read shows
+    /// its verb and call. `None` when this fold did not fold the step.
+    pub fn connector_stub(
+        &self,
+        seq: u64,
+        with_note: bool,
+        label_of: impl Fn(&FoldedConnectorCall) -> Option<String>,
+    ) -> Option<String> {
+        let output = self.outputs.iter().find(|output| output.step == seq)?;
+        let mut stub = format!(
+            "⟨{} · {} folded⟩",
+            fold_handle(self.fold),
+            FoldKind::ConnectorResult.as_str()
+        );
+        if with_note && let Some(note) = &self.note {
+            stub.push_str("\nnote: ");
+            stub.push_str(&escape_compacted_text(note));
         }
-        if !output.ids.is_empty() {
-            stub.push_str("\nids: ");
-            stub.push_str(&output.ids[..output.ids.len().min(STUB_IDS)].join(", "));
-            if output.ids.len() > STUB_IDS {
-                stub.push_str(&format!(
-                    " and {} more (describe({{fold: \"{}\"}}))",
-                    output.ids.len() - STUB_IDS,
-                    fold_handle(self.fold)
-                ));
+        for call in &output.connector_calls {
+            stub.push('\n');
+            match label_of(call) {
+                Some(label) => stub.push_str(&format!(
+                    "{} {} (call {})",
+                    call.verb,
+                    escape_compacted_text(&label),
+                    call.call
+                )),
+                None => stub.push_str(&format!("{} (call {})", call.verb, call.call)),
             }
         }
+        push_handles_and_ids(&mut stub, self.fold, output);
         Some(stub)
     }
 
@@ -186,5 +243,25 @@ impl FoldRecord {
                 .collect::<Vec<_>>()
                 .join("\n"),
         )
+    }
+}
+
+/// A console stub's tail: each handle the folded output keeps, one a line,
+/// then the ids it names, the first [`STUB_IDS`] of them.
+fn push_handles_and_ids(stub: &mut String, fold: u64, output: &FoldedOutput) {
+    for handle in &output.handles {
+        stub.push('\n');
+        stub.push_str(handle);
+    }
+    if !output.ids.is_empty() {
+        stub.push_str("\nids: ");
+        stub.push_str(&output.ids[..output.ids.len().min(STUB_IDS)].join(", "));
+        if output.ids.len() > STUB_IDS {
+            stub.push_str(&format!(
+                " and {} more (describe({{fold: \"{}\"}}))",
+                output.ids.len() - STUB_IDS,
+                fold_handle(fold)
+            ));
+        }
     }
 }

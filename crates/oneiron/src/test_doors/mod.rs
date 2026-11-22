@@ -93,6 +93,7 @@ pub mod compaction_step_read;
 pub mod companion_grant_index;
 pub mod composed_lens_world;
 pub mod connector_key_suspend;
+pub mod connector_result_fold;
 pub mod connector_thread_session;
 pub mod consent_graduation_demotion;
 pub mod consent_graduation_ramp_rows;
