@@ -617,6 +617,13 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# L8-29's remote task stop serves its owner's root from a `MemoryKeystore`, and
+# writes its Deferred sends through `oneiron::test_doors`.
+[[test]]
+name = "remote_task_cancel"
+path = "tests/remote_task_cancel.rs"
+required-features = ["oneiron/test-support"]
+
 # OWNER-GRADE H1's quota answer cases root the owner's home on a `MemoryKeystore` too.
 [[test]]
 name = "quota_answer_requires_vault_owner"
@@ -757,6 +764,12 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "connector_issuer_prm_refusal"
 path = "tests/connector_issuer_prm_refusal.rs"
+required-features = ["oneiron/test-support"]
+
+# The handed-on slip's session-run actor mints its slips on a `MemoryKeystore` too.
+[[test]]
+name = "handed_on_session_run"
+path = "tests/handed_on_session_run.rs"
 required-features = ["oneiron/test-support"]
 
 # The rerank pair template price cases root their owner on a `MemoryKeystore` too.

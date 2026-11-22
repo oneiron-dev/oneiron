@@ -37,6 +37,7 @@
 //!   send capability.
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -314,7 +315,7 @@ fn quoted_sources_in(
         live_entity_row_in_txn(&vault.store, txn, &binding.source)?,
         LiveEntityRow::Live { entity_type, body }
             if entity_type == ENTITY_TYPE_CLAIM
-                && *blake3::hash(&body).as_bytes() == binding.revision
+                && ContentHash::of(&body).into_bytes() == binding.revision
     );
     Ok(holds.then(|| vec![binding.source]))
 }

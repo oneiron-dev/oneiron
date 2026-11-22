@@ -56,6 +56,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::PoisonError;
 
+use oneiron_contracts::fingerprint::ContentHasher;
 use serde::{Deserialize, Serialize};
 
 use super::run_writer_proof::AgentRunWriterProof;
@@ -500,7 +501,7 @@ impl AgentRunTaskBody {
     /// each length-prefixed in that order. The lease, the outcome and the
     /// effect marks change while the run runs, so they are left out.
     pub(super) fn frozen_digest(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = ContentHasher::new();
         hasher.update(&[self.role, self.schema_version]);
         absorb(&mut hasher, self.subkind.as_bytes());
         absorb(&mut hasher, self.attempt_ref.as_bytes());
@@ -535,7 +536,7 @@ impl AgentRunTaskBody {
             }
         }
         hasher.update(&self.created_at.to_be_bytes());
-        *hasher.finalize().as_bytes()
+        hasher.finish().into_bytes()
     }
 
     /// Whether this body, the run TASK `task_ref`'s as read in `txn`,
@@ -558,18 +559,18 @@ impl AgentRunTaskBody {
 }
 
 /// Feeds `len` to `hasher` as eight big-endian bytes.
-fn absorb_len(hasher: &mut blake3::Hasher, len: usize) {
+fn absorb_len(hasher: &mut ContentHasher, len: usize) {
     hasher.update(&u64::try_from(len).unwrap_or(u64::MAX).to_be_bytes());
 }
 
 /// Feeds `bytes` to `hasher`, prefixed with its length.
-fn absorb(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+fn absorb(hasher: &mut ContentHasher, bytes: &[u8]) {
     absorb_len(hasher, bytes.len());
     hasher.update(bytes);
 }
 
 /// Feeds an optional field to `hasher`: a presence byte, then the bytes.
-fn absorb_option(hasher: &mut blake3::Hasher, bytes: Option<&[u8]>) {
+fn absorb_option(hasher: &mut ContentHasher, bytes: Option<&[u8]>) {
     match bytes {
         Some(bytes) => {
             hasher.update(&[1]);

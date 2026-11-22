@@ -83,7 +83,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/type_kinds.rs` | src | s | 3 fn | — | The wire spelling of a scope's entity types (FIX 10762): each type byte as its registry kind, and a byte the… |
 | `src/temporal.rs` | src | L | 6 struct · 6 enum · 7 fn · 1 const | OpenPhrase, QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalPhraseSpan +4 | `TimeRange`, temporal expressions/parsing, granularity |
 | `src/wallet.rs` | src | s | 1 struct · 1 fn | WalletRef | The host wallet an owner's agent Grant names (FIX 7766, ARCH-0011 billing): the host owns the money, a Grant… |
-| `src/write_envelope.rs` | src | s | 1 struct · 7 fn | WriteActor | The write actor every write path stamps |
+| `src/write_envelope.rs` | src | s | 1 struct · 9 fn | WriteActor | The write actor every write path stamps |
 | `tests/contracts_register_names.rs` | test | s | — | — | The names of 8 name lists in `oneiron-contracts`, one line per row, generated from… |
 | `tests/contracts_vad_register_names.rs` | test | s | — | — | The names of `VadAnnotationSource` in `oneiron-contracts`, one line per row, generated from… |
 | `tests/cursor_text.rs` | test | s | — | — | The `{at}:{id}` cursor (UC-13 PR 1): written byte for byte as the mail inbox and the conversation transcript… |
