@@ -67,6 +67,8 @@ use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::source_admission::ContributionSourceAdmission;
 use super::super::{
     ContributionForkProgram, ContributionReplayUnavailable as Unavailable, ForkRows,
@@ -380,6 +382,12 @@ impl Runner<'_> {
         Ok(Ok(Prepared {
             with_skill_hash: request_hash(&with_skill)?,
             without_skill_hash: request_hash(&without_skill)?,
+            // The branch with the load is the next step's captured request,
+            // which reads that capsule's rows; the branch without it shows a
+            // scratch arm's console, whose rows no capsule names: unknown
+            // (FIX 7104).
+            with_skill_rows: next.source_rows.clone(),
+            without_skill_rows: None,
             exposure_revision: target.revision,
             capsule: next,
             binding,
@@ -722,7 +730,7 @@ fn callable_source(vault: &Vault, callable: &CapturedCallable) -> Result<Option<
         .into_iter()
         .find(|file| {
             file.path == selected.reference
-                && *blake3::hash(&file.content).as_bytes() == selected.source_hash
+                && *ContentHash::of(&file.content).as_bytes() == selected.source_hash
         })
         .and_then(|file| String::from_utf8(file.content).ok()))
 }

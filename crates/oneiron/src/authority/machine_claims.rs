@@ -129,6 +129,23 @@ impl<'s> ClaimIndex<'s> {
         rekeyed || shared || key_is_authority(self.state, key) || machine_is_actor(self.state, id)
     }
 
+    /// P1's poison on `admitter`'s chain head of `id` under `key`, in the
+    /// scope the public view judges that head in ([`Self::folded`]): every
+    /// roster revision for the roster's head, that anchor's revisions for an
+    /// anchor's.
+    pub(super) fn head_poisoned(
+        &self,
+        id: EntityId,
+        admitter: &MachineAdmitter,
+        key: &[u8; 32],
+    ) -> bool {
+        let scope = match admitter {
+            MachineAdmitter::Roster => ClaimScope::Roster,
+            MachineAdmitter::Anchor(anchor) => ClaimScope::Anchor(anchor),
+        };
+        self.poisoned(id, key, scope)
+    }
+
     /// The trust scopes in which another machine claims `key`.
     fn shared_scopes(&self, id: EntityId, key: &[u8; 32]) -> BTreeSet<MachineAdmitter> {
         self.state
@@ -174,7 +191,8 @@ impl<'s> ClaimIndex<'s> {
                 head.act = None;
                 head.say_so = None;
             }
-            head.conflicted |= self.poisoned(id, &head.profile.machine_key, ClaimScope::Roster);
+            head.conflicted |=
+                self.head_poisoned(id, &MachineAdmitter::Roster, &head.profile.machine_key);
             head.admitter_unsettled = roster_unsettled;
             head
         });
@@ -195,8 +213,7 @@ impl<'s> ClaimIndex<'s> {
                 MachineAdmitter::Anchor(key) => {
                     let mut head = chain.head.clone();
                     head.floor_held = hold(*admitter, chain, &head.entry);
-                    head.conflicted |=
-                        self.poisoned(id, &head.profile.machine_key, ClaimScope::Anchor(key));
+                    head.conflicted |= self.head_poisoned(id, admitter, &head.profile.machine_key);
                     Some((*key, head))
                 }
                 MachineAdmitter::Roster => None,

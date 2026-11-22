@@ -20,6 +20,7 @@ pub use oneiron_store::config;
 pub mod deletion;
 /// The derivation transaction (untangle 6.7, primitive C).
 pub mod derive;
+pub mod display_edits;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
@@ -49,7 +50,9 @@ pub mod housekeeping;
 pub(crate) mod identity;
 pub mod idle_fold;
 pub mod limit_ask;
+pub mod machine_capacity;
 pub mod machine_destination;
+pub mod machine_names;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
@@ -105,6 +108,7 @@ pub mod conversation;
 pub(crate) use oneiron_base::distance;
 pub mod embed;
 pub mod entity_doc;
+mod text_diff;
 pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
@@ -216,6 +220,7 @@ pub mod comm;
 pub mod connector_key;
 pub mod delivery_window;
 pub mod feedback;
+pub mod gpu_job;
 pub mod ingest;
 pub mod linkedin_connector;
 pub mod linkedin_lead_preload;
@@ -338,6 +343,8 @@ pub use oneiron_base::panic_report;
 pub mod schedule;
 pub mod setting;
 pub mod settings;
+// Transcripts of voice calls with other people: the owner's keep setting (UNBUILT-02 PR 3).
+pub mod voice_call;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
 pub mod voice_identity;
@@ -558,7 +565,7 @@ pub use crate::llm::{
     LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
     LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
     ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ReasoningPartKind, ResponseFormat,
-    RetryableLlmError, TierPrecedence, UnsupportedCapability,
+    RetryableLlmError, TierPrecedence, UnsupportedCapability, provider_finish_reason,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
@@ -694,7 +701,9 @@ pub use crate::workspace_roster::{
     MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterPreset,
     WorkspaceRosterRole,
 };
-pub use crate::workspace_roster::{CompanionChoice, WorkCompanionPolicy};
+pub use crate::workspace_roster::{
+    CompanionChoice, OneVaultMode, OneVaultSetting, OneVaultSource, WorkCompanionPolicy,
+};
 pub use crate::world_keys::{PAGE_SEAL_WARNING, VaultPageSeal};
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,

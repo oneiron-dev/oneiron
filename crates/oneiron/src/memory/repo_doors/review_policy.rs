@@ -2,14 +2,15 @@
 //! PR3b; FIX 8268).
 //!
 //! A run's proposal is held to the vault's own review policy
-//! (`RepoProposalReview::VaultDefault`): the opt-in policy an Owner, or his
-//! agent under its Grant, sets with `vault.code.merge_queue.review_policy.
-//! set`, read by the merge queue's one policy point when it decides. With
-//! none set the same checked queue lands it on green, never unchecked. The
-//! older stock policy, the catalog of the owner's newest own proposal to
-//! that repo, is superseded (Engine 10-22 03:4x): no repo history, folder
-//! match or guest field chooses a requirement. A host that binds a catalog
-//! of its own makes it an explicit requirement beside any vault policy.
+//! (`RepoProposalReview::VaultDefault`): the opt-in setting
+//! `merge_queue.review_policy` an Owner, or his agent under the key's Grant
+//! line, sets with `vault.settings.set`, read by the merge queue's one policy
+//! point when it decides. With none set the same checked queue lands it on
+//! green, never unchecked. The older stock policy, the catalog of the
+//! owner's newest own proposal to that repo, is superseded (Engine 10-22
+//! 03:4x): no repo history, folder match or guest field chooses a
+//! requirement. A host that binds a catalog of its own makes it an explicit
+//! requirement beside any vault policy.
 
 use std::sync::Arc;
 

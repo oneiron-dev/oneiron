@@ -15,7 +15,9 @@ use super::reverse::{
     remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
 };
 use super::types::WindowKey;
-use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
+use crate::sync::window_rows::{
+    HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityHexKey,
+};
 
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -58,6 +60,16 @@ use loro::{CommitOptions, LoroDoc};
 /// (`source_audiences::mirror_record`); one whose binding does not resolve,
 /// or whose words came from a row bound otherwise, stays on this vault
 /// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
+///
+/// A row kept for storage only under a use limit (a privacy erase a standing
+/// customer hold refused, C6, or a cooperative review restriction), or one
+/// whose words came from such a row, stays on this vault too: the owner's
+/// devices lose it as they lose an erased row, and it packs again once the
+/// limit goes inert (Engine ANSWER SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B,
+/// 20 Nov 21:19; LEGAL-HOLD-USE = B; FIX
+/// EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS).
+/// A row the window already carries leaves it through
+/// [`super::use_limited::withhold_use_limited_carriers`].
 /// A packing pass asks it through [`window_packing_excludes_entity_with`].
 #[cfg(test)]
 pub(super) fn window_packing_excludes_entity(
@@ -86,7 +98,8 @@ pub(super) fn window_packing_excludes_entity_with(
         |rtxn| {
             Ok(
                 crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
-                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?,
+                    || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?
+                    || vault.row_or_word_source_use_limited_in(rtxn, id)?,
             )
         },
     )? {
@@ -630,6 +643,9 @@ pub(in crate::sync) fn export_scrubbed_window_state(
     doc: &LoroDoc,
 ) -> Result<ScrubbedWindowState> {
     crate::sync::note::refresh(vault, doc, key)?;
+    // A row a use limit keeps here leaves first, so the side-row scrubs
+    // below drop its side rows as a row the window no longer carries.
+    super::use_limited::withhold_use_limited_carriers(vault, doc, Some(key))?;
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
@@ -724,7 +740,7 @@ pub(super) fn replay_pending_mirrors_kept(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
-) -> Result<Vec<WindowEntityKey>> {
+) -> Result<Vec<WindowEntityHexKey>> {
     let mut done = Vec::new();
     replay_mirrors(vault, doc, window_key, &mut Markers::Collect(&mut done))?;
     Ok(done)
@@ -733,11 +749,11 @@ pub(super) fn replay_pending_mirrors_kept(
 /// What a replay does with a marker whose mirror it settled.
 enum Markers<'a> {
     ClearNow,
-    Collect(&'a mut Vec<WindowEntityKey>),
+    Collect(&'a mut Vec<WindowEntityHexKey>),
 }
 
 impl Markers<'_> {
-    fn settle(&mut self, vault: &Vault, marker: &WindowEntityKey) -> Result<()> {
+    fn settle(&mut self, vault: &Vault, marker: &WindowEntityHexKey) -> Result<()> {
         match self {
             Self::ClearNow => vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
@@ -762,11 +778,11 @@ fn replay_mirrors(
     // A key that does not decode to a hex entity id is silently skipped here
     // (not a fail-closed refusal): best-effort crash-recovery replay, not a
     // fail-closed read of engine-authored truth.
-    let markers: Vec<(WindowEntityKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
+    let markers: Vec<(WindowEntityHexKey, EntityId)> = OFF_RECORD_PROMOTE_PICKUP
         .iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
         .filter_map(Result::ok)
         .map(|(key, _)| {
-            let entity = key.entity;
+            let entity = key.id;
             (key, entity)
         })
         .collect();

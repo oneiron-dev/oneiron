@@ -3,28 +3,33 @@
 //! the route's run, bound for that call alone through
 //! [`RunAdmission::sourced`], so the call's permit and its metered
 //! settlement carry them. A call the engine names no complete set for sends
-//! on the route's own run, its sources unknown.
+//! on the route's own run, its sources unknown. A call bound to its rows
+//! asks them in the vault before each rung, wait and resend, and at each
+//! physical send, and sends nothing once one is withdrawn ([`SourceFence`],
+//! [DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
 use std::sync::Arc;
 
 use oneiron::dreamer_consolidation::SourcedBackend;
 use oneiron::llm::run_admission::RunAdmission;
+use oneiron::llm::{FatalLlmError, LlmError};
 use oneiron::{
     BudgetLease, EntityId, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest,
-    LlmStreamResult, ModelId,
+    LlmStreamResult, ModelId, Vault,
 };
 
-use crate::models::{OfferLadder, RunBackend};
+use crate::models::{OfferLadder, RunBackend, SourceFence};
 
 /// A ladder on a run, as [`RunBackend`] sends on it, that lends each call
-/// the same run bound to that call's rows.
+/// the same run bound to that call's rows, fenced by them in `vault`.
 pub(super) struct SourcedRunBackend {
     ladder: Arc<OfferLadder>,
     run: RunAdmission,
+    vault: Arc<Vault>,
 }
 
 impl SourcedRunBackend {
-    pub(super) fn new(ladder: Arc<OfferLadder>, run: RunAdmission) -> Self {
-        Self { ladder, run }
+    pub(super) fn new(ladder: Arc<OfferLadder>, run: RunAdmission, vault: Arc<Vault>) -> Self {
+        Self { ladder, run, vault }
     }
 }
 
@@ -44,10 +49,11 @@ impl LlmBackend for SourcedRunBackend {
 
 impl SourcedBackend for SourcedRunBackend {
     fn sourced(&self, rows: Vec<EntityId>) -> Box<dyn LlmBackend + '_> {
-        Box::new(RunBackend::new(
-            Arc::clone(&self.ladder),
-            self.run.sourced(Some(rows)),
-        ))
+        let fence = SourceFence::new(Arc::clone(&self.vault), rows.clone());
+        Box::new(
+            RunBackend::new(Arc::clone(&self.ladder), self.run.sourced(Some(rows)))
+                .within_source_fence(fence),
+        )
     }
 }
 
@@ -58,14 +64,16 @@ impl SourcedBackend for SourcedRunBackend {
 pub(super) struct ServedRealization {
     ladder: Arc<OfferLadder>,
     run: RunAdmission,
+    vault: Arc<Vault>,
     served: std::sync::Mutex<Option<ModelId>>,
 }
 
 impl ServedRealization {
-    pub(super) fn new(ladder: Arc<OfferLadder>, run: RunAdmission) -> Self {
+    pub(super) fn new(ladder: Arc<OfferLadder>, run: RunAdmission, vault: Arc<Vault>) -> Self {
         Self {
             ladder,
             run,
+            vault,
             served: std::sync::Mutex::new(None),
         }
     }
@@ -77,14 +85,23 @@ impl ServedRealization {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// One generation on `run`, keeping the model that answered.
+    /// One generation on `run`, keeping the model that answered; under
+    /// `fence`, asked first and before each rung, wait and resend.
     fn generate_on<'a>(
         &'a self,
         run: &'a RunAdmission,
         request: LlmRequest,
+        fence: Option<&'a SourceFence>,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let generated = self.ladder.generate_served(run, request, None).await;
+            let may_send = || fence.is_none_or(SourceFence::stands);
+            if !may_send() {
+                return Err(LlmError::from(FatalLlmError::InvalidRequest));
+            }
+            let generated = self
+                .ladder
+                .generate_served_while(run, request, None, &may_send)
+                .await;
             generated.map(|(response, served)| {
                 *self.served.lock().expect("served model mutex poisoned") = Some(served);
                 response
@@ -99,7 +116,7 @@ impl LlmBackend for ServedRealization {
     }
 
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
-        self.generate_on(&self.run, request)
+        self.generate_on(&self.run, request, None)
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
@@ -109,17 +126,23 @@ impl LlmBackend for ServedRealization {
 
 impl SourcedBackend for ServedRealization {
     fn sourced(&self, rows: Vec<EntityId>) -> Box<dyn LlmBackend + '_> {
+        let fence = SourceFence::new(Arc::clone(&self.vault), rows.clone());
         Box::new(SourcedRealization {
             realization: self,
-            run: self.run.sourced(Some(rows)),
+            run: self
+                .run
+                .sourced(Some(rows))
+                .within_text_dispatch_release(fence.release()),
+            fence,
         })
     }
 }
 
-/// One realization call on its run bound to its rows.
+/// One realization call on its run bound to its rows, fenced by them.
 struct SourcedRealization<'r> {
     realization: &'r ServedRealization,
     run: RunAdmission,
+    fence: SourceFence,
 }
 
 impl LlmBackend for SourcedRealization<'_> {
@@ -128,7 +151,8 @@ impl LlmBackend for SourcedRealization<'_> {
     }
 
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
-        self.realization.generate_on(&self.run, request)
+        self.realization
+            .generate_on(&self.run, request, Some(&self.fence))
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {

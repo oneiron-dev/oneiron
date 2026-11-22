@@ -6,7 +6,9 @@
 //! for the owner's review. Each lands in one write with the claim's settled
 //! mark, and only while the re-check is still owed. A rung applies only on a
 //! claim that write still reads as not critical: one made critical since its
-//! read waits for the owner as one read critical does.
+//! read waits for the owner as one read critical does. A rung that would
+//! retract, weaken or mark stale a claim that restricts someone's access
+//! waits the same way.
 
 use super::super::applied::MaintenanceInverse;
 use super::super::{CURATOR_PROPOSAL_PREDICATE, CuratorRubric, curator, proposals};
@@ -154,8 +156,10 @@ fn refused(error: &Error) -> bool {
 /// finding, receipt and inverse, in one write with the claim's settled
 /// mark: the head, and a weakening's successor, which carries the same
 /// evidence. A rung on a claim this write reads as critical (its class, or
-/// a critical confirm not settled), and one the Gate parks, lands held in
-/// the run tray instead.
+/// a critical confirm not settled), one that would lift a restriction on
+/// someone's access (`curator::rung_lifts_restriction_in`: the Dreamer's
+/// widening asks a person), and one the Gate parks, lands held in the run
+/// tray instead.
 fn apply_rung(
     vault: &Vault,
     attempt: AttemptId,
@@ -177,7 +181,9 @@ fn apply_rung(
             if !owed_in(vault, txn, declaration)? {
                 return Ok(None);
             }
-            if read::critical_in(vault, txn, &head, &ask.predicate)? {
+            if read::critical_in(vault, txn, &head, &ask.predicate)?
+                || curator::rung_lifts_restriction_in(vault, txn, value)?
+            {
                 return hold_in_txn(vault, txn, declaration, &finding, &tray, now).map(Some);
             }
             let mut moved = None;

@@ -13,7 +13,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption,
     TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord, ask_intent,
 };
 
 use super::super::consent::{
@@ -255,7 +255,7 @@ fn live_edit_revision(artifact: &EntityId, editor: &EntityId, owners: &[EntityId
 /// Whether `intent_key` addresses a live-edit holder ask (FIX 596): the
 /// cheap gate checked before the route index is read. The prefix admits
 /// nothing by itself: a routed ask is one its group index names.
-fn is_live_edit_ask(intent_key: &str) -> bool {
+pub(crate) fn is_live_edit_ask(intent_key: &str) -> bool {
     intent_key
         .strip_prefix(LIVE_EDIT_ASK_INTENT)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
@@ -263,12 +263,14 @@ fn is_live_edit_ask(intent_key: &str) -> bool {
 
 /// The intent key the route `route` names, rebuilt from its canonical
 /// fields; the raise writes it, the route index re-parses it.
-fn live_edit_intent_key(route: &LiveEditRoute) -> String {
-    format!(
-        "{LIVE_EDIT_ASK_INTENT}/{}/{}/{}",
-        route.artifact.to_hex(),
-        route.editor.to_hex(),
-        route.revision,
+pub(crate) fn live_edit_intent_key(route: &LiveEditRoute) -> String {
+    ask_intent::join(
+        &format!("{LIVE_EDIT_ASK_INTENT}/"),
+        &[
+            route.artifact.to_hex().as_str(),
+            route.editor.to_hex().as_str(),
+            route.revision.to_string().as_str(),
+        ],
     )
 }
 
@@ -500,4 +502,32 @@ pub(crate) fn resolve_live_edit_holder_ask_in_txn(
     }
     mint_live_edit_grant_in_txn(vault, txn, owner, &route.artifact, &route.editor)?;
     Ok(())
+}
+
+/// Puts a live-edit route for the checkpoint-pins door: `group`'s ask of
+/// `owners` whether `editor` may edit `artifact` at `revision`, the owners
+/// sorted as the admission sorts them.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_live_edit_route_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    group: &EntityId,
+    artifact: &EntityId,
+    editor: &EntityId,
+    owners: &[EntityId],
+    revision: u64,
+) -> crate::error::Result<()> {
+    let mut owners = owners.to_vec();
+    owners.sort();
+    LIVE_EDIT_GROUPS.put(
+        store,
+        txn,
+        group,
+        &LiveEditRoute {
+            artifact: *artifact,
+            editor: *editor,
+            owners,
+            revision,
+        },
+    )
 }

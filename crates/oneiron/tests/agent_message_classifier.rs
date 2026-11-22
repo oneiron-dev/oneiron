@@ -206,6 +206,7 @@ fn witness_message(conversation: EntityId, node: EntityId, now: u64) -> WitnessT
         conversation_ref: conversation.to_hex(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(node.to_hex()),
             author: WitnessAuthor::User,

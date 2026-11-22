@@ -15,6 +15,7 @@
 //! bytes: the payload is scalar UTC seconds, and series linkage is an id field,
 //! not an edge.
 
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 use super::{
@@ -298,10 +299,9 @@ fn decode_entity_ref(value: &Value) -> ScheduleResult<EntityId> {
 }
 
 fn map_entries(value: &Value) -> ScheduleResult<&[(Value, Value)]> {
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(ScheduleError::InvalidPayload),
-    }
+    Entries::of(value)
+        .map(Entries::as_slice)
+        .map_err(|_| ScheduleError::InvalidPayload)
 }
 
 /// Exact key-set equality: no unknown key, no missing key, no duplicate.

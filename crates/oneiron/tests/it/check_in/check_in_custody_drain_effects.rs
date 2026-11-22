@@ -6,11 +6,16 @@
 //!   and `vault.custody.members.reenrol` take `check_in_ref`. An Owner's own
 //!   act is never gated: its answer records the Owner's own-proof decision.
 //! - With `check_in_ref` the Owner applies another asker's approved
-//!   check-in for that door's exact effect on their own proof: it is spent
-//!   before the custody journal acts (the journal is no vault writer), the
-//!   answer names the asker as requester, and it applies once. A check-in
-//!   for another member, or asked for another door, does nothing and stays
-//!   unspent.
+//!   check-in for that door's exact effect on their own proof: it is checked
+//!   before the custody journal acts and spent after the act lands (the
+//!   journal is no vault writer), the answer names the asker as requester,
+//!   and it applies once. A check-in for another member, or asked for
+//!   another door, does nothing and stays unspent; so does one whose act the
+//!   journal refuses, and the Owner applies it once the act can go (FIX
+//!   [CHECK-IN-SPEND-BEFORE-ERASE], custody drain doors). An act that
+//!   landed on the Owner's live credential spends it even when that
+//!   credential lapsed meanwhile: the spend refuses no landed act (review
+//!   round 1 of #9912).
 //! - The ticket and ack protocol is unchanged: an approved begin answers the
 //!   ticket a retry answers, and the member's ack still commits the drain.
 //!
@@ -34,19 +39,23 @@ mod owner_apply_fixture;
 
 use std::path::{Path, PathBuf};
 
+use oneiron::authority::HostSlipIssuer;
 use oneiron::check_in::{ActClass, custody_drain_effect_digest, custody_reenrol_effect_digest};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
-use oneiron::store::custody_protocol::{DeletionEvidence, EvidenceKind, TargetId, TargetSpec};
+use oneiron::store::custody_protocol::{
+    DeletionEvidence, DrainAck, EvidenceKind, TargetId, TargetSpec,
+};
+use oneiron::test_doors::check_in::run_owner_key_recovery_act;
 use oneiron::verbs::{
     CustodyDrainCommitRequest, CustodyMemberReenrolRequest, CustodyMemberRef,
     custody_folder_member_drain_as, custody_member_drain_begin_as, custody_member_drain_commit_as,
     custody_member_reenrol_as,
 };
 use oneiron::{EntityId, Vault};
-use owner_apply_fixture::{approved, owner_decision, rooted, spent};
+use owner_apply_fixture::{approved, owner_decision, proof, rooted, spent};
 
 const BEGIN: &str = "vault.custody.members.drain.begin";
 const COMMIT: &str = "vault.custody.members.drain.commit";
@@ -295,4 +304,201 @@ fn the_owner_applies_an_approved_hosted_drain_begin_and_commit() {
         "the answer names the check-in it applied and its asker"
     );
     assert!(spent(&vault, &asked), "the commit spent the check-in");
+}
+
+/// The hosted member's ack of the drain the owner begins for it now.
+fn hosted_ack(vault: &Vault, owner_proof: &AuthenticatedOwner) -> DrainAck {
+    let hosted = hosted();
+    vault
+        .begin_custody_member_drain_as(owner_proof, hosted.id())
+        .expect("the hosted member's drain begins")
+        .ack(
+            &hosted,
+            DeletionEvidence {
+                kind: EvidenceKind::ObjectVersionSweep,
+                superseded_removed: 0,
+                remaining_heads: 0,
+                inventory_digest: "00".repeat(32),
+            },
+        )
+        .expect("the member's ack")
+}
+
+#[test]
+fn a_custody_act_the_journal_refuses_leaves_the_applied_check_in_unspent() {
+    let (_dir, vault, owner, owner_proof) = rooted();
+    let custody = tempfile::tempdir().expect("tempdir");
+    let folder = custody_set(&vault, &owner_proof, custody.path());
+
+    let stranger = "s3:elsewhere";
+    let (asked, _) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        BEGIN,
+        ActClass::KeyRecovery,
+        &custody_drain_effect_digest(stranger),
+    );
+    let refused =
+        custody_member_drain_begin_as(&vault, &owner_proof, member(stranger, Some(asked)));
+    assert!(
+        refused.is_err(),
+        "the journal begins no drain of a non-member: {refused:?}"
+    );
+    assert!(
+        !spent(&vault, &asked),
+        "a begin the journal refuses leaves its check-in unspent"
+    );
+
+    let elsewhere = TargetId::of_folder(&custody.path().join("elsewhere"));
+    let (asked, _) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        FOLDER_DRAIN,
+        ActClass::KeyRecovery,
+        &custody_drain_effect_digest(elsewhere.as_str()),
+    );
+    let refused = custody_folder_member_drain_as(
+        &vault,
+        &owner_proof,
+        member(elsewhere.as_str(), Some(asked)),
+    );
+    assert!(
+        refused.is_err(),
+        "the journal drains no folder outside the set: {refused:?}"
+    );
+    assert!(
+        !spent(&vault, &asked),
+        "a folder drain the journal refuses leaves its check-in unspent"
+    );
+
+    // The hosted member's drain begins, then the folder member's drain moves
+    // the set past it.
+    let stale = hosted_ack(&vault, &owner_proof);
+    custody_folder_member_drain_as(
+        &vault,
+        &owner_proof,
+        member(TargetId::of_folder(&folder).as_str(), None),
+    )
+    .expect("the owner drains the folder member");
+    let (asked, asker) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        COMMIT,
+        ActClass::KeyRecovery,
+        &custody_drain_effect_digest(HOSTED),
+    );
+    let commit = |ack: &DrainAck| {
+        custody_member_drain_commit_as(
+            &vault,
+            &owner_proof,
+            CustodyDrainCommitRequest {
+                ack: ack.clone(),
+                check_in_ref: Some(asked.to_hex()),
+            },
+        )
+    };
+    let refused = commit(&stale);
+    assert!(
+        refused.is_err(),
+        "the journal commits no drain the set moved past: {refused:?}"
+    );
+    assert!(
+        !spent(&vault, &asked),
+        "a commit the journal refuses leaves its check-in unspent"
+    );
+
+    let committed = commit(&hosted_ack(&vault, &owner_proof))
+        .expect("the owner applies the approved commit to the drain begun again");
+    assert_eq!(
+        committed.check_in,
+        Some(owner_decision(
+            ActClass::KeyRecovery,
+            Some(asked),
+            Some(asker)
+        )),
+        "the answer names the check-in it applied and its asker"
+    );
+    assert!(spent(&vault, &asked), "the commit spent the check-in");
+}
+
+/// The owner's proof bound to a full owner slip the test host mints for it
+/// now, as an owner route carries one, and the slip's id.
+fn credentialed(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    owner: EntityId,
+) -> (AuthenticatedOwner, [u8; 32]) {
+    const CONTEXT: &[u8] = b"custody-drain-owner-credential";
+    let mut claims = vault
+        .ensure_host_root_slip(issuer)
+        .expect("the host root slip")
+        .claims;
+    claims.slip_id = [0x5c; 32];
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault
+        .mint_capability_slip(issuer, claims)
+        .expect("the owner's slip");
+    let verified = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            CONTEXT,
+            &issuer.binding_proof(&slip, CONTEXT).expect("binding proof"),
+        )
+        .expect("the verified slip");
+    let bound = vault
+        .bind_owner_credential(proof(vault, owner), verified)
+        .expect("the owner's credential");
+    (bound, slip.claims.slip_id)
+}
+
+#[test]
+fn a_custody_act_that_landed_spends_its_check_in_after_the_owner_credential_lapses() {
+    let (_dir, vault, owner, owner_proof) = rooted();
+    let custody = tempfile::tempdir().expect("tempdir");
+    let folder = custody_set(&vault, &owner_proof, custody.path());
+    let folder_id = TargetId::of_folder(&folder);
+    let digest = custody_drain_effect_digest(folder_id.as_str());
+    let (asked, asker) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        FOLDER_DRAIN,
+        ActClass::KeyRecovery,
+        &digest,
+    );
+    let issuer = oneiron::test_support::test_host_issuer();
+    let (credentialed, slip_id) = credentialed(&vault, &issuer, owner);
+
+    // The drain lands on the live credential; the credential is revoked
+    // before the spend's writer opens, as one that expires meanwhile.
+    let (revision, decision) = run_owner_key_recovery_act(
+        &vault,
+        &credentialed,
+        FOLDER_DRAIN,
+        digest,
+        Some(asked),
+        || {
+            let revision = vault.drain_custody_folder_member_as(&credentialed, &folder_id)?;
+            vault.revoke_capability_slip(&issuer, slip_id)?;
+            Ok(revision)
+        },
+    )
+    .expect("a drain that landed is answered, not refused after it");
+    assert!(
+        credentialed.revalidate(&vault).is_err(),
+        "the owner's credential lapsed after the drain"
+    );
+    assert!(revision > 0, "the folder member left the set: {revision}");
+    assert_eq!(
+        decision,
+        owner_decision(ActClass::KeyRecovery, Some(asked), Some(asker)),
+        "the answer names the check-in it applied and its asker"
+    );
+    assert!(spent(&vault, &asked), "the landed drain spent the check-in");
 }

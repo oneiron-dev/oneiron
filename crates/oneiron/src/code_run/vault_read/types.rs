@@ -37,7 +37,7 @@ pub(super) const fn search_total(count_mode: CountMode, admitted: usize) -> u64 
 #[doc(hidden)]
 pub use oneiron_records::code_run::vault_read::types::{
     AskResponse, CodeExecuteResponse, CodeSearchResponse, CoreBatchShortIdHydrateItem,
-    CoreBatchShortIdHydrateResponse, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
-    CoreMemoryTimelineRecord, CoreMemoryTimelineResponse, CoreQueryMeta, CoreQueryResponse,
-    CoreShortIdHydrateOutcome,
+    CoreBatchShortIdHydrateResponse, CoreBodyOmitted, CoreEntityRecord, CoreHydrateResponse,
+    CoreHydrateStatus, CoreMemoryTimelineRecord, CoreMemoryTimelineResponse, CoreQueryMeta,
+    CoreQueryResponse, CoreShortIdHydrateOutcome, PROJECTION_BYTES_EXCEEDED_CODE,
 };

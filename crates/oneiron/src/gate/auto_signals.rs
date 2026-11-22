@@ -54,10 +54,16 @@ pub(super) fn auto_check_signals(
         {
             continue;
         }
-        if now.saturating_sub(record.created_at) < config.window_secs {
+        let outcome = record.gate_outcome();
+        // A write is the gate's own decision on it. An answer to a held write
+        // (a tray close, receipted as its author or its closer) or an audit
+        // note is no new write, so it never counts.
+        if outcome.is_none_or(decides_a_write)
+            && now.saturating_sub(record.created_at) < config.window_secs
+        {
             signals.recent_writes = signals.recent_writes.saturating_add(1);
         }
-        match record.gate_outcome() {
+        match outcome {
             Some(GateReceiptOutcome::Allow) => signals.failure_streak = 0,
             Some(GateReceiptOutcome::Deny) => {
                 signals.failure_streak = signals.failure_streak.saturating_add(1);
@@ -86,4 +92,22 @@ pub(super) fn auto_check_signals(
         }
     }
     Ok(signals)
+}
+
+/// Whether a receipt with this outcome is the gate's own decision on a write
+/// (the rule let it go, held it, or refused it), not an answer to an earlier
+/// one or a note.
+const fn decides_a_write(outcome: GateReceiptOutcome) -> bool {
+    match outcome {
+        GateReceiptOutcome::Allow | GateReceiptOutcome::Pending | GateReceiptOutcome::Deny => true,
+        GateReceiptOutcome::Approved
+        | GateReceiptOutcome::ApprovedAmended
+        | GateReceiptOutcome::Rejected
+        | GateReceiptOutcome::LetGo
+        | GateReceiptOutcome::Superseded
+        | GateReceiptOutcome::Retracted
+        | GateReceiptOutcome::Invalidated
+        | GateReceiptOutcome::Revoked
+        | GateReceiptOutcome::Noted => false,
+    }
 }
