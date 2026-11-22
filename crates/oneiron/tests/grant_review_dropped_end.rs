@@ -98,6 +98,7 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let folded = rooted
         .vault
