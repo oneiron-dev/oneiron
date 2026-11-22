@@ -39,15 +39,18 @@ fn is_consent_row(row: &FoldRow) -> bool {
     })
 }
 
-/// A row the door's structure reads: a consent row, a machine revision, or
-/// a root record, which names an owner anchor. Open rows only: a sealed row
-/// that does not open provides nothing, and pushing it admits nothing.
+/// A row the door's structure reads: a consent row, a machine revision, a
+/// root record, which names an owner anchor, or a root appointment, which
+/// admits its successor. Open rows only: a sealed row that does not open
+/// provides nothing, and pushing it admits nothing.
 fn is_structural(row: &FoldRow) -> bool {
     row.op().is_some_and(|op| {
         is_consent_row(row)
             || matches!(
                 op,
-                AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_)
+                AuthorityOp::MachineProfile(_)
+                    | AuthorityOp::OwnerRoot(_)
+                    | AuthorityOp::RootAppointment(_)
             )
     })
 }
@@ -155,6 +158,12 @@ fn wanted_open(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::PolicySettingSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::SettingCopy(copy) => {
+            vec![Grant::InstallKey(copy.machine, entry.signer_key().clone())]
+        }
+        AuthorityOp::SettingPackHead(head) => {
+            vec![Grant::InstallKey(head.machine, entry.signer_key().clone())]
+        }
         AuthorityOp::ExportAct(record) => {
             vec![Grant::InstallKey(
                 record.machine,
@@ -173,6 +182,9 @@ fn wanted_open(entry: &AuthorityLogEntry) -> Vec<Grant> {
             family: FrontierJoinFamily::Anchor,
             ..
         }) => vec![Grant::Anchor(entry.signer_key().clone())],
+        // A root appointment waits for its signer to be an owner anchor, as
+        // the anchor's own rows do (OWNER-ANCHOR-ROOT-RECOVERY).
+        AuthorityOp::RootAppointment(_) => vec![Grant::Anchor(entry.signer_key().clone())],
         // The owner's kit push (FIX 6053) waits for its signer to be an
         // owner anchor, as an anchored machine revision does.
         AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
@@ -322,7 +334,7 @@ fn consent_order(
     entries: &[(AuthorityEntryHash, &FoldRow)],
 ) -> Vec<usize> {
     let mut builder = StructureBuilder::under(local);
-    for entry in stored {
+    for &entry in stored {
         builder.push(entry);
     }
     builder.settle();
@@ -352,7 +364,10 @@ pub(crate) fn authority_stage_order(
 
 /// The consent structure of the stored rows and the rows staged so far, and
 /// the hashes of the stored rows.
-type Consent<'r> = (StructureBuilder<'r>, &'r BTreeSet<AuthorityEntryHash>);
+type Consent<'r> = (
+    StructureBuilder<&'r FoldRow>,
+    &'r BTreeSet<AuthorityEntryHash>,
+);
 
 fn stage_order<'r>(
     entries: &'r [(AuthorityEntryHash, &'r FoldRow)],

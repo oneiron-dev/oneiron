@@ -1,0 +1,16 @@
+{
+  "name": "vault.display_edits.list",
+  "description": "The owner lists every open display-edit proposal, newest first: the edit, what it names, the proposed text, the agent's why, the agent and when.",
+  "input": "EmptyRequest",
+  "output": "crate::task_verb::sdk::DisplayEditListReply",
+  "call": "crate::task_verb::sdk::list_display_edits_as(memory.vault(), &memory.embedded_owner(\"vault.display_edits.list\")?)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

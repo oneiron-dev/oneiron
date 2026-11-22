@@ -7,6 +7,7 @@ pub(super) mod grant_view;
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -68,7 +69,7 @@ pub(super) fn history_admission(
     let Some(body) = row.body.as_deref() else {
         return Ok(HistoryAdmission::Missing);
     };
-    if expected_body_hash.is_some_and(|expected| expected != *blake3::hash(body).as_bytes()) {
+    if expected_body_hash.is_some_and(|expected| expected != *ContentHash::of(body).as_bytes()) {
         return Ok(HistoryAdmission::Missing);
     }
     if grant_view::shows_row(grant, &row)? {
@@ -131,7 +132,7 @@ fn seen_fact(
     let Some(body) = row.body.as_deref() else {
         return Ok(None);
     };
-    let body_hash = *blake3::hash(body).as_bytes();
+    let body_hash = *ContentHash::of(body).as_bytes();
     if entry
         .body_hash
         .is_some_and(|expected| expected != body_hash)
@@ -243,7 +244,7 @@ fn answer_in_snapshot(
     .map_err(|error| error.to_string())?;
     pins.push(HookReadPin {
         request: request.to_owned(),
-        response_hash: blake3::hash(response.as_bytes()).to_hex().to_string(),
+        response_hash: ContentHash::of(response.as_bytes()).to_hex(),
         rows,
     });
     Ok(response)
@@ -313,7 +314,7 @@ pub(super) fn answer_pinned(
         let Some(body) = read.body.as_deref() else {
             return Ok(None);
         };
-        if *blake3::hash(body).as_bytes() != row.body_hash {
+        if *ContentHash::of(body).as_bytes() != row.body_hash {
             return Ok(None);
         }
         let Ok(claim) = crate::claim::decode_claim_body(body, true) else {
@@ -357,7 +358,7 @@ fn read_claim(
             served.push(HookReadRow {
                 id,
                 content_hash: row.content_hash,
-                body_hash: *blake3::hash(body).as_bytes(),
+                body_hash: *ContentHash::of(body).as_bytes(),
             });
         }
     }
@@ -415,7 +416,7 @@ fn read_about(
             served.push(HookReadRow {
                 id: row.id,
                 content_hash: row.content_hash,
-                body_hash: *blake3::hash(body).as_bytes(),
+                body_hash: *ContentHash::of(body).as_bytes(),
             });
         }
     }

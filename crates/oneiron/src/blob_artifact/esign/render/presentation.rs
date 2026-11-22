@@ -2,8 +2,6 @@
 use super::*;
 
 #[doc(hidden)]
-pub(super) use oneiron_verb_wire::blob_artifact::esign::render::presentation::encoded_text;
-#[doc(hidden)]
 pub use oneiron_verb_wire::blob_artifact::esign::render::presentation::{
     FieldControl, FieldLayout, FieldMark, FieldPresentation, PageGeometry,
 };

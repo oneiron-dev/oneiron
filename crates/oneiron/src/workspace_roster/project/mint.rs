@@ -165,6 +165,7 @@ impl Vault {
             conversation_ref: room.to_hex(),
             turn_ref: Some(header_turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(header_message.to_hex()),
                 author: WitnessAuthor::User,
@@ -278,6 +279,11 @@ impl Vault {
             EntityId::from_hex(&root.claims_scope_ref).map_err(|_| invalid())?,
             leader,
         )?;
+        // The minted child attenuates its parent's budget by one, as a
+        // spawned child does, so threads convert under minted projects. A
+        // root with no budget left mints a child with none, as before.
+        project.depth_limit = root.depth_limit;
+        project.depth_remaining = root.depth_remaining.min(root.depth_limit).saturating_sub(1);
         project.board = board.iter().map(EntityId::to_hex).collect();
         project.roster.extend(project.board.iter().cloned());
         if !project.roster.contains(&actor.to_hex()) {
@@ -309,15 +315,16 @@ impl Vault {
         // it lands as history, and the tap commits only if it installs.
         let signed_at = owner_signed_at(self, txn)?;
         self.sign_owner_project_in_txn(txn, owner, signer, id, &mut project, None, signed_at)?;
-        self.batch_in()
-            .put_engine_history(
-                &id,
-                project_type(&self.store).ok_or_else(invalid)?,
-                period,
-                at,
-                &encode(&project)?,
-            )
-            .apply(txn)?;
+        self.land_owner_project_birth_in_txn(
+            txn,
+            id,
+            project_type(&self.store).ok_or_else(invalid)?,
+            period,
+            at,
+            &project,
+        )?;
+        // A new project starts with its row of each `born` setting key (stage 7c-2).
+        crate::setting::write_born_rows_in_txn(self, txn, id)?;
         self.require_owner_head_in_txn(txn, id, &project)?;
         // A house mind the roster seats joins the new home room through the
         // three consents, filed by the owner who tapped (OF-417).

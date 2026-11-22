@@ -13,9 +13,9 @@
 //! [`Vault::revoke_removed_machine_mesh`] revokes its pairing and grants in
 //! the log.
 
+use super::super::setting_keys::MESH_GRANT_MAX_TTL;
 use super::super::slip_vault::{random_slip_id, require_host};
 use super::super::{AuthorityOp, MachineEnrolmentRequest, SlipClaims, strong_ed25519_key};
-use super::doors::MESH_GRANT_MAX_SECS;
 use super::*;
 
 /// Why a redemption's mesh binding was not made. The pairing stands, and no
@@ -55,9 +55,17 @@ pub enum MeshEnrolment {
     Refused(MeshBindRefusal),
 }
 
-/// Whether any chain of `machine` removed it: removal is terminal.
-pub(super) fn machine_removed(machine: &crate::authority::FoldedMachine) -> bool {
-    machine.chains().any(|(_, chain)| chain.removed)
+/// Whether a head `machine` stands under with `pin` removed it: removal is
+/// terminal. Another anchor's chain removes nothing here (FIX
+/// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
+pub(super) fn machine_removed(
+    machine: &crate::authority::FoldedMachine,
+    pin: Option<&crate::authority::PinnedRoot>,
+) -> bool {
+    machine
+        .standing_heads(pin)
+        .into_iter()
+        .any(|chain| chain.removed)
 }
 
 impl Vault {
@@ -139,6 +147,12 @@ impl Vault {
             return Ok(None);
         }
         let now = self.instant_in_txn(&savepoint)?.secs();
+        // The pairing runs as long as the owner's mesh grant ceiling
+        // (`mesh.grant.max_ttl_secs`, one year by default), so a grant can.
+        let ceiling = MESH_GRANT_MAX_TTL
+            .read_in_txn(self, &savepoint, &[], None)?
+            .value
+            .secs();
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(BTreeSet::from([mesh_verb(alpn)]));
         let pairing = self.mint_slip_in_txn(
@@ -152,8 +166,8 @@ impl Vault {
                 binding_key: request.machine_key,
                 scope,
                 issued_at: now,
-                expires_at: now.saturating_add(MESH_GRANT_MAX_SECS),
-                ttl_secs: MESH_GRANT_MAX_SECS,
+                expires_at: now.saturating_add(ceiling),
+                ttl_secs: ceiling,
                 single_use: false,
                 records: Default::default(),
                 channels: Default::default(),
@@ -204,7 +218,10 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
-        if !fold.machine(machine).is_some_and(machine_removed) {
+        if !fold
+            .machine(machine)
+            .is_some_and(|folded| machine_removed(folded, fold.pinned_root.as_ref()))
+        {
             return Ok(false);
         }
         let Some(signed) = MESH_AUTHORITY.get(&self.store, &txn, &HexId(machine))? else {

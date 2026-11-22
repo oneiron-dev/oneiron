@@ -8,13 +8,17 @@
 //! content of the discarded row the parts join to, and erased it when the
 //! key's holder went. It now defers the window. The checkpoint capture
 //! named the key's holder on the whole window; it now names none. A correct
-//! parted row places as before. A turn program row is placed by its body,
-//! whatever its key (the D5 guard).
+//! parted row places as before. A turn program row filed under its own key
+//! is placed by its body; filed under another key, it is placed under no one
+//! (D5, UC-10 PR 6).
 //!
 //! The erase-reach review (Astra, 15 Nov 19:16) added three: a manifest
 //! keeps no part of another map, a capture that reads only part of the
 //! history names no owner, and a manifest whose parts join to no row
 //! proves no other row, so it places by its key and defers nothing.
+//!
+//! A room turn in parts goes with its discarded room, as the same turn
+//! stored whole does (FIX SYNC-DISCARD-PARTED-TURN-HOLDERS-NARROW).
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
 use oneiron::EntityId;
@@ -177,15 +181,21 @@ fn correct_parted_rows_place_as_before() {
     }
 }
 
-/// D5: a turn program arming row filed under another registration's key is
-/// placed under the actor its body names, never one its key chose.
+/// D5 (FIX SYNC-CHECKPOINT-TURN-PROGRAM-KEY-UNUSED): a turn program arming
+/// row filed under its own registration's key is placed under the actor its
+/// body names; filed under another registration's key, which admit refuses
+/// and no writer files, it is placed under no one.
 #[test]
-fn turn_program_arming_places_by_its_body() {
+fn turn_program_arming_places_only_under_its_own_key() {
     let (keyed, registration) = two_rows();
     let actor = EntityId::now();
     assert_eq!(
-        turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
+        turn_program_arming_holder(registration, registration, actor).expect("the row writes"),
         Some(actor)
+    );
+    assert_eq!(
+        turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
+        None
     );
 }
 
@@ -254,4 +264,50 @@ fn repo_head_of_no_manifest_checkpoint_names_its_code() {
         .expect("a head of no manifest keeps its window whole");
     assert_eq!(refusal.owner, Some(keyed));
     assert_eq!(refusal.reason, "Undecodable");
+}
+
+/// The room every fixture turn of the door rides in (its `turn` fixture,
+/// test_doors/sync_parted_row_binding.rs).
+fn fixture_room() -> EntityId {
+    EntityId::from_bytes_unchecked([0x52; 16])
+}
+
+/// FIX SYNC-DISCARD-PARTED-TURN-HOLDERS-NARROW: a room turn stored in parts
+/// goes with its discarded room, as the same turn stored whole does (held
+/// only while its room, its messages and each turn it quotes are): its
+/// manifest and every part are erased, as the turn's own discard erases
+/// them. The manifest was held by the turn alone, so the room's discard
+/// kept the turn's content.
+#[test]
+fn a_parted_turn_goes_with_its_discarded_room() {
+    let turn = EntityId::now();
+    let window = parted_window(PartedMap::RoomTurn, turn, turn).expect("the window writes");
+    let gone = discard_projection(&window, &[fixture_room()]).expect("the projection runs");
+    let erased: usize = gone
+        .strip_prefix("erased ")
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("the room's discard erases its parted turn, got {gone}"));
+    assert!(
+        erased >= 2,
+        "the turn's manifest and its parts go, got {erased}"
+    );
+    assert_eq!(
+        gone,
+        discard_projection(&window, &[turn]).expect("the projection runs"),
+        "the room's discard erases what the turn's own discard erases"
+    );
+}
+
+/// The joined row's holders erase nothing while the turn's room stays: a
+/// discard of another row leaves the parted turn whole.
+#[test]
+fn a_parted_turn_stays_while_its_room_stays() {
+    let (turn, other) = two_rows();
+    assert_ne!(other, fixture_room());
+    let window = parted_window(PartedMap::RoomTurn, turn, turn).expect("the window writes");
+    assert_eq!(
+        discard_projection(&window, &[other]).expect("the projection runs"),
+        "unchanged",
+        "another row's discard leaves the parted turn"
+    );
 }

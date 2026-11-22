@@ -1,7 +1,8 @@
 //! A GPU pod with `hours` takes new batches only inside them, read in its
-//! fixed UTC offset; a pod without `hours` takes them at any hour
-//! (CROSS-ARCH-0024 #my-network 07: "Jobs go to machines by role and
-//! schedule ... Embeddings can run on the GPU box at night"; census L10-15).
+//! fixed UTC offset or in its IANA zone, which follows daylight saving; a pod
+//! without `hours` takes them at any hour (CROSS-ARCH-0024 #my-network 07:
+//! "Jobs go to machines by role and schedule ... Embeddings can run on the
+//! GPU box at night"; census L10-15, FIX [JOB-ROUTING-BY-MACHINE-ROLE-UNBUILT]).
 //!
 //! Each pool polls a loopback fake pod that answers its health and readiness
 //! probes, so every pod is healthy after the first poll. The registry reads
@@ -177,11 +178,135 @@ async fn serve_refuses_hours_that_name_no_time() {
             "hours {start}-{end} {offset}: {error}"
         );
     }
-    let missing_offset = "region = \"home\"\n[[pods]]\nid = \"home-gpu\"\n\
-        url = \"https://home-gpu.example:8000/v1\"\ncapacity = 2\n\
-        hours = { start = \"22:00\", end = \"07:00\" }\n";
-    let error = toml::from_str::<GpuPoolConfig>(missing_offset)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("utc_offset"), "{error}");
+}
+
+/// One `[[pods]]` table whose `hours` take `clock`, the TOML of their clock
+/// keys, verbatim.
+fn pod_on_clock(clock: &str) -> String {
+    format!(
+        "[[pods]]\nid = \"home-gpu\"\nurl = \"https://home-gpu.example:8000/v1\"\n\
+         capacity = 2\nhours = {{ start = \"22:00\", end = \"07:00\"{clock} }}\n"
+    )
+}
+
+#[tokio::test]
+async fn serve_refuses_hours_on_no_clock_two_clocks_or_an_unknown_zone() {
+    for (clock, expected) in [
+        ("", "hours need a utc_offset or an iana_timezone"),
+        (
+            ", utc_offset = \"+01:00\", iana_timezone = \"Europe/Berlin\"",
+            "set utc_offset or iana_timezone, not both",
+        ),
+        (
+            ", iana_timezone = \"Mars/Olympus_Mons\"",
+            "iana_timezone must name",
+        ),
+        (
+            ", iana_timezone = \"europe/berlin\"",
+            "iana_timezone must name",
+        ),
+        (", iana_timezone = \"\"", "iana_timezone must name"),
+    ] {
+        let error = format!(
+            "{:#}",
+            GpuPool::new(config(&[pod_on_clock(clock)])).unwrap_err()
+        );
+        assert!(
+            error.contains("gpu pod home-gpu hours") && error.contains(expected),
+            "hours with clock `{clock}`: {error}"
+        );
+    }
+}
+
+/// UTC instants around Europe/Berlin's 2026 changes: summer time from
+/// 29 Mar 01:00 UTC (02:00 CET to 03:00 CEST) to 25 Oct 01:00 UTC.
+const MAR_28_0530_UTC: u64 = 1_774_675_800;
+const MAR_29_0530_UTC: u64 = 1_774_762_200;
+const JUL_15_2030_UTC: u64 = 1_784_147_400;
+const OCT_24_0530_UTC: u64 = 1_792_819_800;
+const OCT_25_0530_UTC: u64 = 1_792_906_200;
+
+#[test]
+fn pod_hours_in_a_named_zone_follow_daylight_saving() {
+    let pool = config(&[
+        pod_on_clock(", iana_timezone = \"Europe/Berlin\""),
+        pod(
+            "fixed-gpu",
+            "https://fixed-gpu.example:8000/v1",
+            2,
+            Some(("22:00", "07:00", "+01:00")),
+        ),
+    ]);
+    let night_hours = |index: usize| pool.pods[index].hours.as_ref().unwrap().hours().unwrap();
+    let (zoned, fixed) = (night_hours(0), night_hours(1));
+    for (at, local, zoned_in, fixed_in) in [
+        (
+            MAR_28_0530_UTC,
+            "06:30 CET, the day before the change",
+            true,
+            true,
+        ),
+        (
+            MAR_29_0530_UTC,
+            "07:30 CEST, the morning of the change",
+            false,
+            true,
+        ),
+        (JUL_15_2030_UTC, "22:30 CEST, a summer evening", true, false),
+        (
+            OCT_24_0530_UTC,
+            "07:30 CEST, the last summer morning",
+            false,
+            true,
+        ),
+        (
+            OCT_25_0530_UTC,
+            "06:30 CET, the morning back on winter time",
+            true,
+            true,
+        ),
+    ] {
+        assert_eq!(
+            zoned.contains(at),
+            zoned_in,
+            "22:00-07:00 in Europe/Berlin at {local} (unix {at})"
+        );
+        assert_eq!(
+            fixed.contains(at),
+            fixed_in,
+            "22:00-07:00 at the fixed +01:00 when Berlin reads {local} (unix {at})"
+        );
+    }
+}
+
+/// The local hour in `zone` now, read in the engine's zone database.
+fn local_hour_now(zone: &str) -> u8 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    oneiron::calendar::utc_to_wall(now, zone).unwrap().h
+}
+
+#[tokio::test]
+async fn a_pod_in_a_named_zone_takes_batches_in_its_local_hours_only() {
+    let url = fake_pod().await;
+    let hour = i64::from(local_hour_now("Europe/Berlin"));
+    let at = |offset: i64| format!("{:02}:00", (hour + offset).rem_euclid(24));
+    let zoned = |start: &str, end: &str| {
+        format!(
+            "[[pods]]\nid = \"home-gpu\"\nurl = \"{url}\"\ncapacity = 2\n\
+             hours = {{ start = \"{start}\", end = \"{end}\", iana_timezone = \"Europe/Berlin\" }}\n"
+        )
+    };
+    let open = polled_pool(&[zoned(&at(-1), &at(2))]).await;
+    assert!(
+        matches!(open.acquire(), Ok(guard) if guard.lease().pod == "home-gpu"),
+        "a pod whose Berlin hours hold the Berlin hour now took no batch"
+    );
+    let closed = polled_pool(&[zoned(&at(3), &at(5))]).await;
+    assert!(
+        matches!(closed.acquire(), Err(GpuRegistryError::Unavailable)),
+        "a pod whose Berlin hours open later today took a batch now"
+    );
 }

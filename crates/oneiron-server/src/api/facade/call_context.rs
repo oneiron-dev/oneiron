@@ -251,6 +251,30 @@ impl<'a> FacadeCall<'a> {
         }
     }
 
+    /// The call a transport-only row runs its whole request as (FIX
+    /// HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER): this call's credential, room
+    /// turn, session, surface and hook pause, under `invocation`, the one
+    /// its upload minted, so a run of it again finds the ask an earlier run
+    /// left. A transport-only row holds no ask of its own, so no drain runs
+    /// it, and it carries no host-only lens state and no file-held body.
+    pub(crate) fn staged_landing(&self, invocation: InvocationId) -> Self {
+        Self {
+            auth: self.auth,
+            room_turn: self.room_turn,
+            invocation: Carried::Named(invocation),
+            hook_ask: self.hook_ask,
+            session: self.session,
+            session_ref: self.session_ref,
+            drain: None,
+            creator_run: None,
+            subscription: None,
+            surface: self.surface,
+            forwarded: self.forwarded.clone(),
+            signing_request_transport: None,
+            blob_body: None,
+        }
+    }
+
     pub(crate) const fn auth(&self) -> &'a CoreAuth {
         self.auth
     }

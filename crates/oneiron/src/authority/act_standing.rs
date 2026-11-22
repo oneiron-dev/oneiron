@@ -182,7 +182,7 @@ pub(crate) fn causal_points_in_txn(
     }
     let points = Arc::new(points_in_txn(store, txn, generation, &asked)?);
     // A second read txn on this thread fails with MDB_BAD_RSLOT, as for
-    // `per_authority_generation`: only a committed generation is kept.
+    // `readonly_fold::cache_fold_if_committed`: only a committed generation is kept.
     let committed = std::thread::scope(|scope| {
         scope
             .spawn(|| {
@@ -388,6 +388,42 @@ pub(super) fn head_states_in_txn(
     Ok(capture_in_txn(store, txn, heads, pin.as_ref())?.map(|(image, _)| image.per_parent))
 }
 
+impl crate::Vault {
+    /// Whether the merge takes `key`'s owner proof on a row naming each of
+    /// `parent_sets`, rows a door signs off the main frontier the key was
+    /// picked on (a world's key records on their own rows): the merge of
+    /// each set's states ([`parent_state`]), from one capture as the causal
+    /// points read it, judged as the merge judges a carried act's one cosign
+    /// ([`super::owner_proof::owner_proof_key`]). `false` for a set whose
+    /// state is not held here, and for every set when the capture is
+    /// unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]): its row is
+    /// then carried unproven, as before.
+    pub(crate) fn owner_proof_taken_at_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &AuthorityKey,
+        parent_sets: &[BTreeSet<AuthorityEntryHash>],
+    ) -> Result<Vec<bool>> {
+        let heads: BTreeSet<AuthorityEntryHash> = parent_sets.iter().flatten().copied().collect();
+        let pin = super::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
+        let captured = match capture_in_txn(&self.store, txn, &heads, pin.as_ref()) {
+            Ok(captured) => captured,
+            Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
+            Err(error) => return Err(error),
+        };
+        let Some((ImageFold { per_parent, .. }, parents)) = captured else {
+            return Ok(vec![false; parent_sets.len()]);
+        };
+        Ok(parent_sets
+            .iter()
+            .map(|set| {
+                parent_state(&per_parent, &parents, set)
+                    .is_some_and(|state| super::owner_proof::gives_owner_proof(&state, key))
+            })
+            .collect())
+    }
+}
+
 /// The stored log's fold keeping the state at each of `heads`, with no clock,
 /// and each row's parents: past the adopted image where this vault does not
 /// hold its covered history, else the held log whole. `None` where history
@@ -420,13 +456,7 @@ fn capture_in_txn(
         .iter()
         .map(|row| Ok((row.hash()?, row.parent_hashes().to_vec())))
         .collect::<Result<Parents>>()?;
-    let metas = rows
-        .iter()
-        .map(|row| Ok(super::fold_resume::RowMeta::of_row(Some(row.hash()?), row)))
-        .collect::<Result<Vec<_>>>()?;
-    let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
-        store, txn, &metas,
-    )?;
+    let observations = authority_local_observations_in_txn(store, txn)?;
     let capture = FoldCapture::for_image(heads.clone());
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
     super::fold_engine::fold_authority_log_inner(
@@ -482,7 +512,8 @@ fn capture_past_adopted(
         }
     }
     if passes_through {
-        let request = super::adopted_fold::whole_history(adopted, &BTreeSet::new(), &held_covered);
+        let request =
+            super::adopted_fold::whole_history(adopted, &BTreeSet::new(), &held_covered, None);
         return Ok((AdoptedImageFold::NeedHistory(request), Parents::new()));
     }
     let (closed, _, _) = super::adopted_build::tail_closure(image, &tail);
@@ -490,13 +521,7 @@ fn capture_past_adopted(
         .iter()
         .filter_map(|hash| Some((*hash, tail.get(hash)?.0.clone())))
         .collect();
-    let metas: Vec<_> = closed_tail
-        .iter()
-        .map(|(hash, entry)| super::fold_resume::RowMeta::of(Some(*hash), entry))
-        .collect();
-    let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
-        store, txn, &metas,
-    )?;
+    let observations = authority_local_observations_in_txn(store, txn)?;
     let parents = image
         .rows
         .iter()
@@ -512,6 +537,8 @@ fn capture_past_adopted(
         AdoptedTail {
             tail: &closed_tail,
             held_covered: &held_covered,
+            // Image-grade: every handed-over row counts.
+            believed: None,
             required: heads,
             first_seen_at_secs: &BTreeMap::new(),
             now_secs: 0,
