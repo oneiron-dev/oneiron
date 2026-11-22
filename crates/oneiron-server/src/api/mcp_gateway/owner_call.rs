@@ -17,7 +17,6 @@ use oneiron::context_board::StreamConnectionId;
 
 use super::actor_dispatch::mcp_request_placement;
 use super::{MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, resolve_mcp_gateway_actor};
-use crate::api::write_facet::RequestSession;
 use crate::auth::CoreAuth;
 use crate::mcp::{McpConnectorScope, McpResolvedActor, McpSurfaceMode};
 use crate::server::SyncServer;
@@ -133,7 +132,7 @@ fn managed_owner_context(
 pub(crate) fn attested_owner_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    session: Option<RequestSession>,
+    session: Option<oneiron::EntityId>,
 ) -> Option<Result<McpCallContext, McpGatewayError>> {
     let owner = auth.managed_owner()?;
     Some(owner_context_at(
@@ -200,7 +199,7 @@ pub(super) fn owner_code_run_context(
     connection: &str,
     mode: McpSurfaceMode,
     request_id: &str,
-    session: Option<RequestSession>,
+    session: Option<oneiron::EntityId>,
     room_turn: Option<oneiron::EntityId>,
 ) -> Option<Result<McpCallContext, McpGatewayError>> {
     let owner = auth.managed_owner()?;
@@ -224,7 +223,7 @@ fn owner_context_at(
     request_id: &str,
     owner: oneiron::EntityId,
     auth: Option<CoreAuth>,
-    session: Option<RequestSession>,
+    session: Option<oneiron::EntityId>,
     room_turn: Option<oneiron::EntityId>,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
@@ -233,9 +232,7 @@ fn owner_context_at(
         .ok_or_else(owner_not_live)?;
     crate::api::scoped_auth::require_live_managed_owner(server, &auth)
         .map_err(|_| owner_not_live())?;
-    let session_ref = session
-        .as_ref()
-        .map(|session| session.session_ref().to_owned());
+    let session_ref = session.map(|session| session.to_hex());
     let scope = McpConnectorScope::vault_wide();
     let actor = McpResolvedActor {
         auth: Some(auth.in_off_record_session(session_ref.as_deref())),
@@ -250,7 +247,7 @@ fn owner_context_at(
     };
     let landing = crate::api::write_facet::landing_facet(
         &server.vault,
-        session.as_ref(),
+        session,
         &actor.scope.facets,
         actor.scope.facet_ref,
     );
