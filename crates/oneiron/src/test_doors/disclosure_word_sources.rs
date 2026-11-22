@@ -1,7 +1,9 @@
 //! Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the
 //! general disclosure clamp, as a context pack for a non-owner audience asks
 //! it of one stored record, under a contact's clearance or the owner alone,
-//! and of a claim served at another revision than its live row.
+//! and of a claim served at another revision than its live row; and a room's
+//! P7 rule, as a room under a clearance asks it of one stored record (FIX
+//! COPY-SUMMARY-ROW-UNJUDGED).
 
 use crate::Vault;
 use crate::claim::ClaimBody;
@@ -202,4 +204,20 @@ fn clamp_admits(
         .port_entity_record(&rtxn, record)?
         .ok_or(Error::EntityNotFound)?;
     ctx.admits_in(vault, &rtxn, record, row.entity_type, claim_body)
+}
+
+/// Whether a room whose met clearance is `clearance` discloses the stored
+/// `record` by its P7 rule (`disclosure::discloses_raw`): the record's own
+/// stamp, and that of every record its words came from.
+///
+/// # Errors
+/// A record the vault does not hold, or a read error.
+pub fn room_discloses(vault: &Vault, clearance: &Scope, record: &EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .port_entity_record(&rtxn, record)?
+        .ok_or(Error::EntityNotFound)?
+        .encode();
+    crate::disclosure::discloses_raw(vault, &rtxn, clearance, *record, &raw)
 }

@@ -151,16 +151,18 @@ pub(crate) fn word_sources_through_in(
         // A reply carries its summary under the `summary` key, in any
         // string encoding; the decoder below decides. Its words are the
         // summary's as it landed, so the sources its landing registered
-        // stay its sources whatever the summary covers now.
+        // stay its sources whatever the summary covers now, and the summary
+        // it copies is one of them.
         ENTITY_TYPE_TURN if names(b"summary") => {
             super::body_covers_through_in(vault, dbs, txn, id, header.entity_type, body).and_then(
                 |covers| {
                     covers
                         .map(|mut covers| {
                             covers.extend(dependencies()?);
-                            covers.sort_unstable();
-                            covers.dedup();
-                            Ok(covers)
+                            Ok(with_carried_summary(
+                                covers,
+                                super::codec::reply_summary(body)?,
+                            ))
                         })
                         .transpose()
                 },
@@ -182,6 +184,14 @@ pub(crate) fn word_sources_through_in(
                     Ok(None) => {
                         crate::store::conversation_summary::conversation_summary_covers(&claim)
                     }
+                    // A merge header serves the words of the summary it
+                    // names, so that summary is one of its sources.
+                    Ok(Some(sources)) => super::merge_summary_ref(&claim).map(|named| {
+                        Some(with_carried_summary(
+                            sources,
+                            named.map(|(_, summary)| summary),
+                        ))
+                    }),
                     merged => merged,
                 };
                 if claim.predicate == PROFILE_INTENT_PREDICATE {
@@ -259,14 +269,27 @@ fn carried_machine_birth(raw: &[u8], body: &[u8]) -> CarriedBirth {
     CarriedBirth::Revision(revision)
 }
 
+/// `sources`, a reply TURN's or a merge header's word sources, with
+/// `carried`, the summary whose words it carries: the summary is one more
+/// source, so every reader of the copy judges the summary's own row (its
+/// stamp, its Tier A) and walks every record its words came from, its
+/// registered dependencies included (Sol review rounds 1-2 of #7692; FIX
+/// COPY-SUMMARY-ROW-UNJUDGED). An empty `sources` stays empty: a copy whose
+/// summary names no source is unresolved, whatever the summary's own row.
+fn with_carried_summary(mut sources: Vec<EntityId>, carried: Option<EntityId>) -> Vec<EntityId> {
+    if !sources.is_empty() {
+        sources.extend(carried);
+    }
+    sources.sort_unstable();
+    sources.dedup();
+    sources
+}
+
 /// The summary whose words the stored revision `raw` carries: the summary a
 /// reply TURN copies, or the one a `merge.summary` header names. Its words
-/// are that summary's, so the general clamp walks the summary itself: its
-/// own row (its Tier A, its stamp) and every record its words came from,
-/// its registered dependencies included, beyond the records
-/// [`word_sources_in`] names for the copy (Sol review rounds 1-2 of #7692).
-/// `None` for every other row; an association that does not decode is an
-/// error.
+/// are that summary's, so [`word_sources_in`] names it among the copy's
+/// sources. `None` for every other row; an association that does not decode
+/// is an error.
 pub(crate) fn carried_summary(raw: &[u8]) -> Result<Option<EntityId>> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
