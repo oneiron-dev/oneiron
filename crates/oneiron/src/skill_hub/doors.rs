@@ -2,6 +2,7 @@
 //! Entry: `Vault::sync_skill_from_hub`.
 //! Defines its own items.
 
+mod sync_query;
 mod update_settlement;
 
 use rmpv::Value;
@@ -436,10 +437,11 @@ impl Vault {
     }
 
     /// Under an automatic policy, applies same-or-narrower updates and
-    /// proposes capability widening. A changed Active body applies once the
-    /// update's own admission passes (the scan gate over its static and
-    /// advisory receipts, and the owner's hash rule); one that does not pass
-    /// is proposed and the live bytes stay.
+    /// proposes capability widening. A changed Active body applies unless
+    /// the owner's hash rule blocks it; a blocked one is proposed and the
+    /// live bytes stay. A scanner flag on the update's bytes holds
+    /// nothing: the scanner is a signal, and its verdict rows stay on the
+    /// update (ARCH-0053 #promise-gate-23).
     pub fn sync_skill_from_hub(
         &self,
         entity: &EntityId,
@@ -460,189 +462,13 @@ impl Vault {
         )
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "typed hub update plus an injectable dependency advisory transport"
-    )]
-    pub(super) fn sync_skill_from_hub_with_query(
-        &self,
-        entity: &EntityId,
-        hub_ref: &HubRef,
-        package: &HubPackage,
-        sync_policy: HubSyncPolicy,
-        occurred: TimeRange,
-        learned_at: u64,
-        query: &dyn super::osv::OsvQuery,
-    ) -> Result<HubSyncDisposition> {
-        hub_ref.validate()?;
-        encode_skill_record(&package.record)?;
-        let content_hash = package.content_hash()?;
-        let inventory = super::osv::dependency_inventory(package)?;
-        let (_, _, scans) =
-            self.dependency_advisories(content_hash, &inventory, query, learned_at)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let current = self.read_skill_record_in_txn(&wtxn, entity)?;
-        validate_sync_package(&current, package, hub_ref, content_hash, sync_policy)?;
-        if !sync_policy.allows_automatic_update() {
-            return Ok(HubSyncDisposition::RefusedByPolicy);
-        }
-
-        let provenance_rows =
-            self.active_claims_for_predicate_in_txn(&wtxn, entity, PREDICATE_SKILL_HUB_PROVENANCE)?;
-        // Legacy direct imports remain permissive until vault-bound authority lands in ONE-1751.
-        if !provenance_rows.is_empty() {
-            let mut matches_provenance_alias = false;
-            for (_, body, _) in &provenance_rows {
-                let stored_ref = HubRef::from_value(map_value(&body.value, "hubRef").ok_or(
-                    Error::Artifact(ArtifactError::InvalidSkillBody(
-                        "hub provenance claim is missing hubRef",
-                    )),
-                )?)?;
-                if same_hub_ref(&stored_ref, hub_ref) {
-                    matches_provenance_alias = true;
-                    break;
-                }
-            }
-            if !matches_provenance_alias {
-                return Ok(HubSyncDisposition::RefusedByPolicy);
-            }
-        }
-
-        let admitted = self
-            .read_admitted_capability_surface_in_txn(&wtxn, entity)?
-            .unwrap_or_default();
-        let mut proposed_record = package.record.clone();
-        proposed_record.content_hash = Some(content_hash);
-        let requires_held_out = current.lifecycle_status == SkillLifecycle::Active
-            && crate::skill_optimize::skill_body_binding_digest(&current)?
-                != crate::skill_optimize::skill_body_binding_digest(&proposed_record)?;
-        let widens = !package.capabilities.is_same_or_narrower_than(&admitted);
-        let hash_held_elsewhere = current.content_hash != Some(content_hash)
-            && self
-                .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
-                .is_some_and(|holder| holder != *entity);
-        let hub_value = hub_ref.to_value()?;
-        let hash_hex = content_hash.to_hex();
-        let encoded_caps = encode_capability_surface_value(&package.capabilities);
-        if !widens && !hash_held_elsewhere {
-            // A changed Active body lands in a savepoint and stays only when
-            // the update's own admission passes in it; otherwise the live
-            // bytes stay and the update is proposed below.
-            let mut savepoint = self.store.env.nested_write_txn(&mut wtxn)?;
-            let passed = self.apply_hub_sync_in_txn(
-                &mut savepoint,
-                entity,
-                &current,
-                hub_ref,
-                package,
-                content_hash,
-                &scans,
-                occurred,
-                learned_at,
-                None,
-            )?;
-            if passed || !requires_held_out {
-                savepoint.commit()?;
-                for (proposal_id, mut body, proposal_start) in self
-                    .active_claims_for_predicate_in_txn(
-                        &wtxn,
-                        entity,
-                        PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
-                    )?
-                {
-                    if body.approval != ClaimApprovalStatus::Proposed
-                        || map_value(&body.value, "hubRef") != Some(&hub_value)
-                        || map_text(&body.value, "contentHash") != Some(hash_hex.as_str())
-                        || map_text(&body.value, "version") != Some(package.record.version.as_str())
-                        || map_value(&body.value, "capabilities") != Some(&encoded_caps)
-                    {
-                        continue;
-                    }
-                    let original = crate::ports::EntityStoreRead::port_entity_record(
-                        &self.store,
-                        &wtxn,
-                        &proposal_id,
-                    )?
-                    .ok_or(Error::EntityNotFound)?;
-                    let closed_at = learned_at.max(proposal_start);
-                    // The update request is moot, not an approval or held-out verdict.
-                    body.lifecycle = ClaimLifecycleStatus::Retracted;
-                    body.valid_to = Some(closed_at);
-                    self.put_reserved_claim_in_txn(
-                        &mut wtxn,
-                        &proposal_id,
-                        &body,
-                        TimeRange {
-                            start: proposal_start,
-                            end: closed_at,
-                        },
-                        original.learned_at,
-                    )?;
-                }
-                wtxn.commit()?;
-                return Ok(HubSyncDisposition::Applied);
-            }
-        } else if !widens && !requires_held_out {
-            return Ok(HubSyncDisposition::RefusedByPolicy);
-        }
-        for (proposal_id, body, _) in self.active_claims_for_predicate_in_txn(
-            &wtxn,
-            entity,
-            PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
-        )? {
-            if map_value(&body.value, "hubRef") == Some(&hub_value)
-                && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
-                && map_text(&body.value, "version") == Some(package.record.version.as_str())
-                && map_value(&body.value, "capabilities") == Some(&encoded_caps)
-                && map_value(&body.value, "requiresHeldOut")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                    == requires_held_out
-            {
-                return Ok(HubSyncDisposition::Proposed {
-                    proposal_id,
-                    approval: ClaimApprovalStatus::Proposed,
-                });
-            }
-        }
-
-        let proposal_id = self.store.clock.entity_id()?;
-        let mut proposal = ClaimBody::new(
-            PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
-            ClaimSubject::Entity(*entity),
-            Value::Map(vec![
-                (Value::from("hubRef"), hub_value),
-                (
-                    Value::from("version"),
-                    Value::from(package.record.version.as_str()),
-                ),
-                (Value::from("contentHash"), Value::from(hash_hex)),
-                (Value::from("capabilities"), encoded_caps),
-                (
-                    Value::from("requiresHeldOut"),
-                    Value::Boolean(requires_held_out),
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Proposed,
-            ClaimLifecycleStatus::Active,
-        )?;
-        proposal.source = Some(ClaimSource::Imported);
-        proposal.scope_facet = self.default_facet_in_txn(&wtxn)?;
-        self.put_reserved_claim_in_txn(&mut wtxn, &proposal_id, &proposal, occurred, learned_at)?;
-        wtxn.commit()?;
-        Ok(HubSyncDisposition::Proposed {
-            proposal_id,
-            approval: ClaimApprovalStatus::Proposed,
-        })
-    }
-
     /// Lands a same-or-narrower hub update on `entity` in `txn`: the record
     /// with its local axes kept, the capability surface, provenance, the
     /// static and advisory scan receipts and the package. Answers whether
-    /// the update's own admission passed: the scan gate admits the bytes and
-    /// the owner's hash rule does not block them. A gate that asks for an
-    /// owner tap leaves an Active record's approval Proposed.
+    /// the update's own admission passed: the owner's hash rule does not
+    /// block the bytes. A scanner flag on the bytes holds nothing — the
+    /// scanner is a signal, and its verdict rows stay on the update with
+    /// the approval as it was (ARCH-0053 #promise-gate-23).
     #[expect(
         clippy::too_many_arguments,
         reason = "the sync's checked record, package identity, scans and write timing"
@@ -660,7 +486,7 @@ impl Vault {
         learned_at: u64,
         authorization: Option<&crate::consent::ApproveOnceAuthorization>,
     ) -> Result<bool> {
-        let mut updated = local_sync_record(package, current, content_hash);
+        let updated = local_sync_record(package, current, content_hash);
         if let Some(authorization) = authorization {
             self.apply_hub_update_record_with_consent_in_txn(
                 txn,
@@ -707,25 +533,19 @@ impl Vault {
                 learned_at,
             )?;
         }
-        let gate_passed = !matches!(
-            crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, content_hash)?,
-            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-        );
-        if !gate_passed && updated.lifecycle_status == SkillLifecycle::Active {
-            // The old bytes' approval cannot authorize a newly unvetted update.
-            updated.approval_status = ClaimApprovalStatus::Proposed;
-            self.apply_hub_sync_skill_record(txn, entity, &updated, occurred, learned_at)?;
-        }
         let mut saved = package.clone();
         saved.record = self.read_skill_record_in_txn(txn, entity)?;
         self.persist_hub_package_in_txn(txn, entity, &saved)?;
         crate::team::pattern::bind_hub_pattern_in_txn(self, txn, entity, &saved.files, learned_at)?;
-        Ok(gate_passed
-            && !super::import_receipt::marketplace_hash_blocked_in_txn(
-                &self.store,
-                txn,
-                content_hash,
-            )?)
+        // GATE-23 (ARCH-0053 #promise-gate-23): a scanner flag on the
+        // update's bytes holds nothing — the scanner is a signal, and the
+        // verdict rows ingested above stay on the update with the record's
+        // approval as it was. Only the owner's hash rule decides admission.
+        Ok(!super::import_receipt::marketplace_hash_blocked_in_txn(
+            &self.store,
+            txn,
+            content_hash,
+        )?)
     }
 
     /// Refuses cross-hub dependencies before any package can materialize.

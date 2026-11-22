@@ -26,6 +26,17 @@ pub use codec::{
 };
 pub(crate) use lineage::{EpochScope, PriorEpoch};
 pub(super) use lineage::{prior_epoch_in_txn, validate_epoch_boundary, validate_window_span};
+
+/// [`prior_epoch_in_txn`], for `test_doors::epoch_lineage_pointer` only: the
+/// census over a fixture vault's rows. Never a production read.
+#[cfg(oneiron_test_support)]
+pub(crate) fn prior_epoch_in_txn_for_test_door(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    scope: &EpochScope,
+) -> Result<Option<PriorEpoch>> {
+    lineage::prior_epoch_in_txn(store, rtxn, scope)
+}
 pub(crate) use mint::EpochMint;
 pub(super) use mint::{
     mint_epoch_summary_admitted_writer, mint_epoch_summary_guarded, mint_epoch_summary_in_overlay,
@@ -46,15 +57,29 @@ pub(crate) fn epoch_sources_admitted_in(
     rtxn: &heed::RoTxn<'_>,
     summary: &EntityId,
     body: &[u8],
-    mut admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+    admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
 ) -> Result<Option<bool>> {
     match stored_epoch_in(dbs, rtxn, summary, body)? {
         StoredEpoch::No => return Ok(None),
         StoredEpoch::Unresolved => return Ok(Some(false)),
         StoredEpoch::Yes => {}
     }
-    let mut seen = std::collections::BTreeSet::from([*summary]);
-    let mut pending = vec![*summary];
+    derived_from_sources_admitted_in(dbs, rtxn, summary, admit).map(Some)
+}
+
+/// [`epoch_sources_admitted_in`]'s walk from any row whose words came from
+/// its `DerivedFrom` targets: an epoch summary, or a filed compaction step's
+/// claim or response artifact, whose sources are that summary's lineage
+/// (FIX 5977). `false` as soon as `admit` refuses a record reached, a source
+/// no longer resolves, or a nested summary's pointer does.
+pub(crate) fn derived_from_sources_admitted_in(
+    dbs: &impl ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    root: &EntityId,
+    mut admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+) -> Result<bool> {
+    let mut seen = std::collections::BTreeSet::from([*root]);
+    let mut pending = vec![*root];
     while let Some(next) = pending.pop() {
         for edge in dbs.port_edges(
             rtxn,
@@ -68,21 +93,21 @@ pub(crate) fn epoch_sources_admitted_in(
                 continue;
             }
             let Some(row) = dbs.port_entity_record(rtxn, &source)? else {
-                return Ok(Some(false));
+                return Ok(false);
             };
             if !admit(&source, &row)? {
-                return Ok(Some(false));
+                return Ok(false);
             }
             if row.entity_type == ENTITY_TYPE_SUMMARY {
                 match stored_epoch_in(dbs, rtxn, &source, &row.body)? {
                     StoredEpoch::No => {}
                     StoredEpoch::Yes => pending.push(source),
-                    StoredEpoch::Unresolved => return Ok(Some(false)),
+                    StoredEpoch::Unresolved => return Ok(false),
                 }
             }
         }
     }
-    Ok(Some(true))
+    Ok(true)
 }
 
 /// Where a run's epoch summary is born: the run credential's world and

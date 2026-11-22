@@ -397,3 +397,20 @@ Google's OIDC token on the delivery must be signed by a key of `jwks_uri`, for
 the section's `audience` and `service_account`; anything else answers 401. A
 signed delivery answers 204 and steps the mailbox it names at once. See
 `docs/ops/gmail-push.md`.
+
+Booking deposits (BK-DEPOSITS) run on the page owner's own Stripe account, in
+test mode only: a live key (`sk_live_`, `rk_live_`, `pk_live_`) is refused
+before any request, and a live-mode event is refused. The owner stores three
+custody secrets bound to the effector `booking:deposit`:
+`booking.deposit.stripe_secret_key` (`sk_test_` or `rk_test_`),
+`booking.deposit.stripe_publishable_key` (`pk_test_`) and
+`booking.deposit.stripe_webhook_secret` (`whsec_`). A hold of an event type
+that asks a deposit creates its PaymentIntent with manual capture and answers
+the client secret for Stripe.js; confirm captures; a settle worker voids an
+unconfirmed authorization when its checkout window ends and sends refunds.
+`POST /v1/hooks/stripe/booking-deposit` takes the endpoint's signed events
+(keyless; `Stripe-Signature` checked against the webhook secret within five
+minutes of its timestamp): `payment_intent.amount_capturable_updated`,
+`payment_intent.payment_failed` and `payment_intent.canceled`. A Stripe key is
+a payment credential, so a host that proves no runner fence withholds it
+unless the self-hoster serves with `--release-payment-credentials-unfenced`.

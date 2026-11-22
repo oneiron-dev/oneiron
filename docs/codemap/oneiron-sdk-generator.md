@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade_types/reader.rs` | src | m | 27 crate-vis | — | The Rust-text scanner (strings, char literals, comments, brackets), the attribute readers and the type parser |
 | `src/facade_types/reader/tests.rs` | test | s | — | — | — |
 | `src/facade_types/reader/type_parser.rs` | src | s | 2 crate-vis | — | The type parser: a Rust type's text as an `Ast` tree (Python's `parse_type`, and the cursor its nested… |
-| `src/generate/common.rs` | src | L | 25 crate-vis | — | The shared boundary helpers every emitter calls, and `AGENT_VERBS_TS`, which `hand_declared('ts')` reads |
+| `src/generate/common.rs` | src | L | 29 crate-vis | — | The shared boundary helpers every emitter calls, and `AGENT_VERBS_TS`, which `hand_declared('ts')` reads |
 | `src/generate/docs.rs` | src | s | 3 crate-vis | — | Port of packages/oneiron/scripts/agent-docs.py's `generated_artifacts` and `write`: the three agent-SDK… |
 | `src/generate/emit_core.rs` | src | L | 17 crate-vis | — | The Rust core outputs: `run_verb_catalog.rs` (`run_catalog`), `core_verb_names.rs` (untangle slice 5.0a… |
 | `src/generate/emit_http.rs` | src | s | 1 crate-vis | — | The one client artifact, `packages/oneiron-client/src/facade.ts`: the typed facade tree over an injected… |
@@ -36,7 +36,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/generate/emit_py.rs` | src | m | 1 crate-vis | — | The Python emitters: the facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from, at… |
 | `src/generate/emit_remote.rs` | src | s | 3 crate-vis | — | The remote client: `crates/oneiron-remote/src/generated/agent_verbs.rs`, the `remote` segment of `outputs()`… |
 | `src/generate/emit_server.rs` | src | L | 12 crate-vis | — | The server's facade outputs: `agent_verbs.rs` and `dispatch.rs` (`facade_dispatch`), `host_door_rows.rs`… |
-| `src/generate/emit_ts.rs` | src | m | 18 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
+| `src/generate/emit_ts.rs` | src | m | 17 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
+| `src/generate/emit_ts/facade_verb.rs` | src | m | 5 crate-vis | — | One facade verb as a TypeScript member ([`ts_verb`]): a typed binding's verb (its native call, or the… |
 | `src/generate/emit_ts/tests.rs` | test | s | — | — | — |
 | `src/generate/mod.rs` | src | s | 22 crate-vis | — | The `Generator` state and the module-level constants |
 | `src/generate/outputs.rs` | src | m | 1 struct · 4 fn · 17 crate-vis | Outputs | `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed… |
@@ -59,3 +60,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/py/value.rs` | src | m | 23 crate-vis | — | `Value`: a decoded JSON value with Python's meaning (DESIGN 3) |
 | `src/uniffi_types.rs` | src | XL | 1 struct · 15 crate-vis | — | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… |
 | `src/verb_table.rs` | src | s | 5 crate-vis | — | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order |
+| `tests/sdk_generated_header_text.rs` | test | s | — | — | FIX-LIST 22920 [SDK-GENERATED-HEADER-TEXT]: every generated SDK output names `crates/oneiron-sdk-generator`… |
+| `tests/sdk_python_keyword_identifiers.rs` | test | s | — | — | FIX-LIST [PY-SDK-GENERATED-KEYWORD-METHOD]: the generated Python facade names no method, property or… |
+| `tests/sdk_typescript_reserved_word_bindings.rs` | test | m | — | — | FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: the generated TypeScript binds no name that is a JavaScript… |

@@ -124,7 +124,18 @@ pub fn recall_at_door_seeded(
     // The caller's own filter binds this recall's handle once (FIX 3977):
     // its cut, ready, paid and final packs and every lane they read meet it.
     let memory = memory.with_read_filter(input.filter.as_ref());
-    recall_with_whole_limit(&memory, input, embed, door)
+    // Under a caller's operation id the first answer is kept by identity and
+    // each later call of the same request replays it under the current read
+    // (RESEARCH-0363 p5); see `crate::memory::recall_replay`.
+    match input.operation_id.clone() {
+        Some(operation) => crate::memory::recall_replay::recall_under_operation(
+            &memory,
+            &operation,
+            input,
+            |input| recall_with_whole_limit(&memory, input, embed, door),
+        ),
+        None => recall_with_whole_limit(&memory, input, embed, door),
+    }
 }
 
 /// [`recall_at_door`] for the whole requested limit.

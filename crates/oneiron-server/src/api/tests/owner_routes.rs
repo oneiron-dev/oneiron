@@ -400,6 +400,8 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
     assert!(location["disk_bytes"].as_u64().unwrap() > 0);
     assert_eq!(location["embedder"]["dense"], "not_configured");
     assert!(location["embedder"]["loaded"].is_null());
+    // A vault that is no copy made beside its source holds no paused turn program.
+    assert_eq!(location["paused_turn_programs"], 0);
 }
 
 /// Done-means (G1 check 5): the owner's status keeps what config asks for,

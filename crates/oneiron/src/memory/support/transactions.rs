@@ -41,6 +41,24 @@ impl Memory<'_> {
         self.owner_authorship.as_ref()
     }
 
+    /// The owner proof this install's owner key mints for one ask word, on a
+    /// surface that answers for itself as this install's owner device
+    /// ([`Self::answering_as_owner_device`]); `None` on every other surface.
+    /// The one caller of [`crate::Vault::authenticate_owner_device`].
+    pub(crate) fn owner_device_word_proof(
+        &self,
+    ) -> crate::error::Result<Option<crate::consent::AuthenticatedOwner>> {
+        if !self.answers_as_owner_device
+            || self.host_origin.is_some()
+            || self.machine_signer.is_some()
+        {
+            return Ok(None);
+        }
+        self.vault
+            .authenticate_owner_device(self.actor, crate::store::GateDecisionId::now())
+            .map(Some)
+    }
+
     /// Where the owner's request reached this install
     /// ([`Self::with_owner_surface`]), for the audit record of his act:
     /// this install's own on a surface that writes for someone else, as
@@ -102,10 +120,18 @@ impl Memory<'_> {
     }
 
     /// The source a claim door writes: the bound origin's, else the caller's.
+    /// A credential handed on to another key states nothing for the person
+    /// it names: its declared `user_stated` writes Generated
+    /// (HANDED-ON-SLIP-PERSON Q1 = A).
     pub(in crate::memory) fn claim_source(&self, declared: &str) -> MemoryResult<ClaimSource> {
         match &self.host_origin {
             Some(origin) => Ok(origin.source()),
-            None => super::claims::parse_claim_source(declared),
+            None => match super::claims::parse_claim_source(declared)? {
+                ClaimSource::UserStated if self.presents_handed_on_credential() => {
+                    Ok(ClaimSource::Generated)
+                }
+                source => Ok(source),
+            },
         }
     }
 
@@ -227,10 +253,19 @@ impl Memory<'_> {
     /// the run attempt its host origin's envelope binds (FIX 11920), so a
     /// delegated run's writes through every door meet its live delegation
     /// chain at the Gate. It equals the bound actor by identity; with no
-    /// origin, or an origin with no attempt, it is that actor alone.
+    /// origin, or an origin with no attempt, it is that actor alone. A
+    /// handle whose presented credential was handed on to another key
+    /// marks it so ([`crate::WriteActor::with_handed_on_credential`]): every
+    /// person gate that judges the write actor refuses it the person's acts
+    /// ([`Self::acts_as_own_person`]).
     #[must_use]
     pub(crate) fn write_actor(&self) -> crate::WriteActor {
         let actor = crate::WriteActor::new(self.actor, self.actor_class);
+        let actor = if self.presents_handed_on_credential() {
+            actor.with_handed_on_credential()
+        } else {
+            actor
+        };
         match self
             .host_origin
             .as_ref()
@@ -317,5 +352,36 @@ impl Memory<'_> {
             )?;
         }
         Ok(())
+    }
+
+    /// The actor checks for a witness into `conversation` in a vault where a
+    /// work-talk binding may admit it: a bound work-talk writer passes on its
+    /// binding instead of the vault-wide Content grant (the rostered-room
+    /// pattern, L7-05), and only inside that bound conversation. Any other
+    /// witness runs the full check of any actor write. A third writer on a
+    /// bound conversation is refused here, before the landing's guards run.
+    /// Returns the binding that admitted the write, or `None` on the
+    /// ordinary path.
+    pub(crate) fn verify_actor_work_talk_write_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+    ) -> MemoryResult<Option<crate::workspace_roster::WorkTalkBinding>> {
+        let Some(binding) = crate::workspace_roster::admit_work_talk_witness(
+            self.vault,
+            txn,
+            conversation,
+            self.actor,
+        )?
+        else {
+            self.verify_actor_write_in_txn(txn)?;
+            return Ok(None);
+        };
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if self.vault.shared_vault_creation_in_txn(txn)?.is_some() {
+            self.vault
+                .verify_write_actor_in_txn(txn, &self.write_actor())?;
+        }
+        Ok(Some(binding))
     }
 }

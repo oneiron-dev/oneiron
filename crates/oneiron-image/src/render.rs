@@ -6,11 +6,13 @@ use std::borrow::Cow;
 
 use std::io::Write;
 
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::webp::WebPEncoder;
 use image::imageops::{self, FilterType};
-use image::{ImageBuffer, Rgba, Rgba32FImage, RgbaImage};
+use image::{ExtendedColorType, ImageBuffer, Rgba, Rgba32FImage, RgbaImage};
 use oneiron_organ_protocol::{ErrorCode, OrganError};
 
-use crate::body::{Filter, ImageBody, Overlay, Point, Step};
+use crate::body::{Filter, Format, ImageBody, Overlay, Point, Size, Step};
 
 /// Segments longer than this (or than the brush radius, if wider) are cut so
 /// each piece's box stays thin.
@@ -244,6 +246,142 @@ pub(crate) fn png_bound(w: u32, h: u32, channels: u8) -> u64 {
     raw.saturating_add(raw / 1024 * 5)
         .saturating_add(raw / 4096 * 12)
         .saturating_add(4096)
+}
+
+/// The quality a JPEG export encodes at (the encoder's 1 to 100 scale).
+pub(crate) const JPEG_QUALITY: u8 = 90;
+
+/// The longest side a lossless WebP frame has: its header spells each side
+/// in 14 bits.
+pub(crate) const WEBP_MAX_SIDE: u32 = 16_384;
+
+/// What a JPEG export's output is sized to up front: the raw RGB bytes, and
+/// room for its headers and tables.
+fn jpeg_capacity(pixels: u64) -> u64 {
+    pixels.saturating_mul(3).saturating_add(64 * 1024)
+}
+
+/// The most a lossless WebP frame of `pixels` takes: four channel symbols a
+/// pixel, each at most a byte on average under the encoder's per-channel
+/// Huffman codes, and its code tables.
+fn webp_frame_bound(pixels: u64) -> u64 {
+    pixels.saturating_mul(4).saturating_add(64 * 1024)
+}
+
+/// The most bytes encoding a `canvas` as `format` holds at once beside the
+/// rendered canvas itself, `alpha` its source's alpha (painting never adds
+/// transparency):
+/// - PNG streams: its output (sized up front to the stored size), its
+///   compressor and three rows; never a second whole image.
+/// - JPEG streams 8x8 blocks from the canvas into an output sized up front
+///   to the raw RGB bytes; should a noisy image outgrow it, one doubling
+///   holds the old and the new buffer at once.
+/// - WebP (lossless) takes a canvas with no alpha as an RGB copy; its
+///   encoder copies that to RGBA and builds the frame, then the frame is
+///   written to the output. The frame and the output grow by doubling, so
+///   while one grows it holds up to three times its final size, and a grown
+///   one keeps up to twice.
+pub(crate) fn encode_bytes(format: Format, canvas: Size, alpha: bool) -> u64 {
+    let pixels = u64::from(canvas.w).saturating_mul(u64::from(canvas.h));
+    let slack = 1 << 20;
+    let held = match format {
+        Format::Png => {
+            png_bound(canvas.w, canvas.h, 4).saturating_add(3 * (4 * u64::from(canvas.w) + 1))
+        }
+        Format::Jpeg => jpeg_capacity(pixels).saturating_mul(3),
+        Format::Webp => {
+            let rgb = if alpha { 0 } else { pixels.saturating_mul(3) };
+            let frame = webp_frame_bound(pixels);
+            let building = pixels
+                .saturating_mul(4)
+                .saturating_add(frame.saturating_mul(3));
+            let writing = frame.saturating_mul(5);
+            rgb.saturating_add(building.max(writing))
+        }
+    };
+    held.saturating_add(slack)
+}
+
+/// Encodes `image` as `format` with no metadata, `alpha` its source's
+/// alpha: [`encode_png`], [`encode_jpeg`] or [`encode_webp`].
+///
+/// # Errors
+/// `unsupported` for a JPEG of an image with alpha or a WebP past
+/// [`WEBP_MAX_SIDE`]; `internal` if the encoder fails.
+pub(crate) fn encode(
+    image: &RgbaImage,
+    format: Format,
+    alpha: bool,
+) -> Result<Vec<u8>, OrganError> {
+    match format {
+        Format::Png => encode_png(image, alpha),
+        Format::Jpeg => encode_jpeg(image, alpha),
+        Format::Webp => encode_webp(image, alpha),
+    }
+}
+
+/// Encodes baseline JPEG at [`JPEG_QUALITY`] with no metadata, from the
+/// canvas's RGB with no copy. A JPEG has no alpha channel: an image whose
+/// source has one is refused, never flattened onto a colour it did not
+/// name.
+///
+/// # Errors
+/// `unsupported` if the source has alpha; `internal` if the encoder fails.
+pub(crate) fn encode_jpeg(image: &RgbaImage, alpha: bool) -> Result<Vec<u8>, OrganError> {
+    if alpha {
+        return Err(no_jpeg_alpha());
+    }
+    let (w, h) = image.dimensions();
+    let pixels = u64::from(w) * u64::from(h);
+    let mut out = Vec::with_capacity(usize::try_from(jpeg_capacity(pixels)).unwrap_or(0));
+    JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
+        .encode_image(image)
+        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("jpeg encode: {err}")))?;
+    Ok(out)
+}
+
+/// The refusal of a JPEG export of an image with alpha.
+pub(crate) fn no_jpeg_alpha() -> OrganError {
+    OrganError::new(
+        ErrorCode::Unsupported,
+        "a JPEG has no alpha channel and this image has one; export png or webp",
+    )
+}
+
+/// Encodes lossless WebP (VP8L, the encoder this build links) with no
+/// metadata: RGB when the source has no alpha, so the file says it has
+/// none, RGBA otherwise.
+///
+/// # Errors
+/// `unsupported` for a side past [`WEBP_MAX_SIDE`]; `internal` if the
+/// encoder fails.
+pub(crate) fn encode_webp(image: &RgbaImage, alpha: bool) -> Result<Vec<u8>, OrganError> {
+    let (w, h) = image.dimensions();
+    if w > WEBP_MAX_SIDE || h > WEBP_MAX_SIDE {
+        return Err(webp_too_wide());
+    }
+    let mut out = Vec::new();
+    let encoder = WebPEncoder::new_lossless(&mut out);
+    let encoded = if alpha {
+        encoder.encode(image.as_raw(), w, h, ExtendedColorType::Rgba8)
+    } else {
+        let rgb: Vec<u8> = image
+            .as_raw()
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .collect();
+        encoder.encode(&rgb, w, h, ExtendedColorType::Rgb8)
+    };
+    encoded.map_err(|err| OrganError::new(ErrorCode::Internal, format!("webp encode: {err}")))?;
+    Ok(out)
+}
+
+/// The refusal of a WebP export with a side past [`WEBP_MAX_SIDE`].
+pub(crate) fn webp_too_wide() -> OrganError {
+    OrganError::new(
+        ErrorCode::Unsupported,
+        format!("a WebP is at most {WEBP_MAX_SIDE} pixels a side; export png or jpeg"),
+    )
 }
 
 /// Encodes PNG with no metadata: RGB when the source has no alpha (painting

@@ -206,6 +206,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         let mut macro_admissible = None;
         let mut macro_error = None;
         let mut next = ScopeDeadlines::default();
+        let mut unjoined_kinds = std::collections::BTreeMap::new();
         // The ready index holds exactly the Queued and Scheduled tries, so no
         // other row of the ledger is decoded here (FIX 11940).
         for attempt in queue.ready_rows()? {
@@ -220,6 +221,13 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
             let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
                 continue;
             };
+            // A row the queue holds on a copy restored and not joined arms
+            // nothing: its past deadline would start passes that admit
+            // nothing (row RESTORED-UNJOINED-STARTS-NO-WORK). The join wakes
+            // this read through the proactivity watch.
+            if held_while_unjoined(&queue, &mut unjoined_kinds, &attempt.kind) {
+                continue;
+            }
             // A turn program its runtime holds parked arms nothing: only a
             // ready one is due (DOOR-141 PR2). Program rows alone are read.
             if attempt.kind == oneiron::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
@@ -750,6 +758,30 @@ fn program_held(vault: &Vault, attempt: &oneiron::attempt_queue::AttemptRecord) 
             true
         }
     }
+}
+
+/// Whether the queue holds `kind`'s rows on a copy restored and not joined, read once per kind
+/// in one deadline read (`seen`). Best-effort: an unreadable hold arms the row as before, and
+/// its claim still holds it.
+fn held_while_unjoined(
+    queue: &AttemptQueue<'_>,
+    seen: &mut std::collections::BTreeMap<String, bool>,
+    kind: &str,
+) -> bool {
+    if let Some(held) = seen.get(kind) {
+        return *held;
+    }
+    let held = queue
+        .kind_held_while_unjoined(kind)
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the unjoined-copy hold was unreadable; the row's deadline is armed"
+            );
+            false
+        });
+    seen.insert(kind.to_owned(), held);
+    held
 }
 
 fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {

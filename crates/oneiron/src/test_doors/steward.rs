@@ -226,7 +226,7 @@ pub enum GrantMark {
 /// The vault's or the authority log's.
 pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
     let vault = Vault::open(path, crate::VaultConfig::device())?;
-    let issuer = crate::test_support::provision_engine_machines(&vault);
+    let issuer = crate::test_fixtures::provision_engine_machines(&vault);
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| Error::InvalidConfig(format!("embedded owner: {error:?}")))?;
@@ -289,7 +289,7 @@ pub fn drop_dreamer_rows(vault: &Vault) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -312,7 +312,7 @@ fn rewrite_shipped_policy(
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -502,7 +502,7 @@ pub fn empty_grant_policy_rows(vault: &Vault) -> Result<()> {
 /// The vault's or the authority log's.
 pub fn revoke_base_agent_bindings(vault: &Vault, agent: EntityId) -> Result<usize> {
     use crate::authority::{ActorBindingStatus, AuthorityOp};
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     let fold = vault.authority_fold()?;
     let live: Vec<_> = fold
         .actor_bindings

@@ -9,12 +9,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oneiron::llm::BrokerIsolation;
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
-    MediaUsage, ReferenceCompatibility,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaJobState, MediaPart,
+    MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, ReferenceCompatibility,
+    run_once_released,
 };
+use oneiron::llm::{BrokerIsolation, DispatchRelease};
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId};
 use oneiron_llm::openai_compat::{
     OpenAiImagePart, OpenAiMediaBody, OpenAiMediaClient, OpenAiMediaHttpRequest,
@@ -47,7 +48,15 @@ impl<T> OpenAiGenBackend<T> {
 }
 
 impl<T: OpenAiMediaTransport> OpenAiGenBackend<T> {
-    async fn image(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
+    /// One image call, under the caller's release when there is one: it is
+    /// checked before the send, and the transport re-checks it before each
+    /// physical request.
+    async fn image(
+        &self,
+        request: MediaRequest,
+        lease: &BudgetLease,
+        release: Option<DispatchRelease<'_>>,
+    ) -> LlmResult<MediaResponse> {
         let wire = self.client.wire_model(&request.model)?;
         let PreparedImage { model, fields } = prepare_image(&request, &wire)?;
         // Every reference goes, in order (FIX 8614): none is dropped or cut.
@@ -82,10 +91,13 @@ impl<T: OpenAiMediaTransport> OpenAiGenBackend<T> {
                 OpenAiMediaBody::Multipart { fields, files },
             )
         };
+        if let Some(release) = release {
+            release()?;
+        }
         let reply = self
             .client
             .transport()
-            .execute(
+            .execute_released(
                 OpenAiMediaHttpRequest {
                     method: OpenAiMediaMethod::Post,
                     path: path.to_owned(),
@@ -93,6 +105,7 @@ impl<T: OpenAiMediaTransport> OpenAiGenBackend<T> {
                     body,
                 },
                 lease,
+                release,
             )
             .await?;
         // The reply's raw bytes go once its JSON is read, before the image
@@ -332,7 +345,29 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiGenBackend<T> {
             if request.voice.is_some() || request.operation != AiOperation::Image {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
-            self.image(request, lease).await
+            self.image(request, lease, None).await
+        })
+    }
+
+    /// An image call under the caller's release (UC-16): a refused release
+    /// sends nothing. Every other call is refused as [`Self::run`] refuses
+    /// it.
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        if request.voice.is_some() || request.operation != AiOperation::Image {
+            return run_once_released(self, request, lease, None);
+        }
+        Box::pin(async move {
+            if let Err(error) = request.validate_image_mask() {
+                return Err(InterruptedMediaCall::nothing(error));
+            }
+            self.image(request, lease, release)
+                .await
+                .map_err(InterruptedMediaCall::nothing)
         })
     }
 

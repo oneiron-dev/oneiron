@@ -1,6 +1,6 @@
 {
   "name": "vault.authority.audit",
-  "description": "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind.",
+  "description": "One page of the dated authority log audit, for the owner: grants, revokes and confirms. An adopted checkpoint image adds cold rows this vault does not store, with no stored clock, each naming its op where the image carries its signed body.",
   "input": "crate::receipt::AuthorityAuditQuery",
   "output": "crate::receipt::AuthorityAuditPage",
   "call": "crate::receipt::authority_audit_embedded(memory, input)?",

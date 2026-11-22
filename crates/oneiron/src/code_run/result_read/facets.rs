@@ -46,20 +46,30 @@ impl ResultRead {
         Ok(self.read_delivered(storage, facet, input, spill)?.0)
     }
 
-    /// [`Self::read`] over `body`, under the `[limits]` rows of `watch`.
-    /// `redacted`: `body` is the occurrence's redacted view, so a tainted
-    /// occurrence shows it.
+    /// [`Self::read`] over `body`, under the `[limits]` rows of `watch` and
+    /// the owner's search context bound `search_max_context`. `redacted`:
+    /// `body` is the occurrence's redacted view, so a tainted occurrence
+    /// shows it.
     pub(super) fn read_of(
         &self,
         body: &dyn ResultBody,
         redacted: bool,
         watch: &LimitWatch,
+        search_max_context: usize,
         facet: ResultFacet,
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<Reply> {
         Ok(self
-            .read_delivered_of(body, redacted, watch, facet, input, spill)?
+            .read_delivered_of(
+                body,
+                redacted,
+                watch,
+                search_max_context,
+                facet,
+                input,
+                spill,
+            )?
             .0)
     }
 
@@ -72,8 +82,17 @@ impl ResultRead {
         input: Value,
         spill: Option<&mut BodySink>,
     ) -> Result<(Reply, DeliveredRanges)> {
+        let search_max_context = storage.result_search_max_context()?;
         self.with_shown_body(storage, |body, redacted| {
-            self.read_delivered_of(body, redacted, storage.limit_watch(), facet, input, spill)
+            self.read_delivered_of(
+                body,
+                redacted,
+                storage.limit_watch(),
+                search_max_context,
+                facet,
+                input,
+                spill,
+            )
         })
     }
 
@@ -86,6 +105,7 @@ impl ResultRead {
         body: &dyn ResultBody,
         redacted: bool,
         watch: &LimitWatch,
+        search_max_context: usize,
         facet: ResultFacet,
         input: Value,
         spill: Option<&mut BodySink>,
@@ -96,6 +116,7 @@ impl ResultRead {
         let bounds = ReadBounds {
             reply_bytes: RESULT_REPLY_INLINE_BYTES,
             watch,
+            search_max_context,
         };
         let reference = self.reference();
         // Chunk and page refs name the same parent the ref above names: the

@@ -35,6 +35,7 @@ fn record(
         name: name.to_owned(),
         class,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: value.to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1_700_000_000,
@@ -48,7 +49,7 @@ fn record(
 }
 
 #[test]
-fn body_keys_are_thirteen_and_complete() {
+fn body_keys_are_fourteen_and_complete() {
     let rec = record("api-key", CustodyClass::CrossVault, b"hunter2", vec![]);
     let bytes = encode_secret_custody_body(&rec).expect("encode");
     let entries = floor::policy_manifest_body_map(&bytes)
@@ -69,6 +70,7 @@ fn body_keys_are_thirteen_and_complete() {
         "manifest_ref",
         "declared_paths",
         "policy_floor_snapshot",
+        "model_reveal_allowed",
     ];
     assert_eq!(entries.len(), required_keys.len());
     for key in required_keys {
@@ -527,7 +529,14 @@ fn replicated_put_door_rejects_secret_custody_byte() {
     let batch_id = EntityId::now();
     let err = vault
         .batch()
-        .put_replicated(&batch_id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+        .put_replicated(
+            &batch_id,
+            ENTITY_TYPE_SECRET_CUSTODY,
+            occurred,
+            1,
+            None,
+            &body,
+        )
         .commit()
         .expect_err("replicated custody put must be denied");
     assert!(
@@ -544,7 +553,14 @@ fn replicated_put_door_rejects_secret_custody_byte() {
         .with_write_txn(|wtxn| {
             vault
                 .batch_in()
-                .put_replicated(&txn_id, ENTITY_TYPE_SECRET_CUSTODY, occurred, 1, &body)
+                .put_replicated(
+                    &txn_id,
+                    ENTITY_TYPE_SECRET_CUSTODY,
+                    occurred,
+                    1,
+                    None,
+                    &body,
+                )
                 .apply(wtxn)
         })
         .expect_err("in-txn replicated custody put must be denied");
@@ -884,6 +900,7 @@ fn no_custody_class_enters_leaves_or_lands_through_a_window() -> crate::Result<(
                 ENTITY_TYPE_SECRET_CUSTODY,
                 TimeRange { start: ts, end: ts },
                 ts,
+                None,
                 &body,
             )
             .commit()
@@ -961,6 +978,7 @@ fn a_peer_replay_cannot_rewrite_a_custody_record() -> crate::Result<()> {
                 ENTITY_TYPE_SECRET_CUSTODY,
                 ts,
                 1,
+                None,
                 &encode_secret_custody_body(&incoming)?,
             )
             .commit();

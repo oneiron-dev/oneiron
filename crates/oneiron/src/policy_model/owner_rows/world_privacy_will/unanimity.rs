@@ -19,11 +19,18 @@ use serde::{Deserialize, Serialize};
 
 use super::super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use super::record::WorldPrivacyRequestStatus;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
 use crate::inbox::NotificationKind;
 use crate::side_table::{self, Named, SideTable};
+use crate::vault::live_entity_row_in_txn;
 use crate::{EntityId, Vault};
 
 /// Event kind on the shared owner-policy stream for a change of the row.
@@ -392,4 +399,87 @@ fn push_yes(request: &mut WidenUnanimityOffRequest, actor: EntityId) {
     if !request.yes.contains(&me) {
         request.yes.push(me);
     }
+}
+
+/// Lands the archived `OWNER_POLICY_WORLD_PRIVACY_UNANIMITY` singleton in `txn`: canonical
+/// outer decode and the credential predicate, then an install. Stale world keys are inert
+/// (the doors re-read the live owners and match overrides by hex), so no world is checked;
+/// an absent row installs, an identical row is unchanged, and a different live row stays
+/// live.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(in crate::policy_model::owner_rows) fn land_archived_unanimity_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, _) = match decode_archived_row(&UNANIMITY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&UNANIMITY, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived `OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF` envelope in `txn`:
+/// canonical outer decode and the credential predicate, then the writer's own request
+/// shape (the key names its request id, hex ids). A pending turn-off of a world this vault
+/// does not hold stays inert; an applied turn-off whose change event is not live names a
+/// companion this pass did not land. Settled rows are history otherwise: no setting is
+/// landed and nothing is notified, and the live doors re-read the row and the live owners.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(in crate::policy_model::owner_rows) fn land_archived_unanimity_off_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    use RetainedSideHeldBackReason::{
+        InvalidEncoding, InvalidValue, MissingCompanion, MissingLiveEntity,
+    };
+    use WorldPrivacyRequestStatus::{Applied, Declined, Pending};
+    let (key, value) = match decode_archived_row(&OFF_REQUESTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let id_matches = match value.id() {
+        Ok(id) => id == key,
+        Err(_) => false,
+    };
+    if !id_matches {
+        return Ok(ArchivedSideRowOutcome::HeldBack(InvalidEncoding));
+    }
+    let hex_ok = |hex: &str| EntityId::from_hex(hex).is_ok();
+    let status_ok = match &value.status {
+        Pending => true,
+        Applied { receipt_id, holder } => hex_ok(receipt_id) && hex_ok(holder),
+        Declined { holder } => hex_ok(holder),
+    };
+    if value.world.as_deref().is_some_and(|hex| !hex_ok(hex))
+        || !hex_ok(&value.author)
+        || value.needs.iter().any(|hex| !hex_ok(hex))
+        || value.yes.iter().any(|hex| !hex_ok(hex))
+        || !status_ok
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+    }
+    if value.status == Pending
+        && let Some(world) = value.world.as_deref()
+    {
+        let Some(world) = EntityId::from_hex(world).ok() else {
+            return Ok(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+        };
+        if !live_entity_row_in_txn(&vault.store, txn, &world)?.is_live() {
+            return Ok(ArchivedSideRowOutcome::HeldBack(MissingLiveEntity));
+        }
+    }
+    if let Applied { receipt_id, .. } = &value.status
+        && !super::super::ledger::policy_change_event_exists_in_txn(vault, txn, receipt_id)?
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(MissingCompanion));
+    }
+    install_archived_row(&OFF_REQUESTS, vault, txn, permit, &key, row)
 }

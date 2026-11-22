@@ -37,9 +37,6 @@ pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
 /// The four SET-03 customization layers persisted by this module.
 pub const CUSTOMIZATION_SETTINGS_LAYER_COUNT: usize = 4;
 
-/// Stable event kind for client-readable customization change notifications.
-pub const CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND: &str = "settings.customization.changed";
-
 pub const TOKEN_MAX_BYTES: usize = 64;
 
 pub const WORLD_LABEL_MAX_BYTES: usize = 128;

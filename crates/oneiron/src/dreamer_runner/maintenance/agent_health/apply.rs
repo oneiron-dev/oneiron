@@ -176,7 +176,7 @@ impl Vault {
             "The owner approved the Coach's skill edit on {}.",
             card_ref(key)
         );
-        validate_skill_draft(&brief, &approval.instructions, &rationale)?;
+        validate_skill_draft(&brief, &approval.instructions, &rationale, &[])?;
         let ask = approved_ask(card, &approval.ask)?;
         let attempt = AttemptId::from_bytes(
             EntityId::from_hex(&ask.attempt)
@@ -211,6 +211,7 @@ impl Vault {
                 &brief,
                 &approval.instructions,
                 &rationale,
+                &[],
                 &stamp,
                 &candidate,
                 TimeRange {

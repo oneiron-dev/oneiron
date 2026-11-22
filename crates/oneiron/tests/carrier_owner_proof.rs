@@ -109,6 +109,8 @@ const PREDECESSOR_SEED: u8 = 67;
 const JOINING_SEED: u8 = 68;
 /// The seed of a vault root that is a P-256 key.
 const P256_ROOT_SEED: u8 = 60;
+/// The seed of the owner's second laptop in the crossing removal tests.
+const SECOND_LAPTOP_SEED: u8 = 69;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -781,6 +783,7 @@ fn node_profile(
         seen_world_edits: BTreeSet::new(),
         carrier: carried.as_ref().map(|(carrier, _)| *carrier),
         act: carried.map(|(_, act)| act),
+        restored_from: None,
     }
 }
 
@@ -1427,6 +1430,133 @@ fn a_machine_whose_carrier_lost_its_removal_race_is_not_mine_again_without_proof
     );
 }
 
+/// FIX [ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION]: a re-key is a removal race
+/// too, and a later revision under the old key never undoes it. A node paired
+/// a machine with the owner key's proof; then the owner's laptop re-keyed the
+/// node by an answer that never saw the pairing, so the pairing stands on
+/// nothing. A branch that never saw the re-key then names the node's old key
+/// again at revisions 2 and 3: the higher revision wins the node's raw chain
+/// head, which names the key that signed the pairing, live and unconflicted
+/// (the old key's own answer at revision 3 makes the same head). Main: the
+/// pairing stands again on that head, and the machine is mine again.
+#[test]
+fn a_pairing_whose_carrier_was_re_keyed_unseen_stays_not_mine_under_its_old_key() {
+    /// The seed of the node's new install key.
+    const RE_KEYED_NODE_SEED: u8 = 69;
+    let mut beside = LaptopBesideNode::new();
+    let vault_id = beside.node.vault_id();
+    let paired = signing(PAIRED_SEED);
+    let paired_key = paired.verifying_key().to_bytes();
+    let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let pairing = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&beside.node.rows[2])],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            paired_machine,
+            &paired,
+            yours,
+            1,
+            Some((
+                beside.node.machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::Pairing,
+                    paired_machine,
+                    ActSurface::ThisInstall,
+                    [0; 32],
+                ),
+            )),
+        )),
+        &beside.node.node,
+        &[&beside.node.root],
+    );
+    let re_key = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&pairing)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &signing(RE_KEYED_NODE_SEED),
+            MachineRole::HostedNode,
+            2,
+            Some((
+                beside.laptop_machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::MachineAnswer,
+                    beside.node.machine,
+                    ActSurface::ThisInstall,
+                    machine_answer_revision([hash(&beside.node.rows[1])]),
+                ),
+            )),
+        )),
+        &beside.laptop,
+        &[],
+    );
+    let old_key_again = signed(
+        Some(vault_id),
+        3,
+        vec![hash(&pairing)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &beside.node.node,
+            MachineRole::HostedNode,
+            2,
+            None,
+        )),
+        &beside.node.root,
+        &[],
+    );
+    let old_key_higher = signed(
+        Some(vault_id),
+        4,
+        vec![hash(&old_key_again)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &beside.node.node,
+            MachineRole::HostedNode,
+            3,
+            None,
+        )),
+        &beside.node.root,
+        &[],
+    );
+    beside.node.rows.push(pairing);
+    let fold = beside.node.fold();
+    assert!(
+        mine(&fold, paired_machine, &paired_key),
+        "the proven pairing makes the machine mine: {:?}",
+        fold.issues
+    );
+    beside.node.rows.push(re_key);
+    let fold = beside.node.fold();
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "the pairing's carrier was re-keyed by an answer that never saw it, so the machine is not \
+         mine: {:?}",
+        fold.issues
+    );
+    let issues_before = fold.issues.clone();
+    beside.node.rows.push(old_key_again);
+    beside.node.rows.push(old_key_higher);
+    let fold = beside.node.fold();
+    assert_eq!(
+        fold.issues, issues_before,
+        "both old-key revisions fold, so the node's raw head is revision 3 under its old key"
+    );
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "a revision under the old key that never saw the re-key gives the pairing nothing: {:?}",
+        fold.issues
+    );
+}
+
 /// Guard (plan read F4, the strict cascade): a held machine carries nothing.
 /// Its own later answer is an invalid entry, not a second held answer, so
 /// the owner's confirm of the pairing is the only way in.
@@ -1478,6 +1608,244 @@ fn a_held_machines_own_later_answer_is_refused_not_held() {
         fold.issues.len() > issues_before,
         "the held machine's own answer is an invalid entry: {:?}",
         fold.issues
+    );
+}
+
+/// The rows of the crossing removal tests (FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS and FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES), on
+/// [`LaptopBesideNode`]: the root registers the owner's second laptop (a
+/// root-signed roster revision, so it is mine with no carried act); the
+/// node carries one owner act with the owner key's proof; then each laptop
+/// removes the node at revision 2, on that act, neither having seen the
+/// other. The first removal saw the act; the second saw it when
+/// `second_saw`.
+struct CrossingRemovals {
+    beside: LaptopBesideNode,
+    carried: AuthorityLogEntry,
+    removals: [AuthorityLogEntry; 2],
+}
+
+impl CrossingRemovals {
+    /// `carry` signs the act the node carries, on the parent it is given:
+    /// the second laptop's registration.
+    fn new(
+        carry: impl FnOnce(&HostedNodeAnswer, AuthorityEntryHash) -> AuthorityLogEntry,
+        second_saw: bool,
+    ) -> Self {
+        let mut beside = LaptopBesideNode::new();
+        let vault_id = beside.node.vault_id();
+        let second = signing(SECOND_LAPTOP_SEED);
+        let second_machine = EntityId::from_bytes([0x77; 16]).expect("an id");
+        let second_registration = signed(
+            Some(vault_id),
+            3,
+            vec![hash(&beside.node.rows[2])],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                second_machine,
+                &second,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                None,
+            )),
+            &beside.node.root,
+            &[],
+        );
+        let carried = carry(&beside.node, hash(&second_registration));
+        let carried_entry = hash(&carried);
+        let node_registration = hash(&beside.node.rows[1]);
+        let removal = |carrier: EntityId, carrier_key: &SigningKey, saw: bool| {
+            let mut profile = node_profile(
+                vault_id,
+                beside.node.machine,
+                &beside.node.node,
+                MachineRole::Removed,
+                2,
+                Some((
+                    carrier,
+                    OwnerAct::by_owner(
+                        owner(),
+                        OwnerActKind::MachineRemoval,
+                        beside.node.machine,
+                        ActSurface::ThisInstall,
+                        machine_answer_revision([node_registration]),
+                    ),
+                )),
+            );
+            if saw {
+                profile.seen_world_edits.insert(carried_entry);
+            }
+            signed(
+                Some(vault_id),
+                1,
+                vec![carried_entry],
+                AuthorityOp::MachineProfile(profile),
+                carrier_key,
+                &[],
+            )
+        };
+        let removals = [
+            removal(beside.laptop_machine, &beside.laptop, true),
+            removal(second_machine, &second, second_saw),
+        ];
+        beside.node.rows.push(second_registration);
+        Self {
+            beside,
+            carried,
+            removals,
+        }
+    }
+
+    /// The fold with the carried act, and the fold with both removals too,
+    /// after asserting that both removals land and cross at the node's
+    /// roster head, which is removed and conflicted.
+    fn folds(self) -> (AuthorityFold, AuthorityFold) {
+        let Self {
+            mut beside,
+            carried,
+            removals,
+        } = self;
+        beside.node.rows.push(carried);
+        let before = beside.node.fold();
+        beside.node.rows.extend(removals);
+        let removed = beside.node.fold();
+        assert!(
+            removed
+                .machine(beside.node.machine)
+                .and_then(|folded| folded.roster.as_ref())
+                .is_some_and(|head| head.removed && head.conflicted),
+            "FIXTURE: both removals land and cross at the node's roster head: {:?}",
+            removed.issues
+        );
+        (before, removed)
+    }
+}
+
+/// The crossing removals over the node's pairing of a new machine with the
+/// owner key's proof: the fold with both removals, with the paired machine
+/// and its key, after asserting that the pairing alone makes the machine
+/// mine.
+fn crossing_removals_over_a_pairing(second_saw: bool) -> (AuthorityFold, EntityId, [u8; 32]) {
+    let paired = signing(PAIRED_SEED);
+    let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+    let paired_key = paired.verifying_key().to_bytes();
+    let pair = |node: &HostedNodeAnswer, parent: AuthorityEntryHash| {
+        let vault_id = node.vault_id();
+        signed(
+            Some(vault_id),
+            1,
+            vec![parent],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                paired_machine,
+                &paired,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                Some((
+                    node.machine,
+                    OwnerAct::by_owner(
+                        owner(),
+                        OwnerActKind::Pairing,
+                        paired_machine,
+                        ActSurface::ThisInstall,
+                        [0; 32],
+                    ),
+                )),
+            )),
+            &node.node,
+            &[&node.root],
+        )
+    };
+    let (before, removed) = CrossingRemovals::new(pair, second_saw).folds();
+    assert!(
+        mine(&before, paired_machine, &paired_key),
+        "FIXTURE: the proven pairing makes the machine mine: {:?}",
+        before.issues
+    );
+    (removed, paired_machine, paired_key)
+}
+
+/// The crossing removals over the node's home pick of [`PICKED_NODE`] with
+/// the owner key's proof: the fold with both removals, after asserting that
+/// the pick alone is in force.
+fn crossing_removals_over_a_home_pick(second_saw: bool) -> AuthorityFold {
+    let pick = |node: &HostedNodeAnswer, parent: AuthorityEntryHash| {
+        home_pick_row(
+            node.vault_id(),
+            parent,
+            node.machine,
+            &node.node,
+            &[&node.root],
+        )
+    };
+    let (before, removed) = CrossingRemovals::new(pick, second_saw).folds();
+    assert_eq!(
+        home_pick_in_force(&before),
+        Some(PICKED_NODE),
+        "FIXTURE: the proven pick is in force: {:?}",
+        before.issues
+    );
+    removed
+}
+
+/// Two of the owner's laptops remove the node at once, and both removals
+/// saw the pairing it carried. Their crossing leaves the node's roster head
+/// conflicted in what each names beside the key (its carrier and act), and
+/// the node removed whichever wins: that conflict takes nothing away, so the
+/// pairing stands and the machine stays mine. On main 864ee0cf3cd5 the
+/// conflict unmade the pairing.
+#[test]
+fn a_pairing_both_crossing_removals_saw_keeps_the_machine_mine() {
+    let (removed, paired_machine, paired_key) = crossing_removals_over_a_pairing(true);
+    assert!(
+        mine(&removed, paired_machine, &paired_key),
+        "both removals saw the pairing, so their crossing unmakes nothing: {:?}",
+        removed.issues
+    );
+}
+
+/// The control: the second laptop's removal never saw the pairing, so the
+/// pairing's carrier lost its removal race and the machine is not mine,
+/// crossing or not.
+#[test]
+fn a_pairing_one_crossing_removal_did_not_see_is_not_mine() {
+    let (removed, paired_machine, paired_key) = crossing_removals_over_a_pairing(false);
+    assert!(
+        !mine(&removed, paired_machine, &paired_key),
+        "a removal that never saw the pairing takes it away: {:?}",
+        removed.issues
+    );
+}
+
+/// The owner-choice twin (FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES): two of the
+/// owner's laptops remove the node at once, and both removals saw the home
+/// pick it carried. The pick's removal race reads the node's roster head,
+/// conflicted by the crossing alone and removed whichever wins, so the pick
+/// stays in force. On #9132's head 2903ceb8d156 the conflict unmade it.
+#[test]
+fn a_home_pick_both_crossing_removals_saw_stays_in_force() {
+    let removed = crossing_removals_over_a_home_pick(true);
+    assert_eq!(
+        home_pick_in_force(&removed),
+        Some(PICKED_NODE),
+        "both removals saw the pick, so their crossing unmakes nothing: {:?}",
+        removed.issues
+    );
+}
+
+/// The control: the second laptop's removal never saw the home pick, so the
+/// pick's carrier lost its removal race and no pick is in force, crossing or
+/// not.
+#[test]
+fn a_home_pick_one_crossing_removal_did_not_see_is_not_in_force() {
+    let removed = crossing_removals_over_a_home_pick(false);
+    assert_eq!(
+        home_pick_in_force(&removed),
+        None,
+        "a removal that never saw the pick takes it away: {:?}",
+        removed.issues
     );
 }
 
@@ -1996,6 +2364,7 @@ impl ServedVault {
             OriginResidence::LocalVault,
             self.install(),
             false,
+            None,
         )
     }
 
@@ -2035,8 +2404,75 @@ impl ServedVault {
     /// The owner confirms the held answers `entries` name through this
     /// install.
     fn confirm(&self, entries: &[AuthorityEntryHash]) -> oneiron::Result<ConfirmedHeldAnswers> {
+        self.confirm_seen(entries, &BTreeMap::new())
+    }
+
+    /// The owner confirms the held answers `entries` name through this
+    /// install, presenting back for each entry in `seen` the machine
+    /// revision the list showed beside it.
+    fn confirm_seen(
+        &self,
+        entries: &[AuthorityEntryHash],
+        seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
+    ) -> oneiron::Result<ConfirmedHeldAnswers> {
         self.vault
-            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries)
+            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries, seen)
+    }
+
+    /// The role and the revision this install's roster head holds.
+    fn install_standing(&self) -> (MachineRole, u64) {
+        let fold = self.vault.authority_fold().expect("authority fold");
+        let head = fold
+            .machine(self.install())
+            .and_then(|machine| machine.roster.as_ref())
+            .expect("a roster revision names this install");
+        (head.profile.role, head.profile.revision)
+    }
+
+    /// A held "yours" about this install, listed, and then a later answer
+    /// about it that the held one's ask outlives: the owner marks it work or
+    /// school through this install while the vault holds no owner key, so
+    /// that answer stands with no proof and is not his proven word. Returns
+    /// the held entry and the machine revision the list showed before the
+    /// later answer.
+    fn held_yours_then_an_unproven_work_school_answer(&self) -> (AuthorityEntryHash, [u8; 32]) {
+        self.answer_this_install_is_mine();
+        let listing = self.held();
+        assert_eq!(
+            listing.answers.len(),
+            1,
+            "guard: one held answer: {listing:?}"
+        );
+        let (entry, listed) = (listing.answers[0].entry, listing.answers[0].revision);
+        let landing = self
+            .vault
+            .set_machine_role(
+                &self.owner,
+                ActSurface::ThisInstall,
+                self.install(),
+                MachineRole::Owned(MachineOwnership::WorkSchool),
+                None,
+            )
+            .expect("the answer door stores the later answer");
+        assert!(
+            landing.held().is_none(),
+            "guard: the later answer stands, since no key in this vault could prove it"
+        );
+        let listing = self.held();
+        assert_eq!(
+            listing
+                .answers
+                .iter()
+                .map(|listed| listed.entry)
+                .collect::<Vec<_>>(),
+            [entry],
+            "guard: the held answer still asks: {listing:?}"
+        );
+        assert_ne!(
+            listing.answers[0].revision, listed,
+            "guard: the machine's answer changed since the first list"
+        );
+        (entry, listed)
     }
 
     /// The owner dismisses the ask of the held answers `entries` name on
@@ -2071,6 +2507,7 @@ impl ServedVault {
             device_class: profile.device_class,
             encryption_key: profile.encryption_key,
             machine_proof: profile.machine_proof,
+            restored_from: None,
         }
     }
 
@@ -2608,6 +3045,144 @@ fn a_confirm_or_a_dismissal_of_an_answered_entry_is_stale() {
         "a dismissal of it is stale: {dismissal:?}"
     );
     assert_eq!(served.stored_rows(), rows, "neither stores a row");
+}
+
+/// The confirm presents back the machine revision the list showed (FIX
+/// HELD-CONFIRM-CARRIES-NO-SEEN). An answer about the machine that the held
+/// one's ask outlives lands between the list and the confirm: the confirm on
+/// the listed revision is a conflict and writes nothing, never a silent
+/// overwrite of the newer answer. The owner reads the list again and
+/// confirms on what it shows.
+#[test]
+fn a_confirm_on_the_listed_revision_is_a_conflict_once_the_machines_answer_changed() {
+    let served = ServedVault::hosted();
+    let (entry, listed) = served.held_yours_then_an_unproven_work_school_answer();
+    served.enrol_owner_key();
+    let (rows, standing) = (served.stored_rows(), served.install_standing());
+    let stale = served.confirm_seen(&[entry], &BTreeMap::from([(entry, listed)]));
+    assert!(
+        matches!(stale, Err(Error::ConcurrentWrite(_))),
+        "a confirm on the revision the first list showed is a conflict: {stale:?}"
+    );
+    assert_eq!(
+        served.stored_rows(),
+        rows,
+        "the refused confirm stores no row"
+    );
+    assert_eq!(
+        served.install_standing(),
+        standing,
+        "the later answer stands as it did"
+    );
+    assert_eq!(served.held_entries(), [entry], "the held answer still asks");
+    let relisted = served.held().answers[0].revision;
+    served
+        .confirm_seen(&[entry], &BTreeMap::from([(entry, relisted)]))
+        .expect("a confirm on the revision the list shows now lands");
+    assert!(
+        served.install_is_mine(),
+        "the confirmed answer makes it his machine"
+    );
+}
+
+/// Guard: `seen` is optional, as at the answer door. A confirm that presents
+/// none takes the machine's current revision, so it lands one revision
+/// above an answer its list never showed.
+#[test]
+fn a_confirm_that_presents_no_revision_lands_above_a_later_answer() {
+    let served = ServedVault::hosted();
+    let (entry, _) = served.held_yours_then_an_unproven_work_school_answer();
+    served.enrol_owner_key();
+    let (_, later) = served.install_standing();
+    served
+        .confirm(&[entry])
+        .expect("a confirm that presents no revision lands");
+    assert_eq!(
+        served.install_standing(),
+        (MachineRole::Owned(MachineOwnership::Yours), later + 1),
+        "the confirmed role, one revision above the later answer"
+    );
+    assert_eq!(served.held().answers, Vec::new(), "nothing asks");
+}
+
+/// Guard: one confirm of every listed answer, each on its listed revision,
+/// lands them all: a confirm about one machine leaves another machine's
+/// revision as the list showed it. A machine no revision names lists the
+/// zero revision, and its confirm presents that back.
+#[test]
+fn a_confirm_of_two_listed_answers_lands_both_on_their_listed_revisions() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let request = served.joining_machine();
+    let landing = served
+        .vault
+        .enroll_machine(
+            &served.owner,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the enrolment is stored");
+    assert!(landing.held().is_some(), "guard: the enrolment is held");
+    served.enrol_owner_key();
+    let listing = served.held();
+    assert_eq!(listing.answers.len(), 2, "two held answers: {listing:?}");
+    let seen: BTreeMap<_, _> = listing
+        .answers
+        .iter()
+        .map(|listed| (listed.entry, listed.revision))
+        .collect();
+    let joining = listing
+        .answers
+        .iter()
+        .find(|listed| listed.answer.profile.machine == request.machine)
+        .expect("the joining machine's held enrolment");
+    assert_eq!(
+        joining.revision, [0; 32],
+        "no revision names the joining machine yet"
+    );
+    assert_ne!(
+        seen.values().collect::<BTreeSet<_>>().len(),
+        1,
+        "guard: this install's revision is not the zero revision"
+    );
+    let entries: Vec<_> = seen.keys().copied().collect();
+    served
+        .confirm_seen(&entries, &seen)
+        .expect("both confirms land on their listed revisions");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(served.install_is_mine(), "this install is his");
+    assert!(
+        fold.trusted_machine(request.machine).is_some(),
+        "the joining machine is his"
+    );
+    assert_eq!(served.held().answers, Vec::new(), "nothing asks");
+}
+
+/// A revision presented for an entry the confirm does not name is refused
+/// and nothing is written: a surface that keyed its revision wrongly would
+/// otherwise confirm with no revision at all.
+#[test]
+fn a_revision_presented_for_an_entry_the_confirm_does_not_name_is_refused() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    served.enrol_owner_key();
+    let listing = served.held();
+    assert_eq!(
+        listing.answers.len(),
+        1,
+        "guard: one held answer: {listing:?}"
+    );
+    let (entry, listed) = (listing.answers[0].entry, listing.answers[0].revision);
+    let rows = served.stored_rows();
+    let unnamed = served.confirm_seen(&[entry], &BTreeMap::from([([0x5e; 32], listed)]));
+    assert!(
+        matches!(unnamed, Err(Error::InvalidConfig(_))),
+        "a revision for an entry the confirm does not name is refused: {unnamed:?}"
+    );
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(served.held_entries(), [entry], "the held answer still asks");
 }
 
 /// The confirm carries a held answer's role and class, never other keys than

@@ -29,7 +29,7 @@ use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
 use super::ArtifactError;
-use super::licence::admit_download;
+use super::licence::{LicenceClass, LicencePolicy, admit_download};
 use super::manifest::{ArtifactFile, ArtifactManifest, PARTIAL_SUFFIX, RECORD_FILE};
 use crate::embedder::model_manager::{self, PinnedArtifact, ResumableFetch};
 
@@ -126,6 +126,18 @@ pub(crate) enum ArtifactState {
 struct InstalledRecord {
     manifest_sha256: String,
     manifest: ArtifactManifest,
+    /// The licence class the owner's `models.install.allow_noncommercial_licences`
+    /// admitted this install under (`non-commercial` or `unknown`); absent
+    /// for a licence admitted without it, so those records stay as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner_admitted_licence_class: Option<String>,
+}
+
+/// The class a record names as admitted under the owner's key: only one
+/// that no other rule admits.
+fn owner_admitted(class: LicenceClass) -> Option<String> {
+    matches!(class, LicenceClass::NonCommercial | LicenceClass::Unknown)
+        .then(|| class.as_str().to_owned())
 }
 
 /// What a file looked like when it was verified: size and modification
@@ -206,9 +218,10 @@ impl ArtifactStore {
         &self,
         manifest: &ArtifactManifest,
         token: Option<&HubToken>,
+        policy: LicencePolicy,
     ) -> Result<Installed, ArtifactError> {
         manifest.validate()?;
-        admit_download(manifest)?;
+        let class = admit_download(manifest, policy)?;
         let dir = self.final_dir(manifest);
         if dir.symlink_metadata().is_ok() {
             match self.reuse(manifest, &dir) {
@@ -244,7 +257,7 @@ impl ArtifactStore {
             fetched_bytes += fetched;
             stamps.push((file, stamp));
         }
-        let manifest_digest = commit(manifest, &staging, &dir)?;
+        let manifest_digest = commit(manifest, &staging, &dir, owner_admitted(class))?;
         for (file, stamp) in stamps {
             self.remember(dir.join(&*file.path), file, stamp);
         }
@@ -611,11 +624,13 @@ fn commit(
     manifest: &ArtifactManifest,
     staging: &Path,
     dir: &Path,
+    owner_admitted_licence_class: Option<String>,
 ) -> Result<String, ArtifactError> {
     let manifest_digest = manifest.digest()?;
     let record = InstalledRecord {
         manifest_sha256: manifest_digest.clone(),
         manifest: manifest.clone(),
+        owner_admitted_licence_class,
     };
     let bytes = serde_json::to_vec_pretty(&record).map_err(|error| ArtifactError::Invalid {
         model: manifest.id.to_string(),

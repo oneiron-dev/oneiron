@@ -54,10 +54,14 @@ impl Vault {
     /// that names any verb for a backend that no Grant row names is refused
     /// with [`crate::error::RecordError::AppBackendGrantRequired`], which
     /// names `vault.agents.grants.mint`. A link that names no verb, as the
-    /// backend's own first link, and a backend a Grant row names, pass.
+    /// backend's own first link, and a backend a Grant row names, pass. A
+    /// Grant whose `expires_at` the authority clock has reached names no one
+    /// here, so a backend whose every Grant expired is refused as one never
+    /// granted (FIX [APP-BACKEND-LINK-EXPIRED-GRANT-COUNTS]).
     /// `holder_ref` is the link's holder at issue and the redeemer at
     /// redemption, so a link that leaves its holder open is judged for the
-    /// backend that redeems it.
+    /// backend that redeems it, and a link issued while a Grant stood is
+    /// judged again when its backend redeems it.
     pub(super) fn validate_pairing_backend_verbs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -75,7 +79,7 @@ impl Vault {
         let widens = !scope.verbs.is_bottom();
         if widens
             && self.is_artifact_backend_principal_in_txn(txn, holder)?
-            && !self.agent_grant_names_in_txn(txn, holder)?
+            && !self.unexpired_agent_grant_names_in_txn(txn, holder)?
         {
             return Err(crate::error::Error::Record(
                 crate::error::RecordError::AppBackendGrantRequired,
@@ -151,11 +155,7 @@ impl Vault {
 
 /// A lower-case hex id, as every id on a link is written.
 pub(super) fn canonical_id(hex: &str) -> Result<crate::EntityId> {
-    let id = crate::EntityId::from_hex(hex).map_err(|_| invalid_authority())?;
-    if id.to_hex() != hex {
-        return Err(invalid_authority());
-    }
-    Ok(id)
+    crate::EntityId::from_lower_hex(hex).map_err(|_| invalid_authority())
 }
 
 fn pairing_scope(reason: &'static str) -> crate::error::Error {

@@ -5,6 +5,7 @@ pub use oneiron_verb_wire::booking::constraint::BookingError;
 pub use oneiron_verb_wire::booking::constraint::CONSTRAINT_SCHEMA_VERSION;
 pub use oneiron_verb_wire::booking::constraint::ConstraintWeekday;
 pub use oneiron_verb_wire::booking::constraint::EventTypeKey;
+use oneiron_verb_wire::booking::constraint::FullDay;
 pub use oneiron_verb_wire::booking::constraint::LocalMinuteWindow;
 pub use oneiron_verb_wire::booking::constraint::RankedSlot;
 use serde::Deserialize;
@@ -30,6 +31,9 @@ pub struct SolveResult {
     pub slots: Vec<RankedSlot>,
     pub flex_used: bool,
     pub host_bindings: Vec<SlotHostBinding>,
+    /// Visitor-local days whose candidate times a meeting cap removed,
+    /// ascending by date.
+    pub full_days: Vec<FullDay>,
 }
 
 /// The final availability mask shape, settled from day one. There is no
@@ -42,6 +46,9 @@ pub struct SlotMask {
     pub window_end_utc: u64,
     pub slots: Vec<RankedSlot>,
     pub flex_used: bool,
+    /// Visitor-local days in the window a meeting cap filled, ascending by
+    /// date: the date and the cap, never a booking's detail.
+    pub full_days: Vec<FullDay>,
 }
 
 /// Per-session dials. Caller-supplied values, not a new approval wall.

@@ -16,7 +16,7 @@ use crate::store::custody_protocol::{
 };
 
 /// Admits a machine of the owner's, as its socket proved it.
-fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
+pub(super) fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
     let PeerMachine::Proven { machine, key } = peer else {
         return Err(denied());
     };

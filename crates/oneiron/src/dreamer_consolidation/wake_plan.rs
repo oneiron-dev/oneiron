@@ -118,13 +118,6 @@ fn held_round_away_in(
     )
 }
 
-/// The most queued TURNs one wake prepares: one Meso round's worth. A pass
-/// admits work from the head of the ready order, so the wake prepares that
-/// head and leaves the rest of a larger backlog (a whole history import) to
-/// the passes after it, rather than reading all of it before any budget or
-/// deadline applies.
-const WAKE_PREPARED_TURN_CAP: usize = super::DEFAULT_MESO_ROUND_TURN_CAP;
-
 /// What a long preparation polls per iteration: the pass's deadline and
 /// its cooperative cancellation (a drain's pause or a stop).
 pub(super) struct PreparationPreempt<'a> {
@@ -222,6 +215,19 @@ impl PreparedWake {
         Self::prepare_matching(vault, scope, caller_scope, None, Some(attempt), None)
     }
 
+    /// [`Self::prepare_one`] with its listings read for `destination_bound`,
+    /// as a driven pass reads them for the bound its executors stated: the
+    /// native side of a lent-read parity test.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn prepare_one_for_bound(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+        attempt: AttemptId,
+        destination_bound: Option<&ReadDestination>,
+    ) -> Result<Self> {
+        Self::prepare_matching(vault, scope, None, destination_bound, Some(attempt), None)
+    }
+
     fn prepare_matching(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
@@ -273,7 +279,8 @@ impl PreparedWake {
         let left = if only_attempt.is_some() {
             BTreeSet::new()
         } else {
-            left_for_later(&records, scope)
+            let cap = super::watermark::setting_keys::meso_round_turn_cap_in_txn(vault, &txn)?;
+            left_for_later(&records, scope, cap)
         };
         let QueuedPreparation {
             mut ids,
@@ -445,6 +452,13 @@ impl PreparedWake {
             .unwrap_or_else(super::neighbourhood::listing_destination)
     }
 
+    /// The destination bound this wake's pass stated (FIX 12735), or `None`
+    /// where none was stated. A lent extraction read rebuilds its listing
+    /// for it, as [`Self::listing_destination`] read the wake's own.
+    pub(crate) fn destination_bound(&self) -> Option<&ReadDestination> {
+        self.destination_bound.as_ref()
+    }
+
     /// Only work known at the wake's single revision may execute on it.
     pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
         self.attempts.contains(id.as_bytes())
@@ -570,11 +584,19 @@ fn idle(
 
 /// The ready work of `scope` past the head one wake prepares, in the order a
 /// pass admits it: every attempt from the first whose queued TURNs would take
-/// the head past [`WAKE_PREPARED_TURN_CAP`]. The head always holds at least
-/// one attempt, however many TURNs it queued.
+/// the head past `cap`. The head always holds at least one attempt, however
+/// many TURNs it queued.
+///
+/// `cap` is one Meso round's worth, the owner's
+/// `dreamer.consolidation.meso_round_turn_cap` in the wake's snapshot. A pass
+/// admits work from the head of the ready order, so the wake prepares that
+/// head and leaves the rest of a larger backlog (a whole history import) to
+/// the passes after it, rather than reading all of it before any budget or
+/// deadline applies.
 fn left_for_later(
     records: &[crate::attempt_queue::AttemptRecord],
     scope: crate::dreamer_runner::DreamerConsolidationScope,
+    cap: usize,
 ) -> BTreeSet<[u8; 16]> {
     let mut ready: Vec<_> = records
         .iter()
@@ -589,7 +611,7 @@ fn left_for_later(
             .ok()
             .and_then(|payload| super::partition::decode_partition_payload(&payload.input).ok())
             .map_or(0, |branch| branch.turn_count());
-        if !left.is_empty() || (head > 0 && head.saturating_add(queued) > WAKE_PREPARED_TURN_CAP) {
+        if !left.is_empty() || (head > 0 && head.saturating_add(queued) > cap) {
             left.insert(*record.id.as_bytes());
         } else {
             head = head.saturating_add(queued);

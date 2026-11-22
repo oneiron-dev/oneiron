@@ -4,6 +4,7 @@
 //! stopped or deferred wake keeps its input and reports Park or Deferred,
 //! so the trigger is never lost.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 use crate::Vault;
@@ -81,6 +82,7 @@ pub(crate) fn execute(
 /// on while this pass has time; what is left waits for the next wake. A
 /// stopped or deferred wake keeps its input and reports Park or Deferred,
 /// so the trigger is never lost.
+/// Read-phase trigger keys keep their bytes (K, PLAN-UC-04 stage 7).
 fn continuous(
     ctx: &WakeAttemptContext<'_>,
     attempt: &DreamerAdmittedAttempt,
@@ -94,7 +96,7 @@ fn continuous(
     let stop = WakeStop::new(ctx.cancel);
     // A retry may run as a new attempt row; its trigger is its input.
     let input = attempt.status.payload.input.as_str().unwrap_or_default();
-    let trigger_key = *blake3::hash(input.as_bytes()).as_bytes();
+    let trigger_key = read_phase_trigger_key(input);
     let phases = &vault.active_wakes.read_phases;
     let woke = vault.wake_dreamer_on_turn_until(
         WakeTurnSubject::Vault,
@@ -242,3 +244,13 @@ fn nightly(
     }
     Ok(())
 }
+
+/// The input key held by the read-phase map across retry deferrals.
+pub(crate) fn read_phase_trigger_key(input: &str) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_wake::READ_PHASE_TRIGGER)
+        .raw(input.as_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::read_phase_trigger_key as read_phase_trigger_key_for_test;

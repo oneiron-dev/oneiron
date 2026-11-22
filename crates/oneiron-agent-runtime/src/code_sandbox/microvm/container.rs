@@ -149,6 +149,17 @@ impl MicroVmBackend for ContainerBackend {
             .and_then(|s| s.into_transport())
             .map_err(|e| failed(e.to_string()))
     }
+    fn start_session_until_stdin_closes(
+        &self,
+        spec: &GuestSpec,
+        command: &[OsString],
+        relay: Arc<dyn EgressRelay>,
+    ) -> Result<SessionTransport> {
+        self.runtime
+            .start_fenced_until_stdin_closes(spec, command, relay)
+            .and_then(|s| s.into_transport())
+            .map_err(|e| failed(e.to_string()))
+    }
     fn run(&self, _: &MicroVmHandle, _: &GuestImage, _: ExecutionBudget) -> Result<MicroVmExit> {
         Err(failed("container requires its host-bound proxy"))
     }

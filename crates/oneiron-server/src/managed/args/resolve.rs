@@ -188,6 +188,7 @@ impl ManagedArgs {
             container_runtime_dir: args.container_runtime_dir.clone(),
             guest_runtime_fact: args.guest_runtime_fact,
             hosted_private_origins: args.hosted_private_origins.iter().cloned().collect(),
+            hosted_private_networks: args.hosted_private_networks.iter().copied().collect(),
         };
         if managed
             .artifact_socket

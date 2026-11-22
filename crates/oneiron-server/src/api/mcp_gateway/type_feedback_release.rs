@@ -11,11 +11,11 @@
 //!
 //! The carriers are the known typed ones, each found by the host's own
 //! record of what it is, never by its JSON's shape: an `execute_code`
-//! answer's `program_steps`, a wait set's answer among its bridge steps, the
-//! owner's feedback read, a run's history, a session-bound run's entry and
-//! a foreign program's run (FIX 10389), called directly or from inside the
-//! run. A foreign program's refusal keeps its program's feedback beside it
-//! ([`source_run_error`]).
+//! answer's `program_steps`, a wait set's answer among its bridge steps, a
+//! stored wait set's feedback beside its card, the owner's feedback read, a
+//! run's history, a session-bound run's entry and a foreign program's run
+//! (FIX 10389), called directly or from inside the run. A foreign program's
+//! refusal keeps its program's feedback beside it ([`source_run_error`]).
 
 use super::{McpCallContext, McpGatewayError};
 use crate::api::type_feedback_release::{
@@ -43,6 +43,9 @@ const HISTORY_VERB: &str = "self.history";
 enum Carrier {
     /// A wait set's answer: its settled children's `program_steps`.
     WaitSet,
+    /// A stored wait set's feedback beside its card: the `program_steps`
+    /// entry of a `stored_reply` outcome, as JSON text.
+    StoredWaitSet,
     /// The owner's read of one step's feedback: the whole answer.
     Owner,
     /// A run's history: each step's `type_diagnostics` and
@@ -67,6 +70,16 @@ impl Carrier {
                 let mut base = value.clone();
                 base.as_object_mut()?.shift_remove("program_steps");
                 Some((base, answer.program_steps.into_iter().enumerate().collect()))
+            }
+            Self::StoredWaitSet => {
+                let steps: Vec<ProgramStepFeedback> = serde_json::from_value(value.clone()).ok()?;
+                if steps.is_empty() {
+                    return None;
+                }
+                Some((
+                    Value::Array(Vec::new()),
+                    steps.into_iter().enumerate().collect(),
+                ))
             }
             Self::Owner => {
                 match serde_json::from_value::<ProgramStepFeedbackRelease>(value.clone()).ok()? {
@@ -134,6 +147,11 @@ impl Carrier {
                     .get_mut("program_steps")
                     .and_then(|steps| steps.get_mut(slot))
                 {
+                    *item = withheld;
+                }
+            }
+            Self::StoredWaitSet => {
+                if let Some(item) = value.get_mut(slot) {
                     *item = withheld;
                 }
             }
@@ -271,20 +289,23 @@ fn hold_step_feedback(structured: &mut Value, record: &CodeRunReplayRecord) -> V
     };
     let mut held = Vec::new();
     for (index, step) in steps.iter_mut().enumerate() {
-        let Some((carrier, scan, kind, field)) = step
+        let Some(carriers) = step
             .get("seq")
             .and_then(Value::as_u64)
             .and_then(|seq| record.bridge_calls.iter().find(|call| call.seq == seq))
-            .and_then(step_carrier)
+            .map(step_carrier)
         else {
             continue;
         };
         let Some(outcome) = step.get_mut("outcome") else {
             continue;
         };
-        if outcome.get("kind").and_then(Value::as_str) != Some(kind) {
+        let Some((carrier, scan, _, field)) = carriers
+            .into_iter()
+            .find(|(_, _, kind, _)| outcome.get("kind").and_then(Value::as_str) == Some(*kind))
+        else {
             continue;
-        }
+        };
         let Some(Value::String(text)) = outcome.get_mut(field) else {
             continue;
         };
@@ -305,29 +326,57 @@ fn hold_step_feedback(structured: &mut Value, record: &CodeRunReplayRecord) -> V
     held
 }
 
-/// The carrier a recorded bridge call's outcome is, its scan, the outcome
-/// kind its recorder wrote and the field holding its JSON text.
+/// The carriers a recorded bridge call's outcome may be, each with its scan,
+/// the outcome kind its recorder wrote and the field holding its JSON text.
+/// A wait set answers inline or stored beside its card; any other effect
+/// answers at most one.
 fn step_carrier(
     call: &CodeRunBridgeCall,
-) -> Option<(Carrier, FeedbackScan, &'static str, &'static str)> {
+) -> Vec<(Carrier, FeedbackScan, &'static str, &'static str)> {
     let named = FeedbackScan::Named;
     match call.effect {
-        SelfEffect::TasksWaitSet => Some((
-            Carrier::WaitSet,
-            FeedbackScan::Bytes,
-            "task_wait_set",
-            "json",
-        )),
-        SelfEffect::AgentVerb => match recorded_verb(call)? {
-            OWNER_FEEDBACK_VERB => Some((Carrier::Owner, named, "agent_verb", "output")),
-            HISTORY_VERB => Some((Carrier::History, named, "agent_verb", "output")),
-            OFF_RECORD_EXECUTE_VERB | FOREIGN_EXECUTE_CODE_VERB => {
-                Some((Carrier::ProgramSteps, named, "agent_verb", "output"))
+        SelfEffect::TasksWaitSet => {
+            let mut carriers = vec![(
+                Carrier::WaitSet,
+                FeedbackScan::Bytes,
+                "task_wait_set",
+                "json",
+            )];
+            if stored_wait_set_with_feedback(call) {
+                carriers.push((
+                    Carrier::StoredWaitSet,
+                    FeedbackScan::Bytes,
+                    "stored_reply",
+                    "program_steps",
+                ));
             }
-            _ => None,
+            carriers
+        }
+        SelfEffect::AgentVerb => match recorded_verb(call) {
+            Some(OWNER_FEEDBACK_VERB) => vec![(Carrier::Owner, named, "agent_verb", "output")],
+            Some(HISTORY_VERB) => vec![(Carrier::History, named, "agent_verb", "output")],
+            Some(OFF_RECORD_EXECUTE_VERB | FOREIGN_EXECUTE_CODE_VERB) => {
+                vec![(Carrier::ProgramSteps, named, "agent_verb", "output")]
+            }
+            _ => Vec::new(),
         },
-        _ => None,
+        _ => Vec::new(),
     }
+}
+
+/// Whether the recorded call's outcome is a stored wait set whose program
+/// feedback stays typed beside its card.
+fn stored_wait_set_with_feedback(call: &CodeRunBridgeCall) -> bool {
+    let rmpv::Value::Map(entries) = &call.outcome else {
+        return false;
+    };
+    let field = |name: &str| {
+        entries
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+    };
+    field("kind").and_then(rmpv::Value::as_str) == Some("stored_reply")
+        && field("source_kind").and_then(rmpv::Value::as_str) == Some("task_wait_set_with_feedback")
 }
 
 /// The verb a recorded agent-verb call's own request names.

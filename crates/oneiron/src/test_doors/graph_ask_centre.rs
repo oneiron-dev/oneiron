@@ -1,7 +1,9 @@
-//! Exact graph-neighbourhood controls for the standing graph owner read regression.
+//! Doors for the question read regressions: exact graph-neighbourhood
+//! controls for the standing graph owner read, and the read check a task ask
+//! runs on each question and context ref (FIX-LIST [ASK-READER-KEY-CLASSLESS]).
 
 use crate::claim::ScopedReadActorKey;
-use crate::llm::decision::questions::question_lane;
+use crate::llm::decision::questions::{question_lane, validate_task_answer_unit};
 use crate::{EntityId, Error, Result, Vault};
 
 /// Read as a question's bare human identity, with or without its owner alternative.
@@ -25,4 +27,22 @@ pub fn neighbors(
     Ok(lane
         .graph_ask_neighbors(unit, 16, 4096, 1_048_576)?
         .map(|neighbors| neighbors.into_iter().map(|(id, _, _)| id).collect()))
+}
+
+/// Whether `unit` passes a task ask's read check (`validate_task_answer_unit`)
+/// for `principal` (the asker) and `holder` (the recipient), in one read
+/// snapshot: `Ok(false)` when it reads as absent to either party, the ask's
+/// refusal.
+pub fn task_answer_unit_admitted(
+    vault: &Vault,
+    principal: EntityId,
+    holder: EntityId,
+    unit: EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    match validate_task_answer_unit(vault, &txn, principal, holder, unit) {
+        Ok(_) => Ok(true),
+        Err(Error::EntityNotFound) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
