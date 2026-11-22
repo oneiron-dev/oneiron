@@ -433,6 +433,7 @@ fn a_legal_hold_on_a_label_proposal_stops_no_retention_sweep() {
             &owner_proof(&seeded),
             vec![LegalHoldTarget::Record(proposal)],
             None,
+            None,
         )
         .expect("FIXTURE: the owner holds the label proposal");
     set_horizon(&seeded);
@@ -545,6 +546,7 @@ fn a_legal_hold_on_a_label_proposal_refuses_no_rejudgment() {
             &owner_proof(&seeded),
             vec![LegalHoldTarget::Record(proposal)],
             None,
+            None,
         )
         .expect("FIXTURE: the owner holds the label proposal");
 
@@ -583,6 +585,7 @@ fn a_legal_hold_on_a_label_proposals_signed_history_refuses_no_rejudgment() {
         .place_legal_hold(
             &owner_proof(&seeded),
             controls.into_iter().map(LegalHoldTarget::Record).collect(),
+            None,
             None,
         )
         .expect("FIXTURE: the owner holds the label proposal's signed history, not the proposal");

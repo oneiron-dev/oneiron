@@ -169,7 +169,12 @@ fn a_held_notes_purge_runs_and_spends_the_applied_check_in() {
         &digest,
     );
     vault
-        .place_legal_hold(&owner_proof, vec![LegalHoldTarget::Record(note)], None)
+        .place_legal_hold(
+            &owner_proof,
+            vec![LegalHoldTarget::Record(note)],
+            None,
+            None,
+        )
         .expect("the owner holds the note");
     let input = NoteHistoryPurgeRequest {
         note_ref: note.to_hex(),

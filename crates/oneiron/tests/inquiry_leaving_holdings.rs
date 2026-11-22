@@ -913,6 +913,7 @@ fn honour_erases_the_covered_copies_including_a_held_one() {
             &fx.company.proof,
             vec![LegalHoldTarget::Record(copies[0])],
             Some("matter-7".to_owned()),
+            None,
         )
         .expect("the company holds one copy");
     let _ = fx.file_leave_ask();
