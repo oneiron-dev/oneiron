@@ -37,6 +37,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 use crate::federation::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
@@ -189,7 +191,7 @@ impl OwnerAgentMint {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct GrantLines {
     /// Each Grant's counted givings: the live ones and every one a later giving replaced.
-    givings: BTreeMap<EntityId, WorldFrontier<GrantTerms>>,
+    givings: PersistentMap<EntityId, WorldFrontier<GrantTerms>>,
     /// Each Grant's counted ends, each with the family its act named: none for a membership
     /// withdrawal or a slip revoke, which end a Grant of any family.
     ends: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, Option<GrantFamily>>>,
