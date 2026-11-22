@@ -29,7 +29,7 @@ pub fn file_compaction_step(
     sources: Vec<EntityId>,
     answer: &str,
 ) -> Result<EntityId> {
-    file_compaction_step_at(
+    file_compaction_step_at_ms(
         vault,
         run_ref,
         job,
@@ -40,10 +40,9 @@ pub fn file_compaction_step(
     )
 }
 
-/// [`file_compaction_step`] stamped at `filed_at`, the time its rows are
-/// learned at. A pass files at wall milliseconds, which no month window's
-/// scan reaches (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS); a step filed at
-/// a window's Unix seconds rides that window beside its sources.
+/// [`file_compaction_step`] filed at `filed_at`, in Unix seconds: the pass's
+/// clock reads that second, so its rows are learned at it and the step rides
+/// that second's month window beside its sources.
 pub fn file_compaction_step_at(
     vault: &Vault,
     run_ref: &str,
@@ -53,13 +52,34 @@ pub fn file_compaction_step_at(
     answer: &str,
     filed_at: u64,
 ) -> Result<EntityId> {
+    file_compaction_step_at_ms(
+        vault,
+        run_ref,
+        job,
+        writer,
+        sources,
+        answer,
+        filed_at.saturating_mul(1_000),
+    )
+}
+
+/// One step filed as a pass files it, its clock reading `now_ms`.
+fn file_compaction_step_at_ms(
+    vault: &Vault,
+    run_ref: &str,
+    job: EntityId,
+    writer: EntityId,
+    sources: Vec<EntityId>,
+    answer: &str,
+    now_ms: u64,
+) -> Result<EntityId> {
     let call = compaction_call(sources, answer)?;
     filed_claim(ExecutorStorage::Canonical(vault).file_compaction_steps(
         run_ref,
         job,
         WriteActor::new(writer, EdgeActorClass::Agent),
         &[call],
-        filed_at,
+        now_ms,
     )?)
 }
 

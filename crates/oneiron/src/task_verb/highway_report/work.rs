@@ -436,8 +436,10 @@ impl Memory<'_> {
             if committed.settled {
                 // The terminal record committed before the signal goes out; a
                 // crash in this gap is replayed from the local binding index.
-                crate::llm::send_peer_result_signal(self.vault(), task_ref, now)?;
-                crate::llm::reconcile_peer_result_signals(self.vault(), now)?;
+                // The trap signal takes the report's second in milliseconds.
+                let now_ms = now.saturating_mul(1000);
+                crate::llm::send_peer_result_signal(self.vault(), task_ref, now_ms)?;
+                crate::llm::reconcile_peer_result_signals(self.vault(), now_ms)?;
             }
         }
         Ok(committed.receipt)

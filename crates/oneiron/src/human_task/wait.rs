@@ -125,11 +125,14 @@ pub fn signal_human_response(
         // nothing left to wake.
         return Err(HumanTaskError::UnboundResponse);
     }
+    // The response's time is Unix seconds; the trap's clock is milliseconds,
+    // which its transition's own `at` keeps and its row stamps at the second
+    // (FIX MODEL-STEP-ROW-TIMES-IN-MILLISECONDS).
     let signal_ref = send_trap_signal(
         vault,
         &stored.trap_claim_id,
         stored.step_hash,
-        signal.occurred_at,
+        signal.occurred_at.saturating_mul(1_000),
     )?;
     vault.with_write_txn_grouped(|wtxn| {
         put_wait_signal_marker_in_txn(

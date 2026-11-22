@@ -453,7 +453,11 @@ impl Vault {
         txn.commit().map_err(crate::Error::from)?;
         // The marker committed first. A crash here is recovered by the peer
         // wait binding's ordinary reconcile pass, including void-before-wait.
-        crate::llm::send_peer_result_signal(self, group, self.store.clock.now_recorded_at())?;
+        crate::llm::send_peer_result_signal(
+            self,
+            group,
+            self.store.clock.now_recorded_at().saturating_mul(1000),
+        )?;
         Ok(())
     }
 }
