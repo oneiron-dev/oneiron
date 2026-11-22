@@ -23,7 +23,5 @@ pub(crate) fn names_pack_map_carrier(id: &crate::EntityId, digest: &[u8; 32]) ->
     persistence::carrier_id(digest).is_ok_and(|carrier| carrier == *id)
 }
 
-// FIX [LIBTEST-QUARANTINE-REGISTRY-PACK-BYTE-MAP-TESTS]: the lib test target's type check fails here (10 errors: E0599 x6, E0308 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

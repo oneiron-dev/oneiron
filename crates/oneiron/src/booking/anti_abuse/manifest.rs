@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use super::rules::{BookingAntiAbuseRuleRow, booking_rule_row_id, validate_rule_row};
+use super::rules::{BookingAntiAbuseRuleRow, booking_rule_row_id, validate_stored_rule_row};
 use super::storage::{engine_failure, refused};
 use crate::booking::BookingError;
 use crate::consent::AuthenticatedOwner;
@@ -54,7 +54,7 @@ fn decode_manifest_rule_rows(value: &rmpv::Value) -> Option<Vec<BookingAntiAbuse
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, entry).ok()?;
         let row: BookingAntiAbuseRuleRow = rmp_serde::from_slice(&bytes).ok()?;
-        validate_rule_row(&row).ok()?;
+        validate_stored_rule_row(&row).ok()?;
         if row.row_id != booking_rule_row_id(&row.scope, &row.rule)
             || rows.iter().any(|kept| kept.row_id == row.row_id)
         {

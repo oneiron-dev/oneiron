@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
+use serde::{Deserialize, Serialize};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
@@ -15,7 +16,10 @@ use crate::store::{ManifestDbs, Store};
 
 /// The worlds whose words a record carries. `unknown` where one of them
 /// cannot be named, which keeps the record home while any world is flagged.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// A delete keeps a copy beside the record's scope
+/// (`deletion::tombstone_scope`).
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CarriedWorlds {
     pub(crate) worlds: BTreeSet<EntityId>,
     pub(crate) unknown: bool,
@@ -31,7 +35,7 @@ impl CarriedWorlds {
         }
     }
 
-    fn kept_by(&self, flagged: &BTreeSet<EntityId>) -> bool {
+    pub(crate) fn kept_by(&self, flagged: &BTreeSet<EntityId>) -> bool {
         self.unknown || !self.worlds.is_disjoint(flagged)
     }
 
@@ -244,7 +248,7 @@ fn sources_worlds(
 /// SUMMARY where `record_world_in` places it (unknown for an epoch it cannot
 /// place, never base) and in every world its withdrawal recorded. An epoch
 /// SUMMARY's `DerivedFrom` sources, and a CLAIM's prompt inputs, go to
-/// `sources`.
+/// `sources`, as do a composed TASK's.
 fn row_worlds(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -331,6 +335,14 @@ fn row_worlds(
             match crate::federation::record_scope::record_world_in(store, txn, *id, kind, body)? {
                 Some(world) => carried.worlds.extend(world),
                 None => carried.unknown = true,
+            }
+            // A TASK whose brief a model composed from rows its prompt
+            // carried (census L8-07) carries their words, so their worlds
+            // too, as a CLAIM does (FIX 8192).
+            if kind == crate::registry::ENTITY_TYPE_TASK {
+                sources.extend(crate::store::birth_record::prompted::prompt_sources_in_txn(
+                    store, txn, id,
+                )?);
             }
         }
     }

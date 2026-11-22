@@ -143,11 +143,11 @@ pub(super) fn set_glue(
     Ok(written(slide, id, GLUE))
 }
 
+/// A connector's glue: each end's shape id and site.
+pub(crate) type ConnectorGlue = (Option<(u32, u32)>, Option<(u32, u32)>);
+
 /// A connector's glue as written: each end's shape id and site.
-pub(crate) fn glue_of(
-    tree: &crate::ooxml::XmlTree,
-    connector: usize,
-) -> (Option<(u32, u32)>, Option<(u32, u32)>) {
+pub(crate) fn glue_of(tree: &crate::ooxml::XmlTree, connector: usize) -> ConnectorGlue {
     let end = |local: &str| {
         let holder = xml::path(tree, connector, GLUE)?;
         let at = xml::child(tree, holder, A, local)?;

@@ -362,6 +362,14 @@ impl LiftedKeys {
         text.contains(HANDLE_OPEN)
     }
 
+    /// Whether `text` holds a handle a mask on write placed: a bracketed
+    /// custody handle (`[secret sc12]`) or a room's. [`Self::names_a_handle`]
+    /// reads only the text a handle opens with, which a value chosen outside
+    /// the vault (a provider's UID) may hold as literal text.
+    pub(crate) fn holds_a_handle(text: &str) -> bool {
+        Self::names_a_handle(text) && super::text::handles_in(text).next().is_some()
+    }
+
     /// `text` as a reader other than the owner reads it: each value as its
     /// handle. `None` when it holds none.
     pub(crate) fn masked(&self, text: &str) -> Option<String> {

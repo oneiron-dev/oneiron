@@ -128,7 +128,7 @@ fn a_score_is_judged_by_its_own_space_and_kind() -> Result<()> {
         let mut config = embedding_test_config();
         config.embedding_model = Some(space.to_owned());
         config.vector_evidence = pair;
-        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(config);
         for (keyed_space, kind, kind_floors) in table {
             vault.set_vector_evidence_for(keyed_space, kind, kind_floors)?;
         }

@@ -68,9 +68,7 @@ use oneiron::dispatch_byoa::{
 };
 use oneiron::entity_id::EntityId;
 use oneiron::git_wire::GitWire;
-use oneiron::secret_lease::{
-    SECRET_GRANT_MAX_TTL_SECS, SecretGrantCaller, SecretGrantTarget, SecretTaintRef,
-};
+use oneiron::secret_lease::{SecretGrantCaller, SecretGrantTarget, SecretTaintRef};
 use oneiron::{HostingPrivacyPosture, Vault};
 use oneiron_container::SessionManifest;
 use oneiron_vault_contract::now_ts;
@@ -199,6 +197,7 @@ impl SyncServer {
             ran,
             executor.session_manifest,
         );
+        terminal::end_runner_checkout(&dispatcher, self, &fence);
     }
 }
 
@@ -285,7 +284,12 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             model_env: None,
             runner_fence: self.server.runner_fence(),
         };
-        let ttl_secs = budget.wall_clock_secs.clamp(1, SECRET_GRANT_MAX_TTL_SECS);
+        // The owner's cap on one secret grant's lifetime (`secrets.grant.max_ttl_secs`), never
+        // under a second: the run's grants and its helper last the run's budget, cut to it.
+        let cap = self.vault.secret_grant_max_ttl_secs().map_err(|_| {
+            ByoaError::Backend("the seat host could not read the secret grant lifetime cap".into())
+        })?;
+        let ttl_secs = budget.wall_clock_secs.clamp(1, cap);
         let grants = match &self.destinations {
             Some(destinations) => {
                 SeatGrants::materialize(self.vault, self.run, destinations, checkout, ttl_secs)?

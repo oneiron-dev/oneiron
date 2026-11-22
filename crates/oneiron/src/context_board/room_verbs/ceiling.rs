@@ -61,5 +61,8 @@ pub(super) fn room_turn_ceiling_in(
         roster: members.to_vec(),
         branch: None,
         personal: false,
+        // Only the room's own ceiling reads under a work-talk binding
+        // (`room_ceiling_in`); a thread's never does.
+        work_talk: false,
     })
 }

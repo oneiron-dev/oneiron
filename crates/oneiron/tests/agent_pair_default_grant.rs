@@ -11,12 +11,15 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip};
-use oneiron::claim::{FrozenReadLane, ScopedReadActorKey, base_world_id, default_project_id};
+use oneiron::claim::{
+    FrozenReadLane, PointRead, ReadRow, ScopedReadActorKey, base_world_id, default_project_id,
+};
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistryQuery, ConsentRegistryRow};
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::graph_fs::GraphFsOptions;
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::read_exposure::exposed_records;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, AgentGrantRevokeRequest,
     create_agent_definition_as, mint_agent_grant_as, revoke_agent_grant_as,
@@ -628,6 +631,13 @@ fn a_saved_lane_rebuilt_after_the_last_revoke_reads_nothing() {
 /// and never a CLAIM, MESSAGE or SUMMARY to a relationship-gated reader like
 /// this file's agents, so the erased row is a PERSON.
 fn erased_person_short_ref(fixture: &Fixture) -> (String, u8) {
+    let (id, short_id, hash) = person_short_ref(fixture);
+    erase_person(fixture, &id, &short_id, hash);
+    (short_id, hash)
+}
+
+/// A live PERSON row the owner wrote, with the short reference that names it.
+fn person_short_ref(fixture: &Fixture) -> (EntityId, String, u8) {
     let id = EntityId::now();
     fixture
         .vault
@@ -649,9 +659,15 @@ fn erased_person_short_ref(fixture: &Fixture) -> (String, u8) {
         "expected {reference} to spell a short id and one content-hash byte"
     );
     let hash = u8::from_str_radix(hash_hex, 16).expect("the short ref's content-hash byte");
+    (id, short_id.to_owned(), hash)
+}
+
+/// The owner soft-deletes the PERSON row `id`, and its short reference
+/// `(short_id, hash)` then hydrates to a deleted row with no body.
+fn erase_person(fixture: &Fixture, id: &EntityId, short_id: &str, hash: u8) {
     fixture
         .vault
-        .delete_entity_with_reason(&id, oneiron::deletion::DeleteReason::UserDelete)
+        .delete_entity_with_reason(id, oneiron::deletion::DeleteReason::UserDelete)
         .expect("owner soft-deletes the person row");
     let hydrated = fixture
         .vault
@@ -662,7 +678,153 @@ fn erased_person_short_ref(fixture: &Fixture) -> (String, u8) {
         hydrated.body.is_none() && hydrated.deletion.is_some(),
         "expected the erased row to hydrate to a deleted row with no body"
     );
-    (short_id.to_owned(), hash)
+}
+
+/// The one reader with a read exposure, its count of distinct records and the
+/// kept rows naming its records (L8-65).
+fn sole_read_exposure(vault: &Vault) -> (EntityId, u64, BTreeSet<EntityId>) {
+    let exposures = vault
+        .actor_read_exposures()
+        .expect("every reader's exposure");
+    let [(reader, exposure)] = exposures.as_slice() else {
+        panic!("FIXTURE: expected one reader with a read exposure; seen={exposures:?}");
+    };
+    let kept = exposed_records(vault, reader).expect("the reader's kept exposure rows");
+    (*reader, exposure.distinct_records, kept)
+}
+
+/// REVIEW-9209 P1 (L8-65 read exposure): an erased record's shell tells the
+/// reader only that the record is gone, so a read that serves it adds nothing
+/// to the reader's read exposure. The named agent is served the live PERSON
+/// row R whole, and the next write keeps R (count 1). The owner's soft erase
+/// takes R's kept row and keeps the count. `read_shell` then serves the agent
+/// R's shell through its short reference (no body, deletion metadata); the
+/// next write keeps no row naming R again and the count stays 1. This file's
+/// paired agent is the reader because its default Grant is the authority that
+/// reveals an erased row's deletion ([`a_held_lane_learns_no_deletion_in_a_revoked_grants_reach`]).
+fn assert_shell_read_adds_no_exposure(
+    agent_name: &str,
+    read_shell: impl Fn(&oneiron::claim::ScopedRead<'_>, &str, u8) -> Option<ReadRow>,
+) {
+    let fixture = fixture();
+    let (record, short_id, hash) = person_short_ref(&fixture);
+    let agent = fixture
+        .vault
+        .ensure_agent_principal(agent_name)
+        .expect("named agent principal");
+    let slip = paired_agent_slip(&fixture, agent, 0xc9);
+    let key = fixture
+        .vault
+        .credential_read_key(&slip)
+        .expect("agent credential read key")
+        .expect("agent credential grants read");
+    let lane = fixture.vault.scoped_read(key);
+    let next_write = || {
+        fixture
+            .vault
+            .with_write_txn_grouped(|_| Ok(()))
+            .expect("the vault's next write keeps what the reads before it served");
+    };
+
+    let served = lane
+        .read(&[PointRead::id(record)], None)
+        .expect("point-read the live person row")
+        .single()
+        .value;
+    assert!(
+        served
+            .as_ref()
+            .is_some_and(|row| row.id == record && row.body.is_some()),
+        "FIXTURE: actor=named agent {agent:?}; expected its lane to serve the live person row whole; seen={served:?}"
+    );
+    next_write();
+    let (reader, count, kept) = sole_read_exposure(&fixture.vault);
+    assert_eq!(
+        (count, kept),
+        (1, BTreeSet::from([record])),
+        "FIXTURE: reader {reader:?}; expected the next write to keep the person row once"
+    );
+
+    erase_person(&fixture, &record, &short_id, hash);
+    let (_, count, kept) = sole_read_exposure(&fixture.vault);
+    assert_eq!(
+        (count, kept),
+        (1, BTreeSet::new()),
+        "FIXTURE: reader {reader:?}; expected the erase to take the person row's kept row and keep the count"
+    );
+
+    let shell = read_shell(&lane, &short_id, hash);
+    assert!(
+        shell
+            .as_ref()
+            .is_some_and(|row| row.id == record && row.body.is_none() && row.deletion.is_some()),
+        "FIXTURE: actor=named agent {agent:?}; expected its lane to serve the erased row's shell; seen={shell:?}"
+    );
+    next_write();
+    let (_, count, kept) = sole_read_exposure(&fixture.vault);
+    assert_eq!(
+        (count, kept),
+        (1, BTreeSet::new()),
+        "reader {reader:?}; expected the shell read to keep no row naming the erased record and to leave the count at 1"
+    );
+}
+
+/// [`assert_shell_read_adds_no_exposure`] through a point read, the funnel
+/// `ScopedRead::read` serves.
+#[test]
+fn an_erased_records_shell_on_a_point_read_adds_no_read_exposure() {
+    assert_shell_read_adds_no_exposure(
+        "pair_exposure_point_shell_agent",
+        |lane, short_id, hash| {
+            lane.read(&[PointRead::short(short_id, hash)], None)
+                .expect("point-read the erased row's short reference")
+                .single()
+                .value
+        },
+    );
+}
+
+/// [`assert_shell_read_adds_no_exposure`] through a named read, the funnel
+/// `ScopedRead::read_named` serves.
+#[test]
+fn an_erased_records_shell_on_a_named_read_adds_no_read_exposure() {
+    assert_shell_read_adds_no_exposure(
+        "pair_exposure_named_shell_agent",
+        |lane, short_id, hash| {
+            lane.read_named(&[PointRead::short(short_id, hash)], None)
+                .expect("named-read the erased row's short reference")
+                .value
+                .into_iter()
+                .next()
+                .expect("one slot for the one read")
+                .expect("the slot answers with no legal refusal")
+        },
+    );
+}
+
+/// [`assert_shell_read_adds_no_exposure`] through a framed read, the funnel
+/// `ScopedRead::read_frames` serves.
+#[test]
+fn an_erased_records_shell_on_a_framed_read_adds_no_read_exposure() {
+    assert_shell_read_adds_no_exposure(
+        "pair_exposure_frame_shell_agent",
+        |lane, short_id, hash| {
+            lane.read_frames(
+                &[PointRead::short(short_id, hash)],
+                None,
+                Vec::new(),
+                |_, rows, served: &mut Vec<Option<ReadRow>>| {
+                    served.extend(rows);
+                    Ok::<_, oneiron::Error>(())
+                },
+            )
+            .expect("frame-read the erased row's short reference")
+            .value
+            .into_iter()
+            .flatten()
+            .next()
+        },
+    );
 }
 
 /// Whether the short reference `(short_id, hash)` reveals its erased row's

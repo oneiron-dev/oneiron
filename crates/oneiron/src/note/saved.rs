@@ -84,6 +84,34 @@ impl PreparedSavedNote {
             .collect())
     }
 
+    /// This NOTE's live text and title with each room handle they name
+    /// moved into the vault's custody by `carry`, the carry of the save out
+    /// of its room (ROOM-CUSTODY-SAVED-ARTIFACTS), in `txn` before it lands:
+    /// the document takes each base handle where the room handle stood, as
+    /// a mask on write takes a handle in. Its NOTE row holds no text, and
+    /// each pin keeps the quote its hash binds.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage errors, and a document that refuses the edit.
+    pub(crate) fn carry_room_secrets_in_txn(
+        &self,
+        carry: &mut crate::batch::secret_scan::RoomCarry,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        let markdown = self.document.view()?.markdown;
+        if let Some(carried) = carry.text_in_txn(vault, txn, self.id, &markdown)? {
+            self.document.mask_body(&carried.spans, &carried.text)?;
+        }
+        if let Some(title) = self.document.title()?
+            && let Some(carried) = carry.text_in_txn(vault, txn, self.id, &title)?
+        {
+            self.document.mask_title(&carried.text)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn land_in_txn(
         &self,
         vault: &Vault,

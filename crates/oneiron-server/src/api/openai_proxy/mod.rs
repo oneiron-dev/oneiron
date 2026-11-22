@@ -39,10 +39,11 @@ use oneiron::{
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
-pub(super) use self::choices::TIMEOUT_CODE;
+pub(super) use self::choices::{CallerClock, TIMEOUT_CODE};
 use self::exchange::Exchange;
 pub(super) use self::receipt::PROXY_CALL_VERB;
 use self::receipt::{ProxyCaller, ProxyRequest};
+pub(super) use self::wire::typed_upstream_error;
 use self::wire::{error, invalid};
 use super::McpCallContext;
 use crate::auth::{CoreScope, Locality};
@@ -433,11 +434,6 @@ async fn recall(
     off_record: bool,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
-    let proof = actor
-        .auth
-        .as_ref()
-        .and_then(crate::auth::CoreAuth::verified_slip)
-        .cloned();
     let input = RecallRequest {
         query,
         effort: Some(RecallEffort::Call),
@@ -463,6 +459,7 @@ async fn recall(
         query_affect: None,
         telemetry: None,
         filter: None,
+        operation_id: None,
     };
     // Home references carry no local row to judge for an onward model or
     // caller. Keep that path local-only until it carries destination proof.
@@ -475,7 +472,7 @@ async fn recall(
         .recall_home_listing(
             actor.actor_ref,
             actor.actor_class,
-            proof,
+            actor.auth.as_ref(),
             reads_for,
             None,
             input,
