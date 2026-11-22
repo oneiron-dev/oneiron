@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 use rmpv::Value;
 
 use super::*;
@@ -17,7 +18,7 @@ use crate::federation::{
 };
 use crate::share_travel::{BornWithField, TravelChoice};
 
-pub(super) const OP_KIND_NAMES: [&str; 43] = [
+pub(super) const OP_KIND_NAMES: [&str; 49] = [
     "SlipMint",
     "SlipRevoke",
     "SlipConsume",
@@ -55,12 +56,18 @@ pub(super) const OP_KIND_NAMES: [&str; 43] = [
     "FullCopyMark",
     "AgentGrantAct",
     "PolicySettingSet",
+    "SettingCopy",
+    "SettingPackHead",
     "ExportAct",
     "OwnerKeyEnroll",
     "FrontierJoin",
     "OriginCut",
     "DeviceSuccession",
     "MembershipExecution",
+    "RootAppointment",
+    "RestoredMachineJoin",
+    "RecoveryHold",
+    "RecoveryHoldAnswer",
 ];
 
 pub(super) fn op_kind_name(op: &AuthorityOp) -> &'static str {
@@ -102,12 +109,18 @@ pub(super) fn op_kind_name(op: &AuthorityOp) -> &'static str {
         AuthorityOp::FullCopyMark(_) => "FullCopyMark",
         AuthorityOp::AgentGrantAct(_) => "AgentGrantAct",
         AuthorityOp::PolicySettingSet(_) => "PolicySettingSet",
+        AuthorityOp::SettingCopy(_) => "SettingCopy",
+        AuthorityOp::SettingPackHead(_) => "SettingPackHead",
         AuthorityOp::ExportAct(_) => "ExportAct",
         AuthorityOp::OwnerKeyEnroll(_) => "OwnerKeyEnroll",
         AuthorityOp::FrontierJoin(_) => "FrontierJoin",
         AuthorityOp::OriginCut(_) => "OriginCut",
         AuthorityOp::DeviceSuccession(_) => "DeviceSuccession",
         AuthorityOp::MembershipExecution(_) => "MembershipExecution",
+        AuthorityOp::RootAppointment(_) => "RootAppointment",
+        AuthorityOp::RestoredMachineJoin(_) => "RestoredMachineJoin",
+        AuthorityOp::RecoveryHold(_) => "RecoveryHold",
+        AuthorityOp::RecoveryHoldAnswer(_) => "RecoveryHoldAnswer",
     }
 }
 
@@ -390,6 +403,7 @@ fn machine_profile() -> MachineProfile {
         seen_world_edits: BTreeSet::from([[42; 32], [43; 32]]),
         carrier: Some(entity_id(4)),
         act: Some(owner_act(OwnerActKind::MachineAnswer)),
+        restored_from: Some([53; 32]),
     }
 }
 
@@ -480,6 +494,16 @@ fn residence_samples() -> Vec<AuthorityOp> {
     let mut samples: Vec<_> = [
         ResidenceAct::SyncAll,
         ResidenceAct::SyncOpened,
+        ResidenceAct::SyncPredicted {
+            window_budget: 8,
+            document_budget: 16,
+        },
+        ResidenceAct::Predicted {
+            parent: entity_id(47),
+            set_digest: [57; 32],
+            window_count: 2,
+            document_count: 2,
+        },
         ResidenceAct::Follow {
             worlds: BTreeSet::from([entity_id(44), entity_id(45)]),
         },
@@ -674,6 +698,86 @@ fn work_metadata_samples() -> Vec<AuthorityOp> {
     ]
 }
 
+fn setting_slot(setting: &str, project: u8, mode: SettingMode) -> RowKey {
+    RowKey {
+        name: setting.to_owned(),
+        item: Some("mail".to_owned()),
+        mode,
+        scope: SettingScope::Project(entity_id(project)),
+    }
+}
+
+fn catalogue_setting_sample() -> AuthorityOp {
+    let row = |setting: &str, prior, seen, inline: &[u8]| PolicySettingRow {
+        setting: setting.to_owned(),
+        slot: Some(setting_slot(setting, 72, SettingMode::Value)),
+        seen,
+        prior,
+        value: Some(setting_value_digest(inline)),
+        inline: Some(inline.to_vec()),
+    };
+    let setting = "sample.rules.alpha";
+    let inline = b"12";
+    AuthorityOp::PolicySettingSet(PolicySettingSet {
+        act: owner_act(OwnerActKind::PolicySetting),
+        machine: entity_id(4),
+        setting: setting.to_owned(),
+        prior: [97; 32],
+        value: Some(setting_value_digest(inline)),
+        slot: Some(setting_slot(setting, 72, SettingMode::Value)),
+        inline: Some(inline.to_vec()),
+        more: vec![
+            row("sample.rules.beta", [98; 32], [99; 32], b"24"),
+            row("sample.rules.gamma", [100; 32], [101; 32], b"36"),
+        ],
+    })
+}
+
+fn setting_copy_sample() -> AuthorityOp {
+    let row = |setting: &str, seen, first, second| SettingCopyRow {
+        slot: setting_slot(setting, 72, SettingMode::Carried),
+        seen,
+        names: vec![
+            SettingCopyName {
+                slot: setting_slot(setting, 73, SettingMode::Value),
+                act: first,
+            },
+            SettingCopyName {
+                slot: setting_slot(setting, 74, SettingMode::Value),
+                act: second,
+            },
+        ],
+    };
+    AuthorityOp::SettingCopy(SettingCopy {
+        machine: entity_id(4),
+        rows: vec![
+            row("sample.rules.alpha", [102; 32], [103; 32], [104; 32]),
+            row("sample.rules.beta", [105; 32], [106; 32], [107; 32]),
+        ],
+    })
+}
+
+fn setting_pack_head_sample() -> AuthorityOp {
+    AuthorityOp::SettingPackHead(SettingPackHead {
+        machine: entity_id(4),
+        pack: "sample.defaults".to_owned(),
+        version: "1.0.0".to_owned(),
+        digest: [108; 32],
+        held: vec![
+            "sample.rules.alpha".to_owned(),
+            "sample.rules.beta".to_owned(),
+        ],
+        seen: [109; 32],
+        accept: Some(SettingPackAccept {
+            act: owner_act(OwnerActKind::PolicySetting),
+            accepted: vec![
+                "sample.rules.delta".to_owned(),
+                "sample.rules.gamma".to_owned(),
+            ],
+        }),
+    })
+}
+
 fn policy_samples() -> Vec<AuthorityOp> {
     vec![
         AuthorityOp::GrantTravelSet(GrantTravelSet {
@@ -727,10 +831,16 @@ fn policy_samples() -> Vec<AuthorityOp> {
         AuthorityOp::PolicySettingSet(PolicySettingSet {
             act: owner_act(OwnerActKind::PolicySetting),
             machine: entity_id(4),
-            setting: PolicySetting::DreamerWakePolicy,
+            setting: PolicySetting::DreamerWakePolicy.wire().to_owned(),
             prior: [90; 32],
             value: Some([91; 32]),
+            slot: None,
+            inline: None,
+            more: Vec::new(),
         }),
+        catalogue_setting_sample(),
+        setting_copy_sample(),
+        setting_pack_head_sample(),
         AuthorityOp::ExportAct(ExportActRecord {
             act: owner_act(OwnerActKind::Export),
             machine: entity_id(4),
@@ -846,13 +956,55 @@ fn membership_execution() -> MembershipExecution {
     }
 }
 
+fn passkey_owner_device() -> DeviceAuthority {
+    let key = p256::ecdsa::SigningKey::from_slice(&[0x5A; 32]).expect("a P-256 scalar");
+    let assertion = encode_webauthn_assertion(&WebAuthnAssertion {
+        authenticator_data: &[7; WEBAUTHN_AUTHENTICATOR_DATA_MIN_BYTES],
+        client_data_json:
+            br#"{"type":"webauthn.get","challenge":"fixture","origin":"https://example.invalid"}"#,
+        signature: &[8; 64],
+    })
+    .expect("the fixture fits the assertion envelope");
+    DeviceAuthority {
+        key: AuthorityKey::P256(
+            key.verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .to_vec(),
+        ),
+        transport_key_binding: [0; 32],
+        attestation: AuthorityAttestation {
+            kind: OWNER_PASSKEY_POSSESSION_KIND.to_owned(),
+            evidence: owner_passkey_possession_evidence(&[9, 10], &assertion)
+                .expect("the fixture fits the possession envelope"),
+        },
+        ..device()
+    }
+}
+
 fn topology_samples() -> Vec<AuthorityOp> {
+    let enrolment = OwnerKeyEnroll {
+        act: owner_act(OwnerActKind::OwnerKeyEnrollment),
+        machine: entity_id(32),
+        carrier: entity_id(4),
+        device: device(),
+    };
     vec![
+        AuthorityOp::OwnerKeyEnroll(enrolment.clone()),
         AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
-            act: owner_act(OwnerActKind::OwnerKeyEnrollment),
-            machine: entity_id(32),
-            carrier: entity_id(4),
-            device: device(),
+            device: passkey_owner_device(),
+            ..enrolment.clone()
+        }),
+        AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
+            device: DeviceAuthority {
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: RECOVERY_AUTHORITY_POSSESSION_KIND.to_owned(),
+                    evidence: vec![11; OWNER_KEY_POSSESSION_PROOF_LEN],
+                },
+                ..device()
+            },
+            ..enrolment
         }),
         AuthorityOp::OriginCut(OriginCut {
             act: owner_act(OwnerActKind::OriginCut),
@@ -872,6 +1024,50 @@ fn topology_samples() -> Vec<AuthorityOp> {
     ]
 }
 
+fn recovery_samples() -> Vec<AuthorityOp> {
+    vec![
+        AuthorityOp::RootAppointment(RootAppointment {
+            root: RecoveryRootId([110; 32]),
+            successor: DeviceAuthority {
+                key: AuthorityKey::Ed25519([111; 32]),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND.to_owned(),
+                    evidence: vec![112; ROOT_APPOINTMENT_SUCCESSOR_PROOF_LEN],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROOT_APPOINTMENT_SUCCESSOR_ROLES,
+            },
+        }),
+        AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act: owner_act(OwnerActKind::RestoredMachineJoin),
+            enrolment: RestoredJoinEnrolment::Held([113; 32]),
+        }),
+        AuthorityOp::RestoredMachineJoin(RestoredMachineJoin {
+            act: owner_act(OwnerActKind::RestoredMachineJoin),
+            // Keep the profile's optional wire fields; admission requires an act-free profile.
+            enrolment: RestoredJoinEnrolment::Inline(machine_profile()),
+        }),
+        AuthorityOp::RecoveryHold(RecoveryHold {
+            owner: entity_id(1),
+            enrolment: RecoveryHoldEnrolment {
+                machine: entity_id(32),
+                public_key: [114; 32],
+                proof: vec![115; OWNER_KEY_POSSESSION_PROOF_LEN],
+            },
+            lost: vec![
+                AuthorityKey::Ed25519([116; 32]),
+                AuthorityKey::Ed25519([117; 32]),
+            ],
+            lands_at: 250,
+        }),
+        AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
+            hold: [118; 32],
+            answer: RecoveryHoldAnswerKind::ItIsMe,
+        }),
+    ]
+}
+
 pub(super) fn every_op_sample() -> Vec<AuthorityOp> {
     let mut samples = slip_samples();
     samples.extend(roster_samples());
@@ -885,6 +1081,7 @@ pub(super) fn every_op_sample() -> Vec<AuthorityOp> {
     samples.extend(grant_samples());
     samples.extend(frontier_samples());
     samples.extend(topology_samples());
+    samples.extend(recovery_samples());
     samples
 }
 
