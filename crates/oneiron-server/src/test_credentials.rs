@@ -220,6 +220,18 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
                 .collect(),
         );
     }
+    if let Some(worlds) = fields.get("worlds") {
+        scope.worlds = ScopeAxis::Some(
+            worlds
+                .split(',')
+                .map(|world| {
+                    ScopeId(
+                        oneiron::EntityId::from_hex(world.trim()).expect("credential recipe world"),
+                    )
+                })
+                .collect(),
+        );
+    }
     if let Some(bytes) = server.vault().sync_state_get(&cache).unwrap() {
         let slip = CapabilitySlip::from_token(std::str::from_utf8(&bytes).unwrap()).unwrap();
         assert_eq!(

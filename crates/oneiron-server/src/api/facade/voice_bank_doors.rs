@@ -207,6 +207,12 @@ pub(crate) async fn vault_voices_targets_provision(
             target: &input.target,
             include_generated: input.include_generated,
             language: input.language.as_deref(),
+            // The caller's off-record session keeps no model-call record:
+            // the clone's run names no rows (census L5-25).
+            off_record: server.vault().model_call_keeps_no_record_for(
+                auth.off_record_session(),
+                crate::api::call_receipt::request_principal(auth),
+            ),
         },
     )
     .await

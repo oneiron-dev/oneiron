@@ -219,3 +219,27 @@ pub(super) fn lookup_authors(
     pairs.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(pairs)
 }
+
+/// Notes an export row's token ref for the checkpoint-pins door, as the
+/// live writers note each put.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_export_token_ref_in_txn(
+    dbs: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    key: &Vec<u8>,
+    token: &str,
+) -> Result<()> {
+    note_export_put(dbs, wtxn, key, token)
+}
+
+/// Notes a revision-author row's token ref for the checkpoint-pins door, as
+/// the live writers note each put.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_author_token_ref_in_txn(
+    dbs: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    key: &(EntityId, u64, u64),
+    token: &str,
+) -> Result<()> {
+    note_author_put(dbs, wtxn, key, token)
+}

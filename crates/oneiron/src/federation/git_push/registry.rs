@@ -62,7 +62,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<ConsentRegistryRow>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let live = self.git_push_grants_in_txn(txn)?;
         let mut rows: Vec<ConsentRegistryRow> = live
             .iter()

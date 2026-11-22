@@ -182,13 +182,6 @@ impl Memory<'_> {
                 .into());
             }
         };
-        for source in &pinned.sources {
-            if !self.preview_reads(source.entity, owner)?
-                && (source.required || self.vault.get_entity_type(&source.entity)?.is_some())
-            {
-                blockers.push(withheld_record(source.entity));
-            }
-        }
         // A Granted agent's preview of a blob a repo mark covers is held as
         // masked, before any generic sight is read; the owner's stays exact
         // (FIX 7608, CALL N).
@@ -215,7 +208,18 @@ impl Memory<'_> {
                 }
             }
         }
+        // Each source's readability judgement reads in a snapshot of its own
+        // (`get_entity`, `get_entity_type`), and the vendored heed holds one
+        // read snapshot per thread: a judgement inside this one answered
+        // MDB_BAD_RSLOT. The hold sorts its blockers, so the order is free.
         drop(txn);
+        for source in &pinned.sources {
+            if !self.preview_reads(source.entity, owner)?
+                && (source.required || self.vault.get_entity_type(&source.entity)?.is_some())
+            {
+                blockers.push(withheld_record(source.entity));
+            }
+        }
         if blockers.is_empty() {
             if pinned.preview.is_none() {
                 return Err(crate::Error::InvariantViolation(

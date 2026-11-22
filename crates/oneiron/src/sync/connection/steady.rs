@@ -74,6 +74,20 @@ impl SyncConnection {
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // A member lane's thin copies take the home's deletes on the same
+        // cadence; the connect took every set, so the first round is one
+        // period out (review round 2 of #8364).
+        let member_tombstone_period = Duration::from_secs(SEALED_RELAY_INTERVAL_SECS);
+        let mut member_tombstone_refresh = tokio::time::interval_at(
+            Instant::now() + member_tombstone_period,
+            member_tombstone_period,
+        );
+        member_tombstone_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The right device PINs this connection has seen (row OCS-OWNER-PIN):
+        // each new one owes a residence upkeep that starts after it, see the
+        // housekeeping tick.
+        let mut seen_right_pins = self.manager.vault().device_pin_right_pins();
+        let mut right_pin_upkeep_owed = false;
         // One staged import body pass at a time (FIX 12408): its producer's
         // socket runs off this loop, and its frames are handled here.
         let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
@@ -104,7 +118,9 @@ impl SyncConnection {
         // directives, home handoff rounds, machine history, authority
         // catch-up, leaf-key requests, publications), and it probes the home
         // on its cadence, with this session's own hello, ending once the
-        // home sends a probe its root; a 401 there is told as a home dial's.
+        // home sends a probe its root; a 401 there is told as a home dial's,
+        // and a 403 to its credential ends the session and the run as a home
+        // dial's does (MEMBER-SELECTOR-SOCKET).
         let peer_session = client.peer_session;
         let mut home_probe = super::peer_session::HomeProbe::new(
             peer_session.is_some(),
@@ -234,7 +250,8 @@ impl SyncConnection {
                 }
 
                 // Live and lossy: no admission, and none sent while paused.
-                partial = presence_rx.recv(), if !gate.paused() => {
+                partial = presence_rx.recv(),
+                    if !gate.paused() && !self.config.client_config.member_lane => {
                     match partial {
                         Ok(frame) => {
                             let mut send_left = self.left.subscribe();
@@ -277,6 +294,9 @@ impl SyncConnection {
                                 },
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
+                            if client.member_refuses_document_frame(&frame) {
+                                continue;
+                            }
                             let withheld = client.frame_withheld(&frame);
                             // Owner lane only: ask the home for its body instead, and
                             // the VV exchange carries the edit up. A body gone since
@@ -284,6 +304,7 @@ impl SyncConnection {
                             if !withheld
                                 && convert
                                 && client.config.federation_peer.is_none()
+                                && !client.config.member_lane
                                 && client.config.note_session.is_some()
                                 && client.note_session_bound
                             {
@@ -397,7 +418,10 @@ impl SyncConnection {
                     }
                 }
 
-                _ = sealed_relay.tick(), if !gate.paused() => {
+                // H8-SHARED-ENV-LANE = B: owner-machine upkeep never runs on a
+                // member lane, including its initial immediately due tick.
+                _ = sealed_relay.tick(),
+                    if !gate.paused() && !self.config.client_config.member_lane => {
                     // Each upkeep task holds the host's admission until its
                     // last write; a pause leaves the tick due at the thaw
                     // (FIX 12036).
@@ -458,6 +482,7 @@ impl SyncConnection {
                         let config = self.client_config();
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
+                        let predicted = std::sync::Arc::clone(&self.predicted_wake);
                         let follow = std::sync::Arc::clone(&self.follow_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
                         let jobs = upkeep.blocking_jobs();
@@ -504,6 +529,9 @@ impl SyncConnection {
                             // The owner's residence directives naming this
                             // machine run once its history is in (OF-534).
                             directives.notify_one();
+                            // So does the predicted level's upkeep on this
+                            // machine (ARCH-0023b #predicted-residence).
+                            predicted.notify_one();
                             // The owner work those rows name this machine to
                             // do (a world's key work) runs once they are in.
                             let vault = std::sync::Arc::clone(manager.vault());
@@ -557,6 +585,18 @@ impl SyncConnection {
                                     )));
                                 }
                             }
+                            // Each followed window this device holds no rows of
+                            // takes its tombstone id set again (FOLLOWED-WORLD-
+                            // TIER1-TOMBSTONE-IDS): a delete the home made during
+                            // this session reaches a window it refuses to us.
+                            match crate::sync::client::refresh_followed_tombstones(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Followed tombstone refresh failed: {error}"
+                                    )));
+                                }
+                            }
                             // The checkpoint roots of the owner's policy, once the
                             // history is in (FIX 4882): a root held here attests the
                             // home's image, and the home's root this machine's.
@@ -570,6 +610,17 @@ impl SyncConnection {
                                             "Checkpoint root exchange failed: {error}"
                                         )));
                                     }
+                                }
+                            }
+                            // The same-value statements of the owner's machines, to and
+                            // from the residence home (SECRETS-SAME-VALUE-FACT): a home out
+                            // of reach leaves them to the next pass.
+                            match crate::sync::client::exchange_secret_same_value(manager.vault(), &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Same-value statement exchange failed: {error}"
+                                    )));
                                 }
                             }
                             // The authority overlay's keys between this machine and its
@@ -592,6 +643,47 @@ impl SyncConnection {
                                     "Custody relay failed: {error}"
                                 )));
                             }
+                            // The owner's names for his machines and each machine's own
+                            // report, to and from the residence home
+                            // (MACHINE-NAMES-CARRIER = B): a home out of reach leaves
+                            // them to the next pass.
+                            match crate::sync::client::exchange_machine_names(manager.vault(), &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Machine name exchange failed: {error}"
+                                    )));
+                                }
+                            }
+                        }));
+                    }
+                }
+
+                // A member lane runs none of that owner-machine upkeep, yet a
+                // thin copy it fetched takes the home's deletes here: a
+                // promoted window's come in its own exchange, an unpromoted
+                // copy's only by this refresh (review round 2 of #8364).
+                _ = member_tombstone_refresh.tick(),
+                    if !gate.paused() && self.config.client_config.member_lane && peer_session.is_none() => {
+                    if upkeep.member_tombstones.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
+                        // A pause leaves the round due at the thaw.
+                        let Some(batch) = gate.admit().await else {
+                            member_tombstone_refresh.reset_immediately();
+                            continue;
+                        };
+                        let manager = std::sync::Arc::clone(&self.manager);
+                        let config = self.client_config();
+                        let events = event_tx.clone();
+                        upkeep.member_tombstones = Some(tokio::spawn(async move {
+                            let _batch = batch;
+                            match crate::sync::client::refresh_followed_tombstones(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Followed tombstone refresh failed: {error}"
+                                    )));
+                                }
+                            }
                         }));
                     }
                 }
@@ -603,6 +695,25 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer. Its
                 // sends and writes are one batch (FIX 12036).
                 _ = ephemeral_housekeeping.tick(), if !gate.paused() => {
+                    // A right device PIN opened its window since the last
+                    // look: a residence upkeep is owed that starts after it,
+                    // so its checkpoint root exchange attests with the owner
+                    // key that window lets sign. An upkeep that runs now
+                    // began before the PIN and may be past its exchange, so
+                    // the next one is brought forward only once that one has
+                    // ended; until then it stays owed. Right PINs that come
+                    // before it starts share it.
+                    let right_pins = self.manager.vault().device_pin_right_pins();
+                    if right_pins != seen_right_pins {
+                        seen_right_pins = right_pins;
+                        right_pin_upkeep_owed = true;
+                    }
+                    if right_pin_upkeep_owed
+                        && upkeep.sealed.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
+                    {
+                        right_pin_upkeep_owed = false;
+                        sealed_relay.reset_immediately();
+                    }
                     let Some(_batch) = gate.admit().await else {
                         continue;
                     };
@@ -697,8 +808,10 @@ impl SyncConnection {
 
                 // FIX 4748: the home sent a peer session's probe its root:
                 // this session ends, what it buffered queued, and the next
-                // connect is the home's turn.
-                () = home_probe.root_received() => {
+                // connect is the home's turn. A 403 to the probe's credential
+                // ends it the same way, and the run stops as on a home dial's
+                // 403 (MEMBER-SELECTOR-SOCKET).
+                answer = home_probe.home_answer() => {
                     self.queue_on_exit(&mut gate, debounce_buffer).await;
                     let mut send_left = self.left.subscribe();
                     tokio::select! {
@@ -709,7 +822,10 @@ impl SyncConnection {
                         }
                         _ = write.send(Message::Close(None)) => {}
                     }
-                    return LoopExit::HomeReturned;
+                    return match answer {
+                        super::peer_session::HomeAnswer::Root => LoopExit::HomeReturned,
+                        super::peer_session::HomeAnswer::Forbidden => LoopExit::Forbidden,
+                    };
                 }
 
                 changed = mode_rx.changed() => {
@@ -811,7 +927,7 @@ impl SyncConnection {
         gate: &mut super::batch_admission::BatchGate<'_>,
     ) {
         tasks.retain(|task| !task.is_finished());
-        if self.config.client_config.federation_peer.is_some()
+        if self.config.client_config.residence_mode_is_fixed()
             || tasks.len() >= MACHINE_HISTORY_FETCH_TASKS
             || !due.swap(false, Ordering::Relaxed)
         {

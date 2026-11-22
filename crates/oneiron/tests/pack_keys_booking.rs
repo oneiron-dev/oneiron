@@ -28,8 +28,8 @@ use oneiron::booking::constraint::{
 };
 use oneiron::booking::{
     BookingConversionPolicy, BookingError, BookingLandingContent, BookingPageModel,
-    BookingPageModelError, BookingSlotPreview, BookingSolver, CompanionPresetRow,
-    CompanionProposal, CompanionProposalCreation, ConstraintFieldConfig,
+    BookingPageModelError, BookingPagePresentation, BookingSlotPreview, BookingSolver,
+    CompanionPresetRow, CompanionProposal, CompanionProposalCreation, ConstraintFieldConfig,
     DEFAULT_INTRO_DURATION_MIN, DisclosureRung, EventTypeCard, EventTypeConfig, EventTypeKey,
     HostAvailabilityConfig, RankedSlot, RoutingMode, RungProjection, SlotOracle, SolveRequest,
     SolveResult, SurfaceClass, ThemeTokens, VaultActiveHoldSource, WeeklyWallWindow,
@@ -372,6 +372,7 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
         },
         constraint: None,
         visitor_tz: "UTC".to_owned(),
+        duration_min: None,
     };
     let mask = slot_mask(
         &request,
@@ -383,21 +384,25 @@ fn page_model(policy: &BookingConversionPolicy) -> BookingPageModel {
         },
     );
     BookingPageModel::new(
-        "Owen".to_owned(),
-        vec![EventTypeCard {
-            key: request.event_type,
-            title: "Introduction".to_owned(),
-            duration_min: 10,
-            description: "Fixture description".to_owned(),
-        }],
+        BookingPagePresentation {
+            owner_display: "Owen".to_owned(),
+            event_types: vec![EventTypeCard {
+                key: request.event_type,
+                title: "Introduction".to_owned(),
+                deposit: None,
+                duration_min: 10,
+                description: "Fixture description".to_owned(),
+                allowed_durations_min: Vec::new(),
+            }],
+            constraint_field: ConstraintFieldConfig {
+                enabled: false,
+                placeholder: String::new(),
+            },
+            theme: ThemeTokens(serde_json::json!({"mode": "fixture"})),
+            landing: BookingLandingContent::default(),
+        },
         project_at_rung(&[], DisclosureRung::Full, SurfaceClass::Public, Some(&mask))
             .expect("the public clamp keeps the mask"),
-        ConstraintFieldConfig {
-            enabled: false,
-            placeholder: String::new(),
-        },
-        ThemeTokens(serde_json::json!({"mode": "fixture"})),
-        BookingLandingContent::default(),
         "UTC".to_owned(),
         policy,
     )
@@ -523,6 +528,7 @@ impl SolverFixture {
             },
             constraint: None,
             visitor_tz: "UTC".to_owned(),
+            duration_min: None,
         })
         .expect("the fixture day solves")
     }
@@ -534,6 +540,7 @@ fn solver_config(flex_with_ordinary: bool) -> EventTypeConfig {
     EventTypeConfig {
         key: EventTypeKey("intro-call".to_owned()),
         duration_min: DEFAULT_INTRO_DURATION_MIN,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 30,
         pre_buffer_min: 0,
         post_buffer_min: 0,
@@ -541,6 +548,7 @@ fn solver_config(flex_with_ordinary: bool) -> EventTypeConfig {
         booking_window_secs: 7 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HOST_SEED),
@@ -648,6 +656,7 @@ fn companion_config() -> EventTypeConfig {
     EventTypeConfig {
         key: EventTypeKey("friend-hangout".to_owned()),
         duration_min: 60,
+        allowed_durations_min: Vec::new(),
         slot_step_min: 60,
         pre_buffer_min: 0,
         post_buffer_min: 0,
@@ -655,6 +664,7 @@ fn companion_config() -> EventTypeConfig {
         booking_window_secs: 14 * 24 * 3_600,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: test_id(HANGOUT_HOST_SEED),

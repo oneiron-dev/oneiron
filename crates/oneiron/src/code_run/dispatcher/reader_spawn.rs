@@ -31,6 +31,7 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 /// The refusal a reader child meets at every call but its report,
 /// `self.context` and `self.think`: no verbs, writes or ambient reads. A
@@ -118,6 +119,15 @@ impl ReaderChildBinding {
     /// The inputs a scoped child was lent, by name; `None` for a read child.
     fn scoped_inputs(&self) -> Option<&BTreeMap<String, DelegatedSource>> {
         self.scoped.as_ref().map(|spec| &spec.inputs)
+    }
+
+    /// Every source this child was lent: its source, then a scoped child's
+    /// lent inputs. What the child reports is taken from them.
+    pub(crate) fn lent_sources(&self) -> Vec<DelegatedSource> {
+        std::iter::once(&self.source)
+            .chain(self.scoped_inputs().into_iter().flat_map(BTreeMap::values))
+            .cloned()
+            .collect()
     }
 }
 

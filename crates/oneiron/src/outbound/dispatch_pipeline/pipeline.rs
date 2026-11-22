@@ -237,10 +237,13 @@ impl OutboundDispatchPipeline {
         );
         let seat_ledger =
             super::seat_policy::SeatLedgerCount::for_request(&prepared.request, verb_contract);
+        // The owner's LinkedIn seat settings, read once for this send.
+        let seat_settings = super::seat_policy::seat_settings_for(vault, &prepared.request)?;
         let mut admission = super::admission::AdmissionStage::evaluate(
             &prepared.request,
             verb_contract,
             seat_ledger,
+            &seat_settings,
             window_resolution,
             window_decision,
         );
@@ -328,6 +331,7 @@ impl OutboundDispatchPipeline {
                 &request,
                 verb_contract,
                 seat_ledger.held_at(verb_contract, count),
+                &seat_settings,
             );
         }
         let mut result = crate::outbound::receipt_fields::dispatch_result_receipt(

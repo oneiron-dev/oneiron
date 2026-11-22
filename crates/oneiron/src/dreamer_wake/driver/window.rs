@@ -6,7 +6,6 @@
 //! serial loop's; only the extraction wait overlaps.
 
 use std::panic::AssertUnwindSafe;
-use std::pin::pin;
 
 use super::dispatch::Dispatched;
 use super::settle::Settlement;
@@ -366,7 +365,8 @@ impl DreamerWakeDriver<'_> {
             // The window's one panic containment, as a serial dispatch
             // holds per attempt: a panic parks every slot it may have
             // touched and ends the pass through their settles below.
-            let mut execute = pin!(exec.execute_partition_window(&mut window_args));
+            let mut execute =
+                build_boxed_future(|| exec.execute_partition_window(&mut window_args));
             let caught = poll_fn(|task_cx| {
                 match std::panic::catch_unwind(AssertUnwindSafe(|| execute.as_mut().poll(task_cx)))
                 {
@@ -426,8 +426,8 @@ impl DreamerWakeDriver<'_> {
         let mut first_error: Option<crate::Error> = None;
         for (slot, outcome) in slots.into_iter().zip(outcomes) {
             let (executed, stage) = outcome.expect("every window slot decided before its settle");
-            match self
-                .settle_attempt_outcome(
+            match build_boxed_future(|| {
+                self.settle_attempt_outcome(
                     input,
                     &slot.admitted,
                     &slot.line,
@@ -442,7 +442,8 @@ impl DreamerWakeDriver<'_> {
                     held_error,
                     report,
                 )
-                .await
+            })
+            .await
             {
                 Ok(next) => flow.absorb(next),
                 Err(error) => {

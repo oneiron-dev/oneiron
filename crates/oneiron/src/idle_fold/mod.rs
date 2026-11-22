@@ -26,6 +26,7 @@ mod horizon;
 mod returns;
 pub(crate) mod tables;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::CallerOrigin;
@@ -51,8 +52,9 @@ const WAITS: SideTable<(EntityId, EntityId, u64), IdleWait, Named> =
 
 /// How the waiting run's root was admitted: the engine's form of the research's interactive
 /// `cli` against headless `sdk-cli` key, read from the dispatch's caller origin (FIX 4973).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("idle_fold.session_kind")]
 pub(crate) enum IdleSessionKind {
     /// A caller over a connection: a person's client at the other end.
     Connected,
@@ -63,8 +65,9 @@ pub(crate) enum IdleSessionKind {
 }
 
 /// Who the wait waits on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("idle_fold.wait_class")]
 pub(crate) enum IdleWaitClass {
     /// A person: a human answer or a consent.
     User,
@@ -92,23 +95,11 @@ impl IdleWait {
 }
 
 impl IdleSessionKind {
-    #[cfg(oneiron_test_support)]
-    pub(crate) const ALL: [Self; 3] = [Self::Connected, Self::Hosted, Self::Unknown];
-
     fn of(origin: Option<CallerOrigin>) -> Self {
         match origin {
             Some(CallerOrigin::Connection { .. }) => Self::Connected,
             Some(CallerOrigin::NativeHost) => Self::Hosted,
             Some(CallerOrigin::Unknown) | None => Self::Unknown,
-        }
-    }
-
-    #[cfg(oneiron_test_support)]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Connected => "connected",
-            Self::Hosted => "hosted",
-            Self::Unknown => "unknown",
         }
     }
 
@@ -123,23 +114,12 @@ impl IdleSessionKind {
 }
 
 impl IdleWaitClass {
-    #[cfg(oneiron_test_support)]
-    pub(crate) const ALL: [Self; 2] = [Self::User, Self::Tool];
-
     /// The class a trap's wait has, or `None` for a trap that waits on no reply.
     const fn of_trap(kind: DreamerTrapKind) -> Option<Self> {
         match kind {
             DreamerTrapKind::HumanResponse | DreamerTrapKind::Consent => Some(Self::User),
             DreamerTrapKind::PeerResult => Some(Self::Tool),
             DreamerTrapKind::Budget => None,
-        }
-    }
-
-    #[cfg(oneiron_test_support)]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Tool => "tool",
         }
     }
 

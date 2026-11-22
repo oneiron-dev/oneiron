@@ -3,6 +3,7 @@
 //! beside it, sealed, and the vault's own reader opens the row whole, after
 //! a reopen too.
 
+use super::support::*;
 use super::*;
 use crate::side_table::{self, Raw, SideTable};
 #[cfg(feature = "sync")]
@@ -16,7 +17,9 @@ use crate::sync::authority_overlay_custody::{
     apply_overlay_answer, offer_overlay_page, receive_keys, run_round_for_test,
     run_round_then_abort_for_test,
 };
-use crate::{OpenOptions, Vault, VaultConfig, VaultStorageId};
+use crate::{OpenOptions, TimeRange, Vault, VaultConfig, VaultStorageId};
+use oneiron_keystore::MemoryKeystore;
+use std::sync::Arc;
 
 const SECRET: &[u8] = b"overlay rows host root placeholder words";
 
@@ -218,10 +221,11 @@ fn a_sealed_row_on_a_signed_page_lands_as_structure() {
 
 /// T-RECEIPT (census L5-22 1a-iii): the T-LAND sealed row takes its
 /// sequence receipt where it lands, though its record does not open there.
-/// The receipt reads the envelope alone (signer, main log, sequence), so
-/// the row's floor is set at its first observation and stays when the row
-/// opens later; the same first observation adds the row to the totals the
-/// checkpoint cutoffs read.
+/// The receipt reads the envelope alone (signer, main log, sequence), so the
+/// row counts once at its first observation and stays counted when it opens
+/// later; the same first observation adds the row to the totals the
+/// checkpoint cutoffs read. No fold reads the receipt for a floor (FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER]).
 #[test]
 fn a_sealed_row_whose_key_is_not_here_takes_its_sequence_receipt() {
     let home_dir = tempfile::tempdir().unwrap();
@@ -233,10 +237,6 @@ fn a_sealed_row_whose_key_is_not_here_takes_its_sequence_receipt() {
     claims.records = BTreeSet::from(["record:b".to_owned()]);
     let slip = home.mint_capability_slip(&issuer, claims).unwrap();
     let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
-    let mint_entry = home
-        .get_authority_log_entry(&authority_log_entity_id_from_hash(&mint_row).unwrap())
-        .unwrap()
-        .expect("the home vault opens its own mint row");
     let (history, overlays) = home
         .export_signed_authority_history_with_overlays()
         .unwrap();
@@ -254,18 +254,13 @@ fn a_sealed_row_whose_key_is_not_here_takes_its_sequence_receipt() {
             .contains(&mint_row)
     );
     let rtxn = other.store.env.read_txn().unwrap();
-    let (_, receipted) =
-        crate::authority::sequence_observation::authority_local_observations_receipted_in_txn(
+    assert!(
+        crate::authority::sequence_observation::has_sequence_receipt_in_txn(
             &other.store,
             &rtxn,
-            &[crate::authority::fold_resume::RowMeta::of(
-                Some(mint_row),
-                &mint_entry,
-            )],
+            &mint_row,
         )
-        .unwrap();
-    assert!(
-        receipted.contains(&mint_row),
+        .unwrap(),
         "a row that does not open here still takes its sequence receipt",
     );
 }
@@ -1068,4 +1063,131 @@ fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after
     assert!(fold.pass_through_entries.contains(&mint_row));
     assert!(!fold.valid_entries.contains(&mint_row));
     assert!(!machine.capability_slip_id_is_live(&slip_id).unwrap());
+}
+
+const PENDING_SECRET: &[u8] = b"pending overlay sealed grant host root";
+
+/// A sealed granting row kept as FIX 2989 evidence lands whole once its
+/// history arrives (census L5-22 round-2 P1-2): on a vault that adopted a
+/// checkpoint image but holds none of its covered rows, a local append of a
+/// sealed owner-role enrollment (grants-only, outside the adopted tail's
+/// admits-past set, sealed by identifying attestation) is refused for
+/// history and kept; once the covered history is imported, the import's
+/// commit retries the evidence, the row lands, reads back open with its
+/// attestation values, and leaves the evidence.
+#[test]
+fn a_sealed_grant_kept_as_evidence_lands_whole_once_its_history_arrives() {
+    // The home vault: genesis plus the host root slip, which the image covers.
+    let dir_a = tempfile::tempdir().unwrap();
+    let vault_a = Vault::open(dir_a.path(), VaultConfig::default()).unwrap();
+    vault_a.install_device_keystore(Arc::new(MemoryKeystore::new()));
+    let issuer = HostSlipIssuer::from_secret(PENDING_SECRET).unwrap();
+    vault_a.ensure_host_root_slip(&issuer).unwrap();
+
+    // The image, its pin and the bundle a new device adopts.
+    let image_id = vault_a.write_authority_checkpoint_v2(&issuer).unwrap();
+    let pin = vault_a.authority_checkpoint_pin([0; 32]).unwrap().unwrap();
+    let bundle = vault_a
+        .authority_checkpoint_bundle(&image_id)
+        .unwrap()
+        .unwrap();
+
+    // A new device under the home's storage id: adopted, holding no history.
+    let dir_b = tempfile::tempdir().unwrap();
+    let vault_b = Vault::open_owned_with(
+        dir_b.path(),
+        VaultConfig::default(),
+        OpenOptions::default().adopt_storage_id(VaultStorageId::from_verified_pin(&pin)),
+    )
+    .unwrap();
+    vault_b
+        .adopt_authority_checkpoint(&pin, &bundle.image, &bundle.attestations)
+        .unwrap();
+
+    // A sealed granting row whose fold past the image needs the whole
+    // history: an owner-role enrollment is grants-only but no adopted tail
+    // row, and identifying attestation seals it.
+    let fold_b = vault_b.authority_fold().unwrap();
+    assert!(fold_b.vault_id.is_some());
+    let new_key = ed_key(77);
+    let mut enrolled = device(
+        authority_key_from_ed(&new_key),
+        ROLE_ADMIN,
+        AuthorityTier::Software,
+    );
+    enrolled.attestation = AuthorityAttestation {
+        kind: "device-attestation".to_owned(),
+        evidence: vec![9, 10, 11],
+    };
+    let now = vault_b.now_recorded_at();
+    let entry = crate::authority::slip_vault::next_entry(
+        &issuer,
+        &fold_b,
+        AuthorityOp::EnrollDevice {
+            device: enrolled.clone(),
+        },
+        now,
+    )
+    .unwrap();
+    assert!(
+        entry.overlay_seed.is_some(),
+        "an identifying attestation seals"
+    );
+    let body = encode_authority_log_entry_body(&entry).unwrap();
+    assert!(authority_body_is_sealed(&body).unwrap());
+    let hash = authority_entry_hash(&entry).unwrap();
+    let id = authority_log_entity_id_from_hash(&hash).unwrap();
+
+    // The local append is refused for history and the row is kept as evidence.
+    let err = vault_b
+        .put_authority_log_entries(&[(
+            entry.clone(),
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )])
+        .unwrap_err();
+    assert!(
+        crate::authority::is_history_incomplete(&err),
+        "a sealed grant past missing history waits for it: {err:?}"
+    );
+    assert!(vault_b.get_authority_log_entry(&id).unwrap().is_none());
+    {
+        let rtxn = vault_b.store.env.read_txn().unwrap();
+        let pending = crate::authority::history_admission::pending_history_request_in_txn(
+            &vault_b.store,
+            vault_b.privacy_posture(),
+            &rtxn,
+        )
+        .unwrap();
+        assert!(pending.is_some(), "the refused row stays as evidence");
+    }
+
+    // The missing history arrives; the import stores it and retries the evidence.
+    let history = vault_a.export_signed_authority_history().unwrap();
+    vault_b
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
+        .unwrap();
+
+    // The row lands whole and leaves the evidence.
+    let stored = vault_b.get_authority_log_entry(&id).unwrap().unwrap();
+    assert_eq!(authority_entry_hash(&stored).unwrap(), hash);
+    let AuthorityOp::EnrollDevice { device: landed } = &stored.op else {
+        panic!("the kept row must land as its enroll, not {:?}", stored.op);
+    };
+    assert_eq!(landed.key, enrolled.key);
+    assert_eq!(landed.attestation.kind, "device-attestation".to_owned());
+    assert_eq!(landed.attestation.evidence, vec![9, 10, 11]);
+    {
+        let rtxn = vault_b.store.env.read_txn().unwrap();
+        let pending = crate::authority::history_admission::pending_history_request_in_txn(
+            &vault_b.store,
+            vault_b.privacy_posture(),
+            &rtxn,
+        )
+        .unwrap();
+        assert!(pending.is_none(), "a landed row leaves the evidence");
+    }
 }

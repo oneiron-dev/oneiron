@@ -64,7 +64,7 @@ pub use oneiron_records::training_pack::types::{
 };
 
 /// The skill supplies the recipe; the engine supplies no model or tolerance.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrainingPlan {
     /// A role and its binding, or one detector question (FIX 7263).
     #[serde(flatten)]
@@ -186,7 +186,7 @@ pub struct TrainingRun {
 }
 
 /// The owner picks the recipe, a sealed source-family cohort and compute per run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrainingPackDraft {
     pub plan: TrainingPlan,
     pub split: SplitPolicy,

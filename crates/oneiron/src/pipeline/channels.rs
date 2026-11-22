@@ -65,6 +65,9 @@ pub(super) struct TemporalCandidateCollectionContext<'a> {
     /// The last round's radius, when the collector should say whether a
     /// window that wide could add a row.
     pub(super) widest: Option<u64>,
+    /// The call's reader: a scan asks it once its cap would leave a row
+    /// behind, so a row it refuses takes no place under the cap.
+    pub(super) reader: Option<&'a ReadableRows<'a, 'a>>,
 }
 
 #[derive(Clone, Copy)]
@@ -76,6 +79,8 @@ pub(super) struct TemporalIndexCollectionContext<'a> {
     pub(super) deadline: Option<&'a RetrievalDeadline>,
     /// The widest window's bounds, if the collector should probe it.
     pub(super) widest: Option<(u64, u64)>,
+    /// The call's reader, as [`TemporalCandidateCollectionContext::reader`].
+    pub(super) reader: Option<&'a ReadableRows<'a, 'a>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,17 +94,59 @@ fn checkpoint(deadline: Option<&RetrievalDeadline>) -> Result<()> {
     deadline.map_or(Ok(()), RetrievalDeadline::checkpoint)
 }
 
+/// Keeps the first `cap` of `rows`, which stand in the cap's order. A cap
+/// that would leave a row behind asks the call's reader, if it has one,
+/// about each row in that order and keeps the first `cap` rows it reads, so
+/// a row it refuses takes no place; rows that fit under the cap stay
+/// unasked. Returns whether the cap left behind a row the reader may read:
+/// a row past the last one it kept (asked or not), or, with no reader, any
+/// row past `cap`.
+fn keep_first_places<T>(
+    rows: &mut Vec<T>,
+    cap: usize,
+    reader: Option<&ReadableRows<'_, '_>>,
+    (store, rtxn): (&StoreRead<'_>, &RoTxn<'_>),
+    id: impl Fn(&T) -> EntityId,
+) -> Result<bool> {
+    if rows.len() <= cap {
+        return Ok(false);
+    }
+    let Some(reader) = reader else {
+        rows.truncate(cap);
+        return Ok(true);
+    };
+    let capacity = cap.min(MAX_TEMPORAL_SEEK_BUFFER);
+    let mut ordered = std::mem::replace(rows, Vec::with_capacity(capacity)).into_iter();
+    while rows.len() < cap {
+        let Some(row) = ordered.next() else {
+            break;
+        };
+        if reader.reads(store, rtxn, &id(&row))? {
+            rows.push(row);
+        }
+    }
+    Ok(ordered.next().is_some())
+}
+
 /// The phonetic channel. Under a deadline it checks in before each code's
 /// posting and every few hundred ids inside one, so a stage past its share
 /// stops there instead of reading a posting that can name much of the vault.
+/// The sound match takes its cut among the rows `admission` admits.
 pub(super) fn execute_phonetic(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
+    params: &RetrievalParams,
     deadline: Option<&RetrievalDeadline>,
+    admission: &mut crate::ports::SoundMatchAdmission<'_>,
 ) -> Result<Vec<ScoredEntity>> {
     crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search_with_deadline(
-        store, rtxn, codes, deadline,
+        store,
+        rtxn,
+        codes,
+        params,
+        deadline,
+        Some(admission),
     )
 }
 
@@ -204,6 +251,7 @@ pub(super) fn temporal_window(
                 per_scan_cap,
                 deadline,
                 widest,
+                reader,
             };
             let scoring = TemporalScoringContext {
                 sigma,
@@ -343,6 +391,7 @@ pub(super) fn collect_temporal_candidates(
         cap: per_scan_cap,
         deadline,
         widest: widest(config.anchor_start, config.anchor_end),
+        reader: collection.reader,
     };
     let learned_collection = TemporalIndexCollectionContext {
         window_start: learned_window_start,
@@ -351,6 +400,7 @@ pub(super) fn collect_temporal_candidates(
         cap: per_scan_cap,
         deadline,
         widest: widest(learned_anchor_start, learned_anchor_end),
+        reader: collection.reader,
     };
 
     let mut can_grow = match config.anchor_mode {
@@ -384,11 +434,17 @@ pub(super) fn collect_temporal_candidates(
         // used later in `temporal_window()`. Since `per_scan_cap` is 4x the
         // final result limit, anything outside this top-k cannot enter the
         // final top-k after exact scoring. The buffer fills to twice the cap
-        // before it drops back to the cap, so a spanner costs amortized
-        // constant work however large the cap is.
+        // before it drops back to the cap. Without a reader each drop is a
+        // linear selection, so a spanner costs amortized constant work however
+        // large the cap is. With one, each drop sorts the buffer and asks the
+        // reader about the best spanners in order (`keep_first_places`), about
+        // log(cap) work per spanner, and keeps at most the cap: a spanner the
+        // reader refuses holds no place a spanner it reads is denied.
+        let reader = collection.reader;
         let mut spanners = Vec::<TemporalCandidateScore>::new();
         let trim_threshold = per_scan_cap.saturating_mul(2);
-        let mut spanning = 0_usize;
+        // Whether the buffer dropped a spanner the reader may read.
+        let mut left_behind = false;
         // Every spanner is read, so the exact top-k is kept: past the index's
         // threshold row the scan raises one check and reads on.
         let mut scanned = ScanCount::start(store, rtxn, EngineScan::TemporalSpannerRows, &[])?;
@@ -413,10 +469,21 @@ pub(super) fn collect_temporal_candidates(
                 continue;
             }
             spanners.push(score_temporal_candidate(id, meta, config, scoring));
-            spanning += 1;
 
             if spanners.len() >= trim_threshold {
-                retain_best_temporal_candidate_scores(&mut spanners, per_scan_cap);
+                if reader.is_some() {
+                    sort_temporal_candidate_scores(&mut spanners);
+                    left_behind |= keep_first_places(
+                        &mut spanners,
+                        per_scan_cap,
+                        reader,
+                        (store, rtxn),
+                        |candidate| candidate.id,
+                    )?;
+                } else {
+                    retain_best_temporal_candidate_scores(&mut spanners, per_scan_cap);
+                    left_behind = true;
+                }
                 #[cfg(test)]
                 SPANNER_TRIMS.with(|trims| trims.set(trims.get() + 1));
             }
@@ -424,13 +491,19 @@ pub(super) fn collect_temporal_candidates(
         scanned.defer(store);
 
         sort_temporal_candidate_scores(&mut spanners);
-        spanners.truncate(per_scan_cap);
+        left_behind |= keep_first_places(
+            &mut spanners,
+            per_scan_cap,
+            reader,
+            (store, rtxn),
+            |candidate| candidate.id,
+        )?;
         for candidate in spanners {
             out.insert(candidate.id);
         }
         // A wider window's spanners span this one too, so it adds none while
-        // every one of them is kept here.
-        can_grow |= spanning > per_scan_cap;
+        // every one of them the reader may read is kept here.
+        can_grow |= left_behind;
     }
 
     Ok(can_grow)
@@ -574,6 +647,7 @@ fn collect_query_occurred_candidates(
         anchor_mid,
         cap,
         deadline,
+        reader,
         ..
     } = collection;
     if cap == 0 || window_start > window_end {
@@ -630,20 +704,27 @@ fn collect_query_occurred_candidates(
         });
         if rows.len() > trim_threshold {
             rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
-            rows.truncate(cap);
+            keep_first_places(&mut rows, cap, reader, (store, rtxn), |row| row.id)?;
         }
     }
     scanned.defer(store);
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
-    for row in rows.into_iter().take(cap) {
+    keep_first_places(&mut rows, cap, reader, (store, rtxn), |row| row.id)?;
+    for row in rows {
         out.insert(row.id);
     }
+    // A half holds `cap` rows a farther row cannot displace only when the
+    // reader reads each of them, and its rows are not each asked: with a
+    // reader, neither half counts as full. That only lets the probe look
+    // past the window; a half that does hold `cap` such rows fills the
+    // window's bound, and the rounds stop on that count.
+    let full = |count: usize| reader.is_none() && count >= cap;
     Ok(axis_can_grow(
         store,
         axis,
         rtxn,
         collection,
-        [forward_rows >= cap, backward_rows >= cap],
+        [full(forward_rows), full(backward_rows)],
     ))
 }
 
@@ -659,16 +740,36 @@ pub(super) fn collect_index_candidates(
         window_end,
         anchor_mid,
         cap,
+        deadline,
+        reader,
         ..
     } = collection;
     if cap == 0 || window_start > window_end {
         return Ok(cap != 0);
     }
 
-    let mut rows =
-        Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER));
+    // With a reader, a side whose cap binds reads on past the rows it
+    // refuses, up to the window's edge, so each scan then checks the deadline
+    // and counts each row it reads, raising one check past its threshold
+    // row, as the spanner scan does. Without one it stops at `cap` rows, as
+    // before.
+    let scan = if matches!(axis, TimeAxis::Learned) {
+        EngineScan::LearnedRangeRows
+    } else {
+        EngineScan::OccurredRangeRows
+    };
+    let mut scanned = reader
+        .map(|_| ScanCount::start(store, rtxn, scan, &[]))
+        .transpose()?;
+    let mut visit = || -> Result<()> {
+        if let Some(scanned) = scanned.as_mut() {
+            scanned.row();
+            checkpoint(deadline)?;
+        }
+        Ok(())
+    };
 
-    let mut forward = store.port_entity_timeline(
+    let mut forward_rows = store.port_entity_timeline(
         rtxn,
         TimelineQuery {
             axis,
@@ -677,15 +778,10 @@ pub(super) fn collect_index_candidates(
             ..Default::default()
         },
     )?;
-    while rows.len() < cap {
-        let Some(row) = next_temporal_index_row(&mut forward)? else {
-            break;
-        };
-        rows.push(row);
-    }
-    let forward_full = rows.len() >= cap;
+    let forward =
+        collect_temporal_index_rows(&mut forward_rows, cap, reader, (store, rtxn), &mut visit)?;
 
-    let mut backward = store.port_entity_timeline(
+    let mut backward_rows = store.port_entity_timeline(
         rtxn,
         TimelineQuery {
             axis,
@@ -695,23 +791,30 @@ pub(super) fn collect_index_candidates(
             ..Default::default()
         },
     )?;
-    let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
-    let backward_full = backward_rows.len() >= cap;
-    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward_rows)?;
-    rows.extend(backward_rows);
+    let mut backward =
+        collect_temporal_index_rows(&mut backward_rows, cap, reader, (store, rtxn), &mut visit)?;
+    let backward_asked = backward.asked;
+    normalize_backward_boundary_bucket(store, axis, rtxn, &mut backward.rows, |id| {
+        visit()?;
+        match reader {
+            Some(reader) if backward_asked => reader.reads(store, rtxn, id),
+            _ => Ok(true),
+        }
+    })?;
+    if let Some(scanned) = scanned {
+        scanned.defer(store);
+    }
 
+    let full = [forward.full(cap, reader), backward.full(cap, reader)];
+    let mut rows = forward.rows;
+    rows.extend(backward.rows);
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
-    for row in rows.into_iter().take(cap) {
+    keep_first_places(&mut rows, cap, reader, (store, rtxn), |row| row.id)?;
+    for row in rows {
         out.insert(row.id);
     }
 
-    Ok(axis_can_grow(
-        store,
-        axis,
-        rtxn,
-        collection,
-        [forward_full, backward_full],
-    ))
+    Ok(axis_can_grow(store, axis, rtxn, collection, full))
 }
 
 fn next_temporal_index_row<I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
@@ -728,20 +831,74 @@ where
     }))
 }
 
-fn collect_temporal_index_rows<I>(iter: &mut I, cap: usize) -> Result<Vec<TemporalIndexRow>>
+/// One side of an endpoint scan: its rows nearest first, and whether the
+/// call's reader was asked about each of them.
+struct ScanSide {
+    rows: Vec<TemporalIndexRow>,
+    asked: bool,
+}
+
+impl ScanSide {
+    /// Whether the side holds `cap` rows no farther row can displace: `cap`
+    /// rows, each one the reader reads when the call has one.
+    fn full(&self, cap: usize, reader: Option<&ReadableRows<'_, '_>>) -> bool {
+        self.rows.len() >= cap && (reader.is_none() || self.asked)
+    }
+}
+
+/// The nearest `cap` rows of `iter` that may take a place, calling `visit`
+/// at each row read. Until the cap binds, every row takes a place unasked,
+/// as with no reader. A row met with every place taken binds it: the call's
+/// reader, if it has one, is asked about each placed row, the rows it
+/// refuses leave, and from then on each row is asked before it takes a
+/// place, so a row the reader refuses never holds a place a row it reads is
+/// denied. A side that never fills its places asks nothing.
+fn collect_temporal_index_rows<I>(
+    iter: &mut I,
+    cap: usize,
+    reader: Option<&ReadableRows<'_, '_>>,
+    (store, rtxn): (&StoreRead<'_>, &RoTxn<'_>),
+    visit: &mut impl FnMut() -> Result<()>,
+) -> Result<ScanSide>
 where
     I: Iterator<Item = Result<EntityTime>>,
 {
-    let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
-
-    while rows.len() < cap {
+    let mut side = ScanSide {
+        rows: Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER)),
+        asked: false,
+    };
+    loop {
+        if side.full(cap, reader) {
+            return Ok(side);
+        }
         let Some(row) = next_temporal_index_row(iter)? else {
-            return Ok(rows);
+            return Ok(side);
         };
-        rows.push(row);
+        visit()?;
+        let Some(reader) = reader else {
+            side.rows.push(row);
+            continue;
+        };
+        if !side.asked && side.rows.len() >= cap {
+            // The cap binds: `row` would be left behind.
+            side.asked = true;
+            let placed = std::mem::replace(
+                &mut side.rows,
+                Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER)),
+            );
+            for earlier in placed {
+                if reader.reads(store, rtxn, &earlier.id)? {
+                    side.rows.push(earlier);
+                }
+            }
+            if side.rows.len() >= cap {
+                return Ok(side);
+            }
+        }
+        if !side.asked || reader.reads(store, rtxn, &row.id)? {
+            side.rows.push(row);
+        }
     }
-
-    Ok(rows)
 }
 
 fn normalize_backward_boundary_bucket(
@@ -749,6 +906,7 @@ fn normalize_backward_boundary_bucket(
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
+    mut takes: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<()> {
     let Some(boundary_timestamp) = rows.last().map(|row| row.timestamp) else {
         return Ok(());
@@ -779,7 +937,9 @@ fn normalize_backward_boundary_bucket(
         let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
             break;
         };
-        boundary_rows.push(row);
+        if takes(&row.id)? {
+            boundary_rows.push(row);
+        }
     }
     for row in original_boundary_rows {
         if !boundary_rows.iter().any(|candidate| candidate.id == row.id) {

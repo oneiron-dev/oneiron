@@ -192,8 +192,9 @@ impl MergeQueue<'_> {
 
 impl QueueStageOverlap {
     /// CALL A "whole-file queue overlap": two distinct accepted proposals,
-    /// whole-file or source-bound received bundles (FIX 9976), that replace
-    /// the same path from the same green base and retained
+    /// any stored change whose side builds: one file, a native bundle or a
+    /// source-bound received bundle (FIX 9976), that replace the same path
+    /// from the same green base and retained
     /// snapshot, inside `batch` or against another retained batch, need a
     /// fresh combined reviewed proposal even when a text merge could be
     /// clean; equal target bytes count too, so no authorship is dropped. A
@@ -305,15 +306,11 @@ impl QueueStageOverlap {
                     .is_ok_and(|store| store.as_hex() == queue.repo.identity().as_hex()),
                 _ => false,
             };
-            // A source-bound received bundle shares the handoff (FIX 9976).
-            if !same_store
-                || !(matches!(row.operation, RepoProposalOperation::CommitFile)
-                    || row.is_source_bound_received())
-            {
+            // Any stored change whose side builds shares the handoff.
+            if !same_store || !row.conflict_side_buildable() {
                 return hold(
                     QueueDriveHoldReason::HeldOverlap,
-                    "an overlapping proposal is not a whole-file or received proposal of this \
-                     repository",
+                    "an overlapping proposal is no buildable change of this repository",
                 );
             }
             rows.push(row);

@@ -27,6 +27,7 @@
 //! page a lone act began on, or a batch's answer at its stop, its held
 //! step's own answer as `press.step` once it ran).
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Value, json};
 
 use crate::Vault;
@@ -163,7 +164,7 @@ impl Memory<'_> {
             site,
             verb,
             principal: self.code_consent_principal(),
-            frozen_input_digest: *blake3::hash(action.operands.as_bytes()).as_bytes(),
+            frozen_input_digest: *ContentHash::of(action.operands.as_bytes()).as_bytes(),
             holder_settlement: None,
             pending: CodeConsentPendingEffect::BrowserAction(action),
             hold_reasons: vec![hold.to_owned()],
@@ -217,7 +218,7 @@ fn browser_facts_from_row(binding: &CodeConsentBinding) -> Option<BrowserConsent
     }
     let action = binding.pending.browser_action()?;
     let actor_class = EdgeActorClass::try_from_u8(action.actor_class)?;
-    if *blake3::hash(action.operands.as_bytes()).as_bytes() != binding.frozen_input_digest {
+    if *ContentHash::of(action.operands.as_bytes()).as_bytes() != binding.frozen_input_digest {
         return None;
     }
     Some(BrowserConsentFacts {
@@ -321,17 +322,23 @@ impl Vault {
     ///
     /// `None` when nothing runs: the wait is unanswered, denied or settled;
     /// an earlier pass admitted it and never settled (it settles as of
-    /// unknown delivery now); or the original caller's own credential no
-    /// longer stands (it settles refused now).
+    /// unknown delivery now); the original caller's own credential no
+    /// longer stands (it settles refused now); or this install is a copy
+    /// restored and not joined (row RESTORED-UNJOINED-STARTS-NO-WORK), where
+    /// the wait stays as it is for the host's first pass after the join.
     ///
     /// # Errors
     ///
     /// An unknown wait or one no browser act binds, an approved wait with no
-    /// live approve-once marker, or storage errors.
+    /// live approve-once marker, the restored-copy test's errors, or storage
+    /// errors.
     pub fn admit_browser_code_consent_wait(
         &self,
         wait_id: EntityId,
     ) -> Result<Option<AdmittedBrowserAct>> {
+        if self.restored_unjoined()? {
+            return Ok(None);
+        }
         self.with_write_txn(|txn| {
             let row =
                 read_code_consent_wait_in_txn(self, txn, wait_id)?.ok_or(Error::EntityNotFound)?;
@@ -397,16 +404,22 @@ impl Vault {
     /// Settles wait `wait_id`'s held browser act with what it came to, once
     /// (FIX 10423), and delivers the reply to its parked run, which wakes in
     /// the same commit. A settled wait keeps its first settlement. `true`
-    /// when this call settled it.
+    /// when this call settled it. A copy restored and not joined settles
+    /// nothing (row RESTORED-UNJOINED-STARTS-NO-WORK): the wait stays as it
+    /// is for the host's first pass after the join.
     ///
     /// # Errors
     ///
-    /// An unknown wait or one no browser act binds, or storage errors.
+    /// An unknown wait or one no browser act binds, the restored-copy test's
+    /// errors, or storage errors.
     pub fn settle_browser_code_consent_wait(
         &self,
         wait_id: EntityId,
         outcome: CodeConsentBrowserOutcome,
     ) -> Result<bool> {
+        if self.restored_unjoined()? {
+            return Ok(false);
+        }
         self.with_write_txn(|txn| {
             let row =
                 read_code_consent_wait_in_txn(self, txn, wait_id)?.ok_or(Error::EntityNotFound)?;

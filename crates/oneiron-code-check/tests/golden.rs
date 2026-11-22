@@ -108,6 +108,30 @@ fn tsc_rs_in_process_gives_the_golden_diagnostics() {
     assert_eq!(actual, std::fs::read_to_string(GOLDEN).unwrap());
 }
 
+/// `self.report_blocked` and `self.think` are declared by both the host
+/// (code-run.d.ts) and the verb table (code-mode.d.ts), and the runtime
+/// serves both: the positional and the object report, the host's `think`
+/// and the `think.aloud` row on it. A program using all four checks clean.
+#[test]
+fn self_members_the_host_and_the_verb_table_share_check_clean() {
+    let checker = TscRsWasm::load(TscRsBudget::default()).unwrap();
+    let program = r#"await self.report_blocked("tool", "The search tool is down.");
+await self.report_blocked({category: "tool", detail: "The search tool is down."});
+const thought = await self.think({text: "Checking the tool."});
+const spoken = await self.think.aloud("Checking the tool.");
+await self.think.aloud({text: "Checking the tool again."});
+finish({thought: thought.order, spoken});
+"#;
+    let report = checker
+        .check(&CheckInput {
+            declarations: &DECLARATIONS,
+            program,
+            language: ProgramLanguage::JavaScript,
+        })
+        .unwrap();
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+}
+
 #[test]
 fn microsoft_oracle_gives_the_golden_diagnostics() {
     let checker = MicrosoftTsc::new(oracle()).unwrap();

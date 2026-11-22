@@ -36,6 +36,8 @@ pub(super) fn refolds(
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::PolicySettingSet(_)
+                | AuthorityOp::SettingCopy(_)
+                | AuthorityOp::SettingPackHead(_)
         )
 }
 
@@ -105,7 +107,7 @@ pub(super) fn carried_request_kind(
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    ancestors: &AncestorIndex,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
     fenced: impl Fn(&AuthorityEntryHash) -> bool,
@@ -118,7 +120,7 @@ pub(super) fn refold_world_edits(
     };
     let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
         let mut hashes: Vec<_> = hashes.into_iter().collect();
-        hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, BTreeSet::len), *hash));
+        hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, |past| past.len()), *hash));
         hashes
     };
     let crossable = |hash: &AuthorityEntryHash| {
@@ -128,19 +130,25 @@ pub(super) fn refold_world_edits(
                 .is_some_and(|row| row.op().and_then(side_world).is_none())
     };
     // An invalid edit or choice one descends from is crossed like any
-    // main-log row.
+    // main-log row. One marked pass over the index finds the crossable rows
+    // below the rows that refold (row [ROSTER-KEY-LOG-FLOOD], PR 3).
+    let refolding: Vec<_> = by_hash
+        .iter()
+        .filter(|(hash, row)| {
+            row.op().is_some_and(|op| refolds(op, kind_of))
+                && !states.contains_key(*hash)
+                && !fenced(*hash)
+        })
+        .map(|(hash, _)| *hash)
+        .collect();
+    if refolding.is_empty() {
+        return;
+    }
+    let below_crossable = ancestors.marks(&crossable);
     let lost = causal(
-        by_hash
-            .iter()
-            .filter(|(hash, row)| {
-                row.op().is_some_and(|op| refolds(op, kind_of))
-                    && !states.contains_key(*hash)
-                    && !fenced(*hash)
-                    && ancestors
-                        .get(*hash)
-                        .is_some_and(|past| past.iter().any(crossable))
-            })
-            .map(|(hash, _)| *hash)
+        refolding
+            .into_iter()
+            .filter(|hash| below_crossable.in_ancestry(hash))
             .collect(),
     );
     if lost.is_empty() {
@@ -152,7 +160,7 @@ pub(super) fn refold_world_edits(
     let crossed = causal(
         lost.iter()
             .filter_map(|hash| ancestors.get(hash))
-            .flatten()
+            .flat_map(|past| past.iter_unordered())
             .filter(|hash| crossable(hash))
             .copied()
             .collect(),

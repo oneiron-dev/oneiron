@@ -71,6 +71,10 @@ pub(crate) fn capability_hit(
     }))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the reranked block joins the skill reliability inputs"
+)]
 pub(super) fn partition_capabilities(
     scores: &mut Vec<ScoredEntity>,
     vault: &Vault,
@@ -79,6 +83,7 @@ pub(super) fn partition_capabilities(
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     executor: Option<&str>,
     reliability: Option<&crate::skill_reliability::SkillReliabilityQuery>,
+    reranked_block: &super::execution::RerankedBlock,
 ) -> Result<Vec<ScoredEntity>> {
     let mut memory = Vec::with_capacity(scores.len());
     let mut eligible = Vec::new();
@@ -146,13 +151,18 @@ pub(super) fn partition_capabilities(
     }
     // Sort only skill slots. Agent candidates already carry the host reranker's
     // order, and its score ladder can tie; sorting agents here would replace
-    // that order (and the five chosen agents) with entity-ID order.
-    let mut ranked_skills: Vec<_> = eligible
+    // that order (and the five chosen agents) with entity-ID order. The sort
+    // orders within the reranked block and within the rest, never across it
+    // (RERANK-GROUP-ORDER = A): the reliability factor is no ruled precedence
+    // over the reranked order.
+    let skills_before: Vec<_> = eligible
         .iter()
         .copied()
         .filter(|scored| skill_ids.contains(&scored.id))
         .collect();
+    let mut ranked_skills = skills_before.clone();
     crate::fusion::sort_scored_entities_desc(&mut ranked_skills);
+    reranked_block.keep_group_places(&skills_before, &mut ranked_skills);
     let mut ranked_skills = ranked_skills.into_iter();
     for scored in &mut eligible {
         if skill_ids.contains(&scored.id) {

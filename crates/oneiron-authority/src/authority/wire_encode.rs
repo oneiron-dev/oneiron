@@ -311,6 +311,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::FullCopyMark(mark) => super::full_copy_mark::full_copy_mark_value(mark),
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
         AuthorityOp::PolicySettingSet(set) => super::policy_setting::policy_setting_value(set),
+        AuthorityOp::SettingCopy(copy) => super::setting_copy::setting_copy_value(copy),
+        AuthorityOp::SettingPackHead(head) => {
+            super::setting_pack_head::setting_pack_head_value(head)
+        }
         AuthorityOp::ExportAct(record) => super::export_act::export_act_value(record),
         AuthorityOp::OwnerKeyEnroll(enroll) => {
             super::owner_key_enrollment::owner_key_enroll_value(enroll)
@@ -322,6 +326,16 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::MembershipExecution(record) => {
             super::membership_execution::membership_execution_value(record)
+        }
+        AuthorityOp::RootAppointment(appointment) => {
+            super::root_appointment::root_appointment_value(appointment)
+        }
+        AuthorityOp::RestoredMachineJoin(join) => {
+            super::restored_machine_join::restored_machine_join_value(join)
+        }
+        AuthorityOp::RecoveryHold(hold) => super::recovery_hold::recovery_hold_value(hold),
+        AuthorityOp::RecoveryHoldAnswer(answer) => {
+            super::recovery_hold::recovery_hold_answer_value(answer)
         }
     }
 }

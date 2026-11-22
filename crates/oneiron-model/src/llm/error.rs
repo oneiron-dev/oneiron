@@ -157,6 +157,19 @@ pub enum RetryableLlmError {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         resets_at: Vec<u64>,
     },
+    /// No rung of the call's ladder serves at this hour (UNBUILT-14): each
+    /// one it could use keeps daily hours and the call came outside them, so
+    /// the walk passed them all. `resets_at` holds when the first of those
+    /// hours opens; it is empty when no zone reads one in the next two days.
+    /// Nothing went out, so a caller that waits for the opening spends no
+    /// attempt, and no offer takes a strike.
+    #[error("no rung serves at this hour")]
+    OutsideHours {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resets_at: Vec<u64>,
+    },
     #[error("server error")]
     ServerError,
     #[error("timeout")]
