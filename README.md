@@ -1,21 +1,36 @@
 # Oneiron
 
-**Long-context AI memory for agents, built around a local Rust vault.**
+Oneiron is an open-source memory engine for AI agents, written in Rust. An agent saves
+memories to a local vault and recalls them in a later session. Each saved entry records
+where it came from. Embed Oneiron as a Rust library, or run its daemon and connect over
+HTTP or MCP.
+
+Oneiron is pre-release. There is no release yet, so you build it from source. It is
+licensed under [Apache-2.0](./LICENSE).
+
+Oneironは、AIエージェント向けのRust製オープンソース・メモリエンジンです。エージェントは記憶をローカルに保存し、別のセッションで取り出せます。保存した記憶には、情報の出どころが記録されます。現在はリリース前のため、ソースからビルドして使います。下のクイックスタートでは、アカウント、APIキー、モデルは不要です。
+
+<!-- (check) Japanese wording: is メモリエンジン clear (not RAM), and is 情報の出どころ the right word for provenance? -->
+
+[Agent setup](./docs/agent-setup.md) · [Storage layout](#storage-layout) · [HTTP API](./oneiron.skills.md) · [Contributing](./CONTRIBUTING.md)
 
 ## Agent quickstart: install, connect, remember
 
-From this checkout on a Linux/macOS development host:
+On Linux or macOS with Python 3.11+, curl 7.76+, Git, rustup, a C/C++ compiler, CMake
+and pkg-config ([prerequisites](./docs/agent-setup.md#prerequisites)):
 
 ```sh
+git clone https://github.com/oneiron-dev/oneiron.git
+cd oneiron
 python3 examples/agent-quickstart/quickstart.py --keep-running
 ```
 
-Installs the engine, starts a fresh authenticated vault, saves and recalls an
-agent-private memory over HTTP, and connects MCP. No account, API key, model,
-or manual pairing. Needs Python 3.11+, curl 7.76+, and Rust/native build tools.
-It prints the URL, stop command, and ready MCP config with absolute paths for
-Claude Code, Codex, or OpenCode. See [setup and repair](./docs/agent-setup.md)
-and the [complete example](./examples/agent-quickstart/).
+The script builds this checkout, starts a fresh vault, saves a memory over HTTP and
+recalls it, and checks the MCP connection. It then writes an MCP client config and
+prints the command that stops the vault. It needs no account, API key or model. The
+first build compiles the whole engine from source and takes a long time.
+[Setup and repair](./docs/agent-setup.md) shows how to add the vault to Claude Code,
+Codex or OpenCode; the [complete example](./examples/agent-quickstart/) lists every option.
 
 ## Why
 
