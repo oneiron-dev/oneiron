@@ -8,29 +8,57 @@ HTTP or MCP.
 Oneiron is pre-release. There is no release yet, so you build it from source. It is
 licensed under [Apache-2.0](./LICENSE).
 
-Oneironは、AIエージェント向けのRust製オープンソース・メモリエンジンです。エージェントは記憶をローカルに保存し、別のセッションで取り出せます。保存した記憶には、情報の出どころが記録されます。現在はリリース前のため、ソースからビルドして使います。下のクイックスタートでは、アカウント、APIキー、モデルは不要です。
+Oneironは、AIエージェント向けのRust製オープンソース・メモリエンジンです。エージェントは記憶をローカルに保存し、別のセッションで取り出せます。保存した記憶には、情報の出どころが記録されます。現在はリリース前で、ビルド済みのバイナリもまだ公開していないため、ソースからビルドして使います。テスト環境では、ビルドに2時間以上かかり、メモリを最大で約37 GiB使いました。下のクイックスタートは、x86-64のLinuxで動作を確認しています。
 
 <!-- (check) Japanese wording: is メモリエンジン clear (not RAM), and is 情報の出どころ the right word for provenance? -->
 
 [Agent setup](./docs/agent-setup.md) · [Status and contributing](#status-and-contributing) · [Storage layout](#storage-layout) · [HTTP API](./oneiron.skills.md)
 
-## Agent quickstart: install, connect, remember
+## Agent quickstart
 
-On Linux or macOS with Python 3.11+, curl 7.76+, Git, rustup, a C/C++ compiler, CMake
-and pkg-config ([prerequisites](./docs/agent-setup.md#prerequisites)):
+The quickstart script creates a local vault with authentication on and mints a
+credential for one agent. Over HTTP, the agent writes an entry to its private diary
+and reads it back, then saves a research note and recalls it. The script checks that
+MCP initializes, writes a client configuration for Claude Code, Codex or OpenCode,
+and prints its path. It uses no model and no external API key.
+
+It needs Linux on x86-64, a built `oneiron` binary, Python 3.11 or newer and curl
+7.76 or newer.
+
+No prebuilt binary is published yet, so you build one from source. The build needs
+Git, rustup, a C/C++ compiler, CMake and pkg-config. The
+[prerequisites](./docs/agent-setup.md#prerequisites) name the Debian and Ubuntu packages.
 
 ```sh
 git clone https://github.com/oneiron-dev/oneiron.git
 cd oneiron
-python3 examples/agent-quickstart/quickstart.py --keep-running
+CARGO_BUILD_JOBS=1 cargo install --locked --path crates/oneiron-server --bin oneiron
 ```
 
-The script builds this checkout, starts a fresh vault, saves a memory over HTTP and
-recalls it, and checks the MCP connection. It then writes an MCP client config and
-prints the command that stops the vault. It needs no account, API key or model. The
-first build compiles the whole engine from source and takes a long time.
-[Setup and repair](./docs/agent-setup.md) shows how to add the vault to Claude Code,
-Codex or OpenCode; the [complete example](./examples/agent-quickstart/) lists every option.
+On our Linux x86-64 test host, in a job limited to 40 GiB of memory, this build took
+about 2 h 7 min and peaked at about 37.2 GiB. It reused part of the work of two
+earlier parallel attempts, with 16 and 4 jobs, which reached the 40 GiB limit and
+were stopped. We have not finished a build with less memory.
+
+Cargo installs the binary as `$HOME/.cargo/bin/oneiron` by default. Run the
+quickstart with it:
+
+```sh
+python3 examples/agent-quickstart/quickstart.py --binary "$HOME/.cargo/bin/oneiron" --keep-running
+```
+
+With an existing binary, the run took about two seconds on the test host.
+`--keep-running` leaves the vault running and prints the command that stops it.
+
+On macOS, the script needs a signed `oneiron` binary with a keychain access group. A
+plain Cargo build cannot mint the agent credential there. No signed macOS build has
+been tested.
+
+[Setup and repair](./docs/agent-setup.md) shows how to add the vault to a client. The
+[complete example](./examples/agent-quickstart/) lists every option.
+
+Last checked 2026-11-24: this script with a binary built from `01222999f56`, on an
+Arch Linux x86-64 host.
 
 ## Status and contributing
 
@@ -120,15 +148,15 @@ initialized vault and never creates one.
 
 ## Manual installation from source
 
-The [agent quickstart](./examples/agent-quickstart/) installs and connects in
-one run. To install only the CLI, use the Rust toolchain pinned in
-[rust-toolchain.toml](./rust-toolchain.toml), from the repository root:
+This is the build from the [agent quickstart](#agent-quickstart), which gives its
+measured time and memory. Run it from the repository root:
 
 ```sh
-cargo install --locked --path crates/oneiron-server --bin oneiron
+CARGO_BUILD_JOBS=1 cargo install --locked --path crates/oneiron-server --bin oneiron
 ```
 
-This installs `oneiron` in Cargo's bin directory. Without `--bin oneiron`, the
+Cargo uses the Rust toolchain pinned in [rust-toolchain.toml](./rust-toolchain.toml)
+and installs `oneiron` in its bin directory. Without `--bin oneiron`, the
 package also installs its companion binaries. Oneiron is pre-release and is not
 published on crates.io, so install from a checkout. For the exact noninteractive init, agent
 credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
