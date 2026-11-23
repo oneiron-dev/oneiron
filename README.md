@@ -12,7 +12,7 @@ Oneironは、AIエージェント向けのRust製オープンソース・メモ�
 
 <!-- (check) Japanese wording: is メモリエンジン clear (not RAM), and is 情報の出どころ the right word for provenance? -->
 
-[Agent setup](./docs/agent-setup.md) · [Storage layout](#storage-layout) · [HTTP API](./oneiron.skills.md) · [Contributing](./CONTRIBUTING.md)
+[Agent setup](./docs/agent-setup.md) · [Status and contributing](#status-and-contributing) · [Storage layout](#storage-layout) · [HTTP API](./oneiron.skills.md)
 
 ## Agent quickstart: install, connect, remember
 
@@ -31,6 +31,12 @@ prints the command that stops the vault. It needs no account, API key or model. 
 first build compiles the whole engine from source and takes a long time.
 [Setup and repair](./docs/agent-setup.md) shows how to add the vault to Claude Code,
 Codex or OpenCode; the [complete example](./examples/agent-quickstart/) lists every option.
+
+## Status and contributing
+
+The open pull requests are our own work in progress, merged into `main` in batches after
+we check them on our own machines while GitHub CI is paused. To report a bug or propose a
+change, open an issue; [CONTRIBUTING.md](./CONTRIBUTING.md) says what to include.
 
 ## Why
 
