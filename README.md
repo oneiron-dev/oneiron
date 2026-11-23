@@ -108,9 +108,8 @@ cargo install --locked --path crates/oneiron-server --bin oneiron
 ```
 
 This installs `oneiron` in Cargo's bin directory. Without `--bin oneiron`, the
-package also installs `oneiron-server` (the same CLI) and `oneiron-broker`.
-Oneiron is pre-release; this path uses source builds rather than assuming a
-published package or release binary. For the exact noninteractive init, agent
+package also installs its companion binaries. Oneiron is pre-release and is not
+published on crates.io, so install from a checkout. For the exact noninteractive init, agent
 credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 

@@ -2,8 +2,11 @@
 
 Local sync daemon for a single Oneiron vault.
 
+The crate is not published on crates.io yet. Install it from the root of a
+checkout:
+
 ```sh
-cargo install oneiron-server
+cargo install --path crates/oneiron-server
 oneiron-server init ~/.local/share/oneiron/default
 oneiron-server serve --vault-path ~/.local/share/oneiron/default
 oneiron-server skills-pack > oneiron.skills.md
