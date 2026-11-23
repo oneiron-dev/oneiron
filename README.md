@@ -146,11 +146,9 @@ Debug information is adjustable (details in [build performance](./docs/ops/build
 
 ## Web frontend
 
-The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported
-with its complete Git history from `oneiron-dev/oneiron-web`. It includes the
-TanStack Start console/workbench and its existing Tauri desktop shell. The UI
-still uses fixtures and is not connected to an engine; moving it does not enable
-vault operations or change its design.
+The web console and its desktop shell live in [`apps/web`](./apps/web/README.md):
+a TanStack Start console and workbench, and a Tauri desktop shell. The console
+uses fixtures and does not connect to the engine.
 
 Run its Bun commands from `apps/web`. Its Tauri package keeps its own Cargo
 workspace and lockfile, separate from the engine workspace and the existing

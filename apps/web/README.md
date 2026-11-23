@@ -1,16 +1,12 @@
-# oneiron-web
+# Oneiron web console
 
-The Oneiron web surface: the product app (console/workbench) and, later, whatever
-else of the website wants to live in code rather than mocks.
+The Oneiron console and workbench, with a Tauri desktop shell. It lives at
+`apps/web` in the engine repository.
 
 - **Framework:** TanStack Start (Vite, TanStack Router, server functions opt-in).
-  Chosen 2026-08-14 for interactivity-first defaults; research record in
-  `oneiron-mocks` FLOWS.md and the session notes.
-- **Design truth:** graduates from `oneiron-mocks` (Safelight system, FLOWS.md
-  ruling ledger). The mocks repo stays the annotation bench until parity.
-- **Engine frontend:** this app now lives at `apps/web` in the `oneiron` engine
-  repo, imported with its full Git history under U1 = A (2026-11-03). The move
-  does not change the UI or connect its fixtures to a running engine.
+- **Design tokens:** the Safelight token sheet in `src/styles/safelight.css`.
+- **Engine connection:** none yet. The console uses fixtures and does not
+  connect to a running engine.
 
 ## Run
 
@@ -21,7 +17,7 @@ bun run dev
 
 ## Layout
 
-- `src/styles/safelight.css` — the Safelight token sheet (carried from the mocks).
+- `src/styles/safelight.css` — the Safelight token sheet.
 - `public/fonts/` — bundled Source Serif 4, Barlow, Server Mono and Departure Mono.
 - `src/routes/` — TanStack file routes.
 
