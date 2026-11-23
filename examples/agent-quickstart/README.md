@@ -1,20 +1,30 @@
 # Agent quickstart
 
-From the repository root, on a development/build host:
+From the repository root on Linux (on macOS, see the [signed binary requirement](../../docs/agent-setup.md#prerequisites)):
 
 ```sh
-python3 examples/agent-quickstart/quickstart.py --keep-running
+python3 examples/agent-quickstart/quickstart.py --binary /absolute/path/to/oneiron --keep-running
 ```
 
-The script installs this checkout, initializes a fresh authenticated vault,
-mints a scoped agent credential, starts the daemon, saves an agent-private
-diary memory through HTTP, recalls that exact entry, and connects MCP stdio.
-It needs no account, API key, model service, dashboard, or interactive pairing.
+The script starts a fresh authenticated loopback vault and mints its agent
+credential. Over HTTP it saves an entry and reads it back from its private diary.
+It then saves and recalls a vault-readable research note.
+It checks the memory round trip and runs MCP `initialize` over stdio. No
+account, external API key, model service, dashboard, or interactive pairing
+is needed.
 
-Prerequisites: Python 3.11+, curl 7.76+, and (unless `--binary` is supplied)
-rustup plus the native compiler tools. See
-[the setup guide](../../docs/agent-setup.md) for unattended prerequisite commands,
+Default `vault.recall` does not include diary entries.
+
+Use a compatible Linux binary from this revision, Python 3.11+, and curl
+7.76+. The tested binary was Linux x86-64. The script does not download a
+binary. See [the setup guide](../../docs/agent-setup.md) for build dependencies,
 client configuration for Claude Code/Codex/OpenCode, and error recovery.
+
+The `--binary` option skips compilation. Without it, Linux builds this checkout
+with Cargo's release profile. In one Linux x86-64 test, a one-job install with
+partly cached build artifacts took about 2 h 7 min and peaked at about 37.2 GiB.
+A cold parallel attempt was killed at a 40 GiB cap. A successful cold build and
+a 16 GiB source install were not demonstrated.
 
 Options:
 
@@ -31,9 +41,9 @@ The script prints the actual URL and paths, and writes `connection.json` and
 configuration with absolute paths. Keep `agent.cred` and `oneiron.toml` private.
 The printed `kill <pid>` command stops the server without deleting the memory.
 
-The demo disables device keystore access in its fresh config to avoid OS
-keychain prompts. It does not disable HTTP auth or loosen claim policy.
-Private-world keys and device-signing doors are not part of this example.
+The demo uses the platform keystore to mint its agent credential. On Linux,
+keys are in an owner-only directory beside the vault; no keychain login is
+needed. HTTP auth and claim policy are unchanged.
 
 ## Credential names
 
