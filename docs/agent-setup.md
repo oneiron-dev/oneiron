@@ -39,8 +39,7 @@ login shell. With an existing binary from this checkout, skip the build:
 python3 examples/agent-quickstart/quickstart.py --binary /absolute/path/to/oneiron --keep-running
 ```
 
-Repository contributors must still follow the build-host rules in
-[AGENTS.md](../AGENTS.md): do not run a source build on the owner's Mac.
+Contributors to this repository: the build rules are in [AGENTS.md](../AGENTS.md).
 
 ## What the script does
 

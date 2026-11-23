@@ -15,7 +15,6 @@ Prerequisites: Python 3.11+, curl 7.76+, and (unless `--binary` is supplied)
 rustup plus the native compiler tools. See
 [the setup guide](../../docs/agent-setup.md) for unattended prerequisite commands,
 client configuration for Claude Code/Codex/OpenCode, and error recovery.
-Repository build-host rules still apply; do not build on the owner's Mac.
 
 Options:
 
