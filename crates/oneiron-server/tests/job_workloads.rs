@@ -87,7 +87,7 @@ fn pin_json(tag: &str) -> Value {
                 "disk_mib": 2_048,
                 "maximum_secs": MAXIMUM_SECS,
             },
-            "scope": {"kind": "host"},
+            "scope": "host",
             "network": "none",
             "outputs": [{"name": "verdict.json", "returnable": true}],
         }
