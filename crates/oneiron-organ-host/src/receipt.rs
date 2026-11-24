@@ -87,7 +87,7 @@ pub struct ReceiptSignature {
 /// What a machine signs for a receipt: the call it answers, the report it
 /// returned beside it, and the receipt with no signature.
 #[derive(Serialize)]
-struct SignedReceipt<'a> {
+struct ReceiptSigningPayload<'a> {
     call_nonce: &'a str,
     report: &'a Hash32,
     receipt: &'a CallReceipt,
@@ -101,7 +101,7 @@ impl CallReceipt {
             signed_by: None,
             ..self.clone()
         };
-        to_vec(&SignedReceipt {
+        to_vec(&ReceiptSigningPayload {
             call_nonce,
             report,
             receipt: &unsigned,
