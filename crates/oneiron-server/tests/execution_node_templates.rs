@@ -14,12 +14,15 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use oneiron::job_workload::{
+    BoundRequirement, DeviceKind, DeviceLease, DevicePlacement, ScopeBound, Sharing,
+};
 use oneiron::{Vault, VaultConfig};
 use oneiron_server::gpu_execution_node::wire::{
-    NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
+    DeviceClaim, NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
-    ExecutionNode, ExecutionNodeSettings, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe, ScopeBound,
+    ExecutionNode, ExecutionNodeSettings, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -65,10 +68,16 @@ fn pin(digest: &str) -> WorkloadPin {
         entry: "tools/units/run.sh".to_owned(),
         args: Vec::new(),
         request: ResourceRequest {
-            gpus: 1,
-            vram_mib: 1_024,
+            cpu_threads: 0,
             memory_mib: 8 * 1_024,
             disk_mib: 4 * 1_024,
+            devices: vec![DeviceClaim {
+                kind: DeviceKind::Gpu,
+                count: 1,
+                memory_mib: 1_024,
+                features: vec!["cuda".to_owned()],
+                sharing: Sharing::Exclusive,
+            }],
             maximum_secs: 1_800,
         },
         scope: ScopeKind::Host,
@@ -193,8 +202,13 @@ fn a_request_above_the_templates_ceiling_is_refused() -> TestResult {
         Ok(()),
         "a request at every ceiling fits"
     );
-    let above: [(&str, fn(&mut ResourceRequest)); 4] = [
-        ("gpus", |request| request.gpus = 2),
+    let above: [(&str, fn(&mut ResourceRequest)); 6] = [
+        ("devices", |request| request.devices[0].count = 2),
+        ("devices", |request| {
+            let second = request.devices[0].clone();
+            request.devices.push(second);
+        }),
+        ("cpu_threads", |request| request.cpu_threads = 5),
         ("maximum_secs", |request| request.maximum_secs = 1_801),
         ("memory_mib", |request| request.memory_mib = 8 * 1_024 + 1),
         ("disk_mib", |request| request.disk_mib = 4 * 1_024 + 1),
@@ -208,6 +222,38 @@ fn a_request_above_the_templates_ceiling_is_refused() -> TestResult {
             "{field}"
         );
     }
+    let mut at_threads = pin(&digest);
+    at_threads.request.cpu_threads = 4;
+    assert_eq!(
+        node.admit_pin(&at_threads),
+        Ok(()),
+        "a request at the template's default threads fits"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_placement_whose_unified_memory_and_host_memory_pass_the_ceiling_is_refused() -> TestResult {
+    let node = settings(&node_text(1_800, ""))?;
+    let digest = node.template_digest("probe").ok_or("probe")?;
+    let asked = pin(&digest);
+    let placed = |host_memory_mib| DevicePlacement {
+        devices: vec![DeviceLease {
+            claim: 0,
+            device_id: "GPU-0f1e2d3c".to_owned(),
+            sharing: Sharing::Exclusive,
+        }],
+        host_memory_mib,
+    };
+    // A dedicated card leases the request's host memory alone: at the
+    // template's 8 GiB it fits.
+    assert_eq!(node.admit_placement(&asked, &placed(8 * 1_024)), Ok(()));
+    // A unified device adds its claim's 1 GiB to the same pool (pass 34,
+    // section 2.1): past the ceiling, the launch is refused.
+    assert_eq!(
+        node.admit_placement(&asked, &placed(8 * 1_024 + 1_024)),
+        Err("request_above_ceiling: host_memory_mib".to_owned())
+    );
     Ok(())
 }
 
@@ -271,7 +317,10 @@ fn a_template_requires_the_file_wall_and_the_closed_network_unless_it_says_other
     let template = plain.templates.get("probe").ok_or("probe")?;
     assert_eq!(
         template.require,
-        [ScopeBound::FileWall, ScopeBound::NetworkClosed],
+        [ScopeBound::FileWall, ScopeBound::NetworkClosed].map(|bound| BoundRequirement {
+            bound,
+            kernel: false
+        }),
         "the default list keeps a workload out of the vault and off the network"
     );
     let sealed = settings(&node_text(
