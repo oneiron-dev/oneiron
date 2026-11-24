@@ -17,6 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub mod files_search;
 #[cfg(feature = "iroh")]
 pub mod iroh_transport;
+pub mod message;
 #[cfg(feature = "sync")]
 pub mod sync_dialer;
 pub mod transport_key;
