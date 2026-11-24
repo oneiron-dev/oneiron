@@ -153,15 +153,20 @@ def find_root(explicit: str | None = None) -> Path:
 
 
 def is_test_path(rel: str) -> bool:
-    """The ratchet's non-test definition, inverted.
+    """The ratchet's non-test definition (scripts/ratchet/check.sh), inverted.
 
-    A path with a `tests/` component, or a file named `tests.rs` / `*_tests.rs`.
+    A path with a `tests/` component, or a file named `tests.rs`, `*_tests.rs` or
+    `tests_*.rs`.
     """
     parts = PurePosixPath(rel).parts
     if "tests" in parts[:-1]:
         return True
     name = parts[-1]
-    return name == "tests.rs" or name.endswith("_tests.rs")
+    return (
+        name == "tests.rs"
+        or name.endswith("_tests.rs")
+        or (name.startswith("tests_") and name.endswith(".rs"))
+    )
 
 
 def bucket(loc: int) -> str:
@@ -538,7 +543,7 @@ def render_top(data: dict) -> str:
         "run the generator locally only to read a fresh map.",
         "`--sizes` prints the live line-count table (never committed).",
         "Test files follow the ratchet definition: a `tests/` path component, `tests.rs`, "
-        "or `*_tests.rs`.",
+        "`*_tests.rs` or `tests_*.rs`.",
         *legend_lines(),
         "",
         "## Workspace",
@@ -807,25 +812,39 @@ def alias_list(text: str, where: str, column: str) -> list[str]:
 
 
 def check_alias_path(path: str, where: str) -> None:
+    """Fail unless `path` is one repo-relative file path in its one canonical spelling.
+
+    `PurePosixPath` drops `.` parts, repeated slashes and a trailing slash, so
+    `./crates/x.rs`, `crates//x.rs` and `crates/x.rs/` all fail: every accepted
+    path is spelled exactly as the map spells it, and a repeated path is always a
+    repeated string.
+    """
     parts = PurePosixPath(path).parts
     if (
-        path.startswith("/")
+        not parts
+        or path.startswith("/")
         or "\\" in path
-        or any(part in (".", "..") for part in parts)
+        or ".." in parts
         or any(c.isspace() for c in path)
     ):
         raise CodemapError(f"{where}: {path!r} is not a repo-relative file path")
+    canonical = str(PurePosixPath(path))
+    if canonical != path:
+        raise CodemapError(f"{where}: write the path {path!r} as {canonical!r}")
 
 
 def load_aliases(root: Path) -> tuple[list[dict], list[str]]:
     """The reviewed capability aliases and the phrases the review could not place.
 
-    The file holds exactly one table with the header `| phrase | synonyms | paths |
-    spec_ids | note |`, its separator row, then one row of five cells per capability.
-    Anything else that looks like a table row, a missing or renamed column, an extra
+    The file has three parts, in order: free prose (a title and notes, with no `|`),
+    exactly one table with the header `| phrase | synonyms | paths | spec_ids | note |`,
+    its separator row and one row of five cells per capability, and after the table
+    only blank lines and an optional `## Phrases not placed` heading followed by
+    one-line `- ` bullets.  Every other line fails closed: a row that lost its opening
+    or closing `|` (it ends the table, so it is a line after the table), any heading or
+    prose after the table, a `|` in the prose, a missing or renamed column, an extra
     cell, an empty phrase, note or path list, an empty list item, a path that is not
-    repo-relative and a repeated phrase or path all fail closed, as does any line
-    under `## Phrases not placed` that is not a one-line `- ` bullet.
+    repo-relative in its canonical spelling and a repeated phrase or path.
     """
     rel = ALIASES_PATH
     try:
@@ -850,9 +869,13 @@ def load_aliases(root: Path) -> tuple[list[dict], list[str]]:
     end = start + 2
     while end < len(lines) and table_cells(lines[end]) is not None:
         end += 1
-    for i, line in enumerate(lines):
-        if not start <= i < end and line.lstrip().startswith("|"):
-            raise CodemapError(f"{rel}:{i + 1}: a table row outside the alias table")
+    for i in range(start):
+        if "|" in lines[i]:
+            raise CodemapError(
+                f"{rel}:{i + 1}: a `|` before the alias table; only prose may precede the table"
+            )
+        if lines[i].rstrip() == ALIAS_UNPLACED_HEADING:
+            raise CodemapError(f"{rel}:{i + 1}: {ALIAS_UNPLACED_HEADING!r} must follow the table")
     entries: list[dict] = []
     phrases: set[str] = set()
     for i in range(start + 2, end):
@@ -886,15 +909,27 @@ def load_aliases(root: Path) -> tuple[list[dict], list[str]]:
         raise CodemapError(f"{rel}: the alias table has no rows")
     unplaced: list[str] = []
     in_unplaced = False
-    for i, line in enumerate(lines):
-        if line.startswith("#"):
-            in_unplaced = line.strip() == ALIAS_UNPLACED_HEADING
-        elif in_unplaced and line.strip():
-            if not line.startswith("- ") or not line[2:].strip():
-                raise CodemapError(
-                    f"{rel}:{i + 1}: each line under {ALIAS_UNPLACED_HEADING!r} is one `- ` bullet"
-                )
+    for i in range(end, len(lines)):
+        line = lines[i].rstrip()
+        where = f"{rel}:{i + 1}"
+        if not line:
+            continue
+        if line == ALIAS_UNPLACED_HEADING and not in_unplaced:
+            in_unplaced = True
+        elif in_unplaced and line.startswith("- ") and line[2:].strip():
             unplaced.append(line[2:].strip())
+        elif "|" in line and not in_unplaced:
+            raise CodemapError(
+                f"{where}: a table row outside the alias table; every row starts and ends "
+                "with `|`, and the table has no blank line"
+            )
+        elif in_unplaced:
+            raise CodemapError(f"{where}: each line under {ALIAS_UNPLACED_HEADING!r} is one `- ` bullet")
+        else:
+            raise CodemapError(
+                f"{where}: after the alias table only blank lines and {ALIAS_UNPLACED_HEADING!r} "
+                "with its `- ` bullets may follow"
+            )
     return entries, unplaced
 
 

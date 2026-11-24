@@ -79,6 +79,29 @@ class SpecIdTest(unittest.TestCase):
             self.assertIn("| OF-498c | `crates/demo/src/things.rs` |", page)
 
 
+class TestPathTest(unittest.TestCase):
+    def test_test_paths_match_the_ratchet(self):
+        for rel in ("src/tests.rs", "src/a/b_tests.rs", "src/a/tests_saver.rs", "tests/x.rs", "src/tests/x.rs"):
+            with self.subTest(rel):
+                self.assertTrue(codemap.is_test_path(rel))
+        for rel in ("src/lib.rs", "src/contests.rs", "src/attests_x.rs", "src/tests_x/mod_x.rs"):
+            with self.subTest(rel):
+                self.assertFalse(codemap.is_test_path(rel))
+
+    def test_spec_index_skips_a_tests_prefixed_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            src = root / "crates" / "demo" / "src"
+            (src / "lib.rs").write_text(
+                "//! Demo crate root.\n\npub mod relay;\n#[cfg(test)]\nmod tests_saver;\n"
+            )
+            (src / "tests_saver.rs").write_text("//! Saver tests (ARCH-0052).\n")
+            rc, out = run(root)
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("ARCH-0052", (root / codemap.SPEC_PATH).read_text())
+            self.assertIn("| `src/tests_saver.rs` | test |", (root / codemap.DIR_PATH / "demo.md").read_text())
+
+
 class AliasPathTest(unittest.TestCase):
     def test_alias_path_that_stops_existing_fails_loudly(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,6 +165,21 @@ class MalformedAliasFileTest(unittest.TestCase):
         "no rows": "# Aliases\n\n" + HEADER,
         "no table": "# Aliases\n\nNothing here.\n",
         "prose under phrases not placed": HEADER + RELAY_ROW + UNPLACED + "Tried more terms.\n",
+        "last row without its opening pipe": HEADER + RELAY_ROW + ROOT_ROW[1:],
+        "last row without its closing pipe": HEADER + RELAY_ROW + ROOT_ROW.rstrip("|\n") + "\n",
+        "pipe before the table": "# Aliases | draft\n\n" + HEADER + RELAY_ROW,
+        "dot-slash path": HEADER + ROOT_ROW.replace("crates/demo", "./crates/demo"),
+        "path twice in two spellings": HEADER
+        + ROOT_ROW.replace("crates/demo/src/lib.rs", "crates/demo/src/lib.rs; ./crates/demo/src/lib.rs"),
+        "doubled slash": HEADER + ROOT_ROW.replace("crates/demo", "crates//demo"),
+        "trailing slash": HEADER + ROOT_ROW.replace("lib.rs", "lib.rs/"),
+        "dot path": HEADER + ROOT_ROW.replace("crates/demo/src/lib.rs", "."),
+        "non-heading under phrases not placed": GOOD_ALIASES + "\n#typo\nnot a bullet\n",
+        "heading after phrases not placed": GOOD_ALIASES + "\n## More\n\nTried more terms.\n",
+        "second phrases not placed": GOOD_ALIASES + UNPLACED,
+        "phrases not placed before the table": "# Aliases\n" + UNPLACED + "\n" + HEADER + RELAY_ROW,
+        "prose after the table": HEADER + RELAY_ROW + "\nA note.\n",
+        "indented phrases not placed": HEADER + RELAY_ROW + UNPLACED.replace("## ", " ## "),
     }
 
     def test_malformed_alias_files_fail_closed(self):
@@ -179,6 +217,42 @@ class MalformedAliasFileTest(unittest.TestCase):
         )
         self.assertEqual(aliases[1]["spec_ids"], [])
         self.assertEqual(unplaced, ["**Undo any verb.** Tried `global undo`."])
+
+
+class CheckedInAliasFileTest(unittest.TestCase):
+    """The checked-in alias table parses, and each one-line damage to it fails closed."""
+
+    TEXT = (Path(__file__).resolve().parents[2] / codemap.ALIASES_PATH).read_text()
+
+    def load(self, text: str) -> tuple[list[dict], list[str]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            return codemap.load_aliases(make_repo(tmp, text))
+
+    def edit_line(self, number: int, edit) -> str:
+        lines = self.TEXT.split("\n")
+        lines[number - 1] = edit(lines[number - 1])
+        return "\n".join(lines)
+
+    def test_checked_in_alias_file_parses(self):
+        aliases, unplaced = self.load(self.TEXT)
+        self.assertEqual(len(aliases), 100)
+        self.assertEqual(len(unplaced), 3)
+
+    def test_last_row_without_its_opening_pipe_fails(self):
+        last_row = max(a["line"] for a in self.load(self.TEXT)[0])
+        with self.assertRaisesRegex(codemap.CodemapError, rf":{last_row}: a table row outside"):
+            self.load(self.edit_line(last_row, lambda line: line.replace("|", "", 1)))
+
+    def test_one_path_in_two_spellings_fails(self):
+        first = self.load(self.TEXT)[0][0]
+        path = first["paths"][0]
+        text = self.edit_line(first["line"], lambda line: line.replace(path, f"{path}; ./{path}", 1))
+        with self.assertRaisesRegex(codemap.CodemapError, rf":{first['line']}: write the path"):
+            self.load(text)
+
+    def test_appended_non_heading_and_prose_fail(self):
+        with self.assertRaisesRegex(codemap.CodemapError, "is one `- ` bullet"):
+            self.load(self.TEXT + "\n#typo\nnot a bullet\n")
 
 
 if __name__ == "__main__":
