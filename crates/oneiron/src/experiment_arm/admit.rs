@@ -1,20 +1,26 @@
-//! `vault.arms.admit` (design pass 32 section 5, row 4): the lane lead admits
-//! one arm into a seated family of a GPU line. In one write, after every
-//! check and before anything is written, the engine judges the caller again
-//! against the line, reads the intent key, mints the period record at its
-//! first touch, folds the period's spend and plans the arm's first allowance
-//! (one rung-1 cap) in the draw order of section 4.2. The arm then holds
-//! that room for as long as it stays open in that period: no other arm can
-//! take it. The hold names the buckets it sits on, and the fold charges
-//! them once: in full while the arm is open, then only what the arm's units
-//! took. It lapses at the period's end and never funds a later period. A
-//! refusal discards the whole write: no arm, no intent, no period record.
+//! `vault.arms.admit` (design pass 32 r2, section 5.2 row 4): the lane lead
+//! admits one arm into a seated family of a GPU line. In one write, the
+//! engine mints the period record at its first touch, judges the caller
+//! again (the line cover and the lead role, section 5.1), reads the intent
+//! key and the arm's logical key, and plans the arm's first allowance (one
+//! rung-1 cap, `period.policy.first_rung_secs()`) in the draw order of
+//! section 4.2. The hold is an earmark on named pools: no other arm can take
+//! that room while it lives. It ends at the first of: rung 1 leaves `Open`,
+//! the arm is withdrawn ([`ExperimentArm::end_hold`]), the period ends, or
+//! `hold_ttl_secs` pass with no claim ever made
+//! ([`ExperimentArm::hold_ended_at`]); the fold then charges its pools only
+//! what the arm's units took. A re-run of an experiment (the same contract
+//! sha256 as a closed arm it supersedes) gets no hold and keeps its
+//! predecessor's cohort. A refusal discards the whole write: no arm, no
+//! intent, no period record.
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::consent::AuthenticatedOwner;
+use crate::gpu_line::doors_caller;
 use crate::gpu_line::{
-    AllowanceHold, BudgetDenied, DrawAsk, DrawPurpose, IntentAsk, IntentStand, PeriodRoom,
-    SpendRow, plan_draws,
+    AllowanceHold, BudgetDenied, DrawAsk, DrawPurpose, GpuLinePeriod, IntentAsk, IntentStand,
+    LineRole, PeriodRoom, SpendRow, claims_at_rung_in_txn, mint_first_in_txn, plan_draws,
 };
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE,
@@ -24,7 +30,7 @@ use crate::receipt::task_type_ref::TypeRef;
 use crate::{EntityId, Vault};
 
 use super::{
-    ARM_TITLE_MAX_BYTES, ArmRung, ArmView, ContractPin, EXPERIMENT_ARMS, ExperimentArm,
+    ARM_TITLE_MAX_BYTES, ArmRung, ArmState, ArmView, ContractPin, EXPERIMENT_ARMS, ExperimentArm,
     LedgerRowRef, RunnerRef,
 };
 
@@ -35,6 +41,8 @@ pub const ARMS_ADMIT_VERB: &str = "vault.arms.admit";
 const ARM_TEXT_MAX_BYTES: usize = 512;
 /// The most lab ledger handles one arm carries.
 const ARM_LEDGER_ROWS_MAX: usize = 32;
+/// The longest planner card digest, in bytes.
+const CARD_DIGEST_MAX_BYTES: usize = 128;
 
 /// `vault.arms.admit`: the arm to admit, under the caller's intent key.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -52,26 +60,31 @@ pub struct ArmAdmitRequest {
     pub title: String,
     pub contract: ArmContractAsk,
     pub runner: RunnerRef,
-    /// The arm this one corrects, in the same family.
+    /// The closed arm of the same family this one re-runs (same contract
+    /// sha256) or corrects (a new contract).
     #[serde(default)]
     pub supersedes: Option<EntityId>,
     /// The lab ledger lines that mirror the arm, by handle.
     #[serde(default)]
     pub ledger_rows: Vec<LedgerRowRef>,
+    /// The digest of the planner card the lead read before admitting.
+    #[serde(default)]
+    pub card_digest: Option<String>,
 }
 
-/// The frozen contract an admission names; the engine stamps its freeze
-/// time.
+/// The contract an admission pins; the engine stamps the pin time.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArmContractAsk {
     pub path: String,
     /// SHA-256 of the contract text, lower hex.
     pub sha256: String,
-    /// The sealed NOTE that mirrors the contract text; its seal time is the
-    /// freeze time.
+    /// A sealed NOTE whose text hashes to `sha256`.
     #[serde(default)]
     pub note: Option<EntityId>,
+    /// The lane's own freeze time, kept as its claim.
+    #[serde(default)]
+    pub claimed_frozen_at_ms: Option<u64>,
 }
 
 impl ArmAdmitRequest {
@@ -109,26 +122,53 @@ impl ArmAdmitRequest {
         {
             return bad("an arm carries at most 32 lab ledger handles, each an id and a sha256");
         }
+        if self.card_digest.as_deref().is_some_and(|digest| {
+            digest.is_empty()
+                || digest.len() > CARD_DIGEST_MAX_BYTES
+                || !digest.bytes().all(|b| b.is_ascii_graphic())
+        }) {
+            return bad("a planner card digest is 1 to 128 printable ASCII bytes");
+        }
         if self.family == self.line {
             return bad("a family is a project seated on the line, not the line itself");
         }
         Ok(())
+    }
+
+    /// Whether the stored arm `arm` is what this ask would admit: the same
+    /// logical key (family and contract sha256) asked the same way.
+    fn admitted_as(&self, arm: &ExperimentArm) -> bool {
+        arm.line == self.line
+            && arm.family == self.family
+            && arm.type_ref == self.type_ref
+            && arm.title == self.title
+            && arm.contract.path == self.contract.path
+            && arm.contract.sha256 == self.contract.sha256
+            && arm.contract.note == self.contract.note
+            && arm.contract.claimed_frozen_at_ms == self.contract.claimed_frozen_at_ms
+            && arm.runner == self.runner
+            && arm.supersedes == self.supersedes
+            && arm.ledger_rows == self.ledger_rows
+            && arm.card_digest == self.card_digest
     }
 }
 
 /// `vault.arms.admit` as `memory`'s caller, with the owner's own proof when
 /// its credential is owner-grade: admits the arm `request` names, with its
 /// first allowance held, at `now_ms` on the host's clock. The caller is
-/// judged again in the write, against the line (`verb_grant_caller` with the
-/// line cover).
+/// judged again in the write: the line cover and the lead role on the line.
 ///
 /// # Errors
 ///
 /// `bad_request` for a malformed ask or a blank intent key; `forbidden`
-/// for a caller whose Grant does not reach the line; `not_found` for an
-/// unknown line or supersedes target; `invalid_state` for an unseated
-/// family, a target in another family, an unsealed contract NOTE, a
-/// period not open, or an intent key that names another ask;
+/// for a caller whose Grant does not reach the line or holds no lead role
+/// on it (`not_this_line`); `not_found` for an unknown line or supersedes
+/// target; `invalid_state` for a period not begun or not mintable, a family
+/// with no seat in force, a contract an open arm of the family pins under
+/// another ask (`contract_conflict`), a closed arm's contract without
+/// `supersedes`, a supersedes target that is open, in another family or
+/// already superseded, a contract NOTE that is not sealed or whose text
+/// does not hash to the pin, or an intent key that names another ask;
 /// `budget_spent` (`budget_denied`) when no first allowance fits now; a
 /// store failure.
 pub fn arm_admit_as(
@@ -154,9 +194,21 @@ fn admit_in_txn(
     request: &ArmAdmitRequest,
     now_ms: u64,
 ) -> MemoryResult<ArmView> {
-    let line = crate::gpu_line::line_in_txn(vault, wtxn, &request.line)?
-        .ok_or_else(|| not_found("no GPU line is set for this project"))?;
-    memory.verb_grant_caller_admits_over_in_txn(wtxn, owner, ARMS_ADMIT_VERB, line.project)?;
+    let caller = doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_ADMIT_VERB, request.line)?;
+    let minted = match mint_first_in_txn(vault, wtxn, &request.line, now_ms)? {
+        Ok(Some(minted)) => minted,
+        Ok(None) => return Err(not_found("no GPU line is set for this project")),
+        Err(refusal) => {
+            return Err(invalid_state(&format!(
+                "the line's period cannot be minted: {refusal}"
+            )));
+        }
+    };
+    let line = minted.line;
+    caller.require_role(&line, &[LineRole::Lead], ARMS_ADMIT_VERB)?;
+    let period = minted.period.ok_or_else(|| {
+        invalid_state("period_not_begun: the line's first period has not begun; admit the arm once it starts")
+    })?;
     let asker = memory.actor();
     let intent = IntentAsk::new(asker, ARMS_ADMIT_VERB, &request.intent_key, &request.ask())?;
     if let IntentStand::Replayed(written) = intent.stand_in_txn(vault, wtxn)?? {
@@ -167,82 +219,105 @@ fn admit_in_txn(
         .ok_or_else(|| not_found("the arm this intent key admitted is gone"))?;
         return Ok(ArmView::of(arm, true));
     }
+    let family_arms: Vec<ExperimentArm> = vault
+        .experiment_arms_in_txn(wtxn)?
+        .into_iter()
+        .filter(|arm| arm.line == request.line && arm.family == request.family)
+        .collect();
+    // The logical key (section 5.2): an open arm of the family already pins
+    // this contract. The same ask answers it under any intent key, which
+    // then names it too; another ask is a conflict.
+    if let Some(open) = family_arms
+        .iter()
+        .find(|arm| arm.is_open() && arm.contract.sha256 == request.contract.sha256)
+    {
+        if !request.admitted_as(open) {
+            return Err(invalid_state(
+                "contract_conflict: an open arm of this family already pins this contract under another ask",
+            ));
+        }
+        intent.keep_in_txn(vault, wtxn, open.id.as_bytes().to_vec(), now_ms)?;
+        return Ok(ArmView::of(open.clone(), true));
+    }
+    // The live seat: the mint above marked a new idea it no longer funds as
+    // lapsed. A seat that counts from a later mint and took no late floor
+    // has no room this period, which the draw plan below refuses.
     let seat = line.seat(&request.family).ok_or_else(|| {
         invalid_state(
-            "the family is not seated on this line; seat it with vault.gpu.lines.families.admit",
+            "seat_lapsed: the family holds no seat in force on this line; seat it with vault.gpu.lines.families.admit",
         )
     })?;
-    if let Some(target) = request.supersedes {
-        let target = vault
-            .experiment_arm_in_txn(wtxn, &target)?
-            .ok_or_else(|| not_found("no experiment arm has the supersedes id"))?;
-        if target.line != request.line || target.family != request.family {
-            return Err(invalid_state(
-                "an arm supersedes only an arm of its own family",
-            ));
-        }
+    let target = match request.supersedes {
+        Some(id) => Some(supersedes_target(vault, wtxn, request, &family_arms, id)?),
+        None => None,
+    };
+    let rerun = target
+        .as_ref()
+        .is_some_and(|target| target.contract.sha256 == request.contract.sha256);
+    if !rerun
+        && family_arms
+            .iter()
+            .any(|arm| arm.contract.sha256 == request.contract.sha256)
+    {
+        return Err(invalid_state(
+            "a closed arm of this family pins this contract; a re-run names the experiment's last closed arm in supersedes",
+        ));
     }
-    let frozen_at_ms = match request.contract.note {
-        Some(note) => {
-            crate::note::note_seal_in_txn(&vault.store, wtxn, note)?
-                .ok_or_else(|| {
-                    invalid_state(
-                        "the contract NOTE is not sealed; seal it with vault.notes.seal first",
-                    )
-                })?
-                .sealed_at
-        }
-        None => now_ms,
-    };
-    let period = match crate::gpu_line::period_in_txn(vault, wtxn, &line, now_ms)? {
-        Ok(Some(period)) => period,
-        Ok(None) => {
-            return Err(invalid_state(
-                "the line's first period has not begun; admit the arm once it starts",
-            ));
-        }
-        Err(refusal) => {
-            return Err(invalid_state(&format!(
-                "the line's period cannot be minted: {refusal}"
-            )));
-        }
-    };
+    if let Some(note) = request.contract.note {
+        contract_note_matches(vault, wtxn, note, &request.contract.sha256)?;
+    }
     let id = EntityId::now();
-    let rows = vault.hold_rows_in_txn(wtxn, &request.line, period.index)?;
-    let room = PeriodRoom::fold(&period, &rows);
-    let units = line.first_rung_secs();
-    let draws = plan_draws(
-        &room,
-        &DrawAsk {
-            arm: id,
-            family: request.family,
-            track: seat.track,
-            purpose: DrawPurpose::FirstAllowanceHold,
-            units,
-        },
-    )
-    .map_err(|denied| budget_denied(units, &denied))?;
+    let (first_allowance, cohort) = match &target {
+        // A re-run gets no hold and keeps its predecessor's cohort (3.3, 4.4).
+        Some(target) if rerun => (None, target.cohort),
+        _ => {
+            let rows = vault.spend_rows_in_txn(wtxn, &request.line, &period, now_ms)?;
+            let room = PeriodRoom::fold(&period, &line.families, &rows);
+            let units = period.policy.first_rung_secs();
+            let draws = plan_draws(
+                &room,
+                &DrawAsk {
+                    arm: id,
+                    family: request.family,
+                    track: seat.track,
+                    purpose: DrawPurpose::FirstAllowanceHold,
+                    units,
+                },
+            )
+            .map_err(|denied| budget_denied(units, &denied))?;
+            let hold = AllowanceHold {
+                period: period.index,
+                units,
+                draws,
+            };
+            // The comparison's cohort (two rules in force) is row M2-G's.
+            (Some(hold), None)
+        }
+    };
     let arm = ExperimentArm {
         id,
         line: request.line,
         family: request.family,
+        seat: seat.seat,
         track: seat.track,
         type_ref: request.type_ref.clone(),
         title: request.title.clone(),
         contract: ContractPin {
             path: request.contract.path.clone(),
             sha256: request.contract.sha256.clone(),
-            frozen_at_ms,
+            pinned_at_ms: now_ms,
+            claimed_frozen_at_ms: request.contract.claimed_frozen_at_ms,
             note: request.contract.note,
         },
         runner: request.runner.clone(),
         supersedes: request.supersedes,
-        first_allowance: Some(AllowanceHold {
-            period: period.index,
-            units,
-            draws,
-        }),
+        cohort,
+        cohort_block: None,
+        card_digest: request.card_digest.clone(),
+        first_allowance,
+        hold_end: None,
         rungs: vec![ArmRung::open(1, None)],
+        state: ArmState::Open,
         ledger_rows: request.ledger_rows.clone(),
         admitted_by: Some(asker),
         admitted_at_ms: now_ms,
@@ -253,32 +328,108 @@ fn admit_in_txn(
     Ok(ArmView::of(arm, false))
 }
 
+/// The arm `id` a request supersedes: a closed arm of the request's own
+/// family that no arm supersedes yet.
+fn supersedes_target(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &ArmAdmitRequest,
+    family_arms: &[ExperimentArm],
+    id: EntityId,
+) -> MemoryResult<ExperimentArm> {
+    let target = vault
+        .experiment_arm_in_txn(txn, &id)?
+        .ok_or_else(|| not_found("no experiment arm has the supersedes id"))?;
+    if target.line != request.line || target.family != request.family {
+        return Err(invalid_state(
+            "an arm supersedes only an arm of its own family",
+        ));
+    }
+    if target.is_open() {
+        return Err(invalid_state(
+            "an arm supersedes only a closed arm; close the open one with its verdict first",
+        ));
+    }
+    if family_arms.iter().any(|arm| arm.supersedes == Some(id)) {
+        return Err(invalid_state(
+            "the supersedes target already has a successor; name the newest arm of the experiment",
+        ));
+    }
+    Ok(target)
+}
+
+/// Refuses a contract NOTE that is not sealed, or whose sealed text does
+/// not hash to the pinned `sha256`. A sealed NOTE takes no edit, so its
+/// text now is its sealed text.
+fn contract_note_matches(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    sha256: &str,
+) -> MemoryResult<()> {
+    if crate::note::note_seal_in_txn(&vault.store, txn, note)?.is_none() {
+        return Err(invalid_state(
+            "the contract NOTE is not sealed; seal it with vault.notes.seal first",
+        ));
+    }
+    let text = vault.note_text_in_txn(txn, note)?;
+    if format!("{:x}", Sha256::digest(text.as_bytes())) != sha256 {
+        return Err(invalid_state(
+            "the contract NOTE's sealed text does not hash to the contract sha256",
+        ));
+    }
+    Ok(())
+}
+
 impl Vault {
-    /// Every arm's first-allowance hold in period `period` of the line
-    /// `line`, as the fold reads it: an open arm holds its full units, a
-    /// closed one only what its units took. Reserved units join these rows
-    /// when the reserve door lands (rows M2-C and M2-D).
-    pub(crate) fn hold_rows_in_txn(
+    /// Every row the fold reads for `period` of the line `line` at `now_ms`:
+    /// each arm's first-allowance hold made in that period (held in full
+    /// while it lives, else only what the arm's units took from it), and each
+    /// unit claim reserved in that period. A hold that no claim ever drew
+    /// lies dormant once the period policy's `hold_ttl_secs` pass. The
+    /// reserve door (row M2-C) folds the same rows.
+    pub(crate) fn spend_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         line: &EntityId,
-        period: u32,
+        period: &GpuLinePeriod,
+        now_ms: u64,
     ) -> crate::Result<Vec<SpendRow>> {
-        Ok(self
+        let mut rows = Vec::new();
+        for arm in self
             .experiment_arms_in_txn(txn)?
             .into_iter()
             .filter(|arm| arm.line == *line)
-            .filter_map(|arm| {
-                let open = arm.is_open();
-                let hold = arm.first_allowance?;
-                (hold.period == period).then_some(SpendRow::Hold {
-                    arm: arm.id,
-                    family: arm.family,
-                    hold,
-                    arm_open: open,
-                })
-            })
-            .collect())
+        {
+            let mut claimed = false;
+            for rung in 1..=arm.current_rung() {
+                for claim in claims_at_rung_in_txn(self, txn, &arm.id, rung)? {
+                    if claim.arm != arm.id || claim.rung != rung {
+                        continue;
+                    }
+                    claimed |= rung == 1;
+                    if claim.period == period.index {
+                        rows.push(claim.spend_row());
+                    }
+                }
+            }
+            let Some(hold) = &arm.first_allowance else {
+                continue;
+            };
+            if hold.period != period.index {
+                continue;
+            }
+            let lives = arm
+                .hold_ended_at(now_ms, period.end_ms, period.policy.hold_ttl_secs, claimed)
+                .is_none();
+            rows.push(SpendRow::Hold {
+                arm: arm.id,
+                family: arm.family,
+                hold: hold.clone(),
+                arm_open: lives,
+            });
+        }
+        Ok(rows)
     }
 }
 

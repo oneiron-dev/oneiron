@@ -16,7 +16,6 @@ use oneiron::experiment_arm::{
     ArmRef, ArmView, arm_admit_as, arm_get_as, arm_list_as,
 };
 
-use super::install_line_allocation;
 use super::support::Listed;
 use super::verb_grant::verb_grant_door;
 use crate::auth::CoreAuth;
@@ -24,28 +23,20 @@ use crate::gpu_host::now_ms;
 use crate::server::SyncServer;
 
 /// `vault.arms.admit`: admits one arm into a seated family of a GPU line,
-/// with its first allowance held from now until it closes or its period
-/// ends. A repeat under the same intent key answers the same arm. An admit
-/// can be the first write of a period, so the door then installs that
-/// period's allocation, as the line doors do (LM-1).
+/// with its first allowance held from now until rung 1 leaves `Open`, the
+/// arm is withdrawn, the period ends or the hold lies dormant. A repeat
+/// under the same intent key, or of the same ask on the same contract,
+/// answers the same arm. The period record names the period's allocation;
+/// the claims are its hold (HOLD-IS-CLAIM-FOLD = A), so the door installs
+/// nothing in the host account.
 pub(crate) async fn vault_arms_admit(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ArmAdmitRequest,
 ) -> Listed<ArmView> {
-    verb_grant_door(
-        server,
-        auth,
-        ARMS_ADMIT_VERB,
-        move |server, memory, owner| {
-            let now = now_ms();
-            let view = arm_admit_as(memory, owner, &input, now)?;
-            if let Some(line) = server.vault().gpu_line(&input.line)? {
-                install_line_allocation(server, &line, now);
-            }
-            Ok(view)
-        },
-    )
+    verb_grant_door(server, auth, ARMS_ADMIT_VERB, move |_, memory, owner| {
+        arm_admit_as(memory, owner, &input, now_ms())
+    })
     .await
 }
 

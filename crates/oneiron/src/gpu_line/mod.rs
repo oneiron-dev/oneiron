@@ -13,7 +13,7 @@
 pub(crate) mod claim;
 pub mod defaults;
 mod doors;
-mod doors_caller;
+pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
