@@ -1,10 +1,15 @@
-//! The lease a workload holds on one GPU slot (beside the memory floor's
-//! leases): it ends the slot when it drops or finishes, unless it was kept.
+//! The node takes a device lease inside its launch commit and immediately
+//! confirms launch. There is no hold during staging. A pause or quarantine
+//! refuses both steps without releasing existing slots.
+//!
+//! A lease lives for the workload's life. Dropping or finishing it gives
+//! back the slot. Keeping it hands the slot to the journaled key, which the
+//! node reattaches after a restart.
 
 use std::sync::Arc;
 
 use super::{
-    GpuDeviceLease, GpuDeviceProcesses, GpuDeviceState, GpuJobEnd, GpuSlotHold, GpuSlotRefusal,
+    GpuDeviceLease, GpuDeviceProcesses, GpuDeviceState, GpuLeaseEnd, GpuSlotGrant, GpuSlotRefusal,
     GpuSlotRequest, GpuSlotTable, MachineGpus, Shared, Stage, processes_on, refusal, unmeasured,
 };
 
@@ -25,21 +30,21 @@ impl MachineGpus for GpuSlotTable {
 #[derive(Debug)]
 pub struct GpuSlotLease {
     pub(super) shared: Arc<Shared>,
-    pub(super) hold: GpuSlotHold,
+    pub(super) grant: GpuSlotGrant,
     pub(super) ended: bool,
 }
 
 impl GpuSlotLease {
     /// The GPU it holds, under which key, and since when.
     #[must_use]
-    pub fn hold(&self) -> &GpuSlotHold {
-        &self.hold
+    pub fn grant(&self) -> &GpuSlotGrant {
+        &self.grant
     }
 
     /// The launch recheck, just before the job's process starts: a fresh
     /// reading shows its GPU still offered, not withheld, and running no
-    /// compute process, and the machine is not drained. Once confirmed it
-    /// stays confirmed.
+    /// compute process, and the machine is not drained. Pause and
+    /// quarantine refuse confirmation, even if it succeeded before.
     ///
     /// # Errors
     ///
@@ -48,7 +53,13 @@ impl GpuSlotLease {
     pub fn confirm_launch(&mut self) -> Result<(), GpuSlotRefusal> {
         let shared = &self.shared;
         let mut state = shared.lock();
-        let at = state.at(&self.hold.key).ok_or(GpuSlotRefusal::NotHeld)?;
+        if let Some(reason) = &state.paused {
+            return Err(GpuSlotRefusal::Paused {
+                reason: reason.clone(),
+            });
+        }
+        let at = state.at(&self.grant.key).ok_or(GpuSlotRefusal::NotHeld)?;
+        state.check_quarantine(&self.grant.device.device_id)?;
         if state.slots[at].stage == Stage::Launched {
             return Ok(());
         }
@@ -61,12 +72,12 @@ impl GpuSlotLease {
         let device = reading
             .devices
             .iter()
-            .find(|device| device.device_id == self.hold.device.device_id)
+            .find(|device| device.device_id == self.grant.device.device_id)
             .ok_or_else(|| GpuSlotRefusal::UnknownDevice {
-                device_id: self.hold.device.device_id.clone(),
+                device_id: self.grant.device.device_id.clone(),
             })?;
         // The slot is this lease's own, so the GPU is judged as if untaken.
-        match shared.state_of(&reading, None, device) {
+        match shared.state_of(&reading, &state, None, device) {
             GpuDeviceState::Free => {
                 state.slots[at].stage = Stage::Launched;
                 Ok(())
@@ -82,28 +93,27 @@ impl GpuSlotLease {
     /// [`GpuSlotRefusal::Unmeasured`] when the driver cannot be read.
     pub fn end_check(&self) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
         let processes = self.shared.probe.compute_processes().map_err(unmeasured)?;
-        Ok(processes_on(&processes, &self.hold.device.device_id))
+        Ok(processes_on(&processes, &self.grant.device.device_id))
     }
 
     /// Gives the GPU back and records how its job ended: a success starts
     /// the count of failed jobs over, a failure adds to it (and drains the
     /// machine at `drain_after_failures`), a cancel leaves it as it was.
-    pub fn finish(mut self, end: GpuJobEnd) {
+    pub fn finish(mut self, end: GpuLeaseEnd) {
         self.ended = true;
         let mut state = self.shared.lock();
-        self.shared.end(&mut state, &self.hold.key, Some(&end));
+        self.shared.end(&mut state, &self.grant.key, Some(&end));
     }
 
-    /// Hands the GPU to the running job: the slot stays under its key, past
-    /// this lease, until [`GpuSlotTable::finish`] or
+    /// Hands the slot to the journaled key until [`GpuSlotTable::finish`] or
     /// [`GpuSlotTable::release`] ends it.
-    pub fn keep(mut self) -> GpuSlotHold {
+    pub fn keep(mut self) -> GpuSlotGrant {
         self.ended = true;
         let mut state = self.shared.lock();
-        if let Some(at) = state.at(&self.hold.key) {
+        if let Some(at) = state.at(&self.grant.key) {
             state.slots[at].guarded = false;
         }
-        self.hold.clone()
+        self.grant.clone()
     }
 }
 
@@ -111,14 +121,14 @@ impl Drop for GpuSlotLease {
     fn drop(&mut self) {
         if !self.ended {
             let mut state = self.shared.lock();
-            self.shared.end(&mut state, &self.hold.key, None);
+            self.shared.end(&mut state, &self.grant.key, None);
         }
     }
 }
 
 impl GpuDeviceLease for GpuSlotLease {
-    fn hold(&self) -> &GpuSlotHold {
-        Self::hold(self)
+    fn grant(&self) -> &GpuSlotGrant {
+        Self::grant(self)
     }
 
     fn confirm_launch(&mut self) -> Result<(), GpuSlotRefusal> {
@@ -129,11 +139,11 @@ impl GpuDeviceLease for GpuSlotLease {
         Self::end_check(self)
     }
 
-    fn finish(self: Box<Self>, end: GpuJobEnd) {
+    fn finish(self: Box<Self>, end: GpuLeaseEnd) {
         Self::finish(*self, end);
     }
 
-    fn keep(self: Box<Self>) -> GpuSlotHold {
+    fn keep(self: Box<Self>) -> GpuSlotGrant {
         Self::keep(*self)
     }
 }
