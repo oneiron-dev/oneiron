@@ -15,7 +15,7 @@ use crate::authority::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::federation::FederationGrant;
+use crate::federation::{FederationGrant, ScopeAxis, ScopeId};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, Vault};
 
@@ -103,9 +103,10 @@ impl Memory<'_> {
     /// [`Self::verb_grant_caller_admits_in_txn`] for an act on the lane-economy line of
     /// `project` (design pass 32 section 5: a reader sees the arms of lines whose project its
     /// Grant covers). The owner reaches every line. An agent's Grant must also reach this one:
-    /// its scope names no project, the line's project, or a project the line's project
-    /// descends from through the effective parents of live projects. The standing rule picks
-    /// the first Grant that reaches the line, never a union.
+    /// the audience (project) axis of its Scope holds every project, the line's project, or a
+    /// project the line's project descends from through the effective parents of live
+    /// projects; a missing axis denies, as every Scope axis does. The standing rule picks the
+    /// first Grant that reaches the line, never a union.
     ///
     /// # Errors
     ///
@@ -125,10 +126,11 @@ impl Memory<'_> {
         let vault = self.vault();
         let reached = project_and_ancestors_in_txn(vault, txn, project)?;
         let covers = |grant: &FederationGrant| {
-            grant
-                .authority_scope
-                .project
-                .is_none_or(|scoped| reached.contains(&scoped))
+            let audience = &grant.authority_scope.audience;
+            matches!(audience, ScopeAxis::All)
+                || reached
+                    .iter()
+                    .any(|project| audience.contains(&ScopeId(*project)))
         };
         let standing = principal_standing_covering_or_lapse_in_txn(
             vault,
