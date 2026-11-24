@@ -161,6 +161,25 @@ impl Memory<'_> {
         Ok(Some(TaskAskWait::Park(assignee_park(task)?)))
     }
 
+    /// Whether this actor's landing or refusal on consult `task` waits on
+    /// its ConsultAssignee fact: its body addresses this actor and the fact
+    /// has not landed here. Read without a write.
+    pub(crate) fn consult_assignee_pending(&self, task: EntityId) -> MemoryResult<bool> {
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(match task_verb_body_in(self.vault(), &txn, task)? {
+            Some(body) => {
+                body_executor(&body).is_ok_and(|executor| executor == self.actor())
+                    && waits_for_assignee_fact_in(self.vault(), &txn, task, &body)?
+            }
+            None => false,
+        })
+    }
+
     /// The park a code run's landing or refusal on consult `task` takes in
     /// place of a refusal, while its ConsultAssignee fact has not landed and
     /// its body addresses this actor: the same park `tasks.wait` takes, in
@@ -170,22 +189,7 @@ impl Memory<'_> {
         &self,
         task: EntityId,
     ) -> MemoryResult<Option<SelfDurableWait>> {
-        let waits = {
-            let txn = self
-                .vault()
-                .store
-                .env
-                .read_txn()
-                .map_err(crate::Error::from)?;
-            match task_verb_body_in(self.vault(), &txn, task)? {
-                Some(body) => {
-                    body_executor(&body).is_ok_and(|executor| executor == self.actor())
-                        && waits_for_assignee_fact_in(self.vault(), &txn, task, &body)?
-                }
-                None => false,
-            }
-        };
-        if !waits {
+        if !self.consult_assignee_pending(task)? {
             return Ok(None);
         }
         let wait =
