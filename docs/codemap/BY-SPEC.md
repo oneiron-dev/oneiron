@@ -32,7 +32,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0003 | `crates/oneiron/src/setting/learned.rs` | s |
 | ARCH-0003 | `crates/oneiron/src/skill_optimize/audit_rate.rs` | s |
 | ARCH-0003 | `crates/oneiron/src/team/choice_learning.rs` | s |
-| ARCH-0003 | `crates/oneiron/src/team/payoff.rs` | s |
+| ARCH-0003 | `crates/oneiron/src/team/payoff.rs` | m |
 | ARCH-0003 | `crates/oneiron-base/src/learning_estimate.rs` | m |
 | ARCH-0003 | `crates/oneiron-contracts/src/claim/confidence.rs` | s |
 | ARCH-0003 | `crates/oneiron-server/src/api/owner_routes/conflict_routes.rs` | m |
@@ -1262,7 +1262,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0079 | `crates/oneiron/src/team/mod.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/team/owner_outcome.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/team/pattern.rs` | m |
-| ARCH-0079 | `crates/oneiron/src/team/payoff.rs` | s |
+| ARCH-0079 | `crates/oneiron/src/team/payoff.rs` | m |
+| ARCH-0079 | `crates/oneiron/src/team/planner_card_door.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/team/receipt.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/stack.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/verbs/self_verbs.rs` | s |
