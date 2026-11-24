@@ -49,7 +49,7 @@ use oneiron::experiment_arm::{
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, WalletRef};
 use oneiron::gpu_line::{
     AllowanceHold, BudgetPolicy, Draw, DrawSource, GpuLineFamilyAdmitRequest, GpuLinePolicy,
-    GpuLineSetRequest, Track,
+    GpuLineSetRequest, Track, gpu_seconds,
 };
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
@@ -371,6 +371,7 @@ impl Fixture {
 /// fit the allowance). Every other budget number is its default.
 fn policy(roles: &Roles, families: u64, floor_arms: u32) -> GpuLinePolicy {
     GpuLinePolicy {
+        unit: gpu_seconds(),
         wallet: WalletRef {
             issuer: "host".to_owned(),
             id: "gpu".to_owned(),
