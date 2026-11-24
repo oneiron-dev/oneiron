@@ -205,6 +205,13 @@ pub struct MachineCapacity {
     pub measured_at: u64,
 }
 
+/// `values` in ascending order: a changed card order alone is no move.
+fn sorted(values: &[u64]) -> Vec<u64> {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted
+}
+
 /// Available memory after the reserve, over the per-agent budget.
 fn agents_it_can_run(available: u64, reserve: u64, budget: u64) -> u64 {
     available
@@ -249,12 +256,13 @@ impl MachineCapacity {
 
     /// Whether a total, the GPUs, the power source, the agent budget or the
     /// agent count differs from `recorded`: the moves that write a new
-    /// record. Free disk, free memory and the time alone write none.
+    /// record. Free disk, free memory, the time and the order the cards
+    /// were listed in write none.
     #[must_use]
     pub fn moved_from(&self, recorded: &Self) -> bool {
         self.cores != recorded.cores
             || self.memory_total_bytes != recorded.memory_total_bytes
-            || self.gpu_memory_mib != recorded.gpu_memory_mib
+            || sorted(&self.gpu_memory_mib) != sorted(&recorded.gpu_memory_mib)
             || self.gpus != recorded.gpus
             || self.disk_total_bytes != recorded.disk_total_bytes
             || self.power != recorded.power

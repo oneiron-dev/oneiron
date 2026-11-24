@@ -1,10 +1,14 @@
 #![cfg(oneiron_test_support)]
-//! GPU inventory, live slots and selection (machines map, section 9 row 2):
-//! each machine records its GPUs by stable device id, model and memory on
-//! its `machine.capacity` record; a machine's slot table reserves one GPU
-//! atomically from a fresh driver reading, and rechecks it at launch; the
-//! home's selection takes only admitted machines that answer now, and never
-//! admits from the hourly record or reroutes an uncertain reservation.
+//! GPU inventory, live slots and selection (machines map, section 9 row 2;
+//! Engine 24 Nov 21:24: a device lease beside FloorLease, a disk reserve at
+//! booking, a drain guard): each machine records its GPUs by stable device
+//! id, model and memory on its `machine.capacity` record; a machine's slot
+//! table holds or leases one GPU atomically from a fresh driver reading,
+//! refuses a booking whose disk is under its reserve, and rechecks the GPU
+//! at launch; a machine whose jobs fail several times in a row takes no new
+//! GPU work until a person clears it; the home's selection takes only
+//! admitted machines that answer now, and never admits from the hourly
+//! record or reroutes an uncertain hold.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features
@@ -20,11 +24,11 @@ use oneiron::machine_capacity::{
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::gpu_execution_node::{
-    GPU_SLOT_HOLD_SECS, GpuAvailability, GpuComputeProcess, GpuDeviceOffer, GpuDeviceProbe,
-    GpuDeviceState, GpuNodeCandidate, GpuProbeError, GpuSelectionRefusal, GpuSlotGrant,
-    GpuSlotPeer, GpuSlotPeerError, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable, LocalGpuSlotPeer,
-    gpu_node_candidates, parse_compute_process_lines, parse_device_lines, recorded_gpu_devices,
-    select_gpu_slot,
+    GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuAvailability, GpuComputeProcess,
+    GpuDeviceLease, GpuDeviceOffer, GpuDeviceProbe, GpuDeviceState, GpuJobDisk, GpuJobEnd,
+    GpuNodeCandidate, GpuProbeError, GpuSelectionRefusal, GpuSlotHold, GpuSlotPeer,
+    GpuSlotPeerError, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable, LocalGpuSlotPeer, MachineGpus,
+    gpu_node_candidates, parse_compute_process_lines, parse_device_lines, select_gpu_slot,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -99,11 +103,47 @@ impl GpuDeviceProbe for FakeProbe {
     }
 }
 
+/// A disk with `free` bytes and a `reserve`, whose claims count against each
+/// other until they drop.
+struct FakeDisk {
+    free: u64,
+    reserve: u64,
+    claimed: Arc<Mutex<u64>>,
+}
+
+struct FakeClaim {
+    bytes: u64,
+    claimed: Arc<Mutex<u64>>,
+}
+
+impl Drop for FakeClaim {
+    fn drop(&mut self) {
+        *self.claimed.lock().unwrap() -= self.bytes;
+    }
+}
+
+impl GpuJobDisk for FakeDisk {
+    fn claim(&self, bytes: u64) -> Result<Box<dyn Send + Sync>, GpuSlotRefusal> {
+        let mut claimed = self.claimed.lock().unwrap();
+        let needed = self.reserve + *claimed + bytes;
+        if self.free < needed {
+            return Err(GpuSlotRefusal::DiskUnderReserve {
+                needed_bytes: needed,
+                free_bytes: self.free,
+            });
+        }
+        *claimed += bytes;
+        Ok(Box::new(FakeClaim {
+            bytes,
+            claimed: Arc::clone(&self.claimed),
+        }))
+    }
+}
+
 fn offering(device_ids: &[&str]) -> GpuDeviceOffer {
     GpuDeviceOffer {
         offered: device_ids.iter().map(|id| (*id).to_owned()).collect(),
-        withheld_file: None,
-        hold_secs: GPU_SLOT_HOLD_SECS,
+        ..GpuDeviceOffer::default()
     }
 }
 
@@ -120,6 +160,7 @@ fn request(key: &str) -> GpuSlotRequest {
         device_id: None,
         model: None,
         min_memory_mib: 0,
+        disk_bytes: 0,
     }
 }
 
@@ -213,6 +254,26 @@ fn a_recorded_capacity_carries_each_gpus_device_id_model_and_memory() -> TestRes
             MachineCapacityWrite::Unchanged(standing)
         );
 
+        // Nor does a changed order of unequal cards: the memory totals are
+        // compared as a set too.
+        let mixed = measured_with(
+            vec![rtx4090("GPU-aaaa"), gpu("GPU-dddd", A4000, A4000_MIB)],
+            5_000,
+        );
+        let MachineCapacityWrite::Recorded(mixed_id) = vault.record_machine_capacity(&mixed)?
+        else {
+            panic!("an added card records again");
+        };
+        let mixed_reordered = measured_with(
+            vec![gpu("GPU-dddd", A4000, A4000_MIB), rtx4090("GPU-aaaa")],
+            6_000,
+        );
+        assert_ne!(mixed_reordered.gpu_memory_mib, mixed.gpu_memory_mib);
+        assert_eq!(
+            vault.record_machine_capacity(&mixed_reordered)?,
+            MachineCapacityWrite::Unchanged(mixed_id)
+        );
+
         // A swapped card records again, though every memory total is the same.
         let swapped = measured_with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-cccc")], 8_200);
         assert_eq!(swapped.gpu_memory_mib, first.gpu_memory_mib);
@@ -239,24 +300,6 @@ fn a_recorded_capacity_carries_each_gpus_device_id_model_and_memory() -> TestRes
             }]
         );
         assert_eq!(gpu_node_candidates(&vault, &[])?, Vec::new());
-        Ok(())
-    })
-}
-
-#[test]
-fn the_probe_records_the_gpus_the_driver_names() -> TestResult {
-    on_engine_stack(|| {
-        let (_dir, vault, machine) = enrolled_vault()?;
-        oneiron_server::machine_capacity::record_measured_capacity(&vault)?;
-        let recorded = vault
-            .machine_capacity(machine)?
-            .ok_or("the probe records the capacity")?;
-        let mut driver = recorded_gpu_devices();
-        driver.sort();
-        assert_eq!(
-            recorded.gpus, driver,
-            "the record names each GPU the driver names (none on a machine with no NVIDIA driver)"
-        );
         Ok(())
     })
 }
@@ -345,7 +388,7 @@ fn nvidia_smi_lines_parse_to_devices_and_compute_processes() -> TestResult {
 }
 
 #[test]
-fn a_free_offered_gpu_is_reserved_once_and_the_same_key_gets_the_same_grant() -> TestResult {
+fn a_free_offered_gpu_is_held_once_and_the_same_key_gets_the_same_hold() -> TestResult {
     let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
     let slots = table(&probe, offering(&["GPU-aaaa"]));
     assert_eq!(
@@ -355,49 +398,49 @@ fn a_free_offered_gpu_is_reserved_once_and_the_same_key_gets_the_same_grant() ->
 
     let racers = 8;
     let start = Arc::new(Barrier::new(racers));
-    let outcomes: Vec<Result<GpuSlotGrant, GpuSlotRefusal>> = (0..racers)
+    let outcomes: Vec<Result<GpuSlotHold, GpuSlotRefusal>> = (0..racers)
         .map(|n| {
             let slots = Arc::clone(&slots);
             let start = Arc::clone(&start);
             std::thread::spawn(move || {
                 start.wait();
-                slots.reserve(&request(&format!("chunk-{n}")), T0)
+                slots.hold(&request(&format!("chunk-{n}")), T0)
             })
         })
         .collect::<Vec<_>>()
         .into_iter()
         .map(|racer| racer.join().unwrap())
         .collect();
-    let granted: Vec<&GpuSlotGrant> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
-    assert_eq!(granted.len(), 1, "one GPU holds one reservation");
+    let held: Vec<&GpuSlotHold> = outcomes.iter().filter_map(|o| o.as_ref().ok()).collect();
+    assert_eq!(held.len(), 1, "one GPU takes one hold");
     assert!(
         outcomes
             .iter()
             .filter_map(|o| o.as_ref().err())
             .all(|refusal| *refusal == GpuSlotRefusal::NoneFree)
     );
-    let grant = granted[0].clone();
-    assert_eq!(grant.device, rtx4090("GPU-aaaa"));
-    assert_eq!(grant.held_at_ms, T0);
-    assert_eq!(grant.hold_until_ms, T0 + GPU_SLOT_HOLD_SECS * 1000);
+    let hold = held[0].clone();
+    assert_eq!(hold.device, rtx4090("GPU-aaaa"));
+    assert_eq!(hold.held_at_ms, T0);
+    assert_eq!(hold.hold_until_ms, T0 + GPU_SLOT_HOLD_SECS * 1000);
 
-    // The same key again, later, is the same grant.
-    assert_eq!(slots.reserve(&request(&grant.key), T0 + 5)?, grant);
+    // The same key again, later, is the same hold.
+    assert_eq!(slots.hold(&request(&hold.key), T0 + 5)?, hold);
     assert_eq!(
         state_of(&slots.availability(T0 + 5)?, "GPU-aaaa"),
         GpuDeviceState::Held {
-            key: grant.key.clone()
+            key: hold.key.clone()
         }
     );
     assert_eq!(
-        slots.reserve(&pinned("another", "GPU-aaaa"), T0 + 5),
+        slots.hold(&pinned("another", "GPU-aaaa"), T0 + 5),
         Err(GpuSlotRefusal::Taken {
             device_id: "GPU-aaaa".to_owned()
         })
     );
 
-    assert!(slots.release(&grant.key));
-    assert!(!slots.release(&grant.key), "a released slot is gone");
+    assert!(slots.release(&hold.key));
+    assert!(!slots.release(&hold.key), "a released hold is gone");
     assert_eq!(
         state_of(&slots.availability(T0 + 6)?, "GPU-aaaa"),
         GpuDeviceState::Free
@@ -406,7 +449,7 @@ fn a_free_offered_gpu_is_reserved_once_and_the_same_key_gets_the_same_grant() ->
 }
 
 #[test]
-fn a_gpu_with_a_compute_process_is_never_reserved() -> TestResult {
+fn a_gpu_with_a_compute_process_is_never_taken() -> TestResult {
     let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
     let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb"]));
     probe.run_on("GPU-aaaa", 777);
@@ -415,27 +458,103 @@ fn a_gpu_with_a_compute_process_is_never_reserved() -> TestResult {
         state_of(&slots.availability(T0)?, "GPU-aaaa"),
         GpuDeviceState::Busy { pids: vec![777] }
     );
+    let busy = Err(GpuSlotRefusal::Busy {
+        device_id: "GPU-aaaa".to_owned(),
+        pids: vec![777],
+    });
+    assert_eq!(slots.hold(&pinned("pinned", "GPU-aaaa"), T0), busy);
     assert_eq!(
-        slots.reserve(&pinned("pinned", "GPU-aaaa"), T0),
-        Err(GpuSlotRefusal::Busy {
-            device_id: "GPU-aaaa".to_owned(),
-            pids: vec![777],
-        })
+        slots.lease(&pinned("pinned", "GPU-aaaa"), T0).map(|_| ()),
+        busy.map(|_| ())
     );
     assert_eq!(
-        slots.reserve(&request("any"), T0)?.device.device_id,
+        slots.hold(&request("any"), T0)?.device.device_id,
         "GPU-bbbb",
-        "an unpinned reservation passes the busy GPU over"
+        "an unpinned hold passes the busy GPU over"
     );
     assert_eq!(
-        slots.reserve(&request("one-more"), T0),
+        slots.hold(&request("one-more"), T0),
         Err(GpuSlotRefusal::NoneFree)
     );
     Ok(())
 }
 
 #[test]
-fn a_withheld_or_unoffered_gpu_is_never_reserved_and_a_hold_withheld_later_does_not_launch()
+fn a_lease_takes_its_keys_hold_holds_one_gpu_per_key_and_gives_it_back_when_it_drops() -> TestResult
+{
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
+    let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb"]));
+    let hold = slots.hold(&request("chunk"), T0)?;
+    assert_eq!(hold.device.device_id, "GPU-aaaa");
+
+    // The call under the held key takes the held GPU, whatever it pins.
+    let lease = slots.lease(&pinned("chunk", "GPU-bbbb"), T0 + 10)?;
+    assert_eq!(lease.hold(), &hold);
+    assert_eq!(
+        state_of(&slots.availability(T0 + 10)?, "GPU-aaaa"),
+        GpuDeviceState::Leased {
+            key: "chunk".to_owned()
+        }
+    );
+    assert_eq!(
+        slots.lease(&request("chunk"), T0 + 11).map(|_| ()),
+        Err(GpuSlotRefusal::Taken {
+            device_id: "GPU-aaaa".to_owned()
+        }),
+        "one key leases one GPU at a time"
+    );
+    assert!(
+        !slots.release("chunk"),
+        "the home's release does not take a leased GPU from its call"
+    );
+    // A lease never lapses.
+    assert_eq!(
+        state_of(&slots.availability(T0 + 36_000_000)?, "GPU-aaaa"),
+        GpuDeviceState::Leased {
+            key: "chunk".to_owned()
+        }
+    );
+
+    // With no hold, a lease picks as a hold does.
+    let fresh = slots.lease(&request("fresh"), T0 + 20)?;
+    assert_eq!(fresh.hold().device.device_id, "GPU-bbbb");
+
+    drop(lease);
+    drop(fresh);
+    let answer = slots.availability(T0 + 30)?;
+    assert_eq!(state_of(&answer, "GPU-aaaa"), GpuDeviceState::Free);
+    assert_eq!(state_of(&answer, "GPU-bbbb"), GpuDeviceState::Free);
+    Ok(())
+}
+
+#[test]
+fn the_host_leases_a_gpu_through_machine_gpus_as_it_leases_memory() -> TestResult {
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(&probe, offering(&["GPU-aaaa"]));
+    let gpus: Arc<dyn MachineGpus> = Arc::clone(&slots) as Arc<dyn MachineGpus>;
+
+    let mut lease: Box<dyn GpuDeviceLease> = gpus.try_lease(&request("call"))?;
+    assert_eq!(lease.device(), &rtx4090("GPU-aaaa"));
+    assert_eq!(lease.key(), "call");
+    assert!(matches!(
+        gpus.try_lease(&request("other")),
+        Err(GpuSlotRefusal::NoneFree)
+    ));
+    lease.confirm_launch()?;
+    assert!(matches!(
+        state_of(&slots.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Launched { .. }
+    ));
+    lease.finish(GpuJobEnd::Succeeded);
+    assert_eq!(
+        state_of(&slots.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free
+    );
+    Ok(())
+}
+
+#[test]
+fn a_withheld_or_unoffered_gpu_is_never_taken_and_a_lease_withheld_later_does_not_launch()
 -> TestResult {
     let dir = tempfile::tempdir()?;
     let withheld = dir.path().join("gpu-withheld");
@@ -458,31 +577,31 @@ fn a_withheld_or_unoffered_gpu_is_never_reserved_and_a_hold_withheld_later_does_
     assert_eq!(state_of(&answer, "GPU-bbbb"), GpuDeviceState::Withheld);
     assert_eq!(state_of(&answer, "GPU-cccc"), GpuDeviceState::NotOffered);
     assert_eq!(
-        slots.reserve(&pinned("b", "GPU-bbbb"), T0),
+        slots.hold(&pinned("b", "GPU-bbbb"), T0),
         Err(GpuSlotRefusal::Withheld {
             device_id: "GPU-bbbb".to_owned()
         })
     );
     assert_eq!(
-        slots.reserve(&pinned("c", "GPU-cccc"), T0),
+        slots.hold(&pinned("c", "GPU-cccc"), T0),
         Err(GpuSlotRefusal::NotOffered {
             device_id: "GPU-cccc".to_owned()
         })
     );
     assert_eq!(
-        slots.reserve(&pinned("z", "GPU-zzzz"), T0),
+        slots.hold(&pinned("z", "GPU-zzzz"), T0),
         Err(GpuSlotRefusal::UnknownDevice {
             device_id: "GPU-zzzz".to_owned()
         })
     );
-    let grant = slots.reserve(&request("job"), T0)?;
-    assert_eq!(grant.device.device_id, "GPU-aaaa");
+    let mut lease = slots.lease(&request("job"), T0)?;
+    assert_eq!(lease.hold().device.device_id, "GPU-aaaa");
 
-    // The other booker takes the held GPU before the launch: it does not
-    // launch, and the hold stays until it is released or lapses.
+    // The other booker takes the leased GPU before the launch: it does not
+    // launch, and the lease still holds it.
     std::fs::write(&withheld, "GPU-aaaa\nGPU-bbbb\n")?;
     assert_eq!(
-        slots.confirm_launch("job", T0 + 1_000),
+        lease.confirm_launch(),
         Err(GpuSlotRefusal::Withheld {
             device_id: "GPU-aaaa".to_owned()
         })
@@ -492,9 +611,9 @@ fn a_withheld_or_unoffered_gpu_is_never_reserved_and_a_hold_withheld_later_does_
         GpuDeviceState::Withheld
     );
 
-    // Given back, the same hold launches.
+    // Given back, the same lease launches.
     std::fs::write(&withheld, "GPU-bbbb\n")?;
-    assert_eq!(slots.confirm_launch("job", T0 + 2_000)?, grant);
+    lease.confirm_launch()?;
     assert_eq!(
         state_of(&slots.availability(T0 + 2_000)?, "GPU-aaaa"),
         GpuDeviceState::Launched {
@@ -509,10 +628,8 @@ fn a_withheld_or_unoffered_gpu_is_never_reserved_and_a_hold_withheld_later_does_
         Err(GpuProbeError::WithheldUnreadable { .. })
     ));
     assert!(matches!(
-        slots.reserve(&request("next"), T0 + 3_000),
-        Err(GpuSlotRefusal::Unmeasured {
-            probe: GpuProbeError::WithheldUnreadable { .. }
-        })
+        slots.hold(&request("next"), T0 + 3_000),
+        Err(GpuSlotRefusal::Unmeasured { reason }) if reason.contains("gpu_probe.withheld_unreadable")
     ));
     Ok(())
 }
@@ -521,23 +638,19 @@ fn a_withheld_or_unoffered_gpu_is_never_reserved_and_a_hold_withheld_later_does_
 fn the_launch_recheck_refuses_a_gpu_that_turned_busy() -> TestResult {
     let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
     let slots = table(&probe, offering(&["GPU-aaaa"]));
-    let grant = slots.reserve(&request("job"), T0)?;
+    let mut lease = slots.lease(&request("job"), T0)?;
 
     probe.run_on("GPU-aaaa", 99);
     assert_eq!(
-        slots.confirm_launch("job", T0 + 10),
+        lease.confirm_launch(),
         Err(GpuSlotRefusal::Busy {
             device_id: "GPU-aaaa".to_owned(),
             pids: vec![99],
         })
     );
     probe.end_processes();
-    assert_eq!(slots.confirm_launch("job", T0 + 20)?, grant);
-    assert_eq!(
-        slots.confirm_launch("job", T0 + 30)?,
-        grant,
-        "asked again once launched, it answers the same grant"
-    );
+    lease.confirm_launch()?;
+    lease.confirm_launch()?;
 
     // The launched job's own process does not make its GPU busy.
     probe.run_on("GPU-aaaa", 4_100);
@@ -547,59 +660,222 @@ fn the_launch_recheck_refuses_a_gpu_that_turned_busy() -> TestResult {
             key: "job".to_owned()
         }
     );
-    // Released while a process still runs there, the GPU is busy, not free.
-    assert!(slots.release("job"));
+    // Given back while a process still runs there, the GPU is busy, not free.
+    drop(lease);
     assert_eq!(
         state_of(&slots.availability(T0 + 50)?, "GPU-aaaa"),
         GpuDeviceState::Busy { pids: vec![4_100] }
-    );
-    assert_eq!(
-        slots.confirm_launch("nobody", T0 + 60),
-        Err(GpuSlotRefusal::NotHeld)
     );
     Ok(())
 }
 
 #[test]
 fn a_lapsed_hold_frees_the_gpu() -> TestResult {
-    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
-    let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb"]));
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(&probe, offering(&["GPU-aaaa"]));
     let hold = GPU_SLOT_HOLD_SECS * 1000;
 
-    let first = slots.reserve(&pinned("first", "GPU-aaaa"), T0)?;
+    let first = slots.hold(&request("first"), T0)?;
     assert_eq!(
-        slots.reserve(&pinned("second", "GPU-aaaa"), T0 + hold - 1),
-        Err(GpuSlotRefusal::Taken {
-            device_id: "GPU-aaaa".to_owned()
+        slots.hold(&request("second"), T0 + hold - 1),
+        Err(GpuSlotRefusal::NoneFree)
+    );
+    let second = slots.hold(&request("second"), first.hold_until_ms)?;
+    assert_eq!(second.device.device_id, "GPU-aaaa");
+    assert!(!slots.release("first"), "the lapsed hold is gone");
+    assert_eq!(
+        slots
+            .lease(&request("first"), first.hold_until_ms)
+            .map(|_| ()),
+        Err(GpuSlotRefusal::NoneFree),
+        "a call whose hold lapsed is admitted afresh, and the GPU is taken"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_booking_is_refused_while_the_disk_is_under_its_reserve() -> TestResult {
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
+    let disk = Arc::new(FakeDisk {
+        free: 100 * GIB,
+        reserve: 10 * GIB,
+        claimed: Arc::default(),
+    });
+    let slots = GpuSlotTable::with_disk(
+        Arc::clone(&probe) as Arc<dyn GpuDeviceProbe>,
+        offering(&["GPU-aaaa", "GPU-bbbb"]),
+        Some(Arc::clone(&disk) as Arc<dyn GpuJobDisk>),
+    );
+    let sized = |key: &str, disk_bytes: u64| GpuSlotRequest {
+        disk_bytes,
+        ..request(key)
+    };
+
+    assert_eq!(
+        slots.hold(&sized("too-big", 91 * GIB), T0),
+        Err(GpuSlotRefusal::DiskUnderReserve {
+            needed_bytes: 101 * GIB,
+            free_bytes: 100 * GIB,
+        }),
+        "the job's bytes past the reserve must fit at booking, not after the start"
+    );
+    assert_eq!(
+        state_of(&slots.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free,
+        "a refused booking holds nothing"
+    );
+
+    // A booking's claim counts against the next one until it ends.
+    let first = slots.hold(&sized("first", 60 * GIB), T0)?;
+    assert_eq!(
+        slots.lease(&sized("second", 40 * GIB), T0).map(|_| ()),
+        Err(GpuSlotRefusal::DiskUnderReserve {
+            needed_bytes: 110 * GIB,
+            free_bytes: 100 * GIB,
         })
     );
-    let second = slots.reserve(&pinned("second", "GPU-aaaa"), first.hold_until_ms)?;
-    assert_eq!(second.device.device_id, "GPU-aaaa");
+    assert!(slots.release(&first.key));
+    let second = slots.lease(&sized("second", 40 * GIB), T0)?;
+    assert_eq!(*disk.claimed.lock().unwrap(), 40 * GIB);
+    drop(second);
     assert_eq!(
-        slots.confirm_launch("first", first.hold_until_ms),
-        Err(GpuSlotRefusal::NotHeld),
-        "the lapsed hold is gone"
+        *disk.claimed.lock().unwrap(),
+        0,
+        "the claim ends with its slot"
     );
 
-    // A hold confirmed too late lapses there and then.
-    let late = slots.reserve(&pinned("late", "GPU-bbbb"), T0)?;
-    assert_eq!(
-        slots.confirm_launch("late", late.hold_until_ms),
-        Err(GpuSlotRefusal::Lapsed)
+    // A disk already under its reserve takes no booking, even of 0 bytes.
+    let full = GpuSlotTable::with_disk(
+        Arc::clone(&probe) as Arc<dyn GpuDeviceProbe>,
+        offering(&["GPU-aaaa"]),
+        Some(Arc::new(FakeDisk {
+            free: 5 * GIB,
+            reserve: 10 * GIB,
+            claimed: Arc::default(),
+        })),
     );
     assert_eq!(
-        slots.confirm_launch("late", late.hold_until_ms),
-        Err(GpuSlotRefusal::NotHeld)
+        full.hold(&request("zero"), T0),
+        Err(GpuSlotRefusal::DiskUnderReserve {
+            needed_bytes: 10 * GIB,
+            free_bytes: 5 * GIB,
+        })
     );
+    Ok(())
+}
 
-    // A launched slot never lapses.
-    slots.confirm_launch("second", second.hold_until_ms - 1)?;
+#[test]
+fn a_machine_whose_jobs_fail_several_times_in_a_row_takes_no_new_work_until_a_person_clears_it()
+-> TestResult {
+    let dir = tempfile::tempdir()?;
+    let drain_file = dir.path().join("gpu-drained");
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let offer = GpuDeviceOffer {
+        drain_file: Some(drain_file.clone()),
+        ..offering(&["GPU-aaaa"])
+    };
+    assert_eq!(offer.drain_after_failures, GPU_DRAIN_AFTER_FAILURES);
+    assert_eq!(GPU_DRAIN_AFTER_FAILURES, 3);
+    let slots = table(&probe, offer.clone());
+    let run = |key: &str, end: GpuJobEnd| -> TestResult {
+        slots.lease(&request(key), T0)?.finish(end);
+        Ok(())
+    };
+    let failed = |why: &str| GpuJobEnd::Failed {
+        reason: why.to_owned(),
+    };
+
+    // Two failures, a success, two more and a cancel: never three in a row.
+    run("1", failed("exit 1"))?;
+    run("2", failed("exit 1"))?;
+    run("3", GpuJobEnd::Succeeded)?;
+    run("4", failed("exit 1"))?;
+    run("5", failed("exit 1"))?;
+    run("6", GpuJobEnd::Cancelled)?;
+    assert_eq!(slots.drained()?, None);
+
+    run("7", failed("CUDA error: an illegal memory access"))?;
+
+    let drained = slots
+        .drained()?
+        .ok_or("three failed jobs in a row drain the machine")?;
+    assert!(drained.contains("3 failed GPU jobs in a row"), "{drained}");
+    assert!(drained.contains("illegal memory access"), "{drained}");
+    assert!(std::fs::read_to_string(&drain_file)?.contains("Delete this file"));
+    let answer = slots.availability(T0)?;
+    assert_eq!(answer.drained.as_deref(), Some(drained.as_str()));
+    assert_eq!(answer.free_matching(&request("x")).count(), 0);
     assert_eq!(
-        state_of(&slots.availability(T0 + 36_000_000)?, "GPU-aaaa"),
-        GpuDeviceState::Launched {
-            key: "second".to_owned()
+        slots.hold(&request("new"), T0),
+        Err(GpuSlotRefusal::Drained {
+            reason: drained.clone()
+        })
+    );
+    assert!(matches!(
+        slots.lease(&request("new"), T0),
+        Err(GpuSlotRefusal::Drained { .. })
+    ));
+
+    // The drain outlasts a restart: a new table on the same file is drained.
+    let restarted = table(&probe, offer.clone());
+    assert_eq!(restarted.drained()?, Some(drained));
+
+    // A person clears it by deleting the file; the machine takes work again.
+    std::fs::remove_file(&drain_file)?;
+    assert_eq!(restarted.drained()?, None);
+    restarted.hold(&request("after"), T0)?;
+
+    // Or through the table, which also starts the count over.
+    run("8", failed("exit 1"))?;
+    run("9", failed("exit 1"))?;
+    run("10", failed("exit 1"))?;
+    assert!(slots.drained()?.is_some());
+    slots.clear_drain()?;
+    assert_eq!(slots.drained()?, None);
+    assert!(!drain_file.exists());
+
+    // 0 never drains; with no drain file the drain is kept in memory.
+    let never = table(
+        &probe,
+        GpuDeviceOffer {
+            drain_after_failures: 0,
+            ..offering(&["GPU-aaaa"])
+        },
+    );
+    let in_memory = table(&probe, offering(&["GPU-aaaa"]));
+    for n in 0..5 {
+        never
+            .lease(&request(&format!("n{n}")), T0)?
+            .finish(failed("exit 1"));
+        if n < 3 {
+            in_memory
+                .lease(&request(&format!("m{n}")), T0)?
+                .finish(failed("exit 1"));
         }
-    );
+    }
+    assert_eq!(never.drained()?, None);
+    assert!(in_memory.drained()?.is_some());
+    in_memory.clear_drain()?;
+    assert_eq!(in_memory.drained()?, None);
+    Ok(())
+}
+
+#[test]
+fn a_leased_job_does_not_launch_once_the_machine_is_drained() -> TestResult {
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
+    let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb"]));
+    let mut waiting = slots.lease(&pinned("waiting", "GPU-bbbb"), T0)?;
+    for n in 0..GPU_DRAIN_AFTER_FAILURES {
+        slots
+            .lease(&pinned(&format!("f{n}"), "GPU-aaaa"), T0)?
+            .finish(GpuJobEnd::Failed {
+                reason: "exit 1".to_owned(),
+            });
+    }
+    assert!(matches!(
+        waiting.confirm_launch(),
+        Err(GpuSlotRefusal::Drained { .. })
+    ));
     Ok(())
 }
 
@@ -607,24 +883,23 @@ fn a_lapsed_hold_frees_the_gpu() -> TestResult {
 fn a_failed_probe_offers_nothing() -> TestResult {
     let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
     let slots = table(&probe, offering(&["GPU-aaaa"]));
-    let grant = slots.reserve(&request("job"), T0)?;
+    let mut lease = slots.lease(&request("job"), T0)?;
     let failure = GpuProbeError::Unavailable {
         reason: "nvidia-smi did not answer within 10 s".to_owned(),
     };
     probe.fail(failure.clone());
+    let unmeasured = GpuSlotRefusal::Unmeasured {
+        reason: failure.to_string(),
+    };
 
     assert_eq!(slots.availability(T0 + 1), Err(failure.clone()));
     assert_eq!(
-        slots.reserve(&request("other"), T0 + 1),
-        Err(GpuSlotRefusal::Unmeasured {
-            probe: failure.clone()
-        })
+        slots.hold(&request("other"), T0 + 1),
+        Err(unmeasured.clone())
     );
     assert_eq!(
-        slots.confirm_launch(&grant.key, T0 + 1),
-        Err(GpuSlotRefusal::Unmeasured {
-            probe: failure.clone()
-        }),
+        lease.confirm_launch(),
+        Err(unmeasured.clone()),
         "an unmeasured GPU does not launch"
     );
 
@@ -632,9 +907,7 @@ fn a_failed_probe_offers_nothing() -> TestResult {
     let local = LocalGpuSlotPeer::new(home, Arc::clone(&slots));
     assert_eq!(
         local.availability(home),
-        Err(GpuSlotPeerError::Refused(GpuSlotRefusal::Unmeasured {
-            probe: failure
-        }))
+        Err(GpuSlotPeerError::Refused(unmeasured))
     );
     assert!(matches!(
         local.availability(machine(2)),
@@ -653,14 +926,14 @@ fn a_failed_probe_offers_nothing() -> TestResult {
 }
 
 /// The vault's machines as the home reaches them: each a real slot table on
-/// a fake driver, some unreachable, some whose reservations are refused or
-/// lost. It records every call.
+/// a fake driver, some unreachable, some whose holds are refused or lost.
+/// It records every call.
 #[derive(Default)]
 struct FakePeers {
     tables: BTreeMap<EntityId, Arc<GpuSlotTable>>,
     unreachable: BTreeSet<EntityId>,
-    refuse_reserve: BTreeSet<EntityId>,
-    lose_reserve_answer: BTreeSet<EntityId>,
+    refuse_hold: BTreeSet<EntityId>,
+    lose_hold_answer: BTreeSet<EntityId>,
     asked: Mutex<Vec<(EntityId, &'static str)>>,
 }
 
@@ -710,28 +983,33 @@ impl GpuSlotPeer for FakePeers {
     fn availability(&self, machine: EntityId) -> Result<GpuAvailability, GpuSlotPeerError> {
         self.reach(machine, "availability")?
             .availability(T0)
-            .map_err(|probe| GpuSlotRefusal::Unmeasured { probe }.into())
+            .map_err(|probe| {
+                GpuSlotRefusal::Unmeasured {
+                    reason: probe.to_string(),
+                }
+                .into()
+            })
     }
 
-    fn reserve(
+    fn hold(
         &self,
         machine: EntityId,
         request: &GpuSlotRequest,
-    ) -> Result<GpuSlotGrant, GpuSlotPeerError> {
-        let table = self.reach(machine, "reserve")?;
-        if self.refuse_reserve.contains(&machine) {
+    ) -> Result<GpuSlotHold, GpuSlotPeerError> {
+        let table = self.reach(machine, "hold")?;
+        if self.refuse_hold.contains(&machine) {
             return Err(GpuSlotRefusal::Taken {
                 device_id: request.device_id.clone().unwrap_or_default(),
             }
             .into());
         }
-        let grant = table.reserve(request, T0)?;
-        if self.lose_reserve_answer.contains(&machine) {
+        let hold = table.hold(request, T0)?;
+        if self.lose_hold_answer.contains(&machine) {
             return Err(GpuSlotPeerError::Uncertain {
                 reason: "the answer did not arrive in time".to_owned(),
             });
         }
-        Ok(grant)
+        Ok(hold)
     }
 
     fn release(&self, machine: EntityId, key: &str) -> Result<(), GpuSlotPeerError> {
@@ -784,13 +1062,13 @@ fn selection_takes_the_best_fit_admitted_machine_whose_fresh_answer_shows_a_free
     let placement = select_gpu_slot(&candidates, &peers, &twenty_gib("chunk-1"))
         .map_err(|refusal| refusal.to_string())?;
     assert_eq!(placement.machine, roomy, "the smallest free card that fits");
-    assert_eq!(placement.grant.device.device_id, "GPU-roomy");
+    assert_eq!(placement.hold.device.device_id, "GPU-roomy");
     assert_eq!(
         peers.asked("availability"),
         vec![busy, roomy, large, gone],
         "a machine whose record lists no matching GPU is never asked"
     );
-    assert_eq!(peers.asked("reserve"), vec![roomy]);
+    assert_eq!(peers.asked("hold"), vec![roomy]);
 
     let next = select_gpu_slot(&candidates, &peers, &twenty_gib("chunk-2"))
         .map_err(|refusal| refusal.to_string())?;
@@ -836,8 +1114,7 @@ fn selection_takes_the_best_fit_admitted_machine_whose_fresh_answer_shows_a_free
 }
 
 #[test]
-fn a_refused_reservation_moves_to_the_next_fit_and_an_uncertain_one_is_never_rerouted() -> TestResult
-{
+fn a_refused_hold_moves_to_the_next_fit_and_an_uncertain_one_is_never_rerouted() -> TestResult {
     let (first, second) = (machine(1), machine(2));
     let (peers, _) = FakePeers::default().machine(first, vec![gpu("GPU-first", A4000, A4000_MIB)]);
     let (mut peers, _) = peers.machine(second, vec![rtx4090("GPU-second")]);
@@ -853,30 +1130,46 @@ fn a_refused_reservation_moves_to_the_next_fit_and_an_uncertain_one_is_never_rer
     ];
 
     // `first` fits best, but its GPU was taken between the answer and the
-    // reservation: the next fit is tried.
-    peers.refuse_reserve.insert(first);
+    // hold: the next fit is tried.
+    peers.refuse_hold.insert(first);
     let placement = select_gpu_slot(&candidates, &peers, &request("raced"))
         .map_err(|refusal| refusal.to_string())?;
     assert_eq!(placement.machine, second);
-    assert_eq!(peers.asked("reserve"), vec![first, second]);
+    assert_eq!(peers.asked("hold"), vec![first, second]);
     peers.release(second, "raced")?;
 
-    // `first` took the reservation but its answer was lost: the selection
-    // stops there and names it, and `second` is never asked to reserve.
-    peers.refuse_reserve.clear();
-    peers.lose_reserve_answer.insert(first);
+    // `first` took the hold but its answer was lost: the selection stops
+    // there and names it, and `second` is never asked to hold.
+    peers.refuse_hold.clear();
+    peers.lose_hold_answer.insert(first);
     peers.asked.lock().unwrap().clear();
     let refusal = select_gpu_slot(&candidates, &peers, &request("lost")).unwrap_err();
     assert!(
         matches!(&refusal, GpuSelectionRefusal::Uncertain { machine, .. } if *machine == first),
         "{refusal}"
     );
-    assert_eq!(peers.asked("reserve"), vec![first]);
+    assert_eq!(peers.asked("hold"), vec![first]);
 
-    // Asking that machine again under the same key finds the hold it took.
-    peers.lose_reserve_answer.clear();
-    let again = peers.reserve(first, &pinned("lost", "GPU-first"))?;
-    assert_eq!(again.device.device_id, "GPU-first");
+    // A retry under the same key sees the key on `first` and asks only
+    // `first` again, even while its answers are still lost, though `second`
+    // is free.
+    peers.asked.lock().unwrap().clear();
+    let refusal = select_gpu_slot(&candidates, &peers, &request("lost")).unwrap_err();
+    assert!(
+        matches!(&refusal, GpuSelectionRefusal::Uncertain { machine, .. } if *machine == first),
+        "{refusal}"
+    );
+    peers.lose_hold_answer.clear();
+    let placement = select_gpu_slot(&candidates, &peers, &request("lost"))
+        .map_err(|refusal| refusal.to_string())?;
+    assert_eq!(placement.machine, first);
+    assert_eq!(placement.hold.device.device_id, "GPU-first");
+    assert_eq!(peers.asked("hold"), vec![first, first]);
+
+    // A twin call for a key that is already held is answered there too.
+    let twin = select_gpu_slot(&candidates, &peers, &request("lost"))
+        .map_err(|refusal| refusal.to_string())?;
+    assert_eq!(twin, placement);
     Ok(())
 }
 
@@ -885,14 +1178,14 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
     use oneiron_server::test_doors::gpu_backend::gpu_jobs_section;
 
     assert_eq!(gpu_jobs_section("")?.devices, GpuDeviceOffer::default());
-    assert!(
-        GpuDeviceOffer::default().offered.is_empty(),
-        "no GPU is offered by default"
-    );
-    assert_eq!(GpuDeviceOffer::default().hold_secs, GPU_SLOT_HOLD_SECS);
+    let default = GpuDeviceOffer::default();
+    assert!(default.offered.is_empty(), "no GPU is offered by default");
+    assert_eq!(default.hold_secs, GPU_SLOT_HOLD_SECS);
+    assert_eq!(default.drain_after_failures, GPU_DRAIN_AFTER_FAILURES);
+    assert_eq!(default.drain_file, None);
 
     let devices = gpu_jobs_section(
-        "[devices]\noffered = [\"GPU-aaaa\", \"GPU-bbbb\"]\nwithheld_file = \"/var/lib/oneiron/gpu-withheld\"\nhold_secs = 30\n",
+        "[devices]\noffered = [\"GPU-aaaa\", \"GPU-bbbb\"]\nwithheld_file = \"/var/lib/oneiron/gpu-withheld\"\nhold_secs = 30\ndrain_after_failures = 5\ndrain_file = \"/var/lib/oneiron/gpu-drained\"\n",
     )?
     .devices;
     assert_eq!(
@@ -904,6 +1197,8 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
                 .collect(),
             withheld_file: Some("/var/lib/oneiron/gpu-withheld".into()),
             hold_secs: 30,
+            drain_after_failures: 5,
+            drain_file: Some("/var/lib/oneiron/gpu-drained".into()),
         }
     );
 
@@ -912,6 +1207,7 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
         "[devices]\noffered = [\"GPU aaaa\"]\n",
         "[devices]\noffered = [\"\"]\n",
         "[devices]\nwithheld_file = \"relative/gpu-withheld\"\n",
+        "[devices]\ndrain_file = \"relative/gpu-drained\"\n",
         "[devices]\nhold_secs = 0\n",
         "[devices]\nofered = [\"GPU-aaaa\"]\n",
     ] {

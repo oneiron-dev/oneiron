@@ -3,15 +3,16 @@
 //! and its `machine.capacity` record lists a GPU that meets the request.
 //! That record says only what the cards are. Whether a card is free comes
 //! from the machine's own answer now: a machine that does not answer is not
-//! live, and stale data never admits. The slot is then reserved atomically
-//! on the chosen machine, and an uncertain reservation is never rerouted.
+//! live, and stale data never admits. The slot is then held atomically on
+//! the chosen machine (its slot table's hold), and an uncertain hold is
+//! never rerouted.
 
 use std::sync::Arc;
 
 use oneiron::{EntityId, Vault};
 
 use super::device::GpuDevice;
-use super::slots::{GpuAvailability, GpuSlotGrant, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable};
+use super::slots::{GpuAvailability, GpuSlotHold, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable};
 
 /// How the home reaches a machine's GPU slots. The authenticated peer
 /// transport implements it for other machines; [`LocalGpuSlotPeer`]
@@ -25,18 +26,19 @@ pub trait GpuSlotPeer: Send + Sync {
     /// machine is not live now.
     fn availability(&self, machine: EntityId) -> Result<GpuAvailability, GpuSlotPeerError>;
 
-    /// Reserves a slot on `machine` under `request.key`.
+    /// Holds a GPU on `machine` under `request.key`, ahead of the job's
+    /// start.
     ///
     /// # Errors
     ///
-    /// [`GpuSlotPeerError`]; `Uncertain` means the reservation may stand.
-    fn reserve(
+    /// [`GpuSlotPeerError`]; `Uncertain` means the hold may stand.
+    fn hold(
         &self,
         machine: EntityId,
         request: &GpuSlotRequest,
-    ) -> Result<GpuSlotGrant, GpuSlotPeerError>;
+    ) -> Result<GpuSlotHold, GpuSlotPeerError>;
 
-    /// Ends the slot under `key` on `machine`.
+    /// Ends the hold under `key` on `machine` before any call took it.
     ///
     /// # Errors
     ///
@@ -44,7 +46,7 @@ pub trait GpuSlotPeer: Send + Sync {
     fn release(&self, machine: EntityId, key: &str) -> Result<(), GpuSlotPeerError>;
 }
 
-/// Why a machine's GPU slot call did not answer a grant.
+/// Why a machine's GPU slot call did not answer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GpuSlotPeerError {
     /// The machine answered and refused; nothing took effect.
@@ -95,18 +97,21 @@ impl GpuSlotPeer for LocalGpuSlotPeer {
         self.own(machine)?;
         self.table
             .availability(oneiron_base::unix_millis_now())
-            .map_err(|probe| GpuSlotRefusal::Unmeasured { probe }.into())
+            .map_err(|probe| {
+                GpuSlotRefusal::Unmeasured {
+                    reason: probe.to_string(),
+                }
+                .into()
+            })
     }
 
-    fn reserve(
+    fn hold(
         &self,
         machine: EntityId,
         request: &GpuSlotRequest,
-    ) -> Result<GpuSlotGrant, GpuSlotPeerError> {
+    ) -> Result<GpuSlotHold, GpuSlotPeerError> {
         self.own(machine)?;
-        Ok(self
-            .table
-            .reserve(request, oneiron_base::unix_millis_now())?)
+        Ok(self.table.hold(request, oneiron_base::unix_millis_now())?)
     }
 
     fn release(&self, machine: EntityId, key: &str) -> Result<(), GpuSlotPeerError> {
@@ -151,14 +156,14 @@ pub fn gpu_node_candidates(
     Ok(candidates)
 }
 
-/// The slot the home reserved: on which machine, and its grant.
+/// The GPU the home holds: on which machine, and the hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GpuSlotPlacement {
     pub machine: EntityId,
-    pub grant: GpuSlotGrant,
+    pub hold: GpuSlotHold,
 }
 
-/// Why no slot was reserved.
+/// Why no GPU was held.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GpuSelectionRefusal {
     #[error("gpu_slots.no_candidate: no admitted machine records a GPU that meets the request")]
@@ -167,31 +172,34 @@ pub enum GpuSelectionRefusal {
     NoneLive,
     #[error("gpu_slots.none_free: no admitted machine that answered has a matching GPU free now")]
     NoneFree,
-    /// The reservation on `machine` may stand: ask that machine again under
-    /// the same key, never another machine.
+    /// The hold on `machine` may stand: ask that machine again under the
+    /// same key, never another machine.
     #[error(
-        "gpu_slots.uncertain: the reservation on machine {} may stand ({}); ask that machine again under the same key",
+        "gpu_slots.uncertain: the hold on machine {} may stand ({}); ask that machine again under the same key",
         .machine.to_hex(),
         .reason
     )]
     Uncertain { machine: EntityId, reason: String },
 }
 
-/// Reserves one GPU slot for `request` among `candidates`:
+/// Holds one GPU for `request` among `candidates`:
 /// 1. a candidate whose record lists no GPU that meets the request is never
 ///    asked;
 /// 2. every other candidate is asked what its GPUs are doing now, and one
-///    that does not answer is not live;
+///    that does not answer is not live. A machine whose answer shows the
+///    request's key already taking a GPU is asked to hold it again (the same
+///    key answers the same hold), so one key never holds GPUs on two
+///    machines;
 /// 3. the free matching GPUs those answers show are tried in best-fit order
-///    (the least memory first, then machine id, then device id), each
-///    reserved by its device id under the request's key. A refusal (the GPU
-///    was taken in between) or an unreachable machine moves to the next.
-///    An uncertain answer stops there and names its machine, so the slot is
-///    never held twice.
+///    (the least memory first, then machine id, then device id), each held
+///    by its device id under the request's key. A refusal (the GPU was
+///    taken in between, or the disk is under its reserve) or an unreachable
+///    machine moves to the next. An uncertain answer stops there and names
+///    its machine, so the GPU is never held twice.
 ///
 /// # Errors
 ///
-/// [`GpuSelectionRefusal`]: why no slot was reserved.
+/// [`GpuSelectionRefusal`]: why no GPU was held.
 pub fn select_gpu_slot(
     candidates: &[GpuNodeCandidate],
     peer: &dyn GpuSlotPeer,
@@ -216,6 +224,22 @@ pub fn select_gpu_slot(
         match peer.availability(machine) {
             Ok(answer) => {
                 live = true;
+                if answer
+                    .devices
+                    .iter()
+                    .any(|device| device.state.key() == Some(request.key.as_str()))
+                {
+                    // The key already takes a GPU there (a retry, or a twin
+                    // call): that machine answers it again, and no other
+                    // machine is asked.
+                    return peer
+                        .hold(machine, request)
+                        .map(|hold| GpuSlotPlacement { machine, hold })
+                        .map_err(|error| GpuSelectionRefusal::Uncertain {
+                            machine,
+                            reason: error.to_string(),
+                        });
+                }
                 free.extend(
                     answer
                         .free_matching(request)
@@ -241,8 +265,8 @@ pub fn select_gpu_slot(
             device_id: Some(device.device_id),
             ..request.clone()
         };
-        match peer.reserve(machine, &pinned) {
-            Ok(grant) => return Ok(GpuSlotPlacement { machine, grant }),
+        match peer.hold(machine, &pinned) {
+            Ok(hold) => return Ok(GpuSlotPlacement { machine, hold }),
             Err(GpuSlotPeerError::Refused(_) | GpuSlotPeerError::Unreachable { .. }) => {}
             Err(GpuSlotPeerError::Uncertain { reason }) => {
                 return Err(GpuSelectionRefusal::Uncertain { machine, reason });

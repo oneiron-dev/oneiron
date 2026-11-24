@@ -34,14 +34,19 @@
 //! owner lists one. `withheld_file` names a file of the GPUs another booker
 //! holds now, one device id per line, read at every ask: such a GPU is never
 //! offered, and once the file is named, a file that cannot be read offers
-//! nothing. `hold_secs` is how long a reservation holds its GPU before the
-//! job's launch confirms it.
+//! nothing. `hold_secs` is how long the home's hold keeps its GPU before
+//! the job's call takes it. Once `drain_after_failures` jobs in a row
+//! (3 by default; 0 never) finish failed, the machine takes no new GPU job
+//! until a person clears the drain. `drain_file` keeps the drain across a
+//! restart, and deleting it clears the drain.
 //!
 //! ```toml
 //! [gpu_jobs.devices]
 //! offered = ["GPU-0b3c5f52-6e1d-4a8e-9f0a-2d7c1e4b8a61"]
 //! withheld_file = "/var/lib/oneiron/gpu-withheld"
 //! hold_secs = 120
+//! drain_after_failures = 3
+//! drain_file = "/var/lib/oneiron/gpu-drained"
 //! ```
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -51,7 +56,7 @@ use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use serde::Deserialize;
 
-use crate::gpu_execution_node::{GPU_SLOT_HOLD_SECS, GpuDeviceOffer};
+use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuDeviceOffer};
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -84,6 +89,10 @@ struct GpuDevicesFile {
     withheld_file: Option<PathBuf>,
     #[serde(default)]
     hold_secs: Option<u64>,
+    #[serde(default)]
+    drain_after_failures: Option<u32>,
+    #[serde(default)]
+    drain_file: Option<PathBuf>,
 }
 
 /// `[gpu_jobs.offers.<name>]` as written.
@@ -192,12 +201,17 @@ impl GpuDevicesFile {
                 "gpu_jobs.devices.offered names {device} twice"
             );
         }
-        if let Some(file) = &self.withheld_file {
-            anyhow::ensure!(
-                file.is_absolute(),
-                "gpu_jobs.devices.withheld_file must be an absolute path: {}",
-                file.display()
-            );
+        for (field, file) in [
+            ("withheld_file", &self.withheld_file),
+            ("drain_file", &self.drain_file),
+        ] {
+            if let Some(file) = file {
+                anyhow::ensure!(
+                    file.is_absolute(),
+                    "gpu_jobs.devices.{field} must be an absolute path: {}",
+                    file.display()
+                );
+            }
         }
         let hold_secs = self.hold_secs.unwrap_or(GPU_SLOT_HOLD_SECS);
         anyhow::ensure!(
@@ -208,6 +222,10 @@ impl GpuDevicesFile {
             offered,
             withheld_file: self.withheld_file,
             hold_secs,
+            drain_after_failures: self
+                .drain_after_failures
+                .unwrap_or(GPU_DRAIN_AFTER_FAILURES),
+            drain_file: self.drain_file,
         })
     }
 }

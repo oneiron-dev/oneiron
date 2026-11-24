@@ -29,8 +29,8 @@ pub struct GpuComputeProcess {
     pub pid: Option<u32>,
 }
 
-/// Why this machine could not say what its GPUs are, what runs on them, or
-/// which of them another booker holds.
+/// Why this machine could not say what its GPUs are, what runs on them,
+/// which of them another booker holds, or whether it is drained.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "error", rename_all = "snake_case")]
 pub enum GpuProbeError {
@@ -42,6 +42,8 @@ pub enum GpuProbeError {
         "gpu_probe.withheld_unreadable: the list of GPUs another booker holds could not be read: {reason}"
     )]
     WithheldUnreadable { reason: String },
+    #[error("gpu_probe.drain_unreadable: the GPU drain file could not be read: {reason}")]
+    DrainUnreadable { reason: String },
 }
 
 /// What the slot table asks of this machine's GPU driver, at each ask.
@@ -155,7 +157,8 @@ fn plain_device_id(id: &str) -> Option<String> {
 }
 
 /// Runs one driver query and answers its output, within
-/// [`GPU_QUERY_TIMEOUT`].
+/// [`GPU_QUERY_TIMEOUT`]: its exit and the end of its output both wait no
+/// longer, and a query past it is killed and reaped off the caller's path.
 fn query(args: &[&str]) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
     let mut child = oneiron_spawn::command(NVIDIA_SMI)
@@ -166,37 +169,43 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
         .spawn()
         .map_err(|error| unavailable(format!("{NVIDIA_SMI} did not start: {error}")))?;
     let Some(mut stdout) = child.stdout.take() else {
-        stop(&mut child);
+        abandon(child);
         return Err(unavailable(format!("{NVIDIA_SMI} gave no output pipe")));
     };
     // Read while it runs, so a long answer never fills the pipe and stalls it.
-    let reader = std::thread::spawn(move || {
+    let (sender, output) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut text = String::new();
-        stdout.read_to_string(&mut text).map(|_| text)
+        let read = stdout.read_to_string(&mut text).map(|_| text);
+        // An abandoned query has no receiver left; its output is dropped.
+        sender.send(read).ok();
     });
     let deadline = Instant::now() + GPU_QUERY_TIMEOUT;
+    let late = || {
+        unavailable(format!(
+            "{NVIDIA_SMI} did not answer within {} s",
+            GPU_QUERY_TIMEOUT.as_secs()
+        ))
+    };
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(QUERY_POLL),
             Ok(None) => {
-                stop(&mut child);
-                return Err(unavailable(format!(
-                    "{NVIDIA_SMI} did not answer within {} s",
-                    GPU_QUERY_TIMEOUT.as_secs()
-                )));
+                abandon(child);
+                return Err(late());
             }
             Err(error) => {
-                stop(&mut child);
+                abandon(child);
                 return Err(unavailable(format!(
                     "{NVIDIA_SMI} could not be waited on: {error}"
                 )));
             }
         }
     };
-    let text = reader
-        .join()
-        .map_err(|_| unavailable(format!("reading {NVIDIA_SMI}'s output stopped")))?
+    let text = output
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| late())?
         .map_err(|error| unavailable(format!("{NVIDIA_SMI}'s output: {error}")))?;
     if !status.success() {
         return Err(unavailable(format!("{NVIDIA_SMI} exited with {status}")));
@@ -204,12 +213,15 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
     Ok(text)
 }
 
-/// Ends a query that is no longer waited for and reaps it.
-fn stop(child: &mut std::process::Child) {
+/// Kills a query no longer waited for and reaps it on its own thread, so a
+/// driver call that never returns holds that thread, not the caller.
+fn abandon(mut child: std::process::Child) {
     if let Err(error) = child.kill() {
         tracing::debug!(%error, "the GPU driver query had already ended");
     }
-    if let Err(error) = child.wait() {
-        tracing::debug!(%error, "the GPU driver query could not be reaped");
-    }
+    std::thread::spawn(move || {
+        if let Err(error) = child.wait() {
+            tracing::debug!(%error, "the GPU driver query could not be reaped");
+        }
+    });
 }

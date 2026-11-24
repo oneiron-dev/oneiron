@@ -210,9 +210,17 @@ impl SyncServer {
         // Reader children wake this server's runner, which also keeps their
         // cutoff.
         let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
-        let gpu_slots = Arc::new(crate::gpu_execution_node::GpuSlotTable::new(
+        let transfers = crate::api::Transfers::new(
+            &config.limits,
+            Arc::clone(wire_telemetry.limit_questions()),
+            &vault,
+        )?;
+        // A GPU job's booking claims its disk bytes on the floor uploads,
+        // backups and spools claim theirs on.
+        let gpu_slots = Arc::new(crate::gpu_execution_node::GpuSlotTable::with_disk(
             Arc::new(crate::gpu_execution_node::NvidiaSmiProbe),
             config.gpu_jobs.devices.clone(),
+            Some(Arc::new(transfers.disk.clone())),
         ));
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
@@ -381,11 +389,7 @@ impl SyncServer {
             host_account: oneiron::llm::run_admission::HostAccount::with_residents(
                 oneiron::llm::VaultResidentLedger::new(vault.clone()),
             ),
-            transfers: crate::api::Transfers::new(
-                &config.limits,
-                Arc::clone(wire_telemetry.limit_questions()),
-                &vault,
-            )?,
+            transfers,
             memory: memory.clone(),
             renderer_turns,
             context_reads,
