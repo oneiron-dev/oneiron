@@ -17,7 +17,10 @@ use std::collections::BTreeSet;
 use super::{SlipClaims, principal_standing_or_lapse_in_txn};
 use crate::Vault;
 use crate::check_in::{VerbActClass, verb_act_class};
-use crate::consent::{AGENT_VERB_LIST_WIDEN_COMMAND, AgentVerbListRow, AgentVerbListWidenAction};
+use crate::consent::{
+    AGENT_CREDENTIAL_VERBS_WIDEN_COMMAND, AgentCredentialVerbsRow, AgentCredentialVerbsWidenAction,
+    CredentialVerbs,
+};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
@@ -121,33 +124,51 @@ impl Vault {
     }
 }
 
+impl crate::memory::Memory<'_> {
+    /// [`Vault::credential_admits_verb`] for the credential this handle's
+    /// caller presented: a handle bound to none (the embedded owner's, an
+    /// in-process agent run's under its own Grant gates) runs every verb.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vault::credential_admits_verb`].
+    pub(crate) fn presented_credential_admits_verb(&self, verb: &str) -> MemoryResult<()> {
+        match self.presented_credential() {
+            Some(proof) => self.vault().credential_admits_verb(proof.claims(), verb),
+            None => Ok(()),
+        }
+    }
+}
+
 impl Vault {
-    /// The owner's sheet of verb lists in `txn`: each live slip of a named
-    /// agent that carries one, newest issued first, with the owner's
-    /// widening.
+    /// The owner's sheet of agent credentials in `txn`: each live slip of a
+    /// named agent and the verbs it may call (`all` with no list), newest
+    /// issued first, with the owner's widening. Its widening Grants are the
+    /// registry's to fill.
     ///
     /// # Errors
     ///
     /// A store, fold or clock failure.
-    pub(crate) fn agent_verb_list_registry_rows_in_txn(
+    pub(crate) fn agent_credential_verbs_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-    ) -> crate::error::Result<Vec<AgentVerbListRow>> {
-        let mut rows: Vec<AgentVerbListRow> = self
+    ) -> crate::error::Result<Vec<AgentCredentialVerbsRow>> {
+        let mut rows: Vec<AgentCredentialVerbsRow> = self
             .live_agent_slips_in_txn(txn)?
             .into_iter()
-            .filter_map(|slip| {
-                Some(AgentVerbListRow {
-                    holder: slip.holder,
-                    slip_ref: bytes_to_hex_lower(&slip.slip_id),
-                    issued_at: slip.issued_at,
-                    expires_at: slip.expires_at,
-                    verbs: slip.verb_allowlist?,
-                    widen_action: AgentVerbListWidenAction {
-                        command: AGENT_VERB_LIST_WIDEN_COMMAND.to_owned(),
-                        agent: slip.holder,
-                    },
-                })
+            .map(|slip| AgentCredentialVerbsRow {
+                holder: slip.holder,
+                slip_ref: bytes_to_hex_lower(&slip.slip_id),
+                issued_at: slip.issued_at,
+                expires_at: slip.expires_at,
+                verbs: slip
+                    .verb_allowlist
+                    .map_or(CredentialVerbs::All, CredentialVerbs::Listed),
+                widening_grants: Vec::new(),
+                widen_action: AgentCredentialVerbsWidenAction {
+                    command: AGENT_CREDENTIAL_VERBS_WIDEN_COMMAND.to_owned(),
+                    agent: slip.holder,
+                },
             })
             .collect();
         rows.sort_by(|left, right| {

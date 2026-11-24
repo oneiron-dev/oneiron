@@ -1,8 +1,9 @@
 //! AGENT-CREDENTIAL-VERB-ALLOWLIST: `oneiron token agent` signs the agent's
 //! verb list into its slip. Omitted, the list is empty: the read verbs
-//! alone (the good default). `--verbs <names>` lists those verbs; `--verbs
-//! all` leaves the credential no list (every verb its tier admits); a name
-//! the verb table does not hold is refused before anything is minted.
+//! alone (the good default). `--verbs <names>` lists those verbs;
+//! `--all-verbs` leaves the credential no list (every verb its tier admits;
+//! Engine CREDENTIAL-VERBS-UNRESTRICTED = A); a name the verb table does not
+//! hold is refused before anything is minted.
 //! These tests run the shipped binary on a stopped vault.
 //!
 //! Run with: `cargo test --locked -p oneiron-server --all-features --test
@@ -62,19 +63,13 @@ fn init() -> Install {
 
 /// One `token agent` run with `verbs` (`None`: no `--verbs`): what it
 /// printed and the verb list its slip carries.
-fn token_agent(
-    install: &Install,
-    name: &str,
-    verbs: Option<&str>,
-) -> (Value, Option<BTreeSet<String>>) {
+fn token_agent(install: &Install, name: &str, extra: &[&str]) -> (Value, Option<BTreeSet<String>>) {
     let mut args = vec!["token", "agent", "--name", name, "--tier", "full-access"];
-    if let Some(verbs) = verbs {
-        args.extend(["--verbs", verbs]);
-    }
+    args.extend(extra);
     let output = oneiron(&args, &install.config);
     assert!(
         output.status.success(),
-        "token agent {verbs:?}: {}",
+        "token agent {extra:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let printed: Value =
@@ -87,7 +82,7 @@ fn token_agent(
 #[test]
 fn token_agent_signs_the_read_verbs_alone_by_default() {
     let install = init();
-    let (printed, list) = token_agent(&install, "default-reader", None);
+    let (printed, list) = token_agent(&install, "default-reader", &[]);
     assert_eq!(list, Some(BTreeSet::new()), "the read verbs alone");
     assert_eq!(printed["verb_allowlist"], serde_json::json!([]));
 }
@@ -98,7 +93,7 @@ fn token_agent_signs_the_verbs_named_at_mint() {
     let (printed, list) = token_agent(
         &install,
         "note-writer",
-        Some("vault.notes.create,vault.notes.lifecycle"),
+        &["--verbs", "vault.notes.create,vault.notes.lifecycle"],
     );
     assert_eq!(
         list,
@@ -114,9 +109,9 @@ fn token_agent_signs_the_verbs_named_at_mint() {
 }
 
 #[test]
-fn token_agent_verbs_all_leaves_no_list() {
+fn token_agent_all_verbs_leaves_no_list() {
     let install = init();
-    let (printed, list) = token_agent(&install, "every-verb", Some("all"));
+    let (printed, list) = token_agent(&install, "every-verb", &["--all-verbs"]);
     assert_eq!(list, None, "no list: every verb its tier admits");
     assert_eq!(printed["verb_allowlist"], Value::Null);
 }

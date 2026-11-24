@@ -421,8 +421,7 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
             "agent",
             "--name",
             "claude-code",
-            "--verbs",
-            "all",
+            "--all-verbs",
             "--tier",
             "full-access",
             "--out",
@@ -476,8 +475,7 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
             "agent",
             "--name",
             "reviewer",
-            "--verbs",
-            "all",
+            "--all-verbs",
             "--tier",
             "propose-only",
             "--out",
@@ -712,8 +710,7 @@ impl Minted {
                 "agent",
                 "--name",
                 name,
-                "--verbs",
-                "all",
+                "--all-verbs",
                 "--tier",
                 tier,
                 "--out",
@@ -1201,7 +1198,7 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
     let dir = tempfile::tempdir().unwrap();
     let config = init_vault(dir.path());
     let printed: Value = serde_json::from_str(&stdout(oneiron(
-        &["token", "agent", "--name", "codex", "--verbs", "all"],
+        &["token", "agent", "--name", "codex", "--all-verbs"],
         &config,
     )))
     .unwrap();
@@ -1367,8 +1364,7 @@ fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
             "agent",
             "--name",
             "codex",
-            "--verbs",
-            "all",
+            "--all-verbs",
             "--tier",
             "read-only",
             "--out",
@@ -1427,8 +1423,7 @@ fn a_call_as_long_as_the_request_floor_goes_as_the_client_wrote_it() {
             "agent",
             "--name",
             "claude-code",
-            "--verbs",
-            "all",
+            "--all-verbs",
             "--tier",
             "full-access",
             "--out",
@@ -2119,7 +2114,7 @@ fn the_bridge_takes_the_code_mode_pair_only_for_a_credential_that_may_run_code()
     let dir = tempfile::tempdir().unwrap();
     let config = init_vault(dir.path());
     let printed: Value = serde_json::from_str(&stdout(oneiron(
-        &["token", "agent", "--name", "codex", "--verbs", "all"],
+        &["token", "agent", "--name", "codex", "--all-verbs"],
         &config,
     )))
     .unwrap();

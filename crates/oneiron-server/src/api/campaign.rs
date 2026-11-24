@@ -272,6 +272,12 @@ pub(crate) fn dispatch(
     // refuses it on writes: its records cannot bound what comes back.
     auth.require_unrestricted_record_scope()?;
     auth.require(scope)?;
+    // The credential calls only its verbs: a campaign surface write by its
+    // own verb name; its reads are reads (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    if scope != CoreScope::Read {
+        crate::api::credential_verbs::require_listed_verb(server, Some(auth), verb)
+            .map_err(surface_error)?;
+    }
     let actor = surface_actor(auth)?;
     let actor_class = if verb == SELF_CAMPAIGN_LAUNCH {
         match auth.actor_class() {

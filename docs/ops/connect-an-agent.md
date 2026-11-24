@@ -43,6 +43,22 @@ oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
     `core:write`, so no route that commits a write directly (such as
     `/v1/core/batch`) accepts it.
   - `read-only`: it only reads.
+- `--verbs` names the verbs the credential may call beyond the read verbs,
+  by their verb-table names, comma-separated
+  (`--verbs vault.remember,vault.notes.create`), signed into its slip. Every
+  read verb (a verb whose act class is `read`) is always allowed. Without
+  `--verbs` the credential calls the read verbs alone, whatever its tier:
+  name what the agent writes, or pass `--all-verbs` instead to let it call
+  every verb its tier admits (no list, as before). A name that is not a verb
+  is refused at mint. The output shows the list as `verb_allowlist` (`null`
+  under `--all-verbs`). The server
+  refuses any other verb on every door (HTTP, MCP tools, code-mode
+  programs, the REST write routes) with `FORBIDDEN` and "is not among this
+  credential's verbs". To let the agent call one more verb later, name it
+  in a Grant for the agent (`vault.agents.grants.mint` with `read` and the
+  verb in its verbs); revoking that Grant takes the verb back.
+  `vault.consent.registry` lists each agent credential that carries a list
+  under `agent_verb_lists`.
 - `--comm` caps whom the agent may message: `parent`, `subtree`, `project`
   or `vault`, signed into its slip. Outside a run, anything narrower than
   `vault` reaches your owners only. The output shows the reach as `comm`

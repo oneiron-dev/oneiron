@@ -186,8 +186,7 @@ impl Served {
             "parent",
             // The candidate drives the browser rows: it calls every verb its
             // tier admits (AGENT-CREDENTIAL-VERB-ALLOWLIST).
-            "--verbs",
-            "all",
+            "--all-verbs",
             "--out",
         ])
         .arg(&credential)

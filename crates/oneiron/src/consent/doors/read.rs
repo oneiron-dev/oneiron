@@ -151,10 +151,23 @@ impl Vault {
         // AGENT-GRANTLESS-VISIBLE) is listed apart, with no Grant id and no
         // revoke, and with the owner's conversion into a Grant.
         let mut grantless_agents = self.grantless_agent_registry_rows_in_txn(&rtxn)?;
-        // A named agent's live credential the owner minted with a verb list
-        // (AGENT-CREDENTIAL-VERB-ALLOWLIST), with the owner's widening.
-        let mut agent_verb_lists = self.agent_verb_list_registry_rows_in_txn(&rtxn)?;
+        // Each named agent's live credential and the verbs it may call
+        // (AGENT-CREDENTIAL-VERB-ALLOWLIST), with the Grants that widen it.
+        let mut agent_credential_verbs = self.agent_credential_verbs_registry_rows_in_txn(&rtxn)?;
         drop(rtxn);
+        for credential in &mut agent_credential_verbs {
+            credential.widening_grants = rows
+                .iter()
+                .filter(|row| {
+                    row.status == crate::consent::ConsentGrantStatus::Active
+                        && row
+                            .agent_grant
+                            .as_ref()
+                            .is_some_and(|grant| grant.agent == credential.holder)
+                })
+                .map(|row| row.grant_ref.clone())
+                .collect();
+        }
         rows.sort_by(|left, right| {
             right
                 .created_at
@@ -163,11 +176,11 @@ impl Vault {
         });
         rows.truncate(query.limit);
         grantless_agents.truncate(query.limit);
-        agent_verb_lists.truncate(query.limit);
+        agent_credential_verbs.truncate(query.limit);
         Ok(ConsentRegistry {
             rows,
             grantless_agents,
-            agent_verb_lists,
+            agent_credential_verbs,
         })
     }
 }

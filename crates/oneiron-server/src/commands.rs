@@ -512,32 +512,23 @@ fn agent_tier_authority(
     )
 }
 
-/// The word `token agent --verbs` takes for no list: the credential calls
-/// every verb its tier admits.
-const EVERY_VERB: &str = "all";
-
-/// `token agent --verbs` as the slip's verb list
-/// (AGENT-CREDENTIAL-VERB-ALLOWLIST): omitted, the read verbs alone (an
-/// empty list); `all` alone, no list; else the named verbs, each a
-/// verb-table row.
+/// `token agent --verbs` and `--all-verbs` as the slip's verb list
+/// (AGENT-CREDENTIAL-VERB-ALLOWLIST; Engine CREDENTIAL-VERBS-UNRESTRICTED =
+/// A): `--all-verbs`, no list; neither flag, the read verbs alone (an empty
+/// list); else the named verbs, each a verb-table row.
 fn agent_verb_allowlist(
     verbs: Option<&[String]>,
+    all_verbs: bool,
 ) -> anyhow::Result<Option<std::collections::BTreeSet<String>>> {
-    let Some(verbs) = verbs else {
-        return Ok(Some(std::collections::BTreeSet::new()));
-    };
+    if all_verbs {
+        return Ok(None);
+    }
     let verbs: std::collections::BTreeSet<String> = verbs
+        .unwrap_or_default()
         .iter()
         .map(|verb| verb.trim().to_owned())
         .filter(|verb| !verb.is_empty())
         .collect();
-    if verbs.contains(EVERY_VERB) {
-        anyhow::ensure!(
-            verbs.len() == 1,
-            "--verbs {EVERY_VERB} stands alone: it leaves the credential no verb list"
-        );
-        return Ok(None);
-    }
     let unknown = oneiron::authority::unknown_verb_names(&verbs);
     anyhow::ensure!(
         unknown.is_empty(),
@@ -604,7 +595,7 @@ fn mint_agent_credential(
         verbs,
         args.lifetime_secs,
         comm_arg(args.comm.as_deref())?,
-        agent_verb_allowlist(args.verbs.as_deref())?,
+        agent_verb_allowlist(args.verbs.as_deref(), args.all_verbs)?,
     )?;
     let slip_id = oneiron::authority::CapabilitySlip::from_token(&credential.token)?
         .claims

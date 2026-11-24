@@ -132,7 +132,12 @@ impl<'a> HostSelfDispatcher<'a> {
         } else {
             proof.allows_verb("read") || proof.allows_verb("core:read")
         };
-        if admits && vault.capability_slip_is_live(proof)? {
+        // The slip's verb list holds for its program's calls too, a store
+        // failure refusing (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+        if admits
+            && vault.capability_slip_is_live(proof)?
+            && vault.credential_admits_verb(claims, name).is_ok()
+        {
             return Ok(None);
         }
         Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()))
