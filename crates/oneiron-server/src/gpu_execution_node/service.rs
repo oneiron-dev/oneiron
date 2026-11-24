@@ -20,8 +20,10 @@
 use std::future::Future;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use oneiron_mesh_transport::message::{decode_message, encode_message};
-use oneiron_mesh_transport::{MeshConnection, MeshFuture, MeshService};
+use oneiron_mesh_transport::{MeshConnection, MeshFuture, MeshService, MeshStream};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -187,28 +189,52 @@ fn now_ms() -> u64 {
 }
 
 /// Serves `conn` until it ends: each stream it accepts carries one request,
-/// which `answer` answers on the same stream. A stream whose request does
-/// not decode gets no answer.
-async fn serve_each_stream<Q, A, F, Fut>(conn: &dyn MeshConnection, mut answer: F)
+/// which `answer` answers on the same stream. The streams are served side by
+/// side, so a stream whose request never finishes, or whose peer stops
+/// reading its answer, loses only itself; the next stream is still accepted
+/// and answered. Each accept checks the peer's live grant, and the loop ends
+/// when the connection closes or the grant ends; a request still in flight
+/// then ends with it.
+async fn serve_each_stream<Q, A, F, Fut>(conn: &dyn MeshConnection, answer: F)
 where
     Q: DeserializeOwned,
     A: Serialize,
-    F: FnMut(Q) -> Fut,
+    F: Fn(Q) -> Fut,
     Fut: Future<Output = A>,
 {
-    while let Ok(mut stream) = conn.accept_stream().await {
-        let Ok(bytes) = stream.recv().await else {
-            continue;
-        };
-        let Ok(request) = decode_message::<Q>(JOB_PROTOCOL, &bytes) else {
-            continue;
-        };
-        let reply = answer(request).await;
-        let Ok(reply) = encode_message(JOB_PROTOCOL, &reply) else {
-            continue;
-        };
-        if stream.send(&reply).await.is_err() {
-            break;
+    let answer = &answer;
+    let mut streams = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            Some(()) = streams.next(), if !streams.is_empty() => {}
+            accepted = conn.accept_stream() => match accepted {
+                Ok(stream) => streams.push(serve_stream::<Q, A, F, Fut>(stream, answer)),
+                Err(_) => break,
+            },
         }
     }
+}
+
+/// One stream's request and its answer. A stream whose request does not
+/// decode gets no answer; a failure ends this stream alone.
+async fn serve_stream<Q, A, F, Fut>(mut stream: Box<dyn MeshStream>, answer: &F)
+where
+    Q: DeserializeOwned,
+    A: Serialize,
+    F: Fn(Q) -> Fut,
+    Fut: Future<Output = A>,
+{
+    let Ok(bytes) = stream.recv().await else {
+        return;
+    };
+    let Ok(request) = decode_message::<Q>(JOB_PROTOCOL, &bytes) else {
+        return;
+    };
+    let reply = answer(request).await;
+    let Ok(reply) = encode_message(JOB_PROTOCOL, &reply) else {
+        return;
+    };
+    // A peer that stopped reading loses this answer; it asks again on a new
+    // stream.
+    drop(stream.send(&reply).await);
 }

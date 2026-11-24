@@ -741,6 +741,14 @@ name = "mesh_pairing_ceiling"
 path = "tests/mesh_pairing_ceiling.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# The job service answers each stream of a connection on its own: a stream that never finishes
+# its request, or whose answer cannot be sent, costs only itself (review round 1 of #10407). An
+# in-process stand-in for the mesh connection; no vault, no grant.
+[[test]]
+name = "job_service_streams"
+path = "tests/job_service_streams.rs"
+required-features = ["mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
