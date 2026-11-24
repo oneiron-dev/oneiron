@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.order",
+  "description": "Orders one pinned, approved workload run, charged to an offer, with limits and wishes on where; no machine has to be named. It waits holding nothing, and its state says why. The owner calls it, or an agent whose Grant names it.",
+  "input": "crate::work_order::WorkOrderRequest",
+  "output": "crate::work_order::WorkOrderView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.order\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}
