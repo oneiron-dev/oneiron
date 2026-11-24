@@ -58016,7 +58016,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 47,
-      "mod": 41,
+      "mod": 42,
       "re-export": 75
      }
     },
@@ -60198,6 +60198,20 @@
      "purpose": "The owner or administrator standing a room reader presents",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbGrantCaller"
+     ],
+     "path": "src/memory/verb_grant_caller.rs",
+     "purpose": "Who may call a door whose verb row names the proof `verb_grant_caller` (design pass 32 section 5, the lane…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -93587,7 +93601,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 48,
       "re-export": 4,
@@ -95892,7 +95906,7 @@
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
       "crate-vis": 6,
-      "mod": 15,
+      "mod": 16,
       "re-export": 12
      }
     },
@@ -95935,14 +95949,14 @@
      "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4,
       "re-export": 2,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PatternCardEntry",
@@ -95953,9 +95967,26 @@
      "purpose": "The payoff table and the planner card (ARCH-0003 #learning-views, ARCH-0079 #scoring, #works-well-for)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PlannerCardPattern",
+      "PlannerCardPayoffRow",
+      "PlannerCardRequest",
+      "PlannerCardView"
+     ],
+     "path": "src/team/planner_card_door.rs",
+     "purpose": "`vault.planner.card` (design pass 32 section 5, row 12; ARCH-0079 #planner): the planner card of one project…",
+     "surface": {
+      "const": 2,
+      "fn": 4,
+      "struct": 4
      }
     },
     {
@@ -95969,7 +96000,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 10,
       "re-export": 2,
       "struct": 3,
@@ -98833,7 +98864,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 397,
+      "mod": 398,
       "re-export": 3
      }
     },
@@ -100205,6 +100236,16 @@
       "enum": 1,
       "fn": 25,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/store_writes.rs",
+     "purpose": "TEST-ONLY: the store's committed write transactions, so a test can pin that a read door writes nothing at…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -116861,6 +116902,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/planner_card_door.rs",
+     "purpose": "`vault.planner.card` (design pass 32 section 5, row 12; tests T24, T25): the planner card of one project and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/plugin_section_fit_install.rs",
      "purpose": "FIX-LIST [FIT-INSTALL-AUTO-CLAIM-PENDS-AT-GATE]: under ARCH-0053 (\"Everything installs; permissions ask\"), a…",
      "surface": {}
@@ -122276,7 +122325,7 @@
     },
     "memory": {
      "entry": "crates/oneiron/src/memory/mod.rs",
-     "files": 421,
+     "files": 422,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -123114,7 +123163,7 @@
     },
     "team": {
      "entry": "crates/oneiron/src/team/mod.rs",
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -123135,7 +123184,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 409,
+     "files": 410,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -123393,8 +123442,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8535,
-   "test_files": 2273
+   "source_files": 8538,
+   "test_files": 2274
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -166567,7 +166616,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 215
+      "crate-vis": 216
      }
     },
     {
@@ -166644,6 +166693,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/host_doors/planner_card.rs",
+     "purpose": "`vault.planner.card` (design pass 32 section 5, row 12): the planner card of one project and task type, with…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/host_doors/proactivity.rs",
      "purpose": "The owner's saved proactivity digest, through the native screened read",
      "surface": {
@@ -166678,6 +166737,16 @@
      "purpose": "The owner-listing `as_owner` shared by the artifact, commitment, code wait and hook regen doors",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_doors/verb_grant.rs",
+     "purpose": "The host doors whose verb row names the proof `verb_grant_caller` (design pass 32 section 5, the lane…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -189450,7 +189519,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 843,
+     "files": 845,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -190348,7 +190417,7 @@
    },
    "over_bar": 66,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2113,
+   "source_files": 2115,
    "test_files": 577
   },
   "oneiron-setting-contract": {
