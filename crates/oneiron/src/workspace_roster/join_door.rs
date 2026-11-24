@@ -88,9 +88,9 @@ pub struct JoinOutcome {
     pub receipt_ref: Option<String>,
     /// The check-in decision on the Admission yes this call recorded, the
     /// add of the join's subject (ROLES-CHECKIN P2.6a). An offer card's
-    /// exact replay carries the decision its answer stored. Absent on a
-    /// replay of the join doors, on every other answer, and for a person
-    /// with no role on the vault.
+    /// exact replay (its answering host, the same intent key) carries the
+    /// decision its answer stored. Absent on a replay of the join doors, on
+    /// every other answer, and for a person with no role on the vault.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<CheckInDecision>,
 }

@@ -131,19 +131,37 @@ impl Settled {
         txn: &heed::RoTxn<'_>,
         stored: StoredOffer,
     ) -> Result<Self> {
-        let mut join = live_join(&vault.store, txn, &stored.card.join_ref)?
+        let join = live_join(&vault.store, txn, &stored.card.join_ref)?
             .map(|receipt| JoinOutcome::of(&receipt));
-        // The join's receipt keeps no check-in: the answer stored it.
-        if let Some(join) = join.as_mut() {
-            join.check_in = stored
-                .answer
-                .as_ref()
-                .and_then(|answer| answer.check_in.clone());
-        }
         Ok(Self {
             card: stored.into_card(),
             join,
         })
+    }
+
+    /// A stored answer replayed to `caller`: the host who gave it, under
+    /// the same intent key, gets the join it was answered, its check-in
+    /// decision included (the join's receipt keeps none: the answer stored
+    /// it). Any other call reads the card as it stands, with no check-in.
+    fn answer_replayed(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        stored: StoredOffer,
+        caller: EntityId,
+        intent_key: &str,
+    ) -> Result<Self> {
+        let check_in = stored
+            .answer
+            .as_ref()
+            .filter(|answer| {
+                answer.by == RosterActor::Actor(caller) && answer.intent_key == intent_key
+            })
+            .and_then(|answer| answer.check_in.clone());
+        let mut settled = Self::replayed(vault, txn, stored)?;
+        if let Some(join) = settled.join.as_mut() {
+            join.check_in = check_in;
+        }
+        Ok(settled)
     }
 
     fn settlement(self) -> OfferSettlement {
@@ -408,7 +426,13 @@ fn answer_in_txn(
                 "this offer was already answered the other way",
             ));
         }
-        return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
+        return Ok(Step::Done(Settled::answer_replayed(
+            vault,
+            txn,
+            stored,
+            caller.entity_ref(),
+            &request.intent_key,
+        )?));
     }
     // Joined at its mint, replaced or aged out: nothing is left to answer.
     if !matches!(stored.card.state, OfferState::Open { .. }) {
