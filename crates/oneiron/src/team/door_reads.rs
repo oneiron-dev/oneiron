@@ -34,15 +34,18 @@ use crate::team::team_shape::team_pattern;
 use crate::{EntityId, Vault};
 
 use super::doors::{
-    BorrowedCellView, CriticAssociation, CriticObservation, LaunchedMember, LearningCellView,
-    LearningEvidenceView, LearningObservation, ObservationIssue, PlanObservation,
-    PlannedSpawnObservation, ProviderPinView, ResolvedTeam, RouteObservation, SkillRevisionView,
-    TeamBindingView, TeamReceiptView, TypeStamp,
+    BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation,
+    LaunchedMember, LearningCellView, LearningEvidenceView, LearningObservation, ObservationIssue,
+    PlanObservation, PlannedSpawnObservation, ProviderPinView, ResolvedTeam, RouteObservation,
+    SkillRevisionView, SpawnAskKnob, SpawnAskObservation, TeamBindingView, TeamReceiptView,
+    TypeStamp,
 };
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, placed_ancestry_in_txn, team_receipt_in_txn};
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
 use super::spawn_intent::{SpawnErasure, SpawnPhase};
+use super::spawn_need::SpawnNeed;
+use super::spawn_override::SpawnOverride;
 
 /// One team start as read: what [`resolve_team`] holds against the plan.
 struct TeamRead<'a> {
@@ -391,6 +394,40 @@ pub(super) fn plan_view(receipt: &SpawnPlanReceipt) -> PlanObservation {
             .iter()
             .map(ProviderPinView::from)
             .collect(),
+        asked: ask_view(&receipt.asked),
+        what_more_would_buy: plan.what_more_would_buy.clone(),
+    }
+}
+
+/// The knobs the receipt's ask froze, each as the asker set it.
+fn ask_view(asked: &SpawnNeed) -> SpawnAskObservation {
+    SpawnAskObservation {
+        model: asked
+            .model
+            .as_ref()
+            .map(|knob| knob_view(knob, |model| model.as_str().to_owned())),
+        width: asked
+            .width
+            .as_ref()
+            .map(|knob| knob_view(knob, |width| *width)),
+        pattern: asked
+            .pattern
+            .as_ref()
+            .map(|knob| knob_view(knob, |pattern| CoordinationPatternView::from(*pattern))),
+        budget_cap_units: asked
+            .budget_cap_units
+            .as_ref()
+            .map(|knob| knob_view(knob, |cap| *cap)),
+    }
+}
+
+fn knob_view<T, U>(knob: &SpawnOverride<T>, view: impl FnOnce(&T) -> U) -> SpawnAskKnob<U> {
+    match knob {
+        SpawnOverride::Seed { value, weight_runs } => SpawnAskKnob::Seed {
+            value: view(value),
+            weight_runs: *weight_runs,
+        },
+        SpawnOverride::Pin { value } => SpawnAskKnob::Pin { value: view(value) },
     }
 }
 
