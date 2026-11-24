@@ -104,10 +104,15 @@ size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning m
 File paths in a crate map are relative to `crates/<crate>/`. The maps cover `crates/` only; the
 macOS app lives at `apps/macos/src-tauri/` and is linked from the overview.
 
-`scripts/codemap/` generates both map levels and the machine-readable `docs/codemap/codemap.json`.
-Only `main` writes them: `.github/workflows/codemap.yml` regenerates and commits the map after
-every push to `main`. Never hand-edit the map and never commit map output from a branch, so a
-branch's map can lag its own changes. To read a fresh map for your branch, run
+`scripts/codemap/` generates both map levels, the machine-readable `docs/codemap/codemap.json`
+and the two lookup pages `docs/codemap/BY-CAPABILITY.md` and `docs/codemap/BY-SPEC.md`. Besides
+the source, it reads one reviewed input, `scripts/codemap/capability_aliases.md` (a table of
+phrase, synonyms, paths, spec IDs and a note on what it is and is not): add a row there in your PR
+when a capability is hard to find by the words its code uses, and fix its rows when you move or
+delete a file they name, since a path that names no file fails the map run on `main`.
+Only `main` writes the generated files: `.github/workflows/codemap.yml` regenerates and commits the map after every
+push to `main`. Never hand-edit the map and never commit map output from a branch, so a branch's
+map can lag its own changes. To read a fresh map for your branch, run
 `python3 scripts/codemap/codemap.py`, then drop the output with
 `git restore docs/CODEMAP.md docs/codemap`. `python3 scripts/codemap/codemap.py --sizes` prints
 live line counts without changing the maps. The map is a source summary, not a call graph or
@@ -122,6 +127,15 @@ Size and dependency questions without `tokei` or `cargo-modules` (`rg` is presen
     rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files
     rg -l 'crate::pipeline\b' crates --type rust                                     # who names a module
     rg -oIN '\bcrate::[a-z_]+' crates/oneiron/src/pipeline | sort | uniq -c | sort -rn  # what a module names
+
+## Find code by capability
+
+Start with `docs/CODEMAP.md`, then grep `docs/codemap/BY-CAPABILITY.md` for the capability or a synonym.
+For an OF or ARCH ID, grep `docs/codemap/BY-SPEC.md`; follow the listed source paths.
+If no index is available, grep `docs/codemap/*.md` by purpose and path (try node/machine, enrol/enroll).
+For a ref-specific sweep, use `git show <ref>:<path>` or `git grep ... <ref> -- <paths>`, not the worktree.
+Open the matching source and follow its caller or entry point before describing what runs.
+A search miss is not absence. Report “not located” with the ref, searched terms, and scope.
 
 ## Where code lives
 
