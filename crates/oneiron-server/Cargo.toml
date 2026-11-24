@@ -727,6 +727,13 @@ name = "job_protocol_grant"
 path = "tests/job_protocol_grant.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# Pass 33 R1 T3, T4, T5, T5b and the authority tick: an execution node's opt-in and gate between
+# the owner's servers with their real mesh listeners; the listeners need the `mesh` feature.
+[[test]]
+name = "execution_node_gate"
+path = "tests/execution_node_gate.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
