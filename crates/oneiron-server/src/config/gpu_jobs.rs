@@ -27,12 +27,43 @@
 //! teardown_secs = 30
 //! rounding_secs = 60
 //! ```
-use std::collections::BTreeMap;
+//!
+//! `[gpu_jobs.devices]` names the GPUs of this machine that it offers to the
+//! vault's GPU jobs, by the driver's device id (`nvidia-smi -L` shows each
+//! UUID). There is none by default, so a machine offers no GPU until its
+//! owner lists one. `withheld_file` names a file of the GPUs another booker
+//! holds now, one device id per line, read at every ask: such a GPU is never
+//! offered, and once the file is named, a file that cannot be read offers
+//! nothing. `hold_secs` is how long the home's hold keeps its GPU before
+//! the job's call takes it. Once `drain_after_failures` jobs in a row
+//! (3 by default; 0 never) finish failed, the machine takes no new GPU job
+//! until a person clears the drain. `drain_file` keeps the drain across a
+//! restart, and deleting it clears the drain. `owner_lock_dir` is where the
+//! server takes one lock file per offered GPU while it runs, so a second
+//! Oneiron server on the machine does not offer the same GPU; it is the
+//! temp directory's `oneiron-gpu-owners` unless named.
+//!
+//! ```toml
+//! [gpu_jobs.devices]
+//! offered = ["GPU-0b3c5f52-6e1d-4a8e-9f0a-2d7c1e4b8a61"]
+//! withheld_file = "/var/lib/oneiron/gpu-withheld"
+//! hold_secs = 120
+//! drain_after_failures = 3
+//! drain_file = "/var/lib/oneiron/gpu-drained"
+//! owner_lock_dir = "/run/oneiron/gpu-owners"
+//! ```
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use oneiron::ModelLocality;
 use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use serde::Deserialize;
+
+use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuDeviceOffer};
+
+/// The owner lock directory, under the temp directory, when none is named.
+const GPU_OWNER_LOCK_DIR: &str = "oneiron-gpu-owners";
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -51,6 +82,26 @@ pub(crate) struct GpuJobsFile {
     step_secs: Option<u64>,
     #[serde(default)]
     offers: BTreeMap<String, GpuOfferFile>,
+    #[serde(default)]
+    devices: Option<GpuDevicesFile>,
+}
+
+/// `[gpu_jobs.devices]` as written.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GpuDevicesFile {
+    #[serde(default)]
+    offered: Vec<String>,
+    #[serde(default)]
+    withheld_file: Option<PathBuf>,
+    #[serde(default)]
+    hold_secs: Option<u64>,
+    #[serde(default)]
+    drain_after_failures: Option<u32>,
+    #[serde(default)]
+    drain_file: Option<PathBuf>,
+    #[serde(default)]
+    owner_lock_dir: Option<PathBuf>,
 }
 
 /// `[gpu_jobs.offers.<name>]` as written.
@@ -82,6 +133,8 @@ pub struct GpuJobsSettings {
     /// How often the worker steps each live job, in seconds.
     pub step_secs: u64,
     pub offers: BTreeMap<String, GpuOfferSettings>,
+    /// The GPUs of this machine it offers to the vault's GPU jobs.
+    pub devices: GpuDeviceOffer,
 }
 
 impl Default for GpuJobsSettings {
@@ -90,6 +143,7 @@ impl Default for GpuJobsSettings {
             default_maximum_secs: GPU_JOB_DEFAULT_MAXIMUM_SECS,
             step_secs: GPU_JOB_STEP_SECS,
             offers: BTreeMap::new(),
+            devices: GpuDeviceOffer::default(),
         }
     }
 }
@@ -138,6 +192,114 @@ impl GpuJobsFile {
             default_maximum_secs,
             step_secs,
             offers,
+            devices: self.devices.unwrap_or_default().resolve()?,
+        })
+    }
+}
+
+/// Refuses a GPU `[gpu_jobs.devices]` offers that a model worker runs on
+/// (`[models.workers].device`), so one GPU has one booker inside Oneiron too.
+pub(crate) fn refuse_offered_worker_devices(
+    devices: &GpuDeviceOffer,
+    models: Option<&super::ModelsConfig>,
+) -> anyhow::Result<()> {
+    let Some(models) = models else {
+        return Ok(());
+    };
+    refuse_worker_device_overlap(
+        &devices.offered,
+        models
+            .workers
+            .iter()
+            .filter_map(|worker| Some((worker.id.as_str(), worker.device.as_deref()?))),
+    )
+}
+
+/// Refuses an offered GPU that one of `workers` (each its id and its
+/// `CUDA_VISIBLE_DEVICES` entry) names. An index (`0`) names no device id
+/// until the driver is read, and CUDA may number the cards otherwise, so
+/// while any GPU is offered a worker names its GPU by device id.
+///
+/// # Errors
+///
+/// The worker and the GPU that overlap, or the worker that names a GPU by
+/// index.
+pub fn refuse_worker_device_overlap<'a>(
+    offered: &BTreeSet<String>,
+    workers: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> anyhow::Result<()> {
+    if offered.is_empty() {
+        return Ok(());
+    }
+    for (worker, named) in workers {
+        for entry in named
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            anyhow::ensure!(
+                !offered.contains(entry),
+                "gpu_jobs.devices.offered names GPU {entry}, which the model worker {worker} runs on: a GPU has one booker"
+            );
+            anyhow::ensure!(
+                !entry.chars().all(|c| c.is_ascii_digit()),
+                "the model worker {worker} names its GPU by index ({entry}) while gpu_jobs.devices offers GPUs: name it by device id (nvidia-smi -L), so no offered GPU is one it runs on"
+            );
+        }
+    }
+    Ok(())
+}
+
+impl GpuDevicesFile {
+    fn resolve(self) -> anyhow::Result<GpuDeviceOffer> {
+        let mut offered = BTreeSet::new();
+        for device in self.offered {
+            anyhow::ensure!(
+                plain_name(&device),
+                "gpu_jobs.devices.offered: {device:?} is not a device id (it has whitespace or control characters, or is empty)"
+            );
+            anyhow::ensure!(
+                offered.insert(device.clone()),
+                "gpu_jobs.devices.offered names {device} twice"
+            );
+        }
+        for (field, file) in [
+            ("withheld_file", &self.withheld_file),
+            ("drain_file", &self.drain_file),
+            ("owner_lock_dir", &self.owner_lock_dir),
+        ] {
+            if let Some(file) = file {
+                anyhow::ensure!(
+                    file.is_absolute(),
+                    "gpu_jobs.devices.{field} must be an absolute path: {}",
+                    file.display()
+                );
+            }
+        }
+        // A drain written nowhere would be cleared by the next restart.
+        if let Some(file) = &self.drain_file {
+            anyhow::ensure!(
+                file.parent().is_some_and(std::path::Path::is_dir),
+                "gpu_jobs.devices.drain_file's directory must exist, or a drain would not outlast a restart: {}",
+                file.display()
+            );
+        }
+        let hold_secs = self.hold_secs.unwrap_or(GPU_SLOT_HOLD_SECS);
+        anyhow::ensure!(
+            hold_secs > 0,
+            "gpu_jobs.devices.hold_secs must be greater than zero: a reservation holds its GPU until its launch"
+        );
+        Ok(GpuDeviceOffer {
+            withheld_file: self.withheld_file,
+            hold_secs,
+            drain_after_failures: self
+                .drain_after_failures
+                .unwrap_or(GPU_DRAIN_AFTER_FAILURES),
+            drain_file: self.drain_file,
+            owner_lock_dir: self.owner_lock_dir.or_else(|| {
+                (!offered.is_empty()).then(|| std::env::temp_dir().join(GPU_OWNER_LOCK_DIR))
+            }),
+            offered,
         })
     }
 }
