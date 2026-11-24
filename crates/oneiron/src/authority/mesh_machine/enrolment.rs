@@ -4,10 +4,18 @@
 //! own transaction the host checks that they name exactly the MACHINE and
 //! machine key the redemption enrols and that both proofs verify, before it
 //! mints anything. Then, in one savepoint of that transaction, it mints a
-//! pairing slip held by that MACHINE under its machine key and carrying the
-//! one ALPN alone, binds the endpoint on it and grants the ALPN: all of them
-//! land with the pairing, or none do. A binding refused at any step leaves
-//! the pairing as it would stand without one, with the reason.
+//! pairing slip held by that MACHINE under its machine key, binds the
+//! endpoint on it and grants the one ALPN the enrolment asks now: all of
+//! them land with the pairing, or none do. A binding refused at any step
+//! leaves the pairing as it would stand without one, with the reason.
+//!
+//! The pairing slip is the binding's ceiling: the owner's later grants
+//! (`vault.mesh.set_alpn_grant`) must narrow it. It carries the mesh verb of
+//! every protocol in the enrolment's [`MeshEnrolmentAsk::ceiling`], which
+//! the server fills from the protocols it serves (MESH-PAIRING-CEILING = A,
+//! Engine 25 Nov 01:1x): the control stays the grant, per protocol,
+//! owner-only and host-signed, and no protocol is granted by the ceiling
+//! alone.
 //!
 //! A removed MACHINE's binding admits nothing (`mesh_pairing_live`), and
 //! [`Vault::revoke_removed_machine_mesh`] revokes its pairing and grants in
@@ -17,6 +25,32 @@ use super::super::setting_keys::MESH_GRANT_MAX_TTL;
 use super::super::slip_vault::{random_slip_id, require_host};
 use super::super::{AuthorityOp, MachineEnrolmentRequest, SlipClaims, strong_ed25519_key};
 use super::*;
+
+/// What a machine link's redemption binds on the mesh for the machine it
+/// enrols: its mesh identity, the one protocol it is granted now, and the
+/// protocols the owner may grant its binding later (the binding pairing's
+/// ceiling). `granted` is under the ceiling whether or not the ceiling
+/// names it.
+#[derive(Debug, Clone, Copy)]
+pub struct MeshEnrolmentAsk<'a> {
+    pub identity: &'a MeshBindingIdentity,
+    pub granted: &'a [u8],
+    pub ceiling: &'a [&'a [u8]],
+}
+
+impl MeshEnrolmentAsk<'_> {
+    /// The mesh verbs the binding's pairing slip carries: `granted` and every
+    /// valid ALPN of the ceiling.
+    fn ceiling_verbs(&self) -> BTreeSet<String> {
+        self.ceiling
+            .iter()
+            .copied()
+            .chain([self.granted])
+            .filter(|alpn| valid_alpn(alpn))
+            .map(mesh_verb)
+            .collect()
+    }
+}
 
 /// Why a redemption's mesh binding was not made. The pairing stands, and no
 /// part of the binding was written.
@@ -69,16 +103,16 @@ pub(super) fn machine_removed(
 }
 
 impl Vault {
-    /// Binds `identity`'s endpoint for the machine `request` enrols and grants
-    /// it `alpn`, in the caller's redemption transaction.
+    /// Binds `ask.identity`'s endpoint for the machine `request` enrols and
+    /// grants it `ask.granted`, in the caller's redemption transaction.
     pub(in crate::authority) fn bind_enrolled_mesh_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
-        identity: &MeshBindingIdentity,
-        alpn: &[u8],
+        ask: MeshEnrolmentAsk<'_>,
     ) -> MeshEnrolment {
+        let (identity, alpn) = (ask.identity, ask.granted);
         let (machine, endpoint_key) = (request.machine, identity.endpoint_key);
         if identity.machine != machine || identity.device_key != request.machine_key {
             return MeshEnrolment::Refused(MeshBindRefusal::NotTheEnrolledMachine);
@@ -107,7 +141,7 @@ impl Vault {
                 endpoint_key,
             };
         }
-        match self.bind_enrolled_in_savepoint(txn, issuer, request, identity, alpn) {
+        match self.bind_enrolled_in_savepoint(txn, issuer, request, ask) {
             Ok(Some(pairing_slip_id)) => MeshEnrolment::Bound {
                 machine,
                 endpoint_key,
@@ -130,9 +164,9 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
-        identity: &MeshBindingIdentity,
-        alpn: &[u8],
+        ask: MeshEnrolmentAsk<'_>,
     ) -> Result<Option<[u8; 32]>> {
+        let (identity, alpn) = (ask.identity, ask.granted);
         let (machine, endpoint_key) = (request.machine, identity.endpoint_key);
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
         let grant = MeshAlpnGrant {
@@ -154,7 +188,7 @@ impl Vault {
             .value
             .secs();
         let mut scope = Scope::top();
-        scope.verbs = ScopeAxis::Some(BTreeSet::from([mesh_verb(alpn)]));
+        scope.verbs = ScopeAxis::Some(ask.ceiling_verbs());
         let pairing = self.mint_slip_in_txn(
             &mut savepoint,
             issuer,
