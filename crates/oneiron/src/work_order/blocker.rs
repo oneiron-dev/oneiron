@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::job_workload::{TEMPLATE_CHANGED, TEMPLATE_NOT_OFFERED, WorkloadStartRefusal};
 
-/// Why an order cannot run now on a machine, or at all.
+/// Why an order cannot run now on a machine, or at all. On the wire its tag is `code`, the
+/// same string [`Blocker::code`] answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "code", rename_all = "snake_case")]
 pub enum Blocker {
     // Authority: cleared by the owner or the requester.
     /// The requester's Grant no longer names the verb, or the owner who ordered is gone.
