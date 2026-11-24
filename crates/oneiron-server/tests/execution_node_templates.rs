@@ -126,6 +126,13 @@ fn a_pin_for_a_changed_template_is_refused() -> TestResult {
     let mut other = pin(&changed);
     other.template = "other".to_owned();
     assert_eq!(node.admit_pin(&other), Err("template_unknown".to_owned()));
+
+    // EM-11 = B: no heads, or a head that is no entry hash, is never held.
+    assert!(!node.folded(&[]), "an empty position is never held");
+    assert!(
+        !node.folded(&["not-an-entry-hash".to_owned()]),
+        "a malformed head is never held"
+    );
     Ok(())
 }
 
@@ -231,6 +238,30 @@ fn an_argument_outside_the_templates_params_is_refused() -> TestResult {
         Err("arg_not_declared: lr".to_owned())
     );
     Ok(())
+}
+
+#[test]
+fn a_template_that_declares_no_params_refuses_every_argument() -> TestResult {
+    let node = settings(&node_text(1_800, "params = {}"))?;
+    let digest = node.template_digest("probe").ok_or("probe")?;
+    let mut with_arg = pin(&digest);
+    with_arg.args = vec!["mode=debug".to_owned()];
+    assert_eq!(
+        node.admit_pin(&with_arg),
+        Err("arg_not_declared: mode".to_owned())
+    );
+    assert_eq!(node.admit_pin(&pin(&digest)), Ok(()), "no argument fits");
+    Ok(())
+}
+
+#[test]
+fn a_param_pattern_that_does_not_compile_alone_does_not_validate() {
+    let text = node_text(1_800, r#"params = { seed = "[0-9]{1,6})|reject(?:" }"#);
+    let refused = ExecutionNodeSettings::parse(&text);
+    assert!(
+        refused.is_err(),
+        "a pattern that closes its own group must not validate: {refused:?}"
+    );
 }
 
 #[test]

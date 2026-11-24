@@ -9,7 +9,9 @@
 //! and is one of the node's `issuers`, and a request that admits work also
 //! needs the node's own job grant live in its own fold.
 //!
-//! `Node` and `Availability` are answered here. A request that names a key
+//! `Node` is answered to an issuer the file names, enabled or not (it says
+//! which); `Availability` and every request that names a key need the node
+//! enabled. `Node` and `Availability` are answered here. A request that names a key
 //! goes to the node's keys (row R3a's journal, [`super::node::NodeKeys`])
 //! once they are attached; until then it is refused as `NotEnabled`, and
 //! nothing is written. The status side's answers are row R4's: past the
@@ -62,29 +64,30 @@ impl JobService {
 /// The node's answer to `request` on [`JOB_ALPN`].
 fn answer_job(node: &ExecutionNode, endpoint_key: [u8; 32], request: JobRequest) -> JobAnswer {
     let ask = match &request {
+        JobRequest::Node => GateAsk::Offer,
+        JobRequest::Availability | JobRequest::Release { .. } => GateAsk::Read,
         JobRequest::Reserve(_) | JobRequest::Submit(_) => GateAsk::Admit,
-        JobRequest::Node | JobRequest::Availability | JobRequest::Release { .. } => GateAsk::Read,
     };
-    let peer = match node.gate(endpoint_key, JOB_ALPN, ask) {
-        Ok(peer) => peer,
-        // A proven peer learns that this node takes no work now, and why.
-        Err(JobRefusal::NotEnabled) if request == JobRequest::Node => {
-            return JobAnswer::Node(node.node_answer());
-        }
+    let (peer, snapshot) = match node.gate(endpoint_key, JOB_ALPN, ask) {
+        Ok(passed) => passed,
         Err(refusal) => return JobAnswer::Refused(refusal),
     };
     let keys = node.keys();
     match request {
-        JobRequest::Node => JobAnswer::Node(node.node_answer()),
-        JobRequest::Availability => match node.availability(now_ms()) {
+        JobRequest::Node => JobAnswer::Node(node.node_answer_from(&snapshot)),
+        JobRequest::Availability => match node.availability_from(&snapshot, now_ms()) {
             Ok(availability) => JobAnswer::Availability(availability),
             Err(why) => JobAnswer::Refused(JobRefusal::DevicesUnreadable { why }),
         },
         JobRequest::Reserve(reserve) => {
-            keys.map_or(not_enabled(), |keys| keys.reserve(peer, reserve))
+            keys.map_or_else(not_enabled, |keys| keys.reserve(peer, reserve))
         }
-        JobRequest::Release { key } => keys.map_or(not_enabled(), |keys| keys.release(peer, &key)),
-        JobRequest::Submit(signed) => keys.map_or(not_enabled(), |keys| keys.submit(peer, signed)),
+        JobRequest::Release { key } => {
+            keys.map_or_else(not_enabled, |keys| keys.release(peer, &key))
+        }
+        JobRequest::Submit(signed) => {
+            keys.map_or_else(not_enabled, |keys| keys.submit(peer, signed))
+        }
     }
 }
 

@@ -27,7 +27,8 @@ pub use device::{
     parse_compute_process_lines, parse_device_lines, recorded_gpu_devices,
 };
 pub use node::{
-    AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, execution_node_file,
+    AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, NodeSnapshot,
+    execution_node_file,
 };
 pub use node_settings::{ExecutionNodeSettings, NodeTemplate};
 pub use selection::{

@@ -124,13 +124,24 @@ fn first_line(path: &Path) -> Option<String> {
 fn resume(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
     let Some(drain) = drain_file(args)? else {
         println!(
-            "this machine names no [gpu_jobs.devices] drain_file: its drain lives in the engine's memory, and a restart of the engine clears it"
+            "this machine names no [gpu_jobs.devices] drain_file: a drain lives in the engine's memory only, and a restart of the engine clears it"
         );
         return Ok(());
     };
-    remove_marker(&drain)?;
-    println!("resumed: the drain at {} is cleared", drain.display());
-    Ok(())
+    match std::fs::remove_file(&drain) {
+        Ok(()) => {
+            println!("resumed: the drain at {} is cleared", drain.display());
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "no drain file at {}: the node is not drained on disk. A drain the engine could not write is kept in its memory, and a restart of the engine clears it",
+                drain.display()
+            );
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| format!("remove the drain {}", drain.display())),
+    }
 }
 
 /// `check`: what would refuse a job here now.

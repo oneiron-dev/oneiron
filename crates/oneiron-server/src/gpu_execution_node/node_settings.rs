@@ -148,9 +148,10 @@ pub struct NodeTemplate {
     #[serde(default)]
     pub returnable: Vec<String>,
     /// The arguments a pin may pass, by name, each with the pattern its
-    /// whole value matches. Empty: the arguments are not checked by name.
-    #[serde(default)]
-    pub params: BTreeMap<String, String>,
+    /// whole value matches. Absent: the arguments are not checked by name;
+    /// declared, even empty, every argument must be one of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<BTreeMap<String, String>>,
     /// The longest run, in seconds.
     pub max_secs: u64,
     /// The job's memory ceiling.
@@ -374,7 +375,7 @@ impl NodeTemplate {
                 return Err(format!("returnable {name:?} must be a plain file name"));
             }
         }
-        for (name, pattern) in &self.params {
+        for (name, pattern) in self.params.iter().flatten() {
             if name.is_empty() || name.contains('=') {
                 return Err(format!(
                     "params name {name:?} must be non-empty with no '='"
@@ -430,12 +431,12 @@ impl NodeTemplate {
                 return Err(format!("request_above_ceiling: {field}"));
             }
         }
-        if !self.params.is_empty() {
+        if let Some(params) = &self.params {
             for arg in &pin.args {
                 let Some((name, value)) = arg.split_once('=') else {
                     return Err("arg_not_name_value".to_owned());
                 };
-                let Some(pattern) = self.params.get(name) else {
+                let Some(pattern) = params.get(name) else {
                     return Err(format!("arg_not_declared: {name}"));
                 };
                 let matches = param_pattern(pattern).is_ok_and(|pattern| pattern.is_match(value));
@@ -448,12 +449,17 @@ impl NodeTemplate {
     }
 }
 
-/// `pattern` compiled to match a whole value.
+/// `pattern` compiled to match a whole value. The pattern must compile on
+/// its own first, so its text cannot close the group it is placed in.
 fn param_pattern(pattern: &str) -> Result<regex::Regex, String> {
-    regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
-        .size_limit(PARAM_PATTERN_SIZE_MAX)
-        .build()
-        .map_err(|error| error.to_string())
+    let alone = |source: &str| {
+        regex::RegexBuilder::new(source)
+            .size_limit(PARAM_PATTERN_SIZE_MAX)
+            .build()
+            .map_err(|error| error.to_string())
+    };
+    alone(pattern)?;
+    alone(&format!(r"\A(?:{pattern})\z"))
 }
 
 /// Whether `path` is relative, non-empty, and every one of its segments is
