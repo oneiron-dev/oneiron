@@ -11,22 +11,23 @@
 //!
 //! The same directory keeps the bytes the engine sealed under a device PIN
 //! ([`SealedBytesStore`]): one 0600 file per name, `<name>.sealed`, which no
-//! slot reads. It also holds `temp-writers.lock`, an empty file that each
-//! writer of a temporary file locks shared and each sweep of stale temporary
-//! files exclusively (FIX 8019).
+//! slot reads. Where the directory may lie, and how its temporary files are
+//! written and swept (`temp-writers.lock`, FIX 8019), the Windows tier shares
+//! ([`crate::key_dir`]).
 //!
 //! macOS keeps a file's access control list apart from its mode bits, so a
 //! 0700 directory or a 0600 file may still let another user read it. On Apple
 //! a directory or a file that carries one is refused, as one with open mode
 //! bits is (a Linux ACL shows in the group bits, which the mode check reads).
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::fs::{self, File};
+use std::io::{ErrorKind, Read};
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
 
+use crate::key_dir::{self, TempFile};
 use crate::sealed_bytes::check_sealed_len;
 use crate::{
     DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, Result, SEALED_BYTES_MAX,
@@ -37,22 +38,6 @@ const CACHEDIR_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n\
 # This directory holds this machine's own key slots (oneiron-keystore).\n\
 # They must not be backed up or copied to another machine.\n";
 
-/// The key directory's lock file (FIX 8019): each writer of a temporary file
-/// holds it shared, and each sweep of stale temporary files exclusively. It
-/// holds no bytes.
-const TEMP_WRITERS_LOCK: &str = "temp-writers.lock";
-
-/// A temporary file beside the file it will become, with its writer's shared
-/// hold on the key directory's lock file, taken before the file was created
-/// ([`LocalFileKeystore::sweep_temps`]). Dropping it ends the hold, so the
-/// writer keeps it until the file is linked or renamed into place and its
-/// temporary name is gone. The hold is `None` where the file system gives no
-/// lock.
-pub(crate) struct TempFile {
-    pub(crate) path: PathBuf,
-    _hold: Option<File>,
-}
-
 /// One file per slot under `dir`.
 #[derive(Debug)]
 pub struct LocalFileKeystore {
@@ -61,23 +46,14 @@ pub struct LocalFileKeystore {
 
 impl LocalFileKeystore {
     /// Creates `dir` (0700) when absent. It refuses a directory that others can read,
-    /// and one inside any of `vault_dirs`.
+    /// and one inside any of `vault_dirs`, which it never creates.
     pub fn open(dir: &Path, vault_dirs: &[&Path]) -> Result<Self> {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .map_err(io)?;
-        let dir = dir.canonicalize().map_err(io)?;
-        for vault in vault_dirs {
-            if let Ok(vault) = vault.canonicalize()
-                && dir.starts_with(&vault)
-            {
-                return Err(KeystoreError::Unavailable(
-                    "the key directory is inside a vault directory",
-                ));
-            }
-        }
+        let dir = key_dir::create_key_dir(dir, vault_dirs, |dir| {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)
+        })?;
         let meta = fs::metadata(&dir).map_err(io)?;
         if !meta.is_dir() || meta.permissions().mode() & 0o077 != 0 {
             return Err(KeystoreError::Corrupt(
@@ -91,7 +67,7 @@ impl LocalFileKeystore {
             fs::write(&tag, CACHEDIR_TAG).map_err(io)?;
         }
         let this = Self { dir };
-        // FIX 8019: sweep every slot's stale temporary files once.
+        // FIX 8019: sweep every slot's and sealed value's stale temporary files once.
         this.sweep_temps(None);
         Ok(this)
     }
@@ -116,135 +92,24 @@ impl LocalFileKeystore {
         File::open(&self.dir).and_then(|d| d.sync_all()).map_err(io)
     }
 
-    /// The key directory's lock file, open for reading and writing: NFS
-    /// grants an exclusive lock only on a file open for writing.
-    fn temp_writers_lock(&self) -> std::io::Result<File> {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(self.dir.join(TEMP_WRITERS_LOCK))
-    }
-
     /// A private temporary file holding `bytes`, beside the file it will
-    /// become, written under the writer's hold on the key directory. `stem`
-    /// is that file's name; a sweep removes a temporary file under any stem
-    /// once no writer holds the directory. The hardware tier writes its own
-    /// through this one. On Apple a file that inherited an access control
-    /// list from the directory is refused before `bytes` reach it.
+    /// become, written under the writer's hold on the key directory
+    /// ([`key_dir::write_temp`]). `stem` is that file's name. The hardware
+    /// tier writes its own through this one. On Apple a file that inherited
+    /// an access control list from the directory is refused before `bytes`
+    /// reach it.
     pub(crate) fn write_temp(&self, stem: &str, bytes: &[u8]) -> (TempFile, std::io::Result<()>) {
-        let hold = match self.temp_writers_lock() {
-            Ok(lock) if lock.lock_shared().is_ok() => Some(lock),
-            _ => None,
-        };
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let path = self
-            .dir
-            .join(format!(".{stem}.{}.{nanos}.tmp", std::process::id()));
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .and_then(|mut file| {
-                #[cfg(target_vendor = "apple")]
-                apple_acl::refuse_inherited(&file)?;
-                file.write_all(bytes)?;
-                file.sync_all()
-            });
-        (TempFile { path, _hold: hold }, written)
+        #[cfg(target_vendor = "apple")]
+        let refuse_new = apple_acl::refuse_inherited;
+        #[cfg(not(target_vendor = "apple"))]
+        let refuse_new = |_: &File| Ok(());
+        key_dir::write_temp(&self.dir, stem, bytes, refuse_new)
     }
 
-    /// Removes stale temporary files for one slot, or every slot (FIX 8019).
-    /// Every writer holds the key directory's lock file shared from before
-    /// its temporary file exists until after it is gone ([`Self::write_temp`]),
-    /// and the system ends a process's hold when the process ends, however it
-    /// ends. So under the exclusive lock each temporary file is one whose
-    /// writer died or failed to remove it, whichever process its pid names
-    /// now: the system may have given that pid to another. One slot's sweep,
-    /// at a create or a delete, waits for the writers in flight; the
-    /// open-time sweep of every slot does not wait, and leaves the files to a
-    /// later sweep while one writes. Where the file system gives no lock,
-    /// nothing is removed.
+    /// Removes stale temporary files for one slot, or for every slot and
+    /// sealed value (FIX 8019, [`key_dir::sweep_temps`]).
     pub(crate) fn sweep_temps(&self, slot: Option<&KeystoreSlot>) {
-        let Ok(lock) = self.temp_writers_lock() else {
-            return;
-        };
-        let locked = if slot.is_some() {
-            lock.lock().is_ok()
-        } else {
-            lock.try_lock().is_ok()
-        };
-        if !locked {
-            return;
-        }
-        let wanted = slot.map(super::KeystoreSlot::name);
-        let own = std::process::id();
-        let entries = match fs::read_dir(&self.dir) {
-            Ok(entries) => entries,
-            Err(_) => return,
-        };
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            let file_name = entry.file_name();
-            let name = match file_name.to_str() {
-                Some(name) => name,
-                None => continue,
-            };
-            let after_dot = match name.strip_prefix('.') {
-                Some(rest) => rest,
-                None => continue,
-            };
-            let inner = match after_dot.strip_suffix(".tmp") {
-                Some(inner) => inner,
-                None => continue,
-            };
-            let (prefix, nanos_text) = match inner.rsplit_once('.') {
-                Some(pair) => pair,
-                None => continue,
-            };
-            let (slot_part, pid_text) = match prefix.rsplit_once('.') {
-                Some(pair) => pair,
-                None => continue,
-            };
-            if slot_part.is_empty() || pid_text.is_empty() || nanos_text.is_empty() {
-                continue;
-            }
-            if let Some(wanted) = wanted.as_deref() {
-                if slot_part != wanted {
-                    continue;
-                }
-            } else if slot_part.split('.').any(str::is_empty) {
-                continue;
-            }
-            if !pid_text.bytes().all(|b| b.is_ascii_digit())
-                || !nanos_text.bytes().all(|b| b.is_ascii_digit())
-            {
-                continue;
-            }
-            let pid: u32 = match pid_text.parse() {
-                Ok(pid) => pid,
-                Err(_) => continue,
-            };
-            if nanos_text.parse::<u128>().is_err() {
-                continue;
-            }
-            // This process leaves its own files to another process's sweep:
-            // where the file system keeps locks per process (NFS), its own
-            // writers' holds do not stop its sweep.
-            if pid == own {
-                continue;
-            }
-            let _ = fs::remove_file(entry.path());
-        }
-        // Dropping `lock` here closes it, which ends the exclusive hold.
+        key_dir::sweep_temps(&self.dir, slot.map(KeystoreSlot::name).as_deref());
     }
 }
 
@@ -379,6 +244,8 @@ impl SealedBytesStore for LocalFileKeystore {
     /// leaves one of the two whole.
     fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<()> {
         check_sealed_len(sealed)?;
+        // A stale copy of an earlier value under this name goes first.
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
         let (tmp, written) = self.write_temp(&sealed_file_name(name), sealed);
         let renamed = written.and_then(|()| fs::rename(&tmp.path, self.sealed_path(name)));
         if renamed.is_err() {
@@ -388,12 +255,15 @@ impl SealedBytesStore for LocalFileKeystore {
         self.sync_dir()
     }
 
+    /// Removes the value's file, and then every stale temporary copy of it.
     fn delete_sealed(&self, name: &SealedBytesName) -> Result<()> {
-        match fs::remove_file(self.sealed_path(name)) {
-            Ok(()) => self.sync_dir(),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io(e)),
-        }
+        let removed = match fs::remove_file(self.sealed_path(name)) {
+            Ok(()) => true,
+            Err(e) if e.kind() == ErrorKind::NotFound => false,
+            Err(e) => return Err(io(e)),
+        };
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
+        if removed { self.sync_dir() } else { Ok(()) }
     }
 }
 
@@ -571,6 +441,58 @@ mod tests {
         assert!(
             !stale.exists(),
             "the open after the writer's hold ended kept a stale file"
+        );
+    }
+
+    /// FIX FILE-KEYSTORE-CREATES-DIR-BEFORE-VAULT-CHECK: a key directory
+    /// inside a vault directory is refused before it is made, also one inside
+    /// a vault directory not made yet, so a refusal leaves nothing behind.
+    #[test]
+    fn a_key_directory_refused_inside_a_vault_is_never_made() {
+        let root = tempfile::tempdir().unwrap();
+        let vault = root.path().join("vault");
+        fs::create_dir(&vault).unwrap();
+        let later = root.path().join("later-vault");
+        for (dir, vault_dir) in [
+            (vault.join("keys"), &vault),
+            (vault.join("a").join("keys"), &vault),
+            (later.join("keys"), &later),
+        ] {
+            assert_eq!(
+                LocalFileKeystore::open(&dir, &[vault_dir.as_path()]).unwrap_err(),
+                KeystoreError::Unavailable("the key directory is inside a vault directory"),
+                "{}",
+                dir.display()
+            );
+        }
+        assert_eq!(
+            fs::read_dir(&vault).unwrap().count(),
+            0,
+            "a refused key directory was made inside the vault"
+        );
+        assert!(
+            !later.exists(),
+            "a refused key directory made the vault directory"
+        );
+    }
+
+    /// FIX 8019 for sealed values: a writer that died before its rename left
+    /// a copy of a sealed value. Deleting the value removes the copy too.
+    #[test]
+    fn delete_sealed_removes_a_dead_writers_copy_of_the_value() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        let name = SealedBytesName::DevicePinKey;
+        keys.put_sealed(&name, b"sealed").unwrap();
+        // pid 1 is the system's first process: alive, and never this writer.
+        let copy = keys
+            .dir
+            .join(format!(".{}.1.1.tmp", sealed_file_name(&name)));
+        fs::write(&copy, b"sealed").unwrap();
+        keys.delete_sealed(&name).unwrap();
+        assert!(
+            !copy.exists(),
+            "the dead writer's copy of the sealed value is removed"
         );
     }
 }

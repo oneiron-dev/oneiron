@@ -14,9 +14,16 @@
 //! as a slot is, with an entropy no slot has. So a sealed value's file opens
 //! for no other user and on no other machine either, and neither it nor a
 //! slot's file opens as the other.
+//!
+//! The directory follows the Unix file tier's rules ([`crate::key_dir`]): one
+//! inside a vault directory is refused before it is made, and each file is
+//! written to a temporary file under a shared hold on `temp-writers.lock`. A
+//! writer killed before its link or rename leaves that file, which DPAPI
+//! opens for this user; the sweeps at open, at each create and put, and at
+//! each delete remove it once no writer holds the directory.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read, Write};
+use std::fs::{self, File};
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use windows_sys::Win32::Foundation::LocalFree;
@@ -26,6 +33,7 @@ use windows_sys::Win32::Security::Cryptography::{
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::dpapi_names::{sealed_entropy, sealed_file_name, slot_entropy, slot_file_name};
+use crate::key_dir::{self, TempFile};
 use crate::sealed_bytes::check_sealed_len;
 use crate::{
     DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, Result,
@@ -51,24 +59,17 @@ pub struct WindowsDpapiKeystore {
 }
 
 impl WindowsDpapiKeystore {
-    /// Creates `dir` when absent. It refuses one inside any of `vault_dirs`.
+    /// Creates `dir` when absent. It refuses one inside any of `vault_dirs`,
+    /// which it never creates.
     pub fn open(dir: &Path, vault_dirs: &[&Path]) -> Result<Self> {
-        fs::create_dir_all(dir).map_err(io)?;
-        let dir = dir.canonicalize().map_err(io)?;
-        for vault in vault_dirs {
-            if let Ok(vault) = vault.canonicalize()
-                && dir.starts_with(&vault)
-            {
-                return Err(KeystoreError::Unavailable(
-                    "the key directory is inside a vault directory",
-                ));
-            }
-        }
+        let dir = key_dir::create_key_dir(dir, vault_dirs, |dir| fs::create_dir_all(dir))?;
         if !fs::metadata(&dir).map_err(io)?.is_dir() {
             return Err(KeystoreError::Corrupt(
                 "the key directory is not a directory",
             ));
         }
+        // Every slot's and sealed value's stale temporary files, once.
+        key_dir::sweep_temps(&dir, None);
         Ok(Self { dir })
     }
 
@@ -82,41 +83,30 @@ impl WindowsDpapiKeystore {
     }
 
     /// Seals `bytes` with `entropy` and syncs one temporary file beside the
-    /// file it will become, removing it if any step fails. `stem` is that
-    /// file's part of the temporary file's name. A sealed form longer than
-    /// `sealed_max`, which the reader of that file would refuse, is refused
-    /// here before any file is made.
+    /// file it will become, under the writer's hold on the key directory
+    /// ([`key_dir::write_temp`]), removing it if any step fails. `stem` is
+    /// that file's part of the temporary file's name. A sealed form longer
+    /// than `sealed_max`, which the reader of that file would refuse, is
+    /// refused here before any file is made. The caller keeps the answer
+    /// until it has removed the temporary file.
     fn write_temp(
         &self,
         stem: &str,
         bytes: &[u8],
         entropy: &[u8],
         sealed_max: usize,
-    ) -> Result<PathBuf> {
+    ) -> Result<TempFile> {
         let sealed = protect(bytes, entropy)?;
         if sealed.len() > sealed_max {
             return Err(KeystoreError::Unsupported(
                 "DPAPI's sealed form is longer than its file may be",
             ));
         }
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let tmp = self
-            .dir
-            .join(format!(".{stem}.{}.{nanos}.tmp", std::process::id()));
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .and_then(|mut file| {
-                file.write_all(&sealed)?;
-                file.sync_all()
-            });
+        let (tmp, written) = key_dir::write_temp(&self.dir, stem, &sealed, |_| Ok(()));
         match written {
             Ok(()) => Ok(tmp),
             Err(error) => {
-                let _ = fs::remove_file(&tmp);
+                let _ = fs::remove_file(&tmp.path);
                 Err(io(error))
             }
         }
@@ -146,10 +136,13 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     /// Writes a temporary file, then links it into place. A crash leaves either
     /// no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
+        // FIX 8019: sweep this slot's stale temporary files before writing.
+        key_dir::sweep_temps(&self.dir, Some(&slot.name()));
         let path = self.path(slot);
         let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;
-        let linked = fs::hard_link(&tmp, &path);
-        let _ = fs::remove_file(&tmp);
+        let linked = fs::hard_link(&tmp.path, &path);
+        // A failed removal is swept by a later open, create or delete.
+        let _ = fs::remove_file(&tmp.path);
         match linked {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => Err(KeystoreError::AlreadyExists),
@@ -157,12 +150,15 @@ impl DeviceKeystore for WindowsDpapiKeystore {
         }
     }
 
+    /// Removes the slot's file, and then every stale temporary copy of it.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
         match fs::remove_file(self.path(slot)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io(e)),
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io(e)),
         }
+        key_dir::sweep_temps(&self.dir, Some(&slot.name()));
+        Ok(())
     }
 
     /// Writes a sealed temporary file, then renames it over the filled slot:
@@ -176,9 +172,9 @@ impl DeviceKeystore for WindowsDpapiKeystore {
             Err(e) => return Err(io(e)),
         }
         let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;
-        let renamed = fs::rename(&tmp, &path);
+        let renamed = fs::rename(&tmp.path, &path);
         if renamed.is_err() {
-            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp.path);
         }
         renamed.map_err(io)?;
         Ok(true)
@@ -225,25 +221,30 @@ impl SealedBytesStore for WindowsDpapiKeystore {
     /// leaves one of the two whole.
     fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<()> {
         check_sealed_len(sealed)?;
+        // A stale copy of an earlier value under this name goes first.
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
         let tmp = self.write_temp(
             &sealed_file_name(name),
             sealed,
             &sealed_entropy(name),
             SEALED_FILE_MAX,
         )?;
-        let renamed = fs::rename(&tmp, self.sealed_path(name));
+        let renamed = fs::rename(&tmp.path, self.sealed_path(name));
         if renamed.is_err() {
-            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp.path);
         }
         renamed.map_err(io)
     }
 
+    /// Removes the value's file, and then every stale temporary copy of it.
     fn delete_sealed(&self, name: &SealedBytesName) -> Result<()> {
         match fs::remove_file(self.sealed_path(name)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io(e)),
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io(e)),
         }
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
+        Ok(())
     }
 }
 
