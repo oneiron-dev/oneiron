@@ -181,9 +181,8 @@ outputs on every train top (TRAIN-REGEN).
 The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron` and
 `bun run prepare` in `packages/oneiron-client` (each runs the generator with `cargo run`), and `maturin build`
 for `oneiron-py`. The agent-SDK reference generated from the verb table (`types.md`, `facade-types.md`,
-`verbs.md`) is not published online yet. Every cargo build keeps a local copy in
-`target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build). The SDK
-[quickstart](./docs/agent-sdk/quickstart.md) and [error reference](./docs/agent-sdk/errors.md) are in this repository.
+`verbs.md`) is published from main at https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build
+keeps a local copy in `target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
 
 Debug information is adjustable (details in [build performance](./docs/ops/build-performance.md)):
 
