@@ -55,7 +55,7 @@ pub enum MintError {
 /// Why a line cannot be set.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LineInvalid {
-    #[error("a GPU line counts in {GPU_SECONDS}, not {0}")]
+    #[error("a GPU line counts in gpu_seconds, not {0}")]
     Unit(String),
     #[error("a GPU line names a wallet with a nonempty issuer and id")]
     Wallet,
