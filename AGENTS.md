@@ -165,7 +165,7 @@ Eight count non-test code: files at or over 800 lines, `#[allow(` attributes, pr
 process-global mutable statics, the keyspace census, raw core writes, hand-started hashes
 (`raw_hasher_starts`) and lists of names spelled by hand (`hand_name_tables`; a new list of names
 is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). They skip
-`tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. Five count test code, one per
+`tests/` and `tests_*/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. Five count test code, one per
 rule of `scripts/ratchet/test_lint.py` (`test_lint_*`): sleeps, wall-clock reads, URLs to real
 hosts, fixed loopback ports and real models. A test waits on a barrier, a channel or the
 `oneiron_testkit` fake clock, binds port 0 and uses its scripted provider; a line that must break a
