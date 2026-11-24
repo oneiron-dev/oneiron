@@ -101,6 +101,7 @@ fn not_enabled_node() -> NodeAnswer {
         paused: None,
         drained: None,
         templates: Vec::new(),
+        scopes: Vec::new(),
         disk_free_bytes: 0,
         disk_reserved_bytes: 0,
         disk_reserve_bytes: 0,
