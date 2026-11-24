@@ -56,7 +56,7 @@ impl JobKeyId {
     /// The id of `key`.
     #[must_use]
     pub fn for_key(key: &str) -> Self {
-        let hash = blake3::hash(key.as_bytes());
+        let hash = oneiron_contracts::fingerprint::ContentHash::of(key.as_bytes());
         Self(hash.to_hex()[..JOB_KEY_ID_HEX_DIGITS].to_owned())
     }
 
@@ -367,13 +367,14 @@ fn boot_clock_ns() -> u64 {
 }
 
 /// Not a boot clock: a machine without Linux runs no job (it has no job
-/// unit), so this only keeps the node's answers well formed there.
+/// unit), so the wall clock only keeps the node's answers well formed there.
 #[cfg(not(target_os = "linux"))]
 fn boot_clock_ns() -> u64 {
-    use std::sync::OnceLock;
-    static ANCHOR: OnceLock<std::time::Instant> = OnceLock::new();
-    let anchor = ANCHOR.get_or_init(std::time::Instant::now);
-    u64::try_from(anchor.elapsed().as_nanos()).unwrap_or(u64::MAX)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
 }
 
 /// The unit's exact parameters, written by the engine into the key's control

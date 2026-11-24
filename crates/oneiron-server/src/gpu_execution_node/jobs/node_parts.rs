@@ -19,11 +19,12 @@
 //! The server's parts implement these traits here, each method a call of
 //! the same name: [`ExecutionNode`] is the [`NodeAdmission`] and the
 //! [`AuthorityPosition`], [`GpuSlotTable`] the [`NodeDevices`], and
-//! [`super::NodeJobs`] is R1's [`NodeKeys`].
+//! [`NodeJobsAttachment`] is R1's [`NodeKeys`]: a weak handle, since the
+//! service holds the node.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use oneiron::EntityId;
 use oneiron::machine_signature::MachineSignatures;
@@ -188,6 +189,15 @@ pub trait NodeDevices: Send + Sync {
 
     /// Gives the key's device back and records how its job ended.
     fn finish(&self, key: &str, end: &GpuLeaseEnd);
+
+    /// Puts the device out of every reserve and launch until
+    /// [`NodeDevices::clear_quarantine`]: the journal's quarantine of a
+    /// key's device, as it is written and as recovery replays it (design
+    /// 7.6). The slot table keeps it in memory only.
+    fn quarantine(&self, device_id: &str, why: &str);
+
+    /// Ends the device's quarantine, at its key's clean release.
+    fn clear_quarantine(&self, device_id: &str);
 
     /// Drains the machine: it takes no new GPU job until a person clears it
     /// at the box (`oneiron execution-node resume`). One drain per machine:
@@ -383,45 +393,99 @@ impl NodeDevices for GpuSlotTable {
         GpuSlotTable::finish(self, key, end);
     }
 
+    fn quarantine(&self, device_id: &str, why: &str) {
+        GpuSlotTable::quarantine(self, device_id, why.to_owned());
+    }
+
+    fn clear_quarantine(&self, device_id: &str) {
+        GpuSlotTable::clear_quarantine(self, device_id);
+    }
+
     fn drain(&self, why: &str) {
         GpuSlotTable::drain(self, why.to_owned());
     }
 }
 
-impl NodeKeys for super::NodeJobs {
+/// The job service as R1's node holds it ([`ExecutionNode::attach_keys`]):
+/// a weak handle. The service holds the node as its admission and its
+/// authority, so a strong handle back would keep both alive, and the
+/// journal's writer lock with them, after the server dropped the service.
+/// The server keeps the strong [`super::NodeJobs`]; once it is gone, every
+/// request answers `NotEnabled`, as a node with no keys attached does, and
+/// the journal's directory can be opened again.
+#[derive(Debug, Clone)]
+pub struct NodeJobsAttachment {
+    service: Weak<super::NodeJobsShared>,
+}
+
+impl NodeJobsAttachment {
+    fn service(&self) -> Option<super::NodeJobs> {
+        self.service
+            .upgrade()
+            .map(|shared| super::NodeJobs { shared })
+    }
+}
+
+impl super::NodeJobs {
+    /// The handle to attach to R1's node: it answers for this service while
+    /// the service lives, and never keeps it alive.
+    #[must_use]
+    pub fn attachment(&self) -> Arc<dyn NodeKeys> {
+        Arc::new(NodeJobsAttachment {
+            service: Arc::downgrade(&self.shared),
+        })
+    }
+}
+
+fn not_enabled() -> JobAnswer {
+    JobAnswer::Refused(JobRefusal::NotEnabled)
+}
+
+impl NodeKeys for NodeJobsAttachment {
     fn reserve(&self, peer: EntityId, reserve: JobReserve) -> JobAnswer {
-        super::NodeJobs::reserve(self, peer, reserve)
+        self.service()
+            .map_or_else(not_enabled, |jobs| jobs.reserve(peer, reserve))
     }
 
     fn release(&self, peer: EntityId, key: &str) -> JobAnswer {
-        super::NodeJobs::release(self, peer, key)
+        self.service()
+            .map_or_else(not_enabled, |jobs| jobs.release(peer, key))
     }
 
     fn submit(&self, peer: EntityId, signed: SignedJobSubmit) -> JobAnswer {
-        super::NodeJobs::submit(self, peer, signed)
+        self.service()
+            .map_or_else(not_enabled, |jobs| jobs.submit(peer, signed))
     }
 
     fn swept(&self) -> bool {
-        super::NodeJobs::swept(self)
+        self.service().is_some_and(|jobs| jobs.swept())
     }
 
     fn epoch(&self) -> Option<String> {
-        super::NodeJobs::epoch(self).map(|epoch| epoch.to_hex())
+        self.service()
+            .and_then(|jobs| jobs.epoch())
+            .map(|epoch| epoch.to_hex())
     }
 
     fn booked_disk_mib(&self) -> u64 {
-        super::NodeJobs::booked_disk_mib(self)
+        self.service().map_or(0, |jobs| jobs.booked_disk_mib())
     }
 
     fn live_issuers(&self) -> BTreeSet<EntityId> {
-        super::NodeJobs::live_issuers(self)
+        self.service()
+            .map(|jobs| jobs.live_issuers())
+            .unwrap_or_default()
     }
 
     fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str) {
-        super::NodeJobs::revoke_live_keys(self, issuer, why);
+        if let Some(jobs) = self.service() {
+            jobs.revoke_live_keys(issuer, why);
+        }
     }
 
     fn stop_live_keys(&self) {
-        super::NodeJobs::stop_live_keys(self);
+        if let Some(jobs) = self.service() {
+            jobs.stop_live_keys();
+        }
     }
 }

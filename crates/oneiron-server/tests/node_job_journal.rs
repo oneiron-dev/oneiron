@@ -11,7 +11,7 @@
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
-use oneiron_server::gpu_execution_node::ScopeBound;
+use oneiron_server::gpu_execution_node::jobs::job_unit::RECEIPT_FILE_NAME;
 use oneiron_server::gpu_execution_node::jobs::{
     BoundReport, JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey, Strength,
 };
@@ -20,6 +20,7 @@ use oneiron_server::gpu_execution_node::wire::{
     JobStatusAnswer, JobSubmit, NetworkMode, OutputDecl, OutputsState, ResourceRequest, ScopeKind,
     SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
+use oneiron_server::gpu_execution_node::{NodeKeys, ScopeBound};
 use oneiron_server::test_doors::node_jobs::{
     ScriptedJobUnits, ScriptedNode, ScriptedSigner, ScriptedStart, fail_journal_sync,
 };
@@ -141,8 +142,12 @@ fn entry(jobs: &NodeJobs, key: &str) -> Option<NodeKey> {
     jobs.keys().into_iter().find(|entry| entry.key == key)
 }
 
-/// Waits until the key exists and `done` holds for it.
+/// Waits until the key exists and `done` holds for it. The node's staging
+/// worker and launch commit run on threads of their own and signal nothing
+/// a test could await, and the staging limit runs on the real monotonic
+/// clock, so the wait polls.
 fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> NodeKey {
+    // testkit-lint: allow(wall-clock) bounds a wait on the node's own worker threads
     let deadline = Instant::now() + WAIT;
     loop {
         if let Some(found) = entry(jobs, key)
@@ -151,16 +156,20 @@ fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> Node
             return found;
         }
         assert!(
+            // testkit-lint: allow(wall-clock) the same bound
             Instant::now() < deadline,
             "key {key} did not reach the state: {:?}",
             entry(jobs, key)
         );
+        // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
         std::thread::sleep(Duration::from_millis(10));
     }
 }
 
-/// Waits until every staging worker of the key has had time to finish.
+/// Waits until every staging worker of the key has had time to finish: a
+/// worker that should start nothing leaves no state to poll for.
 fn settle() {
+    // testkit-lint: allow(sleep) proves an absence: no worker signals that it started nothing
     std::thread::sleep(Duration::from_millis(300));
 }
 
@@ -859,4 +868,223 @@ fn a_damaged_record_length_is_a_lost_history_never_a_torn_tail() {
         jobs.submit(fixture.issuer, fixture.submit(key, &pin)),
         JobAnswer::Refused(JobRefusal::HistoryLost)
     );
+}
+
+#[test]
+fn a_submit_after_the_issuers_grant_ended_writes_nothing() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    // A held key past its window, and a key the node never saw: each would
+    // be closed by a new record, so each waits for the issuer's authority.
+    let held = "job-30/held";
+    let unknown = "job-30/never-reserved";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(held, &pin)));
+    fixture.node.clock.advance_ms(600_000);
+    fixture
+        .node
+        .admission
+        .set_issuer_refusal(Some("issuer_standing_ended"));
+    for key in [held, unknown] {
+        assert_eq!(
+            jobs.submit(fixture.issuer, fixture.submit(key, &pin)),
+            JobAnswer::Refused(JobRefusal::IssuerStandingEnded),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        entry(&jobs, held).map(|entry| entry.state),
+        Some(JobState::Held)
+    );
+    assert_eq!(entry(&jobs, unknown), None);
+}
+
+#[test]
+fn a_recovery_that_cannot_read_a_launched_units_phase_keeps_the_gate_closed() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-31/chunk-0";
+    fixture.node.units.set_next_start(ScriptedStart::NotTaken);
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &pin)));
+    wait_for(&jobs, key, |entry| entry.state == JobState::Launching);
+
+    // The engine restarts; the service manager lists its units but cannot
+    // say this unit's phase, so the key's row of the table cannot be
+    // applied and the gate stays closed.
+    drop(jobs);
+    fixture.node.units.set_next_start(ScriptedStart::Run);
+    fixture.node.units.set_status_answering(false);
+    let jobs = fixture.node.open();
+    assert_eq!(jobs.gate(), NodeGate::Recovering);
+    assert!(matches!(
+        jobs.find(fixture.issuer, key),
+        JobStatusAnswer::Busy { .. }
+    ));
+
+    // It answers again: the key is lost, and only then does the gate open.
+    fixture.node.units.set_status_answering(true);
+    jobs.tick();
+    assert_eq!(jobs.gate(), NodeGate::Open);
+    let lost = known(jobs.find(fixture.issuer, key));
+    assert!(
+        matches!(&lost.end, Some(JobEnd::Lost { reason, .. }) if reason == "launch_uncertain"),
+        "{:?}",
+        lost.end
+    );
+}
+
+#[test]
+fn the_handle_the_node_attaches_never_keeps_the_job_service_alive() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let attachment = jobs.attachment();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-32/chunk-0";
+    assert_eq!(
+        receipt(attachment.reserve(fixture.issuer, fixture.reserve(key, &pin))).state,
+        JobState::Held
+    );
+    assert!(attachment.swept());
+
+    // The server drops its service: the handle answers as a node with no
+    // keys attached, and the journal's directory opens again.
+    drop(jobs);
+    assert_eq!(
+        attachment.reserve(fixture.issuer, fixture.reserve("job-32/chunk-1", &pin)),
+        JobAnswer::Refused(JobRefusal::NotEnabled)
+    );
+    assert!(!attachment.swept());
+    let reopened = fixture.node.open();
+    assert_eq!(reopened.gate(), NodeGate::Open);
+    assert_eq!(
+        entry(&reopened, key).map(|entry| entry.state),
+        Some(JobState::Held)
+    );
+}
+
+#[test]
+fn a_quarantined_device_takes_no_new_reserve_until_its_clean_release() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let first = "job-33/chunk-0";
+    fixture.run(&jobs, first);
+
+    // The release check cannot probe the device: the journal quarantines
+    // it, and so does the slot table, so a reserve finds no device.
+    fixture.node.devices.set_probe_fails(true);
+    fixture.node.units.exit(first, 0);
+    jobs.tick();
+    let held_out = wait_for(&jobs, first, |entry| {
+        matches!(entry.release, DeviceRelease::Unconfirmed { .. })
+    });
+    assert!(held_out.is_ended());
+    assert!(fixture.node.devices.quarantined(DEVICE).is_some());
+    let refused = receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-33/chunk-1", &pin)));
+    assert!(
+        matches!(&refused.end, Some(JobEnd::Refused { reason }) if reason == "no_device"),
+        "{:?}",
+        refused.end
+    );
+
+    // The slot table keeps quarantines in memory: after a restart the
+    // journal's quarantine is back before the gate opens.
+    drop(jobs);
+    fixture.node.devices.forget_quarantines();
+    let jobs = fixture.node.open();
+    assert_eq!(jobs.gate(), NodeGate::Open);
+    assert!(fixture.node.devices.quarantined(DEVICE).is_some());
+
+    // A clean probe releases the device and ends its quarantine.
+    fixture.node.devices.set_probe_fails(false);
+    jobs.tick();
+    wait_for(&jobs, first, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(fixture.node.devices.quarantined(DEVICE), None);
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-33/chunk-2", &pin))).state,
+        JobState::Held
+    );
+}
+
+#[test]
+fn a_launch_the_prepare_step_refused_books_no_disk_once_ended() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let refused = "job-34/refused";
+    fixture
+        .node
+        .units
+        .set_next_start(ScriptedStart::RefuseInPrepare(
+            "scope_unavailable".to_owned(),
+        ));
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(refused, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(refused, &pin)));
+    wait_for(&jobs, refused, |entry| entry.state == JobState::Launching);
+    jobs.tick();
+    let ended = wait_for(&jobs, refused, |entry| entry.state == JobState::Ended);
+    assert!(
+        matches!(&ended.end, Some(JobEnd::LaunchRefused { .. })),
+        "{:?}",
+        ended.end
+    );
+    assert!(!ended.started());
+    assert_eq!(jobs.booked_disk_mib(), 0);
+
+    // A key whose workload ran keeps its disk booked for its outputs.
+    fixture.node.units.set_next_start(ScriptedStart::Run);
+    let ran = "job-34/ran";
+    fixture.run(&jobs, ran);
+    fixture.node.units.exit(ran, 0);
+    jobs.tick();
+    wait_for(&jobs, ran, |entry| entry.state == JobState::Ended);
+    assert_eq!(jobs.booked_disk_mib(), pin.request.disk_mib);
+}
+
+#[test]
+fn a_fold_that_never_reaches_the_submits_heads_refuses_the_launch_as_authority_stale() {
+    let fixture = fixture();
+    fixture.node.admission.set_staging_limit_secs(1);
+    fixture.node.authority.set_stale(true);
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-35/chunk-0";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &pin)));
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    assert_eq!(
+        ended.end,
+        Some(JobEnd::LaunchRefused {
+            reason: "authority_stale".to_owned()
+        })
+    );
+    assert_eq!(fixture.node.units.total_starts(), 0);
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+}
+
+#[test]
+fn a_sealed_keys_missing_receipt_file_is_written_again_from_the_journal() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let key = "job-36/chunk-0";
+    fixture.run(&jobs, key);
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    wait_for(&jobs, key, |entry| entry.outputs != OutputsState::Pending);
+    let file = JobKeyId::for_key(key)
+        .control_dir(&fixture.node.paths.state_dir)
+        .join(RECEIPT_FILE_NAME);
+    assert!(file.exists());
+
+    // The engine stopped after the `hashed` record and before the file.
+    drop(jobs);
+    std::fs::remove_file(&file).expect("receipt file removed");
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let bytes = std::fs::read(&file).expect("receipt file written again");
+    assert!(!bytes.is_empty());
 }

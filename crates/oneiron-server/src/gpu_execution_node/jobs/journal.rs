@@ -198,16 +198,17 @@ impl NodeKey {
     }
 
     /// The disk the key keeps booked on the payload disk, in MiB: a live key
-    /// its request, an ended key that launched its request too (its outputs
-    /// stay until the issuer acknowledges them), a key that never launched
-    /// nothing once it ended.
+    /// its request, an ended key whose workload may have started its
+    /// request too (its outputs stay until the issuer acknowledges them),
+    /// and an ended key whose workload never started nothing: one that never
+    /// launched, or one whose launch the unit's prepare step refused.
     #[must_use]
     pub fn booked_disk_mib(&self) -> u64 {
         let request = self
             .reserve
             .as_ref()
             .map_or(0, |reserve| reserve.pin.request.disk_mib);
-        if self.state != JobState::Ended || self.launch.is_some() {
+        if self.state != JobState::Ended || self.started() {
             request
         } else {
             0

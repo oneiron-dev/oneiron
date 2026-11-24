@@ -32,7 +32,7 @@ use super::journal::{JobJournal, JournalEvent, NodeKey};
 use super::journal_file::{JournalFile, JournalOpening, JournalWriterLock};
 use super::node_parts::{NodeJobParts, NodeJobPaths};
 use super::{NodeBook, NodeGate, NodeJobs, NodeJobsShared, ReceiptClock};
-use crate::gpu_execution_node::wire::{JobEnd, JobState};
+use crate::gpu_execution_node::wire::{DeviceRelease, JobEnd, JobState};
 
 impl NodeJobs {
     /// Opens the node's job service on `paths` and runs the start-up
@@ -242,7 +242,7 @@ impl NodeJobs {
                 current.state,
                 JobState::Launching | JobState::Running | JobState::Ending
             ) {
-                self.read_unit_end(book, &current, now);
+                self.read_unit_end(book, &current, now)?;
             }
         }
         Ok(())
@@ -363,7 +363,13 @@ impl NodeJobs {
         self.parts()
             .devices
             .reattach(&known.key, &launch.device_id)
-            .map_err(|refusal| format!("job_recovery.reattach {}: {refusal}", known.key))
+            .map_err(|refusal| format!("job_recovery.reattach {}: {refusal}", known.key))?;
+        // The slot table keeps quarantines in memory: the journal's comes
+        // back with the device.
+        if let DeviceRelease::Unconfirmed { why } = &known.release {
+            self.quarantine_device(known, why);
+        }
+        Ok(())
     }
 }
 

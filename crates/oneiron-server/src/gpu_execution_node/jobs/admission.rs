@@ -274,7 +274,34 @@ impl NodeJobs {
                 Ok(journal) => journal,
                 Err(answer) => return answer,
             };
-            let Some(known) = journal.table().get(&key).cloned() else {
+            let known = journal.table().get(&key).cloned();
+            // A key that already took effect is answered first: the
+            // issuer, the pin and the slot must be the same.
+            if let Some(known) = &known {
+                if known.issuer != peer {
+                    return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
+                }
+                let digest = signed.submit.pin.digest().ok();
+                let other_slot = known
+                    .reserve
+                    .as_ref()
+                    .is_some_and(|reserve| reserve.slot != signed.submit.slot);
+                if (known.pin_digest.is_some() && digest != known.pin_digest) || other_slot {
+                    return JobAnswer::Refused(JobRefusal::KeyConflict);
+                }
+                if known.state != JobState::Held {
+                    return self.receipt_answer(known, journal.epoch(), &now);
+                }
+            }
+            // Before any new record (the key's close for a missing reserve,
+            // its close past the window, its acceptance), the issuer's
+            // authority, read again under the lock: a grant that ended after
+            // the gate is refused as the gate refuses it, with nothing
+            // journaled.
+            if let Err(not_live) = self.parts().admission.issuer_live(peer) {
+                return JobAnswer::Refused(not_live.refusal);
+            }
+            let Some(known) = known else {
                 let event = JournalEvent::Ended {
                     end: JobEnd::Refused {
                         reason: "not_reserved".to_owned(),
@@ -283,20 +310,6 @@ impl NodeJobs {
                 };
                 return self.record_and_answer(journal, &key, peer, event, &now);
             };
-            if known.issuer != peer {
-                return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
-            }
-            let digest = signed.submit.pin.digest().ok();
-            let other_slot = known
-                .reserve
-                .as_ref()
-                .is_some_and(|reserve| reserve.slot != signed.submit.slot);
-            if (known.pin_digest.is_some() && digest != known.pin_digest) || other_slot {
-                return JobAnswer::Refused(JobRefusal::KeyConflict);
-            }
-            if known.state != JobState::Held {
-                return self.receipt_answer(&known, journal.epoch(), &now);
-            }
             // A reserve past its window is closed here, before any submit
             // could take it up, even when the tick has not closed it yet.
             if known
@@ -305,9 +318,6 @@ impl NodeJobs {
                 .is_some_and(|reserve| now.wall_ms > reserve.not_after_ms)
             {
                 return self.record_and_answer(journal, &key, peer, withdrawn(), &now);
-            }
-            if let Err(not_live) = self.parts().admission.issuer_live(peer) {
-                return JobAnswer::Refused(not_live.refusal);
             }
             let event = match self.submit_refusal(&signed, &known, now.wall_ms) {
                 Some(reason) => JournalEvent::Ended {
