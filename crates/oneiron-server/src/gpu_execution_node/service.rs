@@ -165,7 +165,7 @@ where
     F: Fn(Q) -> Fut,
     Fut: Future<Output = A>,
 {
-    let Ok(Ok(bytes)) = tokio::time::timeout(REQUEST_READ_DEADLINE, stream.recv()).await else {
+    let Ok(bytes) = stream.recv().await else {
         return;
     };
     let Ok(request) = decode_message::<Q>(JOB_PROTOCOL, &bytes) else {
