@@ -2,9 +2,9 @@
 """Ratchet metrics 9-13, test_lint_*: sleeps, wall-clock reads, network, fixed ports and real
 models in test code (Fable's test-strategy verdict, sections 3 and 4).
 
-It reads Rust test code under crates/ and apps/: every file under a `tests` directory, every
-tests.rs, *_tests.rs and *_test.rs, every file gated by an inner `#![cfg(test)]`, and the item
-after each `#[cfg(test)]`-style attribute in any other file. Directories named target, vendor,
+It reads Rust test code under crates/ and apps/: every file under a `tests` or `tests_*`
+directory, every tests.rs, *_tests.rs, *_test.rs and tests_*.rs, every file gated by an inner
+`#![cfg(test)]`, and the item after each `#[cfg(test)]`-style attribute in any other file. Directories named target, vendor,
 node_modules, .git and fixtures-out, and the vendored crates/heed, crates/paste and crates/loro,
 are skipped. Each rule looks for plain text patterns outside comments; sleep and wall-clock read
 code only, the others also read string literals:
@@ -215,9 +215,19 @@ def char_literal_end(data, start):
 
 
 def whole_file_is_test(path):
-    """Whether the file at workspace-relative `path` is test code as a whole."""
-    name = path.rsplit("/", 1)[-1]
-    return "tests" in path.split("/") or name == "tests.rs" or name.endswith("_tests.rs") or name.endswith("_test.rs")
+    """Whether the file at workspace-relative `path` is test code as a whole: it has a `tests` or
+    `tests_*` directory component (crates/oneiron/src/memory/tests_regressions/), or it is named
+    tests.rs, *_tests.rs, *_test.rs or tests_*.rs. The non-test metrics of scripts/ratchet/check.sh
+    skip the same directories and the same names but *_test.rs."""
+    *directories, name = path.split("/")
+    if any(part == "tests" or part.startswith("tests_") for part in directories):
+        return True
+    return (
+        name == "tests.rs"
+        or name.endswith("_tests.rs")
+        or name.endswith("_test.rs")
+        or (name.startswith("tests_") and name.endswith(".rs"))
+    )
 
 
 def gates_on_test(attribute):
