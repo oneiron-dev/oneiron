@@ -81,6 +81,18 @@ class Rules(unittest.TestCase):
         self.assertTrue(LINT.whole_file_is_test("crates/oneiron-server/tests/it/main.rs"))
         self.assertFalse(LINT.whole_file_is_test("crates/oneiron/src/gate/mod.rs"))
 
+    def test_a_tests_prefixed_directory_or_file_name_is_test_code_as_a_whole(self):
+        # The spellings check.sh's non-test metrics skip: a cfg(test) tree mounted as `mod tests_regressions;`
+        # and a module file such as code_run/tests_room_saver.rs.
+        source = "fn t() { std::thread::sleep(d); let i = Instant::now(); }\n"
+        found = [(1, "sleep"), (1, "wall-clock")]
+        self.assertEqual(rules("crates/oneiron/src/memory/tests_regressions/recall/call_mode.rs", source), found)
+        self.assertEqual(rules("crates/oneiron/src/code_run/tests_room_saver.rs", source), found)
+        self.assertEqual(rules("crates/oneiron/src/code_run/room_saver.rs", source), [])
+        self.assertFalse(LINT.whole_file_is_test("crates/oneiron/src/testsuite/mod.rs"))
+        self.assertFalse(LINT.whole_file_is_test("crates/oneiron/src/contests/latests_x.rs"))
+        self.assertFalse(LINT.whole_file_is_test("crates/oneiron/src/gate/tests_rs"))
+
     def test_a_file_gated_as_test_and_a_bodiless_test_item_are_read_too(self):
         gated = "#![cfg(test)]\nfn t() { std::thread::sleep(d); }\n"
         self.assertEqual(rules("crates/oneiron-seal/src/native/verify/review.rs", gated), [(2, "sleep")])
