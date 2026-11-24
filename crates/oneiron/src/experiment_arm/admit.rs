@@ -440,7 +440,7 @@ fn written_arm(written: &[u8]) -> Option<EntityId> {
         .and_then(|bytes| EntityId::from_bytes(bytes).ok())
 }
 
-fn is_sha256_hex(text: &str) -> bool {
+pub(super) fn is_sha256_hex(text: &str) -> bool {
     text.len() == 64
         && text
             .bytes()
