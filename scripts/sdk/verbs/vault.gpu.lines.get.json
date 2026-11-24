@@ -1,6 +1,6 @@
 {
   "name": "vault.gpu.lines.get",
-  "description": "Reads the GPU line of one lane project and the record of the period that holds now: its floors, pools and market ceilings. The owner calls it, or an agent whose Grant names it.",
+  "description": "Reads the GPU line of one lane project and the record of the period that holds now: its seats, floors, pools and market ceilings. The owner calls it, or a Grant that holds a role on the line.",
   "input": "crate::gpu_line::GpuLineRef",
   "output": "crate::gpu_line::GpuLineView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.get\", &input)?",
