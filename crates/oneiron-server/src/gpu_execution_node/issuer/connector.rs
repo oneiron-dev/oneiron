@@ -14,8 +14,8 @@
 use std::sync::Arc;
 
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
-    GpuResourceStatus, GpuTermination,
+    GpuConnectorError, GpuJob, GpuJobConnector, GpuJobNodeView, GpuJobSignal, GpuJobSpec,
+    GpuResourceRef, GpuResourceStatus, GpuTermination,
 };
 use oneiron::job_dispatch::{
     DispatchAsk, DispatchClose, DispatchPhase, DispatchRefusal, JobDispatch, JobObservation,
@@ -423,6 +423,15 @@ impl VaultMachineConnector {
             return Err(unavailable("history_lost"));
         }
         if self.now_ms() >= row.not_after_ms {
+            // Row R4, 7.9: the machine's journal never took the reserve in its whole window.
+            super::guard::count_outcome(
+                self.vault(),
+                row.machine,
+                &oneiron::job_dispatch::machine_records::MachineJobOutcome::MachineFailure {
+                    why: "reserve_never_arrived".to_owned(),
+                },
+                self.now_ms(),
+            );
             let closed = self.close(&row.key, DispatchClose::StartWindowPassed)?;
             return self.stop_and_read(&closed);
         }
@@ -509,6 +518,19 @@ impl VaultMachineConnector {
             .unwrap_or_else(|| self.parts.clock.boot_mark());
         let bracket = row.sent_boot.as_ref().map(|sent| bracket(sent, &end_seen));
         let billing = billing(ended, submit.maximum_secs, bracket);
+        // Row R4, 7.9: the end counts for the machine's guard on the issuer, once: the dispatch
+        // closes below and a closed key confirms from its stored terminal.
+        match self.vault().machine_job_settings(row.machine) {
+            Ok(settings) => super::guard::count_outcome(
+                self.vault(),
+                row.machine,
+                &super::guard::machine_job_outcome(ended, &billing.meter, settings.fast_exit_secs),
+                self.now_ms(),
+            ),
+            Err(error) => {
+                tracing::warn!(machine = %row.machine.to_hex(), %error, "vault_machine: the job guard's settings not read; this end is not counted");
+            }
+        }
         let revoked = matches!(row.closed, Some(DispatchClose::Revoked { .. }));
         let typed = terminal(
             ended,
@@ -537,6 +559,13 @@ impl GpuJobConnector for VaultMachineConnector {
         }
         if self.parts.settings.paused {
             return Err(refused("dispatch_paused"));
+        }
+        // Row R4, 7.9: a machine the issuer drained takes no new dispatch until door 12 clears
+        // it. Nothing is written or sent.
+        if let Some(refusal) =
+            super::guard::machine_job_guard_refusal(self.vault(), inputs.machine).map_err(store)?
+        {
+            return Err(refused(refusal));
         }
         let job = EntityId::from_hex(&spec.job).map_err(|_| refused("job_id_invalid"))?;
         let started_by = self
@@ -749,6 +778,10 @@ impl GpuJobConnector for VaultMachineConnector {
             .map_err(store)?
             .unwrap_or(row);
         self.confirm(&row, &signed.submit, &ended)
+    }
+
+    fn node_view(&self, job: &GpuJob, now_ms: u64, step_ms: u64) -> Option<GpuJobNodeView> {
+        super::view::node_view(self.vault(), job, now_ms, step_ms)
     }
 }
 

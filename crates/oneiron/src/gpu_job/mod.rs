@@ -27,6 +27,7 @@ use crate::{EntityId, Vault};
 mod allowance;
 mod caller;
 mod connector;
+mod node_view;
 mod offer;
 mod permits;
 mod start;
@@ -40,6 +41,10 @@ pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
 pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
     GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
+};
+pub use node_view::{
+    GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved,
+    GpuJobOutputView, GpuJobOutputsView,
 };
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;

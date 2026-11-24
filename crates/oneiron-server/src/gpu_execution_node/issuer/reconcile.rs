@@ -1,9 +1,10 @@
 //! The reconcile before dispatch (pass 33 section 8.5). Before its first reserve or submit to a
 //! node since this issuer started, the issuer reads every key the node holds for it, ended keys
 //! too, page by page. A key that has a dispatch row is left to `status`. A key without one is an
-//! orphan: it goes to one hook, which row R4 fills with `JOB_ORPHAN` and its stop; until then
-//! the hook logs the key. A reconcile that got no answer, or ended before its last page, leaves
-//! the node unmarked, and no reserve or submit goes to it.
+//! orphan: it goes to one hook, which row R4 fills with `JOB_ORPHAN` and its stop
+//! (`super::orphans`), and the hook hears when the node's whole listing was read. A reconcile
+//! that got no answer, or ended before its last page, leaves the node unmarked, and no reserve
+//! or submit goes to it.
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
@@ -16,6 +17,11 @@ use crate::gpu_execution_node::wire::{JobStatusAnswer, JobStatusRequest, KeyEntr
 pub trait OrphanKeys: Send + Sync {
     /// `node` holds `entry`, which this issuer never dispatched or no longer knows.
     fn unknown_key(&self, node: EntityId, entry: &KeyEntry);
+
+    /// `node`'s whole listing was read: every page, the last with no `next`.
+    fn listing_complete(&self, node: EntityId) {
+        let _ = node;
+    }
 }
 
 /// The hook until row R4's `JOB_ORPHAN` lands: it logs the key.
@@ -102,6 +108,7 @@ impl Reconciled {
                 None => break,
             }
         }
+        orphans.listing_complete(node);
         self.nodes
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
