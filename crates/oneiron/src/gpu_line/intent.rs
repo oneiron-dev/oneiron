@@ -22,7 +22,7 @@ use crate::{EntityId, Vault};
 /// Domain of an intent's row key.
 const INTENT_KEY_CONTEXT: &str = "oneiron lane economy intent key v1";
 /// Domain of an ask's digest.
-const ASK_DIGEST_CONTEXT: &str = "oneiron lane economy intent ask v1";
+const ASK_DIGEST_CONTEXT: &str = "oneiron lane economy intent ask v2";
 
 /// The refusal of a key that already names another ask.
 pub const DIFFERENT_ASK: &str = "this intent key already names a different ask; repeat that \
@@ -122,9 +122,12 @@ impl IntentAsk {
         if intent_key.trim().is_empty() {
             return Err(IntentRefused::BlankKey);
         }
-        let encoded = rmp_serde::to_vec_named(ask).map_err(|_| IntentRefused::Unencodable)?;
+        // The ask's canonical JSON (object keys sorted at every depth), so
+        // two encodings of one ask, such as a map in another iteration
+        // order, digest alike (review-10396 P1).
+        let value = serde_json::to_value(ask).map_err(|_| IntentRefused::Unencodable)?;
         let mut digest = blake3::Hasher::new_derive_key(ASK_DIGEST_CONTEXT);
-        digest.update(&encoded);
+        oneiron_records::receipt::call::write_canonical(&mut digest, &value);
         Ok(Self {
             asker,
             verb: verb.to_owned(),
