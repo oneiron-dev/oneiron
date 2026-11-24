@@ -396,6 +396,7 @@ impl OrganService {
         };
         let cancel = self.cancel.clone();
         let answers = peer.answers;
+        let call_nonce = peer.call_nonce;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
             let _input_lease = input_lease;
             let fetch = GuardedFetch;
@@ -415,15 +416,30 @@ impl OrganService {
                 };
                 handlers = handlers.with(verb, handler);
             }
-            let outcome = host.call_for_peer(&vault, call, inputs, &handlers, &cancel);
+            // The receipt is final once the call returns: its output lines
+            // are the host's own hashes, which the staging below carries
+            // unchanged. This machine signs it, with the asking node's nonce
+            // for this call and the report beside it, as its word to the
+            // asking node (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE).
+            let outcome = host
+                .call_for_peer(&vault, call, inputs, &handlers, &cancel)
+                .map(|mut outcome| {
+                    let signed = outcome.receipt.sign(&*vault, &call_nonce, &outcome.report);
+                    (outcome, signed)
+                });
             (outcome, handlers.asked())
         })
         .await
         .map_err(|err| format!("the call's thread: {err}"))?;
         drop(held);
         Ok(match outcome {
-            Ok(outcome) => offered(outcome, staging, self.host.floor().as_ref())
+            Ok((outcome, Ok(()))) => offered(outcome, staging, self.host.floor().as_ref())
                 .unwrap_or_else(|detail| CallReply::failed(detail, asked)),
+            // Never an unsigned outcome: the asking node would refuse it.
+            Ok((_, Err(why))) => CallReply::failed(
+                format!("this node could not sign its receipt: {why}"),
+                asked,
+            ),
             Err(err) => CallReply {
                 result: PeerResult::Failed(failure(err, asked)),
                 _outputs: Vec::new(),
