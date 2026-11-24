@@ -422,7 +422,16 @@ impl Machines {
     /// the owner's grant of it syncs there (e.g. a node's own job grant).
     pub(crate) fn grant_own(&self, index: usize, alpns: &[&[u8]]) -> TestResult {
         let machine = &self.machines[index];
-        machine.device.bind(&machine.device, &machine.served)?;
+        // A vault binds each machine's endpoint once.
+        let bound = machine
+            .device
+            .vault
+            .mesh_machine(machine.device.machine)
+            .map_err(at("read the machine's own endpoint"))?
+            .is_some();
+        if !bound {
+            machine.device.bind(&machine.device, &machine.served)?;
+        }
         for alpn in alpns {
             machine.device.grant(&machine.device, alpn)?;
         }
