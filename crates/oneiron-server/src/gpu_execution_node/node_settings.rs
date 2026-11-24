@@ -54,8 +54,8 @@ pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
 /// unit's write rate to the payload device.
 pub const WRITE_MIB_PER_SEC_DEFAULT: u64 = 200;
 
-/// Default of a template's `max_gpus`.
-pub const MAX_GPUS_DEFAULT: u32 = 1;
+/// Default of a template's `max_devices`: the devices one pin may claim.
+pub const MAX_DEVICES_DEFAULT: u32 = 1;
 
 /// The longest template name, in bytes.
 const TEMPLATE_NAME_MAX: usize = 64;
@@ -70,13 +70,27 @@ struct ExecutionNodeFile {
     execution_node: ExecutionNodeSettings,
 }
 
-/// What a machine that cannot build a job's scope does.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnfencedPolicy {
-    /// It refuses the job (section 7.8).
-    #[default]
-    Refuse,
+/// A bound a job's scope gives the workload (pass 34 section 2.2). A
+/// template lists the bounds it requires; a required bound the scope cannot
+/// give blocks the job, and one that is not required and not available is
+/// recorded in the receipt as unproven (row R3b proves them on the machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ScopeBound {
+    /// The workload reads and writes only its paths: never the vault.
+    #[serde(rename = "file_wall")]
+    FileWall,
+    /// The workload reaches no network.
+    #[serde(rename = "network_closed")]
+    NetworkClosed,
+    /// The workload opens its claimed devices and no other.
+    #[serde(rename = "device_closure")]
+    DeviceClosure,
+    /// The kernel caps the workload's memory.
+    #[serde(rename = "memory_cap:kernel")]
+    MemoryCapKernel,
+    /// The kernel enforces the cutoff, with no engine alive.
+    #[serde(rename = "cutoff:kernel")]
+    CutoffKernel,
 }
 
 /// The node's `[execution_node]` table.
@@ -108,8 +122,6 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
-    #[serde(default)]
-    pub unfenced: UnfencedPolicy,
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
@@ -158,8 +170,12 @@ pub struct NodeTemplate {
     pub memory_gib: u64,
     /// The job's disk ceiling on the payload disk.
     pub disk_gib: u64,
-    #[serde(default = "max_gpus_default")]
-    pub max_gpus: u32,
+    /// The bounds the job's scope must give, else the job is blocked. The
+    /// default keeps a workload out of the vault and off the network.
+    #[serde(default = "require_default")]
+    pub require: Vec<ScopeBound>,
+    #[serde(default = "max_devices_default")]
+    pub max_devices: u32,
 }
 
 fn disk_reserve_gib_default() -> u64 {
@@ -180,8 +196,11 @@ fn job_account_default() -> String {
 fn write_mib_per_sec_default() -> u64 {
     WRITE_MIB_PER_SEC_DEFAULT
 }
-fn max_gpus_default() -> u32 {
-    MAX_GPUS_DEFAULT
+fn max_devices_default() -> u32 {
+    MAX_DEVICES_DEFAULT
+}
+fn require_default() -> Vec<ScopeBound> {
+    vec![ScopeBound::FileWall, ScopeBound::NetworkClosed]
 }
 fn host_scope() -> Vec<ScopeClass> {
     vec![ScopeClass::Host]
@@ -414,7 +433,7 @@ impl NodeTemplate {
         }
         let request = &pin.request;
         for (field, asked, ceiling) in [
-            ("gpus", u64::from(request.gpus), u64::from(self.max_gpus)),
+            ("gpus", u64::from(request.gpus), u64::from(self.max_devices)),
             ("maximum_secs", request.maximum_secs, self.max_secs),
             (
                 "memory_mib",

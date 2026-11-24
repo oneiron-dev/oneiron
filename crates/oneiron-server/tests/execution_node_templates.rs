@@ -19,7 +19,7 @@ use oneiron_server::gpu_execution_node::wire::{
     NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
-    ExecutionNode, ExecutionNodeSettings, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe,
+    ExecutionNode, ExecutionNodeSettings, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe, ScopeBound,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -262,6 +262,32 @@ fn a_param_pattern_that_does_not_compile_alone_does_not_validate() {
         refused.is_err(),
         "a pattern that closes its own group must not validate: {refused:?}"
     );
+}
+
+#[test]
+fn a_template_requires_the_file_wall_and_the_closed_network_unless_it_says_otherwise() -> TestResult
+{
+    let plain = settings(&node_text(1_800, ""))?;
+    let template = plain.templates.get("probe").ok_or("probe")?;
+    assert_eq!(
+        template.require,
+        [ScopeBound::FileWall, ScopeBound::NetworkClosed],
+        "the default list keeps a workload out of the vault and off the network"
+    );
+    let sealed = settings(&node_text(
+        1_800,
+        r#"require = ["file_wall", "network_closed", "device_closure", "memory_cap:kernel"]"#,
+    ))?;
+    assert_ne!(
+        sealed.template_digest("probe"),
+        plain.template_digest("probe"),
+        "the required bounds are part of what a pin names"
+    );
+    assert!(
+        ExecutionNodeSettings::parse(&node_text(1_800, r#"require = ["wishful"]"#)).is_err(),
+        "a bound outside the closed list does not validate"
+    );
+    Ok(())
 }
 
 #[test]
