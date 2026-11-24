@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
-use crate::{EdgeActorClass, EntityId, Vault};
+use crate::{EntityId, Vault};
 
 use super::WorkloadPin;
 
@@ -28,48 +28,36 @@ pub struct JobWorkload {
     pub revoked: Option<WorkloadRevocation>,
 }
 
-/// The yes for one pinned workload (EN-1 A: each exact workload): the
-/// owner's, or an agent's while `jobs.workloads.agent_may_approve` is on.
+/// The yes for one pinned workload: the owner's (card EN-1 A, each exact
+/// workload).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkloadApproval {
     pub by: WorkloadApprovedBy,
     /// The machines it may run on; never empty.
     pub machines: Vec<EntityId>,
     /// The Grants that may start it; empty means the Grant it was pinned
-    /// under only (the owner may start any approved workload). An agent's
-    /// approval never names the agent's own Grant.
+    /// under only (the owner may start any approved workload).
     pub starters: Vec<EntityId>,
     pub expires_at_ms: u64,
     pub at_ms: u64,
 }
 
 /// Who approved a workload, and so how the start gate judges the approval.
-/// A family approval (EN-1 B, row R7) adds its own variant.
+/// Pass 34's check-in of an agent's pin (R2's follow-up, with R7) adds its
+/// own variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkloadApprovedBy {
     /// The vault owner under their own proof; `None` after their erase.
     Owner { owner: Option<EntityId> },
-    /// An agent under its own Grant, given while
-    /// `jobs.workloads.agent_may_approve` was on. The gate admits it only
-    /// while that key is on and the agent still holds a live Grant naming
-    /// `vault.jobs.workloads.approve`; `actor` is `None` after the agent's
-    /// erase, which ends it.
-    Grant {
-        actor: Option<EntityId>,
-        class: EdgeActorClass,
-        grant: EntityId,
-    },
 }
 
 /// The revoke of a workload: no later start, and the issuer stops its
 /// running jobs (EN-4 A).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkloadRevocation {
-    /// The owner or agent who revoked it; `None` after their erase.
+    /// The owner who revoked it; `None` after their erase.
     pub by: Option<EntityId>,
-    /// The Grant an agent revoked it under; `None` for the owner's revoke.
-    pub under: Option<EntityId>,
     pub at_ms: u64,
 }
 
@@ -146,12 +134,7 @@ pub(crate) fn erase_workload_actor_in_txn(
             changed = true;
         }
         if let Some(approval) = row.approval.as_mut() {
-            let approver = match &mut approval.by {
-                WorkloadApprovedBy::Owner { owner } => owner,
-                WorkloadApprovedBy::Grant {
-                    actor: approver, ..
-                } => approver,
-            };
+            let WorkloadApprovedBy::Owner { owner: approver } = &mut approval.by;
             if *approver == Some(*actor) {
                 *approver = None;
                 changed = true;

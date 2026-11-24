@@ -358,7 +358,9 @@ impl JobNodeClient for ScriptedNode {
                     scopes: vec![ScopeClass::Host],
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
+                    require: Vec::new(),
                 }],
+                scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,
                 disk_reserved_bytes: 0,
                 disk_reserve_bytes: 0,
@@ -596,8 +598,17 @@ impl Rig {
                 "entry": "fixture/run.py",
                 "args": ["--case", tag],
                 "request": {
-                    "gpus": 1, "vram_mib": 22_528, "memory_mib": 22_528,
-                    "disk_mib": 2_048, "maximum_secs": MAXIMUM_SECS,
+                    "cpu_threads": 0,
+                    "memory_mib": 22_528,
+                    "disk_mib": 2_048,
+                    "devices": [{
+                        "kind": "gpu",
+                        "count": 1,
+                        "memory_mib": 22_528,
+                        "features": ["cuda"],
+                        "sharing": "exclusive",
+                    }],
+                    "maximum_secs": MAXIMUM_SECS,
                 },
                 "scope": "host",
                 "network": "none",
@@ -1036,7 +1047,7 @@ fn billed_seconds_never_pass_the_issuers_bracket_and_a_job_between_two_polls_is_
 }
 
 #[test]
-fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
+fn a_job_that_never_started_settles_nothing_and_its_dispatch_keeps_the_nodes_reason() {
     with_rig(|rig| {
         let workload = rig.approve("never-started", FAR_EXPIRY_MS);
         rig.node.refuse_submits(Some("no_device"));
@@ -1044,9 +1055,9 @@ fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
         assert_eq!(
             refused.job.state,
             GpuJobState::Held {
-                reason: "no_device".to_owned()
+                reason: "not_available_to_this_caller".to_owned()
             },
-            "create preserves the node's refusal",
+            "the job's reason does not disclose what the machine said (section 6; review round 1 of #10414)",
         );
         assert_eq!(
             refused.settled(),

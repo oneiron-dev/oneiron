@@ -5,16 +5,22 @@
 //!   the starter still stands (the owner is a live owner; the agent's Grant still names
 //!   `vault.gpu.jobs.start` and keeps its allowance), the workload's approval holds through
 //!   row R2's check, and this vault grants the node both job protocols. None of these may end
-//!   within the horizon (the submit window plus the staging limit). The node's own vault holds
-//!   the issuer's grant, and the node checks that one at each request.
+//!   within the horizon (the submit window plus the staging limit). An approval an agent gave
+//!   stands only while the agent's Grant does, so that Grant may not end within the horizon
+//!   either. The node's own vault holds the issuer's grant, and the node checks that one at each
+//!   request.
 //! - The revoke check, at every step: a revoke of the starter's Grant, the approval or the
 //!   workload stops the job; an expiry does not, since the job started within its terms
-//!   (EN-4, recommended option A).
-use crate::authority::principal_standing_covering_or_lapse_in_txn;
+//!   (EN-4, recommended option A). The expiry of the Grant an agent approved under is an
+//!   expiry too.
+use crate::authority::{
+    principal_standing_covering_or_lapse_in_txn, principal_standing_or_lapse_in_txn,
+};
 use crate::federation::{FederationGrant, agent_grants_for_store_in_txn};
 use crate::gpu_job::GpuJobVerb;
 use crate::job_workload::{
-    JOB_ALPN, JOB_STATUS_ALPN, WorkloadPin, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter,
+    JOB_ALPN, JOB_STATUS_ALPN, WorkloadApprovedBy, WorkloadPin, WorkloadStartAsk,
+    WorkloadStartRefusal, WorkloadStarter, WorkloadVerb,
 };
 use crate::policy_model::is_live_vault_owner_in_txn;
 use crate::{EdgeActorClass, EntityId, Vault};
@@ -47,6 +53,9 @@ pub enum DispatchRefusal {
     /// Row R2's approval check refused.
     #[error(transparent)]
     Workload(WorkloadStartRefusal),
+    /// The approval is an agent's, and the Grant it stands on ends within the horizon.
+    #[error("the Grant the approval stands on ends before the dispatch window closes")]
+    ApprovalExpiring,
     /// This vault grants the node no live grant for a job protocol.
     #[error("the machine holds no live grant for a job protocol")]
     MachineGrantEnded,
@@ -64,9 +73,22 @@ impl DispatchRefusal {
             Self::StarterExpiring => "starter_expiring",
             Self::AllowanceRemoved => "allowance_removed",
             Self::Workload(refusal) => refusal.code(),
+            Self::ApprovalExpiring => "approval_expiring",
             Self::MachineGrantEnded => "machine_grant_ended",
             Self::MachineGrantExpiring => "machine_grant_expiring",
         }
+    }
+}
+
+/// The Grant an agent's approval stands on, and when it ends (vault seconds), if it does.
+struct ApproverGrant {
+    expires_at: Option<u64>,
+}
+
+impl ApproverGrant {
+    /// Whether the Grant ends by `until_secs`.
+    fn ends_by(&self, until_secs: u64) -> bool {
+        self.expires_at.is_some_and(|at| at <= until_secs)
     }
 }
 
@@ -160,6 +182,12 @@ impl Vault {
                 Ok(pin) => pin,
                 Err(refused) => return Ok(Err(DispatchRefusal::Workload(refused))),
             };
+            if self
+                .approver_grant_in_txn(&txn, ask.workload)?
+                .is_some_and(|approver| approver.ends_by(until_secs))
+            {
+                return Ok(Err(DispatchRefusal::ApprovalExpiring));
+            }
             for alpn in [JOB_ALPN, JOB_STATUS_ALPN] {
                 match self.mesh_grant_live_until_in_txn(&txn, ask.node, alpn)? {
                     None => return Ok(Err(DispatchRefusal::MachineGrantEnded)),
@@ -218,9 +246,79 @@ impl Vault {
         Ok(
             match self.workload_approval_in_txn(&txn, &workload, now_ms)? {
                 Ok(_) | Err(WorkloadStartRefusal::WorkloadExpired) => None,
+                Err(WorkloadStartRefusal::WorkloadNotApproved)
+                    if self.approval_grant_expired_in_txn(&txn, ask.workload, now_secs)? =>
+                {
+                    None
+                }
                 Err(refused) => Some(DispatchRefusal::Workload(refused)),
             },
         )
+    }
+
+    /// The Grant an agent's approval of `workload` stands on now: the one the standing rule
+    /// picks for the agent and `vault.jobs.workloads.approve`, as row R2's check reads it.
+    /// `None` for the owner's approval, or when no Grant stands for it.
+    fn approver_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        workload: &str,
+    ) -> crate::Result<Option<ApproverGrant>> {
+        let Some(WorkloadApprovedBy::Grant {
+            actor: Some(actor),
+            class,
+            ..
+        }) = self
+            .job_workload_in_txn(txn, workload)?
+            .and_then(|row| row.approval)
+            .map(|approval| approval.by)
+        else {
+            return Ok(None);
+        };
+        let Some(grant) = principal_standing_or_lapse_in_txn(
+            self,
+            txn,
+            actor,
+            class,
+            WorkloadVerb::Approve.name(),
+        )?
+        .ok()
+        .and_then(|standing| standing.grant) else {
+            return Ok(None);
+        };
+        Ok(agent_grants_for_store_in_txn(&self.store, txn)?
+            .into_iter()
+            .find(|listed| listed.id == grant)
+            .map(|listed| ApproverGrant {
+                expires_at: listed.grant.expires_at,
+            }))
+    }
+
+    /// Whether an agent's approval of `workload` no longer stands only because the Grant it
+    /// was given under expired by `now_secs`: that Grant is still listed (not withdrawn) and
+    /// its time has passed. A withdrawn Grant, an erased agent or the owner's switch turned off
+    /// answers `false`: those stop a running job as a revoke does.
+    fn approval_grant_expired_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        workload: &str,
+        now_secs: u64,
+    ) -> crate::Result<bool> {
+        let Some(WorkloadApprovedBy::Grant {
+            actor: Some(_),
+            grant,
+            ..
+        }) = self
+            .job_workload_in_txn(txn, workload)?
+            .and_then(|row| row.approval)
+            .map(|approval| approval.by)
+        else {
+            return Ok(false);
+        };
+        Ok(agent_grants_for_store_in_txn(&self.store, txn)?
+            .into_iter()
+            .find(|listed| listed.id == grant)
+            .is_some_and(|listed| listed.grant.expires_at.is_some_and(|at| at <= now_secs)))
     }
 
     /// Where the Grant `grant` stands for its agent and `vault.gpu.jobs.start` at `now_secs`.
