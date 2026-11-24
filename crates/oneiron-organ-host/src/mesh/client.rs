@@ -26,6 +26,7 @@ use crate::clock::Clock;
 use crate::error::HostError;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::outcome::{Leased, OrganOutcome, OrganOutput, OutputBytes};
+use crate::receipt::digest;
 use crate::resource_memory::{FloorRefusal, SharedFloor};
 use crate::shutdown;
 use crate::spec::{FetchGrant, LentInput, OrganCall, OrganInput};
@@ -222,6 +223,7 @@ pub(crate) async fn call_on(
                 .map_err(absent)?,
         });
     }
+    let call_nonce = draw_call_nonce()?;
     let peer = PeerCall {
         organ: call.organ.clone(),
         verb: call.verb.clone(),
@@ -233,6 +235,7 @@ pub(crate) async fn call_on(
         grant: call.grant.clone(),
         inputs: wire,
         answers: asks.verbs(),
+        call_nonce: call_nonce.clone(),
     };
     let encoded = encode(&peer).map_err(absent)?;
     let carried = if encoded.len() <= INLINE {
@@ -269,31 +272,25 @@ pub(crate) async fn call_on(
     let result = match decode::<Reply>(&reply.map_err(absent)?).map_err(absent)? {
         Reply::Call(carried) => {
             let _held = here.hold(&carried)?;
-            decode::<PeerResult>(&take(conn, carried).await.map_err(absent)?).map_err(absent)?
+            let bytes = take(conn, carried).await.map_err(absent)?;
+            // The call ran there once its result came: a result that does
+            // not decode is a broken rule, never an absent node to run the
+            // call on again (blind-review P1 on #10409).
+            decode::<PeerResult>(&bytes).map_err(|err| {
+                PeerError::Failed(HostError::ReplyInvalid(format!(
+                    "the node's result does not decode: {err}"
+                )))
+            })?
         }
         other => return Err(absent(unexpected(&other))),
     };
     match result {
         PeerResult::Done(outcome) => {
-            // The serving machine's word, before anything of the outcome is
-            // used: its signature over the receipt, by the machine the
-            // handshake proved (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE).
-            // A reply that fails it is a broken rule, not an absent node: the
-            // call already ran there.
-            match outcome.receipt.signer(verifier) {
-                Ok(signer) if signer == machine => {}
-                Ok(signer) => {
-                    return Err(PeerError::Failed(HostError::ReplyInvalid(format!(
-                        "the node's receipt is signed by machine {}, not by the node that ran the call",
-                        signer.to_hex()
-                    ))));
-                }
-                Err(why) => {
-                    return Err(PeerError::Failed(HostError::ReplyInvalid(format!(
-                        "the node's receipt does not hold: {why}"
-                    ))));
-                }
-            }
+            // The serving machine's word on this call, before anything of
+            // the outcome is used. A reply that fails it is a broken rule,
+            // not an absent node: the call already ran there.
+            answers_this_call(&outcome, machine, verifier, call, inputs, &call_nonce)
+                .map_err(|why| PeerError::Failed(HostError::ReplyInvalid(why)))?;
             // The receipt stays as the serving machine signed it; this
             // node's own ask evidence is reconciled into the lines the
             // handlers keep.
@@ -320,6 +317,74 @@ pub(crate) async fn call_on(
             })
         }
     }
+}
+
+/// 32 bytes drawn for one call, hex: the serving node's receipt signature
+/// must name them.
+fn draw_call_nonce() -> Result<String, PeerError> {
+    let mut nonce = [0_u8; 32];
+    getrandom::fill(&mut nonce).map_err(|err| {
+        PeerError::Failed(HostError::Io(io::Error::other(format!(
+            "no call nonce: {err}"
+        ))))
+    })?;
+    Ok(oneiron_hex::encode(&nonce))
+}
+
+/// Whether `outcome` is the serving node's word on this call: its receipt
+/// is signed by `machine`, the node the handshake proved, against its
+/// MACHINE row there (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE); the
+/// signature names this call's nonce and the report beside it; and the
+/// receipt describes the call this node sent, with its inputs, and the
+/// body it returned (blind-review P1s on #10409). The output files are
+/// checked against the receipt as they are taken.
+fn answers_this_call(
+    outcome: &PeerOutcome,
+    machine: EntityId,
+    verifier: &dyn MachineSignatures,
+    call: &OrganCall,
+    inputs: &[(Option<OrganInput>, LentInput)],
+    call_nonce: &str,
+) -> Result<(), String> {
+    let receipt = &outcome.receipt;
+    let signer = receipt
+        .signer(verifier)
+        .map_err(|why| format!("the node's receipt does not hold: {why}"))?;
+    if signer != machine {
+        return Err(format!(
+            "the node's receipt is signed by machine {}, not by the node that ran the call",
+            signer.to_hex()
+        ));
+    }
+    let signed = receipt
+        .signed_by
+        .as_ref()
+        .ok_or("the node's receipt is not signed")?;
+    if signed.call_nonce != call_nonce {
+        return Err("the node's receipt answers another call than this one".into());
+    }
+    if signed.report != digest(&outcome.report) {
+        return Err("the node's report is not the one its receipt names".into());
+    }
+    if receipt.result_body != outcome.body.as_ref().map(digest) {
+        return Err("the node's body is not the one its receipt names".into());
+    }
+    let same_inputs = receipt.inputs.len() == inputs.len()
+        && receipt
+            .inputs
+            .iter()
+            .zip(inputs)
+            .all(|(line, (_, lent))| line.content_hash == Hash32::of(&lent.bytes));
+    if receipt.organ.name != call.organ
+        || receipt.verb != call.verb
+        || receipt.schema != call.schema
+        || receipt.args_digest != digest(&call.args)
+        || receipt.base_body != call.body.as_ref().map(digest)
+        || !same_inputs
+    {
+        return Err("the node's receipt describes another call than the one sent".into());
+    }
+    Ok(())
 }
 
 /// This one mesh attempt's receipt, retained before each callback and

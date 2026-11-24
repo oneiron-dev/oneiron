@@ -6,7 +6,7 @@ use oneiron::limit_ask::EngineLimit;
 use oneiron::machine_signature::MachineSignatures;
 use oneiron::{EntityId, Vault};
 use oneiron_organ_protocol::{
-    AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion, to_vec,
+    AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion, Value, to_vec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -66,47 +66,80 @@ pub struct CallReceipt {
 pub const CALL_RECEIPT_SIGNATURE_DOMAIN: &[u8] = b"oneiron/organ-call-receipt/v1\0";
 
 /// A machine's signature over a [`CallReceipt`]: its Ed25519 signature
-/// under [`CALL_RECEIPT_SIGNATURE_DOMAIN`] over the receipt in the organ
-/// codec without this field.
+/// under [`CALL_RECEIPT_SIGNATURE_DOMAIN`] over the asking node's call
+/// nonce, the call's report digest and the receipt without this field, in
+/// the organ codec.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptSignature {
     /// The MACHINE that signed, hex.
     pub machine: String,
     /// The 64-byte signature, hex.
     pub signature: String,
+    /// The nonce the asking node drew for the call, hex: the signature
+    /// answers that one call, so a receipt another call earned never passes
+    /// for this one (blind-review P1 on #10409).
+    pub call_nonce: String,
+    /// blake3 of the call's report, as MessagePack: the report is the
+    /// serving machine's word too.
+    pub report: Hash32,
+}
+
+/// What a machine signs for a receipt: the call it answers, the report it
+/// returned beside it, and the receipt with no signature.
+#[derive(Serialize)]
+struct SignedReceipt<'a> {
+    call_nonce: &'a str,
+    report: &'a Hash32,
+    receipt: &'a CallReceipt,
 }
 
 impl CallReceipt {
-    /// The bytes a machine signs for this receipt: the receipt in the organ
-    /// codec, with no signature.
-    fn signed_bytes(&self) -> Result<Vec<u8>, String> {
+    /// The bytes a machine signs for this receipt on the call `call_nonce`
+    /// names, whose report digests to `report`.
+    fn signed_bytes(&self, call_nonce: &str, report: &Hash32) -> Result<Vec<u8>, String> {
         let unsigned = Self {
             signed_by: None,
             ..self.clone()
         };
-        to_vec(&unsigned).map_err(|err| format!("the receipt did not encode: {err}"))
+        to_vec(&SignedReceipt {
+            call_nonce,
+            report,
+            receipt: &unsigned,
+        })
+        .map_err(|err| format!("the receipt did not encode: {err}"))
     }
 
     /// Signs this receipt as `signer`'s machine, in place of any signature
-    /// it held.
+    /// it held: its answer to the call the asking node drew `call_nonce`
+    /// for, which returned `report` beside it.
     ///
     /// # Errors
     /// The receipt did not encode, or `signer` could not sign.
-    pub fn sign(&mut self, signer: &dyn MachineSignatures) -> Result<(), String> {
-        let bytes = self.signed_bytes()?;
+    pub fn sign(
+        &mut self,
+        signer: &dyn MachineSignatures,
+        call_nonce: &str,
+        report: &Value,
+    ) -> Result<(), String> {
+        let report = digest(report);
+        let bytes = self.signed_bytes(call_nonce, &report)?;
         let (machine, signature) = signer
             .sign(CALL_RECEIPT_SIGNATURE_DOMAIN, &bytes)
             .map_err(|err| err.to_string())?;
         self.signed_by = Some(ReceiptSignature {
             machine: machine.to_hex(),
             signature: oneiron_hex::encode(&signature),
+            call_nonce: call_nonce.to_owned(),
+            report,
         });
         Ok(())
     }
 
     /// The machine whose signature this receipt carries, once `verifier`
-    /// finds it that machine's over this receipt, against the key its
-    /// MACHINE row holds there.
+    /// finds it that machine's over this receipt, its call nonce and its
+    /// report digest, against the key its MACHINE row holds there. Whether
+    /// the nonce and the digest are the asking node's call and report is the
+    /// asking node's check.
     ///
     /// # Errors
     /// The receipt is unsigned, its signature is malformed, or it is not
@@ -121,7 +154,7 @@ impl CallReceipt {
             .verify(
                 machine,
                 CALL_RECEIPT_SIGNATURE_DOMAIN,
-                &self.signed_bytes()?,
+                &self.signed_bytes(&signed.call_nonce, &signed.report)?,
                 &signature,
             )
             .map_err(|err| err.to_string())?;

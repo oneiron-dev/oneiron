@@ -23,6 +23,9 @@ oneiron-mesh-transport = { version = "0.1.0", path = "../oneiron-mesh-transport"
 # An organ starts with its socket on fd 3 and stdio only.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 blake3 = { workspace = true }
+# The nonce the asking node draws for each mesh call, which the serving
+# node's receipt signature names; the engine's own pin.
+getrandom = "=0.4.3"
 # The file-backed seal key (OF-415): its PEM files, and the RSA or P-256
 # signer, at the seal organ's exact pins.
 base64 = "0.22"

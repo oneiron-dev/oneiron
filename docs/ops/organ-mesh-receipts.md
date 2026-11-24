@@ -33,16 +33,27 @@ host's own ask lines, exactly as the serving machine signed them (below).
 
 ## The serving machine's signature
 
+The asking node draws 32 random bytes for each call (`PeerCall.call_nonce`).
 The serving node signs each successful call's `CallReceipt` with its machine key
-(`signed_by`: the machine and its Ed25519 signature under the domain
-`oneiron/organ-call-receipt/v1\0`, over the receipt in the organ codec without
-that field), through the vault's `MachineSignatures`, the one key path pass 33's
-job submit and job receipt use too. The asking node reads the machine its
-handshake proved (`Vault::mesh_peer_machine` on the connection's endpoint key)
-before it sends anything, and refuses a node not proven as the machine it
-dialed. Before it takes any output it checks that the receipt is signed by that
-machine, against the machine key its MACHINE row holds in this replica. An
-unsigned receipt, another machine's, or one that does not verify is
+(`signed_by`: the machine, its Ed25519 signature, the call nonce and the blake3
+of the call's report). The signature is under the domain
+`oneiron/organ-call-receipt/v1\0`, over the call nonce, the report digest and
+the receipt without `signed_by`, in the organ codec. It goes through the vault's
+`MachineSignatures`, the one key path pass 33's job submit and job receipt use
+too. The asking node reads the machine its handshake proved
+(`Vault::mesh_peer_machine` on the connection's endpoint key) before it sends
+anything, and refuses a node not proven as the machine it dialed. Before it
+takes any output it checks:
+
+- the receipt is signed by that machine, against the machine key its MACHINE
+  row holds in this replica;
+- the signature names this call's nonce, so a receipt another call earned never
+  passes for this one;
+- the report and the body are the ones the signature and the receipt name;
+- the receipt describes the call it sent: organ, verb, schema, args digest, base
+  body digest and the hash of each input.
+
+A receipt that fails any check, and a result that does not decode, is
 `ReplyInvalid`: the call ran there, so it is not retried on another node. A
 serving node that cannot sign answers the call as failed, never as an unsigned
 success. A call this machine runs itself carries no signature.
