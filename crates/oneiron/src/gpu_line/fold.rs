@@ -21,7 +21,19 @@ use crate::federation::WalletRef;
 use crate::llm::run_admission::LeaseUnit;
 
 /// The track a family's seat is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Track {
     /// Work a client or the lane's goal asks for now.
@@ -61,7 +73,19 @@ pub enum InvalidCost {
 }
 
 /// An allowance rule the mint can fund (LE-4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AllowanceRule {
     /// Confirmed promotions per GPU-second, smoothed toward the lane's base
@@ -86,7 +110,19 @@ impl AllowanceRule {
 }
 
 /// One version of one allowance rule, such as `payoff_share@1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct RuleRef {
     pub rule: AllowanceRule,
     pub version: u16,
@@ -339,7 +375,19 @@ impl GpuLinePeriod {
 }
 
 /// Which bucket a draw takes from, relative to its arm and family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DrawSource {
     /// The arm's own first-allowance hold (rung 1 only).
@@ -353,7 +401,7 @@ pub enum DrawSource {
 }
 
 /// Units taken from one bucket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Draw {
     pub source: DrawSource,
     pub units: u64,
@@ -361,7 +409,7 @@ pub struct Draw {
 
 /// The first allowance an arm holds from its admission: one rung-1 cap, in
 /// the period it was admitted. It lapses at that period's end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AllowanceHold {
     pub period: u32,
     pub units: u64,
