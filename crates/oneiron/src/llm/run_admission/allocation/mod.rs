@@ -23,6 +23,15 @@ pub use oneiron_records::llm::run_admission::allocation::{
     AllocationCallKey, AllocationServingFence, AllocationTerminal, DurableAllocationHold,
 };
 
+/// Who a durable reservation is for: the resident whose share it draws on
+/// (FIX 7767), and the wallet of the Grant that funds its run (FIX 7766),
+/// which the writer checks before anything is held.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReservationParties<'a> {
+    pub resident: Option<EntityId>,
+    pub funding: Option<&'a WalletRef>,
+}
+
 /// One allocation's current durable observation, in its original opaque unit.
 /// Pending deletion or a newer observation is not Cloud acceptance or backing.
 #[derive(Debug, Clone, PartialEq, Eq)]

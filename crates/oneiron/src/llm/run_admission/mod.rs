@@ -37,7 +37,8 @@ pub use admission::{
 };
 pub use allocation::{
     AllocationCallKey, AllocationCommit, AllocationServingFence, AllocationStoreError,
-    AllocationTerminal, DurableAllocationHold, DurableAllocationRead, VaultAllocationLedger,
+    AllocationTerminal, DurableAllocationHold, DurableAllocationRead, ReservationParties,
+    VaultAllocationLedger,
 };
 pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{

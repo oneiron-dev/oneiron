@@ -98,15 +98,22 @@ pub(super) fn select(
         }
         match units.len() {
             0 => {
-                // The Grant's wallet prices nothing for the call while
-                // another wallet's allocation would: the wallet refuses it.
+                // The Grant's wallet holds nothing the call can draw on
+                // while another wallet's allocation is in its unit or
+                // priced for it: the wallet refuses it, also when the
+                // unfunded choice would be ambiguous. The unfunded probe
+                // only names the wallet the call would hold on.
+                let drawable_elsewhere = slots.iter().any(|slot| {
+                    slot.unit == native
+                        || rates
+                            .iter()
+                            .any(|rate| rate.unit == *slot.unit && rate.per > 0)
+                });
                 return Err(match funding {
-                    Some(expected) if select(slots, native, rates, None).is_ok() => {
-                        SlotMiss::Wallet {
-                            expected: expected.clone(),
-                            live: unfunded_wallet(),
-                        }
-                    }
+                    Some(expected) if drawable_elsewhere => SlotMiss::Wallet {
+                        expected: expected.clone(),
+                        live: unfunded_wallet(),
+                    },
                     _ => SlotMiss::Unpriced {
                         to: slots[first].unit.clone(),
                     },
@@ -195,5 +202,47 @@ mod tests {
         );
         assert_eq!(select(&slots, &gpu, &[], Some(&lane)), Ok(1));
         assert_eq!(select(&[], &gpu, &[], None), Err(SlotMiss::Empty));
+    }
+
+    /// Review 10403 P1-3: a funded call whose Grant's wallet holds nothing
+    /// it can draw on is the wallet's refusal, also when the unfunded choice
+    /// between two other wallets would be ambiguous.
+    #[test]
+    fn a_funded_call_with_nothing_in_its_wallet_is_refused_by_the_wallet() {
+        let (money, gpu) = (unit("micro_usd"), unit("gpu_seconds"));
+        let (a, b, c) = (wallet("a"), wallet("b"), wallet("c"));
+        let slots = [
+            Slot {
+                unit: &gpu,
+                wallet: Some(&a),
+            },
+            Slot {
+                unit: &money,
+                wallet: Some(&b),
+            },
+            Slot {
+                unit: &money,
+                wallet: Some(&c),
+            },
+        ];
+        assert_eq!(
+            select(&slots, &money, &[], None),
+            Err(SlotMiss::Ambiguous {
+                units: vec![money.clone()]
+            })
+        );
+        assert_eq!(
+            select(&slots, &money, &[], Some(&a)),
+            Err(SlotMiss::Wallet {
+                expected: a.clone(),
+                live: None
+            })
+        );
+        let tokens = unit("tokens");
+        assert_eq!(
+            select(&slots, &tokens, &[], Some(&a)),
+            Err(SlotMiss::Unpriced { to: gpu.clone() }),
+            "a call no allocation can draw on stays a unit mismatch"
+        );
     }
 }

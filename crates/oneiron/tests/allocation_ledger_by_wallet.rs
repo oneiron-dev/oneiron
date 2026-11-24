@@ -8,7 +8,7 @@ use std::sync::Arc;
 use oneiron::federation::WalletRef;
 use oneiron::llm::run_admission::{
     Allocation, AllocationCallKey, AllocationRef, AllocationStoreError, DurableAllocationHold,
-    LeaseUnit, SelectedAllocation, UnitRate, VaultAllocationLedger,
+    LeaseUnit, ReservationParties, SelectedAllocation, UnitRate, VaultAllocationLedger,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -82,8 +82,10 @@ fn reserve(
             units,
             &unit(native),
             rates,
-            None,
-            funding,
+            ReservationParties {
+                resident: None,
+                funding,
+            },
             |_txn, _hold| Ok(()),
         )
         .map(|committed| committed.value.0)

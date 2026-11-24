@@ -11,6 +11,9 @@ use std::sync::Arc;
 
 use oneiron::agent_dispatch::GrantSpendBinding;
 use oneiron::federation::WalletRef;
+use oneiron::llm::run_admission::resident_doors::{
+    ResidentSharesRequest, resident_shares_as_owner, resident_shares_on_allocation_as_owner,
+};
 use oneiron::llm::run_admission::{
     Allocation, AllocationGrantError, AllocationRef, BudgetLine, CallOutcome, HostAccount,
     KeyCustody, LeaseUnit, MemoryReceipts, OfferRoute, PaidConnector, Payer, ResidentShare,
@@ -334,4 +337,131 @@ fn the_owners_pinned_share_binds_the_walletless_allocation_and_never_the_gpu_lin
         ("gpu-line".to_owned(), 2, Some(unit(GPU)))
     );
     permit.settle(CallOutcome::Used(600)).expect("settles");
+}
+
+/// Review 10403 P1-1: the slots refuse a call before anything is
+/// reserved, so a refused call leaves the run's line and its ladder as they
+/// were: the next call that fits still fires every threshold it crosses.
+#[test]
+fn a_call_the_slots_refuse_leaves_the_runs_ladder_unfired() {
+    let account = HostAccount::new();
+    account
+        .grant(allocation("money-b", 1, 1_000, MONEY, Some(wallet("b"))))
+        .expect("wallet b's money");
+    account
+        .grant(allocation("money-c", 1, 1_000, MONEY, Some(wallet("c"))))
+        .expect("wallet c's money");
+    let search = search();
+    let line = BudgetLine {
+        limit_units: 100,
+        reserve_units: 1,
+        unit: search.cost_unit.clone(),
+    };
+    let declaration = RunDeclaration::declared(line).with_connector(search.connector.clone());
+    let meter =
+        BudgetGuard::with_reserve_units("run-ladder", 100, 1, BudgetExhaustionPolicy::Suspend);
+    let receipts = Arc::new(MemoryReceipts::default()) as Arc<dyn RunReceiptSink>;
+    let run = RunAdmission::with_funding(
+        "run-ladder".to_owned(),
+        declaration,
+        meter.clone(),
+        Some(Arc::clone(&account)),
+        receipts,
+        None,
+        None,
+    );
+    match run.admit_paid(&search, 100) {
+        Ok(_) => panic!("two wallets serve money and the host named none"),
+        Err(denied) => assert!(
+            matches!(denied, RunDenied::AllocationAmbiguous { .. }),
+            "{denied:?}"
+        ),
+    }
+    let admission = meter
+        .admit_reserve(100)
+        .expect("the run's line is untouched");
+    assert_eq!(
+        admission.ladder_events.len(),
+        3,
+        "the refused call fired none of the line's thresholds: {:?}",
+        admission.ladder_events
+    );
+}
+
+/// Review 10403 P1-2: with no walletless allocation selected, the owner's
+/// shares govern nothing, so the server's view shows each setting with no
+/// depletion, never a named wallet's GPU seconds beside the pin. The
+/// embedded view keeps each resident's newest charged generation.
+#[test]
+fn the_share_view_shows_no_named_wallets_usage_beside_the_owners_pin() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("vault"));
+    let resident = EntityId::now();
+    vault
+        .set_resident_share(
+            resident,
+            ResidentShare {
+                units: Some(5),
+                pinned: true,
+            },
+        )
+        .expect("the owner pins 5 units");
+    let account = HostAccount::with_residents(VaultResidentLedger::new(Arc::clone(&vault)));
+    account
+        .grant(allocation("gpu-line", 1, 1_000, GPU, Some(wallet("lane"))))
+        .expect("gpu line grant");
+    let gpu = gpu();
+    run(&gpu, &account, Some(wallet("lane")))
+        .initiated_by(Some(resident))
+        .admit_paid(&gpu, 10)
+        .expect("10 gpu seconds")
+        .settle(CallOutcome::Used(10))
+        .expect("settles");
+
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let status = account.status();
+    assert!(status.resident_share_allocation().is_none());
+    let server = resident_shares_on_allocation_as_owner(
+        &vault,
+        &owner,
+        &ResidentSharesRequest {},
+        status.resident_share_allocation(),
+    )
+    .expect("server view");
+    let row = server
+        .residents
+        .iter()
+        .find(|row| row.resident == resident.to_hex())
+        .expect("the resident's row");
+    assert_eq!((row.units, row.pinned), (Some(5), true));
+    assert_eq!(
+        (
+            row.allocation.as_deref(),
+            row.used_units,
+            row.overdraft_units
+        ),
+        (None, 0, 0),
+        "no named wallet's usage beside the pin"
+    );
+
+    let embedded =
+        resident_shares_as_owner(&vault, &owner, &ResidentSharesRequest {}).expect("embedded view");
+    let row = embedded
+        .residents
+        .iter()
+        .find(|row| row.resident == resident.to_hex())
+        .expect("the resident's row");
+    assert_eq!(
+        (row.allocation.as_deref(), row.used_units),
+        (Some("gpu-line"), 10),
+        "the embedded view: the newest charged generation"
+    );
 }
