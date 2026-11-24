@@ -83,6 +83,33 @@ class Rules(unittest.TestCase):
             [(6, "network"), (7, "network"), (8, "network"), (9, "network"), (10, "network")],
         )
 
+    def test_lfs_pointer_version_uri_is_a_name_only_on_a_whole_line_of_a_literal_value(self):
+        source = (
+            # `version ` inside a line of the value: each URL counts.
+            'reqwest::get("API version https://git-lfs.github.com/spec/v1".split_whitespace().last().unwrap()).await;\n'
+            'let s = "say \\"version https://git-lfs.github.com/spec/v1\\n";\n'
+            'let s = "a\\\\nversion https://git-lfs.github.com/spec/v1\\n";\n'
+            'let s = r"a\\nversion https://git-lfs.github.com/spec/v1";\n'
+            'let s = "lfs \\\n'
+            'version https://git-lfs.github.com/spec/v1\\n";\n'
+            'let s = r#"x"version https://git-lfs.github.com/spec/v1"#;\n'
+            'let s = r#"version https://git-lfs.github.com/spec/v1"x"#;\n'
+            'let s = "version https://git-lfs.github.com/spec/v1 x";\n'
+            # A whole line of the value: none counts.
+            'const V: &str = r#"version https://git-lfs.github.com/spec/v1"#;\n'
+            'let s = "size 12\\nversion https://git-lfs.github.com/spec/v1\\n";\n'
+            'let s = "a\\\\\\nversion https://git-lfs.github.com/spec/v1\\n";\n'
+            'let s = "\n'
+            "version https://git-lfs.github.com/spec/v1\n"
+            '";\n'
+            'let s = "a\\\\\n'
+            'version https://git-lfs.github.com/spec/v1\\n";\n'
+        )
+        self.assertEqual(
+            rules(TEST_FILE, source),
+            [(n, "network") for n in (1, 2, 3, 4, 6, 7, 8, 9)],
+        )
+
     def test_real_model_keys_hosts_and_files_are_found(self):
         source = 'env::var("OPENAI_API_KEY");\nlet u = "https://api.openai.com/v1";\nlet m = "model.gguf";\n'
         self.assertEqual(rules(TEST_FILE, source), [(1, "real-model"), (2, "real-model"), (3, "real-model")])

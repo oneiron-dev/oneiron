@@ -16,8 +16,8 @@ code only, the others also read string literals:
   network      an http(s)/ws(s) URL to a host other than loopback, a reserved test name
                (example.com/.org/.net, .test, .example, .invalid, .localhost) or a host whose
                URIs are names only (XML namespaces and JSON schema dialects). The Git LFS
-               pointer's version line (`version https://git-lfs.github.com/spec/v1`) is a name
-               too; any other URL to that host counts.
+               pointer's version line (`version https://git-lfs.github.com/spec/v1`), as a whole
+               line of a string literal's value, is a name too; any other URL to that host counts.
   fixed-port   a fixed loopback port (`127.0.0.1:8080`). Bind port 0.
   real-model   provider API key names, provider hosts, model files (.gguf, .safetensors, .onnx)
                and local model servers. Use ScriptedProvider and HashingEmbedder.
@@ -89,12 +89,10 @@ IDENTIFIER_HOSTS = (
 )
 # The Git LFS pointer's version line names the pointer grammar: Git LFS compares
 # `version https://git-lfs.github.com/spec/v1` as text and nothing fetches it (an LFS transfer goes
-# to the repository's own host). Only that exact line is a name; any other URL to the host counts.
+# to the repository's own host). Only that line, as a whole line of a string literal's value, is a
+# name (see is_value_line); any other URL to the host counts.
 LFS_POINTER_VERSION_KEY = "version "
-LFS_POINTER_VERSION_URI = "https://git-lfs.github.com/spec/v1"
-# What ends the version line in Rust source after the URI: the `\n` escape or the literal's closing
-# quote. The end of the source line ends it too (a literal that spans lines).
-LFS_POINTER_LINE_ENDS = ("\\n", '"')
+LFS_POINTER_VERSION_LINE = LFS_POINTER_VERSION_KEY + "https://git-lfs.github.com/spec/v1"
 SCHEMES = ("http://", "https://", "ws://", "wss://")
 ALLOW_MARK = "testkit-lint: allow("
 SKIPPED_DIRS = ("target", "vendor", "node_modules", ".git", "fixtures-out")
@@ -375,20 +373,74 @@ def is_identifier_host(host):
     return host.rstrip(".").translate(ASCII_LOWER) in IDENTIFIER_HOSTS
 
 
-def is_lfs_pointer_version(text, at):
-    """Whether the URL at `at` in `text` is the URI of a Git LFS pointer's version line, exactly:
-    `version ` before it, and the line's end right after it."""
-    if not text.startswith(LFS_POINTER_VERSION_URI, at):
-        return False
-    key_at = at - len(LFS_POINTER_VERSION_KEY)
-    if key_at < 0 or not text.startswith(LFS_POINTER_VERSION_KEY, key_at):
-        return False
-    end = at + len(LFS_POINTER_VERSION_URI)
-    return end == len(text) or text.startswith(LFS_POINTER_LINE_ENDS, end)
+def backslashes_before(data, at, payload):
+    """The number of backslashes right before the byte `at`, back to the value's first byte `payload`."""
+    count = 0
+    while at - count - 1 >= payload and data[at - count - 1] == 0x5C:
+        count += 1
+    return count
 
 
-def line_rules(code, text):
-    """The rules one line breaks, given its code-only text and its code-and-strings text."""
+def is_value_line(data, classes, begin, end):
+    """Whether the bytes begin..end of `data`, which hold no quote, backslash or newline, are one whole
+    logical line of a string literal's value. Before them: the literal's opening quote, a newline of
+    the value (in a literal that is not raw, a newline after an odd run of backslashes is a line
+    continuation and adds none), or an unescaped `\\n` escape in a literal that is not raw. After them:
+    a newline, the `\\n` escape (not raw) or the literal's closing quote."""
+    if begin == 0 or end >= len(data) or classes[begin - 1] != STR or classes[begin] != STR:
+        return False
+    first = begin - 1
+    while first > 0 and classes[first - 1] == STR:
+        first -= 1
+    if data[first] == 0x22:  # `"`
+        raw, hashes, payload = False, 0, first + 1
+    elif data[first] == 0x72:  # `r`, then `#`* and `"`
+        hashes = 0
+        while first + 1 + hashes < begin and data[first + 1 + hashes] == 0x23:
+            hashes += 1
+        raw, payload = True, first + 2 + hashes
+    else:
+        return False
+    if begin < payload:
+        return False
+    if begin == payload:
+        starts = True
+    elif data[begin - 1] == 0x0A:  # a newline; rustc reads CRLF as LF
+        newline = begin - 2 if begin - 2 >= payload and data[begin - 2] == 0x0D else begin - 1
+        starts = raw or backslashes_before(data, newline, payload) % 2 == 0
+    else:
+        starts = (
+            not raw
+            and data[begin - 2:begin] == b"\\n"
+            and begin - 2 >= payload
+            and backslashes_before(data, begin - 2, payload) % 2 == 0
+        )
+    if not starts:
+        return False
+    after = data[end:end + 2]
+    return (
+        after[:1] == b"\n"
+        or after == b"\r\n"
+        or (not raw and after == b"\\n")
+        or (after[:1] == b'"' and data[end + 1:end + 1 + hashes] == b"#" * hashes)
+    )
+
+
+def lfs_pointer_version_uris(data, classes, start, line):
+    """The indexes in `line`, which starts at the byte `start` of `data`, of each URL that is the URI of
+    a Git LFS pointer's version line: `version https://git-lfs.github.com/spec/v1` as a whole line of a
+    string literal's value. A pointer's first line is its version line, and nothing fetches its URI."""
+    uris = set()
+    for index in find_all(line, LFS_POINTER_VERSION_LINE):
+        begin = start + len(line[:index].encode("utf-8"))
+        if is_value_line(data, classes, begin, begin + len(LFS_POINTER_VERSION_LINE)):
+            uris.add(index + len(LFS_POINTER_VERSION_KEY))
+    return uris
+
+
+def line_rules(code, text, name_uris=()):
+    """The rules one line breaks, given its code-only text, its code-and-strings text and the indexes
+    of URLs in it that are names only (see lfs_pointer_version_uris)."""
     rules = []
     for call in SLEEP_CALLS:
         if any(
@@ -408,7 +460,7 @@ def line_rules(code, text):
     )
     for scheme in SCHEMES:
         for at in find_all(text, scheme):
-            if is_lfs_pointer_version(text, at):
+            if at in name_uris:
                 continue
             authority = []
             for ch in text[at + len(scheme):]:
@@ -483,7 +535,10 @@ def scan_source(path, source):
             code_chars.append(ch if cls == CODE else " ")
             text_chars.append(" " if cls == COMMENT else ch)
             offset += len(ch.encode("utf-8"))
-        rules = line_rules("".join(code_chars), "".join(text_chars))
+        name_uris = (
+            lfs_pointer_version_uris(data, classes, start, line) if LFS_POINTER_VERSION_LINE in line else ()
+        )
+        rules = line_rules("".join(code_chars), "".join(text_chars), name_uris)
         if not rules:
             continue
         here_allows = allows(line)
