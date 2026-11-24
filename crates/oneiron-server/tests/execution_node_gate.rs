@@ -22,6 +22,7 @@ mod execution_nodes;
 #[path = "support/mesh_machines.rs"]
 mod mesh_machines;
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ use mesh_machines::{Machine, Machines, TestResult, at};
 use oneiron::EntityId;
 use oneiron_mesh_transport::MeshError;
 use oneiron_mesh_transport::message::exchange;
+use oneiron_server::gpu_execution_node::node::{DISABLED_MARKER_EXTENSION, marker_beside};
 use oneiron_server::gpu_execution_node::wire::{
     HoldRef, JOB_ALPN, JOB_PROTOCOL, JOB_STATUS_ALPN, JobAnswer, JobRefusal, JobRequest,
     JobReserve, JobStatusAnswer, JobStatusRequest, JobSubmit, NetworkMode, ResourceRequest,
@@ -341,6 +343,31 @@ async fn granted_machine_not_the_issuer_is_refused() -> TestResult {
         JobAnswer::Refused(JobRefusal::NotEnabled),
         "A's reserve must pass B's gate"
     );
+
+    // `disable` at the box: C still learns nothing, and A reads that B takes
+    // no work.
+    std::fs::write(
+        marker_beside(&files.path(B), DISABLED_MARKER_EXTENSION),
+        "disabled\n",
+    )?;
+    assert_eq!(
+        ask::<_, JobAnswer>(c, b, JOB_ALPN, &JobRequest::Node)
+            .await?
+            .map_err(|error| format!("C's Node of a disabled B: {error:?}"))?,
+        not_issuer,
+        "a disabled node must still refuse a machine its file does not name"
+    );
+    match ask::<_, JobAnswer>(a, b, JOB_ALPN, &JobRequest::Node).await? {
+        Ok(JobAnswer::Node(node)) => assert!(!node.enabled, "B is disabled at the box: {node:?}"),
+        other => panic!("a disabled B must answer its issuer's Node: {other:?}"),
+    }
+    assert_eq!(
+        ask::<_, JobAnswer>(a, b, JOB_ALPN, &reserve(a.device.machine))
+            .await?
+            .map_err(|error| format!("A's reserve of a disabled B: {error:?}"))?,
+        JobAnswer::Refused(JobRefusal::NotEnabled),
+        "a disabled node admits no work"
+    );
     mesh.stop().await;
     Ok(())
 }
@@ -421,6 +448,9 @@ impl NodeKeys for RecordedKeys {
     fn booked_disk_mib(&self) -> u64 {
         0
     }
+    fn live_issuers(&self) -> BTreeSet<EntityId> {
+        BTreeSet::new()
+    }
     fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str) {
         self.record(format!(
             "revoke {} {why}",
@@ -482,7 +512,10 @@ async fn authority_tick_stops_the_work_a_revoke_ended() -> TestResult {
 
     // `disable --stop` at the box stops every job on the next tick.
     mesh.grant(B, A, &[JOB_ALPN])?;
-    std::fs::write(files.path(B).with_extension("disabled"), "stop\n")?;
+    std::fs::write(
+        marker_beside(&files.path(B), DISABLED_MARKER_EXTENSION),
+        "stop\n",
+    )?;
     node.authority_tick();
     assert_eq!(keys.take(), ["stop"]);
     mesh.stop().await;
