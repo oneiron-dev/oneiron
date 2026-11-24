@@ -39,7 +39,7 @@ use oneiron::gpu_line::{
     BudgetPolicy, Draw, DrawAsk, DrawPurpose, DrawSource, GpuLine, GpuLineError,
     GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineSetRequest, GpuLineView, LineInvalid,
     MintError, PeriodRoom, Side, Track, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET,
-    VAULT_GPU_LINES_SET, line_allocation_id, mint_period, period_balances, plan_draws,
+    VAULT_GPU_LINES_SET, gpu_seconds, line_allocation_id, mint_period, period_balances, plan_draws,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError,
@@ -275,10 +275,32 @@ impl Fixture {
     }
 }
 
-/// The lane's policy with every budget default (96 GPU-hours a fortnight, a
-/// third pinned to the interest track, `payoff_share@1`) and no role.
+/// The open-models lane's preset (pass 34, 3.3; EM-21): the lane's own
+/// document, which its kit passes to `vault.gpu.lines.set`. The engine's own
+/// defaults are neutral.
+fn open_models() -> BudgetPolicy {
+    BudgetPolicy {
+        allowance_units: 345_600,
+        pinned_parts: (1, 3),
+        floor_arms: 2,
+        rung_caps_secs: vec![1_800, 10_800, 172_800],
+        seat_cap: 6,
+        seat_reserve_floors: 1,
+        new_idea_slots_per_period: 4,
+        review_check_secs: 600,
+        max_running_per_family: 1,
+        forecast_required: true,
+        window_periods: 3,
+        ..BudgetPolicy::default()
+    }
+}
+
+/// The lane's policy under the open-models preset (96 GPU-hours a
+/// fortnight, a third pinned to the interest track, `payoff_share@1`) and no
+/// role.
 fn policy() -> GpuLinePolicy {
     GpuLinePolicy {
+        unit: gpu_seconds(),
         wallet: WalletRef {
             issuer: "host".to_owned(),
             id: "gpu".to_owned(),
@@ -290,7 +312,7 @@ fn policy() -> GpuLinePolicy {
         planners: Vec::new(),
         period_secs: PERIOD_SECS,
         period_anchor_ms: ANCHOR_MS,
-        budget: BudgetPolicy::default(),
+        budget: open_models(),
     }
 }
 
@@ -684,6 +706,31 @@ fn a_seat_past_the_cap_needs_the_owner() {
     fixture
         .admit(None, "owner-seat-2", lane, families[2], Track::Demand)
         .expect("past the cap with the owner's proof");
+
+    // The pinned track's seats have their own cap, 0 in the lane's preset:
+    // when the owner raises it, a lead seats interest families up to it.
+    let interest: Vec<EntityId> = (0..2).map(|_| fixture.project_under(lane, 0)).collect();
+    let refused = fixture
+        .admit(Some(lead), "interest-0", lane, interest[0], Track::Interest)
+        .expect_err("pinned_seat_cap 0: interest seats are the owner's");
+    assert_eq!(code(refused), MEMORY_CODE_FORBIDDEN);
+    let mut pinned = with_roles(&[grant], &[], &[]);
+    pinned.budget.seat_cap = 2;
+    pinned.budget.pinned_seat_cap = 1;
+    fixture.owner_set("pinned-cap", lane, pinned, NOW_MS);
+    fixture
+        .admit(
+            Some(lead),
+            "interest-0b",
+            lane,
+            interest[0],
+            Track::Interest,
+        )
+        .expect("inside the pinned cap");
+    let past_pinned = fixture
+        .admit(Some(lead), "interest-1", lane, interest[1], Track::Interest)
+        .expect_err("a second interest seat");
+    assert_eq!(code(past_pinned), MEMORY_CODE_FORBIDDEN);
 
     let seeded = serde_json::from_value::<GpuLineFamilyAdmitRequest>(serde_json::json!({
         "intent_key": "seeded",

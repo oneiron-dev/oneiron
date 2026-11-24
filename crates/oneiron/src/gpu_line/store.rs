@@ -213,7 +213,7 @@ pub fn mint_first_in_txn(
     let mut lapsed = false;
     for seat in &mut line.families {
         if seat.lapsed_from_period.is_none()
-            && let Some(lapse) = seat.lapses_from()
+            && let Some(lapse) = seat.lapses_from(line.budget.new_idea_periods)
             && lapse <= index
         {
             seat.lapsed_from_period = Some(lapse);

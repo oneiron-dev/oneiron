@@ -28,6 +28,7 @@ use oneiron::gpu_line::{
     PeriodClockError, PinnedMode, RuleRef, SettledTally, Side, Track, defaults, economic_digest,
     gpu_seconds, line_allocation_id, mint_period, period_balances,
 };
+use oneiron::llm::run_admission::LeaseUnit;
 
 const ANCHOR_MS: u64 = 1_000;
 const PERIOD_SECS: u64 = 1_209_600;
@@ -56,7 +57,27 @@ fn seat(family: u8, track: Track) -> FamilySeat {
     }
 }
 
-/// The lane's line under the default budget policy: 96 GPU-hours a
+/// The open-models lane's preset (pass 34, 3.3; EM-21): the lane's own
+/// document, which its kit passes to `vault.gpu.lines.set`. The engine's own
+/// defaults are neutral.
+fn open_models() -> BudgetPolicy {
+    BudgetPolicy {
+        allowance_units: 345_600,
+        pinned_parts: (1, 3),
+        floor_arms: 2,
+        rung_caps_secs: vec![1_800, 10_800, 172_800],
+        seat_cap: 6,
+        seat_reserve_floors: 1,
+        new_idea_slots_per_period: 4,
+        review_check_secs: 600,
+        max_running_per_family: 1,
+        forecast_required: true,
+        window_periods: 3,
+        ..BudgetPolicy::default()
+    }
+}
+
+/// The lane's line under the open-models preset: 96 GPU-hours a
 /// fortnight, a third pinned to the interest track, two floor arms.
 fn line(seats: Vec<FamilySeat>, mode: PinnedMode) -> GpuLine {
     GpuLine {
@@ -75,7 +96,7 @@ fn line(seats: Vec<FamilySeat>, mode: PinnedMode) -> GpuLine {
         period_anchor_ms: ANCHOR_MS,
         budget: BudgetPolicy {
             pinned_mode: mode,
-            ..BudgetPolicy::default()
+            ..open_models()
         },
         families: seats,
         set_by: None,
@@ -475,12 +496,73 @@ fn a_line_keeps_its_bounds() {
         LineInvalid::Machines,
     );
     refused(&|lane| lane.leads = vec![id(3), id(3)], LineInvalid::Roles);
-    // The defaults are the lane's numbers, read in one place.
-    assert_eq!(BudgetPolicy::default().seat_cap, defaults::SEAT_CAP);
-    assert_eq!(defaults::SEAT_CAP, 6);
-    assert_eq!(defaults::NEW_IDEA_SLOTS_PER_PERIOD, 4);
-    assert_eq!(defaults::REVIEW_CHECK_SECS, 600);
-    assert_eq!(defaults::HOLD_TTL_SECS, 259_200);
+    refused(
+        &|lane| lane.budget.new_idea_periods = 0,
+        LineInvalid::NewIdeaPeriods,
+    );
+    refused(
+        &|lane| {
+            lane.unit = serde_json::from_value(serde_json::json!("GPU seconds")).expect("raw");
+        },
+        LineInvalid::Unit,
+    );
+    accepted(&|lane| lane.unit = LeaseUnit::new("gpu_24g_seconds").expect("a unit name"));
+}
+
+/// Pass 34, 3.1 (EM-21): the engine ships only neutral defaults. A line
+/// that states only its period, allowance and rung caps pins nothing, funds
+/// no floor, no reserve and no new-idea slot, and the owner seats every
+/// family; its whole allowance is a market over its families.
+#[test]
+fn the_engines_own_defaults_fund_no_pinned_share_no_floor_and_no_slot() {
+    let neutral = BudgetPolicy::default();
+    assert_eq!(
+        (neutral.allowance_units, neutral.rung_caps_secs.len()),
+        (0, 0),
+        "no engine default for the allowance or the rung caps"
+    );
+    assert_eq!(neutral.pinned_parts, (0, 1));
+    assert_eq!(
+        (
+            neutral.floor_arms,
+            neutral.seat_reserve_floors,
+            neutral.new_idea_slots_per_period
+        ),
+        (0, 0, 0)
+    );
+    assert_eq!((neutral.seat_cap, neutral.pinned_seat_cap), (0, 0));
+    assert_eq!(
+        (neutral.review_check_secs, neutral.max_running_per_family),
+        (0, 0)
+    );
+    assert!(!neutral.forecast_required);
+    assert_eq!(neutral.forecast_score_after, 20);
+    assert_eq!(neutral.window_periods, 1);
+    assert_eq!(neutral.draw_orders, defaults::draw_orders());
+
+    let mut lane = line(
+        vec![seat(10, Track::Demand), seat(11, Track::Demand)],
+        PinnedMode::FloorPlusMarket,
+    );
+    lane.budget = neutral;
+    assert_eq!(lane.validate(), Err(LineInvalid::Allowance));
+    lane.budget.allowance_units = 100_000;
+    assert_eq!(lane.validate(), Err(LineInvalid::RungCaps));
+    lane.budget.rung_caps_secs = vec![3_600];
+    lane.validate()
+        .expect("the period, allowance and caps are all a line must state");
+    let record = mint_period(&lane, 0, &BTreeMap::new(), ANCHOR_MS).expect("mint");
+    assert_eq!((record.pinned_units, record.pinned_pool), (0, 0));
+    assert!(record.floors.iter().all(|floor| floor.units == 0));
+    assert_eq!((record.reserve, record.new_idea_pool), ((0, 0), 0));
+    assert_eq!(
+        record.market_pool, 100_000,
+        "the whole allowance is the market"
+    );
+    assert_eq!(
+        record.tables[0].ceilings,
+        vec![(id(10), 50_000), (id(11), 50_000)]
+    );
 }
 
 /// `policy_unfunded`: a policy whose seated families' floors and reserve do
@@ -534,7 +616,7 @@ fn a_new_idea_seat_lapses_at_the_mint_after_its_second_period() {
     assert_eq!(idea.first_funded_period(), 2);
     assert!(listed(&idea, 3), "funded in its second period");
     assert!(!listed(&idea, 4), "lapsed at the next mint");
-    assert_eq!(idea.lapses_from(), Some(4));
+    assert_eq!(idea.lapses_from(2), Some(4));
 
     let mut graduated = idea.clone();
     graduated.track = Track::Demand;

@@ -2,21 +2,24 @@
 //! section 5). Ids travel as lower hex, as every entity reference does.
 use serde::{Deserialize, Serialize};
 
-use super::defaults;
 use super::fold::{BudgetPolicy, GpuLine, GpuLinePeriod, Track};
+use super::store::gpu_seconds;
 use crate::EntityId;
 use crate::federation::WalletRef;
-
-fn default_period_secs() -> u64 {
-    defaults::PERIOD_SECS
-}
+use crate::llm::run_admission::LeaseUnit;
 
 /// The owner's policy for one lane's GPU time: every field of a line but its
-/// seats, which `vault.gpu.lines.families.admit` writes. A field left out
-/// takes its default (`gpu_line::defaults`).
+/// seats, which `vault.gpu.lines.families.admit` writes. A budget field left
+/// out takes the engine's neutral default (`gpu_line::defaults`); the period,
+/// the allowance and the rung caps have none. A lane's numbers come in its
+/// preset document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuLinePolicy {
+    /// The unit the line counts in; each managed offer's `cost_unit` equals
+    /// it. `gpu_seconds` when left out.
+    #[serde(default = "gpu_seconds")]
+    pub unit: LeaseUnit,
     /// The host wallet the line's allocation funds.
     pub wallet: WalletRef,
     /// The offers the line manages. A line that names none spends nothing.
@@ -35,13 +38,11 @@ pub struct GpuLinePolicy {
     #[serde(default)]
     pub planners: Vec<EntityId>,
     /// Fixed once a period is minted.
-    #[serde(default = "default_period_secs")]
     pub period_secs: u64,
     /// The start of period 0, in milliseconds of the vault's clock; fixed
     /// once a period is minted.
     pub period_anchor_ms: u64,
     /// Applies from the next mint.
-    #[serde(default)]
     pub budget: BudgetPolicy,
 }
 
