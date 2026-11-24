@@ -24,6 +24,8 @@ pub use oneiron::job_workload::{
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
 use serde::{Deserialize, Serialize};
 
+use super::availability::GpuAvailability;
+
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
 /// The domain the issuer's machine key signs a [`JobSubmit`] under.
@@ -77,6 +79,9 @@ impl ScopeClass {
 pub enum JobRequest {
     /// What the node offers now: [`JobAnswer::Node`].
     Node,
+    /// A fresh sample of the node's GPUs: [`JobAnswer::Availability`]. A
+    /// reading, not a hold.
+    Availability,
     /// Hold a key and its disk space, never a device: answered by the
     /// key's receipt in state `Held`, or the key's existing receipt, or
     /// `Busy`. Journaled before it is answered; a reserve never starts a
@@ -156,6 +161,8 @@ pub struct SignedJobSubmit {
 #[serde(rename_all = "snake_case")]
 pub enum JobAnswer {
     Node(NodeAnswer),
+    /// The node's GPUs now, as OPUS-LE-FLEET's slot table reads them.
+    Availability(GpuAvailability),
     /// The key's receipt: the one the request made, or the one it already
     /// had.
     Receipt(SignedJobReceipt),
@@ -196,8 +203,8 @@ pub struct NodeAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateOffer {
     pub name: String,
-    /// The sha256 (lower hex) of the template's canonical form, which a pin
-    /// names.
+    /// The content hash (BLAKE3, lower hex) of the template's canonical
+    /// JSON form, made as a pin's digest is made; a pin names it.
     pub digest: String,
     pub scopes: Vec<ScopeClass>,
     pub network: Vec<NetworkMode>,
@@ -237,6 +244,8 @@ pub enum JobRefusal {
     NotTheKeysIssuer,
     /// The submit's signature is not its issuer's.
     SubmitSignatureInvalid,
+    /// The node's GPUs could not be read now, with why.
+    DevicesUnreadable { why: String },
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is

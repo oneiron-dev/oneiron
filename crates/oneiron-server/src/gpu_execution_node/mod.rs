@@ -3,11 +3,15 @@
 //! runs on them now ([`device`]), what it offers and answers when asked
 //! ([`availability`]), the slots it holds and leases on them, beside its
 //! memory floor ([`slots`]), the home's choice of a GPU among the vault's
-//! machines ([`selection`]), the job protocols' messages ([`wire`]) and the
-//! node's two mesh services ([`service`]).
+//! machines ([`selection`]), the job protocols' messages ([`wire`]), the
+//! node's own configuration and templates ([`node_settings`]), the node's
+//! gate, controls and authority tick ([`node`]), and its two mesh services
+//! ([`service`]).
 
 pub mod availability;
 pub mod device;
+pub mod node;
+pub mod node_settings;
 pub mod selection;
 #[cfg(feature = "mesh")]
 pub mod service;
@@ -22,6 +26,10 @@ pub use device::{
     GPU_QUERY_TIMEOUT, GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError, NvidiaSmiProbe,
     parse_compute_process_lines, parse_device_lines, recorded_gpu_devices,
 };
+pub use node::{
+    AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, execution_node_file,
+};
+pub use node_settings::{ExecutionNodeSettings, NodeTemplate};
 pub use selection::{
     GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement,
     LocalGpuSlotPeer, gpu_node_candidates, select_gpu_slot,
