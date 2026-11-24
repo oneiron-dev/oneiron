@@ -87,7 +87,27 @@ fn seat(
     }
 }
 
-/// The lane's line under the default budget policy (96 GPU-hours a
+/// The open-models lane's preset (pass 34, 3.3; EM-21): the lane's own
+/// document, which its kit passes to `vault.gpu.lines.set`. The engine's own
+/// defaults are neutral.
+fn open_models() -> BudgetPolicy {
+    BudgetPolicy {
+        allowance_units: 345_600,
+        pinned_parts: (1, 3),
+        floor_arms: 2,
+        rung_caps_secs: vec![1_800, 10_800, 172_800],
+        seat_cap: 6,
+        seat_reserve_floors: 1,
+        new_idea_slots_per_period: 4,
+        review_check_secs: 600,
+        max_running_per_family: 1,
+        forecast_required: true,
+        window_periods: 3,
+        ..BudgetPolicy::default()
+    }
+}
+
+/// The lane's line under the open-models preset (96 GPU-hours a
 /// fortnight, a third pinned to the interest track) in `mode`.
 fn line(mode: PinnedMode, families: Vec<FamilySeat>) -> GpuLine {
     GpuLine {
@@ -106,7 +126,7 @@ fn line(mode: PinnedMode, families: Vec<FamilySeat>) -> GpuLine {
         period_anchor_ms: ANCHOR_MS,
         budget: BudgetPolicy {
             pinned_mode: mode,
-            ..BudgetPolicy::default()
+            ..open_models()
         },
         families,
         set_by: None,

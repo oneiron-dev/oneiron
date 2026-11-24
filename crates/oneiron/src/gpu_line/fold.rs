@@ -240,13 +240,14 @@ pub struct TrackDrawOrder {
 }
 
 /// The budget policy of a line: every setting an edit changes from the next
-/// mint on (section 4.1). Each period record copies it whole. Every field
-/// has a default (`gpu_line::defaults`), so a line names only what it
-/// changes.
+/// mint on (section 4.1). Each period record copies it whole. A field left
+/// out takes the engine's neutral default (`gpu_line::defaults`); the
+/// allowance and the rung caps have none, and a line that leaves them out is
+/// refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct BudgetPolicy {
-    /// GPU-seconds a period.
+    /// Units a period.
     pub allowance_units: u64,
     /// The track the pinned share pays for.
     pub pinned_track: Track,
@@ -260,16 +261,27 @@ pub struct BudgetPolicy {
     pub rung_caps_secs: Vec<u64>,
     /// Demand seats a lead may fill without the owner's proof (LE-7).
     pub seat_cap: u32,
+    /// Seats on the pinned track a lead may fill without the owner's proof
+    /// (pass 34, 3.1).
+    pub pinned_seat_cap: u32,
     /// Floors held back per side for seats asked after the mint.
     pub seat_reserve_floors: u32,
     /// New-idea seats a period funds, one floor each (LE-6).
     pub new_idea_slots_per_period: u32,
-    /// GPU-seconds a reviewer may book per rung under review (LE-8).
+    /// Periods a new idea is funded before it lapses, counting the one it
+    /// was seated in.
+    pub new_idea_periods: u32,
+    /// Units a reviewer may book per rung under review (LE-8).
     pub review_check_secs: u64,
     /// A first-allowance hold no claim ever drew lapses after this long.
     pub hold_ttl_secs: u64,
+    /// Attempts of one family that may run at once; 0 is no cap (pass 34,
+    /// 4.5). The reserve door reads it.
+    pub max_running_per_family: u32,
     /// Whether a unit needs its runner's forecast before it reserves.
     pub forecast_required: bool,
+    /// Forecasts are scored once this many arms have one.
+    pub forecast_score_after: u32,
     /// The rules the mint funds, in order. One entry: the starter; a second
     /// turns the comparison on and halves the market pool.
     pub rules: Vec<RuleRef>,
@@ -280,21 +292,28 @@ pub struct BudgetPolicy {
     pub draw_orders: Vec<TrackDrawOrder>,
 }
 
+/// The engine's neutral defaults. The allowance is 0 and the rung caps are
+/// empty: neither has an engine default, and `GpuLine::validate` refuses
+/// both, so the owner or the lane's preset states them.
 impl Default for BudgetPolicy {
     fn default() -> Self {
         Self {
-            allowance_units: defaults::ALLOWANCE_UNITS,
+            allowance_units: 0,
             pinned_track: defaults::PINNED_TRACK,
             pinned_parts: defaults::PINNED_PARTS,
             pinned_mode: PinnedMode::default(),
             floor_arms: defaults::FLOOR_ARMS,
-            rung_caps_secs: defaults::RUNG_CAPS_SECS.to_vec(),
+            rung_caps_secs: Vec::new(),
             seat_cap: defaults::SEAT_CAP,
+            pinned_seat_cap: defaults::PINNED_SEAT_CAP,
             seat_reserve_floors: defaults::SEAT_RESERVE_FLOORS,
             new_idea_slots_per_period: defaults::NEW_IDEA_SLOTS_PER_PERIOD,
+            new_idea_periods: defaults::NEW_IDEA_PERIODS,
             review_check_secs: defaults::REVIEW_CHECK_SECS,
             hold_ttl_secs: defaults::HOLD_TTL_SECS,
+            max_running_per_family: defaults::MAX_RUNNING_PER_FAMILY,
             forecast_required: defaults::FORECAST_REQUIRED,
+            forecast_score_after: defaults::FORECAST_SCORE_AFTER,
             rules: defaults::RULES.to_vec(),
             invalid_cost: InvalidCost::default(),
             window_periods: defaults::WINDOW_PERIODS,
@@ -401,19 +420,23 @@ impl FamilySeat {
             .map_or(self.effective_from_period, |(period, _)| period)
     }
 
-    /// The period a new idea that has not graduated lapses from: funded in
-    /// its first period and the next one (LE-6). `None` for every other
-    /// seat.
+    /// The period a new idea that has not graduated lapses from: funded for
+    /// `new_idea_periods` periods from its first (LE-6). `None` for every
+    /// other seat.
     #[must_use]
-    pub fn lapses_from(&self) -> Option<u32> {
-        (self.track == Track::NewIdea).then(|| self.first_funded_period().saturating_add(2))
+    pub fn lapses_from(&self, new_idea_periods: u32) -> Option<u32> {
+        (self.track == Track::NewIdea)
+            .then(|| self.first_funded_period().saturating_add(new_idea_periods))
     }
 
-    /// Whether the mint of period `index` lists the seat.
+    /// Whether the mint of period `index` lists the seat, new ideas being
+    /// funded for `new_idea_periods` periods.
     #[must_use]
-    pub fn funded_in(&self, index: u32) -> bool {
+    pub fn funded_in(&self, index: u32, new_idea_periods: u32) -> bool {
         self.effective_from_period <= index
-            && self.lapses_from().is_none_or(|lapse| index < lapse)
+            && self
+                .lapses_from(new_idea_periods)
+                .is_none_or(|lapse| index < lapse)
             && self.lapsed_from_period.is_none_or(|lapse| index < lapse)
     }
 
@@ -460,7 +483,8 @@ pub enum PeriodClockError {
 pub struct GpuLine {
     /// The lane.
     pub project: EntityId,
-    /// `gpu_seconds`: one GPU held for one second.
+    /// The unit the line counts in, which its offers' `cost_unit` equals:
+    /// `gpu_seconds` is one GPU held for one second.
     pub unit: LeaseUnit,
     /// The host wallet the line's allocation funds.
     pub wallet: WalletRef,

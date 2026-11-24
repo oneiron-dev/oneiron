@@ -10,9 +10,9 @@
 //!   role on the line. Before the period's first write it shows the mint's
 //!   preview of the record.
 //! - `vault.gpu.lines.families.admit`: seats a child project of the lane. A
-//!   lead seats a demand family inside the seat cap; a lead or a planner
-//!   seats a new idea; an interest seat, and a demand seat past the cap, is
-//!   the owner's own act. A seat asked after its period began counts from
+//!   lead seats a demand family inside `seat_cap` and a pinned-track family
+//!   inside `pinned_seat_cap`; a lead or a planner seats a new idea; any other
+//!   seat is the owner's own act. A seat asked after its period began counts from
 //!   the next mint; it takes a floor at once from its side's reserve while
 //!   one is left, and a new idea takes a free slot of the new-idea pool or is
 //!   refused.
@@ -21,8 +21,8 @@ use super::fold::{FamilySeat, GpuLine, LineRole, PeriodClockError, PeriodRoom, S
 use super::intent::{IntentAsk, IntentRefused, IntentStand};
 use super::mint::{LineInvalid, MintError};
 use super::store::{
-    MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, newest_minted_in_txn,
-    other_line_in_txn, period_view_in_txn, put_line_in_txn, seated_elsewhere_in_txn,
+    MintedLine, line_in_txn, mint_first_in_txn, newest_minted_in_txn, other_line_in_txn,
+    period_view_in_txn, put_line_in_txn, seated_elsewhere_in_txn,
 };
 use super::wire::{GpuLineFamilyAdmitRequest, GpuLineSetRequest, GpuLineView};
 use crate::EntityId;
@@ -158,6 +158,37 @@ fn seat_timing(
     Ok((next, Some((period.index, floor))))
 }
 
+/// The seats of `track` a lead may fill without the owner's proof: the
+/// pinned track's `pinned_seat_cap`, demand's `seat_cap`, none on an interest
+/// track the line does not pin (LE-6: interest seats are the owner's), and
+/// no cap for new ideas, which the period's slots bound.
+fn lead_seat_cap(line: &GpuLine, track: Track) -> Option<u32> {
+    let budget = &line.budget;
+    match track {
+        Track::NewIdea => None,
+        track if track == budget.pinned_track => Some(budget.pinned_seat_cap),
+        Track::Demand => Some(budget.seat_cap),
+        Track::Interest => Some(0),
+    }
+}
+
+/// The name a refusal gives `track`.
+fn track_name(track: Track) -> &'static str {
+    match track {
+        Track::Demand => "demand",
+        Track::Interest => "interest",
+        Track::NewIdea => "new-idea",
+    }
+}
+
+/// The live seats of `track` on `line`.
+fn live_seats(line: &GpuLine, track: Track) -> usize {
+    line.families
+        .iter()
+        .filter(|seat| seat.lapsed_from_period.is_none() && seat.track == track)
+        .count()
+}
+
 impl Memory<'_> {
     /// `vault.gpu.lines.set`: the owner sets the policy of `request.project`'s
     /// line. The seats stay as `families.admit` wrote them.
@@ -220,7 +251,7 @@ impl Memory<'_> {
             let policy = &request.policy;
             let line = GpuLine {
                 project: request.project,
-                unit: gpu_seconds(),
+                unit: policy.unit.clone(),
                 wallet: policy.wallet.clone(),
                 offers: policy.offers.clone(),
                 machines: policy.machines.clone(),
@@ -300,8 +331,8 @@ impl Memory<'_> {
     /// # Errors
     ///
     /// [`GpuLineError`]: a caller the door does not admit or whose Grant
-    /// holds no fitting role on this line; an interest seat, or a demand
-    /// seat past the seat cap, asked without the owner's proof; a reused
+    /// holds no fitting role on this line; a seat past the lead's cap for its
+    /// track asked without the owner's proof; a reused
     /// intent key; no line; a family that is not a child of the lane or holds
     /// a seat under another ask or on another line; a full new-idea count
     /// this period; a floor the next mint could not fund. The current period
@@ -331,12 +362,6 @@ impl Memory<'_> {
                 Ok(caller) => caller,
                 Err(refusal) => return Ok(Err(GpuLineError::Caller(refusal))),
             };
-            if request.track == Track::Interest && caller.owner().is_none() {
-                return Ok(Err(GpuLineError::Caller(refused_owner_act(
-                    VAULT_GPU_LINES_FAMILIES_ADMIT,
-                    "seating a family on the interest track",
-                ))));
-            }
             match ask.stand_in_txn(vault, txn)? {
                 Err(refused) => return Ok(Err(GpuLineError::Intent(refused))),
                 Ok(IntentStand::Replayed(_)) => {
@@ -379,18 +404,16 @@ impl Memory<'_> {
             if seated_elsewhere_in_txn(vault, txn, &request.project, &request.family)? {
                 return Ok(Err(GpuLineError::SeatTaken));
             }
-            let demand_seats = line
-                .families
-                .iter()
-                .filter(|seat| seat.lapsed_from_period.is_none() && seat.track == Track::Demand)
-                .count();
-            if request.track == Track::Demand
-                && demand_seats >= line.budget.seat_cap as usize
-                && caller.owner().is_none()
+            if caller.owner().is_none()
+                && let Some(cap) = lead_seat_cap(&line, request.track)
+                && live_seats(&line, request.track) >= cap as usize
             {
                 return Ok(Err(GpuLineError::Caller(refused_owner_act(
                     VAULT_GPU_LINES_FAMILIES_ADMIT,
-                    "seating a demand family past the line's seat cap",
+                    &format!(
+                        "seating a {} family past the line's cap of {cap} such seats",
+                        track_name(request.track)
+                    ),
                 ))));
             }
             let (effective_from_period, late_floor) =

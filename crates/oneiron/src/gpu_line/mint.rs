@@ -16,8 +16,10 @@ use super::fold::{
 };
 use crate::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
+use crate::llm::run_admission::LeaseUnit;
 
-/// The unit every line counts in: one GPU held for one second.
+/// The unit a line counts in when its policy names none: one GPU held for
+/// one second.
 pub const GPU_SECONDS: &str = "gpu_seconds";
 
 /// The rules the mint can fund today. `posterior_sampling@1` and
@@ -68,8 +70,8 @@ pub enum MintError {
 /// Why a line cannot be set.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LineInvalid {
-    #[error("a GPU line counts in gpu_seconds, not {0}")]
-    Unit(String),
+    #[error("a GPU line names its unit in lowercase ASCII letters, digits, `_` and `-`")]
+    Unit,
     #[error("a GPU line names a wallet with a nonempty issuer and id")]
     Wallet,
     #[error(
@@ -105,6 +107,12 @@ pub enum LineInvalid {
         max = defaults::MAX_NEW_IDEA_SLOTS_PER_PERIOD
     )]
     NewIdeaSlots,
+    #[error(
+        "a new idea is funded for {min} to {max} periods",
+        min = defaults::NEW_IDEA_PERIODS_BOUNDS.start(),
+        max = defaults::NEW_IDEA_PERIODS_BOUNDS.end()
+    )]
+    NewIdeaPeriods,
     #[error(
         "a GPU line funds {min} to {max} distinct allowance rules",
         min = defaults::RULE_COUNT_BOUNDS.start(),
@@ -243,8 +251,8 @@ impl GpuLine {
     /// The first rule it breaks.
     pub fn validate(&self) -> Result<(), LineInvalid> {
         let budget = &self.budget;
-        if self.unit.as_str() != GPU_SECONDS {
-            return Err(LineInvalid::Unit(self.unit.as_str().to_owned()));
+        if LeaseUnit::new(self.unit.as_str()).is_err() {
+            return Err(LineInvalid::Unit);
         }
         if !self.wallet.is_valid() {
             return Err(LineInvalid::Wallet);
@@ -281,6 +289,9 @@ impl GpuLine {
             || self.new_idea_seats() > u64::from(budget.new_idea_slots_per_period)
         {
             return Err(LineInvalid::NewIdeaSlots);
+        }
+        if !defaults::NEW_IDEA_PERIODS_BOUNDS.contains(&budget.new_idea_periods) {
+            return Err(LineInvalid::NewIdeaPeriods);
         }
         if !defaults::RULE_COUNT_BOUNDS.contains(&budget.rules.len()) || !distinct(&budget.rules) {
             return Err(LineInvalid::Rules);
@@ -438,7 +449,7 @@ pub fn mint_period(
     let mut funded: Vec<&FamilySeat> = line
         .families
         .iter()
-        .filter(|seat| seat.funded_in(index))
+        .filter(|seat| seat.funded_in(index, policy.new_idea_periods))
         .collect();
     funded.sort_by_key(|seat| seat.project);
     let floored = |seat: &&&FamilySeat| seat.track != Track::NewIdea;

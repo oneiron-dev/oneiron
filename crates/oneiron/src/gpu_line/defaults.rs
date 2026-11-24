@@ -1,40 +1,47 @@
 //! Every default and bound of a GPU line's settings, in one place (design
-//! pass 32 section 3.1; lead 25 Nov 00:04, policy as settings). The engine
-//! holds no lane number anywhere else: a line names the values it changes and
-//! takes these for the rest.
+//! pass 32 section 3.1; pass 34 section 3.1; Engine ruling EM-21). The
+//! engine ships only neutral defaults: nothing pinned, no floor, no new-idea
+//! slot, no reserve, and the owner seats every family. A lane's numbers (the
+//! open-models lane's 96 GPU-hours a fortnight, its pinned third, its floors
+//! and rung caps) come in a preset document the lane's kit passes to
+//! `vault.gpu.lines.set`.
 //!
-//! The defaults are today's recommended values for the lane: 14-day periods
-//! of 96 GPU-hours, a pinned third for the interest track, two rung-1
-//! allowances a floor, rung caps of 30 minutes, 3 hours and 48 hours.
+//! The period length, the allowance and the rung caps have no engine
+//! default: a line that leaves them out is refused.
 use std::ops::RangeInclusive;
 
 use super::fold::{DrawStep, RuleRef, Track, TrackDrawOrder};
 
-/// 14 days.
-pub const PERIOD_SECS: u64 = 1_209_600;
-/// 96 GPU-hours a period.
-pub const ALLOWANCE_UNITS: u64 = 345_600;
+/// The track the pinned share pays for; unused while nothing is pinned.
 pub const PINNED_TRACK: Track = Track::Interest;
-/// One third.
-pub const PINNED_PARTS: (u32, u32) = (1, 3);
-pub const FLOOR_ARMS: u32 = 2;
-pub const RUNG_CAPS_SECS: [u64; 3] = [1_800, 10_800, 172_800];
-/// LE-7.
-pub const SEAT_CAP: u32 = 6;
-pub const SEAT_RESERVE_FLOORS: u32 = 1;
-/// LE-6.
-pub const NEW_IDEA_SLOTS_PER_PERIOD: u32 = 4;
-/// LE-8.
-pub const REVIEW_CHECK_SECS: u64 = 600;
+/// Nothing pinned.
+pub const PINNED_PARTS: (u32, u32) = (0, 1);
+pub const FLOOR_ARMS: u32 = 0;
+/// The owner seats every demand family (LE-7's option B).
+pub const SEAT_CAP: u32 = 0;
+/// The owner seats every family on the pinned track ("interest seats stay
+/// owner-only").
+pub const PINNED_SEAT_CAP: u32 = 0;
+pub const SEAT_RESERVE_FLOORS: u32 = 0;
+pub const NEW_IDEA_SLOTS_PER_PERIOD: u32 = 0;
+/// A new idea is funded in the period it was seated and the next one.
+pub const NEW_IDEA_PERIODS: u32 = 2;
+/// A reviewer books nothing unless the line says so.
+pub const REVIEW_CHECK_SECS: u64 = 0;
 /// 72 hours.
 pub const HOLD_TTL_SECS: u64 = 259_200;
-pub const FORECAST_REQUIRED: bool = true;
+/// No running cap per family.
+pub const MAX_RUNNING_PER_FAMILY: u32 = 0;
+pub const FORECAST_REQUIRED: bool = false;
+/// Forecasts are scored once this many arms have one.
+pub const FORECAST_SCORE_AFTER: u32 = 20;
 pub const RULES: [RuleRef; 1] = [RuleRef::PAYOFF_SHARE_1];
-pub const WINDOW_PERIODS: u32 = 3;
+pub const WINDOW_PERIODS: u32 = 1;
 
-/// The draw order of section 4.2. Demand: the hold, the floor, the market.
-/// Interest: the hold, the floor, the pinned pool, the market. A new idea:
-/// the hold and its slot, at rung 1 only (LE-6).
+/// The draw order of pass 32 section 4.2: what the three tracks mean, not a
+/// lane's number. Demand: the hold, the floor, the market. Interest: the
+/// hold, the floor, the pinned pool, the market. A new idea: the hold and its
+/// slot, at rung 1 only (LE-6).
 #[must_use]
 pub fn draw_orders() -> Vec<TrackDrawOrder> {
     use DrawStep::{FirstAllowance, Floor, Market, Pinned};
@@ -66,6 +73,7 @@ pub const MAX_PINNED_DENOMINATOR: u32 = 1_000;
 pub const RUNG_COUNT_BOUNDS: RangeInclusive<usize> = 1..=8;
 pub const MAX_FLOOR_ARMS: u32 = 64;
 pub const MAX_NEW_IDEA_SLOTS_PER_PERIOD: u32 = 64;
+pub const NEW_IDEA_PERIODS_BOUNDS: RangeInclusive<u32> = 1..=26;
 /// The starter and one rival for the comparison.
 pub const RULE_COUNT_BOUNDS: RangeInclusive<usize> = 1..=2;
 pub const WINDOW_PERIODS_BOUNDS: RangeInclusive<u32> = 1..=26;
