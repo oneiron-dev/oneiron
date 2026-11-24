@@ -23,21 +23,10 @@ use crate::llm::run_admission::{Allocation, AllocationRef};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, Vault};
 
-/// Domain of an allocation id's digest in a node answer's row key.
-const ALLOCATION_ID_CONTEXT: &str = "oneiron gpu allocation id v1";
-
-/// (allocation, generation, machine) -> the machine's answer since this start.
-const NODES: SideTable<AllocationNodeKey, AllocationNodeRow, Named> =
+/// (generation, machine, allocation id) -> the machine's answer since this start. The rows of
+/// one generation number are one prefix scan; a read keeps the rows of its own allocation id.
+const NODES: SideTable<(u64, EntityId, String), AllocationNodeRow, Named> =
     SideTable::new(&side_table::GPU_ALLOCATION_NODE);
-
-/// A node answer's row key. The rows of one generation are one prefix scan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SideKey)]
-struct AllocationNodeKey {
-    /// The first 16 bytes of the BLAKE3 digest of the allocation id.
-    allocation_id_digest: [u8; 16],
-    generation: u64,
-    machine: EntityId,
-}
 
 /// One machine's newest answer for one allocation generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -341,18 +330,9 @@ pub fn record_node_answer_in_txn(
             "a machine's answer needs this process's vault writer lease".to_owned(),
         ));
     };
-    let key = AllocationNodeKey {
-        allocation_id_digest: allocation_id_digest(&allocation.id),
-        generation: allocation.generation,
-        machine,
-    };
+    let key = (allocation.generation, machine, allocation.id.clone());
     let mut row = match NODES.get(&vault.store, txn, &key)? {
-        Some(row) if row.allocation == *allocation => row,
-        Some(_) => {
-            return Err(Error::InvalidConfig(
-                "two allocation ids share a digest".to_owned(),
-            ));
-        }
+        Some(row) => row,
         None => AllocationNodeRow {
             allocation: allocation.clone(),
             machine,
@@ -407,17 +387,8 @@ fn serving_start(vault: &Vault) -> Option<[u8; 16]> {
         .map(|lease| lease.acquisition_id())
 }
 
-fn allocation_id_digest(id: &str) -> [u8; 16] {
-    let mut hasher = blake3::Hasher::new_derive_key(ALLOCATION_ID_CONTEXT);
-    hasher.update(id.as_bytes());
-    let mut digest = [0_u8; 16];
-    digest.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    digest
-}
-
 fn generation_prefix(allocation: &AllocationRef) -> Vec<u8> {
     let mut prefix = Vec::new();
-    allocation_id_digest(&allocation.id).encode_into(&mut prefix);
     allocation.generation.encode_into(&mut prefix);
     prefix
 }
