@@ -3,7 +3,11 @@
 //! `verb_grant_caller`: the owner under their own proof, or an agent whose
 //! own live owner Grant lists the verb; an agent admits into and reads only
 //! the lines its Grant reaches, as the engine's act judges it again. Arms
-//! live in a side table, which holds no entity row: the doors list none.
+//! live in a side table, which holds no entity row: the doors list none. So
+//! no invocation claim keeps the reads' reply
+//! (`invocations::UNKEPT_REPLY_VERBS`): a same-id retry of a get or a list
+//! runs the read again, with the line cover, and is never answered a saved
+//! arm.
 
 use std::sync::Arc;
 
