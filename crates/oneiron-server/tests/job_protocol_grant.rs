@@ -97,9 +97,14 @@ async fn machine_without_the_job_grant_is_refused() -> TestResult {
         other => panic!("B must answer A's Node on oneiron/job/1: {other:?}"),
     }
     assert_eq!(
-        ask::<_, JobStatusAnswer>(a, b, JOB_STATUS_ALPN, &JobStatusRequest::Keys)
-            .await?
-            .map_err(|error| format!("A's Keys on oneiron/job-status/1: {error:?}"))?,
+        ask::<_, JobStatusAnswer>(
+            a,
+            b,
+            JOB_STATUS_ALPN,
+            &JobStatusRequest::Keys { after: None }
+        )
+        .await?
+        .map_err(|error| format!("A's Keys on oneiron/job-status/1: {error:?}"))?,
         JobStatusAnswer::Refused(JobRefusal::NotEnabled),
         "B must answer A on oneiron/job-status/1"
     );
@@ -130,9 +135,14 @@ async fn machine_without_the_job_grant_is_refused() -> TestResult {
         "B must never admit C on oneiron/job/1"
     );
     assert_eq!(
-        ask::<_, JobStatusAnswer>(c, b, JOB_STATUS_ALPN, &JobStatusRequest::Keys)
-            .await?
-            .map_err(|error| format!("C's Keys on oneiron/job-status/1: {error:?}"))?,
+        ask::<_, JobStatusAnswer>(
+            c,
+            b,
+            JOB_STATUS_ALPN,
+            &JobStatusRequest::Keys { after: None }
+        )
+        .await?
+        .map_err(|error| format!("C's Keys on oneiron/job-status/1: {error:?}"))?,
         JobStatusAnswer::Refused(JobRefusal::NotEnabled),
         "B must answer C on oneiron/job-status/1, which it grants C"
     );
@@ -143,7 +153,13 @@ async fn machine_without_the_job_grant_is_refused() -> TestResult {
         Ok(JobAnswer::Node(node)) => assert!(!node.enabled, "C runs no jobs: {node:?}"),
         other => panic!("C must answer A's Node on oneiron/job/1: {other:?}"),
     }
-    let refused = ask::<_, JobStatusAnswer>(a, c, JOB_STATUS_ALPN, &JobStatusRequest::Keys).await?;
+    let refused = ask::<_, JobStatusAnswer>(
+        a,
+        c,
+        JOB_STATUS_ALPN,
+        &JobStatusRequest::Keys { after: None },
+    )
+    .await?;
     assert!(
         refused.is_err(),
         "C must refuse A on oneiron/job-status/1 before any answer: {refused:?}"

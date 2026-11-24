@@ -70,7 +70,7 @@ impl JobStatusService {
             | JobStatusRequest::Status { .. }
             | JobStatusRequest::Signal { .. }
             | JobStatusRequest::Stop { .. }
-            | JobStatusRequest::Keys
+            | JobStatusRequest::Keys { .. }
             | JobStatusRequest::Fetch { .. }
             | JobStatusRequest::Ack { .. } => JobStatusAnswer::Refused(JobRefusal::NotEnabled),
         }
