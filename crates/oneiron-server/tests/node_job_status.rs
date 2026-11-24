@@ -456,7 +456,7 @@ fn three_machine_failures_in_a_row_drain_the_node_until_a_person_clears_it() {
     ));
     let mut parts = fixture.node.parts();
     parts.devices = Arc::clone(&table) as Arc<dyn NodeDevices>;
-    let jobs = NodeJobs::open(fixture.node.paths.clone(), parts);
+    let jobs = NodeJobs::open(fixture.node.paths.clone(), parts).expect("open the node's journal");
     let finish = |key: &str, run_ms: u64, stop: bool| {
         fixture.run(&jobs, key);
         fixture.node.clock.advance_ms(run_ms);
