@@ -21,14 +21,15 @@ use oneiron::EntityId;
 pub use oneiron::job_workload::{
     JOB_ALPN, JOB_STATUS_ALPN, NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
 };
+use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
 use serde::{Deserialize, Serialize};
 
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
 /// The domain the issuer's machine key signs a [`JobSubmit`] under.
-pub const JOB_SUBMIT_DOMAIN: &[u8] = b"oneiron/job-submit/v1";
+pub const JOB_SUBMIT_DOMAIN: &[u8] = b"oneiron/job-submit/v1\0";
 /// The domain the node's machine key signs a [`JobReceipt`] under.
-pub const JOB_RECEIPT_DOMAIN: &[u8] = b"oneiron/job-receipt/v1";
+pub const JOB_RECEIPT_DOMAIN: &[u8] = b"oneiron/job-receipt/v1\0";
 /// The most bytes one [`JobStatusRequest::Fetch`] answers: one transport
 /// piece under the 1 MiB message bound.
 pub const FETCH_MAX_BYTES: u64 = 1_044_480;
@@ -402,8 +403,11 @@ pub struct JobReceipt {
     pub started: bool,
     pub end: Option<JobEnd>,
     pub occupied: Option<Occupied>,
-    /// The occupied interval in whole seconds, rounded up; `None` is
-    /// unknown (a lost box), never zero.
+    /// The occupied seconds as the node measured them on its boot clock,
+    /// rounded up: so far while the key is `Launching`, `Running` or
+    /// `Ending`, final once it is `Ended`. The issuer never subtracts the
+    /// node's boot times itself. `None` before the launch commit, and for an
+    /// unknown interval (a lost box), never zero.
     pub measured_secs: Option<u64>,
     pub cutoff_at_ms: Option<u64>,
     pub release: DeviceRelease,
@@ -427,4 +431,81 @@ pub struct SignedJobReceipt {
     pub receipt: JobReceipt,
     #[serde(with = "serde_bytes")]
     pub signature: [u8; 64],
+}
+
+/// The codec encoding of `value`, which a machine signature covers.
+fn signed_message<T: Serialize>(value: &T) -> Result<Vec<u8>, MachineSignatureError> {
+    oneiron_organ_protocol::to_vec(value)
+        .map_err(|error| MachineSignatureError::Encode(error.to_string()))
+}
+
+/// Signs as `signers`' machine, which must be `named`.
+fn sign_as<T: Serialize>(
+    signers: &dyn MachineSignatures,
+    named: EntityId,
+    domain: &[u8],
+    value: &T,
+) -> Result<[u8; 64], MachineSignatureError> {
+    let (local, signature) = signers.sign(domain, &signed_message(value)?)?;
+    if local == named {
+        Ok(signature)
+    } else {
+        Err(MachineSignatureError::NotThisMachine { named, local })
+    }
+}
+
+impl SignedJobSubmit {
+    /// `submit` signed by this install, which must be its `issuer`.
+    ///
+    /// # Errors
+    /// As [`MachineSignatures::sign`]; `NotThisMachine` when this install
+    /// is not `submit.issuer`.
+    pub fn sign(
+        submit: JobSubmit,
+        signers: &dyn MachineSignatures,
+    ) -> Result<Self, MachineSignatureError> {
+        let signature = sign_as(signers, submit.issuer, JOB_SUBMIT_DOMAIN, &submit)?;
+        Ok(Self { submit, signature })
+    }
+
+    /// `Ok` when the submit's `issuer` signed it, by its MACHINE row.
+    ///
+    /// # Errors
+    /// As [`MachineSignatures::verify`].
+    pub fn verify(&self, signers: &dyn MachineSignatures) -> Result<(), MachineSignatureError> {
+        signers.verify(
+            self.submit.issuer,
+            JOB_SUBMIT_DOMAIN,
+            &signed_message(&self.submit)?,
+            &self.signature,
+        )
+    }
+}
+
+impl SignedJobReceipt {
+    /// `receipt` signed by this install, which must be its `machine`.
+    ///
+    /// # Errors
+    /// As [`MachineSignatures::sign`]; `NotThisMachine` when this install
+    /// is not `receipt.machine`.
+    pub fn sign(
+        receipt: JobReceipt,
+        signers: &dyn MachineSignatures,
+    ) -> Result<Self, MachineSignatureError> {
+        let signature = sign_as(signers, receipt.machine, JOB_RECEIPT_DOMAIN, &receipt)?;
+        Ok(Self { receipt, signature })
+    }
+
+    /// `Ok` when the receipt's `machine` signed it, by its MACHINE row.
+    ///
+    /// # Errors
+    /// As [`MachineSignatures::verify`].
+    pub fn verify(&self, signers: &dyn MachineSignatures) -> Result<(), MachineSignatureError> {
+        signers.verify(
+            self.receipt.machine,
+            JOB_RECEIPT_DOMAIN,
+            &signed_message(&self.receipt)?,
+            &self.signature,
+        )
+    }
 }

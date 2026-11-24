@@ -53,6 +53,7 @@ pub mod limit_ask;
 pub mod machine_capacity;
 pub mod machine_destination;
 pub mod machine_names;
+pub mod machine_signature;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
 pub(crate) use oneiron_base::msgpack_shape;
