@@ -100,6 +100,11 @@ pub(crate) struct PeerCall {
     pub inputs: Vec<PeerInput>,
     /// The ask verbs the asking node has handlers for.
     pub answers: Vec<String>,
+    /// 32 bytes the asking node drew for this call, hex; the serving node's
+    /// receipt signature names them. Empty from an asking node that checks
+    /// no signature.
+    #[serde(default)]
+    pub call_nonce: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
