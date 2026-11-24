@@ -17,7 +17,9 @@ use oneiron::gpu_job::{
     GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuOffer, GpuResourceRef,
     GpuResourceStatus, GpuTermination, PriceShape,
 };
-use oneiron::job_workload::{NetworkMode, ResourceRequest, ScopeKind, WorkloadPin};
+use oneiron::job_workload::{
+    DeviceClaim, DeviceKind, NetworkMode, ResourceRequest, ScopeKind, Sharing, WorkloadPin,
+};
 use oneiron::llm::ModelLocality;
 use oneiron::llm::run_admission::{
     BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferRoute, PaidConnector, Payer,
@@ -146,12 +148,24 @@ fn rig() -> Rig {
     }
 }
 
+/// A request of `gpus` CUDA GPUs of at least 20,000 MiB each (none for 0).
 fn request(gpus: u32) -> ResourceRequest {
+    let devices = if gpus == 0 {
+        Vec::new()
+    } else {
+        vec![DeviceClaim {
+            kind: DeviceKind::Gpu,
+            count: gpus,
+            memory_mib: 20_000,
+            features: vec!["cuda".to_owned()],
+            sharing: Sharing::Exclusive,
+        }]
+    };
     ResourceRequest {
-        gpus,
-        vram_mib: if gpus == 0 { 0 } else { 20_000 },
+        cpu_threads: 0,
         memory_mib: 8_192,
         disk_mib: 1_024,
+        devices,
         maximum_secs: 600,
     }
 }

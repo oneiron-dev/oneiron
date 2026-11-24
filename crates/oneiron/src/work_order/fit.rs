@@ -6,12 +6,12 @@
 //!
 //! A fact a machine does not report yet is absent here and limits nothing: the room, device and
 //! role facts arrive with R1's `Node` and `Availability` facts (Q1's read half) and rows P0 and
-//! P2. The order's own request is read through [`Needs::of`] alone, so the typed request of
-//! row G1 changes one function.
+//! P2. The order's own request (row G1's [`ResourceRequest`]) is read through [`Needs::of`]
+//! alone.
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::job_workload::ResourceRequest;
+use crate::job_workload::{DeviceKind, ResourceRequest, Sharing};
 
 use super::blocker::Blocker;
 use super::record::WorkOrder;
@@ -114,38 +114,61 @@ pub struct WindowFact {
 /// What one attempt of an order needs of a machine, read from the order's request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Needs {
+    /// 0 when the request takes its template's default, which the issuer does not know: it
+    /// limits nothing here, and the node's own fit counts.
     pub threads: u32,
     pub memory_mib: u64,
     pub disk_mib: u64,
     pub devices: Vec<DeviceNeed>,
 }
 
-/// Devices of one kind an attempt claims.
+/// Devices of one kind an attempt claims: one of the request's device claims.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceNeed {
+    /// The claim's kind by name, as [`DeviceFact::kind`] reports it.
     pub kind: String,
     pub count: u32,
+    /// The least device memory; 0 takes any.
     pub memory_mib: u64,
+    /// Each must be among the device's features.
+    pub features: Vec<String>,
+    /// The issuer's device facts carry no holders yet (R1's node facts bring them), so a
+    /// shared claim waits for a free device here as an exclusive one does; the node, which
+    /// knows its holders, admits it beside them (pass 34, 2.1).
+    pub sharing: Sharing,
 }
 
-/// The device kind the request's GPU count claims until row G1 types the claims.
-pub const GPU_DEVICE_KIND: &str = "gpu";
+/// A device kind by the name a machine reports it under (`gpu`, `npu`, `fpga`, or the
+/// probe's own name for another kind).
+#[must_use]
+pub fn device_kind_name(kind: &DeviceKind) -> &str {
+    match kind {
+        DeviceKind::Gpu => "gpu",
+        DeviceKind::Npu => "npu",
+        DeviceKind::Fpga => "fpga",
+        DeviceKind::Other(name) => name,
+    }
+}
 
 impl Needs {
-    /// What `request` asks of one machine. The one reader of the request's shape.
+    /// What `request` asks of one machine. The one reader of the request's shape. A claim of
+    /// count 0 takes no device (R2's pin shape check refuses it before an order is made).
     #[must_use]
     pub fn of(request: &ResourceRequest) -> Self {
-        let devices = if request.gpus == 0 {
-            Vec::new()
-        } else {
-            vec![DeviceNeed {
-                kind: GPU_DEVICE_KIND.to_owned(),
-                count: request.gpus,
-                memory_mib: request.vram_mib,
-            }]
-        };
+        let devices = request
+            .devices
+            .iter()
+            .filter(|claim| claim.count > 0)
+            .map(|claim| DeviceNeed {
+                kind: device_kind_name(&claim.kind).to_owned(),
+                count: claim.count,
+                memory_mib: claim.memory_mib,
+                features: claim.features.clone(),
+                sharing: claim.sharing,
+            })
+            .collect();
         Self {
-            threads: 0,
+            threads: request.cpu_threads,
             memory_mib: request.memory_mib,
             disk_mib: request.disk_mib,
             devices,
@@ -172,6 +195,10 @@ impl MachineFacts {
             .filter(move |device| {
                 device.kind == need.kind
                     && device.memory_mib >= need.memory_mib
+                    && need
+                        .features
+                        .iter()
+                        .all(|feature| device.features.contains(feature))
                     && (allowed.is_empty() || allowed.contains(&device.id))
             })
     }
@@ -291,7 +318,7 @@ fn fit_devices(order: &WorkOrder, machine: &MachineFacts, needs: &Needs, blocked
         if matching.len() < count {
             blocked.push(Blocker::NoDevice {
                 kind: need.kind.clone(),
-                features: Vec::new(),
+                features: need.features.clone(),
             });
             continue;
         }
