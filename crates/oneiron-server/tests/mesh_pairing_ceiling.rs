@@ -7,7 +7,9 @@
 //! verb of each protocol in `SERVED_MESH_ALPNS`, so the owner can grant a
 //! machine enrolled for sync the job protocols later, one at a time. A
 //! protocol the engine does not serve is still refused: the grant check
-//! stays exact.
+//! stays exact. A machine bound under a narrower ceiling takes the served one
+//! when it re-enrols, and the pairing it leaves stays standing for every
+//! other replica that bound the machine on it.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -69,5 +71,33 @@ fn a_machine_bound_under_a_narrower_ceiling_takes_the_served_one_when_it_re_enro
         other => panic!("a re-enrolment keeps the standing sync grant: {other:?}"),
     }
     home.grant(&device, JOB_ALPN)?;
+    Ok(())
+}
+
+#[test]
+fn a_re_enrolment_leaves_standing_the_pairing_another_replica_binds_on() -> TestResult {
+    let home = home()?;
+    let a = home.enrol_with(0x0c, &[SYNC_ALPN])?;
+    let b = home.enrol(0x0d)?;
+    home.share_history(&[&a, &b])?;
+    // B binds A on the pairing H minted for A, and grants it sync.
+    b.bind_at(&a, Vec::new())?;
+    b.grant(&a, SYNC_ALPN)?;
+    assert!(b.admits(&a, SYNC_ALPN)?, "B admits A on sync");
+
+    // A re-enrols on H: H's binding of A moves to a new pairing. B takes
+    // H's history again, and its binding of A still stands on the first
+    // pairing, which the re-enrolment leaves to its expiry.
+    match home.re_enrol(&a, 0x0e, &SERVED_MESH_ALPNS)? {
+        Some(MeshEnrolment::AlreadyGranted { machine, .. }) => {
+            assert_eq!(machine, a.machine, "the same machine re-enrolled");
+        }
+        other => panic!("a re-enrolment keeps the standing sync grant: {other:?}"),
+    }
+    home.share_history(&[&b])?;
+    assert!(
+        b.admits(&a, SYNC_ALPN)?,
+        "a re-enrolment on H never ends B's binding of A"
+    );
     Ok(())
 }
