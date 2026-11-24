@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::gpu_execution_node::node_settings::ScopeBound;
+
 /// The name every job unit instance starts with.
 pub const JOB_UNIT_TEMPLATE_PREFIX: &str = "oneiron-job@";
 
@@ -203,6 +205,46 @@ impl ScopeCapabilities {
         .map(|(name, _)| name)
         .collect()
     }
+
+    /// Whether this scope gives `bound`, as a template requires it: the
+    /// two kernel bounds only from the kernel, every other bound from the
+    /// kernel or a supervisor.
+    #[must_use]
+    pub fn gives(&self, bound: ScopeBound) -> bool {
+        match bound {
+            ScopeBound::FileWall => self.file_wall.enforced(),
+            ScopeBound::NetworkClosed => self.network_closed.enforced(),
+            ScopeBound::DeviceClosure => self.device_closure.enforced(),
+            ScopeBound::MemoryCapKernel => self.memory_cap.strength == Strength::Kernel,
+            ScopeBound::CutoffKernel => self.cutoff_without_engine.strength == Strength::Kernel,
+        }
+    }
+
+    /// What a launch under a template that requires `required` lacks on
+    /// this scope, by name: the minimum contract's missing bounds, then each
+    /// required bound the scope cannot give (pass 34 section 2.2, the
+    /// blocker `NoScope { missing }`). Empty when the launch may go on.
+    #[must_use]
+    pub fn missing_for(&self, required: &[ScopeBound]) -> Vec<&'static str> {
+        let mut missing = self.minimum_contract_missing();
+        for bound in required {
+            if !self.gives(*bound) && !missing.contains(&bound_name(*bound)) {
+                missing.push(bound_name(*bound));
+            }
+        }
+        missing
+    }
+}
+
+/// A required bound's name, as a template's `require` spells it.
+fn bound_name(bound: ScopeBound) -> &'static str {
+    match bound {
+        ScopeBound::FileWall => "file_wall",
+        ScopeBound::NetworkClosed => "network_closed",
+        ScopeBound::DeviceClosure => "device_closure",
+        ScopeBound::MemoryCapKernel => "memory_cap:kernel",
+        ScopeBound::CutoffKernel => "cutoff:kernel",
+    }
 }
 
 /// Why a unit's cutoff was not renewed.
@@ -336,22 +378,19 @@ fn boot_clock_ns() -> u64 {
 
 /// The unit's exact parameters, written by the engine into the key's control
 /// directory before the launch commit. The prepare step reads it as
-/// untrusted input: every value must fit the root-owned configuration.
+/// untrusted input: the pin passes the node file's own admission check
+/// (`ExecutionNodeSettings::admit_pin`) again, as root, and every other value
+/// must fit the root-owned configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchFile {
     /// The job key. Its [`JobKeyId`] must equal the unit's instance name.
     pub key: String,
-    pub template: String,
-    pub template_digest: String,
-    pub commit: String,
-    pub entry: String,
-    pub args: Vec<String>,
-    pub network: String,
+    /// The pin the key was reserved and submitted with.
+    pub pin: crate::gpu_execution_node::wire::WorkloadPin,
     /// The one device the unit may open, by the vendor's id.
     pub device_id: String,
-    pub memory_mib: u64,
-    pub disk_mib: u64,
+    /// The submit's maximum: at most the pin's.
     pub maximum_secs: u64,
     /// The boot and the boot-clock time of the launch commit; the prepare
     /// step arms the cutoff from them.
