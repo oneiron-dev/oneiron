@@ -5,17 +5,23 @@
 //! Nothing is held when it says no.
 //!
 //! The check has two halves. The vault half reads the `JOB_WORKLOAD` row: the
-//! pin exists, is not revoked, is approved, has not expired, names the
-//! starter and the machine, and its maximum covers the quote's. The node half
+//! pin exists, is not revoked, holds an approval in force, has not expired,
+//! names the starter and the machine, and its maximum covers the quote's. An
+//! approval is in force when the owner gave it, or when an agent gave it and
+//! `jobs.workloads.agent_may_approve` is still on and that agent still holds
+//! a live Grant naming `vault.jobs.workloads.approve`. The node half
 //! judges what the machine answered to `Node` and `Availability`: it was
 //! reached, it holds the pin's template under the same digest, and it did not
 //! refuse. The vault half alone is also the recheck inside the reservation
 //! write and before every dispatch that could make work.
+use crate::authority::principal_standing_or_lapse_in_txn;
 use crate::gpu_job::GpuJobQuote;
-use crate::{EntityId, Vault};
+use crate::{EdgeActorClass, EntityId, Vault};
 
 use super::WorkloadPin;
-use super::record::JobWorkload;
+use super::doors::WorkloadVerb;
+use super::record::{JobWorkload, WorkloadApprovedBy};
+use super::setting_keys::agent_may_approve_in_txn;
 
 /// Who starts a workload, as the start gate resolved the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +97,7 @@ pub enum WorkloadStartRefusal {
     MachineMissing,
     #[error("no workload is pinned under this digest")]
     WorkloadUnknown,
-    #[error("the owner has not approved this workload")]
+    #[error("no approval of this workload is in force")]
     WorkloadNotApproved,
     #[error("the owner revoked this workload")]
     WorkloadRevoked,
@@ -173,10 +179,10 @@ impl Vault {
     }
 
     /// The vault half of the workload check, read in `txn`: the pin exists,
-    /// is not revoked, is approved and has not expired by `now_ms`; its
-    /// approval names the starter and the machine; its maximum covers the
-    /// ask's. A recheck before a dispatch passes `now_ms` plus the window the
-    /// approval must still cover.
+    /// is not revoked, holds an approval in force that has not expired by
+    /// `now_ms`; its approval names the starter and the machine; its maximum
+    /// covers the ask's. A recheck before a dispatch passes `now_ms` plus the
+    /// window the approval must still cover.
     ///
     /// # Errors
     ///
@@ -190,20 +196,59 @@ impl Vault {
         let Some(row) = self.job_workload_in_txn(txn, ask.workload)? else {
             return Ok(Err(WorkloadStartRefusal::WorkloadUnknown));
         };
-        Ok(judge_approval(row, ask, now_ms))
+        let in_force = match row.approval.as_ref() {
+            Some(approval) => self.approval_in_force_in_txn(txn, &approval.by)?,
+            None => false,
+        };
+        Ok(judge_approval(row, in_force, ask, now_ms))
+    }
+
+    /// Whether an approval given by `by` is in force, read in `txn`: the
+    /// owner's always is; an agent's is while
+    /// `jobs.workloads.agent_may_approve` is on and the agent still holds a
+    /// live Grant from a live owner naming `vault.jobs.workloads.approve`.
+    fn approval_in_force_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        by: &WorkloadApprovedBy,
+    ) -> crate::Result<bool> {
+        let (actor, class) = match by {
+            WorkloadApprovedBy::Owner { .. } => return Ok(true),
+            WorkloadApprovedBy::Grant { actor: None, .. } => return Ok(false),
+            WorkloadApprovedBy::Grant {
+                actor: Some(actor),
+                class,
+                ..
+            } => (*actor, *class),
+        };
+        if !matches!(class, EdgeActorClass::Agent | EdgeActorClass::System)
+            || !agent_may_approve_in_txn(self, txn)?
+        {
+            return Ok(false);
+        }
+        let standing = principal_standing_or_lapse_in_txn(
+            self,
+            txn,
+            actor,
+            class,
+            WorkloadVerb::Approve.name(),
+        )?;
+        Ok(standing.is_ok_and(|standing| standing.grant.is_some()))
     }
 }
 
-/// The vault half's verdict on one row.
+/// The vault half's verdict on one row; `in_force` says whether its
+/// approval, if it has one, is in force.
 fn judge_approval(
     row: JobWorkload,
+    in_force: bool,
     ask: &WorkloadStartAsk<'_>,
     now_ms: u64,
 ) -> Result<WorkloadPin, WorkloadStartRefusal> {
     if row.revoked.is_some() {
         return Err(WorkloadStartRefusal::WorkloadRevoked);
     }
-    let Some(approval) = row.approval.as_ref() else {
+    let Some(approval) = row.approval.as_ref().filter(|_| in_force) else {
         return Err(WorkloadStartRefusal::WorkloadNotApproved);
     };
     if approval.expires_at_ms <= now_ms {

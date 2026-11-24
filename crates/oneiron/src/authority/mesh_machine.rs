@@ -267,6 +267,25 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)
     }
+    /// Whether this vault's grants admit the MACHINE `machine` on `alpn`
+    /// under its current address key, read in `txn`: the one-machine form of
+    /// [`Self::mesh_machines_granted`], for a write that judges the grant in
+    /// its own transaction. A row whose grant does not check out answers
+    /// `false`, never an error.
+    pub(crate) fn mesh_machine_granted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+        alpn: &[u8],
+    ) -> Result<bool> {
+        let Some(row) = self.mesh_machine_in_txn(txn, machine)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .mesh_grant_permits_in_txn(txn, machine, row.endpoint_key, alpn)
+            .unwrap_or(false))
+    }
+
     /// Every MACHINE this vault's grants admit on `alpn` under its current
     /// address key, in one snapshot, as a caller picks a peer to dial. A
     /// row whose grant does not check out is left out, never an error.

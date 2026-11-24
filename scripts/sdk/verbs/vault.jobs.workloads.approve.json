@@ -1,6 +1,6 @@
 {
   "name": "vault.jobs.workloads.approve",
-  "description": "Approves one pinned workload on the named machines, for the named Grants, until its expiry. It widens what runs on the owner's machines, so it asks the owner's presence. The owner's own act.",
+  "description": "Approves one pinned workload on the named machines, for the named Grants, until its expiry. The owner's act, with presence; an agent's under its own Grant only while the owner's jobs.workloads.agent_may_approve key is on.",
   "input": "crate::job_workload::WorkloadApproveRequest",
   "output": "crate::job_workload::WorkloadChange",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.approve\", &input)?",
@@ -12,5 +12,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "owner"
+  "host_door_proof": "job_workload_caller"
 }

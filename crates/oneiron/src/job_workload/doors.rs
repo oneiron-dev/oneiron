@@ -1,12 +1,16 @@
-//! The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5; EN-1 A:
-//! the owner approves each exact workload).
+//! The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5). Who
+//! approves is the Setting `jobs.workloads.agent_may_approve`, whose default
+//! is EN-1 A: the owner approves each exact workload.
 //!
 //! - `pin`: the owner, or an agent whose own live Grant names the verb, pins
 //!   one exact workload. A pin approves nothing, and it is written once.
-//! - `approve`: the owner's own act, with presence at `Important`, since it
-//!   widens what runs on the owner's machines.
-//! - `revoke`: the owner's own act; the issuer then stops the workload's
-//!   running jobs (EN-4 A, the connector's step).
+//! - `approve`: the owner's act, with presence at `Important`, since it
+//!   widens what runs on the owner's machines. While the key is on, also an
+//!   agent's under its own Grant naming the verb, on a workload not pinned
+//!   under that Grant and for starters other than that Grant.
+//! - `revoke`: the owner's act, and while the key is on an agent's under its
+//!   own Grant naming the verb; the issuer then stops the workload's running
+//!   jobs (EN-4 A, the connector's step).
 //! - `get`, `list`: reads for the owner, or an agent whose Grant names the
 //!   verb. An agent reads only the workloads its Grant pinned or may start.
 use crate::EdgeActorClass;
@@ -25,6 +29,7 @@ use super::record::{
     JOB_WORKLOADS, JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadRevocation,
     digest_key,
 };
+use super::setting_keys::agent_may_approve_in_txn;
 use super::wire::{
     WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadPinRequest, WorkloadRef,
     WorkloadView, parse_ids,
@@ -69,9 +74,10 @@ impl WorkloadVerb {
         Self::ALL.into_iter().find(|verb| verb.name() == name)
     }
 
-    /// Whether only the owner's own proof admits it.
+    /// Whether it approves or revokes: the owner's act, and an agent's only
+    /// while `jobs.workloads.agent_may_approve` is on.
     #[must_use]
-    pub const fn is_owner_act(self) -> bool {
+    pub const fn is_approval_act(self) -> bool {
         matches!(self, Self::Approve | Self::Revoke)
     }
 }
@@ -102,6 +108,17 @@ pub enum WorkloadError {
     MachineNotGranted { machine: String },
     #[error("another approval of this workload stands until it expires or is revoked")]
     ApprovalStands,
+    /// An agent's approval of a workload pinned under its own Grant, or one
+    /// naming its own Grant as a starter: an agent never mints its own
+    /// approval.
+    #[error(
+        "an agent does not approve a workload pinned under its own Grant or name its own Grant as a starter"
+    )]
+    SelfApproval,
+    /// An agent's pin of a workload pinned before under a Grant that agent
+    /// may not read it through.
+    #[error("this exact workload is already pinned under another Grant")]
+    PinnedElsewhere,
 }
 
 impl From<WorkloadError> for MemoryError {
@@ -120,7 +137,9 @@ impl From<WorkloadError> for MemoryError {
             WorkloadError::PinConflict
             | WorkloadError::Revoked
             | WorkloadError::MachineNotGranted { .. }
-            | WorkloadError::ApprovalStands => MEMORY_CODE_INVALID_STATE,
+            | WorkloadError::ApprovalStands
+            | WorkloadError::PinnedElsewhere => MEMORY_CODE_INVALID_STATE,
+            WorkloadError::SelfApproval => MEMORY_CODE_FORBIDDEN,
             WorkloadError::NotFound => MEMORY_CODE_NOT_FOUND,
         };
         MemoryError::new(code, refusal.to_string(), &[])
@@ -153,17 +172,21 @@ impl WorkloadAgent {
     }
 
     /// The live Grant that admits this agent to `verb` now, as the standing
-    /// rule picks it: its actor binding holds, its presented credential is
-    /// still live, and one live Grant from a live owner names it and lists
-    /// the verb.
+    /// rule picks it: an approval act only while
+    /// `jobs.workloads.agent_may_approve` is on; its actor binding holds, its
+    /// presented credential is still live, and one live Grant from a live
+    /// owner names it and lists the verb.
     fn grant_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         verb: WorkloadVerb,
     ) -> MemoryResult<EntityId> {
-        if verb.is_owner_act() {
-            return Err(refused(verb, "it is the owner's own act"));
+        if verb.is_approval_act() && !agent_may_approve_in_txn(vault, txn)? {
+            return Err(refused(
+                verb,
+                "it is the owner's own act while jobs.workloads.agent_may_approve is off",
+            ));
         }
         crate::memory::verify_actor_binding_in_txn(vault, txn, self.actor, self.class)?;
         if let Some(slip) = &self.credential
@@ -201,9 +224,9 @@ impl Memory<'_> {
 
     /// Admits this handle's caller to `verb`. With `owner`, the caller's own
     /// proof decides: revalidated as a live owner of this vault and this
-    /// handle's own human actor. Without one, `verb` must not be an owner
-    /// act, and one live Grant a live owner gave this handle's agent must
-    /// name it now.
+    /// handle's own human actor. Without one, one live Grant a live owner
+    /// gave this handle's agent must name `verb` now, and an approval act
+    /// needs `jobs.workloads.agent_may_approve` on.
     ///
     /// # Errors
     ///
@@ -235,23 +258,34 @@ impl Memory<'_> {
 
 /// The refusal of a caller `verb` does not admit.
 fn refused(verb: WorkloadVerb, why: &str) -> MemoryError {
-    let takes = if verb.is_owner_act() {
-        "the vault owner's own proof"
+    let (takes, hint) = if verb.is_approval_act() {
+        (
+            "the vault owner's own proof, or an agent's own Grant that names it while jobs.workloads.agent_may_approve is on",
+            "Call it as the vault owner, or ask the owner to turn jobs.workloads.agent_may_approve on and name the verb in the agent's Grant.",
+        )
     } else {
-        "the vault owner's own proof or an agent's own Grant that names it"
+        (
+            "the vault owner's own proof or an agent's own Grant that names it",
+            "Call it as the vault owner, or name the verb in the agent's Grant.",
+        )
     };
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!("{} takes {takes}: {why}", verb.name()),
-        &["Call it as the vault owner, or name the verb in the agent's Grant."],
+        &[hint],
     )
 }
 
-/// Who the caller is in a read or write: the owner's id, or the agent's
-/// Grant for `verb`.
+/// Who the caller is in a read or write: the owner's id, or the agent and
+/// its Grant for `verb`.
+#[derive(Clone, Copy)]
 enum Resolved {
     Owner(EntityId),
-    Agent { actor: EntityId, grant: EntityId },
+    Agent {
+        actor: EntityId,
+        class: EdgeActorClass,
+        grant: EntityId,
+    },
 }
 
 fn resolve_in_txn(
@@ -267,6 +301,7 @@ fn resolve_in_txn(
         WorkloadCaller::Agent(agent) => Ok(match agent.grant_in_txn(vault, txn, verb) {
             Ok(grant) => Ok(Resolved::Agent {
                 actor: agent.actor(),
+                class: agent.class,
                 grant,
             }),
             Err(refusal) => Err(WorkloadError::Caller(refusal)),
@@ -300,6 +335,9 @@ impl Vault {
     ///
     /// [`WorkloadError::BadPin`] for a pin of the wrong shape;
     /// [`WorkloadError::PinConflict`] for a digest pinned with other content;
+    /// [`WorkloadError::PinnedElsewhere`] for an agent's pin of a workload
+    /// that stands under a Grant it may not read it through, so the answer
+    /// carries no approval it may not read;
     /// [`WorkloadError::Caller`] for a caller the door does not admit.
     pub fn pin_job_workload(
         &self,
@@ -325,6 +363,11 @@ impl Vault {
                     if row.pin != request.pin {
                         return Ok(Err(WorkloadError::PinConflict));
                     }
+                    if let Resolved::Agent { grant, .. } = resolved
+                        && !agent_reads(&row, grant)
+                    {
+                        return Ok(Err(WorkloadError::PinnedElsewhere));
+                    }
                     return Ok(Ok(WorkloadChange {
                         changed: false,
                         workload: WorkloadView::of(&row, now_ms),
@@ -332,7 +375,7 @@ impl Vault {
                 }
                 let (pinned_by, pinned_under) = match resolved {
                     Resolved::Owner(owner) => (owner, None),
-                    Resolved::Agent { actor, grant } => (actor, Some(grant)),
+                    Resolved::Agent { actor, grant, .. } => (actor, Some(grant)),
                 };
                 let row = JobWorkload {
                     digest,
@@ -352,11 +395,15 @@ impl Vault {
         )?
     }
 
-    /// The owner approves the workload `request.workload` on
+    /// `caller` approves the workload `request.workload` on
     /// `request.machines`, for `request.starters`, until
-    /// `request.expires_at_ms`. It widens what runs on the owner's machines,
-    /// so the owner's presence is checked at `Important` first. The same
-    /// approval again answers `changed: false`.
+    /// `request.expires_at_ms`. The owner's approval widens what runs on the
+    /// owner's machines, so the owner's presence is checked at `Important`
+    /// first. An agent approves only while `jobs.workloads.agent_may_approve`
+    /// is on, under its own Grant naming the verb, and never a workload
+    /// pinned under that Grant or for that Grant as a starter. Each machine's
+    /// job grant is judged again in the write. The same approval again
+    /// answers `changed: false`.
     ///
     /// # Errors
     ///
@@ -364,10 +411,12 @@ impl Vault {
     /// [`WorkloadError::ExpiryPast`], [`WorkloadError::NoMachines`],
     /// [`WorkloadError::MachineNotGranted`] for a machine with no live grant
     /// of the job protocol, [`WorkloadError::ApprovalStands`] for a different
-    /// approval while one stands; a refused presence check.
+    /// approval while one stands, [`WorkloadError::SelfApproval`],
+    /// [`WorkloadError::Caller`] for a caller the door does not admit; a
+    /// refused presence check.
     pub fn approve_job_workload(
         &self,
-        owner: &AuthenticatedOwner,
+        caller: WorkloadCaller<'_>,
         request: &WorkloadApproveRequest,
         now_ms: u64,
     ) -> Result<WorkloadChange, WorkloadError> {
@@ -380,23 +429,56 @@ impl Vault {
         if request.expires_at_ms <= now_ms {
             return Err(WorkloadError::ExpiryPast);
         }
-        owner.revalidate(self)?;
-        let granted = self.mesh_machines_granted(JOB_ALPN)?;
-        if let Some(machine) = machines.iter().find(|machine| !granted.contains(machine)) {
-            return Err(WorkloadError::MachineNotGranted {
-                machine: machine.to_hex(),
-            });
-        }
-        let _witness =
-            self.owner_presence(OwnerActImportance::Important, WorkloadVerb::Approve.name())?;
+        let _witness = match caller {
+            WorkloadCaller::Owner(owner) => {
+                owner.revalidate(self)?;
+                let granted = self.mesh_machines_granted(JOB_ALPN)?;
+                if let Some(machine) = machines.iter().find(|machine| !granted.contains(machine)) {
+                    return Err(WorkloadError::MachineNotGranted {
+                        machine: machine.to_hex(),
+                    });
+                }
+                Some(
+                    self.owner_presence(
+                        OwnerActImportance::Important,
+                        WorkloadVerb::Approve.name(),
+                    )?,
+                )
+            }
+            WorkloadCaller::Agent(_) => None,
+        };
         self.with_write_txn_grouped(
             |txn| -> crate::Result<Result<WorkloadChange, WorkloadError>> {
-                let by = owner.revalidate_in_txn(self, txn)?;
+                let by = match resolve_in_txn(self, txn, caller, WorkloadVerb::Approve)? {
+                    Ok(Resolved::Owner(owner)) => WorkloadApprovedBy::Owner { owner: Some(owner) },
+                    Ok(Resolved::Agent {
+                        actor,
+                        class,
+                        grant,
+                    }) => WorkloadApprovedBy::Grant {
+                        actor: Some(actor),
+                        class,
+                        grant,
+                    },
+                    Err(refused) => return Ok(Err(refused)),
+                };
                 let Some(mut row) = JOB_WORKLOADS.get(&self.store, txn, &key)? else {
                     return Ok(Err(WorkloadError::NotFound));
                 };
                 if row.revoked.is_some() {
                     return Ok(Err(WorkloadError::Revoked));
+                }
+                if let WorkloadApprovedBy::Grant { grant, .. } = &by
+                    && (row.pinned_under == Some(*grant) || starters.contains(grant))
+                {
+                    return Ok(Err(WorkloadError::SelfApproval));
+                }
+                for machine in &machines {
+                    if !self.mesh_machine_granted_in_txn(txn, *machine, JOB_ALPN)? {
+                        return Ok(Err(WorkloadError::MachineNotGranted {
+                            machine: machine.to_hex(),
+                        }));
+                    }
                 }
                 if let Some(standing) = row.approval.as_ref()
                     && standing.expires_at_ms > now_ms
@@ -413,7 +495,7 @@ impl Vault {
                     }));
                 }
                 row.approval = Some(WorkloadApproval {
-                    by: WorkloadApprovedBy::Owner { owner: Some(by) },
+                    by,
                     machines,
                     starters,
                     expires_at_ms: request.expires_at_ms,
@@ -428,24 +510,33 @@ impl Vault {
         )?
     }
 
-    /// The owner revokes the workload `request.workload`: no later start
-    /// passes the gate, and the issuer stops its running jobs. A repeat
-    /// answers `changed: false`.
+    /// `caller` revokes the workload `request.workload`: no later start
+    /// passes the gate, and the issuer stops its running jobs. The owner
+    /// revokes; an agent only while `jobs.workloads.agent_may_approve` is
+    /// on, under its own Grant naming the verb. A repeat answers
+    /// `changed: false`.
     ///
     /// # Errors
     ///
-    /// [`WorkloadError::NotFound`] for no such workload.
+    /// [`WorkloadError::NotFound`] for no such workload;
+    /// [`WorkloadError::Caller`] for a caller the door does not admit.
     pub fn revoke_job_workload(
         &self,
-        owner: &AuthenticatedOwner,
+        caller: WorkloadCaller<'_>,
         request: &WorkloadRef,
         now_ms: u64,
     ) -> Result<WorkloadChange, WorkloadError> {
         let key = digest_key(&request.workload).ok_or(WorkloadError::NotFound)?;
-        owner.revalidate(self)?;
+        if let WorkloadCaller::Owner(owner) = caller {
+            owner.revalidate(self)?;
+        }
         self.with_write_txn_grouped(
             |txn| -> crate::Result<Result<WorkloadChange, WorkloadError>> {
-                let by = owner.revalidate_in_txn(self, txn)?;
+                let (by, under) = match resolve_in_txn(self, txn, caller, WorkloadVerb::Revoke)? {
+                    Ok(Resolved::Owner(owner)) => (owner, None),
+                    Ok(Resolved::Agent { actor, grant, .. }) => (actor, Some(grant)),
+                    Err(refused) => return Ok(Err(refused)),
+                };
                 let Some(mut row) = JOB_WORKLOADS.get(&self.store, txn, &key)? else {
                     return Ok(Err(WorkloadError::NotFound));
                 };
@@ -457,6 +548,7 @@ impl Vault {
                 }
                 row.revoked = Some(WorkloadRevocation {
                     by: Some(by),
+                    under,
                     at_ms: now_ms,
                 });
                 JOB_WORKLOADS.put(&self.store, txn, &key, &row)?;
@@ -505,12 +597,10 @@ impl Vault {
         caller: WorkloadCaller<'_>,
         now_ms: u64,
     ) -> Result<WorkloadList, WorkloadError> {
-        let resolved = {
-            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-            resolve_in_txn(self, &txn, caller, WorkloadVerb::List)??
-        };
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let resolved = resolve_in_txn(self, &txn, caller, WorkloadVerb::List)??;
         let workloads = self
-            .job_workloads()?
+            .job_workloads_in_txn(&txn)?
             .iter()
             .filter(|row| match resolved {
                 Resolved::Owner(_) => true,

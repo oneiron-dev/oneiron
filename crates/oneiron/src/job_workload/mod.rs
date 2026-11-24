@@ -14,6 +14,7 @@ pub use protocol::*;
 mod check;
 mod doors;
 mod record;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 mod wire;
 

@@ -17,9 +17,10 @@ pub struct WorkloadPinRequest {
     pub pin: WorkloadPin,
 }
 
-/// `vault.jobs.workloads.approve`: the owner's yes for one pinned workload,
-/// on the machines it may run on, for the Grants that may start it, until
-/// `expires_at_ms`.
+/// `vault.jobs.workloads.approve`: the yes for one pinned workload, on the
+/// machines it may run on, for the Grants that may start it, until
+/// `expires_at_ms`: the owner's, or an agent's while
+/// `jobs.workloads.agent_may_approve` is on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkloadApproveRequest {
@@ -58,16 +59,25 @@ pub enum WorkloadStanding {
     Approved,
     /// Approved, and the approval has expired.
     Expired,
-    /// Revoked by the owner.
+    /// Revoked.
     Revoked,
 }
 
-/// The owner's approval of a workload, as the SDK spells it.
+/// The approval of a workload, as the SDK spells it. An agent's approval
+/// admits a start only while `jobs.workloads.agent_may_approve` is on and the
+/// agent still holds a live Grant naming `vault.jobs.workloads.approve`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkloadApprovalView {
-    /// The owner who approved it (hex); `None` after their erase.
+    /// The owner who approved it (hex); `None` for an agent's approval, or
+    /// after the owner's erase.
     pub owner: Option<String>,
+    /// The agent who approved it (hex); `None` for the owner's approval, or
+    /// after the agent's erase.
+    pub agent: Option<String>,
+    /// The Grant the agent approved it under (hex); `None` for the owner's
+    /// approval.
+    pub under: Option<String>,
     pub machines: Vec<String>,
     pub starters: Vec<String>,
     pub expires_at_ms: u64,
@@ -108,9 +118,14 @@ impl WorkloadView {
             pinned_under: row.pinned_under.map(|id| id.to_hex()),
             pinned_at_ms: row.pinned_at_ms,
             approval: row.approval.as_ref().map(|approval| {
-                let WorkloadApprovedBy::Owner { owner } = &approval.by;
+                let (owner, agent, under) = match &approval.by {
+                    WorkloadApprovedBy::Owner { owner } => (*owner, None, None),
+                    WorkloadApprovedBy::Grant { actor, grant, .. } => (None, *actor, Some(*grant)),
+                };
                 WorkloadApprovalView {
                     owner: owner.map(|id| id.to_hex()),
+                    agent: agent.map(|id| id.to_hex()),
+                    under: under.map(|id| id.to_hex()),
                     machines: approval.machines.iter().map(EntityId::to_hex).collect(),
                     starters: approval.starters.iter().map(EntityId::to_hex).collect(),
                     expires_at_ms: approval.expires_at_ms,
