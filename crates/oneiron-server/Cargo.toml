@@ -716,6 +716,14 @@ name = "mesh_two_machine_peer_e2e"
 path = "tests/mesh_two_machine_peer_e2e.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# Pass 33 R0 T2: the job protocols' grant is the gate, per protocol id, between three of the
+# owner's servers with their real mesh listeners (tests/support/mesh_machines.rs). Each
+# device's install keys sit in a `MemoryKeystore`; the listeners need the `mesh` feature.
+[[test]]
+name = "job_protocol_grant"
+path = "tests/job_protocol_grant.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
