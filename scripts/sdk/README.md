@@ -47,9 +47,9 @@ The docs mirror has two parts. The quickstart is authored in
 error codes: `docs/agent-sdk/quickstart.md`, `errors.md` and `llms.txt` stay in git,
 and the generator's `--check` checks them. Edit their inputs, not the copies. The type
 declarations, facade types and verb census (`types.md`, `facade-types.md`,
-`verbs.md`) are generated from the verb table, so they are not in git:
-`.github/workflows/agent-sdk-docs.yml` builds them for GitHub Pages, which does not
-serve them yet, a cargo build keeps a local copy in
+`verbs.md`) are generated from the verb table, so they are not in git: CI publishes
+them from main at https://oneiron-dev.github.io/oneiron/agent-sdk/
+(`.github/workflows/agent-sdk-docs.yml`), a cargo build keeps a local copy in
 `target/debug/sdk-generated/agent-sdk/`, and the generator's `--package docs` writes
 them into `docs/agent-sdk/`.
 
