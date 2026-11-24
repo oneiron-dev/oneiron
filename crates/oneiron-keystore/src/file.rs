@@ -573,4 +573,56 @@ mod tests {
             "the open after the writer's hold ended kept a stale file"
         );
     }
+
+    /// FIX FILE-KEYSTORE-CREATES-DIR-BEFORE-VAULT-CHECK: a key directory
+    /// inside a vault directory is refused before it is made, also one inside
+    /// a vault directory not made yet, so a refusal leaves nothing behind.
+    #[test]
+    fn a_key_directory_refused_inside_a_vault_is_never_made() {
+        let root = tempfile::tempdir().unwrap();
+        let vault = root.path().join("vault");
+        fs::create_dir(&vault).unwrap();
+        let later = root.path().join("later-vault");
+        for (dir, vault_dir) in [
+            (vault.join("keys"), &vault),
+            (vault.join("a").join("keys"), &vault),
+            (later.join("keys"), &later),
+        ] {
+            assert_eq!(
+                LocalFileKeystore::open(&dir, &[vault_dir.as_path()]).unwrap_err(),
+                KeystoreError::Unavailable("the key directory is inside a vault directory"),
+                "{}",
+                dir.display()
+            );
+        }
+        assert_eq!(
+            fs::read_dir(&vault).unwrap().count(),
+            0,
+            "a refused key directory was made inside the vault"
+        );
+        assert!(
+            !later.exists(),
+            "a refused key directory made the vault directory"
+        );
+    }
+
+    /// FIX 8019 for sealed values: a writer that died before its rename left
+    /// a copy of a sealed value. Deleting the value removes the copy too.
+    #[test]
+    fn delete_sealed_removes_a_dead_writers_copy_of_the_value() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        let name = SealedBytesName::DevicePinKey;
+        keys.put_sealed(&name, b"sealed").unwrap();
+        // pid 1 is the system's first process: alive, and never this writer.
+        let copy = keys
+            .dir
+            .join(format!(".{}.1.1.tmp", sealed_file_name(&name)));
+        fs::write(&copy, b"sealed").unwrap();
+        keys.delete_sealed(&name).unwrap();
+        assert!(
+            !copy.exists(),
+            "the dead writer's copy of the sealed value is removed"
+        );
+    }
 }
