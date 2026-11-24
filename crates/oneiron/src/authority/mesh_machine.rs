@@ -100,6 +100,27 @@ fn mesh_verb(alpn: &[u8]) -> String {
             .collect::<String>()
     )
 }
+/// The claims of the pairing slip a binding stands on, when it stands for
+/// that binding at any time: minted and not revoked in `fold`, a root slip of
+/// this vault held by the binding's MACHINE under its machine key, and the
+/// MACHINE not removed. Whether it is live now is its lifetime's question
+/// ([`Vault::mesh_pairing_live`]).
+fn mesh_pairing_standing<'f>(
+    fold: &'f AuthorityFold,
+    claims: &MeshAuthorityClaims,
+) -> Option<&'f super::SlipClaims> {
+    let pair = &fold.slips.mints.get(&claims.pairing_slip_id)?.action.claims;
+    (fold.slip_is_live(&claims.pairing_slip_id)
+        && pair.holder_ref == claims.machine.to_hex()
+        && pair.binding_key == claims.device_key
+        && pair.parent_id.is_none()
+        && fold.vault_id == Some(pair.vault_id)
+        // A removed MACHINE's binding admits nothing (FIX 3374).
+        && !fold.machine(claims.machine).is_some_and(|folded| {
+            enrolment::machine_removed(folded, fold.pinned_root.as_ref())
+        }))
+    .then_some(pair)
+}
 /// The address a MACHINE body carries, every direct address in it: a
 /// binding is never refused or read as absent for how many it names (Phase2
 /// A, FIX 7922). Its key, relay and envelope checks stay; a stranger's lookup
@@ -198,6 +219,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
     ) -> Result<Option<MeshAuthorityClaims>> {
+        let Some((fold, claims)) = self.mesh_authority_signed_in_txn(txn, machine)? else {
+            return Ok(None);
+        };
+        if !self.mesh_pairing_live(&fold, txn, &claims)? {
+            return Ok(None);
+        }
+        Ok(Some(claims))
+    }
+    /// `machine`'s binding row as a live owner host signed it, with the fold
+    /// it was checked against: [`Self::mesh_authority_in_txn`] without its
+    /// check that the binding's pairing is live.
+    fn mesh_authority_signed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+    ) -> Result<Option<(AuthorityFold, MeshAuthorityClaims)>> {
         let Some(signed) = MESH_AUTHORITY
             .get(&self.store, txn, &HexId(machine))
             .map_err(|error| {
@@ -229,10 +266,7 @@ impl Vault {
         let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
         host.verify_strict(&transcript(&claims)?, &sig)
             .map_err(|_| invalid_authority())?;
-        if !self.mesh_pairing_live(&fold, txn, &claims)? {
-            return Ok(None);
-        }
-        Ok(Some(claims))
+        Ok(Some((fold, claims)))
     }
     fn mesh_pairing_live(
         &self,
@@ -240,22 +274,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         claims: &MeshAuthorityClaims,
     ) -> Result<bool> {
-        let Some(mint) = fold.slips.mints.get(&claims.pairing_slip_id) else {
-            return Ok(false);
-        };
         let now = self.instant_in_txn(txn)?.secs();
-        let pair = &mint.action.claims;
-        Ok(fold.slip_is_live(&claims.pairing_slip_id)
-            && now >= pair.issued_at
-            && now < pair.expires_at
-            && pair.holder_ref == claims.machine.to_hex()
-            && pair.binding_key == claims.device_key
-            && pair.parent_id.is_none()
-            && fold.vault_id == Some(pair.vault_id)
-            // A removed MACHINE's binding admits nothing (FIX 3374).
-            && !fold.machine(claims.machine).is_some_and(|folded| {
-                enrolment::machine_removed(folded, fold.pinned_root.as_ref())
-            }))
+        Ok(mesh_pairing_standing(fold, claims)
+            .is_some_and(|pair| now >= pair.issued_at && now < pair.expires_at))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(
