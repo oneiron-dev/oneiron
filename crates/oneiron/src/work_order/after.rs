@@ -139,7 +139,9 @@ fn same_class(a: EndKind, b: EndKind) -> bool {
         EndKind::NeverStarted => 0,
         EndKind::Expired => 1,
         EndKind::Lost => 2,
-        EndKind::Exited { .. } | EndKind::MemoryLimit | EndKind::DiskLimit | EndKind::TimeLimit => 3,
+        EndKind::Exited { .. } | EndKind::MemoryLimit | EndKind::DiskLimit | EndKind::TimeLimit => {
+            3
+        }
         _ => 4,
     };
     class(a) == class(b)
@@ -164,8 +166,7 @@ pub fn after_rule(
         EndKind::WrittenOff => (
             &["give_up"],
             AfterPick::GiveUp,
-            "the owner wrote it off: nothing starts again unless somebody orders again"
-                .to_owned(),
+            "the owner wrote it off: nothing starts again unless somebody orders again".to_owned(),
         ),
         EndKind::LaunchRefusedChanged | EndKind::Revoked | EndKind::Stopped => (
             &["give_up"],

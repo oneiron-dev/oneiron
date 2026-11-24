@@ -31,7 +31,8 @@ fn offer(name: &str) -> GpuOffer {
         region: "home".to_owned(),
         connector: PaidConnector {
             connector: "vault-machines".to_owned(),
-            route: OfferRoute::new("vault-machines", "https://machines.example.com").expect("route"),
+            route: OfferRoute::new("vault-machines", "https://machines.example.com")
+                .expect("route"),
             locality: ModelLocality::ThirdParty,
             payer: Payer::Local,
             credential_binding: None,
@@ -111,7 +112,11 @@ fn the_node_the_gate_and_the_order_name_a_refusal_with_one_code() {
         JobRefusal::SubmitSignatureInvalid,
     ];
     for refusal in &node_refusals {
-        assert_eq!(Blocker::from(refusal).code(), job_refusal_code(refusal), "{refusal:?}");
+        assert_eq!(
+            Blocker::from(refusal).code(),
+            job_refusal_code(refusal),
+            "{refusal:?}"
+        );
     }
     // Every gate refusal keeps its code, and a node's reason the gate passes on is named by
     // the node's own code.

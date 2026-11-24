@@ -45,7 +45,10 @@ pub fn rank_decision(ranked: &[EntityId], position: usize) -> SlotDecision {
     let why = if position == 0 {
         "first by class, then the fewest running in its family, then the oldest".to_owned()
     } else {
-        format!("place {} by class, running in its family, then age", position + 1)
+        format!(
+            "place {} by class, running in its family, then age",
+            position + 1
+        )
     };
     SlotDecision::by_rule(SlotName::Rank, RANK_RULE, options, pick, &why)
 }

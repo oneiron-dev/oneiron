@@ -19,20 +19,21 @@ pub mod place;
 pub mod rank;
 pub mod record;
 pub(crate) mod setting_keys;
+pub mod start_check;
 pub(crate) mod tables;
 mod wire;
 
 pub use after::{AFTER_RULE, AfterPick, RetryPolicy, RetryRule, after_rule};
 pub use blocker::{BlockedOn, Blocker, Clearing};
 pub use doors::{
-    CancelRefused, ORDER_INTENT_KEY_MAX, machines_place_as, order_refusal, order_work_as, work_order_cancel_as,
-    work_order_get_as, work_order_list_as,
+    CancelRefused, ORDER_INTENT_KEY_MAX, machines_place_as, order_refusal, order_work_as,
+    work_order_cancel_as, work_order_get_as, work_order_list_as,
 };
-pub use fit::{DeviceFact, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact, fit};
-pub use pass::{
-    AttemptOutcome, AttemptRefused, AttemptToMake, OrderAttemptRef, OrderHost, OrderStarter,
-    PassReport, allowed_machines,
+pub use fit::{
+    DeviceFact, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact, fit,
+    scope_allowed, scope_kind_name,
 };
+pub use pass::{AttemptOutcome, AttemptToMake, OrderHost, PassReport, allowed_machines};
 pub use place::{PLACE_RULE, place};
 pub use rank::{RANK_RULE, rank};
 pub use record::{
@@ -40,6 +41,7 @@ pub use record::{
     OrderClass, OrderLimits, OrderState, OrderWishes, OrderedBy, ResultBinding, SlotDecision,
     SlotName, WaitRule, WorkOrder, attempt_job_id,
 };
+pub use start_check::{AttemptRefused, OrderAttemptRef, OrderStarter};
 pub use wire::{
     MachinesPlaceRequest, MachinesPlaceView, WorkOrderList, WorkOrderListRequest, WorkOrderRef,
     WorkOrderRequest, WorkOrderView,

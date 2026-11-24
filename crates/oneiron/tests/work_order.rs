@@ -87,7 +87,11 @@ impl GpuJobConnector for FakeGpu {
             .unwrap_or(GpuResourceStatus::Pending))
     }
 
-    fn signal(&self, _resource: &GpuResourceRef, _signal: GpuJobSignal) -> Result<(), GpuConnectorError> {
+    fn signal(
+        &self,
+        _resource: &GpuResourceRef,
+        _signal: GpuJobSignal,
+    ) -> Result<(), GpuConnectorError> {
         Ok(())
     }
 
@@ -195,10 +199,10 @@ fn machine(id: EntityId, devices: Option<Vec<DeviceFact>>) -> MachineFacts {
         refusal: None,
         paused: None,
         drained: None,
-        templates: vec![TemplateFact {
+        templates: Some(vec![TemplateFact {
             name: TEMPLATE.to_owned(),
             digest: TEMPLATE_DIGEST.to_owned(),
-        }],
+        }]),
         room: Room {
             threads_total: Some(32),
             threads_free: Some(32),
@@ -393,7 +397,14 @@ impl<'a> TestHost<'a> {
         let run = admissions.get(job).expect("the job's run");
         self.rig
             .vault
-            .gpu_job_step(job, &self.rig.offer, run, &self.rig.permits, &self.rig.gpu, now_ms)
+            .gpu_job_step(
+                job,
+                &self.rig.offer,
+                run,
+                &self.rig.permits,
+                &self.rig.gpu,
+                now_ms,
+            )
             .expect("step");
     }
 }
@@ -490,7 +501,10 @@ fn an_order_that_cannot_run_now_waits_and_names_each_blocker() {
     let free_at = NOW + 300_000;
     let host = TestHost::new(
         &rig,
-        vec![paused_facts, machine(busy, Some(vec![gpu("GPU-b", Some(free_at))]))],
+        vec![
+            paused_facts,
+            machine(busy, Some(vec![gpu("GPU-b", Some(free_at))])),
+        ],
     );
     rig.vault.work_order_pass(&host, NOW).expect("pass");
     let stored = rig.stored(&order);
@@ -521,7 +535,10 @@ fn a_waiting_order_holds_no_device_and_no_wallet_hold() {
     let busy = EntityId::now();
     let digest = rig.workload(1, &[busy]);
     let order = rig.order(&digest, 1, WaitRule::Open);
-    let host = TestHost::new(&rig, vec![machine(busy, Some(vec![gpu("GPU-b", Some(NOW + 1))]))]);
+    let host = TestHost::new(
+        &rig,
+        vec![machine(busy, Some(vec![gpu("GPU-b", Some(NOW + 1))]))],
+    );
     rig.vault.work_order_pass(&host, NOW).expect("pass");
     assert!(matches!(rig.stored(&order).state, OrderState::Open { .. }));
     // No start was asked, so no quote was reserved and no job row or permit exists.
@@ -596,7 +613,9 @@ fn an_order_whose_requesters_grant_is_revoked_before_dispatch_makes_no_attempt()
     );
     assert!(matches!(
         refused,
-        Err(GpuJobError::Order(AttemptRefused::Blocked(Blocker::GrantNotLive)))
+        Err(GpuJobError::Order(AttemptRefused::Blocked(
+            Blocker::GrantNotLive
+        )))
     ));
     assert!(rig.jobs().is_empty());
     // The loop cancels the order with the reason and asks for no attempt.
@@ -622,7 +641,10 @@ fn a_cancel_and_a_dispatch_of_one_order_never_both_win() {
     let host = TestHost::new(&rig, vec![machine(free, None)]);
     host.before.set(BeforeStart::CancelFirst);
     rig.vault.work_order_pass(&host, NOW).expect("pass");
-    assert!(matches!(rig.stored(&first).state, OrderState::Cancelled { .. }));
+    assert!(matches!(
+        rig.stored(&first).state,
+        OrderState::Cancelled { .. }
+    ));
     assert!(rig.stored(&first).attempts.is_empty());
     assert!(rig.jobs().is_empty());
     assert!(rig.gpu.state().creates.is_empty());
@@ -631,7 +653,10 @@ fn a_cancel_and_a_dispatch_of_one_order_never_both_win() {
     let second = rig.order(&digest, 0, WaitRule::Open);
     host.before.set(BeforeStart::Start);
     rig.vault.work_order_pass(&host, NOW).expect("pass");
-    assert!(matches!(rig.stored(&second).state, OrderState::Running { attempt: 1 }));
+    assert!(matches!(
+        rig.stored(&second).state,
+        OrderState::Running { attempt: 1 }
+    ));
     rig.vault
         .cancel_work_order(&second.id, Some(rig.owner_actor), NOW)
         .expect("cancel write")
@@ -666,7 +691,9 @@ fn a_written_off_attempt_is_not_followed_by_another_unless_someone_orders_again(
             why: GiveUpWhy::WrittenOff
         }
     );
-    rig.vault.work_order_pass(&host, NOW + 60_000).expect("pass");
+    rig.vault
+        .work_order_pass(&host, NOW + 60_000)
+        .expect("pass");
     assert_eq!(host.asked.get(), 1);
     assert_eq!(rig.stored(&order).attempts.len(), 1);
 }
@@ -731,9 +758,11 @@ fn a_blocker_that_no_wait_can_clear_refuses_the_order_at_once() {
     let digest = rig.workload(0, &[a, b]);
     let order = rig.order(&digest, 0, WaitRule::Open);
     let mut without = machine(a, None);
-    without.templates.clear();
+    without.templates = Some(Vec::new());
     let mut changed = machine(b, None);
-    changed.templates[0].digest = "2".repeat(64);
+    if let Some(templates) = changed.templates.as_mut() {
+        templates[0].digest = "2".repeat(64);
+    }
     let host = TestHost::new(&rig, vec![without, changed]);
     rig.vault.work_order_pass(&host, NOW).expect("pass");
     match rig.stored(&order).state {
@@ -771,7 +800,9 @@ fn a_retry_is_a_new_key_and_the_old_key_is_never_sent_again() {
         [(None, Blocker::RetryNotBefore { .. })]
     ));
     // After the backoff, attempt 2 under its own job id.
-    rig.vault.work_order_pass(&host, NOW + 32_000).expect("pass");
+    rig.vault
+        .work_order_pass(&host, NOW + 32_000)
+        .expect("pass");
     let stored = rig.stored(&order);
     assert_eq!(stored.attempts.len(), 2);
     let (first, second) = (stored.attempts[0].job, stored.attempts[1].job);
@@ -815,7 +846,10 @@ fn a_job_without_a_device_claim_is_not_placed_on_a_device_machine_when_another_f
     let (with_gpus, without) = (EntityId::now(), EntityId::now());
     let digest = rig.workload(0, &[with_gpus, without]);
     let order = rig.order(&digest, 0, WaitRule::Open);
-    let device_machine = machine(with_gpus, Some(vec![gpu("GPU-a", None), gpu("GPU-b", None)]));
+    let device_machine = machine(
+        with_gpus,
+        Some(vec![gpu("GPU-a", None), gpu("GPU-b", None)]),
+    );
     let cpu_machine = machine(without, Some(Vec::new()));
     let (picked, decision) = place(&order, &[&device_machine, &cpu_machine]).expect("a pick");
     assert_eq!(picked.machine, without);
@@ -848,7 +882,10 @@ fn a_machine_outside_its_window_or_inside_its_kept_headroom_is_not_a_candidate()
             opens_ms: Some(opens)
         }]
     );
-    assert_eq!(fit(&order, template, &tight_facts), vec![Blocker::KeepHeadroom]);
+    assert_eq!(
+        fit(&order, template, &tight_facts),
+        vec![Blocker::KeepHeadroom]
+    );
     let host = TestHost::new(&rig, vec![closed_facts, tight_facts, machine(open, None)]);
     rig.vault.work_order_pass(&host, NOW).expect("pass");
     let stored = rig.stored(&order);
@@ -865,7 +902,13 @@ fn two_runnable_orders_of_two_lines_start_in_the_order_rule_and_neither_spends_t
         owner: Some(rig.owner_actor),
     };
     // The background order is older; the interactive one still goes first.
-    let background = rig.order_by(&digest, 1, WaitRule::Open, owner.clone(), OrderClass::Background);
+    let background = rig.order_by(
+        &digest,
+        1,
+        WaitRule::Open,
+        owner.clone(),
+        OrderClass::Background,
+    );
     let interactive = rig.order_by(&digest, 1, WaitRule::Open, owner, OrderClass::Interactive);
     let host = TestHost::new(&rig, vec![machine(one, Some(vec![gpu("GPU-a", None)]))]);
     rig.vault.work_order_pass(&host, NOW).expect("pass");
@@ -884,4 +927,161 @@ fn two_runnable_orders_of_two_lines_start_in_the_order_rule_and_neither_spends_t
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].id, first.attempts[0].job);
     assert_eq!(host.admissions.borrow().len(), 1);
+}
+
+/// A decision of `slot` by a test rule that picks `pick`.
+fn test_decision(
+    slot: oneiron::work_order::SlotName,
+    pick: String,
+) -> oneiron::work_order::SlotDecision {
+    oneiron::work_order::SlotDecision {
+        slot,
+        options: vec![pick.clone()],
+        pick,
+        by: oneiron::work_order::DecidedBy::Rule {
+            name: "test".to_owned(),
+        },
+        why: String::new(),
+    }
+}
+
+/// The first attempt of `order` on `machine`, as a pass would ask for it.
+fn first_attempt<'a>(
+    order: &'a WorkOrder,
+    machine: EntityId,
+    pin: &'a WorkloadPin,
+) -> AttemptToMake<'a> {
+    AttemptToMake {
+        order,
+        n: 1,
+        job: attempt_job_id(&order.id, 1).expect("job id"),
+        machine,
+        devices: Vec::new(),
+        pin,
+        ranked: test_decision(oneiron::work_order::SlotName::Rank, order.id.to_hex()),
+        placed: test_decision(oneiron::work_order::SlotName::Place, machine.to_hex()),
+    }
+}
+
+#[test]
+fn an_order_whose_wait_ran_out_makes_no_attempt_even_where_it_fits() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Until { ms: NOW });
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    // The start's own write refuses an attempt at or after the order's time.
+    let pin = pin(0);
+    let started = host.start(&first_attempt(&order, free, &pin));
+    assert!(matches!(
+        started,
+        Err(GpuJobError::Order(AttemptRefused::OrderChanged))
+    ));
+    assert!(rig.jobs().is_empty());
+    // The loop gives it up on a machine that fits, and asks for no attempt.
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    assert_eq!(host.asked.get(), 0);
+    assert!(rig.jobs().is_empty());
+    assert!(matches!(
+        rig.stored(&order).state,
+        OrderState::GivenUp {
+            why: GiveUpWhy::WaitEnded { .. }
+        }
+    ));
+}
+
+#[test]
+fn a_refusal_that_reports_no_templates_waits_instead_of_refusing_the_order() {
+    let rig = rig();
+    let paused = EntityId::now();
+    let digest = rig.workload(0, &[paused]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    // A node's refusal carries no template inventory: the template is not known missing.
+    let mut facts = machine(paused, None);
+    facts.templates = None;
+    facts.refusal = Some(Blocker::Paused {
+        why: "maintenance".to_owned(),
+    });
+    let host = TestHost::new(&rig, vec![facts]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    assert_eq!(host.asked.get(), 0);
+    let stored = rig.stored(&order);
+    let reasons = blockers(&stored);
+    let codes: Vec<&str> = reasons.iter().map(|(_, blocker)| blocker.code()).collect();
+    assert_eq!(codes, vec!["paused"]);
+}
+
+#[test]
+fn an_order_whose_limits_allow_no_scope_of_its_pin_is_never_placed() {
+    let rig = rig();
+    let free = EntityId::now();
+    // The pin runs in the host scope; the order allows containers only.
+    let digest = rig.workload(0, &[free]);
+    let mut order = rig.order(&digest, 0, WaitRule::Open);
+    order.limits.scopes = vec!["container".to_owned()];
+    put_order(&rig.vault, &order);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    let pin = pin(0);
+    let started = host.start(&first_attempt(&order, free, &pin));
+    match started {
+        Err(GpuJobError::Order(AttemptRefused::Blocked(blocker))) => {
+            assert_eq!(blocker.code(), "scope_not_allowed");
+        }
+        other => panic!("the start's write let a host pin past a container-only order: {other:?}"),
+    }
+    assert!(rig.jobs().is_empty());
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    assert_eq!(host.asked.get(), 0);
+    match rig.stored(&order).state {
+        OrderState::GivenUp {
+            why: GiveUpWhy::NeverFits { blocked },
+        } => {
+            let codes: Vec<&str> = blocked.iter().map(|on| on.blocker.code()).collect();
+            assert_eq!(codes, vec!["scope_not_allowed"]);
+        }
+        other => panic!("the order is not refused at once: {other:?}"),
+    }
+}
+
+#[test]
+fn a_cancel_of_an_order_whose_attempt_is_unconfirmed_waits_for_that_attempts_end() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    // The attempt's job row is gone from this issuer's view: the order shows open, on an
+    // unconfirmed attempt.
+    let job = EntityId::now();
+    let mut lost = rig.stored(&order);
+    lost.attempts[0].job = job;
+    put_order(&rig.vault, &lost);
+    rig.vault.work_order_pass(&host, NOW + 1_000).expect("pass");
+    assert!(matches!(rig.stored(&order).state, OrderState::Open { .. }));
+    // The cancel is recorded and the order stays where the attempt's end can still land.
+    rig.vault
+        .cancel_work_order(&order.id, Some(rig.owner_actor), NOW + 2_000)
+        .expect("cancel write")
+        .expect("cancel");
+    let cancelled = rig.stored(&order);
+    assert!(!cancelled.state.is_terminal());
+    assert!(cancelled.cancel.is_some());
+    rig.vault.work_order_pass(&host, NOW + 3_000).expect("pass");
+    assert_eq!(host.asked.get(), 1);
+    // The owner's write-off of that attempt lands on the order, which ends cancelled.
+    let wrote = rig
+        .vault
+        .with_write_txn_grouped(|txn| {
+            rig.vault
+                .order_attempt_written_off_in_txn(txn, &job, NOW + 4_000)
+        })
+        .expect("write-off");
+    assert!(wrote);
+    let ended = rig.stored(&order);
+    assert!(matches!(ended.state, OrderState::Cancelled { .. }));
+    assert_eq!(
+        ended.attempts[0].end.as_ref().map(|end| end.kind),
+        Some(EndKind::WrittenOff)
+    );
 }

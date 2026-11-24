@@ -58,7 +58,7 @@ pub fn facts_of_answer(machine: EntityId, answer: Option<&JobAnswer>, now_ms: u6
         refusal: None,
         paused: None,
         drained: None,
-        templates: Vec::new(),
+        templates: None,
         room: Room::default(),
         devices: None,
         window: None,
@@ -84,14 +84,15 @@ fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
     facts.enabled = node.enabled;
     facts.paused.clone_from(&node.paused);
     facts.drained.clone_from(&node.drained);
-    facts.templates = node
-        .templates
-        .iter()
-        .map(|template| TemplateFact {
-            name: template.name.clone(),
-            digest: template.digest.clone(),
-        })
-        .collect();
+    facts.templates = Some(
+        node.templates
+            .iter()
+            .map(|template| TemplateFact {
+                name: template.name.clone(),
+                digest: template.digest.clone(),
+            })
+            .collect(),
+    );
     let free = node
         .disk_free_bytes
         .saturating_sub(node.disk_reserved_bytes)
@@ -251,8 +252,8 @@ impl OrderHost for ServerOrderHost<'_> {
             .gpu_job(job)
             .map_err(|error| error.to_string())?
             .ok_or("the attempt's job is not on this issuer")?;
-        let (_, connector) =
-            offer_with_backend(self.server, &job_row.offer.name).map_err(|error| error.to_string())?;
+        let (_, connector) = offer_with_backend(self.server, &job_row.offer.name)
+            .map_err(|error| error.to_string())?;
         self.server
             .vault
             .cancel_gpu_job(

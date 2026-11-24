@@ -4,17 +4,14 @@
 //! mesh grant check the workload tests prove), and an order is written as the order door
 //! writes it for the caller it admitted.
 
-use crate::job_workload::{
-    JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadPin,
-};
+use crate::job_workload::{JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadPin};
 use crate::side_table::{self, Named, SideTable};
 use crate::work_order::WorkOrder;
 use crate::{EntityId, Vault};
 
 const JOB_WORKLOADS: SideTable<[u8; 32], JobWorkload, Named> =
     SideTable::new(&side_table::JOB_WORKLOAD);
-const WORK_ORDERS: SideTable<EntityId, WorkOrder, Named> =
-    SideTable::new(&side_table::WORK_ORDER);
+const WORK_ORDERS: SideTable<EntityId, WorkOrder, Named> = SideTable::new(&side_table::WORK_ORDER);
 
 /// Pins `pin` and writes the owner `owner`'s approval of it on `machines` for `starters`
 /// until `expires_at_ms`. Returns the workload digest.

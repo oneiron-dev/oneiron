@@ -2,9 +2,10 @@
 //! `.list` and `.cancel`, and the read `vault.machines.place`. Each proves `verb_grant_caller`:
 //! the owner under his own proof, or an agent whose own live Grant from a live owner lists the
 //! verb, judged again in the door's own read or write. The charge decides what else is checked,
-//! when an attempt is made: an offer's allowance, in the built start. `.get` and `.list` show
-//! an agent its own orders and the owner every order; `.cancel` follows the built rule for jobs:
-//! the owner cancels any order, an agent only one it made.
+//! when an attempt is made: an offer's allowance, in the built start, so an agent's offer order
+//! is made under the Grant that starts its GPU jobs. `.get` and `.list` show an agent its own
+//! orders, with no other order's id, and the owner every order; `.cancel` follows the built
+//! rule for jobs: the owner cancels any order, an agent only one it made.
 use crate::consent::AuthenticatedOwner;
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{
@@ -14,7 +15,7 @@ use crate::memory::{
 use crate::{EntityId, Vault};
 
 use super::blocker::Blocker;
-use super::fit::MachineFacts;
+use super::fit::{MachineFacts, scope_allowed};
 use super::pass::OrderFit;
 use super::place::place;
 use super::record::{
@@ -59,7 +60,10 @@ fn bad_request(message: &str) -> MemoryError {
 }
 
 fn is_lower_hex_64(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Who ordered, as the door admitted the caller.
@@ -74,6 +78,19 @@ fn ordered_by(memory: &Memory<'_>, caller: VerbGrantCaller) -> OrderedBy {
             grant,
         },
     }
+}
+
+/// `order` as `caller` reads it. An attempt's RANK decision lists the orders that were
+/// runnable in its pass, which may be other callers' orders: an agent sees only its own order's
+/// id among the options, and the owner sees the whole decision.
+fn order_seen_by(caller: VerbGrantCaller, mut order: WorkOrder) -> WorkOrder {
+    if matches!(caller, VerbGrantCaller::Agent { .. }) {
+        let own = order.id.to_hex();
+        for attempt in &mut order.attempts {
+            attempt.ranked.options.retain(|option| *option == own);
+        }
+    }
+    order
 }
 
 /// Whether `caller` may read or cancel `order`: the owner any, an agent one it made.
@@ -112,7 +129,9 @@ pub fn order_work_as(
     now_ms: u64,
 ) -> MemoryResult<WorkOrderView> {
     if !is_lower_hex_64(&input.workload) {
-        return Err(bad_request("workload is a digest of 64 lower-hex characters"));
+        return Err(bad_request(
+            "workload is a digest of 64 lower-hex characters",
+        ));
     }
     match &input.charge {
         OrderCharge::Offer { name } if name.is_empty() => {
@@ -159,7 +178,7 @@ pub fn order_work_as(
                 if let Some(order) = earlier {
                     if same_request(&order, input, &by) {
                         return Ok(Ok(WorkOrderView {
-                            order,
+                            order: order_seen_by(caller, order),
                             replayed: true,
                         }));
                     }
@@ -202,6 +221,23 @@ pub fn order_work_as(
                 updated_at_ms: now_ms,
                 revision: 0,
             };
+            if !scope_allowed(&order.limits, &row.pin.scope) {
+                return Ok(Err(order_refusal(
+                    MEMORY_CODE_INVALID_STATE,
+                    "the order's limits allow no scope of the kind the workload's pin runs in",
+                    &[Blocker::scope_not_allowed(&row.pin.scope)],
+                )));
+            }
+            // The loop and the start ask the same question at each attempt.
+            if vault.order_authority_in_txn(txn, &order)?.is_none() {
+                return Ok(Err(order_refusal(
+                    MEMORY_CODE_FORBIDDEN,
+                    "an agent's offer order is made under the Grant that starts its GPU jobs: \
+                     the Grant that admits it to vault.jobs.order must be the one that admits it \
+                     to vault.gpu.jobs.start, with the owner's per-job maximum beside it",
+                    &[Blocker::GrantNotLive],
+                )));
+            }
             WORK_ORDERS.put(&vault.store, txn, &order.id, &order)?;
             Ok(Ok(WorkOrderView {
                 order,
@@ -227,7 +263,7 @@ pub fn work_order_get_as(
     let caller = memory.verb_grant_caller_admits_in_txn(&txn, owner, ORDERS_GET_VERB)?;
     match WORK_ORDERS.get(&vault.store, &txn, &input.order)? {
         Some(order) if reaches(caller, &order) => Ok(WorkOrderView {
-            order,
+            order: order_seen_by(caller, order),
             replayed: false,
         }),
         _ => Err(MemoryError::new(
@@ -257,6 +293,7 @@ pub fn work_order_list_as(
         .map(|(_, order)| order)
         .filter(|order| reaches(caller, order))
         .filter(|order| !input.open_only || !order.state.is_terminal())
+        .map(|order| order_seen_by(caller, order))
         .collect();
     orders.sort_by(|a, b| b.ordered_at_ms.cmp(&a.ordered_at_ms).then(b.id.cmp(&a.id)));
     Ok(WorkOrderList { orders })
@@ -319,7 +356,7 @@ pub fn work_order_cancel_as(
                 }
             };
             Ok(Ok(WorkOrderView {
-                order,
+                order: order_seen_by(caller, order),
                 replayed: false,
             }))
         })
@@ -340,7 +377,9 @@ pub fn machines_place_as(
     now_ms: u64,
 ) -> MemoryResult<MachinesPlaceView> {
     if !is_lower_hex_64(&input.workload) {
-        return Err(bad_request("workload is a digest of 64 lower-hex characters"));
+        return Err(bad_request(
+            "workload is a digest of 64 lower-hex characters",
+        ));
     }
     let vault: &Vault = memory.vault();
     let caller = {
@@ -410,6 +449,12 @@ pub fn machines_place_as(
             blocked,
             decision: None,
         }),
+        // The read's order waits openly, so its wait never runs out.
+        OrderFit::WaitEnded => Ok(MachinesPlaceView {
+            candidates: Vec::new(),
+            blocked: Vec::new(),
+            decision: None,
+        }),
         OrderFit::AuthorityEnded => Err(order_refusal(
             MEMORY_CODE_FORBIDDEN,
             "the caller's authority to order this work has ended",
@@ -419,10 +464,12 @@ pub fn machines_place_as(
 }
 
 impl Vault {
-    /// The cancel's write, in `txn`: an open order is cancelled at once and is never dispatched;
-    /// a running order keeps its state with the cancel recorded, the loop stops its attempt,
-    /// and the order is cancelled when that attempt's end is in. The write bumps the order's
-    /// revision, so a dispatch that read the order before refuses in its own write.
+    /// The cancel's write, in `txn`: an open order with no attempt in flight is cancelled at
+    /// once and is never dispatched. An order whose last attempt has no end, running or open
+    /// while that attempt is unconfirmed, keeps its state with the cancel recorded: the loop
+    /// stops the attempt it can reach, and the order is cancelled when the attempt's end (its
+    /// receipt or the owner's write-off) is in. The write bumps the order's revision, so a
+    /// dispatch that read the order before refuses in its own write.
     ///
     /// # Errors
     ///
@@ -437,13 +484,14 @@ impl Vault {
         let Some(mut order) = WORK_ORDERS.get(&self.store, txn, id)? else {
             return Ok(Err(CancelRefused::NotFound));
         };
+        let attempt_in_flight = order.last_attempt().is_some_and(|last| last.end.is_none());
         match order.state {
-            OrderState::Open { .. } => {
+            OrderState::Open { .. } if !attempt_in_flight => {
                 order.state = OrderState::Cancelled {
                     why: CancelWhy::Asked { by },
                 };
             }
-            OrderState::Running { .. } => {
+            OrderState::Open { .. } | OrderState::Running { .. } => {
                 if order.cancel.is_none() {
                     order.cancel = Some(CancelAsk { at_ms: now_ms, by });
                 }

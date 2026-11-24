@@ -73,7 +73,10 @@ pub(crate) async fn vault_jobs_order(
             return Ok(view);
         }
         locked_order_pass(&shared, now)?;
-        let order = server.vault.work_order(&view.order.id)?.unwrap_or(view.order);
+        let order = server
+            .vault
+            .work_order(&view.order.id)?
+            .unwrap_or(view.order);
         if let OrderState::GivenUp { why } = &order.state
             && let Some(refusal) = refusal_of_end(why)
         {
@@ -118,11 +121,16 @@ pub(crate) async fn vault_jobs_orders_cancel(
     auth: &CoreAuth,
     input: WorkOrderRef,
 ) -> Listed<WorkOrderView> {
-    verb_grant_door(server, auth, ORDERS_CANCEL_VERB, move |server, memory, owner| {
-        let view = work_order_cancel_as(memory, owner, &input, now_ms())?;
-        server.gpu_jobs.orders().wake();
-        Ok(view)
-    })
+    verb_grant_door(
+        server,
+        auth,
+        ORDERS_CANCEL_VERB,
+        move |server, memory, owner| {
+            let view = work_order_cancel_as(memory, owner, &input, now_ms())?;
+            server.gpu_jobs.orders().wake();
+            Ok(view)
+        },
+    )
     .await
 }
 
@@ -134,9 +142,12 @@ pub(crate) async fn vault_machines_place(
     input: MachinesPlaceRequest,
 ) -> Listed<MachinesPlaceView> {
     let shared = Arc::clone(server);
-    verb_grant_door(server, auth, MACHINES_PLACE_VERB, move |server, memory, owner| {
-        place_now(&shared, server, memory, owner, &input)
-    })
+    verb_grant_door(
+        server,
+        auth,
+        MACHINES_PLACE_VERB,
+        move |server, memory, owner| place_now(&shared, server, memory, owner, &input),
+    )
     .await
 }
 

@@ -18,7 +18,9 @@ use crate::job_workload::{TEMPLATE_CHANGED, TEMPLATE_NOT_OFFERED, WorkloadStartR
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum Blocker {
     // Authority: cleared by the owner or the requester.
-    /// The requester's Grant no longer names the verb, or the owner who ordered is gone.
+    /// The Grant the requester ordered under no longer stands for it and the verb (for an
+    /// offer's charge, also as the Grant that starts its GPU jobs), or the owner who ordered is
+    /// gone.
     GrantNotLive,
     WorkloadUnknown,
     WorkloadNotApproved,
@@ -76,6 +78,10 @@ pub enum Blocker {
     NoMachine,
     NoScope {
         missing: Vec<String>,
+    },
+    /// The order's hard limit allows no scope of the kind its workload's pin runs in.
+    ScopeNotAllowed {
+        scope: String,
     },
     NoDevice {
         kind: String,
@@ -188,6 +194,7 @@ impl Blocker {
             Self::MachineMissing => "machine_missing",
             Self::NoMachine => "no_machine",
             Self::NoScope { .. } => "no_scope",
+            Self::ScopeNotAllowed { .. } => "scope_not_allowed",
             Self::NoDevice { .. } => "no_device",
             Self::AboveCeiling { .. } => "above_ceiling",
             Self::TemplateNotOffered => TEMPLATE_NOT_OFFERED,
@@ -241,6 +248,7 @@ impl Blocker {
             Self::MachineMissing
             | Self::NoMachine
             | Self::NoScope { .. }
+            | Self::ScopeNotAllowed { .. }
             | Self::NoDevice { .. }
             | Self::AboveCeiling { .. }
             | Self::TemplateNotOffered

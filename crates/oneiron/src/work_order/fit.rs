@@ -11,10 +11,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
-use crate::job_workload::{DeviceKind, ResourceRequest, Sharing};
+use crate::job_workload::{DeviceKind, ResourceRequest, ScopeKind, Sharing};
 
 use super::blocker::Blocker;
-use super::record::WorkOrder;
+use super::record::{OrderLimits, WorkOrder};
 
 /// What a machine reported, as the issuer last read it. Every room fact is optional: absent
 /// means not reported, and an absent fact blocks nothing.
@@ -32,8 +32,10 @@ pub struct MachineFacts {
     pub paused: Option<String>,
     #[serde(default)]
     pub drained: Option<String>,
+    /// The templates the machine holds; `None` while it has not reported them (a refusal
+    /// carries no inventory), which limits nothing.
     #[serde(default)]
-    pub templates: Vec<TemplateFact>,
+    pub templates: Option<Vec<TemplateFact>>,
     #[serde(default)]
     pub room: Room,
     /// The devices the machine offers jobs, when it reports them.
@@ -70,7 +72,9 @@ pub struct TemplateFact {
 }
 
 /// A machine's room for jobs: totals and what is free, each when reported.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct Room {
     #[serde(default)]
     pub threads_total: Option<u32>,
@@ -150,6 +154,36 @@ pub fn device_kind_name(kind: &DeviceKind) -> &str {
     }
 }
 
+/// A scope kind by the name an order's `limits.scopes` lists it under.
+#[must_use]
+pub const fn scope_kind_name(scope: &ScopeKind) -> &'static str {
+    match scope {
+        ScopeKind::Host => "host",
+        ScopeKind::Container { .. } => "container",
+    }
+}
+
+/// Whether the order's hard limit `limits` lets its pin run in `scope`: an empty list allows
+/// every kind. The loop reads it at each fit and the start in its own write; no wait clears it.
+#[must_use]
+pub fn scope_allowed(limits: &OrderLimits, scope: &ScopeKind) -> bool {
+    limits.scopes.is_empty()
+        || limits
+            .scopes
+            .iter()
+            .any(|allowed| allowed == scope_kind_name(scope))
+}
+
+impl Blocker {
+    /// The blocker of a pin whose scope kind `scope` the order's limit does not allow.
+    #[must_use]
+    pub fn scope_not_allowed(scope: &ScopeKind) -> Self {
+        Self::ScopeNotAllowed {
+            scope: scope_kind_name(scope).to_owned(),
+        }
+    }
+}
+
 impl Needs {
     /// What `request` asks of one machine. The one reader of the request's shape. A claim of
     /// count 0 takes no device (R2's pin shape check refuses it before an order is made).
@@ -189,18 +223,15 @@ impl MachineFacts {
         need: &'a DeviceNeed,
         allowed: &'a [String],
     ) -> impl Iterator<Item = &'a DeviceFact> + 'a {
-        self.devices
-            .iter()
-            .flatten()
-            .filter(move |device| {
-                device.kind == need.kind
-                    && device.memory_mib >= need.memory_mib
-                    && need
-                        .features
-                        .iter()
-                        .all(|feature| device.features.contains(feature))
-                    && (allowed.is_empty() || allowed.contains(&device.id))
-            })
+        self.devices.iter().flatten().filter(move |device| {
+            device.kind == need.kind
+                && device.memory_mib >= need.memory_mib
+                && need
+                    .features
+                    .iter()
+                    .all(|feature| device.features.contains(feature))
+                && (allowed.is_empty() || allowed.contains(&device.id))
+        })
     }
 
     /// The free devices this machine would give `needs`, smallest memory first, so the least
@@ -228,11 +259,15 @@ impl MachineFacts {
     /// holds it, so the next order of the pass is fitted against what is left.
     pub fn hold(&mut self, needs: &Needs, devices: &[String], until_ms: u64) {
         let room = &mut self.room;
-        room.threads_free = room.threads_free.map(|free| free.saturating_sub(needs.threads));
+        room.threads_free = room
+            .threads_free
+            .map(|free| free.saturating_sub(needs.threads));
         room.memory_free_mib = room
             .memory_free_mib
             .map(|free| free.saturating_sub(needs.memory_mib));
-        room.disk_free_mib = room.disk_free_mib.map(|free| free.saturating_sub(needs.disk_mib));
+        room.disk_free_mib = room
+            .disk_free_mib
+            .map(|free| free.saturating_sub(needs.disk_mib));
         for device in self.devices.iter_mut().flatten() {
             if devices.contains(&device.id) {
                 device.busy_until_ms = Some(until_ms);
@@ -296,10 +331,12 @@ pub fn fit(order: &WorkOrder, template: (&str, &str), machine: &MachineFacts) ->
         });
     }
     let (name, digest) = template;
-    match machine.templates.iter().find(|held| held.name == name) {
-        None => blocked.push(Blocker::TemplateNotOffered),
-        Some(held) if held.digest != digest => blocked.push(Blocker::TemplateChanged),
-        Some(_) => {}
+    if let Some(templates) = &machine.templates {
+        match templates.iter().find(|held| held.name == name) {
+            None => blocked.push(Blocker::TemplateNotOffered),
+            Some(held) if held.digest != digest => blocked.push(Blocker::TemplateChanged),
+            Some(_) => {}
+        }
     }
     let needs = Needs::of(&order.request);
     fit_devices(order, machine, &needs, &mut blocked);
@@ -307,7 +344,12 @@ pub fn fit(order: &WorkOrder, template: (&str, &str), machine: &MachineFacts) ->
     blocked
 }
 
-fn fit_devices(order: &WorkOrder, machine: &MachineFacts, needs: &Needs, blocked: &mut Vec<Blocker>) {
+fn fit_devices(
+    order: &WorkOrder,
+    machine: &MachineFacts,
+    needs: &Needs,
+    blocked: &mut Vec<Blocker>,
+) {
     if machine.devices.is_none() {
         return;
     }
@@ -343,7 +385,10 @@ fn fit_devices(order: &WorkOrder, machine: &MachineFacts, needs: &Needs, blocked
 
 fn fit_room(machine: &MachineFacts, needs: &Needs, blocked: &mut Vec<Blocker>) {
     let room = &machine.room;
-    if room.threads_total.is_some_and(|total| total < needs.threads) {
+    if room
+        .threads_total
+        .is_some_and(|total| total < needs.threads)
+    {
         blocked.push(Blocker::AboveCeiling {
             resource: "threads".to_owned(),
         });
@@ -352,11 +397,17 @@ fn fit_room(machine: &MachineFacts, needs: &Needs, blocked: &mut Vec<Blocker>) {
             free_at_ms: room.frees_at_ms,
         });
     }
-    if room.memory_total_mib.is_some_and(|total| total < needs.memory_mib) {
+    if room
+        .memory_total_mib
+        .is_some_and(|total| total < needs.memory_mib)
+    {
         blocked.push(Blocker::AboveCeiling {
             resource: "memory".to_owned(),
         });
-    } else if room.memory_free_mib.is_some_and(|free| free < needs.memory_mib) {
+    } else if room
+        .memory_free_mib
+        .is_some_and(|free| free < needs.memory_mib)
+    {
         blocked.push(Blocker::MemoryBusy {
             free_at_ms: room.frees_at_ms,
         });

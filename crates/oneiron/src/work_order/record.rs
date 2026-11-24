@@ -1,6 +1,7 @@
 //! The stored work order (pass 34, section 1.1; Engine ruling EM-18 = A): one `WORK_ORDER` row
 //! per order, above the built job. An open order holds no device and no money; an attempt is a
 //! job the built start makes, under a job id the order and the attempt number fix.
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::gpu_line::ClaimKey;
@@ -12,9 +13,6 @@ use super::blocker::BlockedOn;
 
 pub(super) const WORK_ORDERS: SideTable<EntityId, WorkOrder, Named> =
     SideTable::new(&side_table::WORK_ORDER);
-
-/// The domain the job id of an order's attempt is derived under.
-const ATTEMPT_JOB_CONTEXT: &str = "oneiron/work-order/v1";
 
 /// One work order: somebody wants a pinned workload run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -144,7 +142,17 @@ pub struct OrderWishes {
 
 /// Who goes first among runnable orders (4.5).
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
@@ -179,11 +187,17 @@ pub enum OrderState {
         earliest_ms: Option<u64>,
     },
     /// Attempt `attempt` (1-based) is live.
-    Running { attempt: u16 },
+    Running {
+        attempt: u16,
+    },
     /// The last attempt ended in success.
     Done,
-    GivenUp { why: GiveUpWhy },
-    Cancelled { why: CancelWhy },
+    GivenUp {
+        why: GiveUpWhy,
+    },
+    Cancelled {
+        why: CancelWhy,
+    },
 }
 
 impl OrderState {
@@ -260,7 +274,9 @@ pub struct AttemptEnd {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EndKind {
     /// The process exited by itself with this code; 0 is success.
-    Exited { code: i32 },
+    Exited {
+        code: i32,
+    },
     /// Never started, zero seconds: a refusal, a busy device, a node restart before launch.
     NeverStarted,
     /// The start window passed with nothing accepted.
@@ -326,7 +342,13 @@ pub const SLOT_WHY_MAX: usize = 500;
 impl SlotDecision {
     /// The rule `rule`'s pick among `options`, with its reason cut to [`SLOT_WHY_MAX`] bytes.
     #[must_use]
-    pub fn by_rule(slot: SlotName, rule: &str, options: Vec<String>, pick: String, why: &str) -> Self {
+    pub fn by_rule(
+        slot: SlotName,
+        rule: &str,
+        options: Vec<String>,
+        pick: String,
+        why: &str,
+    ) -> Self {
         let mut why = why.to_owned();
         if why.len() > SLOT_WHY_MAX {
             let mut cut = SLOT_WHY_MAX;
@@ -347,24 +369,31 @@ impl SlotDecision {
     }
 }
 
-/// The job id of attempt `n` of order `order`: the id16 of BLAKE3 under
-/// `"oneiron/work-order/v1"` over the order id and `n` (1.1). A second pass of the loop after a
-/// crash makes the same id, so the built start finds its own job and never makes another.
+/// The job id of attempt `n` of order `order`: the id16 of the fingerprint
+/// `purposes::work_order::ATTEMPT_JOB_ID` over the order id and `n` (1.1). A second pass of the
+/// loop after a crash makes the same id, so the built start finds its own job and never makes
+/// another.
 ///
 /// # Errors
 ///
 /// [`crate::Error::InvariantViolation`] in the one-in-2^128 case the digest is a reserved id.
 pub fn attempt_job_id(order: &EntityId, n: u16) -> crate::Result<EntityId> {
-    let mut hasher = blake3::Hasher::new_derive_key(ATTEMPT_JOB_CONTEXT);
-    hasher.update(order.as_bytes());
-    hasher.update(&n.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    EntityId::from_bytes(bytes)
+    let digest = Fingerprint::of_parts(
+        purposes::work_order::ATTEMPT_JOB_ID,
+        &[&order.as_bytes()[..], &n.to_be_bytes()[..]],
+    );
+    EntityId::from_bytes(digest.prefix::<16>())
         .map_err(|_| crate::Error::InvariantViolation("a work order attempt id is reserved"))
 }
 
 impl WorkOrder {
+    /// Whether the order's `Until` time has passed at `now_ms`: no attempt is made after it,
+    /// whether or not the order fits then.
+    #[must_use]
+    pub fn wait_ran_out(&self, now_ms: u64) -> bool {
+        matches!(self.wait, WaitRule::Until { ms } if now_ms >= ms)
+    }
+
     /// The attempt numbered `n`.
     #[must_use]
     pub fn attempt(&self, n: u16) -> Option<&OrderAttempt> {
@@ -390,7 +419,9 @@ impl WorkOrder {
     #[must_use]
     pub fn claim_key(&self, n: u16) -> Option<ClaimKey> {
         match &self.charge {
-            OrderCharge::Line { arm, rung } => Some(ClaimKey::of(*arm, *rung, &self.id.to_hex(), n)),
+            OrderCharge::Line { arm, rung } => {
+                Some(ClaimKey::of(*arm, *rung, &self.id.to_hex(), n))
+            }
             OrderCharge::Offer { .. } => None,
         }
     }

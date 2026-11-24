@@ -11,26 +11,26 @@
 //! ```
 //!
 //! The issuer's host supplies what the engine cannot store: the machines' reported facts and
-//! the built quote and start ([`OrderHost`]).
+//! the built quote and start ([`OrderHost`]). What the start checks in its own write is
+//! [`super::start_check`].
 use std::collections::BTreeMap;
 
-use crate::authority::principal_standing_or_lapse_in_txn;
 use crate::gpu_job::{GpuEndReason, GpuJobEnd, GpuJobState};
 use crate::job_dispatch::DispatchClose;
 use crate::job_workload::{JobWorkload, WorkloadPin, WorkloadStartAsk};
-use crate::{EdgeActorClass, EntityId, Vault};
+use crate::{EntityId, Vault};
 
 use super::after::{AfterPick, after_rule};
 use super::blocker::{BlockedOn, Blocker};
-use super::fit::{MachineFacts, MachineReach, Needs, fit};
+use super::fit::{MachineFacts, MachineReach, Needs, fit, scope_allowed};
 use super::place::place;
 use super::rank::{rank, rank_decision};
 use super::record::{
-    AttemptEnd, CancelWhy, EndKind, GiveUpWhy, OrderAttempt, OrderLimits, OrderState, OrderedBy,
-    SlotDecision, WORK_ORDERS, WaitRule, WorkOrder, attempt_job_id,
+    AttemptEnd, CancelWhy, EndKind, GiveUpWhy, OrderAttempt, OrderLimits, OrderState, SlotDecision,
+    WORK_ORDERS, WaitRule, WorkOrder, attempt_job_id,
 };
 use super::setting_keys::retry_policy_in_txn;
-use super::ORDER_VERB;
+use super::start_check::OrderAttemptRef;
 
 /// The node refusals inside a launch that clear by trying again (4.7): a busy device, an
 /// authority fold that had not caught up. Any other launch refusal is a changed pin.
@@ -103,49 +103,6 @@ pub enum AttemptOutcome {
     Refused(Vec<Blocker>),
 }
 
-/// The attempt a start makes for an order, as the built start carries it into its write.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderAttemptRef {
-    pub order: EntityId,
-    /// The order's revision when the loop read it.
-    pub revision: u64,
-    pub n: u16,
-    pub machine: Option<EntityId>,
-    pub ranked: SlotDecision,
-    pub placed: SlotDecision,
-}
-
-/// Who the start acts for, as the order's authority stands in the start's own read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderStarter {
-    /// The owner's recorded act: he showed the maximum when he ordered, at `ordered_at_ms`.
-    Owner { owner: EntityId, ordered_at_ms: u64 },
-    /// An agent under `grant`, the Grant that named `vault.jobs.order`; the start checks the
-    /// maximum the owner set beside it.
-    Agent { actor: EntityId, grant: EntityId },
-}
-
-/// Why the start's write made no attempt for an order.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AttemptRefused {
-    /// The order is no longer as the loop read it.
-    #[error("the work order changed since the loop read it")]
-    OrderChanged,
-    #[error("the work order is blocked: {0}")]
-    Blocked(Blocker),
-}
-
-impl AttemptRefused {
-    /// The reason code a caller branches on.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::OrderChanged => "order_changed",
-            Self::Blocked(blocker) => blocker.code(),
-        }
-    }
-}
-
 /// How the job of an attempt stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AttemptStanding {
@@ -178,6 +135,8 @@ pub(super) enum OrderFit {
     Blocked(Vec<BlockedOn>),
     /// The authority it runs under ended: it is cancelled.
     AuthorityEnded,
+    /// Its `Until` time passed before an attempt was made: it gives up, runnable or not.
+    WaitEnded,
 }
 
 /// The end an attempt's typed terminal names (4.7).
@@ -216,7 +175,7 @@ fn unknown_machine(machine: EntityId) -> MachineFacts {
         refusal: None,
         paused: None,
         drained: None,
-        templates: Vec::new(),
+        templates: None,
         room: super::fit::Room::default(),
         devices: None,
         window: None,
@@ -278,188 +237,6 @@ impl Vault {
         let mut next = order.clone();
         change(&mut next);
         self.with_write_txn_grouped(|txn| self.put_work_order_in_txn(txn, &mut next, now_ms))
-    }
-
-    /// Whether the authority `ordered_by` names still lives in `txn`: the owner is not gone,
-    /// or the agent still holds a live Grant from a live owner naming `vault.jobs.order`.
-    fn order_authority_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        order: &WorkOrder,
-    ) -> crate::Result<Option<OrderStarter>> {
-        match order.ordered_by {
-            OrderedBy::Owner { owner: None } | OrderedBy::Agent { actor: None, .. } => Ok(None),
-            OrderedBy::Owner { owner: Some(owner) } => {
-                if crate::ports::owner_gone_in_txn(&self.store, txn, &owner)? {
-                    return Ok(None);
-                }
-                Ok(Some(OrderStarter::Owner {
-                    owner,
-                    ordered_at_ms: order.ordered_at_ms,
-                }))
-            }
-            OrderedBy::Agent {
-                actor: Some(actor),
-                class,
-                grant,
-            } => {
-                if !matches!(class, EdgeActorClass::Agent | EdgeActorClass::System) {
-                    return Ok(None);
-                }
-                let standing =
-                    principal_standing_or_lapse_in_txn(self, txn, actor, class, ORDER_VERB)?;
-                Ok(standing
-                    .ok()
-                    .and_then(|standing| standing.grant)
-                    .map(|_| OrderStarter::Agent { actor, grant }))
-            }
-        }
-    }
-
-    /// The start's check of an order's attempt, read in `txn` (the built start's own read
-    /// and its write, hunk H1): the order is as the loop read it, the attempt is its next one
-    /// under the fixed job id `job`, the requester's authority lives, and the workload's
-    /// approval covers the machine. Nothing is held when it says no.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors. Every refusal is the inner `Err`.
-    pub fn order_starter_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        attempt: &OrderAttemptRef,
-        job: &EntityId,
-        now_ms: u64,
-    ) -> crate::Result<Result<OrderStarter, AttemptRefused>> {
-        let Some(order) = WORK_ORDERS.get(&self.store, txn, &attempt.order)? else {
-            return Ok(Err(AttemptRefused::OrderChanged));
-        };
-        let in_turn = order.revision == attempt.revision
-            && matches!(order.state, OrderState::Open { .. })
-            && order.cancel.is_none()
-            && attempt.n == order.next_attempt_number()
-            && order.last_attempt().is_none_or(|last| last.end.is_some())
-            && attempt_job_id(&order.id, attempt.n)? == *job;
-        if !in_turn {
-            return Ok(Err(AttemptRefused::OrderChanged));
-        }
-        let Some(starter) = self.order_authority_in_txn(txn, &order)? else {
-            return Ok(Err(AttemptRefused::Blocked(Blocker::GrantNotLive)));
-        };
-        if let (Some(machine), Some(workload_starter)) = (attempt.machine, order.ordered_by.starter())
-        {
-            let ask = WorkloadStartAsk {
-                workload: &order.workload,
-                machine,
-                maximum_secs: order.request.maximum_secs,
-                starter: workload_starter,
-            };
-            if let Err(refused) = self.workload_approval_in_txn(txn, &ask, now_ms)? {
-                return Ok(Err(AttemptRefused::Blocked(Blocker::from(&refused))));
-            }
-        }
-        Ok(Ok(starter))
-    }
-
-    /// [`Self::order_starter_in_txn`] in the start's write, then the order's attempt entry
-    /// beside the job row the start writes: the order runs attempt `attempt.n` under `job`.
-    /// One write, so a crash leaves one attempt or none, and a cancel that wrote first makes
-    /// this refuse.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors. Every refusal is the inner `Err`, and writes nothing.
-    pub fn record_order_attempt_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        attempt: &OrderAttemptRef,
-        job: &EntityId,
-        now_ms: u64,
-    ) -> crate::Result<Result<OrderStarter, AttemptRefused>> {
-        let starter = match self.order_starter_in_txn(txn, attempt, job, now_ms)? {
-            Ok(starter) => starter,
-            Err(refused) => return Ok(Err(refused)),
-        };
-        let Some(mut order) = WORK_ORDERS.get(&self.store, txn, &attempt.order)? else {
-            return Ok(Err(AttemptRefused::OrderChanged));
-        };
-        order.attempts.push(OrderAttempt {
-            n: attempt.n,
-            job: *job,
-            machine: attempt.machine,
-            ranked: attempt.ranked.clone(),
-            placed: attempt.placed.clone(),
-            made_at_ms: now_ms,
-            end: None,
-        });
-        order.state = OrderState::Running { attempt: attempt.n };
-        order.retry_not_before_ms = None;
-        if !self.put_work_order_in_txn(txn, &mut order, now_ms)? {
-            return Ok(Err(AttemptRefused::OrderChanged));
-        }
-        Ok(Ok(starter))
-    }
-
-    /// Whether the loop may stop `job` for the order `attempt` names, read in `txn` (the built
-    /// cancel's own write, hunk H1): a cancel reached the order and `job` is its live attempt.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn order_stop_reaches_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        attempt: &OrderAttemptRef,
-        job: &EntityId,
-    ) -> crate::Result<bool> {
-        Ok(WORK_ORDERS
-            .get(&self.store, txn, &attempt.order)?
-            .is_some_and(|order| {
-                order.cancel.is_some()
-                    && order
-                        .last_attempt()
-                        .is_some_and(|last| last.job == *job && last.end.is_none())
-            }))
-    }
-
-    /// The owner wrote off `job`, an order's attempt whose end the machine cannot give (pass
-    /// 33, door 10): the attempt ends `WrittenOff` and the order gives up. Nothing starts again
-    /// unless somebody orders again. The write-off door calls this in its own write; a job no
-    /// order made is left alone.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn order_attempt_written_off_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        job: &EntityId,
-        now_ms: u64,
-    ) -> crate::Result<bool> {
-        let found = WORK_ORDERS
-            .scan(&self.store, txn)?
-            .into_iter()
-            .find(|(_, order)| {
-                order
-                    .last_attempt()
-                    .is_some_and(|last| last.job == *job && last.end.is_none())
-            });
-        let Some((_, mut order)) = found else {
-            return Ok(false);
-        };
-        let policy = retry_policy_in_txn(self, txn)?;
-        let (_, decision) = after_rule(&order, EndKind::WrittenOff, &policy, now_ms);
-        if let Some(last) = order.attempts.last_mut() {
-            last.end = Some(AttemptEnd {
-                kind: EndKind::WrittenOff,
-                at_ms: now_ms,
-                after: decision,
-            });
-        }
-        order.state = OrderState::GivenUp {
-            why: GiveUpWhy::WrittenOff,
-        };
-        self.put_work_order_in_txn(txn, &mut order, now_ms)
     }
 
     /// How the job of `attempt` stands.
@@ -570,10 +347,8 @@ impl Vault {
         machines: &[MachineFacts],
         now_ms: u64,
     ) -> crate::Result<OrderFit> {
-        let txn = self.store.env.read_txn()?;
-        if self.order_authority_in_txn(&txn, order)?.is_none() {
-            return Ok(OrderFit::AuthorityEnded);
-        }
+        // An attempt with no end keeps the order as it is, whatever else ended: its receipt or
+        // the owner's write-off still lands on the order (I3).
         if let Some(last) = order.last_attempt()
             && last.end.is_none()
         {
@@ -583,6 +358,13 @@ impl Vault {
                     key: last.job.to_hex(),
                 },
             }]));
+        }
+        let txn = self.store.env.read_txn()?;
+        if self.order_authority_in_txn(&txn, order)?.is_none() {
+            return Ok(OrderFit::AuthorityEnded);
+        }
+        if order.wait_ran_out(now_ms) {
+            return Ok(OrderFit::WaitEnded);
         }
         if let Some(at_ms) = order.retry_not_before_ms
             && at_ms > now_ms
@@ -601,6 +383,13 @@ impl Vault {
         let Some(starter) = order.ordered_by.starter() else {
             return Ok(OrderFit::AuthorityEnded);
         };
+        // The order's hard limit on scope kinds: no machine can run a pin outside it.
+        if !scope_allowed(&order.limits, &row.pin.scope) {
+            return Ok(OrderFit::Blocked(vec![BlockedOn {
+                machine: None,
+                blocker: Blocker::scope_not_allowed(&row.pin.scope),
+            }]));
+        }
         let allowed = allowed_machines(&order.limits, &row);
         if allowed.is_empty() {
             let blocker = if row.approval.is_none() {
@@ -631,11 +420,7 @@ impl Vault {
             let mut reasons = Vec::new();
             match self.workload_approval_in_txn(&txn, &ask, now_ms)? {
                 Ok(pin) => {
-                    reasons.extend(fit(
-                        order,
-                        (&pin.template, &pin.template_digest),
-                        &facts,
-                    ));
+                    reasons.extend(fit(order, (&pin.template, &pin.template_digest), &facts));
                     if reasons.is_empty() {
                         candidates.push(machine);
                         runnable_pin = Some(pin);
@@ -781,6 +566,9 @@ impl Vault {
                 OrderFit::AuthorityEnded => {
                     self.block_order(order, Vec::new(), true, now_ms, &mut report)?;
                 }
+                OrderFit::WaitEnded => {
+                    self.block_order(order, Vec::new(), false, now_ms, &mut report)?;
+                }
             }
         }
         let ranked = rank(&runnable, &running);
@@ -797,6 +585,10 @@ impl Vault {
                     self.block_order(order, Vec::new(), true, now_ms, &mut report)?;
                     continue;
                 }
+                OrderFit::WaitEnded => {
+                    self.block_order(order, Vec::new(), false, now_ms, &mut report)?;
+                    continue;
+                }
             };
             let candidate_facts: Vec<&MachineFacts> = machines
                 .iter()
@@ -808,7 +600,8 @@ impl Vault {
                 .filter(|machine| !machines.iter().any(|facts| facts.machine == **machine))
                 .map(|machine| unknown_machine(*machine))
                 .collect();
-            let all: Vec<&MachineFacts> = candidate_facts.into_iter().chain(unknown.iter()).collect();
+            let all: Vec<&MachineFacts> =
+                candidate_facts.into_iter().chain(unknown.iter()).collect();
             let Some((chosen, placed)) = place(order, &all) else {
                 continue;
             };
@@ -833,9 +626,8 @@ impl Vault {
                     report.made.push((order.id, n, machine));
                     if let Some(facts) = machines.iter_mut().find(|facts| facts.machine == machine)
                     {
-                        let until = now_ms.saturating_add(
-                            order.request.maximum_secs.saturating_mul(1_000),
-                        );
+                        let until =
+                            now_ms.saturating_add(order.request.maximum_secs.saturating_mul(1_000));
                         facts.hold(&needs, &devices, until);
                     }
                 }
@@ -914,11 +706,7 @@ fn closing_state(
             },
         });
     }
-    let wait_ended = match order.wait {
-        WaitRule::No => true,
-        WaitRule::Until { ms } => now_ms >= ms,
-        WaitRule::Open => false,
-    };
+    let wait_ended = order.wait == WaitRule::No || order.wait_ran_out(now_ms);
     // An unconfirmed attempt is never a reason to give up: it waits for its end (I3).
     let unconfirmed = blocked
         .iter()
