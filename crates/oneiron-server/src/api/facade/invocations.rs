@@ -112,6 +112,14 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
+            // The row's own door proof is judged again for the waiter, as
+            // a fresh call meets it before its hooks (review-10395 P1): a
+            // saved reply never goes to a caller that door refuses now,
+            // such as an agent whose Grant naming the verb was revoked
+            // after the first call ran.
+            if let Err(refusal) = row_door_admits(&server, &auth, verb) {
+                return FacadeApiError::from(refusal).into_response();
+            }
             // The owner's own whole-vault export is released again as its
             // owner's, once the waiter's fresh proof admits him as that
             // owner now (owner ruling 1-EXPORT = B).
