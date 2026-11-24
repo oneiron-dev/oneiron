@@ -10,8 +10,6 @@ licensed under [Apache-2.0](./LICENSE).
 
 Oneironは、AIエージェント向けのRust製オープンソース・メモリエンジンです。エージェントは記憶をローカルに保存し、別のセッションで取り出せます。保存した記憶には、情報の出どころが記録されます。現在はリリース前で、ビルド済みのバイナリもまだ公開していないため、ソースからビルドして使います。テスト環境では、ビルドに2時間以上かかり、メモリを最大で約37 GiB使いました。下のクイックスタートは、x86-64のLinuxで動作を確認しています。
 
-<!-- (check) Japanese wording: is メモリエンジン clear (not RAM), and is 情報の出どころ the right word for provenance? -->
-
 [Agent setup](./docs/agent-setup.md) · [Status and contributing](#status-and-contributing) · [Storage layout](#storage-layout) · [HTTP API](./oneiron.skills.md)
 
 ## Agent quickstart
