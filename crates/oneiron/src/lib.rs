@@ -224,6 +224,7 @@ pub mod feedback;
 pub mod gpu_job;
 pub mod gpu_line;
 pub mod ingest;
+pub mod job_history;
 pub mod linkedin_connector;
 pub mod linkedin_lead_preload;
 pub mod outbound;

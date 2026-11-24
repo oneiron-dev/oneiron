@@ -69,9 +69,17 @@ every quote refuses and no worker starts.
 - **Status and list** (`vault.gpu.jobs.status`, `.list`): run time and spend
   against the maximum, the signals sent, the warning, the checkpoint and the
   stop.
+- **History** (`vault.jobs.history`): every ended attempt (one chunk of a
+  job), newest end first, with its machine, device, reserved, occupied,
+  billed, charged and returned seconds and its end cause, and totals by
+  machine, line, family and line period. It reads the job rows and the lane
+  economy's unit claims and keeps nothing of its own: a period's charged total
+  is what the line's own fold charges that period. A lost machine's occupancy
+  shows as unknown, never as zero.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
-verb. Start and cancel admit the owner, or an agent whose own Grant names the
+verb. History admits the same callers; an agent sees only the attempts it
+started or reserved, and totals over those. Start and cancel admit the owner, or an agent whose own Grant names the
 verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 
 - a start passes only when the owner set a maximum beside the Grant that

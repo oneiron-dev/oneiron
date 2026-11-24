@@ -494,6 +494,20 @@ pub fn claims_at_rung_in_txn(
         .collect())
 }
 
+/// Every claim of the vault, over every arm, rung, unit and attempt, in key order: the rows a
+/// read over the whole line's history (`vault.jobs.history`) projects.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn claims_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<UnitClaim>> {
+    Ok(CLAIMS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, claim)| claim)
+        .collect())
+}
+
 /// Takes the erased actor out of every claim (the side table's actor scrub): as reserver or
 /// as the owner who wrote it off, its id is forgotten and the rest of the record stays. The
 /// scrub bumps the claim's revision.
