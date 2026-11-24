@@ -549,7 +549,6 @@ impl GpuJobConnector for VaultMachineConnector {
         let ask = DispatchAsk {
             starter,
             workload: &spec.image,
-            issuer: self.parts.issuer,
             node: inputs.machine,
             maximum_secs: spec.maximum_secs,
         };
@@ -774,7 +773,6 @@ fn dispatch_ask<'a>(
     DispatchAsk {
         starter,
         workload: &row.workload,
-        issuer: submit.issuer,
         node: row.machine,
         maximum_secs: submit.maximum_secs,
     }

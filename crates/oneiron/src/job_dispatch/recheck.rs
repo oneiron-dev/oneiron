@@ -4,8 +4,9 @@
 //! - The live recheck, before the first reserve and before every reserve or submit sent again:
 //!   the starter still stands (the owner is a live owner; the agent's Grant still names
 //!   `vault.gpu.jobs.start` and keeps its allowance), the workload's approval holds through
-//!   row R2's check, and both machines hold live grants for both job protocols. None of these
-//!   may end within the horizon (the submit window plus the staging limit).
+//!   row R2's check, and this vault grants the node both job protocols. None of these may end
+//!   within the horizon (the submit window plus the staging limit). The node's own vault holds
+//!   the issuer's grant, and the node checks that one at each request.
 //! - The revoke check, at every step: a revoke of the starter's Grant, the approval or the
 //!   workload stops the job; an expiry does not, since the job started within its terms
 //!   (EN-4, recommended option A).
@@ -18,15 +19,13 @@ use crate::job_workload::{
 use crate::policy_model::is_live_vault_owner_in_txn;
 use crate::{EdgeActorClass, EntityId, Vault};
 
-/// The dispatch a recheck is about: who started it, the workload, the two machines and the
-/// chunk's maximum.
+/// The dispatch a recheck is about: who started it, the workload, the node and the chunk's
+/// maximum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DispatchAsk<'a> {
     pub starter: WorkloadStarter,
     /// The workload digest: the quote's `image`.
     pub workload: &'a str,
-    /// This install's MACHINE: the issuer.
-    pub issuer: EntityId,
     /// The machine that runs the chunk: the quote's `inputs.machine`.
     pub node: EntityId,
     pub maximum_secs: u64,
@@ -48,12 +47,12 @@ pub enum DispatchRefusal {
     /// Row R2's approval check refused.
     #[error(transparent)]
     Workload(WorkloadStartRefusal),
-    /// A machine holds no live grant for a job protocol.
-    #[error("a machine holds no live grant for a job protocol")]
-    MachineGrantEnded { machine: EntityId },
-    /// A machine's grant for a job protocol ends within the horizon.
-    #[error("a machine's job protocol grant ends before the dispatch window closes")]
-    MachineGrantExpiring { machine: EntityId },
+    /// This vault grants the node no live grant for a job protocol.
+    #[error("the machine holds no live grant for a job protocol")]
+    MachineGrantEnded,
+    /// The node's grant for a job protocol ends within the horizon.
+    #[error("the machine's job protocol grant ends before the dispatch window closes")]
+    MachineGrantExpiring,
 }
 
 impl DispatchRefusal {
@@ -65,8 +64,8 @@ impl DispatchRefusal {
             Self::StarterExpiring => "starter_expiring",
             Self::AllowanceRemoved => "allowance_removed",
             Self::Workload(refusal) => refusal.code(),
-            Self::MachineGrantEnded { .. } => "machine_grant_ended",
-            Self::MachineGrantExpiring { .. } => "machine_grant_expiring",
+            Self::MachineGrantEnded => "machine_grant_ended",
+            Self::MachineGrantExpiring => "machine_grant_expiring",
         }
     }
 }
@@ -161,15 +160,13 @@ impl Vault {
                 Ok(pin) => pin,
                 Err(refused) => return Ok(Err(DispatchRefusal::Workload(refused))),
             };
-            for machine in [ask.issuer, ask.node] {
-                for alpn in [JOB_ALPN, JOB_STATUS_ALPN] {
-                    match self.mesh_grant_live_until_in_txn(&txn, machine, alpn)? {
-                        None => return Ok(Err(DispatchRefusal::MachineGrantEnded { machine })),
-                        Some(at) if at <= until_secs => {
-                            return Ok(Err(DispatchRefusal::MachineGrantExpiring { machine }));
-                        }
-                        Some(_) => {}
+            for alpn in [JOB_ALPN, JOB_STATUS_ALPN] {
+                match self.mesh_grant_live_until_in_txn(&txn, ask.node, alpn)? {
+                    None => return Ok(Err(DispatchRefusal::MachineGrantEnded)),
+                    Some(at) if at <= until_secs => {
+                        return Ok(Err(DispatchRefusal::MachineGrantExpiring));
                     }
+                    Some(_) => {}
                 }
             }
             pin
