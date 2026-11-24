@@ -25,10 +25,12 @@ use crate::receipt::task_type_ref::TypeRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod admit;
 mod read;
 pub(crate) mod tables;
 mod wire;
 
+pub use admit::{ARMS_ADMIT_VERB, ArmAdmitRequest, ArmContractAsk, arm_admit_as};
 pub use read::{ARMS_GET_VERB, ARMS_LIST_VERB, arm_get_as, arm_list_as};
 pub use wire::{ArmList, ArmListRequest, ArmRef, ArmView};
 
