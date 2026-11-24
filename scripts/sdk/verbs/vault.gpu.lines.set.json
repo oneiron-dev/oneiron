@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.lines.set",
+  "description": "Sets the GPU line of one lane project: its wallet, periods, pinned share, floors, rung caps and allowance rules. It takes effect at the next period, its hosts at once. The vault owner's own act.",
+  "input": "crate::gpu_line::GpuLineSetRequest",
+  "output": "crate::gpu_line::GpuLineView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.set\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}
