@@ -5,11 +5,13 @@
 //! ([`slots`]), a read that picks a machine's GPU before a quote
 //! ([`selection`]), the job protocols' messages ([`wire`]), the node's own
 //! configuration and templates ([`node_settings`]), the node's gate,
-//! controls and authority tick ([`node`]), and its two mesh services
-//! ([`service`]).
+//! controls and authority tick ([`node`]), its two mesh services
+//! ([`service`]), and the node's keys with their journal ([`jobs`]).
 
 pub mod availability;
 pub mod device;
+#[cfg(unix)]
+pub mod jobs;
 pub mod node;
 pub mod node_settings;
 pub mod selection;

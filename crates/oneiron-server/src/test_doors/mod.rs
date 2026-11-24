@@ -63,6 +63,8 @@ pub mod memory_timeline_projection;
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
 pub mod native_board;
+#[cfg(unix)]
+pub mod node_jobs;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
