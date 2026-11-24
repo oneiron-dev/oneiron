@@ -103,8 +103,9 @@ pub struct SpawnIntentRequest {
 
 /// Where the owner's planned spawn stands: its phase, the type the engine
 /// placed, the refusal it kept and, once launched, what launched. A
-/// projection of the selected plan, not the whole plan receipt: the asked
-/// need, the alternatives weighed, the care, effort and rung resolved and
+/// projection of the selected plan, not the whole plan receipt: the knobs
+/// asked are shown beside what was resolved, while the asked need and
+/// notes, the alternatives weighed, the care, effort and rung resolved and
 /// the per-agent cost evidence stay in the receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnIntentReply {
