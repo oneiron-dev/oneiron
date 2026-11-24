@@ -94,6 +94,7 @@ fn same_request(order: &WorkOrder, input: &WorkOrderRequest, by: &OrderedBy) -> 
         && order.class == input.class
         && order.wait == input.wait
         && order.retry_on == input.retry_on
+        && order.result == input.result
 }
 
 /// `vault.jobs.order`: `memory`'s caller orders one pinned workload at `now_ms`. The order is
@@ -195,6 +196,7 @@ pub fn order_work_as(
                 cancel: None,
                 retry_not_before_ms: None,
                 attempts: Vec::new(),
+                result: input.result,
                 intent_key: input.intent_key.clone(),
                 ordered_at_ms: now_ms,
                 updated_at_ms: now_ms,
@@ -374,6 +376,7 @@ pub fn machines_place_as(
         cancel: None,
         retry_not_before_ms: None,
         attempts: Vec::new(),
+        result: None,
         intent_key: None,
         ordered_at_ms: now_ms,
         updated_at_ms: now_ms,

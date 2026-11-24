@@ -180,6 +180,12 @@ impl OrderHost for ServerOrderHost<'_> {
         if let [device] = attempt.devices.as_slice() {
             inputs["device_id"] = serde_json::Value::String(device.clone());
         }
+        if let Some(result) = attempt.order.result {
+            inputs["result"] = serde_json::json!({
+                "artifact": result.artifact.to_hex(),
+                "task": result.task.to_hex(),
+            });
+        }
         let request = GpuJobRequest {
             job_type: attempt.pin.template.clone(),
             image: attempt.order.workload.clone(),

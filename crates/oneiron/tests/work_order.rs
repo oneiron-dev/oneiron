@@ -267,6 +267,7 @@ impl Rig {
             cancel: None,
             retry_not_before_ms: None,
             attempts: Vec::new(),
+            result: None,
             intent_key: None,
             ordered_at_ms: NOW,
             updated_at_ms: NOW,

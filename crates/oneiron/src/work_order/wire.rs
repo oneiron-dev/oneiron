@@ -6,7 +6,8 @@ use crate::EntityId;
 
 use super::blocker::BlockedOn;
 use super::record::{
-    EndKind, OrderCharge, OrderClass, OrderLimits, OrderWishes, SlotDecision, WaitRule, WorkOrder,
+    EndKind, OrderCharge, OrderClass, OrderLimits, OrderWishes, ResultBinding, SlotDecision,
+    WaitRule, WorkOrder,
 };
 
 /// The wait rule an order takes when the request names none: it waits.
@@ -35,6 +36,9 @@ pub struct WorkOrderRequest {
     /// retried otherwise.
     #[serde(default)]
     pub retry_on: Vec<EndKind>,
+    /// Where a successful attempt's returnable outputs land; none fetches nothing.
+    #[serde(default)]
+    pub result: Option<ResultBinding>,
     /// The same key with the same input answers the order it made, `replayed: true`.
     #[serde(default)]
     pub intent_key: Option<String>,

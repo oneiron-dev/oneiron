@@ -37,8 +37,8 @@ pub use place::{PLACE_RULE, place};
 pub use rank::{RANK_RULE, rank};
 pub use record::{
     AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy, OrderAttempt, OrderCharge,
-    OrderClass, OrderLimits, OrderState, OrderWishes, OrderedBy, SlotDecision, SlotName, WaitRule,
-    WorkOrder, attempt_job_id,
+    OrderClass, OrderLimits, OrderState, OrderWishes, OrderedBy, ResultBinding, SlotDecision,
+    SlotName, WaitRule, WorkOrder, attempt_job_id,
 };
 pub use wire::{
     MachinesPlaceRequest, MachinesPlaceView, WorkOrderList, WorkOrderListRequest, WorkOrderRef,

@@ -49,6 +49,10 @@ pub struct WorkOrder {
     /// Every attempt, in order; attempt `n` is `attempts[n - 1]`.
     #[serde(default)]
     pub attempts: Vec<OrderAttempt>,
+    /// Where the attempt's returnable outputs land, passed into each quote it makes (Engine
+    /// ruling R4-RESULT-BINDING = A); none fetches nothing.
+    #[serde(default)]
+    pub result: Option<ResultBinding>,
     /// The caller's idempotency key: the same key with the same input answers this order.
     #[serde(default)]
     pub intent_key: Option<String>,
@@ -56,6 +60,15 @@ pub struct WorkOrder {
     pub updated_at_ms: u64,
     /// Every write compares and bumps it.
     pub revision: u64,
+}
+
+/// The artifact a successful attempt's returnable outputs land in as its next version,
+/// pending Keep, through the starter's lane, and the task it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResultBinding {
+    pub artifact: EntityId,
+    pub task: EntityId,
 }
 
 /// Who ordered, as the loop checks it again at each attempt.
