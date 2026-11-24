@@ -305,3 +305,30 @@ fn the_terminal_is_written_once() {
         );
     }
 }
+
+#[test]
+fn a_write_off_repeated_after_its_writer_is_erased_is_still_a_replay() {
+    let write_off = UnitEndReport::WrittenOff { by: id(7) };
+    let mut done = ended(&claim(ClaimState::Started), &write_off);
+    // The erase's actor scrub forgets the writer and keeps the rest of the record.
+    let ClaimState::Ended(terminal) = &mut done.state else {
+        panic!("the claim ended");
+    };
+    terminal.end = UnitEnd::WrittenOff { by: None };
+
+    // The same report again writes nothing, so the erased id is never stored back.
+    assert_eq!(done.ended_by(&write_off, NOW + 5_000), Ok(None));
+    // A different end still meets the stored terminal.
+    let ClaimState::Ended(stored) = &done.state else {
+        panic!("the claim ended");
+    };
+    assert_eq!(
+        done.ended_by(
+            &machine_end(GpuJobEnd::Exited { code: 0 }, Some(10), 10),
+            NOW
+        ),
+        Err(UnitSettleRefused::EndedOtherwise {
+            stored: Box::new(stored.clone()),
+        })
+    );
+}
