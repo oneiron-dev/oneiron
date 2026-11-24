@@ -6,7 +6,8 @@
 //! ([`selection`]), the job protocols' messages ([`wire`]), the node's own
 //! configuration and templates ([`node_settings`]), the node's gate,
 //! controls and authority tick ([`node`]), its two mesh services
-//! ([`service`]), and the node's keys with their journal ([`jobs`]).
+//! ([`service`]), the node's keys with their journal ([`jobs`]), and the
+//! systemd job unit those keys run in on Linux (`scope_systemd`).
 
 pub mod availability;
 pub mod device;
@@ -14,6 +15,8 @@ pub mod device;
 pub mod jobs;
 pub mod node;
 pub mod node_settings;
+#[cfg(target_os = "linux")]
+pub mod scope_systemd;
 pub mod selection;
 #[cfg(feature = "mesh")]
 pub mod service;

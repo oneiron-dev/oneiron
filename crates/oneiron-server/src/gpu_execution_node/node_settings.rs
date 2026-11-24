@@ -57,6 +57,21 @@ pub const WRITE_MIB_PER_SEC_DEFAULT: u64 = 200;
 /// Default of a template's `max_gpus`.
 pub const MAX_GPUS_DEFAULT: u32 = 1;
 
+/// Default of `stop_grace_secs`: the job unit's stop grace (TERM, then KILL
+/// after it), inside each maximum (section 7.6).
+pub const STOP_GRACE_SECS_DEFAULT: u64 = 10;
+
+/// Default of `unit_start_timeout_secs`: the longest a job unit's start (the
+/// prepare step, the proofs from inside, the gate) may take.
+pub const UNIT_START_TIMEOUT_SECS_DEFAULT: u64 = 60;
+
+/// Default of `disk_check_secs`: how often the engine compares each running
+/// key's payload directory with its disk request (section 7.9).
+pub const DISK_CHECK_SECS_DEFAULT: u64 = 5;
+
+/// Default of a template's `tasks_max`: the job unit's task ceiling.
+pub const TASKS_MAX_DEFAULT: u64 = 4_096;
+
 /// The longest template name, in bytes.
 const TEMPLATE_NAME_MAX: usize = 64;
 
@@ -113,6 +128,18 @@ pub struct ExecutionNodeSettings {
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
+    #[serde(default = "stop_grace_secs_default")]
+    pub stop_grace_secs: u64,
+    #[serde(default = "unit_start_timeout_secs_default")]
+    pub unit_start_timeout_secs: u64,
+    #[serde(default = "disk_check_secs_default")]
+    pub disk_check_secs: u64,
+    /// The files of each device a job may lease, by the device's id: the
+    /// job unit's device policy opens these and no others. A card the NVIDIA
+    /// driver lists needs no entry (its node and the driver's control nodes
+    /// are found by its UUID).
+    #[serde(default)]
+    pub device_files: BTreeMap<String, Vec<PathBuf>>,
 }
 
 /// One `[execution_node.templates.<name>]`: what a pin of it may run, and
@@ -159,6 +186,15 @@ pub struct NodeTemplate {
     pub disk_gib: u64,
     #[serde(default = "max_gpus_default")]
     pub max_gpus: u32,
+    /// The bounds a job of this template requires its scope to prove from
+    /// inside (pass 34, section 2.2), by name; a required bound the machine
+    /// lacks refuses the job, any other is recorded unproven. Default: the
+    /// file wall and the closed network.
+    #[serde(default = "required_bounds_default")]
+    pub require: Vec<String>,
+    /// The job unit's task ceiling.
+    #[serde(default = "tasks_max_default")]
+    pub tasks_max: u64,
 }
 
 fn disk_reserve_gib_default() -> u64 {
@@ -182,6 +218,42 @@ fn write_mib_per_sec_default() -> u64 {
 fn max_gpus_default() -> u32 {
     MAX_GPUS_DEFAULT
 }
+fn stop_grace_secs_default() -> u64 {
+    STOP_GRACE_SECS_DEFAULT
+}
+fn unit_start_timeout_secs_default() -> u64 {
+    UNIT_START_TIMEOUT_SECS_DEFAULT
+}
+fn disk_check_secs_default() -> u64 {
+    DISK_CHECK_SECS_DEFAULT
+}
+fn tasks_max_default() -> u64 {
+    TASKS_MAX_DEFAULT
+}
+fn required_bounds_default() -> Vec<String> {
+    REQUIRED_BOUNDS_DEFAULT
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
+/// The bounds a template requires when it names none (pass 34, 2.2).
+pub const REQUIRED_BOUNDS_DEFAULT: [&str; 2] = ["file_wall", "network_closed"];
+
+/// Every bound a scope reports, by pass 34's names (section 2.2).
+pub const SCOPE_BOUND_NAMES: [&str; 10] = [
+    "tree_kill",
+    "cutoff_without_engine",
+    "emptiness",
+    "memory_cap",
+    "cpu_cap",
+    "file_wall",
+    "network_closed",
+    "device_closure",
+    "processes_hidden",
+    "write_rate_cap",
+];
+
 fn host_scope() -> Vec<ScopeClass> {
     vec![ScopeClass::Host]
 }
@@ -345,6 +417,16 @@ impl NodeTemplate {
         }
         if self.entries.is_empty() {
             return Err("entries must list at least one entry".to_owned());
+        }
+        if let Some(unknown) = self
+            .require
+            .iter()
+            .find(|name| !SCOPE_BOUND_NAMES.contains(&name.as_str()))
+        {
+            return Err(format!(
+                "require names {unknown:?}, which is not a bound (one of {})",
+                SCOPE_BOUND_NAMES.join(", ")
+            ));
         }
         for entry in &self.entries {
             if !relative_inside(entry) {

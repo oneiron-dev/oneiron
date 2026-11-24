@@ -244,22 +244,19 @@ fn boot_clock_ns() -> u64 {
 
 /// The unit's exact parameters, written by the engine into the key's control
 /// directory before the launch commit. The prepare step reads it as
-/// untrusted input: every value must fit the root-owned configuration.
+/// untrusted input: the pin passes the node file's own admission check
+/// (`ExecutionNodeSettings::admit_pin`) again, as root, and every other value
+/// must fit the root-owned configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchFile {
     /// The job key. Its [`JobKeyId`] must equal the unit's instance name.
     pub key: String,
-    pub template: String,
-    pub template_digest: String,
-    pub commit: String,
-    pub entry: String,
-    pub args: Vec<String>,
-    pub network: String,
+    /// The pin the key was reserved and submitted with.
+    pub pin: crate::gpu_execution_node::wire::WorkloadPin,
     /// The one device the unit may open, by the vendor's id.
     pub device_id: String,
-    pub memory_mib: u64,
-    pub disk_mib: u64,
+    /// The submit's maximum: at most the pin's.
     pub maximum_secs: u64,
     /// The boot and the boot-clock time of the launch commit; the prepare
     /// step arms the cutoff from them.

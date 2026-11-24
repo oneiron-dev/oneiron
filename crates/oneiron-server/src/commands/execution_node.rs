@@ -77,6 +77,14 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
             );
             reset_history(&node_file(&args.node))
         }
+        ExecutionNodeCommand::Install(args) => install(&args),
+        ExecutionNodeCommand::UnitName(args) => {
+            println!(
+                "{}",
+                crate::gpu_execution_node::jobs::JobKeyId::for_key(&args.key).unit_name()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -204,6 +212,14 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
             Err(error) => refusals.push(format!("{name} {}: {error}", dir.display())),
         }
     }
+    // The job unit (row R3b): each bound's strength, proved in a probe unit
+    // when run as root.
+    #[cfg(target_os = "linux")]
+    refusals.extend(crate::gpu_execution_node::scope_systemd::probe_unit::check_scope(
+        &file, &settings,
+    ));
+    #[cfg(not(target_os = "linux"))]
+    refusals.push("this platform has no job scope yet (pass 34: the systemd scope is Linux's)".to_owned());
     if refusals.is_empty() {
         println!(
             "would refuse a job: nothing here (the issuer's grants are checked at each request)"
@@ -245,4 +261,23 @@ fn reset_history(file: &Path) -> anyhow::Result<()> {
         aside.display()
     );
     Ok(())
+}
+
+/// `execution-node install` (row R3b): the job unit on Linux with systemd.
+#[cfg(target_os = "linux")]
+fn install(args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
+    use crate::gpu_execution_node::scope_systemd::install::{InstallRequest, install};
+    install(&InstallRequest {
+        node_file: node_file(&args.node),
+        engine_account: args.engine_account.clone(),
+        protect: args.protect.clone(),
+        dry_run: args.dry_run,
+    })
+    .map_err(|why| anyhow::anyhow!("install: {why}"))
+}
+
+/// `execution-node install` has a job unit on Linux with systemd only.
+#[cfg(not(target_os = "linux"))]
+fn install(_args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
+    anyhow::bail!("install: the job unit needs Linux with systemd (pass 33, EM-4)")
 }
