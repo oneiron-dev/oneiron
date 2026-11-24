@@ -13,6 +13,7 @@ pub use protocol::*;
 
 mod check;
 mod doors;
+mod pin_shape;
 mod record;
 pub(crate) mod setting_keys;
 pub(crate) mod tables;

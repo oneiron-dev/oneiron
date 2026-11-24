@@ -43,23 +43,23 @@ use serde_json::json;
 use crate::engine_stack::run_on_engine_stack;
 use crate::mesh_machines::Machines;
 
-pub const NOW_MS: u64 = 1_800_000_000_000;
-pub const FAR_EXPIRY_MS: u64 = 4_102_444_800_000;
-pub const MAXIMUM_SECS: u64 = 1_800;
-pub const TEMPLATE: &str = "fixture-workload";
-pub const TEMPLATE_DIGEST: &str =
+pub(crate) const NOW_MS: u64 = 1_800_000_000_000;
+pub(crate) const FAR_EXPIRY_MS: u64 = 4_102_444_800_000;
+pub(crate) const MAXIMUM_SECS: u64 = 1_800;
+pub(crate) const TEMPLATE: &str = "fixture-workload";
+pub(crate) const TEMPLATE_DIGEST: &str =
     "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
-pub const CONTRACT_SHA256: &str =
+pub(crate) const CONTRACT_SHA256: &str =
     "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0";
-pub const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+pub(crate) const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
-pub struct FakeSigners {
-    pub local: EntityId,
-    pub keys: Arc<BTreeMap<EntityId, SigningKey>>,
+pub(crate) struct FakeSigners {
+    pub(crate) local: EntityId,
+    pub(crate) keys: Arc<BTreeMap<EntityId, SigningKey>>,
 }
 
 impl FakeSigners {
-    pub fn new(issuer: EntityId, node: EntityId) -> Self {
+    pub(crate) fn new(issuer: EntityId, node: EntityId) -> Self {
         Self {
             local: issuer,
             keys: Arc::new(BTreeMap::from([
@@ -69,7 +69,7 @@ impl FakeSigners {
         }
     }
 
-    pub fn as_machine(&self, local: EntityId) -> Arc<dyn MachineSignatures> {
+    pub(crate) fn as_machine(&self, local: EntityId) -> Arc<dyn MachineSignatures> {
         Arc::new(Self {
             local,
             keys: Arc::clone(&self.keys),
@@ -111,10 +111,10 @@ impl MachineSignatures for FakeSigners {
     }
 }
 
-pub struct ScriptedClock(Mutex<BootMark>);
+pub(crate) struct ScriptedClock(Mutex<BootMark>);
 
 impl ScriptedClock {
-    pub fn new(now_ms: u64) -> Self {
+    pub(crate) fn new(now_ms: u64) -> Self {
         Self(Mutex::new(BootMark {
             boot_id: "boot-a".to_owned(),
             boot_ns: 1_000_000_000,
@@ -122,13 +122,13 @@ impl ScriptedClock {
         }))
     }
 
-    pub fn advance_secs(&self, secs: u64) {
+    pub(crate) fn advance_secs(&self, secs: u64) {
         let mut mark = self.0.lock().expect("scripted clock lock");
         mark.wall_ms += secs * 1_000;
         mark.boot_ns += secs * 1_000_000_000;
     }
 
-    pub fn reboot(&self, boot_id: &str) {
+    pub(crate) fn reboot(&self, boot_id: &str) {
         let mut mark = self.0.lock().expect("scripted clock lock");
         mark.boot_id = boot_id.to_owned();
         mark.boot_ns = 0;
@@ -146,32 +146,32 @@ impl IssuerClock for ScriptedClock {
 }
 
 #[derive(Clone, Debug)]
-pub struct Call {
-    pub node: EntityId,
-    pub kind: &'static str,
-    pub key: Option<String>,
-    pub bytes: Vec<u8>,
+pub(crate) struct Call {
+    pub(crate) node: EntityId,
+    pub(crate) kind: &'static str,
+    pub(crate) key: Option<String>,
+    pub(crate) bytes: Vec<u8>,
 }
 
 #[derive(Default)]
-pub struct NodeState {
-    pub journal: BTreeMap<String, SignedJobReceipt>,
-    pub generation: u64,
-    pub seq: u64,
-    pub calls: Vec<Call>,
-    pub unreachable: bool,
-    pub drop_next: Option<&'static str>,
-    pub refuse_submits: Option<String>,
+pub(crate) struct NodeState {
+    pub(crate) journal: BTreeMap<String, SignedJobReceipt>,
+    pub(crate) generation: u64,
+    pub(crate) seq: u64,
+    pub(crate) calls: Vec<Call>,
+    pub(crate) unreachable: bool,
+    pub(crate) drop_next: Option<&'static str>,
+    pub(crate) refuse_submits: Option<String>,
     /// The outputs the issuer may fetch, by key and name.
-    pub outputs: BTreeMap<(String, String), Vec<u8>>,
+    pub(crate) outputs: BTreeMap<(String, String), Vec<u8>>,
 }
 
 impl NodeState {
-    pub fn epoch(&self) -> String {
+    pub(crate) fn epoch(&self) -> String {
         format!("epoch-{}", self.generation)
     }
 
-    pub fn record(
+    pub(crate) fn record(
         &mut self,
         node: EntityId,
         kind: &'static str,
@@ -196,7 +196,7 @@ impl NodeState {
         Ok(())
     }
 
-    pub fn known_or_absent(&self, key: &str) -> JobStatusAnswer {
+    pub(crate) fn known_or_absent(&self, key: &str) -> JobStatusAnswer {
         match self.journal.get(key) {
             Some(receipt) => JobStatusAnswer::Known(receipt.clone()),
             None => JobStatusAnswer::Absent {
@@ -206,36 +206,36 @@ impl NodeState {
     }
 }
 
-pub struct ScriptedNode {
-    pub machine: EntityId,
-    pub issuer: EntityId,
-    pub signer: Arc<dyn MachineSignatures>,
-    pub clock: Arc<ScriptedClock>,
-    pub state: Mutex<NodeState>,
+pub(crate) struct ScriptedNode {
+    pub(crate) machine: EntityId,
+    pub(crate) issuer: EntityId,
+    pub(crate) signer: Arc<dyn MachineSignatures>,
+    pub(crate) clock: Arc<ScriptedClock>,
+    pub(crate) state: Mutex<NodeState>,
 }
 
 impl ScriptedNode {
-    pub fn state(&self) -> MutexGuard<'_, NodeState> {
+    pub(crate) fn state(&self) -> MutexGuard<'_, NodeState> {
         self.state.lock().expect("scripted node lock")
     }
 
-    pub fn calls(&self) -> Vec<Call> {
+    pub(crate) fn calls(&self) -> Vec<Call> {
         self.state().calls.clone()
     }
 
-    pub fn unreachable(&self, yes: bool) {
+    pub(crate) fn unreachable(&self, yes: bool) {
         self.state().unreachable = yes;
     }
 
-    pub fn drop_next(&self, kind: &'static str) {
+    pub(crate) fn drop_next(&self, kind: &'static str) {
         self.state().drop_next = Some(kind);
     }
 
-    pub fn refuse_submits(&self, reason: Option<&str>) {
+    pub(crate) fn refuse_submits(&self, reason: Option<&str>) {
         self.state().refuse_submits = reason.map(str::to_owned);
     }
 
-    pub fn forget_journal(&self) {
+    pub(crate) fn forget_journal(&self) {
         let mut node = self.state();
         node.journal.clear();
         node.generation += 1;
@@ -243,7 +243,11 @@ impl ScriptedNode {
     }
 
     /// Publishes `key`'s receipt as `change` leaves it: the node's next report of the key.
-    pub fn revise(&self, key: &str, change: impl FnOnce(&mut JobReceipt)) -> SignedJobReceipt {
+    pub(crate) fn revise(
+        &self,
+        key: &str,
+        change: impl FnOnce(&mut JobReceipt),
+    ) -> SignedJobReceipt {
         let mut node = self.state();
         let mut receipt = node
             .journal
@@ -256,26 +260,26 @@ impl ScriptedNode {
     }
 
     /// Publishes `receipt` for a key the node holds, whatever the issuer knows of it.
-    pub fn put(&self, receipt: JobReceipt) -> SignedJobReceipt {
+    pub(crate) fn put(&self, receipt: JobReceipt) -> SignedJobReceipt {
         let mut node = self.state();
         self.publish(&mut node, receipt)
     }
 
     /// Answers `signed` again for its key, as a node that went back in its journal would.
-    pub fn replay(&self, signed: SignedJobReceipt) {
+    pub(crate) fn replay(&self, signed: SignedJobReceipt) {
         self.state()
             .journal
             .insert(signed.receipt.key.clone(), signed);
     }
 
     /// Lets the issuer fetch `bytes` as `key`'s output `name`.
-    pub fn put_output(&self, key: &str, name: &str, bytes: &[u8]) {
+    pub(crate) fn put_output(&self, key: &str, name: &str, bytes: &[u8]) {
         self.state()
             .outputs
             .insert((key.to_owned(), name.to_owned()), bytes.to_vec());
     }
 
-    pub fn advance(
+    pub(crate) fn advance(
         &self,
         key: &str,
         state: JobState,
@@ -301,7 +305,7 @@ impl ScriptedNode {
         self.publish(&mut node, receipt);
     }
 
-    pub fn blank(&self, key: &str) -> JobReceipt {
+    pub(crate) fn blank(&self, key: &str) -> JobReceipt {
         JobReceipt {
             key: key.to_owned(),
             machine: self.machine,
@@ -327,7 +331,11 @@ impl ScriptedNode {
         }
     }
 
-    pub fn publish(&self, node: &mut NodeState, mut receipt: JobReceipt) -> SignedJobReceipt {
+    pub(crate) fn publish(
+        &self,
+        node: &mut NodeState,
+        mut receipt: JobReceipt,
+    ) -> SignedJobReceipt {
         node.seq += 1;
         receipt.seq = node.seq;
         receipt.epoch = node.epoch();
@@ -339,7 +347,7 @@ impl ScriptedNode {
         signed
     }
 
-    pub fn stop(&self, node: &mut NodeState, key: &str) -> SignedJobReceipt {
+    pub(crate) fn stop(&self, node: &mut NodeState, key: &str) -> SignedJobReceipt {
         let mut receipt = match node.journal.get(key) {
             Some(known) if matches!(known.receipt.state, JobState::Ending | JobState::Ended) => {
                 return known.clone();
@@ -488,26 +496,26 @@ impl JobNodeClient for ScriptedNode {
     }
 }
 
-pub struct Rig {
-    pub mesh: Machines,
-    pub issuer: EntityId,
-    pub owner: AuthenticatedOwner,
-    pub offer: GpuOffer,
-    pub permits: GpuJobPermits,
-    pub signers: FakeSigners,
-    pub clock: Arc<ScriptedClock>,
-    pub node: Arc<ScriptedNode>,
-    pub connector: VaultMachineConnector,
+pub(crate) struct Rig {
+    pub(crate) mesh: Machines,
+    pub(crate) issuer: EntityId,
+    pub(crate) owner: AuthenticatedOwner,
+    pub(crate) offer: GpuOffer,
+    pub(crate) permits: GpuJobPermits,
+    pub(crate) signers: FakeSigners,
+    pub(crate) clock: Arc<ScriptedClock>,
+    pub(crate) node: Arc<ScriptedNode>,
+    pub(crate) connector: VaultMachineConnector,
 }
 
-pub struct JobRun {
-    pub job: GpuJob,
-    pub admission: RunAdmission,
-    pub receipts: Arc<MemoryReceipts>,
+pub(crate) struct JobRun {
+    pub(crate) job: GpuJob,
+    pub(crate) admission: RunAdmission,
+    pub(crate) receipts: Arc<MemoryReceipts>,
 }
 
 impl JobRun {
-    pub fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &str {
         &self
             .job
             .chunk()
@@ -515,7 +523,7 @@ impl JobRun {
             .idempotency_key
     }
 
-    pub fn settled(&self) -> Vec<u64> {
+    pub(crate) fn settled(&self) -> Vec<u64> {
         self.receipts
             .rows()
             .into_iter()
@@ -527,7 +535,7 @@ impl JobRun {
     }
 }
 
-pub fn settings(issuer: EntityId) -> VaultMachineSettings {
+pub(crate) fn settings(issuer: EntityId) -> VaultMachineSettings {
     VaultMachineSettings {
         enabled: true,
         issuer: Some(issuer),
@@ -535,7 +543,7 @@ pub fn settings(issuer: EntityId) -> VaultMachineSettings {
     }
 }
 
-pub fn make_connector(
+pub(crate) fn make_connector(
     vault: &Arc<Vault>,
     issuer: EntityId,
     signers: &FakeSigners,
@@ -553,7 +561,7 @@ pub fn make_connector(
 }
 
 /// [`make_connector`] with `orphans` as the reconcile's hook for the keys it does not know.
-pub fn make_connector_with(
+pub(crate) fn make_connector_with(
     vault: &Arc<Vault>,
     issuer: EntityId,
     signers: &FakeSigners,
@@ -572,7 +580,7 @@ pub fn make_connector_with(
     })
 }
 
-pub fn offer() -> GpuOffer {
+pub(crate) fn offer() -> GpuOffer {
     GpuOffer {
         name: "scripted-gpu".to_owned(),
         class: "fixture".to_owned(),
@@ -600,7 +608,7 @@ pub fn offer() -> GpuOffer {
 }
 
 impl Rig {
-    pub async fn start() -> Self {
+    pub(crate) async fn start() -> Self {
         let mesh = Machines::start_granted(2, &[JOB_ALPN, JOB_STATUS_ALPN])
             .await
             .expect("two machines with both job protocol grants");
@@ -631,11 +639,11 @@ impl Rig {
         }
     }
 
-    pub fn vault(&self) -> &Arc<Vault> {
+    pub(crate) fn vault(&self) -> &Arc<Vault> {
         &self.mesh.machine(0).device.vault
     }
 
-    pub fn approve(&self, tag: &str, expires_at_ms: u64) -> String {
+    pub(crate) fn approve(&self, tag: &str, expires_at_ms: u64) -> String {
         let request: WorkloadPinRequest = serde_json::from_value(json!({
             "pin": {
                 "template": TEMPLATE,
@@ -680,17 +688,17 @@ impl Rig {
         digest
     }
 
-    pub fn start_job(&self, workload: &str) -> JobRun {
+    pub(crate) fn start_job(&self, workload: &str) -> JobRun {
         self.start_job_with(workload, &self.connector)
     }
 
-    pub fn start_job_with(&self, workload: &str, connector: &dyn GpuJobConnector) -> JobRun {
+    pub(crate) fn start_job_with(&self, workload: &str, connector: &dyn GpuJobConnector) -> JobRun {
         let inputs = json!({"machine": self.node.machine.to_hex()});
         self.start_job_with_inputs(workload, inputs, connector)
     }
 
     /// [`Self::start_job_with`] on a quote whose inputs are `inputs`.
-    pub fn start_job_with_inputs(
+    pub(crate) fn start_job_with_inputs(
         &self,
         workload: &str,
         inputs: serde_json::Value,
@@ -746,11 +754,11 @@ impl Rig {
         }
     }
 
-    pub fn step(&self, run: &JobRun) -> Result<GpuJobStepReport, GpuJobError> {
+    pub(crate) fn step(&self, run: &JobRun) -> Result<GpuJobStepReport, GpuJobError> {
         self.step_with(run, &self.connector)
     }
 
-    pub fn step_with(
+    pub(crate) fn step_with(
         &self,
         run: &JobRun,
         connector: &dyn GpuJobConnector,
@@ -765,7 +773,7 @@ impl Rig {
         )
     }
 
-    pub fn settle(&self, run: &JobRun) -> GpuJob {
+    pub(crate) fn settle(&self, run: &JobRun) -> GpuJob {
         for _ in 0..3 {
             let report = self.step(run).expect("step a job whose node has ended it");
             if matches!(report.state, GpuJobState::Ended { .. }) {
@@ -782,21 +790,21 @@ impl Rig {
         );
     }
 
-    pub fn job(&self, run: &JobRun) -> GpuJob {
+    pub(crate) fn job(&self, run: &JobRun) -> GpuJob {
         self.vault()
             .gpu_job(&run.job.id)
             .expect("read the job")
             .expect("job row")
     }
 
-    pub fn dispatch(&self, run: &JobRun) -> JobDispatch {
+    pub(crate) fn dispatch(&self, run: &JobRun) -> JobDispatch {
         self.vault()
             .job_dispatch(run.key())
             .expect("read JOB_DISPATCH")
             .expect("dispatch row")
     }
 
-    pub fn observation(&self, run: &JobRun) -> JobObservation {
+    pub(crate) fn observation(&self, run: &JobRun) -> JobObservation {
         self.vault()
             .job_observation(run.key())
             .expect("read JOB_OBSERVATION")
@@ -804,7 +812,7 @@ impl Rig {
     }
 }
 
-pub fn with_rig(test: impl FnOnce(&Rig) + Send + 'static) {
+pub(crate) fn with_rig(test: impl FnOnce(&Rig) + Send + 'static) {
     run_on_engine_stack("vault-machine-connector", || async move {
         let rig = Rig::start().await;
         tokio::task::block_in_place(|| test(&rig));

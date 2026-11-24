@@ -54,28 +54,43 @@ jobs:
         run: |
           git config user.name oneiron-codemap
           git config user.email codemap@oneiron.dev
+          # Exit 3 from the generator: the map is written, but a path in
+          # scripts/codemap/capability_aliases.md names no file (moved or
+          # deleted; CODEMAP-ALIAS-MISSING lines above). Push the map anyway,
+          # then fail this run so the alias row gets fixed.
+          finish() {
+            if [ "$generator_status" -eq 3 ]; then
+              echo "CODEMAP-ALIAS-MISSING: fix scripts/codemap/capability_aliases.md (see above)"
+              exit 1
+            fi
+            exit 0
+          }
           for attempt in 1 2 3; do
             # Start from the newest main every time. A rejected push means main
             # moved, so the map is rebuilt for the new tip instead of rebasing
             # generated files onto it.
             git fetch -q origin main
             git reset -q --hard origin/main
-            python3 scripts/codemap/codemap.py
+            generator_status=0
+            python3 scripts/codemap/codemap.py || generator_status=$?
+            if [ "$generator_status" -ne 0 ] && [ "$generator_status" -ne 3 ]; then
+              exit "$generator_status"
+            fi
             if [ -z "$(git status --porcelain docs/CODEMAP.md docs/codemap)" ]; then
               echo "Code map already current at $(git rev-parse --short HEAD)"
-              exit 0
+              finish
             fi
             git add -A docs/CODEMAP.md docs/codemap
             git commit -q -m "codemap: regenerate [skip ci]"
             if git push origin HEAD:main; then
               echo "Pushed $(git rev-parse --short HEAD) on attempt ${attempt}"
-              exit 0
+              finish
             fi
             echo "Push rejected on attempt ${attempt}; regenerating on the new main"
           done
           if [ "$HAS_TOKEN" != "true" ]; then
             echo "CODEMAP-NO-TOKEN: the map on main is stale; add the CODEMAP_TOKEN secret (fine-grained token, Contents read/write, this repo) and re-run"
-            exit 0
+            finish
           fi
           echo "CODEMAP-PUSH-FAILED: main refused the push 3 times with a token present"
           exit 1
