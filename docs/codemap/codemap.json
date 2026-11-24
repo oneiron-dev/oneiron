@@ -5639,6 +5639,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_signatures.rs",
+     "purpose": "The vault's [`MachineSignatures`]: this install signs as its machine with its machine key, and a peer…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -121293,7 +121301,7 @@
     },
     "authority": {
      "entry": "crates/oneiron/src/authority/mod.rs",
-     "files": 346,
+     "files": 347,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -123710,7 +123718,7 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8531,
+   "source_files": 8532,
    "test_files": 2298
   },
   "oneiron-agent-runtime": {
@@ -144854,15 +144862,18 @@
       "FetchTarget",
       "ReceiptInput",
       "ReceiptOutput",
+      "ReceiptSignature",
       "SignedReceipt",
       "Unanswered"
      ],
      "path": "src/receipt.rs",
      "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them…",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "struct": 6
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -145235,7 +145246,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/mesh_ask_carried.rs",

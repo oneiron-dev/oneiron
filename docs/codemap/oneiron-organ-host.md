@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/process/frames.rs` | src | s | 5 crate-vis | — | A process's messages, booked before each allocation they make (FIX 6195, 7890): each frame of a message the… |
 | `src/process/lifeline.rs` | src | s | 6 crate-vis | — | One organ process's life: the child, the cell its descendants are fenced in (FIX 7887), a third-party… |
 | `src/process/shutdown.rs` | src | s | 4 crate-vis | — | A call the host's mesh stop cancels (FIX 4756): told with the protocol's shutdown reason, as a deadline… |
-| `src/receipt.rs` | src | s | 6 struct · 1 enum · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
+| `src/receipt.rs` | src | s | 7 struct · 1 enum · 2 fn · 1 const · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, ReceiptSignature, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
 | `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 crate-vis | FloorLease, FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 6 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
@@ -71,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
 | `tests/host_recycle.rs` | test | m | — | — | The organ code `internal` names a bug, and the host recycles the live process after three in a row… |
 | `tests/image_edit_max_ops.rs` | test | s | — | — | Restriction wave 13: the image edit op count is an owner key |
-| `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
+| `tests/mesh_ask_carried.rs` | test | L | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
 | `tests/organ_first_party_fence.rs` | test | s | — | — | A first-party organ starts inside the filesystem fence where the host has one (FIX… |
 | `tests/organ_start_fd3_reuse.rs` | test | s | — | — | An organ starts whole while another thread frees and reuses fd 3, the number the organ's socket takes in the… |

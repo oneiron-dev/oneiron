@@ -2732,6 +2732,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | OF-570 | `crates/oneiron-server/src/owner/backup.rs` | m |
 | OF-570 | `crates/oneiron-server/src/owner/vault_key.rs` | m |
 | OF-570 | `crates/oneiron-store/src/vault_page_seal.rs` | s |
+| OF-575 | `crates/oneiron/src/authority/machine_signatures.rs` | s |
 | OF-575 | `crates/oneiron/src/edit_settle/organ_wait.rs` | m |
 | OF-575 | `crates/oneiron/src/machine_signature.rs` | s |
 | OF-575 | `crates/oneiron/src/skill_hub/pack_catalog/organs.rs` | m |
