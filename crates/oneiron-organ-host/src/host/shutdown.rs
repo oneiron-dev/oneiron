@@ -22,7 +22,7 @@ use std::fmt;
 use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(unix)]
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -44,7 +44,11 @@ struct Cancel {
     stopping: AtomicBool,
     /// The work still running is cancelled.
     cancelled: AtomicBool,
-    /// Wakes the waits for either step.
+    /// The connections the organ service serves under this cancel, open
+    /// now.
+    serving: AtomicUsize,
+    /// Wakes the waits for either step, and for the last served
+    /// connection's close.
     moved: Notify,
     /// The organ calls in flight under this cancel, by registration.
     #[cfg(unix)]
@@ -116,6 +120,22 @@ impl MeshCancel {
         self.until(Self::is_cancelled).await;
     }
 
+    /// Returns once no connection the organ service serves under this
+    /// cancel is open. After the cancel, each one closes once its calls
+    /// ended and their replies reached the asking node, so a listener that
+    /// waits here before its endpoint closes never cuts such a reply off.
+    pub async fn served(&self) {
+        self.until(|cancel| cancel.0.serving.load(Ordering::SeqCst) == 0)
+            .await;
+    }
+
+    /// Counts a connection the organ service serves under this cancel
+    /// until the guard drops ([`Self::served`]).
+    pub(crate) fn serving(&self) -> ServedConnection {
+        self.0.serving.fetch_add(1, Ordering::SeqCst);
+        ServedConnection(Arc::clone(&self.0))
+    }
+
     async fn until(&self, reached: fn(&Self) -> bool) {
         loop {
             // Made before the check, so a step taken between the two still
@@ -134,6 +154,18 @@ impl MeshCancel {
     pub fn scope<T>(&self, work: impl FnOnce() -> T) -> T {
         let _scope = Scope::enter(self.clone());
         work()
+    }
+}
+
+/// A connection the organ service serves under a [`MeshCancel`], counted
+/// open until it drops.
+pub(crate) struct ServedConnection(Arc<Cancel>);
+
+impl Drop for ServedConnection {
+    fn drop(&mut self) {
+        if self.0.serving.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.0.moved.notify_waiters();
+        }
     }
 }
 
