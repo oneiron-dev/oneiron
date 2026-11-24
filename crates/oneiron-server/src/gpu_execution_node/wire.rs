@@ -90,15 +90,24 @@ pub enum JobRequest {
     Submit(SignedJobSubmit),
 }
 
-/// A reserve: the key, the pin it will run, and the device if the issuer
-/// chose one. The node forms the device slot request from the key, the
-/// pin's resource request and `device_id`, so a slot never disagrees with
-/// its pin.
+/// Which of the node's GPUs a key may take: the selectors of a GPU slot
+/// request. The node forms the whole request from the key, these selectors
+/// and the pin's resource request (the least GPU memory is `vram_mib`, the
+/// disk is `disk_mib`), so a slot never disagrees with its pin.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlotSelector {
+    /// This GPU only, by the driver's device id (the vendor's UUID).
+    pub device_id: Option<String>,
+    /// A GPU of this model only, as the driver names it.
+    pub model: Option<String>,
+}
+
+/// A reserve: the key, the pin it will run, and the GPU slot it may take.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobReserve {
     pub key: String,
     pub pin: WorkloadPin,
-    pub device_id: Option<String>,
+    pub slot: SlotSelector,
     pub issuer: EntityId,
     pub starter: Starter,
     pub issued_at_ms: u64,
@@ -113,8 +122,10 @@ pub struct JobSubmit {
     /// The issuer's `GPU_JOB` row.
     pub job: EntityId,
     pub chunk: u32,
+    /// The key's reserve named the same pin and slot; a submit that names
+    /// another is a key conflict.
     pub pin: WorkloadPin,
-    pub device_id: Option<String>,
+    pub slot: SlotSelector,
     /// The cutoff the node arms, at most the pin's maximum.
     pub maximum_secs: u64,
     pub issued_at_ms: u64,
@@ -122,6 +133,12 @@ pub struct JobSubmit {
     pub issuer: EntityId,
     pub starter: Starter,
     pub hold: HoldRef,
+    /// The issuer's authority main-log heads when it signed (EM-11 = B),
+    /// lower-hex entry hashes. The node launches once its own fold holds
+    /// every one, so a revoke the issuer had folded stops the launch; else
+    /// the key ends `LaunchRefused { authority_stale }` at the staging
+    /// limit.
+    pub authority_heads: Vec<String>,
 }
 
 /// A submit with the issuer's machine-key signature under
@@ -210,6 +227,16 @@ pub enum JobRefusal {
     Drained { why: String },
     /// A release of a key that is no longer `Held` with no accepted submit.
     NotReleasable { state: JobState },
+    /// The node lost the journal that could have held a key: it admits
+    /// nothing until `reset-history` at the box.
+    HistoryLost,
+    /// A submit under a known key with another pin or slot: nothing
+    /// changed.
+    KeyConflict,
+    /// The request names a key the journal recorded for another issuer.
+    NotTheKeysIssuer,
+    /// The submit's signature is not its issuer's.
+    SubmitSignatureInvalid,
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is
@@ -228,8 +255,10 @@ pub enum JobStatusRequest {
     /// Closes a key that has not launched (also one the node never saw);
     /// ends one that has. Answered by the key's receipt.
     Stop { key: String },
-    /// Every key of the asker the journal still holds, live and ended.
-    Keys,
+    /// One page of the keys of the asker the journal still holds, live and
+    /// ended: the first page with no `after`, then each next page from the
+    /// `next` of the page before.
+    Keys { after: Option<String> },
     /// The bytes of one returnable output, at most [`FETCH_MAX_BYTES`].
     Fetch { key: String, name: String },
     /// The issuer holds every returnable output it wants; only then may the
@@ -254,7 +283,7 @@ pub enum JobStatusAnswer {
     Busy {
         retry_after_ms: u64,
     },
-    Keys(Vec<KeyEntry>),
+    Keys(KeyPage),
     Output {
         #[serde(with = "serde_bytes")]
         bytes: Vec<u8>,
@@ -264,7 +293,18 @@ pub enum JobStatusAnswer {
     Refused(JobRefusal),
 }
 
-/// One key in a [`JobStatusAnswer::Keys`] list.
+/// One page of a [`JobStatusRequest::Keys`] listing. A page stays under the
+/// transport's 1 MiB message bound. The issuer has every key only once it
+/// has read a page with no `next`; until then it has not reconciled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyPage {
+    pub entries: Vec<KeyEntry>,
+    /// The cursor of the next page, opaque to the issuer; `None` on the last
+    /// page.
+    pub next: Option<String>,
+}
+
+/// One key in a [`KeyPage`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyEntry {
     pub key: String,
@@ -391,13 +431,19 @@ pub struct JobReceipt {
     /// The node.
     pub machine: EntityId,
     pub epoch: String,
+    /// The GPU the key leased; `None` before the launch commit, and for a
+    /// key that never launched.
     pub device_id: Option<String>,
     pub issuer: EntityId,
-    pub starter: Starter,
+    /// Who started the job, as its reserve stated it; `None` only for a key
+    /// the node closed before any reserve of it arrived (a `Stop` of a key
+    /// it never saw), whose starter it never learned.
+    pub starter: Option<Starter>,
     /// The money the submit named; `None` before a submit was accepted.
     pub hold: Option<HoldRef>,
-    /// The digest the node computed from the pin it holds.
-    pub workload: String,
+    /// The digest the node computed from the pin it holds; `None` exactly
+    /// when `starter` is.
+    pub workload: Option<String>,
     pub state: JobState,
     /// False: the workload process never existed and never can.
     pub started: bool,
