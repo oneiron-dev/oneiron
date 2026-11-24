@@ -269,11 +269,16 @@ mod tests {
                 base.join("vault/keys")
             );
         }
-        fs::write(base.join("file"), b"").expect("a file");
-        assert!(
-            resolved(&base.join("file/../keys")).is_err(),
-            "a file has no `..`"
-        );
+        // Windows takes `..` by name before any lookup, as joining onto a
+        // canonical path already does.
+        #[cfg(unix)]
+        {
+            fs::write(base.join("file"), b"").expect("a file");
+            assert!(
+                resolved(&base.join("file/../keys")).is_err(),
+                "a file has no `..`"
+            );
+        }
     }
 
     /// FIX FILE-KEYSTORE-CREATES-DIR-BEFORE-VAULT-CHECK: a key directory at
@@ -418,7 +423,9 @@ mod tests {
 
     /// Review of #10420: a path may pass through a vault directory and leave
     /// it by `..`, but a directory it would make inside the vault directory on
-    /// the way is refused before it is made.
+    /// the way is refused before it is made. Unix only: Windows takes `..` by
+    /// name before any lookup, so it makes nothing on the way.
+    #[cfg(unix)]
     #[test]
     fn a_path_through_a_vault_makes_nothing_inside_it() {
         let root = tempfile::tempdir().expect("a temporary directory");
