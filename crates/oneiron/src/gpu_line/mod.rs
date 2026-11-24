@@ -10,6 +10,7 @@
 //! share, the floor per seat, the new-idea slots and the market ceilings the
 //! mint divides by payoff. Every number of it is a setting of the line
 //! ([`defaults`]).
+pub(crate) mod claim;
 pub mod defaults;
 mod doors;
 mod doors_caller;
@@ -20,6 +21,11 @@ mod store;
 pub(crate) mod tables;
 mod wire;
 
+pub use claim::{
+    AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
+    UnitSettleRefused, UnitSettlement, UnitTerminal, claim_in_txn, claims_at_rung_in_txn,
+    settle_unit_in_txn,
+};
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
