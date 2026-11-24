@@ -45,17 +45,21 @@ pub(crate) struct TempFile {
 /// makes one directory whose parent exists. A directory at or inside any of
 /// `vault_dirs` is refused, and a refusal leaves nothing behind:
 ///
-/// - First `dir` is taken as it will resolve once made ([`resolved`]), so a
-///   directory refused by its name, through a link, or past a `..` is
-///   refused before anything is made.
-/// - Then each missing directory is made alone, from the root down, and the
-///   path made so far is checked against every vault directory as soon as
-///   it exists ([`make_each`]). So the volume's own rules for names decide
+/// - First `dir` is taken as it will resolve once made ([`resolved`]), and
+///   each vault directory too ([`vault_resolved`]), so a directory refused by
+///   its name, through a link, or past a `..` is refused before anything is
+///   made.
+/// - Then each missing directory is made alone, from the root down
+///   ([`make_each`]). Each one is checked against every vault directory just
+///   before it is made and again as soon as it exists, and so is the
+///   directory reached at the end. So the volume's own rules for names decide
 ///   (`VAULT` names a vault directory `vault` not made yet, where the volume
 ///   ignores case), and so does a link that moved meanwhile. A refusal there
-///   removes the directories this call made.
+///   removes the directories this call made, each one that is still empty.
 ///
-/// A vault directory that does not resolve is not compared.
+/// A path may pass through a vault directory and leave it by `..`, as long
+/// as nothing is made inside it. A vault directory that does not resolve is
+/// not compared.
 pub(crate) fn create_key_dir(
     dir: &Path,
     vault_dirs: &[&Path],
@@ -74,8 +78,9 @@ pub(crate) fn create_key_dir(
 }
 
 /// Makes each missing directory of `dir` with `make`, from the root down,
-/// recording each one in `made`, and refuses as soon as the path made so
-/// far resolves at or inside a vault directory. Answers the canonical path.
+/// recording each one in `made`. A directory that lies at or inside a vault
+/// directory is refused just before it is made and as soon as it exists, and
+/// so is the directory reached at the end. Answers its canonical path.
 fn make_each(
     dir: &Path,
     vault_dirs: &[&Path],
@@ -85,27 +90,29 @@ fn make_each(
     let absolute = std::path::absolute(dir).map_err(io_error)?;
     let mut ancestors: Vec<&Path> = absolute.ancestors().collect();
     ancestors.reverse();
-    let mut walked = PathBuf::new();
+    let mut at = PathBuf::new();
     for ancestor in ancestors {
         // Every part before the last one exists by now, so only the last
         // one can be missing.
-        let at = resolved(ancestor).map_err(io_error)?;
+        at = resolved(ancestor).map_err(io_error)?;
         if fs::symlink_metadata(&at).is_err() {
+            refuse_inside_vaults(&at, vault_dirs)?;
             match make(&at) {
                 Ok(()) => made.push(at.clone()),
                 Err(_) if at.is_dir() => {}
                 Err(e) => return Err(io_error(e)),
             }
+            refuse_inside_vaults(&at.canonicalize().map_err(io_error)?, vault_dirs)?;
         }
-        walked = at.canonicalize().map_err(io_error)?;
-        refuse_inside_vaults(&walked, vault_dirs)?;
     }
+    let walked = at.canonicalize().map_err(io_error)?;
+    refuse_inside_vaults(&walked, vault_dirs)?;
     Ok(walked)
 }
 
 fn refuse_inside_vaults(dir: &Path, vault_dirs: &[&Path]) -> Result<()> {
     for vault in vault_dirs {
-        if let Ok(vault) = resolved(vault)
+        if let Ok(vault) = vault_resolved(vault)
             && dir.starts_with(&vault)
         {
             return Err(KeystoreError::Unavailable(INSIDE_A_VAULT));
@@ -114,13 +121,32 @@ fn refuse_inside_vaults(dir: &Path, vault_dirs: &[&Path]) -> Result<()> {
     Ok(())
 }
 
+/// The most links whose target is missing that [`vault_resolved`] follows
+/// for one path, as many as a system lookup follows links.
+const DANGLING_LINKS_MAX: usize = 40;
+
 /// `path` as it will resolve once its missing directories are made, taken
 /// part by part from the root as the system takes it: each part against the
 /// canonical path of the parts before it, so a link counts wherever it lies,
 /// also one reached past a missing part and a `..`. A missing part stays as
-/// named, and a `..` after it takes it back, as making it would. A link
-/// whose target is missing is an error: no directory is made through it.
+/// named, and a `..` after it takes it back, as making it would. A `..` after
+/// a file is an error, as it is to the system. A link whose target is missing
+/// is an error too: no directory is made through it.
 fn resolved(path: &Path) -> io::Result<PathBuf> {
+    resolve(path, &mut 0)
+}
+
+/// A vault directory as it will resolve once made: as [`resolved`], except
+/// that a link whose target is missing stands for that target as it will
+/// resolve once made, since the vault's own maker may make it.
+fn vault_resolved(path: &Path) -> io::Result<PathBuf> {
+    let mut links = DANGLING_LINKS_MAX;
+    resolve(path, &mut links)
+}
+
+/// [`resolved`], following up to `links` links whose target is missing; one
+/// more is an error.
+fn resolve(path: &Path, links: &mut usize) -> io::Result<PathBuf> {
     let mut resolved = PathBuf::new();
     for part in std::path::absolute(path)?.components() {
         match part {
@@ -132,6 +158,9 @@ fn resolved(path: &Path) -> io::Result<PathBuf> {
             // The path so far is canonical or missing, so its parent is the
             // directory `..` names.
             Component::ParentDir => {
+                if fs::metadata(&resolved).is_ok_and(|meta| !meta.is_dir()) {
+                    return Err(io::Error::from(ErrorKind::NotADirectory));
+                }
                 resolved.pop();
                 continue;
             }
@@ -139,8 +168,19 @@ fn resolved(path: &Path) -> io::Result<PathBuf> {
         }
         match resolved.canonicalize() {
             Ok(canonical) => resolved = canonical,
-            Err(e)
-                if e.kind() == ErrorKind::NotFound && fs::symlink_metadata(&resolved).is_err() => {}
+            // A missing part stays as named; a link whose target is missing
+            // stands for that target, or is an error.
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                if fs::symlink_metadata(&resolved).is_ok() {
+                    if *links == 0 {
+                        return Err(e);
+                    }
+                    *links -= 1;
+                    let target = fs::read_link(&resolved)?;
+                    resolved.pop();
+                    resolved = resolve(&resolved.join(target), links)?;
+                }
+            }
             Err(e) => return Err(e),
         }
     }
@@ -194,30 +234,48 @@ pub(crate) fn write_temp(
 /// directory's lock file shared from before its temporary file exists until
 /// after it is gone ([`write_temp`]). So under the exclusive lock each
 /// temporary file is one whose writer died or failed to remove it, whichever
-/// process its pid names now: the system may have given that pid to another.
-/// One stem's sweep, at a write or an erase, waits for the writers in
-/// flight; the open-time sweep of every stem does not wait, and leaves the
-/// files to a later sweep while one writes. Where the file system gives no
-/// lock, nothing is removed. Every file is tried; the first removal that
-/// failed, other than of a file already gone, is the answer.
+/// process its pid names now: the system may have given that pid to another
+/// process, or to this one.
+///
+/// - One stem's sweep serves an erase or a write over an old value, which
+///   must leave no copy behind. It waits for the writers in flight, then
+///   removes every file of its stem, also where the file system gives no
+///   lock: a writer whose file it takes fails its own write and leaves no
+///   copy.
+/// - The open-time sweep of every stem does not wait. While a writer holds
+///   the directory, or where the file system gives no lock, it removes
+///   nothing, and on Unix it leaves this process's own files
+///   ([`left_to_another_process`]).
+///
+/// Every file is tried; the first removal that failed, other than of a file
+/// already gone, is the answer. A key directory that is gone holds no file.
 pub(crate) fn sweep_temps(dir: &Path, stem: Option<&str>) -> io::Result<()> {
-    let lock = temp_writers_lock(dir)?;
-    let locked = if stem.is_some() {
-        lock.lock().is_ok()
-    } else {
-        lock.try_lock().is_ok()
-    };
-    if !locked {
-        return Ok(());
+    let lock = temp_writers_lock(dir).ok();
+    match (&lock, stem) {
+        (Some(lock), Some(_)) => {
+            let _ = lock.lock();
+        }
+        (None, Some(_)) => {}
+        (Some(lock), None) if lock.try_lock().is_ok() => {}
+        (_, None) => return Ok(()),
     }
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
     let mut swept = Ok(());
-    for entry in fs::read_dir(dir)? {
+    for entry in entries {
         let entry = entry?;
         let file_name = entry.file_name();
         let Some((file_stem, pid)) = file_name.to_str().and_then(temp_name_parts) else {
             continue;
         };
-        if stem.is_some_and(|wanted| wanted != file_stem) || left_to_another_process(pid) {
+        let kept = match stem {
+            Some(wanted) => wanted != file_stem,
+            None => left_to_another_process(pid),
+        };
+        if kept {
             continue;
         }
         if let Err(e) = fs::remove_file(entry.path())
@@ -231,9 +289,10 @@ pub(crate) fn sweep_temps(dir: &Path, stem: Option<&str>) -> io::Result<()> {
     swept
 }
 
-/// Unix: this process leaves its own temporary files to another process's
-/// sweep. Where the file system keeps locks per process (NFS), its own
-/// writers' shared holds do not stop its exclusive lock.
+/// Unix: the open-time sweep leaves this process's own files to another
+/// process's sweep, or to a stem's sweep. Where the file system keeps locks
+/// per process (NFS), this process's own writers' shared holds do not stop
+/// its lock, so a file under its pid may be one of them in flight.
 #[cfg(unix)]
 fn left_to_another_process(pid: u32) -> bool {
     pid == std::process::id()
@@ -330,6 +389,11 @@ mod tests {
                 base.join("vault/keys")
             );
         }
+        fs::write(base.join("file"), b"").expect("a file");
+        assert!(
+            resolved(&base.join("file/../keys")).is_err(),
+            "a file has no `..`"
+        );
     }
 
     /// FIX FILE-KEYSTORE-CREATES-DIR-BEFORE-VAULT-CHECK: a key directory at
@@ -412,15 +476,15 @@ mod tests {
         );
     }
 
-    /// Review of #10420: a vault directory may resolve only once a directory
-    /// of the key directory's path exists, as `vault` does when `VAULT` is
-    /// made on a volume that ignores case. Here the vault directory is a
-    /// link to `x/y`, which is missing until made. The directory that makes
-    /// it resolve is refused as soon as it is made, nothing is made inside
-    /// it, and the directories made are removed.
+    /// Review of #10420: a vault directory reached through a dangling link
+    /// (one whose target is missing) stands for that target as it will be
+    /// made, so a key directory inside it is refused before anything is
+    /// made. Also when the vault directory leaves that target by `..`
+    /// (`alias/..`, the link naming `store/keys`), which makes it `store` once
+    /// `store/keys` exists.
     #[cfg(unix)]
     #[test]
-    fn a_directory_that_resolves_as_a_vault_once_made_is_refused_and_removed() {
+    fn a_key_directory_inside_a_vault_behind_a_dangling_link_is_refused_before_it_is_made() {
         let root = tempfile::tempdir().expect("a temporary directory");
         let base = root.path().canonicalize().expect("the root resolves");
         let vault = base.join("vault-link");
@@ -429,9 +493,73 @@ mod tests {
             create_key_dir(&base.join("x/y/keys"), &[&vault], |d| fs::create_dir_all(d)),
             Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
         );
+        assert!(!base.join("x").exists(), "a refusal made a directory");
+
+        fs::create_dir(base.join("store")).expect("a directory");
+        std::os::unix::fs::symlink(base.join("store/keys"), base.join("alias"))
+            .expect("a link to a missing directory");
+        let vault = base.join("alias/..");
+        let keys = base.join("store/keys");
+        assert_eq!(
+            create_key_dir(&keys, &[&vault], |d| fs::create_dir_all(d)),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert!(!keys.exists(), "a refusal made a directory");
+    }
+
+    /// Review of #10420: a vault directory may come to name a directory only
+    /// once that directory is made, as `vault` names `VAULT` on a volume that
+    /// ignores case. Here the vault directory's link appears as `x/y` is made.
+    /// That directory is refused as soon as it exists, nothing is made inside
+    /// it, and the directories made are removed.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_a_vault_names_once_made_is_refused_and_removed() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault-link");
+        let named = base.join("x/y");
+        let make = |d: &Path| -> io::Result<()> {
+            fs::create_dir_all(d)?;
+            if named.exists() && fs::symlink_metadata(&vault).is_err() {
+                std::os::unix::fs::symlink(&named, &vault)?;
+            }
+            Ok(())
+        };
+        assert_eq!(
+            create_key_dir(&base.join("x/y/keys"), &[&vault], make),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
         assert!(
             !base.join("x").exists(),
             "a refusal left a directory it made"
+        );
+    }
+
+    /// Review of #10420: a path may pass through a vault directory and leave
+    /// it by `..`, but a directory it would make inside the vault directory on
+    /// the way is refused before it is made.
+    #[test]
+    fn a_path_through_a_vault_makes_nothing_inside_it() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        assert_eq!(
+            create_key_dir(&vault.join("a/../../keys"), &[&vault], |d| {
+                fs::create_dir_all(d)
+            }),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert_eq!(
+            fs::read_dir(&vault).expect("the vault lists").count(),
+            0,
+            "a directory was made inside the vault"
+        );
+        assert!(!base.join("keys").exists(), "a refusal made a directory");
+        assert_eq!(
+            create_key_dir(&vault.join("../keys"), &[&vault], |d| fs::create_dir_all(d)),
+            Ok(base.join("keys"))
         );
     }
 
@@ -441,10 +569,12 @@ mod tests {
     fn a_sweep_reports_a_stale_file_it_could_not_remove() {
         let root = tempfile::tempdir().expect("a temporary directory");
         let dir = root.path();
-        let stuck = dir.join(".slot.1.1.tmp");
+        // A pid no process has: above every Unix pid limit, and every
+        // Windows pid is a multiple of four.
+        let stuck = dir.join(".slot.4294967295.1.tmp");
         fs::create_dir(&stuck).expect("a directory under a temporary file's name");
         fs::write(stuck.join("inner"), [2; 32]).expect("a file inside it");
-        let stale = dir.join(".slot.1.2.tmp");
+        let stale = dir.join(".slot.4294967295.2.tmp");
         fs::write(&stale, [2; 32]).expect("a stale file");
         assert!(
             sweep_temps(dir, Some("slot")).is_err(),

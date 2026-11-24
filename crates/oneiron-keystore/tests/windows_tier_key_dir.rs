@@ -55,6 +55,12 @@ fn a_key_directory_refused_inside_a_vault_is_never_made() {
 #[test]
 fn a_key_directory_under_a_vault_named_in_another_case_is_never_made() {
     let root = tempfile::tempdir().expect("a temporary directory");
+    // A directory set to tell case apart makes `VAULT` another directory than
+    // `vault`, and leaves nothing to refuse.
+    fs::create_dir(root.path().join("probe")).expect("a probe directory");
+    if !root.path().join("PROBE").exists() {
+        return;
+    }
     let vault = root.path().join("vault");
     assert_eq!(
         WindowsDpapiKeystore::open(&root.path().join("VAULT").join("keys"), &[&vault])

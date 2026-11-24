@@ -114,9 +114,14 @@ impl LocalFileKeystore {
 
     /// Ends an erase: syncs the directory, so neither the removal of the
     /// file nor of a stale copy comes back after a crash, then reports a
-    /// stale copy that `swept` could not remove.
+    /// stale copy that `swept` could not remove. A key directory that is gone
+    /// took every file in it along.
     pub(crate) fn sync_erase(&self, swept: std::io::Result<()>) -> Result<()> {
-        self.sync_dir()?;
+        match File::open(&self.dir).and_then(|d| d.sync_all()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io(e)),
+        }
         swept.map_err(io)
     }
 }
@@ -157,8 +162,8 @@ impl DeviceKeystore for LocalFileKeystore {
     /// either no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
         // FIX 8019: sweep this slot's stale temporary files before writing.
-        // The slot is empty, so a file that stays holds no value of it; its
-        // delete reports such a file.
+        // The slot is empty, so a file that stays holds no value the slot
+        // has now; the slot's delete reports such a file.
         let _ = self.sweep_temps(Some(slot));
         let path = self.path(slot);
         let (tmp, written) = self.write_temp(&slot.name(), secret);
@@ -440,8 +445,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
         keys.create(&slot(), &[1; 32]).unwrap();
-        // pid 1 is the system's first process: alive, and never this writer.
-        let copy = keys.dir.join(format!(".{}.1.1.tmp", slot().name()));
+        // A pid no process has: above every Unix pid limit.
+        let copy = keys
+            .dir
+            .join(format!(".{}.4294967295.1.tmp", slot().name()));
         fs::hard_link(keys.path(&slot()), &copy).unwrap();
         assert!(keys.replace(&slot(), &[2; 32]).unwrap());
         assert_eq!(*keys.get(&slot()).unwrap().unwrap(), [2; 32]);
@@ -461,7 +468,8 @@ mod tests {
         keys.create(&slot(), &[1; 32]).unwrap();
         keys.put_sealed(&name, b"sealed").unwrap();
         for stem in [slot().name(), sealed_file_name(&name)] {
-            let stuck = keys.dir.join(format!(".{stem}.1.1.tmp"));
+            // A pid no process has: above every Unix pid limit.
+            let stuck = keys.dir.join(format!(".{stem}.4294967295.1.tmp"));
             fs::create_dir(&stuck).unwrap();
             fs::write(stuck.join("inner"), [1; 32]).unwrap();
         }
@@ -475,6 +483,26 @@ mod tests {
             Err(KeystoreError::Platform("io", _))
         ));
         assert_eq!(keys.get_sealed(&name).unwrap(), None);
+    }
+
+    /// Review of #10420: a writer that died between its link and its unlink
+    /// left a copy of the seed under the pid the system has since given this
+    /// process. The slot's delete waits for this process's own writers too
+    /// (a local volume locks each open file apart), so it removes the copy.
+    #[test]
+    fn delete_removes_a_dead_writers_copy_of_the_seed_under_this_process_pid() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        keys.create(&slot(), &[1; 32]).unwrap();
+        let copy = keys
+            .dir
+            .join(format!(".{}.{}.1.tmp", slot().name(), std::process::id()));
+        fs::hard_link(keys.path(&slot()), &copy).unwrap();
+        keys.delete(&slot()).unwrap();
+        assert!(
+            !copy.exists(),
+            "the dead writer's copy under this process's pid is removed"
+        );
     }
 
     /// The open-time sweep does not wait for a writer in flight: while one

@@ -140,8 +140,8 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     /// no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
         // FIX 8019: sweep this slot's stale temporary files before writing.
-        // The slot is empty, so a file that stays holds no value of it; its
-        // delete reports such a file.
+        // The slot is empty, so a file that stays holds no value the slot
+        // has now; the slot's delete reports such a file.
         let _ = key_dir::sweep_temps(&self.dir, Some(&slot.name()));
         let path = self.path(slot);
         let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;

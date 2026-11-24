@@ -298,8 +298,8 @@ impl DeviceKeystore for LinuxTpmKeystore {
     /// it into place. A crash leaves either no slot or a whole one, and the
     /// link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
-        // The slot is empty, so a stale file that stays holds no value of
-        // it; its delete reports such a file.
+        // The slot is empty, so a stale file that stays holds no value the
+        // slot has now; the slot's delete reports such a file.
         let _ = self.files.sweep_temps(Some(slot));
         let path = self.path(slot);
         if fs::symlink_metadata(&path).is_ok() {
