@@ -8733,8 +8733,8 @@
         "COORDINATION-02",
         "COORDINATION-08"
       ],
-      "disposition": "public flow planned",
-      "limit": null
+      "disposition": "public behavior slice; see limits",
+      "limit": "Home room, child threads and born-from only (COORDINATION-02). Leaders talking by default is unproved: COORDINATION-08 proves the refusal dial (OF-533) and leaves its leadership-chat half unwritten."
     },
     {
       "row": "OF-523",
