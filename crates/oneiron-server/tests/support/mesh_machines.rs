@@ -120,6 +120,16 @@ impl Home {
             )
             .map_err(at("the device takes the home's authority history"))?;
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        // The install's identity is minted with its machine encryption key,
+        // as its enrolment request mints it; its mesh identity is read from
+        // that identity.
+        let vault_id = vault
+            .authority_vault_id()
+            .map_err(at("the device's vault id"))?
+            .ok_or("FIXTURE: the device's copy has no vault id")?;
+        vault
+            .machine_encryption_key(vault_id)
+            .map_err(at("the device's encryption key"))?;
         let device_owner = steward::owner(&vault).map_err(at("the device's owner proof"))?;
         let identity = vault
             .mesh_binding_identity_as_owner(&device_owner)
@@ -267,13 +277,19 @@ impl Device {
     /// The listeners and dialers read the roster and the grants live, so a
     /// bind after the listener started counts.
     pub(crate) fn bind(&self, peer: &Device, listening: &Served) -> TestResult {
+        self.bind_at(peer, listening.addresses.clone())
+    }
+
+    /// This vault binds `peer`'s endpoint at `direct_addrs` (none for a peer
+    /// no test dials), on the pairing H minted for it.
+    pub(crate) fn bind_at(&self, peer: &Device, direct_addrs: Vec<SocketAddr>) -> TestResult {
         self.vault
             .bind_mesh_machine(
                 &test_host_issuer(),
                 peer.machine,
                 MeshMachineAddress {
                     endpoint_key: peer.identity.endpoint_key,
-                    direct_addrs: listening.addresses.clone(),
+                    direct_addrs,
                     relay_url: None,
                 },
                 peer.identity.device_key,
@@ -301,6 +317,14 @@ impl Device {
             )
             .map_err(at("grant the peer a protocol"))?;
         Ok(())
+    }
+
+    /// Whether this vault's grants admit `peer` on `alpn` now, as its mesh
+    /// listener's admission reads them.
+    pub(crate) fn admits(&self, peer: &Device, alpn: &[u8]) -> TestResult<bool> {
+        self.vault
+            .mesh_grant_permits(peer.machine, peer.identity.endpoint_key, alpn)
+            .map_err(at("read the peer's grant"))
     }
 
     /// Starts this device's server as a device of H, with no models, and its
