@@ -528,36 +528,23 @@ mod tests {
         assert!(signal_finds_process(u32::MAX));
     }
 
-    /// FIX 8019 on every Unix system, macOS included: a copy of the seed that
-    /// a writer which died between its link and its unlink left goes with
-    /// the slot's delete. A live writer's file stays.
+    /// FIX 8019 after a pid is handed on (review of #10401): a writer that
+    /// died between its link and its unlink left a copy of the seed under a
+    /// pid the system now gives another live process. The slot's delete
+    /// removes it all the same, since no writer holds the key directory.
     #[test]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "a test starts one child that stands for a live writer"
-    )]
-    fn delete_removes_a_dead_writers_copy_of_the_seed() {
+    fn delete_removes_a_dead_writers_copy_of_the_seed_under_a_reused_pid() {
         let root = tempfile::tempdir().unwrap();
         let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
         keys.create(&slot(), &[1; 32]).unwrap();
-        let copy = |pid: u32| keys.dir.join(format!(".{}.{pid}.1.tmp", slot().name()));
-        let dead = copy(gone_pid());
-        fs::hard_link(keys.path(&slot()), &dead).unwrap();
-        let mut live_writer = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
-        let live = copy(live_writer.id());
-        fs::hard_link(keys.path(&slot()), &live).unwrap();
+        // pid 1 is the system's first process: alive, and never this writer.
+        let copy = keys.dir.join(format!(".{}.1.1.tmp", slot().name()));
+        fs::hard_link(keys.path(&slot()), &copy).unwrap();
         keys.delete(&slot()).unwrap();
-        let live_kept = live.exists();
-        live_writer.kill().unwrap();
-        live_writer.wait().unwrap();
         assert!(
-            !dead.exists(),
-            "a dead writer's copy of the seed is removed"
+            !copy.exists(),
+            "the dead writer's copy of the seed is removed"
         );
-        assert!(live_kept, "a live writer's file is kept");
     }
 
     /// macOS keeps access control lists apart from the mode bits: a grant to
