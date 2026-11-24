@@ -9,15 +9,16 @@
 //! The fixture is the owner's home H and three devices of H, each a replica
 //! of H's vault in its own directory with its own install identity,
 //! enrolled as `oneiron device enrol` enrols a device (the enrolment of
-//! `mesh_two_machine_peer_e2e.rs`). Each device's server runs with its real
-//! mesh listener (`handler::mesh::start`, serve's full route set: iroh on a
-//! loopback port the system assigns, no relay), so every call below crosses
-//! the real handshake, the listener's admission (the MACHINE row and its
-//! grant for `oneiron/organ/1`, read live), the organ service, the staging
-//! of bytes past the transport's 1 MiB message, and the listener's stop.
-//! Every replica holds the same roster: each device's endpoint bound at the
-//! address its listener took; A and B granted organ calls; C granted sync
-//! only (by its enrolment), never organ calls.
+//! `mesh_two_machine_peer_e2e.rs`), A and B paired for organ calls and C for
+//! sync (a pairing covers the one protocol it names until MESH-PAIRING-CEILING
+//! lands). Each device's server runs with its real mesh listener
+//! (`handler::mesh::start`, serve's full route set: iroh on a loopback port
+//! the system assigns, no relay), so every call below crosses the real
+//! handshake, the listener's admission (the MACHINE row and its grant for
+//! `oneiron/organ/1`, read live), the organ service, the staging of bytes
+//! past the transport's 1 MiB message, and the listener's stop. Each replica
+//! binds the other two devices' endpoints at the addresses their listeners
+//! took, and grants A and B organ calls and C sync, never organ calls.
 //!
 //! - A asks. Its host has no organ installed, so its router (the one the
 //!   image edit doors take) sends each call to the owner's other nodes.
@@ -27,18 +28,18 @@
 //!
 //! The organ is `oneiron-organ-probe`, a bin of `oneiron-organ-host`, so
 //! this package's tests have no `CARGO_BIN_EXE` for it. The test takes
-//! `ONEIRON_TEST_ORGAN_PROBE`, else the bin beside its own target dir, which
-//! one cargo invocation builds with the same features when it also selects
-//! an `oneiron-organ-host` test. Run with:
+//! `ONEIRON_TEST_ORGAN_PROBE`, else the bin in the profile dir its own
+//! binary was built under, which one cargo invocation builds with the same
+//! features when it also selects an `oneiron-organ-host` test. Run with:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! -p oneiron-organ-host --all-features --test organ_mesh_two_server_e2e
 //! --test mesh_ask_carried`.
 
 use std::future::Future;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
@@ -121,23 +122,25 @@ where
 }
 
 /// The probe organ's program: `ONEIRON_TEST_ORGAN_PROBE`, else the bin in
-/// the target dir this test was built into (`<target>/<profile>/deps/<test>`
-/// beside `<target>/<profile>/oneiron-organ-probe`).
+/// the profile dir this test's binary sits under: `<target>/<profile>/deps/`
+/// in cargo's old layout, `<target>/<profile>/build/<package>/<hash>/out/`
+/// in its build-dir layout, the bin at `<target>/<profile>/oneiron-organ-probe`
+/// in both. The nearest ancestor that holds the bin is that profile dir.
 fn probe_program() -> TestResult<PathBuf> {
     if let Some(program) = std::env::var_os(PROBE_ENV).filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(program));
     }
     let exe = std::env::current_exe()?;
-    let beside = exe
-        .parent()
-        .and_then(Path::parent)
-        .map(|profile| profile.join(PROBE_BIN))
-        .filter(|program| program.is_file());
-    beside.ok_or_else(|| {
+    let found = exe
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join(PROBE_BIN))
+        .find(|program| program.is_file());
+    found.ok_or_else(|| {
         format!(
-            "FIXTURE: no {PROBE_BIN} beside {}: set {PROBE_ENV}, or build it in the same cargo \
-             invocation (`cargo test -p oneiron-server -p oneiron-organ-host --all-features \
-             --test organ_mesh_two_server_e2e --test mesh_ask_carried`)",
+            "FIXTURE: no {PROBE_BIN} in any dir above {}: set {PROBE_ENV}, or build it in the \
+             same cargo invocation (`cargo test -p oneiron-server -p oneiron-organ-host \
+             --all-features --test organ_mesh_two_server_e2e --test mesh_ask_carried`)",
             exe.display()
         )
         .into()
@@ -195,8 +198,9 @@ impl Home {
     /// pairing link; the device redeems it with a holder key of its own
     /// (seeded by `holder_seed`), its enrolment request, its machine key's
     /// possession proof and its mesh identity; H enrols it, and binds and
-    /// grants its endpoint on sync in the same redemption.
-    fn enrol(&self, holder_seed: u8) -> TestResult<Device> {
+    /// grants its endpoint on `alpn` in the same redemption. Its pairing
+    /// covers `alpn` alone, so no replica can grant it another protocol.
+    fn enrol(&self, holder_seed: u8, alpn: &[u8]) -> TestResult<Device> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())
             .map_err(at("open the device's vault"))?;
@@ -261,7 +265,7 @@ impl Home {
                 &holder.sign(&transcript).to_bytes(),
                 &request,
                 Some(&possession),
-                (&identity, SYNC_ALPN),
+                (&identity, alpn),
             )
             .map_err(at("the home redeems the device's enrolment"))?;
         let pairing_slip_id = match redeemed.mesh {
@@ -324,18 +328,18 @@ impl Device {
         Ok(())
     }
 
-    /// This vault grants `peer` organ calls, as the owner does for a machine
-    /// whose organ calls this one takes or makes.
-    fn grant_organ_calls(&self, peer: &Device) -> TestResult {
+    /// This vault grants `peer` the protocol `alpn`, as the owner does for a
+    /// machine whose calls on it this one takes or makes.
+    fn grant(&self, peer: &Device, alpn: &[u8]) -> TestResult {
         self.vault
             .set_mesh_alpn_grant(
                 &test_host_issuer(),
                 peer.machine,
                 peer.identity.endpoint_key,
-                ORGAN_ALPN,
+                alpn,
                 true,
             )
-            .map_err(at("grant the peer organ calls"))?;
+            .map_err(at("grant the peer its protocol"))?;
         Ok(())
     }
 
@@ -404,15 +408,15 @@ struct Mesh {
 
 impl Mesh {
     /// Enrols the three devices, starts each server and listener, writes
-    /// the one roster into every replica (each device bound at the address
-    /// its listener took; A and B granted organ calls; C sync only, from its
-    /// enrolment), and installs the probe on B's host alone.
+    /// the roster into every replica (the other two devices bound at the
+    /// addresses their listeners took; A and B granted organ calls; C
+    /// granted sync), and installs the probe on B's host alone.
     async fn start() -> TestResult<Self> {
         let probe = probe_program()?;
         let home = home()?;
-        let a = home.enrol(0x0a)?;
-        let b = home.enrol(0x0b)?;
-        let c = home.enrol(0x0c)?;
+        let a = home.enrol(0x0a, ORGAN_ALPN)?;
+        let b = home.enrol(0x0b, ORGAN_ALPN)?;
+        let c = home.enrol(0x0c, SYNC_ALPN)?;
         home.share_history(&[&a, &b, &c])?;
         let a = Machine {
             served: a.serve().await?,
@@ -426,15 +430,16 @@ impl Mesh {
             served: c.serve().await?,
             device: c,
         };
-        let machines = [&a, &b, &c];
-        for holder in machines {
-            for peer in machines {
+        // A replica holds no binding of its own install: it binds and
+        // grants the other two.
+        let roster = [(&a, ORGAN_ALPN), (&b, ORGAN_ALPN), (&c, SYNC_ALPN)];
+        for (holder, _) in roster {
+            for (peer, alpn) in roster {
                 if peer.device.machine != holder.device.machine {
                     holder.device.bind(&peer.device, &peer.served)?;
+                    holder.device.grant(&peer.device, alpn)?;
                 }
             }
-            holder.device.grant_organ_calls(&a.device)?;
-            holder.device.grant_organ_calls(&b.device)?;
         }
         let mut spec = OrganSpec::first_party(PROBE, probe);
         spec.verbs = PROBE_VERBS.map(String::from).into();
@@ -540,16 +545,14 @@ fn organ_path_receipts(vault: &Vault, machine: EntityId) -> Vec<MeshPathReceipt>
 
 /// Polls `probe` every 250 ms until it holds or `within` passes.
 async fn eventually(within: Duration, mut probe: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + within;
-    loop {
-        if probe() {
-            return true;
+    tokio::time::timeout(within, async {
+        while !probe() {
+            // testkit-lint: allow(sleep) poll interval: the listener writes its path receipts and the host its organ status on tasks of their own, which offer no event to await
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+    })
+    .await
+    .is_ok()
 }
 
 #[test]
@@ -658,7 +661,7 @@ async fn machine_without_the_organ_grant_is_refused() -> TestResult {
     let b_hex = mesh.b.device.machine.to_hex();
 
     // C's replica names B (and A) as granted organ calls, so C dials them;
-    // their listeners grant C sync alone.
+    // their replicas grant C sync alone.
     let routed = call_from(&mesh.c, touch(), lent(b"refused".to_vec()))
         .await?
         .map_err(at("C's touch"))?;
@@ -730,12 +733,11 @@ async fn call_in_flight_when_the_server_stops() -> TestResult {
     })
     .await;
     assert!(running, "B's host never started the probe for A's call");
-    // The call goes to the warm process right after its handshake.
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // B's listener stops: it admits nothing new, the admitted call runs on
     // until the drain deadline, then the stop cancels it.
-    let stopping = Instant::now();
+    // testkit-lint: allow(wall-clock) the drain deadline runs on the listener's own clock: this measures it
+    let stopping = std::time::Instant::now();
     let listener = mesh
         .b
         .served
