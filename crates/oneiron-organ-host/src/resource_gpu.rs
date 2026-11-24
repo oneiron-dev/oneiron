@@ -1,26 +1,22 @@
-//! GPU leases, beside the memory floor's ([`crate::FloorLease`]): a call
-//! that runs on one of this machine's GPUs holds that GPU alone, from its
-//! admission until its lease drops or finishes.
+//! GPU leases, beside the memory floor's ([`crate::FloorLease`]). The node
+//! takes a device lease inside its launch commit, then immediately calls
+//! [`GpuDeviceLease::confirm_launch`]. There is no hold during staging.
 //!
-//! The host leases a GPU from [`MachineGpus`] (in the server, its GPU slot
-//! table) at the call's admission, never waiting. The lease is taken from a
-//! fresh driver reading: the GPU is offered, not withheld by another booker,
-//! held by no other call, and runs no compute process. The machine's disk is
-//! not under its reserve, and the machine is not drained. Just before the
-//! call's process starts, [`GpuDeviceLease::confirm_launch`] checks the GPU
-//! again. A call that took an earlier reservation (a hold under the same
-//! key) takes that GPU over.
+//! A fresh driver reading must show the GPU offered, not withheld, untaken,
+//! and running no compute process. The disk must have room past its reserve.
+//! A paused or drained machine takes no new GPU work, and a quarantined GPU
+//! cannot be leased or confirmed for launch.
 //!
-//! The lease lives as long as the workload: [`GpuDeviceLease::keep`] hands
-//! the GPU to a job that outlives the call, which then holds it under its
-//! key until its machine's table ends it. [`GpuDeviceLease::finish`]
-//! records how the job ended. A machine whose jobs fail several times in a
-//! row is drained: it leases no GPU until a person clears it.
+//! The lease lives for the workload's life. [`GpuDeviceLease::keep`] hands
+//! the slot to the journaled key until the machine's table ends it. After a
+//! restart the node reattaches its live keys and replays quarantines from its
+//! journal. [`GpuDeviceLease::finish`] records how the job ended; repeated
+//! failures can drain the machine until a person clears it.
 
 use oneiron::machine_capacity::GpuDevice;
 use serde::{Deserialize, Serialize};
 
-/// What a GPU reservation or lease asks for. `key` is the job chunk's
+/// What a GPU lease asks for. `key` is the job chunk's
 /// idempotency key: one key holds at most one GPU.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,16 +53,13 @@ impl GpuSlotRequest {
     }
 }
 
-/// A GPU taken under a key: by the home's hold ahead of the job's start, or
-/// by a lease.
+/// A GPU granted under a workload's key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GpuSlotHold {
+pub struct GpuSlotGrant {
     pub key: String,
     pub device: GpuDevice,
     /// When the GPU was taken, in Unix milliseconds.
-    pub held_at_ms: u64,
-    /// When an untaken hold lapses; a lease and a kept slot never lapse.
-    pub hold_until_ms: u64,
+    pub granted_at_ms: u64,
 }
 
 /// The compute processes the driver lists on one GPU now.
@@ -86,7 +79,7 @@ impl GpuDeviceProcesses {
     }
 }
 
-/// Why no GPU was reserved, leased or launched.
+/// Why no GPU was leased or confirmed for launch.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "refusal", rename_all = "snake_case")]
 pub enum GpuSlotRefusal {
@@ -98,7 +91,7 @@ pub enum GpuSlotRefusal {
     Withheld { device_id: String },
     #[error("gpu_slots.busy: a compute process runs on GPU {device_id}")]
     Busy { device_id: String, pids: Vec<u32> },
-    #[error("gpu_slots.taken: another reservation or call holds GPU {device_id}")]
+    #[error("gpu_slots.taken: another lease or job holds GPU {device_id}")]
     Taken { device_id: String },
     #[error("gpu_slots.no_match: no GPU of this machine meets the request")]
     NoMatch,
@@ -110,6 +103,12 @@ pub enum GpuSlotRefusal {
         "gpu_slots.disk_under_reserve: the booking needs {needed_bytes} free bytes on the disk (its reserve, the other bookings' claims and this job's bytes), and the disk has {free_bytes}"
     )]
     DiskUnderReserve { needed_bytes: u64, free_bytes: u64 },
+    #[error(
+        "gpu_slots.quarantined: GPU {device_id} takes no job until a clean probe or a person clears it: {why}"
+    )]
+    Quarantined { device_id: String, why: String },
+    #[error("gpu_slots.paused: this machine takes no new GPU job now: {reason}")]
+    Paused { reason: String },
     #[error("gpu_slots.drained: this machine takes no GPU job until a person clears it: {reason}")]
     Drained { reason: String },
     #[error("gpu_slots.unmeasured: {reason}")]
@@ -119,7 +118,7 @@ pub enum GpuSlotRefusal {
 /// How a job that held a GPU ended, as its runner reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "end", rename_all = "snake_case")]
-pub enum GpuJobEnd {
+pub enum GpuLeaseEnd {
     /// The job's process finished its work.
     Succeeded,
     /// The job failed on this machine (it did not start, or its process
@@ -133,12 +132,12 @@ pub enum GpuJobEnd {
 /// drops, finishes or is kept.
 pub trait GpuDeviceLease: Send {
     /// The GPU it holds, under which key, and since when.
-    fn hold(&self) -> &GpuSlotHold;
+    fn grant(&self) -> &GpuSlotGrant;
 
     /// The launch recheck, just before the job's process starts on the GPU:
     /// a fresh reading shows it still offered, not withheld, and running no
-    /// compute process, and the machine is not drained. Once confirmed, it
-    /// stays confirmed.
+    /// compute process. Pause and quarantine refuse confirmation, even if
+    /// it succeeded before. A first confirmation also checks for a drain.
     ///
     /// # Errors
     ///
@@ -156,19 +155,19 @@ pub trait GpuDeviceLease: Send {
 
     /// Gives the GPU back and records how its job ended. Dropping the lease
     /// instead gives it back and records nothing.
-    fn finish(self: Box<Self>, end: GpuJobEnd);
+    fn finish(self: Box<Self>, end: GpuLeaseEnd);
 
-    /// Hands the GPU to the running job: it stays taken under its key, past
-    /// this lease, until the machine's slot table ends it by key.
-    fn keep(self: Box<Self>) -> GpuSlotHold;
+    /// Hands the GPU to the journaled key until the machine's slot table
+    /// ends it by key.
+    fn keep(self: Box<Self>) -> GpuSlotGrant;
 }
 
 /// This machine's GPUs, as the host leases them to calls. The server's
 /// implementation is its GPU slot table.
 pub trait MachineGpus: Send + Sync {
-    /// Leases one GPU that meets `request` now, from a fresh reading, never
-    /// waiting: the GPU an earlier hold under `request.key` reserved, else
-    /// the free matching GPU with the least memory.
+    /// Leases the GPU already taken by `request.key` if it has no live
+    /// lease, or, for a new key, picks the free matching GPU with the least
+    /// memory from a fresh reading without waiting.
     ///
     /// # Errors
     ///

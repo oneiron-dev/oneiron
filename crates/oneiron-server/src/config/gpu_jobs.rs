@@ -34,20 +34,18 @@
 //! owner lists one. `withheld_file` names a file of the GPUs another booker
 //! holds now, one device id per line, read at every ask: such a GPU is never
 //! offered, and once the file is named, a file that cannot be read offers
-//! nothing. `hold_secs` is how long the home's hold keeps its GPU before
-//! the job's call takes it. Once `drain_after_failures` jobs in a row
-//! (3 by default; 0 never) finish failed, the machine takes no new GPU job
-//! until a person clears the drain. `drain_file` keeps the drain across a
-//! restart, and deleting it clears the drain. `owner_lock_dir` is where the
-//! server takes one lock file per offered GPU while it runs, so a second
-//! Oneiron server on the machine does not offer the same GPU; it is the
-//! temp directory's `oneiron-gpu-owners` unless named.
+//! nothing. Once `drain_after_failures` jobs in a row (3 by default; 0
+//! never) finish failed, the machine takes no new GPU job until a person
+//! clears the drain. `drain_file` keeps the drain across a restart, and
+//! deleting it clears the drain. `owner_lock_dir` is where the server takes
+//! one lock file per offered GPU while it runs, so a second Oneiron server
+//! on the machine does not offer the same GPU; it is the temp directory's
+//! `oneiron-gpu-owners` unless named.
 //!
 //! ```toml
 //! [gpu_jobs.devices]
 //! offered = ["GPU-0b3c5f52-6e1d-4a8e-9f0a-2d7c1e4b8a61"]
 //! withheld_file = "/var/lib/oneiron/gpu-withheld"
-//! hold_secs = 120
 //! drain_after_failures = 3
 //! drain_file = "/var/lib/oneiron/gpu-drained"
 //! owner_lock_dir = "/run/oneiron/gpu-owners"
@@ -60,7 +58,7 @@ use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use serde::Deserialize;
 
-use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuDeviceOffer};
+use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GpuDeviceOffer};
 
 /// The owner lock directory, under the temp directory, when none is named.
 const GPU_OWNER_LOCK_DIR: &str = "oneiron-gpu-owners";
@@ -94,8 +92,6 @@ struct GpuDevicesFile {
     offered: Vec<String>,
     #[serde(default)]
     withheld_file: Option<PathBuf>,
-    #[serde(default)]
-    hold_secs: Option<u64>,
     #[serde(default)]
     drain_after_failures: Option<u32>,
     #[serde(default)]
@@ -197,8 +193,9 @@ impl GpuJobsFile {
     }
 }
 
-/// Refuses a GPU `[gpu_jobs.devices]` offers that a model worker runs on
-/// (`[models.workers].device`), so one GPU has one booker inside Oneiron too.
+/// Refuses a GPU `[gpu_jobs.devices]` offers that a managed model worker's
+/// launch device names (`[models.workers.<id>].device`), so one GPU has one
+/// booker inside Oneiron too.
 pub(crate) fn refuse_offered_worker_devices(
     devices: &GpuDeviceOffer,
     models: Option<&super::ModelsConfig>,
@@ -208,10 +205,12 @@ pub(crate) fn refuse_offered_worker_devices(
     };
     refuse_worker_device_overlap(
         &devices.offered,
-        models
-            .workers
-            .iter()
-            .filter_map(|worker| Some((worker.id.as_str(), worker.device.as_deref()?))),
+        models.workers.iter().filter_map(|worker| {
+            Some((
+                worker.id.as_str(),
+                worker.launch.as_ref()?.device.as_deref()?,
+            ))
+        }),
     )
 }
 
@@ -284,14 +283,8 @@ impl GpuDevicesFile {
                 file.display()
             );
         }
-        let hold_secs = self.hold_secs.unwrap_or(GPU_SLOT_HOLD_SECS);
-        anyhow::ensure!(
-            hold_secs > 0,
-            "gpu_jobs.devices.hold_secs must be greater than zero: a reservation holds its GPU until its launch"
-        );
         Ok(GpuDeviceOffer {
             withheld_file: self.withheld_file,
-            hold_secs,
             drain_after_failures: self
                 .drain_after_failures
                 .unwrap_or(GPU_DRAIN_AFTER_FAILURES),

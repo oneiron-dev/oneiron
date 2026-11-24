@@ -1,11 +1,11 @@
 //! A vault machine that runs GPU jobs and pinned workloads for the vault's
 //! issuer (pass 33, `33-exec-node/DESIGN.md`): what its GPUs are and what
 //! runs on them now ([`device`]), what it offers and answers when asked
-//! ([`availability`]), the slots it holds and leases on them, beside its
-//! memory floor ([`slots`]), the home's choice of a GPU among the vault's
-//! machines ([`selection`]), the job protocols' messages ([`wire`]), the
-//! node's own configuration and templates ([`node_settings`]), the node's
-//! gate, controls and authority tick ([`node`]), and its two mesh services
+//! ([`availability`]), the slots it leases on them, beside its memory floor
+//! ([`slots`]), a read that picks a machine's GPU before a quote
+//! ([`selection`]), the job protocols' messages ([`wire`]), the node's own
+//! configuration and templates ([`node_settings`]), the node's gate,
+//! controls and authority tick ([`node`]), and its two mesh services
 //! ([`service`]).
 
 pub mod availability;
@@ -19,8 +19,8 @@ pub mod slots;
 pub mod wire;
 
 pub use availability::{
-    GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuAvailability, GpuDeviceAvailability,
-    GpuDeviceOffer, GpuDeviceState, GpuDiskReading, GpuJobDisk,
+    GPU_DRAIN_AFTER_FAILURES, GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer,
+    GpuDeviceState, GpuDiskReading, GpuJobDisk,
 };
 pub use device::{
     GPU_QUERY_TIMEOUT, GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError, NvidiaSmiProbe,
@@ -37,6 +37,6 @@ pub use selection::{
 #[cfg(feature = "mesh")]
 pub use service::{JobService, JobStatusService};
 pub use slots::{
-    GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotHold, GpuSlotLease, GpuSlotRefusal,
+    GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotGrant, GpuSlotLease, GpuSlotRefusal,
     GpuSlotRequest, GpuSlotTable, MachineGpus,
 };

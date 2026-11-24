@@ -1,6 +1,6 @@
 //! What this machine offers the vault's GPU jobs, and what it answers when
 //! asked: the offer (`[gpu_jobs.devices]`), the jobs' disk, and the
-//! availability answer the home selects from.
+//! availability answer a caller may use to pick a machine before a quote.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -9,10 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use super::device::GpuDevice;
 use super::slots::{GpuSlotRefusal, GpuSlotRequest};
-
-/// How long a hold keeps its GPU before a lease must take it, in seconds:
-/// two minutes.
-pub const GPU_SLOT_HOLD_SECS: u64 = 120;
 
 /// How many jobs in a row must finish failed before the machine is drained.
 pub const GPU_DRAIN_AFTER_FAILURES: u32 = 3;
@@ -28,8 +24,6 @@ pub struct GpuDeviceOffer {
     /// named, a file that cannot be read offers nothing. `None` means no
     /// other booker.
     pub withheld_file: Option<PathBuf>,
-    /// How long a hold keeps its GPU before a lease takes it, in seconds.
-    pub hold_secs: u64,
     /// Failed jobs in a row that drain this machine. 0 never drains it.
     pub drain_after_failures: u32,
     /// Where a drain is written, so it outlasts a restart. A person deletes
@@ -46,7 +40,6 @@ impl Default for GpuDeviceOffer {
         Self {
             offered: BTreeSet::new(),
             withheld_file: None,
-            hold_secs: GPU_SLOT_HOLD_SECS,
             drain_after_failures: GPU_DRAIN_AFTER_FAILURES,
             drain_file: None,
             owner_lock_dir: None,
@@ -138,8 +131,8 @@ pub enum GpuDeviceState {
     /// A compute process this table did not launch runs on it, with the
     /// process ids the driver gave.
     Busy { pids: Vec<u32> },
-    /// The home's hold under `key` keeps it until a lease takes it.
-    Held { key: String },
+    /// It takes no new job until cleared; `key` still takes the slot, if any.
+    Quarantined { why: String, key: Option<String> },
     /// The workload under `key` leased it, and its process has not started.
     Leased { key: String },
     /// The job under `key` runs on it.
@@ -151,11 +144,12 @@ pub enum GpuDeviceState {
 }
 
 impl GpuDeviceState {
-    /// The key a hold, lease or job takes the GPU under.
+    /// The key a lease or job takes the GPU under, even during quarantine.
     #[must_use]
     pub fn key(&self) -> Option<&str> {
         match self {
-            Self::Held { key } | Self::Leased { key } | Self::Launched { key } => Some(key),
+            Self::Quarantined { key, .. } => key.as_deref(),
+            Self::Leased { key } | Self::Launched { key } => Some(key),
             Self::Free | Self::Busy { .. } | Self::Withheld | Self::NotOffered => None,
         }
     }
@@ -174,6 +168,9 @@ pub struct GpuDeviceAvailability {
 pub struct GpuAvailability {
     /// When the driver was read, in Unix milliseconds.
     pub measured_at_ms: u64,
+    /// While the machine is paused, why. It then takes no new GPU work.
+    #[serde(default)]
+    pub paused: Option<String>,
     /// While the machine is drained, why. It then takes no GPU work.
     #[serde(default)]
     pub drained: Option<String>,
@@ -185,13 +182,14 @@ pub struct GpuAvailability {
 
 impl GpuAvailability {
     /// The free GPUs that meet `request`. There are none while the machine is
-    /// drained or while its disk has no room for the request's bytes.
+    /// paused, drained or while its disk has no room for the request's bytes.
     pub fn free_matching<'a>(
         &'a self,
         request: &'a GpuSlotRequest,
     ) -> impl Iterator<Item = &'a GpuDevice> + 'a {
-        let open =
-            self.drained.is_none() && self.disk.is_none_or(|disk| disk.fits(request.disk_bytes));
+        let open = self.paused.is_none()
+            && self.drained.is_none()
+            && self.disk.is_none_or(|disk| disk.fits(request.disk_bytes));
         self.devices
             .iter()
             .filter(move |device| {

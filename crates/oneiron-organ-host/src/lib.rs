@@ -87,7 +87,7 @@ pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };
 pub use resource_gpu::{
-    GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotHold, GpuSlotRefusal, GpuSlotRequest,
+    GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotGrant, GpuSlotRefusal, GpuSlotRequest,
     MachineGpus,
 };
 pub use resource_memory::{FloorLease, FloorRefusal, MachineFloor, MemoryGrow};
