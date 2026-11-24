@@ -356,7 +356,7 @@ pub(crate) async fn vault_budgets_resident_shares(
                 .status()
                 .resident_share_allocation()
                 .cloned();
-            resident_doors::resident_shares_as_owner(
+            resident_doors::resident_shares_on_allocation_as_owner(
                 server.vault(),
                 owner,
                 &input,
@@ -386,7 +386,7 @@ pub(crate) async fn vault_budgets_resident_shares_set(
                 .status()
                 .resident_share_allocation()
                 .cloned();
-            resident_doors::set_resident_share_as_owner(
+            resident_doors::set_resident_share_on_allocation_as_owner(
                 server.vault(),
                 owner,
                 &input,
