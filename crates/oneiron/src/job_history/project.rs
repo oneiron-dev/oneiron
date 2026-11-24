@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::gpu_job::{GpuChunk, GpuEndReason, GpuJob, GpuJobState};
+use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobState};
 use crate::gpu_line::{ClaimState, GpuLinePeriod, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal};
 
 use super::{
@@ -174,10 +174,8 @@ fn unit_attempt(claim: &UnitClaim, job: Option<&GpuJob>) -> Option<JobHistoryAtt
         UnitEnd::BoxLost | UnitEnd::WrittenOff { .. } => None,
         UnitEnd::Settled | UnitEnd::Released(_) => Some(terminal.measured_secs),
     };
-    let machine = terminal
-        .machine
-        .or(claim.machine)
-        .or_else(|| chunk.and_then(quoted_machine));
+    // The machine that answered for the run, never the pin the reservation asked for.
+    let machine = terminal.machine;
     Some(JobHistoryAttempt {
         key: chunk.map_or_else(
             || chunk_key(&claim.id, 0),
@@ -232,20 +230,29 @@ fn unit_end(terminal: &UnitTerminal) -> (&'static str, Option<String>) {
 }
 
 /// A plain offer job's ended chunks. Every chunk before the last stopped at its maximum (a
-/// resume starts only from a stop); the last has ended when the job no longer runs and its
-/// end is the job's.
+/// resume starts only from a stop); the last has ended when the job no longer runs, and its end
+/// is the job's (a stop that the customer cancelled later reads `cancelled`). The row keeps no
+/// chunk's own end time (the job's last write moves at every later write, a resume or a cancel),
+/// so none is shown, and no offer chunk names a machine: an offer's inputs are the customer's,
+/// not a placement. A chunk whose provider lost the resource has an unknown occupancy, and the
+/// run time last reported is its lost lower bound.
 fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
     let last = job.chunks.len().saturating_sub(1);
     job.chunks
         .iter()
         .enumerate()
         .filter_map(|(index, chunk)| {
-            let (end, end_reason, ended_at_ms) = if index < last {
-                ("at_maximum".to_owned(), None, None)
+            let (end, end_reason) = if index < last {
+                ("at_maximum".to_owned(), None)
             } else {
-                let (end, reason) = offer_end(&job.state)?;
-                (end, reason, Some(job.updated_at_ms))
+                offer_end(&job.state)?
             };
+            let gone = end == "gone";
+            // The settled units are the charged seconds times the quote's price of one second.
+            let charged_secs = chunk
+                .settled_units
+                .zip((chunk.quote.unit_cost > 0).then_some(chunk.quote.unit_cost))
+                .map(|(units, cost)| units / cost);
             Some(JobHistoryAttempt {
                 key: chunk.idempotency_key.clone(),
                 job: job.id.to_hex(),
@@ -259,16 +266,17 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                     class: job.offer.class.clone(),
                     provider: job.offer.provider.clone(),
                 }),
-                machine: quoted_machine(chunk).map(|machine| machine.to_hex()),
+                machine: None,
                 device: None,
                 reserved_at_ms: (index == 0).then_some(job.created_at_ms),
-                ended_at_ms,
+                ended_at_ms: None,
                 reserved_secs: chunk.quote.quantity,
-                occupied_secs: Some(chunk.used_secs),
+                occupied_secs: (!gone).then_some(chunk.used_secs),
                 billed_secs: chunk.billed_secs,
-                charged_secs: None,
-                returned_secs: None,
-                lost_secs: 0,
+                charged_secs,
+                returned_secs: charged_secs
+                    .map(|charged| chunk.quote.quantity.saturating_sub(charged)),
+                lost_secs: if gone { chunk.used_secs } else { 0 },
                 settled_units: chunk.settled_units,
                 unit: Some(chunk.quote.unit.as_str().to_owned()),
                 end,
@@ -299,16 +307,6 @@ fn offer_end(state: &GpuJobState) -> Option<(String, Option<String>)> {
         GpuJobState::Ended { reason: end } => Some((reason(end), None)),
         GpuJobState::Held { reason } => Some(("held".to_owned(), Some(reason.clone()))),
     }
-}
-
-/// The machine a chunk's quote fixed (pass 33: the quote's `inputs.machine`, hex).
-fn quoted_machine(chunk: &GpuChunk) -> Option<EntityId> {
-    chunk
-        .quote
-        .inputs
-        .get("machine")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|hex| EntityId::from_hex(hex).ok())
 }
 
 /// A job's chunk key, as the job's start writes it.

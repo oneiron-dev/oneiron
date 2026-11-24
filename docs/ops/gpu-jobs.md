@@ -74,7 +74,8 @@ every quote refuses and no worker starts.
   billed, charged and returned seconds and its end cause, and totals by
   machine, line, family and line period. It reads the job rows and the lane
   economy's unit claims and keeps nothing of its own: a period's charged total
-  is what the line's own fold charges that period. A lost machine's occupancy
+  is what the line's own fold charges that period for the same ended attempts
+  (open claims and open holds are not history). A lost machine's occupancy
   shows as unknown, never as zero.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the

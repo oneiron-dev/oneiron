@@ -361,6 +361,15 @@ impl Vault {
             .collect()
     }
 
+    /// Every GPU job of this vault, in the caller's read transaction: for a read that joins the
+    /// jobs to other rows of one snapshot (`vault.jobs.history`).
+    pub(crate) fn gpu_jobs_in_txn(&self, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<GpuJob>> {
+        GPU_JOBS
+            .iter_from(&self.store, txn, &[])?
+            .map(|row| row.map(|(_, job)| job))
+            .collect()
+    }
+
     /// The jobs a host steps: those with a live chunk, or with a resource
     /// whose termination is not confirmed yet.
     pub fn live_gpu_jobs(&self) -> crate::Result<Vec<EntityId>> {

@@ -15,9 +15,9 @@
 //! whose own live Grant lists the verb ([`crate::memory::verb_grant_caller`]), who reads the
 //! attempts it started or reserved, and totals over those.
 //!
-//! What the rows do not keep, history does not invent: a plain offer chunk has no end time of
-//! its own (the job's last write dates its last chunk only), and a lost machine's occupancy is
-//! unknown, never zero.
+//! What the rows do not keep, history does not invent: a plain offer chunk has no end time and
+//! no machine of its own, and a lost machine's or a lost resource's occupancy is unknown, never
+//! zero.
 
 use std::collections::BTreeSet;
 
@@ -130,7 +130,8 @@ pub struct JobHistoryAttempt {
     /// The job (hex) and the chunk's index in it.
     pub job: String,
     pub chunk: u32,
-    /// Who started or reserved it (an actor id, hex); absent after their erase.
+    /// Who reserved the line unit, or who started the offer job (an actor id, hex; a resumed
+    /// chunk's own starter is not stored, so it reads as the job's); absent after their erase.
     pub requester: Option<String>,
     /// The Grant it was reserved under (hex), where the row keeps it; absent for the owner.
     pub grant: Option<String>,
@@ -139,7 +140,8 @@ pub struct JobHistoryAttempt {
     /// Exactly one of `line` and `offer`: what the attempt was charged to.
     pub line: Option<JobHistoryLineCharge>,
     pub offer: Option<JobHistoryOfferCharge>,
-    /// The machine that ran it (hex), and the device it held; absent where no row names them.
+    /// The machine that answered for the run (hex), and the device it held; absent where no
+    /// row names them.
     pub machine: Option<String>,
     pub device: Option<String>,
     /// When it was reserved, on the vault's clock, where a row keeps it.
@@ -153,10 +155,11 @@ pub struct JobHistoryAttempt {
     pub occupied_secs: Option<u64>,
     /// The seconds billed, where a row keeps them.
     pub billed_secs: Option<u64>,
-    /// What the line's pools paid: `min(billed, reserved)` for a run that ended, else 0. Line
-    /// units only.
+    /// The seconds charged: for a line unit what the line's pools paid (`min(billed,
+    /// reserved)` for a run that ended, else 0); for an offer chunk its settled units over its
+    /// quote's price of one second. Absent where no settlement is recorded.
     pub charged_secs: Option<u64>,
-    /// What went back to the pools: the reservation less the charge. Line units only.
+    /// What went back: the reservation less the charge.
     pub returned_secs: Option<u64>,
     /// For a lost machine, the run time last seen (a lower bound); else 0.
     pub lost_secs: u64,
@@ -288,9 +291,8 @@ pub fn job_history_embedded(
     job_history_as(memory, owner.as_ref(), input)
 }
 
-/// Reads the rows history projects and projects them. The jobs are read first: a line unit's
-/// claim is written before its job row, so every line unit's job read here finds its claim in
-/// the later snapshot, and no line unit reads as a plain offer.
+/// Reads the rows history projects, the jobs, the claims and their periods, in one snapshot (a
+/// claim's terminal and its job's terminal row are one write), and projects them.
 ///
 /// # Errors
 ///
@@ -300,8 +302,8 @@ pub fn read_job_history(
     filter: &JobHistoryFilter,
     viewer: HistoryViewer,
 ) -> crate::Result<JobHistory> {
-    let jobs = vault.gpu_jobs()?;
     let txn = vault.store.env.read_txn()?;
+    let jobs = vault.gpu_jobs_in_txn(&txn)?;
     let claims = claims_in_txn(vault, &txn)?;
     let windows: BTreeSet<(EntityId, u32)> = claims
         .iter()

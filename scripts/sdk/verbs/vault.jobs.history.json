@@ -11,6 +11,12 @@
   "admission": {
     "unrestricted_record_scope": true
   },
+  "page": {
+    "rows": "attempts",
+    "cursor": "next",
+    "resume": "spec",
+    "within": "after"
+  },
   "section": false,
   "host_door_proof": "verb_grant_caller"
 }
