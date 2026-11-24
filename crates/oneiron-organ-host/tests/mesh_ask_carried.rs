@@ -17,9 +17,14 @@
 //! device of it, enrolled as `oneiron device enrol` enrols one, its mesh
 //! identity bound on the home and granted `oneiron/organ/1` in the same
 //! redemption. The in-memory pair presents the serving device's endpoint key
-//! to the asking end, as the real handshake would. The last two tests pin the
+//! to the asking end, as the real handshake would. The last six tests pin the
 //! signature: the serving node's receipt verifies as its own, and a receipt a
-//! machine other than the one the connection proved signed is refused.
+//! machine other than the one the connection proved signed is refused. The
+//! serving end can rewrite its replies as a node that breaks the protocol
+//! would: a receipt an earlier call earned, a report or a body other than
+//! the ones the receipt names, and a result that does not decode are each
+//! refused as a broken rule, never taken and never tried on another node
+//! (blind-review P1s on #10409).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-organ-host --test mesh_ask_carried` (the home's owner proof is a
@@ -52,7 +57,7 @@ use oneiron_organ_host::{
     HostConfig, HostError, ORGAN_ALPN, OrganCall, OrganHost, OrganNodes, OrganOutcome, OrganRouter,
     OrganService, OrganSpec, RanOn, Routed,
 };
-use oneiron_organ_protocol::{AskRefusal, Value};
+use oneiron_organ_protocol::{AskRefusal, Value, from_slice, to_vec};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
@@ -336,11 +341,17 @@ struct Pair {
     link: Arc<Link>,
 }
 
+/// Rewrites one message the serving end sends, as a node that breaks the
+/// protocol would.
+type Rewrite = Arc<dyn Fn(Vec<u8>) -> Vec<u8> + Send + Sync>;
+
 /// One message each way: the mesh sends once and receives once per stream.
 struct FakeStream {
     tx: Option<oneshot::Sender<Vec<u8>>>,
     rx: Option<oneshot::Receiver<Vec<u8>>>,
     link: Arc<Link>,
+    /// What the serving end's sends go through, if anything.
+    rewrite: Option<Rewrite>,
 }
 
 fn stream_pair(link: &Arc<Link>) -> (FakeStream, FakeStream) {
@@ -351,13 +362,51 @@ fn stream_pair(link: &Arc<Link>) -> (FakeStream, FakeStream) {
             tx: Some(a_tx),
             rx: Some(b_rx),
             link: Arc::clone(link),
+            rewrite: None,
         },
         FakeStream {
             tx: Some(b_tx),
             rx: Some(a_rx),
             link: Arc::clone(link),
+            rewrite: None,
         },
     )
+}
+
+/// `value`'s entry under `key`, when `value` is a map that holds one.
+fn entry_mut<'a>(value: &'a mut Value, key: &str) -> Option<&'a mut Value> {
+    match value {
+        Value::Map(entries) => entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(key))
+            .map(|(_, v)| v),
+        _ => None,
+    }
+}
+
+/// A rewrite that hands `change` the outcome in each call reply the serving
+/// end sends (`{"call": {"inline": <{"done": outcome}>}}`), and passes every
+/// other message through.
+fn rewrite_done(change: impl Fn(&mut Value) + Send + Sync + 'static) -> Rewrite {
+    Arc::new(move |bytes: Vec<u8>| {
+        let Ok(mut reply) = from_slice::<Value>(&bytes) else {
+            return bytes;
+        };
+        let Some(Value::Binary(inner)) =
+            entry_mut(&mut reply, "call").and_then(|call| entry_mut(call, "inline"))
+        else {
+            return bytes;
+        };
+        let Ok(mut result) = from_slice::<Value>(inner) else {
+            return bytes;
+        };
+        let Some(done) = entry_mut(&mut result, "done") else {
+            return bytes;
+        };
+        change(done);
+        *inner = to_vec(&result).expect("the rewritten result encodes");
+        to_vec(&reply).expect("the rewritten reply encodes")
+    })
 }
 
 impl MeshStream for FakeStream {
@@ -369,12 +418,16 @@ impl MeshStream for FakeStream {
             let Some(tx) = self.tx.take() else {
                 return Err(MeshError::Io("the stream already sent".into()));
             };
+            let bytes = match &self.rewrite {
+                Some(rewrite) => rewrite(bytes.to_vec()),
+                None => bytes.to_vec(),
+            };
             // As the real transport: a message past 1 MiB fails, and nothing
             // arrives; the peer's receive ends with the stream.
             if bytes.len() > MESSAGE_MAX {
                 return Err(MeshError::Unavailable);
             }
-            tx.send(bytes.to_vec())
+            tx.send(bytes)
                 .map_err(|_| MeshError::Io("the stream broke".into()))
         })
     }
@@ -404,6 +457,8 @@ struct FakeConn {
     endpoint_key: [u8; 32],
     alpn: Vec<u8>,
     accepted: Arc<AtomicUsize>,
+    /// What the replies on the streams this end accepts go through.
+    rewrite: Option<Rewrite>,
 }
 
 #[derive(Clone, Copy)]
@@ -450,8 +505,9 @@ impl FakeConn {
             if self.pair.link.is_closed() {
                 return Err(MeshError::Io("the connection closed".into()));
             }
-            if let Some(stream) = self.take_incoming() {
+            if let Some(mut stream) = self.take_incoming() {
                 self.accepted.fetch_add(1, Ordering::SeqCst);
+                stream.rewrite.clone_from(&self.rewrite);
                 return Ok(stream);
             }
             tokio::select! {
@@ -515,6 +571,8 @@ struct FakeTransport {
     /// The endpoint key the asking end's handshake proves for the node it
     /// dialed.
     presented_key: [u8; 32],
+    /// What the serving end's replies go through.
+    rewrite: Option<Rewrite>,
 }
 
 impl MeshTransport for FakeTransport {
@@ -532,6 +590,7 @@ impl MeshTransport for FakeTransport {
             endpoint_key: [0; 32],
             alpn: alpn.to_vec(),
             accepted: Arc::clone(&self.serving_accepted),
+            rewrite: self.rewrite.clone(),
         };
         let handed = self
             .serving_tx
@@ -544,6 +603,7 @@ impl MeshTransport for FakeTransport {
             endpoint_key: self.presented_key,
             alpn: alpn.to_vec(),
             accepted: Arc::new(AtomicUsize::new(0)),
+            rewrite: None,
         };
         Box::pin(async move {
             if handed {
@@ -570,15 +630,17 @@ impl OrganNodes for OneNode {
 
 /// Runs one `probe.ask` call from the home over the in-memory pair: the
 /// router dials `dialed`, whose endpoint key the asking end's handshake
-/// proves, while `serving`'s host runs the probe, and `handler` answers the
-/// organ's ask back on the home. Returns what the router said and how many
-/// streams the serving end accepted.
+/// proves, while `serving`'s host runs the probe, its replies going through
+/// `rewrite`, and `handler` answers the organ's ask back on the home.
+/// Returns what the router said and how many streams the serving end
+/// accepted.
 async fn run_on(
     home: &Home,
     dialed: &Device,
     serving: &Device,
     value: Value,
     handler: &'static dyn AskHandler,
+    rewrite: Option<Rewrite>,
 ) -> (Result<Routed, HostError>, usize) {
     let serving_host = Arc::new({
         let host = OrganHost::new(HostConfig::default());
@@ -592,6 +654,7 @@ async fn run_on(
         serving_tx,
         serving_accepted: Arc::clone(&serving_accepted),
         presented_key: dialed.endpoint_key,
+        rewrite,
     });
     let nodes = Arc::new(OneNode(dialed.machine));
     let asks = AskHandlers::none().with(ASK_VERB, handler);
@@ -628,7 +691,7 @@ async fn run_over_mesh_on(
 ) -> (OrganOutcome, usize, Home, Device) {
     let home = home();
     let serving = home.enrol(0x51);
-    let (routed, accepted) = run_on(&home, &serving, &serving, value, handler).await;
+    let (routed, accepted) = run_on(&home, &serving, &serving, value, handler, None).await;
     let outcome = match routed {
         Ok(Routed::Done { outcome, ran_on }) => {
             assert_eq!(
@@ -738,6 +801,7 @@ async fn a_receipt_signed_by_another_machine_than_the_one_proved_is_refused() {
         &serving,
         Value::String("a small ask".into()),
         &ECHO,
+        None,
     )
     .await;
     match routed {
@@ -751,4 +815,147 @@ async fn a_receipt_signed_by_another_machine_than_the_one_proved_is_refused() {
         Ok(Routed::Waiting(wait)) => panic!("the call waits: {}", wait.reason),
         Err(err) => panic!("the call fails otherwise: {err}"),
     }
+}
+
+/// One `probe.ask` call from the home on `serving`, its replies going
+/// through `rewrite`: what the router said.
+async fn run_rewritten(
+    home: &Home,
+    serving: &Device,
+    value: &str,
+    rewrite: Rewrite,
+) -> Result<Routed, HostError> {
+    let value = Value::String(value.into());
+    run_on(home, serving, serving, value, &ECHO, Some(rewrite))
+        .await
+        .0
+}
+
+/// Why the asking node refused a reply as a broken rule; any other end
+/// fails the test.
+fn refused(routed: Result<Routed, HostError>) -> String {
+    match routed {
+        Err(HostError::ReplyInvalid(why)) => why,
+        Ok(Routed::Done { ran_on, .. }) => {
+            panic!("the asking node took the rewritten reply, as run on {ran_on:?}")
+        }
+        Ok(Routed::Waiting(wait)) => {
+            panic!("the call waits, as for an absent node: {}", wait.reason)
+        }
+        Err(err) => panic!("the call fails otherwise: {err}"),
+    }
+}
+
+#[tokio::test]
+async fn a_receipt_an_earlier_call_earned_is_refused_for_a_later_call() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    let earlier: Arc<Mutex<Option<Value>>> = Arc::default();
+    let kept = Arc::clone(&earlier);
+    let first = run_rewritten(
+        &home,
+        &serving,
+        "the earlier call",
+        rewrite_done(move |done| {
+            *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(done.clone());
+        }),
+    )
+    .await;
+    assert!(
+        matches!(first, Ok(Routed::Done { .. })),
+        "the earlier call must run as it is"
+    );
+    let replayed = earlier
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+        .expect("the earlier call's outcome was kept");
+    // The serving node answers a later call, with other args, with the
+    // earlier call's signed outcome, outputs and all.
+    let why = refused(
+        run_rewritten(
+            &home,
+            &serving,
+            "a later call",
+            rewrite_done(move |done| *done = replayed.clone()),
+        )
+        .await,
+    );
+    assert!(
+        why.contains("another call"),
+        "the refusal must say the receipt answers another call: {why}"
+    );
+}
+
+#[tokio::test]
+async fn a_report_other_than_the_one_the_receipt_names_is_refused() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    let why = refused(
+        run_rewritten(
+            &home,
+            &serving,
+            "a small ask",
+            rewrite_done(|done| {
+                *entry_mut(done, "report").expect("the outcome holds its report") =
+                    Value::from("a report the node never signed");
+            }),
+        )
+        .await,
+    );
+    assert!(
+        why.contains("report"),
+        "the refusal must name the report: {why}"
+    );
+}
+
+#[tokio::test]
+async fn a_body_other_than_the_one_the_receipt_names_is_refused() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    let why = refused(
+        run_rewritten(
+            &home,
+            &serving,
+            "a small ask",
+            rewrite_done(|done| {
+                *entry_mut(done, "body").expect("the outcome holds its body") = Value::Map(vec![
+                    ("kind".into(), "text".into()),
+                    ("schema".into(), 1_u64.into()),
+                    ("value".into(), "a body the node never signed".into()),
+                ]);
+            }),
+        )
+        .await,
+    );
+    assert!(
+        why.contains("body"),
+        "the refusal must name the body: {why}"
+    );
+}
+
+#[tokio::test]
+async fn a_result_that_does_not_decode_is_refused_not_tried_on_another_node() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    // The call ran on the serving node; its result's signature is a number.
+    let why = refused(
+        run_rewritten(
+            &home,
+            &serving,
+            "a small ask",
+            rewrite_done(|done| {
+                let signed = entry_mut(done, "receipt")
+                    .and_then(|receipt| entry_mut(receipt, "signed_by"))
+                    .expect("the receipt carries its signature");
+                *entry_mut(signed, "signature").expect("the signature's bytes") =
+                    Value::from(7_u64);
+            }),
+        )
+        .await,
+    );
+    assert!(
+        why.contains("does not decode"),
+        "the refusal must say the result does not decode: {why}"
+    );
 }
