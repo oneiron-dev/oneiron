@@ -11,8 +11,9 @@ use std::sync::Arc;
 
 use oneiron::{EntityId, Vault};
 
+use super::availability::GpuAvailability;
 use super::device::GpuDevice;
-use super::slots::{GpuAvailability, GpuSlotHold, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable};
+use super::slots::{GpuSlotHold, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable};
 
 /// How the home reaches a machine's GPU slots. The authenticated peer
 /// transport implements it for other machines; [`LocalGpuSlotPeer`]

@@ -20,7 +20,11 @@
 //!
 //! One booker per GPU: a GPU named in `[gpu_jobs.devices].withheld_file`
 //! belongs to another booker, whatever writes that file, and is never
-//! offered. The file is read at every ask.
+//! offered. The file is read at every ask, after the driver. On one
+//! machine, each offered GPU is owned by one Oneiron server at a time: the
+//! table holds a lock file per GPU in `owner_lock_dir` while it runs, and a
+//! GPU whose lock another server (or another vault in this process) holds
+//! reads as withheld.
 //!
 //! The drain guard: once `drain_after_failures` jobs in a row finish
 //! failed, the machine takes no new GPU work until a person clears it
@@ -31,204 +35,23 @@
 //! compute process on its GPU, so no new slot takes that GPU until the job
 //! reattaches or ends.
 
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-
-use serde::{Deserialize, Serialize};
 
 pub use oneiron_organ_host::{
     GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotHold, GpuSlotRefusal, GpuSlotRequest,
     MachineGpus,
 };
 
+use super::availability::{
+    GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer, GpuDeviceState, GpuJobDisk,
+};
 use super::device::{GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
 
-/// How long a hold keeps its GPU before a lease must take it, in seconds:
-/// two minutes.
-pub const GPU_SLOT_HOLD_SECS: u64 = 120;
+mod lease;
 
-/// How many jobs in a row must finish failed before the machine is drained.
-pub const GPU_DRAIN_AFTER_FAILURES: u32 = 3;
-
-/// Which of this machine's GPUs it offers to the vault's GPU jobs, and how
-/// (`[gpu_jobs.devices]`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GpuDeviceOffer {
-    /// The offered GPUs, by device id. Empty, the default, offers none.
-    pub offered: BTreeSet<String>,
-    /// A file naming the GPUs another booker holds now, one device id per
-    /// line (`#` starts a comment line), read at every ask. Once a file is
-    /// named, a file that cannot be read offers nothing. `None` means no
-    /// other booker.
-    pub withheld_file: Option<PathBuf>,
-    /// How long a hold keeps its GPU before a lease takes it, in seconds.
-    pub hold_secs: u64,
-    /// Failed jobs in a row that drain this machine. 0 never drains it.
-    pub drain_after_failures: u32,
-    /// Where a drain is written, so it outlasts a restart. A person deletes
-    /// it to clear the drain. `None` keeps the drain in memory only.
-    pub drain_file: Option<PathBuf>,
-}
-
-impl Default for GpuDeviceOffer {
-    fn default() -> Self {
-        Self {
-            offered: BTreeSet::new(),
-            withheld_file: None,
-            hold_secs: GPU_SLOT_HOLD_SECS,
-            drain_after_failures: GPU_DRAIN_AFTER_FAILURES,
-            drain_file: None,
-        }
-    }
-}
-
-/// What the disk a GPU job writes on holds now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GpuDiskReading {
-    /// The bytes an unprivileged writer may still use there.
-    pub free_bytes: u64,
-    /// The free bytes no work takes.
-    pub reserve_bytes: u64,
-    /// The bytes work in flight has claimed past the reserve.
-    pub claimed_bytes: u64,
-}
-
-impl GpuDiskReading {
-    /// Whether a booking of `bytes` more fits past the reserve and every
-    /// claim.
-    #[must_use]
-    pub fn fits(&self, bytes: u64) -> bool {
-        self.free_bytes
-            >= self
-                .reserve_bytes
-                .saturating_add(self.claimed_bytes)
-                .saturating_add(bytes)
-    }
-}
-
-/// The disk a GPU job writes on, as its booking claims room there.
-pub trait GpuJobDisk: Send + Sync {
-    /// Claims `bytes` past the disk's reserve and every other claim, held
-    /// until the returned claim drops. 0 bytes still requires the disk to
-    /// be at or above its reserve.
-    ///
-    /// # Errors
-    ///
-    /// [`GpuSlotRefusal::DiskUnderReserve`] when they do not fit;
-    /// [`GpuSlotRefusal::Unmeasured`] when the disk cannot be read.
-    fn claim(&self, bytes: u64) -> Result<Box<dyn Send + Sync>, GpuSlotRefusal>;
-
-    /// What the disk holds now.
-    ///
-    /// # Errors
-    ///
-    /// The error reading its free space.
-    fn reading(&self) -> std::io::Result<GpuDiskReading>;
-}
-
-/// The server's disk floor as a GPU job's disk: a booking claims its bytes
-/// with the uploads, backups and spools that claim theirs there.
-impl GpuJobDisk for crate::machine::DiskFloor {
-    fn claim(&self, bytes: u64) -> Result<Box<dyn Send + Sync>, GpuSlotRefusal> {
-        match self.claim_room(bytes) {
-            Ok(claim) => Ok(Box::new(claim)),
-            Err(oneiron::code_sandbox::SpoolFloorRefusal::AtFloor(at)) => {
-                Err(GpuSlotRefusal::DiskUnderReserve {
-                    needed_bytes: at.needed,
-                    free_bytes: at.available,
-                })
-            }
-            Err(oneiron::code_sandbox::SpoolFloorRefusal::Unmeasured(error)) => {
-                Err(GpuSlotRefusal::Unmeasured {
-                    reason: format!("the GPU job disk's free space could not be read: {error}"),
-                })
-            }
-        }
-    }
-
-    fn reading(&self) -> std::io::Result<GpuDiskReading> {
-        let (free_bytes, reserve_bytes, claimed_bytes) = self.measured()?;
-        Ok(GpuDiskReading {
-            free_bytes,
-            reserve_bytes,
-            claimed_bytes,
-        })
-    }
-}
-
-/// What one of this machine's GPUs is doing, as an availability answer
-/// reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum GpuDeviceState {
-    /// Offered, not withheld, untaken, and no compute process runs on it.
-    Free,
-    /// A compute process this table did not launch runs on it, with the
-    /// process ids the driver gave.
-    Busy { pids: Vec<u32> },
-    /// The home's hold under `key` keeps it until a lease takes it.
-    Held { key: String },
-    /// The workload under `key` leased it, and its process has not started.
-    Leased { key: String },
-    /// The job under `key` runs on it.
-    Launched { key: String },
-    /// Another booker holds it.
-    Withheld,
-    /// This machine does not offer it.
-    NotOffered,
-}
-
-impl GpuDeviceState {
-    /// The key a hold, lease or job takes the GPU under.
-    #[must_use]
-    pub fn key(&self) -> Option<&str> {
-        match self {
-            Self::Held { key } | Self::Leased { key } | Self::Launched { key } => Some(key),
-            Self::Free | Self::Busy { .. } | Self::Withheld | Self::NotOffered => None,
-        }
-    }
-}
-
-/// One GPU in an availability answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GpuDeviceAvailability {
-    pub device: GpuDevice,
-    pub state: GpuDeviceState,
-}
-
-/// What this machine's GPUs are doing, read from the driver when it was
-/// asked.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GpuAvailability {
-    /// When the driver was read, in Unix milliseconds.
-    pub measured_at_ms: u64,
-    /// While the machine is drained, why. It then takes no GPU work.
-    #[serde(default)]
-    pub drained: Option<String>,
-    /// What the jobs' disk holds now, when the table books on one.
-    #[serde(default)]
-    pub disk: Option<GpuDiskReading>,
-    pub devices: Vec<GpuDeviceAvailability>,
-}
-
-impl GpuAvailability {
-    /// The free GPUs that meet `request`. There are none while the machine is
-    /// drained or while its disk has no room for the request's bytes.
-    pub fn free_matching<'a>(
-        &'a self,
-        request: &'a GpuSlotRequest,
-    ) -> impl Iterator<Item = &'a GpuDevice> + 'a {
-        let open =
-            self.drained.is_none() && self.disk.is_none_or(|disk| disk.fits(request.disk_bytes));
-        self.devices
-            .iter()
-            .filter(move |device| {
-                open && device.state == GpuDeviceState::Free && request.admits(&device.device)
-            })
-            .map(|device| &device.device)
-    }
-}
+pub use lease::GpuSlotLease;
 
 /// How far a slot has come.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +84,9 @@ impl std::fmt::Debug for Slot {
 #[derive(Debug, Default)]
 struct State {
     slots: Vec<Slot>,
+    /// The offered GPUs this table owns on this machine, each by its open
+    /// lock file.
+    owner_locks: BTreeMap<String, std::fs::File>,
     failures_in_a_row: u32,
     /// A drain with no file to hold it (none named, or its write failed).
     drain_in_memory: Option<String>,
@@ -272,29 +98,59 @@ impl State {
     }
 }
 
-/// One fresh reading of the driver and the withheld list.
+/// One fresh reading of the driver and the withheld list, and the GPUs this
+/// table owns (`None`: it takes no owner lock).
 struct Reading {
     devices: Vec<GpuDevice>,
     processes: Vec<GpuComputeProcess>,
     withheld: BTreeSet<String>,
+    owned: Option<BTreeSet<String>>,
 }
 
 impl Reading {
     /// The compute processes on `device_id`.
     fn processes_on(&self, device_id: &str) -> GpuDeviceProcesses {
-        let mut on = GpuDeviceProcesses::default();
-        for process in self
-            .processes
-            .iter()
-            .filter(|process| process.device_id == device_id)
-        {
-            match process.pid {
-                Some(pid) => on.pids.push(pid),
-                None => on.hidden = on.hidden.saturating_add(1),
-            }
-        }
-        on
+        processes_on(&self.processes, device_id)
     }
+}
+
+/// The compute processes on `device_id` among `processes`.
+fn processes_on(processes: &[GpuComputeProcess], device_id: &str) -> GpuDeviceProcesses {
+    let mut on = GpuDeviceProcesses::default();
+    for process in processes
+        .iter()
+        .filter(|process| process.device_id == device_id)
+    {
+        match process.pid {
+            Some(pid) => on.pids.push(pid),
+            None => on.hidden = on.hidden.saturating_add(1),
+        }
+    }
+    on
+}
+
+/// This server's lock on `device_id` in `dir`, when no other holds it. The
+/// lock lasts as long as the open file.
+fn owner_lock(dir: &Path, device_id: &str) -> Option<std::fs::File> {
+    std::fs::create_dir_all(dir).ok()?;
+    let name: String = device_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join(format!("{name}.lock")))
+        .ok()?;
+    file.try_lock().ok()?;
+    Some(file)
 }
 
 struct Shared {
@@ -369,6 +225,7 @@ impl GpuSlotTable {
         let shared = &self.shared;
         let mut state = shared.lock();
         lapse(&mut state, now_ms);
+        let reading = shared.read(&mut state)?;
         let drained = shared.drained(&state)?;
         let disk = match &shared.disk {
             Some(disk) => Some(
@@ -379,7 +236,6 @@ impl GpuSlotTable {
             ),
             None => None,
         };
-        let reading = shared.read()?;
         let devices = reading
             .devices
             .iter()
@@ -411,6 +267,9 @@ impl GpuSlotTable {
         let shared = &self.shared;
         let mut state = shared.lock();
         lapse(&mut state, now_ms);
+        if let Some(reason) = shared.drained(&state).map_err(unmeasured)? {
+            return Err(GpuSlotRefusal::Drained { reason });
+        }
         if let Some(at) = state.at(&request.key) {
             return Ok(state.slots[at].hold.clone());
         }
@@ -444,7 +303,17 @@ impl GpuSlotTable {
                 });
             }
             Some(at) => {
+                // A hold checked the disk's room; the lease claims its own
+                // bytes, and a refusal leaves the hold as it was. A kept slot
+                // keeps the claim its first lease took.
+                let disk = match (&shared.disk, state.slots[at].stage) {
+                    (Some(disk), Stage::Held) => Some(disk.claim(request.disk_bytes)?),
+                    _ => None,
+                };
                 let slot = &mut state.slots[at];
+                if disk.is_some() {
+                    slot._disk = disk;
+                }
                 slot.guarded = true;
                 if slot.stage == Stage::Held {
                     slot.stage = Stage::Leased;
@@ -488,7 +357,7 @@ impl GpuSlotTable {
                 })
             };
         }
-        let reading = shared.read().map_err(unmeasured)?;
+        let reading = shared.read(&mut state).map_err(unmeasured)?;
         let device = reading
             .devices
             .iter()
@@ -525,8 +394,11 @@ impl GpuSlotTable {
     pub fn end_check(&self, key: &str) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
         let state = self.shared.lock();
         let at = state.at(key).ok_or(GpuSlotRefusal::NotHeld)?;
-        let reading = self.shared.read().map_err(unmeasured)?;
-        Ok(reading.processes_on(&state.slots[at].hold.device.device_id))
+        let processes = self.shared.probe.compute_processes().map_err(unmeasured)?;
+        Ok(processes_on(
+            &processes,
+            &state.slots[at].hold.device.device_id,
+        ))
     }
 
     /// Ends the slot `key` takes with no live lease (a hold, a kept slot or
@@ -576,134 +448,6 @@ impl GpuSlotTable {
     }
 }
 
-impl MachineGpus for GpuSlotTable {
-    fn try_lease(
-        &self,
-        request: &GpuSlotRequest,
-    ) -> Result<Box<dyn GpuDeviceLease>, GpuSlotRefusal> {
-        Ok(Box::new(
-            self.lease(request, oneiron_base::unix_millis_now())?,
-        ))
-    }
-}
-
-/// One GPU leased to the workload that runs its job. Dropping it gives the
-/// GPU back; [`Self::finish`] also records how the job ended; [`Self::keep`]
-/// hands it to the running job.
-#[derive(Debug)]
-pub struct GpuSlotLease {
-    shared: Arc<Shared>,
-    hold: GpuSlotHold,
-    ended: bool,
-}
-
-impl GpuSlotLease {
-    /// The GPU it holds, under which key, and since when.
-    #[must_use]
-    pub fn hold(&self) -> &GpuSlotHold {
-        &self.hold
-    }
-
-    /// The launch recheck, just before the job's process starts: a fresh
-    /// reading shows its GPU still offered, not withheld, and running no
-    /// compute process, and the machine is not drained. Once confirmed it
-    /// stays confirmed.
-    ///
-    /// # Errors
-    ///
-    /// [`GpuSlotRefusal`]: why the job must not start. The lease still
-    /// holds its GPU.
-    pub fn confirm_launch(&mut self) -> Result<(), GpuSlotRefusal> {
-        let shared = &self.shared;
-        let mut state = shared.lock();
-        let at = state.at(&self.hold.key).ok_or(GpuSlotRefusal::NotHeld)?;
-        if state.slots[at].stage == Stage::Launched {
-            return Ok(());
-        }
-        if let Some(reason) = shared.drained(&state).map_err(unmeasured)? {
-            return Err(GpuSlotRefusal::Drained { reason });
-        }
-        let reading = shared.read().map_err(unmeasured)?;
-        let device = reading
-            .devices
-            .iter()
-            .find(|device| device.device_id == self.hold.device.device_id)
-            .ok_or_else(|| GpuSlotRefusal::UnknownDevice {
-                device_id: self.hold.device.device_id.clone(),
-            })?;
-        // The slot is this lease's own, so the GPU is judged as if untaken.
-        match shared.state_of(&reading, None, device) {
-            GpuDeviceState::Free => {
-                state.slots[at].stage = Stage::Launched;
-                Ok(())
-            }
-            other => Err(refusal(device, other)),
-        }
-    }
-
-    /// The compute processes on its GPU now, from a fresh reading.
-    ///
-    /// # Errors
-    ///
-    /// [`GpuSlotRefusal::Unmeasured`] when the driver cannot be read.
-    pub fn end_check(&self) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
-        let reading = self.shared.read().map_err(unmeasured)?;
-        Ok(reading.processes_on(&self.hold.device.device_id))
-    }
-
-    /// Gives the GPU back and records how its job ended: a success starts
-    /// the count of failed jobs over, a failure adds to it (and drains the
-    /// machine at `drain_after_failures`), a cancel leaves it as it was.
-    pub fn finish(mut self, end: GpuJobEnd) {
-        self.ended = true;
-        let mut state = self.shared.lock();
-        self.shared.end(&mut state, &self.hold.key, Some(&end));
-    }
-
-    /// Hands the GPU to the running job: the slot stays under its key, past
-    /// this lease, until [`GpuSlotTable::finish`] or
-    /// [`GpuSlotTable::release`] ends it.
-    pub fn keep(mut self) -> GpuSlotHold {
-        self.ended = true;
-        let mut state = self.shared.lock();
-        if let Some(at) = state.at(&self.hold.key) {
-            state.slots[at].guarded = false;
-        }
-        self.hold.clone()
-    }
-}
-
-impl Drop for GpuSlotLease {
-    fn drop(&mut self) {
-        if !self.ended {
-            let mut state = self.shared.lock();
-            self.shared.end(&mut state, &self.hold.key, None);
-        }
-    }
-}
-
-impl GpuDeviceLease for GpuSlotLease {
-    fn hold(&self) -> &GpuSlotHold {
-        Self::hold(self)
-    }
-
-    fn confirm_launch(&mut self) -> Result<(), GpuSlotRefusal> {
-        Self::confirm_launch(self)
-    }
-
-    fn end_check(&self) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
-        Self::end_check(self)
-    }
-
-    fn finish(self: Box<Self>, end: GpuJobEnd) {
-        Self::finish(*self, end);
-    }
-
-    fn keep(self: Box<Self>) -> GpuSlotHold {
-        Self::keep(*self)
-    }
-}
-
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
         // Each change is one push, removal, flag or count under the lock, so
@@ -721,14 +465,32 @@ impl Shared {
         stage: Stage,
         guarded: bool,
     ) -> Result<GpuSlotHold, GpuSlotRefusal> {
+        let reading = self.read(state).map_err(unmeasured)?;
         if let Some(reason) = self.drained(state).map_err(unmeasured)? {
             return Err(GpuSlotRefusal::Drained { reason });
         }
-        let reading = self.read().map_err(unmeasured)?;
         let device = self.pick(&reading, &state.slots, request)?.clone();
-        let disk = match &self.disk {
-            Some(disk) => Some(disk.claim(request.disk_bytes)?),
-            None => None,
+        // A hold checks that the job's bytes fit past the reserve now; the
+        // lease that runs the job claims them, so a hold that lapses holds
+        // no disk.
+        let disk = match (&self.disk, stage) {
+            (Some(disk), Stage::Held) => {
+                let room = disk.reading().map_err(|error| GpuSlotRefusal::Unmeasured {
+                    reason: format!("the GPU job disk's free space could not be read: {error}"),
+                })?;
+                if !room.fits(request.disk_bytes) {
+                    return Err(GpuSlotRefusal::DiskUnderReserve {
+                        needed_bytes: room
+                            .reserve_bytes
+                            .saturating_add(room.claimed_bytes)
+                            .saturating_add(request.disk_bytes),
+                        free_bytes: room.free_bytes,
+                    });
+                }
+                None
+            }
+            (Some(disk), _) => Some(disk.claim(request.disk_bytes)?),
+            (None, _) => None,
         };
         let hold = GpuSlotHold {
             key: request.key.clone(),
@@ -792,50 +554,68 @@ impl Shared {
     }
 
     /// What `device` is doing in `reading`, with `slot` the slot on it, if
-    /// any.
+    /// any. A slot always shows its key, so the home sees where a key is
+    /// even on a GPU withheld since.
     fn state_of(
         &self,
         reading: &Reading,
         slot: Option<&Slot>,
         device: &GpuDevice,
     ) -> GpuDeviceState {
-        if let Some(slot) = slot.filter(|slot| slot.stage == Stage::Launched) {
-            return GpuDeviceState::Launched {
-                key: slot.hold.key.clone(),
+        if let Some(slot) = slot {
+            let key = slot.hold.key.clone();
+            return match slot.stage {
+                Stage::Held => GpuDeviceState::Held { key },
+                Stage::Leased => GpuDeviceState::Leased { key },
+                Stage::Launched => GpuDeviceState::Launched { key },
             };
         }
         if !self.offer.offered.contains(&device.device_id) {
             return GpuDeviceState::NotOffered;
         }
-        if reading.withheld.contains(&device.device_id) {
+        let owned_elsewhere = reading
+            .owned
+            .as_ref()
+            .is_some_and(|owned| !owned.contains(&device.device_id));
+        if owned_elsewhere || reading.withheld.contains(&device.device_id) {
             return GpuDeviceState::Withheld;
         }
-        match slot {
-            Some(slot) if slot.stage == Stage::Leased => GpuDeviceState::Leased {
-                key: slot.hold.key.clone(),
-            },
-            Some(slot) => GpuDeviceState::Held {
-                key: slot.hold.key.clone(),
-            },
-            None => {
-                let on = reading.processes_on(&device.device_id);
-                if on.is_empty() {
-                    GpuDeviceState::Free
-                } else {
-                    GpuDeviceState::Busy { pids: on.pids }
-                }
-            }
+        let on = reading.processes_on(&device.device_id);
+        if on.is_empty() {
+            GpuDeviceState::Free
+        } else {
+            GpuDeviceState::Busy { pids: on.pids }
         }
     }
 
-    /// One fresh reading: the withheld list, the GPUs, their processes.
-    fn read(&self) -> Result<Reading, GpuProbeError> {
+    /// One fresh reading: the GPUs and their processes, then the withheld
+    /// list and the GPUs this table owns.
+    fn read(&self, state: &mut State) -> Result<Reading, GpuProbeError> {
+        let devices = self.probe.devices()?;
+        let processes = self.probe.compute_processes()?;
         let withheld = self.withheld()?;
+        let owned = self.own_offered(state);
         Ok(Reading {
-            devices: self.probe.devices()?,
-            processes: self.probe.compute_processes()?,
+            devices,
+            processes,
             withheld,
+            owned,
         })
+    }
+
+    /// Takes the owner lock of every offered GPU this table does not own
+    /// yet, and answers the ones it owns (`None`: it takes no lock). A lock
+    /// another server holds is asked again at the next reading.
+    fn own_offered(&self, state: &mut State) -> Option<BTreeSet<String>> {
+        let dir = self.offer.owner_lock_dir.as_ref()?;
+        for device_id in &self.offer.offered {
+            if !state.owner_locks.contains_key(device_id)
+                && let Some(lock) = owner_lock(dir, device_id)
+            {
+                state.owner_locks.insert(device_id.clone(), lock);
+            }
+        }
+        Some(state.owner_locks.keys().cloned().collect())
     }
 
     /// The GPUs another booker holds now.

@@ -38,7 +38,10 @@
 //! the job's call takes it. Once `drain_after_failures` jobs in a row
 //! (3 by default; 0 never) finish failed, the machine takes no new GPU job
 //! until a person clears the drain. `drain_file` keeps the drain across a
-//! restart, and deleting it clears the drain.
+//! restart, and deleting it clears the drain. `owner_lock_dir` is where the
+//! server takes one lock file per offered GPU while it runs, so a second
+//! Oneiron server on the machine does not offer the same GPU; it is the
+//! temp directory's `oneiron-gpu-owners` unless named.
 //!
 //! ```toml
 //! [gpu_jobs.devices]
@@ -47,6 +50,7 @@
 //! hold_secs = 120
 //! drain_after_failures = 3
 //! drain_file = "/var/lib/oneiron/gpu-drained"
+//! owner_lock_dir = "/run/oneiron/gpu-owners"
 //! ```
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -57,6 +61,9 @@ use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnect
 use serde::Deserialize;
 
 use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuDeviceOffer};
+
+/// The owner lock directory, under the temp directory, when none is named.
+const GPU_OWNER_LOCK_DIR: &str = "oneiron-gpu-owners";
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -93,6 +100,8 @@ struct GpuDevicesFile {
     drain_after_failures: Option<u32>,
     #[serde(default)]
     drain_file: Option<PathBuf>,
+    #[serde(default)]
+    owner_lock_dir: Option<PathBuf>,
 }
 
 /// `[gpu_jobs.offers.<name>]` as written.
@@ -257,6 +266,7 @@ impl GpuDevicesFile {
         for (field, file) in [
             ("withheld_file", &self.withheld_file),
             ("drain_file", &self.drain_file),
+            ("owner_lock_dir", &self.owner_lock_dir),
         ] {
             if let Some(file) = file {
                 anyhow::ensure!(
@@ -266,19 +276,30 @@ impl GpuDevicesFile {
                 );
             }
         }
+        // A drain written nowhere would be cleared by the next restart.
+        if let Some(file) = &self.drain_file {
+            anyhow::ensure!(
+                file.parent().is_some_and(std::path::Path::is_dir),
+                "gpu_jobs.devices.drain_file's directory must exist, or a drain would not outlast a restart: {}",
+                file.display()
+            );
+        }
         let hold_secs = self.hold_secs.unwrap_or(GPU_SLOT_HOLD_SECS);
         anyhow::ensure!(
             hold_secs > 0,
             "gpu_jobs.devices.hold_secs must be greater than zero: a reservation holds its GPU until its launch"
         );
         Ok(GpuDeviceOffer {
-            offered,
             withheld_file: self.withheld_file,
             hold_secs,
             drain_after_failures: self
                 .drain_after_failures
                 .unwrap_or(GPU_DRAIN_AFTER_FAILURES),
             drain_file: self.drain_file,
+            owner_lock_dir: self.owner_lock_dir.or_else(|| {
+                (!offered.is_empty()).then(|| std::env::temp_dir().join(GPU_OWNER_LOCK_DIR))
+            }),
+            offered,
         })
     }
 }

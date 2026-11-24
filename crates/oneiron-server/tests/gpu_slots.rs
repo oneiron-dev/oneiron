@@ -139,6 +139,13 @@ impl GpuJobDisk for FakeDisk {
             claimed: Arc::clone(&self.claimed),
         }))
     }
+    fn reading(&self) -> std::io::Result<GpuDiskReading> {
+        Ok(GpuDiskReading {
+            free_bytes: self.free,
+            reserve_bytes: self.reserve,
+            claimed_bytes: *self.claimed.lock().unwrap(),
+        })
+    }
 }
 
 fn offering(device_ids: &[&str]) -> GpuDeviceOffer {
@@ -608,7 +615,7 @@ fn a_withheld_or_unoffered_gpu_is_never_taken_and_a_lease_withheld_later_does_no
     assert_eq!(lease.hold().device.device_id, "GPU-aaaa");
 
     // The other booker takes the leased GPU before the launch: it does not
-    // launch, and the lease still holds it.
+    // launch, and the lease still holds it (its key still shows).
     std::fs::write(&withheld, "GPU-aaaa\nGPU-bbbb\n")?;
     assert_eq!(
         lease.confirm_launch(),
@@ -618,7 +625,9 @@ fn a_withheld_or_unoffered_gpu_is_never_taken_and_a_lease_withheld_later_does_no
     );
     assert_eq!(
         state_of(&slots.availability(T0 + 1_000)?, "GPU-aaaa"),
-        GpuDeviceState::Withheld
+        GpuDeviceState::Leased {
+            key: "job".to_owned()
+        }
     );
 
     // Given back, the same lease launches.
@@ -735,8 +744,15 @@ fn a_booking_is_refused_while_the_disk_is_under_its_reserve() -> TestResult {
         "a refused booking holds nothing"
     );
 
-    // A booking's claim counts against the next one until it ends.
-    let first = slots.hold(&sized("first", 60 * GIB), T0)?;
+    // A hold checks the room and claims nothing, so a hold that lapses
+    // holds no disk; the lease that runs the job claims its own bytes.
+    let held = slots.hold(&sized("first", 60 * GIB), T0)?;
+    assert_eq!(*disk.claimed.lock().unwrap(), 0);
+    let first = slots.lease(&sized(&held.key, 60 * GIB), T0)?;
+    assert_eq!(first.hold(), &held);
+    assert_eq!(*disk.claimed.lock().unwrap(), 60 * GIB);
+
+    // A lease's claim counts against the next booking until it ends.
     assert_eq!(
         slots.lease(&sized("second", 40 * GIB), T0).map(|_| ()),
         Err(GpuSlotRefusal::DiskUnderReserve {
@@ -744,15 +760,39 @@ fn a_booking_is_refused_while_the_disk_is_under_its_reserve() -> TestResult {
             free_bytes: 100 * GIB,
         })
     );
-    assert!(slots.release(&first.key));
-    let second = slots.lease(&sized("second", 40 * GIB), T0)?;
-    assert_eq!(*disk.claimed.lock().unwrap(), 40 * GIB);
-    drop(second);
+    assert_eq!(
+        slots.hold(&sized("third", 40 * GIB), T0),
+        Err(GpuSlotRefusal::DiskUnderReserve {
+            needed_bytes: 110 * GIB,
+            free_bytes: 100 * GIB,
+        })
+    );
+    drop(first);
     assert_eq!(
         *disk.claimed.lock().unwrap(),
         0,
         "the claim ends with its slot"
     );
+
+    // A lease that takes a hold claims its own bytes: too many leave the
+    // hold as it was.
+    let small = slots.hold(&sized("small", 0), T0)?;
+    let other = slots.lease(&sized("other", 45 * GIB), T0)?;
+    assert_eq!(
+        slots.lease(&sized(&small.key, 50 * GIB), T0).map(|_| ()),
+        Err(GpuSlotRefusal::DiskUnderReserve {
+            needed_bytes: 105 * GIB,
+            free_bytes: 100 * GIB,
+        })
+    );
+    assert_eq!(
+        state_of(&slots.availability(T0)?, &small.device.device_id),
+        GpuDeviceState::Held {
+            key: small.key.clone()
+        }
+    );
+    drop(other);
+    assert!(slots.release(&small.key));
 
     // A disk already under its reserve takes no booking, even of 0 bytes.
     let full = GpuSlotTable::with_disk(
@@ -1194,9 +1234,14 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
     assert_eq!(default.drain_after_failures, GPU_DRAIN_AFTER_FAILURES);
     assert_eq!(default.drain_file, None);
 
-    let devices = gpu_jobs_section(
-        "[devices]\noffered = [\"GPU-aaaa\", \"GPU-bbbb\"]\nwithheld_file = \"/var/lib/oneiron/gpu-withheld\"\nhold_secs = 30\ndrain_after_failures = 5\ndrain_file = \"/var/lib/oneiron/gpu-drained\"\n",
-    )?
+    let dir = tempfile::tempdir()?;
+    let drain_file = dir.path().join("gpu-drained");
+    let owner_lock_dir = dir.path().join("gpu-owners");
+    let devices = gpu_jobs_section(&format!(
+        "[devices]\noffered = [\"GPU-aaaa\", \"GPU-bbbb\"]\nwithheld_file = \"/var/lib/oneiron/gpu-withheld\"\nhold_secs = 30\ndrain_after_failures = 5\ndrain_file = {:?}\nowner_lock_dir = {:?}\n",
+        drain_file.display().to_string(),
+        owner_lock_dir.display().to_string(),
+    ))?
     .devices;
     assert_eq!(
         devices,
@@ -1208,8 +1253,16 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
             withheld_file: Some("/var/lib/oneiron/gpu-withheld".into()),
             hold_secs: 30,
             drain_after_failures: 5,
-            drain_file: Some("/var/lib/oneiron/gpu-drained".into()),
+            drain_file: Some(drain_file),
+            owner_lock_dir: Some(owner_lock_dir),
         }
+    );
+    assert_eq!(
+        gpu_jobs_section("[devices]\noffered = [\"GPU-aaaa\"]\n")?
+            .devices
+            .owner_lock_dir,
+        Some(std::env::temp_dir().join("oneiron-gpu-owners")),
+        "an offering server takes owner locks by default"
     );
 
     for refused in [
@@ -1218,6 +1271,8 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
         "[devices]\noffered = [\"\"]\n",
         "[devices]\nwithheld_file = \"relative/gpu-withheld\"\n",
         "[devices]\ndrain_file = \"relative/gpu-drained\"\n",
+        "[devices]\ndrain_file = \"/no/such/directory/gpu-drained\"\n",
+        "[devices]\nowner_lock_dir = \"relative/gpu-owners\"\n",
         "[devices]\nhold_secs = 0\n",
         "[devices]\nofered = [\"GPU-aaaa\"]\n",
     ] {
@@ -1455,5 +1510,46 @@ fn an_offered_gpu_that_a_model_worker_runs_on_is_refused() -> TestResult {
     let by_index = refuse_worker_device_overlap(&offered, [("voice", "0")])
         .expect_err("an index cannot be told apart from an offered GPU");
     assert!(by_index.to_string().contains("by index"), "{by_index}");
+    Ok(())
+}
+
+#[test]
+fn two_servers_on_one_machine_never_offer_the_same_gpu() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let offer = GpuDeviceOffer {
+        owner_lock_dir: Some(dir.path().join("owners")),
+        ..offering(&["GPU-aaaa"])
+    };
+    let first = table(&probe, offer.clone());
+    let second = table(&probe, offer);
+    assert_eq!(
+        state_of(&first.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free
+    );
+    assert_eq!(
+        state_of(&second.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Withheld,
+        "the GPU's owner lock is the first server's"
+    );
+    assert_eq!(
+        second.hold(&request("b"), T0),
+        Err(GpuSlotRefusal::NoneFree)
+    );
+    assert_eq!(
+        second.hold(&pinned("b", "GPU-aaaa"), T0),
+        Err(GpuSlotRefusal::Withheld {
+            device_id: "GPU-aaaa".to_owned()
+        })
+    );
+    first.hold(&request("a"), T0)?;
+
+    // The first server stops: the second owns the GPU at its next reading.
+    drop(first);
+    assert_eq!(
+        state_of(&second.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free
+    );
+    second.hold(&request("b"), T0)?;
     Ok(())
 }
