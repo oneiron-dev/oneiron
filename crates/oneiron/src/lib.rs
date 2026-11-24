@@ -224,6 +224,7 @@ pub mod delivery_window;
 pub mod feedback;
 pub mod gpu_job;
 pub mod gpu_line;
+pub mod job_dispatch;
 pub mod job_workload;
 pub mod ingest;
 pub mod linkedin_connector;

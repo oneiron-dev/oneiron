@@ -26,12 +26,21 @@
 //! startup_secs = 60
 //! teardown_secs = 30
 //! rounding_secs = 60
+//!
+//! [gpu_jobs.vault_machine]
+//! enabled = true
+//! issuer = "<this install's MACHINE id, 32 hex>"
 //! ```
+//!
+//! `[gpu_jobs.vault_machine]` sets up the `vault_machine` backend, which runs a pinned workload
+//! on one of the vault's own machines (pass 33 section 8). It registers only on the install whose
+//! MACHINE is the `issuer`, never on a managed server; `paused` stops new dispatches and cancels
+//! nothing. The windows are settings with the design's values as defaults.
 use std::collections::BTreeMap;
 
-use oneiron::ModelLocality;
 use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
+use oneiron::{EntityId, ModelLocality};
 use serde::Deserialize;
 
 /// The maximum a job takes when its request names none: one hour.
@@ -40,6 +49,14 @@ pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
 pub const GPU_JOB_STEP_SECS: u64 = 30;
 /// The adapter prefix an offer's route names; the backend follows it.
 const GPU_BACKEND_ADAPTER: &str = "gpu-backend";
+/// How long after it is signed a vault machine job's reserve and submit may still be sent: its
+/// `not_after` (pass 33, 5.1).
+pub const VAULT_MACHINE_SUBMIT_WINDOW_SECS: u64 = 300;
+/// How far ahead the live recheck before a dispatch looks: nothing it reads may end sooner. The
+/// submit window plus the node's staging limit (pass 33, 8.2 step 2).
+pub const VAULT_MACHINE_RECHECK_HORIZON_SECS: u64 = 900;
+/// How long one job protocol call to a node may take, the dial included.
+pub const VAULT_MACHINE_CALL_TIMEOUT_SECS: u64 = 10;
 
 /// `[gpu_jobs]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -51,6 +68,27 @@ pub(crate) struct GpuJobsFile {
     step_secs: Option<u64>,
     #[serde(default)]
     offers: BTreeMap<String, GpuOfferFile>,
+    #[serde(default)]
+    vault_machine: VaultMachineFile,
+}
+
+/// `[gpu_jobs.vault_machine]` as written.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VaultMachineFile {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    paused: bool,
+    /// The MACHINE id, in hex, of the one install that issues vault machine jobs.
+    #[serde(default)]
+    issuer: Option<String>,
+    #[serde(default)]
+    submit_window_secs: Option<u64>,
+    #[serde(default)]
+    recheck_horizon_secs: Option<u64>,
+    #[serde(default)]
+    call_timeout_secs: Option<u64>,
 }
 
 /// `[gpu_jobs.offers.<name>]` as written.
@@ -82,6 +120,7 @@ pub struct GpuJobsSettings {
     /// How often the worker steps each live job, in seconds.
     pub step_secs: u64,
     pub offers: BTreeMap<String, GpuOfferSettings>,
+    pub vault_machine: VaultMachineSettings,
 }
 
 impl Default for GpuJobsSettings {
@@ -90,7 +129,81 @@ impl Default for GpuJobsSettings {
             default_maximum_secs: GPU_JOB_DEFAULT_MAXIMUM_SECS,
             step_secs: GPU_JOB_STEP_SECS,
             offers: BTreeMap::new(),
+            vault_machine: VaultMachineSettings::default(),
         }
+    }
+}
+
+/// The `vault_machine` backend's settings (pass 33 section 8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VaultMachineSettings {
+    /// Whether this install registers the backend. Off by default.
+    pub enabled: bool,
+    /// No new dispatch while set; every admitted job runs on and is stepped (pass 33, 7.9).
+    pub paused: bool,
+    /// The one install that issues vault machine jobs (R5-ISSUER-IDENTITY = A). A start on any
+    /// other install answers `not_the_issuer`.
+    pub issuer: Option<EntityId>,
+    /// How long after signing a reserve or submit may still be sent.
+    pub submit_window_secs: u64,
+    /// How far ahead the live recheck before a dispatch looks.
+    pub recheck_horizon_secs: u64,
+    /// How long one job protocol call to a node may take.
+    pub call_timeout_secs: u64,
+}
+
+impl Default for VaultMachineSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            paused: false,
+            issuer: None,
+            submit_window_secs: VAULT_MACHINE_SUBMIT_WINDOW_SECS,
+            recheck_horizon_secs: VAULT_MACHINE_RECHECK_HORIZON_SECS,
+            call_timeout_secs: VAULT_MACHINE_CALL_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl VaultMachineFile {
+    fn resolve(self) -> anyhow::Result<VaultMachineSettings> {
+        let issuer = self
+            .issuer
+            .map(|hex| {
+                EntityId::from_hex(hex.trim()).map_err(|_| {
+                    anyhow::anyhow!("gpu_jobs.vault_machine.issuer must be a MACHINE id in hex")
+                })
+            })
+            .transpose()?;
+        let submit_window_secs = self
+            .submit_window_secs
+            .unwrap_or(VAULT_MACHINE_SUBMIT_WINDOW_SECS);
+        let recheck_horizon_secs = self
+            .recheck_horizon_secs
+            .unwrap_or(VAULT_MACHINE_RECHECK_HORIZON_SECS);
+        let call_timeout_secs = self
+            .call_timeout_secs
+            .unwrap_or(VAULT_MACHINE_CALL_TIMEOUT_SECS);
+        anyhow::ensure!(
+            submit_window_secs > 0 && call_timeout_secs > 0,
+            "gpu_jobs.vault_machine.submit_window_secs and call_timeout_secs must be greater than zero"
+        );
+        anyhow::ensure!(
+            recheck_horizon_secs >= submit_window_secs,
+            "gpu_jobs.vault_machine.recheck_horizon_secs must cover the submit window"
+        );
+        anyhow::ensure!(
+            !self.enabled || issuer.is_some(),
+            "gpu_jobs.vault_machine.enabled needs the issuer's MACHINE id"
+        );
+        Ok(VaultMachineSettings {
+            enabled: self.enabled,
+            paused: self.paused,
+            issuer,
+            submit_window_secs,
+            recheck_horizon_secs,
+            call_timeout_secs,
+        })
     }
 }
 
@@ -138,6 +251,7 @@ impl GpuJobsFile {
             default_maximum_secs,
             step_secs,
             offers,
+            vault_machine: self.vault_machine.resolve()?,
         })
     }
 }
