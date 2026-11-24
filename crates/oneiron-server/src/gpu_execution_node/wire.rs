@@ -18,14 +18,11 @@
 //! environment, every host path and the limits are the node's own.
 
 use oneiron::EntityId;
-pub use oneiron::job_workload::{NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin};
+pub use oneiron::job_workload::{
+    JOB_ALPN, JOB_STATUS_ALPN, NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
+};
 use serde::{Deserialize, Serialize};
 
-/// The mesh ALPN that admits new work on a node: [`JobRequest`].
-pub const JOB_ALPN: &[u8] = b"oneiron/job/1";
-/// The mesh ALPN that serves the keys a node already holds:
-/// [`JobStatusRequest`].
-pub const JOB_STATUS_ALPN: &[u8] = b"oneiron/job-status/1";
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
 /// The domain the issuer's machine key signs a [`JobSubmit`] under.

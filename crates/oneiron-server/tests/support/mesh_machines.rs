@@ -345,6 +345,20 @@ impl Machines {
         })
     }
 
+    /// As [`Self::start`], then every replica grants every other machine
+    /// each of `alpns`: for a test that needs machines already holding a
+    /// protocol's grant (e.g. the job grant before an approval).
+    pub(crate) async fn start_granted(count: u8, alpns: &[&[u8]]) -> TestResult<Self> {
+        let machines = Self::start(count).await?;
+        let indices = 0..machines.machines.len();
+        for holder in indices.clone() {
+            for peer in indices.clone().filter(|peer| *peer != holder) {
+                machines.grant(holder, peer, alpns)?;
+            }
+        }
+        Ok(machines)
+    }
+
     /// The machine at `index`, in enrolment order.
     pub(crate) fn machine(&self, index: usize) -> &Machine {
         &self.machines[index]
