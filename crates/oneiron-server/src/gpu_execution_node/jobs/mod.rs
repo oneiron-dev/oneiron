@@ -39,8 +39,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use oneiron_organ_host::FloorLease;
 
 pub use job_unit::{
-    BoundReport, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
-    LaunchFile, NodeClock, RenewRefusal, ScopeCapabilities, Strength, SystemNodeClock,
+    EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
+    RenewRefusal, SystemNodeClock, scope_missing,
 };
 pub use journal::{EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey};
 pub use journal_file::{

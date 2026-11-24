@@ -11,9 +11,11 @@
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
-use oneiron_server::gpu_execution_node::ScopeBound;
+use oneiron::job_workload::{
+    BoundReport, BoundRequirement, BoundStrength, DeviceClaim, DeviceKind, ScopeBound, Sharing,
+};
 use oneiron_server::gpu_execution_node::jobs::{
-    BoundReport, JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey, Strength,
+    JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey,
 };
 use oneiron_server::gpu_execution_node::wire::{
     DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState,
@@ -29,6 +31,7 @@ const DIGEST: &str = "1111111111111111111111111111111111111111111111111111111111
 const DEVICE: &str = "GPU-scripted-0";
 const NOW_MS: u64 = 1_800_000_000_000;
 const WAIT: Duration = Duration::from_secs(10);
+const MIB: u64 = 1024 * 1024;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -56,10 +59,10 @@ fn pin(entry: &str) -> WorkloadPin {
         entry: entry.to_owned(),
         args: vec!["seed=7".to_owned()],
         request: ResourceRequest {
-            gpus: 1,
-            vram_mib: 22 * 1024,
+            cpu_threads: 0,
             memory_mib: 22 * 1024,
             disk_mib: 2 * 1024,
+            devices: vec![gpu_claim(22 * 1024)],
             maximum_secs: 1_800,
         },
         scope: ScopeKind::Host,
@@ -69,6 +72,27 @@ fn pin(entry: &str) -> WorkloadPin {
             returnable: true,
         }],
     }
+}
+
+/// One exclusive GPU of at least `memory_mib`.
+fn gpu_claim(memory_mib: u64) -> DeviceClaim {
+    DeviceClaim {
+        kind: DeviceKind::Gpu,
+        count: 1,
+        memory_mib,
+        features: Vec::new(),
+        sharing: Sharing::Exclusive,
+    }
+}
+
+/// `pin` with `devices` in place of its device claims.
+fn with_devices(mut pin: WorkloadPin, devices: Vec<DeviceClaim>) -> WorkloadPin {
+    pin.request.devices = devices;
+    pin
+}
+
+fn requirement(bound: ScopeBound, kernel: bool) -> BoundRequirement {
+    BoundRequirement { bound, kernel }
 }
 
 impl Fixture {
@@ -108,13 +132,17 @@ impl Fixture {
 
     /// Reserves and submits `key`, and waits until its unit runs.
     fn run(&self, jobs: &NodeJobs, key: &str) -> NodeKey {
-        let pin = pin("tools/units/run.sh");
+        self.run_pin(jobs, key, &pin("tools/units/run.sh"))
+    }
+
+    /// Reserves and submits `key` with `pin`, and waits until its unit runs.
+    fn run_pin(&self, jobs: &NodeJobs, key: &str, pin: &WorkloadPin) -> NodeKey {
         assert_eq!(
-            receipt(jobs.reserve(self.issuer, self.reserve(key, &pin))).state,
+            receipt(jobs.reserve(self.issuer, self.reserve(key, pin))).state,
             JobState::Held
         );
         assert_eq!(
-            receipt(jobs.submit(self.issuer, self.submit(key, &pin))).state,
+            receipt(jobs.submit(self.issuer, self.submit(key, pin))).state,
             JobState::Accepted
         );
         wait_for(jobs, key, |entry| entry.state == JobState::Launching);
@@ -526,20 +554,25 @@ fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
     let pin = pin("tools/units/run.sh");
     let mut no_cutoff = ScriptedJobUnits::kernel_scope();
     no_cutoff.cutoff_without_engine = BoundReport {
-        strength: Strength::None,
+        strength: BoundStrength::None,
         evidence: "scripted: no timer outlives the engine".to_owned(),
     };
     let mut supervised_memory = ScriptedJobUnits::kernel_scope();
     supervised_memory.memory_cap = BoundReport {
-        strength: Strength::Supervised { lateness_ms: 1_000 },
+        strength: BoundStrength::Supervised {
+            worst_lateness_ms: 1_000,
+        },
         evidence: "scripted: a supervisor reads the usage".to_owned(),
     };
     let mut open_network = ScriptedJobUnits::kernel_scope();
     open_network.network_closed = BoundReport {
-        strength: Strength::None,
+        strength: BoundStrength::None,
         evidence: "scripted: no network namespace".to_owned(),
     };
-    let default_require = vec![ScopeBound::FileWall, ScopeBound::NetworkClosed];
+    let default_require = vec![
+        requirement(ScopeBound::FileWall, false),
+        requirement(ScopeBound::NetworkClosed, false),
+    ];
     let cases = [
         // The minimum contract holds whatever the template requires.
         (
@@ -552,7 +585,10 @@ fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
         (
             "job-12/kernel",
             supervised_memory.clone(),
-            vec![ScopeBound::FileWall, ScopeBound::MemoryCapKernel],
+            vec![
+                requirement(ScopeBound::FileWall, false),
+                requirement(ScopeBound::MemoryCap, true),
+            ],
             "no_scope: memory_cap:kernel",
         ),
         // The template's default list keeps a workload off the network.
@@ -581,12 +617,154 @@ fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
     // A bound the template does not require does not block: the same
     // supervised memory cap launches under the default list.
     fixture.node.units.set_probe(supervised_memory);
-    fixture
-        .node
-        .admission
-        .set_template_requires(vec![ScopeBound::FileWall, ScopeBound::NetworkClosed]);
+    fixture.node.admission.set_template_requires(vec![
+        requirement(ScopeBound::FileWall, false),
+        requirement(ScopeBound::NetworkClosed, false),
+    ]);
     let running = fixture.run(&jobs, "job-12/unrequired");
     assert!(running.started());
+}
+
+#[test]
+fn a_key_with_no_device_claim_takes_no_device_and_launches_on_memory_alone() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let mut cpu = with_devices(pin("tools/units/run.sh"), Vec::new());
+    cpu.request.memory_mib = 2 * 1024;
+    let key = "job-20/cpu";
+    let running = fixture.run_pin(&jobs, key, &cpu);
+    let launch = running.launch.as_ref().expect("launched");
+    assert!(launch.devices.is_empty());
+    assert_eq!(launch.host_memory_mib, 2 * 1024);
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+    assert_eq!(fixture.node.devices.taken_by(DEVICE), None);
+    assert_eq!(fixture.node.floor.leased_bytes(), 2 * 1024 * MIB);
+
+    // A GPU job runs beside it, on the device the CPU job left free.
+    let gpu = "job-20/gpu";
+    fixture.run(&jobs, gpu);
+    assert_eq!(fixture.node.devices.taken_by(DEVICE).as_deref(), Some(gpu));
+    assert_eq!(fixture.node.floor.leased_bytes(), 24 * 1024 * MIB);
+
+    // The CPU job's end gives its memory back with no device probe, and
+    // the GPU job keeps its device.
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    let ended = wait_for(&jobs, key, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(ended.end, Some(JobEnd::Exited { code: 0 }));
+    assert_eq!(known(jobs.find(fixture.issuer, key)).device_id, None);
+    assert!(
+        fixture
+            .node
+            .devices
+            .finished()
+            .iter()
+            .all(|(finished, _)| finished != key)
+    );
+    assert_eq!(fixture.node.devices.taken_by(DEVICE).as_deref(), Some(gpu));
+    assert_eq!(fixture.node.floor.leased_bytes(), 22 * 1024 * MIB);
+}
+
+#[test]
+fn a_claim_no_device_of_the_machine_meets_is_refused_at_reserve() {
+    let fixture = fixture();
+    fixture.node.devices.add_device("GPU-scripted-1", 24 * 1024);
+    let jobs = fixture.node.open();
+    let base = pin("tools/units/run.sh");
+    let fp8 = DeviceClaim {
+        features: vec!["fp8".to_owned()],
+        ..gpu_claim(1024)
+    };
+    let npu = DeviceClaim {
+        kind: DeviceKind::Npu,
+        ..gpu_claim(0)
+    };
+    let cases = [
+        ("job-21/feature", vec![fp8.clone()], "no_device: claim 0"),
+        (
+            "job-21/kind",
+            vec![gpu_claim(1024), npu],
+            "no_device: claim 1",
+        ),
+        (
+            "job-21/count",
+            vec![DeviceClaim {
+                count: 3,
+                ..gpu_claim(1024)
+            }],
+            "no_device: claim 0",
+        ),
+        (
+            "job-21/memory",
+            vec![gpu_claim(48 * 1024)],
+            "no_device: claim 0",
+        ),
+        // Two devices meet it, but a key holds one device in this slice.
+        (
+            "job-21/two",
+            vec![DeviceClaim {
+                count: 2,
+                ..gpu_claim(1024)
+            }],
+            "devices_above_one",
+        ),
+    ];
+    for (key, devices, reason) in cases {
+        let refused_pin = with_devices(base.clone(), devices);
+        let refused = receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &refused_pin)));
+        assert_eq!(refused.state, JobState::Ended, "{key}");
+        assert!(
+            matches!(&refused.end, Some(JobEnd::Refused { reason: found }) if found == reason),
+            "{key}: {:?}",
+            refused.end
+        );
+        assert!(!refused.started);
+    }
+    // Once the device reports the feature, the same claim is held.
+    fixture.node.devices.set_features(DEVICE, &["fp8"]);
+    let met = with_devices(base, vec![fp8]);
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-21/feature-met", &met))).state,
+        JobState::Held
+    );
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+}
+
+#[test]
+fn a_unified_memory_device_adds_its_claim_memory_to_the_floor_and_a_short_floor_takes_nothing() {
+    let fixture = fixture();
+    fixture.node.devices.set_unified(DEVICE, true);
+    let jobs = fixture.node.open();
+    let large = pin("tools/units/run.sh");
+    // 22 GiB for the run and 22 GiB for the device's share of the host's
+    // memory: past the 26 GiB floor. The device leased first goes back.
+    let key = "job-22/large";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &large)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &large)));
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    assert_eq!(
+        ended.end,
+        Some(JobEnd::LaunchRefused {
+            reason: "memory_busy".to_owned()
+        })
+    );
+    assert_eq!(fixture.node.devices.leases_given(), 1);
+    assert_eq!(fixture.node.devices.taken_by(DEVICE), None);
+    assert_eq!(fixture.node.floor.leased_bytes(), 0);
+    assert_eq!(fixture.node.units.total_starts(), 0);
+
+    // 22 GiB and 2 GiB fit: the floor holds both.
+    let small = with_devices(large, vec![gpu_claim(2 * 1024)]);
+    let running = fixture.run_pin(&jobs, "job-22/small", &small);
+    let launch = running.launch.expect("launched");
+    assert_eq!(launch.host_memory_mib, 24 * 1024);
+    assert_eq!(fixture.node.floor.leased_bytes(), 24 * 1024 * MIB);
+    assert_eq!(
+        fixture.node.devices.taken_by(DEVICE).as_deref(),
+        Some("job-22/small")
+    );
 }
 
 #[test]

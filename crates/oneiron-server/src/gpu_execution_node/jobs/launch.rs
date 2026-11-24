@@ -14,10 +14,14 @@
 //! 3. the authority, read now: the node's fold holds the position the
 //!    issuer signed the submit at (EM-11 = B; the worker waits for it up to
 //!    the staging limit), and the grants and the issuer's standing are live;
-//! 4. the device and the memory, both or neither: a device lease confirmed
-//!    with no compute process on it, and the memory floor;
+//! 4. every lease of the request, or none (pass 34 9.2 (a)): the request's
+//!    device claims placed on a fresh reading of the devices
+//!    (`ResourceRequest::place_devices`; none for a request with no device
+//!    claim), each placed device leased and confirmed with no compute
+//!    process on it, then the placement's host memory from the floor (the
+//!    request's memory plus each unified device's claim memory);
 //! 5. `launch.json`, then the `launching` record, synced. Occupancy starts
-//!    at this record: its clock is read after both leases are taken, so the
+//!    at this record: its clock is read after every lease is taken, so the
 //!    lock wait and the device probe are not occupancy;
 //! 6. the unit's start.
 //!
@@ -27,8 +31,8 @@
 
 use std::time::{Duration, Instant};
 
-use super::admission::{log_write_error, memory_bytes, slot_request};
-use super::job_unit::{LAUNCH_FILE_NAME, LaunchFile, write_file_synced};
+use super::admission::{Placing, device_slot_request, log_write_error, mib_bytes, placement};
+use super::job_unit::{LAUNCH_FILE_NAME, LaunchFile, scope_missing, write_file_synced};
 use super::journal::{JournalEvent, NodeKey};
 use super::node_parts::{GpuSlotRefusal, StageFailure, StageOrder};
 use super::{JobKeyId, NodeBook, NodeGate, NodeJobs};
@@ -205,14 +209,30 @@ impl NodeJobs {
             return;
         }
         let pin = &reserve.pin;
-        let request = slot_request(key, pin, &reserve.slot);
-        let lease = match self.parts().devices.lease_for_launch(&request) {
-            Ok(lease) => lease,
-            Err(refusal) => {
-                let reason = match refusal {
-                    GpuSlotRefusal::Busy { .. } => "device_busy".to_owned(),
-                    other => format!("device_refused: {other}"),
-                };
+        // Step 4: every lease of the request, or none (pass 34 9.2 (a)): the
+        // placement from a fresh reading, each placed device leased and
+        // confirmed, then the host memory. A request with no device claim
+        // takes no device lease.
+        let leased = placement(self.parts().devices.as_ref(), &reserve, Placing::AtLaunch)
+            .map_err(|reason| format!("device_refused: {reason}"))
+            .and_then(|placed| {
+                let mut leases = Vec::with_capacity(placed.devices.len());
+                for device in &placed.devices {
+                    let request =
+                        device_slot_request(key, device, pin.request.devices.get(device.claim));
+                    match self.parts().devices.lease_for_launch(&request) {
+                        Ok(lease) => leases.push(lease),
+                        // The leases taken so far drop here: their devices go
+                        // back.
+                        Err(GpuSlotRefusal::Busy { .. }) => return Err("device_busy".to_owned()),
+                        Err(other) => return Err(format!("device_refused: {other}")),
+                    }
+                }
+                Ok((placed, leases))
+            });
+        let (placed, leases) = match leased {
+            Ok(leased) => leased,
+            Err(reason) => {
                 if let Err(error) = journal.record(
                     key,
                     known.issuer,
@@ -225,10 +245,14 @@ impl NodeJobs {
                 return;
             }
         };
-        let floor = match self.parts().floor.try_lease(memory_bytes(pin)) {
+        let floor = match self
+            .parts()
+            .floor
+            .try_lease(mib_bytes(placed.host_memory_mib))
+        {
             Ok(Some(floor)) => floor,
             Ok(None) | Err(_) => {
-                drop(lease);
+                drop(leases);
                 if let Err(error) = journal.record(
                     key,
                     known.issuer,
@@ -241,9 +265,8 @@ impl NodeJobs {
                 return;
             }
         };
-        // Occupancy starts here, with both leases taken.
+        // Occupancy starts here, with every lease taken.
         let now = self.now();
-        let device_id = lease.grant().device.device_id.clone();
         let maximum_secs = signed.submit.maximum_secs;
         let cutoff_boot_ns = now
             .boot_ns
@@ -251,7 +274,8 @@ impl NodeJobs {
         let launch_file = LaunchFile {
             key: key.to_owned(),
             pin: pin.clone(),
-            device_id: device_id.clone(),
+            devices: placed.devices.clone(),
+            host_memory_mib: placed.host_memory_mib,
             maximum_secs,
             boot_id: now.boot_id.clone(),
             launch_boot_ns: now.boot_ns,
@@ -261,7 +285,7 @@ impl NodeJobs {
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
             .and_then(|bytes| write_file_synced(&control_dir.join(LAUNCH_FILE_NAME), &bytes));
         if let Err(error) = written {
-            drop((lease, floor));
+            drop((leases, floor));
             let reason = format!("control_file: {error}");
             if let Err(error) = journal.record(
                 key,
@@ -275,18 +299,20 @@ impl NodeJobs {
             return;
         }
         let event = JournalEvent::Launching {
-            device_id,
+            devices: placed.devices,
             launch_boot_ns: now.boot_ns,
             cutoff_boot_ns,
-            memory_mib: pin.request.memory_mib,
+            host_memory_mib: placed.host_memory_mib,
         };
         if let Err(error) = journal.record(key, known.issuer, &now.boot_id, now.wall_ms, event) {
-            // Nothing is journaled: the device and the memory go back as the
-            // leases drop, and the key stays `Staging` for the next tick.
+            // Nothing is journaled: the devices and the memory go back as
+            // the leases drop, and the key stays `Staging` for the next tick.
             log_write_error(key, &error);
             return;
         }
-        let _kept = lease.keep();
+        for lease in leases {
+            let _kept = lease.keep();
+        }
         book.floors.insert(key.to_owned(), floor);
         if let Err(error) = self.parts().units.start(&JobKeyId::for_key(key)) {
             tracing::warn!(key, %error, "job unit start not taken; the end handling reads what remains");
@@ -313,7 +339,7 @@ impl NodeJobs {
         let Some(required) = admission.template_requires(&pin.template) else {
             return Some("template_changed".to_owned());
         };
-        let missing = self.parts().units.probe().missing_for(&required);
+        let missing = scope_missing(&self.parts().units.probe(), &required);
         if !missing.is_empty() {
             return Some(format!("no_scope: {}", missing.join(", ")));
         }
