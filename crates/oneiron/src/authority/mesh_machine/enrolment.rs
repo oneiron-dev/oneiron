@@ -39,16 +39,20 @@ pub struct MeshEnrolmentAsk<'a> {
 }
 
 impl MeshEnrolmentAsk<'_> {
-    /// The mesh verbs the binding's pairing slip carries: `granted` and every
-    /// valid ALPN of the ceiling.
-    fn ceiling_verbs(&self) -> BTreeSet<String> {
-        self.ceiling
-            .iter()
-            .copied()
-            .chain([self.granted])
-            .filter(|alpn| valid_alpn(alpn))
-            .map(mesh_verb)
-            .collect()
+    /// The scope the binding's pairing slip carries: the mesh verbs of
+    /// `granted` and of every valid ALPN of the ceiling.
+    fn ceiling_scope(&self) -> Scope {
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(
+            self.ceiling
+                .iter()
+                .copied()
+                .chain([self.granted])
+                .filter(|alpn| valid_alpn(alpn))
+                .map(mesh_verb)
+                .collect(),
+        );
+        scope
     }
 }
 
@@ -81,7 +85,9 @@ pub enum MeshEnrolment {
         machine: EntityId,
         endpoint_key: [u8; 32],
     },
-    /// The endpoint already held a live grant on the ALPN; nothing new.
+    /// The endpoint already held a live grant on the ALPN, and it stands. Its
+    /// binding moved to a pairing under the ask's ceiling if its own did not
+    /// cover it.
     AlreadyGranted {
         machine: EntityId,
         endpoint_key: [u8; 32],
@@ -138,17 +144,14 @@ impl Vault {
         {
             // A re-enrolment: the binding moves to the ask's ceiling in a
             // savepoint that lands whole or not at all, and the grant stands.
-            if let Ok(mut savepoint) = self.store.env.nested_write_txn(txn) {
-                if self
-                    .re_pair_enrolled_in_txn(&mut savepoint, issuer, request, ask)
-                    .is_ok()
-                {
-                    let _ = savepoint.commit();
-                }
-            }
-            return MeshEnrolment::AlreadyGranted {
-                machine,
-                endpoint_key,
+            // A move that does not land refuses the binding, so no answer
+            // promises a ceiling the binding lacks.
+            return match self.re_pair_enrolled_in_savepoint(txn, issuer, request, ask) {
+                Ok(()) => MeshEnrolment::AlreadyGranted {
+                    machine,
+                    endpoint_key,
+                },
+                Err(_) => MeshEnrolment::Refused(MeshBindRefusal::BindRefused),
             };
         }
         match self.bind_enrolled_in_savepoint(txn, issuer, request, ask) {
@@ -192,7 +195,7 @@ impl Vault {
             return Ok(None);
         }
         let pairing_slip_id =
-            self.mint_enrolment_pairing_in_txn(&mut savepoint, issuer, request, ask)?;
+            self.mint_enrolment_pairing_in_txn(&mut savepoint, issuer, request, ask, 0)?;
         let count = self.bind_mesh_machine_in_txn(
             &mut savepoint,
             issuer,
@@ -218,13 +221,15 @@ impl Vault {
     /// The binding's pairing slip for an enrolment: held by the MACHINE under
     /// its machine key, carrying the mesh verb of every protocol of
     /// `ask`'s ceiling, and running as long as the owner's mesh grant ceiling
-    /// (`mesh.grant.max_ttl_secs`, one year by default), so a grant can.
+    /// (`mesh.grant.max_ttl_secs`, one year by default), so a grant can, and
+    /// never ending before `at_least_until`.
     fn mint_enrolment_pairing_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
         ask: MeshEnrolmentAsk<'_>,
+        at_least_until: u64,
     ) -> Result<[u8; 32]> {
         let machine = request.machine;
         let now = self.instant_in_txn(txn)?.secs();
@@ -232,8 +237,7 @@ impl Vault {
             .read_in_txn(self, txn, &[], None)?
             .value
             .secs();
-        let mut scope = Scope::top();
-        scope.verbs = ScopeAxis::Some(ask.ceiling_verbs());
+        let expires_at = now.saturating_add(ceiling).max(at_least_until);
         let pairing = self.mint_slip_in_txn(
             txn,
             issuer,
@@ -243,10 +247,10 @@ impl Vault {
                 parent_id: None,
                 holder_ref: machine.to_hex(),
                 binding_key: request.machine_key,
-                scope,
+                scope: ask.ceiling_scope(),
                 issued_at: now,
-                expires_at: now.saturating_add(ceiling),
-                ttl_secs: ceiling,
+                expires_at,
+                ttl_secs: expires_at.saturating_sub(now),
                 single_use: false,
                 records: Default::default(),
                 channels: Default::default(),
@@ -264,35 +268,67 @@ impl Vault {
         Ok(pairing.claims.slip_id)
     }
 
-    /// A re-enrolment of a machine this vault has bound at the same endpoint
-    /// under the same machine key (the owner issued its new machine link,
-    /// and its proofs verified): the binding moves to a new pairing slip
-    /// under `ask`'s ceiling, and the old pairing slip is revoked, so a
-    /// machine bound under a narrower ceiling can take the owner's later
-    /// grants. Its grants stand. A binding that is revoked, or names another
-    /// endpoint, key or host, is left for the grant to refuse.
-    fn re_pair_enrolled_in_txn(
+    /// [`Self::re_pair_enrolled_in_txn`] in a savepoint of `txn` that lands
+    /// whole or not at all.
+    fn re_pair_enrolled_in_savepoint(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
         ask: MeshEnrolmentAsk<'_>,
     ) -> Result<()> {
-        let Some(mut claims) = self.mesh_authority_in_txn(txn, request.machine)? else {
-            return Ok(());
+        let mut savepoint = self.store.env.nested_write_txn(txn)?;
+        if self.re_pair_enrolled_in_txn(&mut savepoint, issuer, request, ask)? {
+            savepoint.commit()?;
+        }
+        Ok(())
+    }
+
+    /// A re-enrolment of a machine this vault has bound at the same endpoint
+    /// under the same machine key (the owner issued its new machine link,
+    /// and its proofs verified): the binding moves to a new pairing slip
+    /// under `ask`'s ceiling, so a machine bound under a narrower ceiling can
+    /// take the owner's later grants, and one whose pairing expired takes a
+    /// live one. Its grants stand: the new pairing ends no earlier than the
+    /// old one, which no grant outlives. The old pairing is left to its
+    /// expiry, never revoked here: another replica's binding of the machine
+    /// may stand on it. `false` when nothing moved: the pairing is live and
+    /// covers the ceiling already, or the binding is revoked, names another
+    /// endpoint, key or host, or stands on a pairing a revoke or the
+    /// MACHINE's removal ended (the grant refuses those).
+    fn re_pair_enrolled_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        request: &MachineEnrolmentRequest,
+        ask: MeshEnrolmentAsk<'_>,
+    ) -> Result<bool> {
+        let Some((fold, mut claims)) = self.mesh_authority_signed_in_txn(txn, request.machine)?
+        else {
+            return Ok(false);
         };
         if claims.revoked
             || claims.endpoint_key != ask.identity.endpoint_key
             || claims.device_key != request.machine_key
             || claims.host_key != issuer.binding_key()
         {
-            return Ok(());
+            return Ok(false);
         }
-        let previous = claims.pairing_slip_id;
-        claims.pairing_slip_id = self.mint_enrolment_pairing_in_txn(txn, issuer, request, ask)?;
+        let Some(pair) = mesh_pairing_standing(&fold, &claims) else {
+            return Ok(false);
+        };
+        let now = self.instant_in_txn(txn)?.secs();
+        if now >= pair.issued_at
+            && now < pair.expires_at
+            && ask.ceiling_scope().is_narrowing_of(&pair.scope)
+        {
+            return Ok(false);
+        }
+        let at_least_until = pair.expires_at;
+        claims.pairing_slip_id =
+            self.mint_enrolment_pairing_in_txn(txn, issuer, request, ask, at_least_until)?;
         self.write_mesh_authority_in_txn(txn, issuer, claims)?;
-        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipRevoke { slip_id: previous })?;
-        Ok(())
+        Ok(true)
     }
 
     /// Revokes, for a MACHINE the owner removed, the pairing its mesh binding

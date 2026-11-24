@@ -30,13 +30,14 @@ use engine_stack::on_engine_stack;
 use execution_nodes::{NodeFiles, PROBE_TEMPLATE};
 use mesh_machines::{Machine, Machines, TestResult, at};
 use oneiron::EntityId;
+use oneiron::job_workload::{DeviceKind, Sharing};
 use oneiron_mesh_transport::MeshError;
 use oneiron_mesh_transport::message::exchange;
 use oneiron_server::gpu_execution_node::node::{DISABLED_MARKER_EXTENSION, marker_beside};
 use oneiron_server::gpu_execution_node::wire::{
-    HoldRef, JOB_ALPN, JOB_PROTOCOL, JOB_STATUS_ALPN, JobAnswer, JobRefusal, JobRequest,
-    JobReserve, JobStatusAnswer, JobStatusRequest, JobSubmit, NetworkMode, ResourceRequest,
-    ScopeKind, SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
+    DeviceClaim, HoldRef, JOB_ALPN, JOB_PROTOCOL, JOB_STATUS_ALPN, JobAnswer, JobRefusal,
+    JobRequest, JobReserve, JobStatusAnswer, JobStatusRequest, JobSubmit, NetworkMode,
+    ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
     ExecutionNode, GpuDeviceOffer, GpuSlotTable, NodeKeys, NvidiaSmiProbe,
@@ -91,10 +92,16 @@ fn probe_pin() -> WorkloadPin {
         entry: "tools/units/run.sh".to_owned(),
         args: Vec::new(),
         request: ResourceRequest {
-            gpus: 1,
-            vram_mib: 1_024,
+            cpu_threads: 0,
             memory_mib: 1_024,
             disk_mib: 1_024,
+            devices: vec![DeviceClaim {
+                kind: DeviceKind::Gpu,
+                count: 1,
+                memory_mib: 1_024,
+                features: Vec::new(),
+                sharing: Sharing::Exclusive,
+            }],
             maximum_secs: 600,
         },
         scope: ScopeKind::Host,

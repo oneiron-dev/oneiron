@@ -11,9 +11,13 @@
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
-use oneiron_server::gpu_execution_node::ScopeBound;
+use oneiron::job_workload::{
+    BoundReport, BoundRequirement, BoundStrength, DeviceClaim, DeviceKind, ScopeBound, Sharing,
+};
+use oneiron_server::gpu_execution_node::NodeKeys;
+use oneiron_server::gpu_execution_node::jobs::job_unit::RECEIPT_FILE_NAME;
 use oneiron_server::gpu_execution_node::jobs::{
-    BoundReport, JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey, Strength,
+    JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey,
 };
 use oneiron_server::gpu_execution_node::wire::{
     DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState,
@@ -29,6 +33,7 @@ const DIGEST: &str = "1111111111111111111111111111111111111111111111111111111111
 const DEVICE: &str = "GPU-scripted-0";
 const NOW_MS: u64 = 1_800_000_000_000;
 const WAIT: Duration = Duration::from_secs(10);
+const MIB: u64 = 1024 * 1024;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -56,10 +61,10 @@ fn pin(entry: &str) -> WorkloadPin {
         entry: entry.to_owned(),
         args: vec!["seed=7".to_owned()],
         request: ResourceRequest {
-            gpus: 1,
-            vram_mib: 22 * 1024,
+            cpu_threads: 0,
             memory_mib: 22 * 1024,
             disk_mib: 2 * 1024,
+            devices: vec![gpu_claim(22 * 1024)],
             maximum_secs: 1_800,
         },
         scope: ScopeKind::Host,
@@ -69,6 +74,27 @@ fn pin(entry: &str) -> WorkloadPin {
             returnable: true,
         }],
     }
+}
+
+/// One exclusive GPU of at least `memory_mib`.
+fn gpu_claim(memory_mib: u64) -> DeviceClaim {
+    DeviceClaim {
+        kind: DeviceKind::Gpu,
+        count: 1,
+        memory_mib,
+        features: Vec::new(),
+        sharing: Sharing::Exclusive,
+    }
+}
+
+/// `pin` with `devices` in place of its device claims.
+fn with_devices(mut pin: WorkloadPin, devices: Vec<DeviceClaim>) -> WorkloadPin {
+    pin.request.devices = devices;
+    pin
+}
+
+fn requirement(bound: ScopeBound, kernel: bool) -> BoundRequirement {
+    BoundRequirement { bound, kernel }
 }
 
 impl Fixture {
@@ -108,13 +134,17 @@ impl Fixture {
 
     /// Reserves and submits `key`, and waits until its unit runs.
     fn run(&self, jobs: &NodeJobs, key: &str) -> NodeKey {
-        let pin = pin("tools/units/run.sh");
+        self.run_pin(jobs, key, &pin("tools/units/run.sh"))
+    }
+
+    /// Reserves and submits `key` with `pin`, and waits until its unit runs.
+    fn run_pin(&self, jobs: &NodeJobs, key: &str, pin: &WorkloadPin) -> NodeKey {
         assert_eq!(
-            receipt(jobs.reserve(self.issuer, self.reserve(key, &pin))).state,
+            receipt(jobs.reserve(self.issuer, self.reserve(key, pin))).state,
             JobState::Held
         );
         assert_eq!(
-            receipt(jobs.submit(self.issuer, self.submit(key, &pin))).state,
+            receipt(jobs.submit(self.issuer, self.submit(key, pin))).state,
             JobState::Accepted
         );
         wait_for(jobs, key, |entry| entry.state == JobState::Launching);
@@ -141,8 +171,12 @@ fn entry(jobs: &NodeJobs, key: &str) -> Option<NodeKey> {
     jobs.keys().into_iter().find(|entry| entry.key == key)
 }
 
-/// Waits until the key exists and `done` holds for it.
+/// Waits until the key exists and `done` holds for it. The node's staging
+/// worker and launch commit run on threads of their own and signal nothing
+/// a test could await, and the staging limit runs on the real monotonic
+/// clock, so the wait polls.
 fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> NodeKey {
+    // testkit-lint: allow(wall-clock) bounds a wait on the node's own worker threads
     let deadline = Instant::now() + WAIT;
     loop {
         if let Some(found) = entry(jobs, key)
@@ -151,16 +185,20 @@ fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> Node
             return found;
         }
         assert!(
+            // testkit-lint: allow(wall-clock) the same bound
             Instant::now() < deadline,
             "key {key} did not reach the state: {:?}",
             entry(jobs, key)
         );
+        // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
         std::thread::sleep(Duration::from_millis(10));
     }
 }
 
-/// Waits until every staging worker of the key has had time to finish.
+/// Waits until every staging worker of the key has had time to finish: a
+/// worker that should start nothing leaves no state to poll for.
 fn settle() {
+    // testkit-lint: allow(sleep) proves an absence: no worker signals that it started nothing
     std::thread::sleep(Duration::from_millis(300));
 }
 
@@ -526,20 +564,25 @@ fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
     let pin = pin("tools/units/run.sh");
     let mut no_cutoff = ScriptedJobUnits::kernel_scope();
     no_cutoff.cutoff_without_engine = BoundReport {
-        strength: Strength::None,
+        strength: BoundStrength::None,
         evidence: "scripted: no timer outlives the engine".to_owned(),
     };
     let mut supervised_memory = ScriptedJobUnits::kernel_scope();
     supervised_memory.memory_cap = BoundReport {
-        strength: Strength::Supervised { lateness_ms: 1_000 },
+        strength: BoundStrength::Supervised {
+            worst_lateness_ms: 1_000,
+        },
         evidence: "scripted: a supervisor reads the usage".to_owned(),
     };
     let mut open_network = ScriptedJobUnits::kernel_scope();
     open_network.network_closed = BoundReport {
-        strength: Strength::None,
+        strength: BoundStrength::None,
         evidence: "scripted: no network namespace".to_owned(),
     };
-    let default_require = vec![ScopeBound::FileWall, ScopeBound::NetworkClosed];
+    let default_require = vec![
+        requirement(ScopeBound::FileWall, false),
+        requirement(ScopeBound::NetworkClosed, false),
+    ];
     let cases = [
         // The minimum contract holds whatever the template requires.
         (
@@ -552,7 +595,10 @@ fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
         (
             "job-12/kernel",
             supervised_memory.clone(),
-            vec![ScopeBound::FileWall, ScopeBound::MemoryCapKernel],
+            vec![
+                requirement(ScopeBound::FileWall, false),
+                requirement(ScopeBound::MemoryCap, true),
+            ],
             "no_scope: memory_cap:kernel",
         ),
         // The template's default list keeps a workload off the network.
@@ -581,12 +627,176 @@ fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
     // A bound the template does not require does not block: the same
     // supervised memory cap launches under the default list.
     fixture.node.units.set_probe(supervised_memory);
+    fixture.node.admission.set_template_requires(vec![
+        requirement(ScopeBound::FileWall, false),
+        requirement(ScopeBound::NetworkClosed, false),
+    ]);
+    let running = fixture.run(&jobs, "job-12/unrequired");
+    assert!(running.started());
+}
+
+#[test]
+fn a_key_with_no_device_claim_takes_no_device_and_launches_on_memory_alone() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let mut cpu = with_devices(pin("tools/units/run.sh"), Vec::new());
+    cpu.request.memory_mib = 2 * 1024;
+    let key = "job-20/cpu";
+    let running = fixture.run_pin(&jobs, key, &cpu);
+    let launch = running.launch.as_ref().expect("launched");
+    assert!(launch.devices.is_empty());
+    assert_eq!(launch.host_memory_mib, 2 * 1024);
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+    assert_eq!(fixture.node.devices.taken_by(DEVICE), None);
+    assert_eq!(fixture.node.floor.leased_bytes(), 2 * 1024 * MIB);
+
+    // A GPU job runs beside it, on the device the CPU job left free.
+    let gpu = "job-20/gpu";
+    fixture.run(&jobs, gpu);
+    assert_eq!(fixture.node.devices.taken_by(DEVICE).as_deref(), Some(gpu));
+    assert_eq!(fixture.node.floor.leased_bytes(), 24 * 1024 * MIB);
+
+    // The CPU job's end gives its memory back with no device probe, and
+    // the GPU job keeps its device.
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    let ended = wait_for(&jobs, key, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(ended.end, Some(JobEnd::Exited { code: 0 }));
+    assert_eq!(known(jobs.find(fixture.issuer, key)).device_id, None);
+    assert!(
+        fixture
+            .node
+            .devices
+            .finished()
+            .iter()
+            .all(|(finished, _)| finished != key)
+    );
+    assert_eq!(fixture.node.devices.taken_by(DEVICE).as_deref(), Some(gpu));
+    assert_eq!(fixture.node.floor.leased_bytes(), 22 * 1024 * MIB);
+}
+
+#[test]
+fn a_claim_no_device_of_the_machine_meets_is_refused_at_reserve() {
+    let fixture = fixture();
+    fixture.node.devices.add_device("GPU-scripted-1", 24 * 1024);
+    let jobs = fixture.node.open();
+    let base = pin("tools/units/run.sh");
+    let fp8 = DeviceClaim {
+        features: vec!["fp8".to_owned()],
+        ..gpu_claim(1024)
+    };
+    let npu = DeviceClaim {
+        kind: DeviceKind::Npu,
+        ..gpu_claim(0)
+    };
+    let cases = [
+        ("job-21/feature", vec![fp8.clone()], "no_device: claim 0"),
+        (
+            "job-21/kind",
+            vec![gpu_claim(1024), npu],
+            "no_device: claim 1",
+        ),
+        (
+            "job-21/count",
+            vec![DeviceClaim {
+                count: 3,
+                ..gpu_claim(1024)
+            }],
+            "no_device: claim 0",
+        ),
+        (
+            "job-21/memory",
+            vec![gpu_claim(48 * 1024)],
+            "no_device: claim 0",
+        ),
+        // Two devices meet it, but a key holds one device in this slice.
+        (
+            "job-21/two",
+            vec![DeviceClaim {
+                count: 2,
+                ..gpu_claim(1024)
+            }],
+            "devices_above_one",
+        ),
+    ];
+    for (key, devices, reason) in cases {
+        let refused_pin = with_devices(base.clone(), devices);
+        let refused = receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &refused_pin)));
+        assert_eq!(refused.state, JobState::Ended, "{key}");
+        assert!(
+            matches!(&refused.end, Some(JobEnd::Refused { reason: found }) if found == reason),
+            "{key}: {:?}",
+            refused.end
+        );
+        assert!(!refused.started);
+    }
+    // Once the device reports the feature, the same claim is held.
+    fixture.node.devices.set_features(DEVICE, &["fp8"]);
+    let met = with_devices(base, vec![fp8]);
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-21/feature-met", &met))).state,
+        JobState::Held
+    );
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+}
+
+#[test]
+fn a_unified_memory_device_adds_its_claim_memory_to_the_floor_and_a_short_floor_takes_nothing() {
+    let fixture = fixture();
+    fixture.node.devices.set_unified(DEVICE, true);
+    let jobs = fixture.node.open();
+    let large = pin("tools/units/run.sh");
+    // 22 GiB for the run and 22 GiB for the device's share of the host's
+    // memory: past the 26 GiB floor. The device leased first goes back.
+    let key = "job-22/large";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &large)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &large)));
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    assert_eq!(
+        ended.end,
+        Some(JobEnd::LaunchRefused {
+            reason: "memory_busy".to_owned()
+        })
+    );
+    assert_eq!(fixture.node.devices.leases_given(), 1);
+    assert_eq!(fixture.node.devices.taken_by(DEVICE), None);
+    assert_eq!(fixture.node.floor.leased_bytes(), 0);
+    assert_eq!(fixture.node.units.total_starts(), 0);
+
+    // 22 GiB and 2 GiB fit the floor, but not a 23 GiB template ceiling:
+    // the sum rule refuses before any lease.
+    let small = with_devices(large, vec![gpu_claim(2 * 1024)]);
     fixture
         .node
         .admission
-        .set_template_requires(vec![ScopeBound::FileWall, ScopeBound::NetworkClosed]);
-    let running = fixture.run(&jobs, "job-12/unrequired");
-    assert!(running.started());
+        .set_memory_ceiling_mib(Some(23 * 1024));
+    let ceiling = "job-22/ceiling";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(ceiling, &small)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(ceiling, &small)));
+    let refused = wait_for(&jobs, ceiling, |entry| entry.state == JobState::Ended);
+    assert_eq!(
+        refused.end,
+        Some(JobEnd::LaunchRefused {
+            reason: "request_above_ceiling: host_memory_mib".to_owned()
+        })
+    );
+    assert_eq!(fixture.node.devices.leases_given(), 1);
+
+    // Within the ceiling, the floor holds both.
+    fixture
+        .node
+        .admission
+        .set_memory_ceiling_mib(Some(24 * 1024));
+    let running = fixture.run_pin(&jobs, "job-22/small", &small);
+    let launch = running.launch.expect("launched");
+    assert_eq!(launch.host_memory_mib, 24 * 1024);
+    assert_eq!(fixture.node.floor.leased_bytes(), 24 * 1024 * MIB);
+    assert_eq!(
+        fixture.node.devices.taken_by(DEVICE).as_deref(),
+        Some("job-22/small")
+    );
 }
 
 #[test]
@@ -859,4 +1069,223 @@ fn a_damaged_record_length_is_a_lost_history_never_a_torn_tail() {
         jobs.submit(fixture.issuer, fixture.submit(key, &pin)),
         JobAnswer::Refused(JobRefusal::HistoryLost)
     );
+}
+
+#[test]
+fn a_submit_after_the_issuers_grant_ended_writes_nothing() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    // A held key past its window, and a key the node never saw: each would
+    // be closed by a new record, so each waits for the issuer's authority.
+    let held = "job-30/held";
+    let unknown = "job-30/never-reserved";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(held, &pin)));
+    fixture.node.clock.advance_ms(600_000);
+    fixture
+        .node
+        .admission
+        .set_issuer_refusal(Some("issuer_standing_ended"));
+    for key in [held, unknown] {
+        assert_eq!(
+            jobs.submit(fixture.issuer, fixture.submit(key, &pin)),
+            JobAnswer::Refused(JobRefusal::IssuerStandingEnded),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        entry(&jobs, held).map(|entry| entry.state),
+        Some(JobState::Held)
+    );
+    assert_eq!(entry(&jobs, unknown), None);
+}
+
+#[test]
+fn a_recovery_that_cannot_read_a_launched_units_phase_keeps_the_gate_closed() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-31/chunk-0";
+    fixture.node.units.set_next_start(ScriptedStart::NotTaken);
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &pin)));
+    wait_for(&jobs, key, |entry| entry.state == JobState::Launching);
+
+    // The engine restarts; the service manager lists its units but cannot
+    // say this unit's phase, so the key's row of the table cannot be
+    // applied and the gate stays closed.
+    drop(jobs);
+    fixture.node.units.set_next_start(ScriptedStart::Run);
+    fixture.node.units.set_status_answering(false);
+    let jobs = fixture.node.open();
+    assert_eq!(jobs.gate(), NodeGate::Recovering);
+    assert!(matches!(
+        jobs.find(fixture.issuer, key),
+        JobStatusAnswer::Busy { .. }
+    ));
+
+    // It answers again: the key is lost, and only then does the gate open.
+    fixture.node.units.set_status_answering(true);
+    jobs.tick();
+    assert_eq!(jobs.gate(), NodeGate::Open);
+    let lost = known(jobs.find(fixture.issuer, key));
+    assert!(
+        matches!(&lost.end, Some(JobEnd::Lost { reason, .. }) if reason == "launch_uncertain"),
+        "{:?}",
+        lost.end
+    );
+}
+
+#[test]
+fn the_handle_the_node_attaches_never_keeps_the_job_service_alive() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let attachment = jobs.attachment();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-32/chunk-0";
+    assert_eq!(
+        receipt(attachment.reserve(fixture.issuer, fixture.reserve(key, &pin))).state,
+        JobState::Held
+    );
+    assert!(attachment.swept());
+
+    // The server drops its service: the handle answers as a node with no
+    // keys attached, and the journal's directory opens again.
+    drop(jobs);
+    assert_eq!(
+        attachment.reserve(fixture.issuer, fixture.reserve("job-32/chunk-1", &pin)),
+        JobAnswer::Refused(JobRefusal::NotEnabled)
+    );
+    assert!(!attachment.swept());
+    let reopened = fixture.node.open();
+    assert_eq!(reopened.gate(), NodeGate::Open);
+    assert_eq!(
+        entry(&reopened, key).map(|entry| entry.state),
+        Some(JobState::Held)
+    );
+}
+
+#[test]
+fn a_quarantined_device_takes_no_new_reserve_until_its_clean_release() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let first = "job-33/chunk-0";
+    fixture.run(&jobs, first);
+
+    // The release check cannot probe the device: the journal quarantines
+    // it, and so does the slot table, so a reserve finds no device.
+    fixture.node.devices.set_probe_fails(true);
+    fixture.node.units.exit(first, 0);
+    jobs.tick();
+    let held_out = wait_for(&jobs, first, |entry| {
+        matches!(entry.release, DeviceRelease::Unconfirmed { .. })
+    });
+    assert!(held_out.is_ended());
+    assert!(fixture.node.devices.quarantined(DEVICE).is_some());
+    let refused = receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-33/chunk-1", &pin)));
+    assert!(
+        matches!(&refused.end, Some(JobEnd::Refused { reason }) if reason == "device_unavailable: claim 0"),
+        "{:?}",
+        refused.end
+    );
+
+    // The slot table keeps quarantines in memory: after a restart the
+    // journal's quarantine is back before the gate opens.
+    drop(jobs);
+    fixture.node.devices.forget_quarantines();
+    let jobs = fixture.node.open();
+    assert_eq!(jobs.gate(), NodeGate::Open);
+    assert!(fixture.node.devices.quarantined(DEVICE).is_some());
+
+    // A clean probe releases the device and ends its quarantine.
+    fixture.node.devices.set_probe_fails(false);
+    jobs.tick();
+    wait_for(&jobs, first, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(fixture.node.devices.quarantined(DEVICE), None);
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-33/chunk-2", &pin))).state,
+        JobState::Held
+    );
+}
+
+#[test]
+fn a_launch_the_prepare_step_refused_books_no_disk_once_ended() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let refused = "job-34/refused";
+    fixture
+        .node
+        .units
+        .set_next_start(ScriptedStart::RefuseInPrepare(
+            "scope_unavailable".to_owned(),
+        ));
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(refused, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(refused, &pin)));
+    wait_for(&jobs, refused, |entry| entry.state == JobState::Launching);
+    jobs.tick();
+    let ended = wait_for(&jobs, refused, |entry| entry.state == JobState::Ended);
+    assert!(
+        matches!(&ended.end, Some(JobEnd::LaunchRefused { .. })),
+        "{:?}",
+        ended.end
+    );
+    assert!(!ended.started());
+    assert_eq!(jobs.booked_disk_mib(), 0);
+
+    // A key whose workload ran keeps its disk booked for its outputs.
+    fixture.node.units.set_next_start(ScriptedStart::Run);
+    let ran = "job-34/ran";
+    fixture.run(&jobs, ran);
+    fixture.node.units.exit(ran, 0);
+    jobs.tick();
+    wait_for(&jobs, ran, |entry| entry.state == JobState::Ended);
+    assert_eq!(jobs.booked_disk_mib(), pin.request.disk_mib);
+}
+
+#[test]
+fn a_fold_that_never_reaches_the_submits_heads_refuses_the_launch_as_authority_stale() {
+    let fixture = fixture();
+    fixture.node.admission.set_staging_limit_secs(1);
+    fixture.node.authority.set_stale(true);
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-35/chunk-0";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &pin)));
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    assert_eq!(
+        ended.end,
+        Some(JobEnd::LaunchRefused {
+            reason: "authority_stale".to_owned()
+        })
+    );
+    assert_eq!(fixture.node.units.total_starts(), 0);
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+}
+
+#[test]
+fn a_sealed_keys_missing_receipt_file_is_written_again_from_the_journal() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let key = "job-36/chunk-0";
+    fixture.run(&jobs, key);
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    wait_for(&jobs, key, |entry| entry.outputs != OutputsState::Pending);
+    let file = JobKeyId::for_key(key)
+        .control_dir(&fixture.node.paths.state_dir)
+        .join(RECEIPT_FILE_NAME);
+    assert!(file.exists());
+
+    // The engine stopped after the `hashed` record and before the file.
+    drop(jobs);
+    std::fs::remove_file(&file).expect("receipt file removed");
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let bytes = std::fs::read(&file).expect("receipt file written again");
+    assert!(!bytes.is_empty());
 }

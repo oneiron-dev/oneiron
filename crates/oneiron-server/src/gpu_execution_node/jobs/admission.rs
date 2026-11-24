@@ -14,37 +14,128 @@
 //! it, with nothing journaled.
 
 use oneiron::EntityId;
+use oneiron::job_workload::{
+    DeviceClaim, DeviceLease, DevicePlacement, DevicePlacementError, DeviceState, HeldDevice,
+    ResourceRequest,
+};
 
 use super::end::end_of;
 use super::job_unit::read_end_record;
 use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, NodeKey};
-use super::node_parts::GpuSlotRequest;
+use super::node_parts::{GpuSlotRequest, NodeDevices};
 use super::receipt::{ReceiptClock, receipt_of, sign_receipt};
 use super::{BUSY_RETRY_AFTER_MS, NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobEnd, JobRefusal, JobReserve, JobState, JobStatusAnswer, SignedJobSubmit,
-    SlotSelector, WorkloadPin,
+    SlotSelector,
 };
 
 const MIB: u64 = 1024 * 1024;
 
-/// The GPU slot request a key's pin and slot selector make. The journal
+/// The most devices one key leases in this slice: the GPU slot table holds
+/// one lease per key, and a receipt names one device. A bound of the
+/// table's shape, not a policy.
+pub(super) const DEVICES_PER_KEY_MAX: usize = 1;
+
+/// When a key's request is placed, and so whose leases count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Placing {
+    /// Design 7.3 reserve step 7: whether the request could be placed here
+    /// at all. Leases of other keys are left out, as they end; a withheld
+    /// or quarantined device still does not count.
+    AtReserve,
+    /// Design 7.5 step 4: the placement the launch commit leases, with
+    /// every holder counted.
+    AtLaunch,
+}
+
+/// The placement of `reserve`'s request on the node's devices (pass 34,
+/// 2.1, `ResourceRequest::place_devices`), read fresh and narrowed by the
+/// reserve's slot selector. A request with no device claim reads no
+/// device: it is placed on threads and memory alone.
+///
+/// # Errors
+///
+/// The reason for the key's end: the devices cannot be read, no device of
+/// the machine meets a claim (`no_device: claim <n>`), the devices that
+/// meet it are taken (`device_unavailable: claim <n>`), or the placement
+/// takes more devices than a key may hold (`devices_above_one`).
+pub(super) fn placement(
+    devices: &dyn NodeDevices,
+    reserve: &JobReserve,
+    placing: Placing,
+) -> Result<DevicePlacement, String> {
+    let request = &reserve.pin.request;
+    let held = if claims_devices(request) {
+        let mut held = selected(devices.devices()?, &reserve.slot);
+        if placing == Placing::AtReserve {
+            for device in &mut held {
+                device.holders.clear();
+                if matches!(device.facts.state, DeviceState::Leased { .. }) {
+                    device.facts.state = DeviceState::Offered;
+                }
+            }
+        }
+        held
+    } else {
+        Vec::new()
+    };
+    let placed = request.place_devices(&held).map_err(|error| match error {
+        DevicePlacementError::NoDevice { claim, .. } => format!("no_device: claim {claim}"),
+        DevicePlacementError::DeviceBusy { claim } => {
+            format!("device_unavailable: claim {claim}")
+        }
+    })?;
+    if placed.devices.len() > DEVICES_PER_KEY_MAX {
+        return Err("devices_above_one".to_owned());
+    }
+    Ok(placed)
+}
+
+/// Whether the request claims a device at all: a claim with a count of 0
+/// takes no lease.
+fn claims_devices(request: &ResourceRequest) -> bool {
+    request.devices.iter().any(|claim| claim.count > 0)
+}
+
+/// The devices the reserve's slot selector lets the key take: the one it
+/// names by id, of the model it names; every device when it names neither.
+fn selected(devices: Vec<HeldDevice>, slot: &SlotSelector) -> Vec<HeldDevice> {
+    devices
+        .into_iter()
+        .filter(|held| {
+            slot.device_id
+                .as_ref()
+                .is_none_or(|id| *id == held.facts.id)
+                && slot
+                    .model
+                    .as_ref()
+                    .is_none_or(|model| *model == held.facts.model)
+        })
+        .collect()
+}
+
+/// The slot request that leases one placed device under `key`. The journal
 /// books the key's disk at `Reserve`, so the slot claims none of it again.
 #[must_use]
-pub(super) fn slot_request(key: &str, pin: &WorkloadPin, slot: &SlotSelector) -> GpuSlotRequest {
+pub(super) fn device_slot_request(
+    key: &str,
+    lease: &DeviceLease,
+    claim: Option<&DeviceClaim>,
+) -> GpuSlotRequest {
     GpuSlotRequest {
         key: key.to_owned(),
-        device_id: slot.device_id.clone(),
-        model: slot.model.clone(),
-        min_memory_mib: pin.request.vram_mib,
+        device_id: Some(lease.device_id.clone()),
+        model: None,
+        min_memory_mib: claim.map_or(0, |claim| claim.memory_mib),
         disk_bytes: 0,
     }
 }
 
-/// The memory a key's pin takes from the machine's floor, in bytes.
+/// `mib` in bytes, as the machine's memory floor counts them.
 #[must_use]
-pub(super) fn memory_bytes(pin: &WorkloadPin) -> u64 {
-    pin.request.memory_mib.saturating_mul(MIB)
+pub(super) fn mib_bytes(mib: u64) -> u64 {
+    mib.saturating_mul(MIB)
 }
 
 fn busy() -> JobAnswer {
@@ -217,8 +308,7 @@ impl NodeJobs {
         if let Err(reason) = admission.disk_room(booked_mib, reserve.pin.request.disk_mib) {
             return Some(reason);
         }
-        let request = slot_request(&reserve.key, &reserve.pin, &reserve.slot);
-        self.parts().devices.could_take(&request).err()
+        placement(self.parts().devices.as_ref(), reserve, Placing::AtReserve).err()
     }
 
     /// `Release` (design 7.1): withdraws a `Held` key that has no accepted
@@ -274,7 +364,34 @@ impl NodeJobs {
                 Ok(journal) => journal,
                 Err(answer) => return answer,
             };
-            let Some(known) = journal.table().get(&key).cloned() else {
+            let known = journal.table().get(&key).cloned();
+            // A key that already took effect is answered first: the
+            // issuer, the pin and the slot must be the same.
+            if let Some(known) = &known {
+                if known.issuer != peer {
+                    return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
+                }
+                let digest = signed.submit.pin.digest().ok();
+                let other_slot = known
+                    .reserve
+                    .as_ref()
+                    .is_some_and(|reserve| reserve.slot != signed.submit.slot);
+                if (known.pin_digest.is_some() && digest != known.pin_digest) || other_slot {
+                    return JobAnswer::Refused(JobRefusal::KeyConflict);
+                }
+                if known.state != JobState::Held {
+                    return self.receipt_answer(known, journal.epoch(), &now);
+                }
+            }
+            // Before any new record (the key's close for a missing reserve,
+            // its close past the window, its acceptance), the issuer's
+            // authority, read again under the lock: a grant that ended after
+            // the gate is refused as the gate refuses it, with nothing
+            // journaled.
+            if let Err(not_live) = self.parts().admission.issuer_live(peer) {
+                return JobAnswer::Refused(not_live.refusal);
+            }
+            let Some(known) = known else {
                 let event = JournalEvent::Ended {
                     end: JobEnd::Refused {
                         reason: "not_reserved".to_owned(),
@@ -283,20 +400,6 @@ impl NodeJobs {
                 };
                 return self.record_and_answer(journal, &key, peer, event, &now);
             };
-            if known.issuer != peer {
-                return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
-            }
-            let digest = signed.submit.pin.digest().ok();
-            let other_slot = known
-                .reserve
-                .as_ref()
-                .is_some_and(|reserve| reserve.slot != signed.submit.slot);
-            if (known.pin_digest.is_some() && digest != known.pin_digest) || other_slot {
-                return JobAnswer::Refused(JobRefusal::KeyConflict);
-            }
-            if known.state != JobState::Held {
-                return self.receipt_answer(&known, journal.epoch(), &now);
-            }
             // A reserve past its window is closed here, before any submit
             // could take it up, even when the tick has not closed it yet.
             if known
@@ -305,9 +408,6 @@ impl NodeJobs {
                 .is_some_and(|reserve| now.wall_ms > reserve.not_after_ms)
             {
                 return self.record_and_answer(journal, &key, peer, withdrawn(), &now);
-            }
-            if let Err(not_live) = self.parts().admission.issuer_live(peer) {
-                return JobAnswer::Refused(not_live.refusal);
             }
             let event = match self.submit_refusal(&signed, &known, now.wall_ms) {
                 Some(reason) => JournalEvent::Ended {

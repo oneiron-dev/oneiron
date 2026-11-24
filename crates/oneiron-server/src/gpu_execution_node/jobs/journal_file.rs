@@ -34,6 +34,7 @@ use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use oneiron_contracts::fingerprint::{ContentHash, ContentHasher};
 use rand_core::{OsRng, RngCore as _};
 
 /// The first eight bytes of every job journal.
@@ -463,17 +464,14 @@ fn frame(payload_length: u32, payload: &[u8]) -> Vec<u8> {
 }
 
 fn length_check(length: &[u8; 4]) -> [u8; LENGTH_CHECK_BYTES as usize] {
-    let hash = blake3::hash(length);
+    let hash = ContentHash::of(length);
     let mut check = [0u8; LENGTH_CHECK_BYTES as usize];
     check.copy_from_slice(&hash.as_bytes()[..LENGTH_CHECK_BYTES as usize]);
     check
 }
 
 fn frame_checksum(length: &[u8; 4], payload: &[u8]) -> [u8; CHECKSUM_BYTES as usize] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(length);
-    hasher.update(payload);
-    let hash = hasher.finalize();
+    let hash = ContentHasher::new().update(length).update(payload).finish();
     let mut checksum = [0u8; CHECKSUM_BYTES as usize];
     checksum.copy_from_slice(&hash.as_bytes()[..CHECKSUM_BYTES as usize]);
     checksum
