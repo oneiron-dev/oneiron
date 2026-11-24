@@ -133,6 +133,12 @@ pub struct JobSubmit {
     pub issuer: EntityId,
     pub starter: Starter,
     pub hold: HoldRef,
+    /// The issuer's authority main-log heads when it signed (EM-11 = B),
+    /// lower-hex entry hashes. The node launches once its own fold holds
+    /// every one, so a revoke the issuer had folded stops the launch; else
+    /// the key ends `LaunchRefused { authority_stale }` at the staging
+    /// limit.
+    pub authority_heads: Vec<String>,
 }
 
 /// A submit with the issuer's machine-key signature under
@@ -221,6 +227,16 @@ pub enum JobRefusal {
     Drained { why: String },
     /// A release of a key that is no longer `Held` with no accepted submit.
     NotReleasable { state: JobState },
+    /// The node lost the journal that could have held a key: it admits
+    /// nothing until `reset-history` at the box.
+    HistoryLost,
+    /// A submit under a known key with another pin or slot: nothing
+    /// changed.
+    KeyConflict,
+    /// The request names a key the journal recorded for another issuer.
+    NotTheKeysIssuer,
+    /// The submit's signature is not its issuer's.
+    SubmitSignatureInvalid,
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is
