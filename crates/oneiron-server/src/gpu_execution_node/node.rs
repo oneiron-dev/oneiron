@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::authority::PeerMachine;
+use oneiron::job_workload::DevicePlacement;
 use oneiron::{EntityId, Vault};
 
 use super::node_settings::{
@@ -43,7 +44,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, NodeAnswer, SignedJobSubmit, WorkloadPin,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, NodeAnswer, ScopeReport, SignedJobSubmit,
+    WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -218,6 +220,14 @@ pub trait NodeKeys: Send + Sync {
     /// `disable --stop` at the box: every key that has not ended ends; a
     /// launched one is stopped.
     fn stop_live_keys(&self);
+
+    /// The launch scopes the keys' job unit starts runs in, each with what
+    /// it can enforce now, as its probe reads them (pass 34, section 2.2):
+    /// `Node`'s `scopes`. A scope that does not meet the minimum contract is
+    /// listed and runs nothing. None until a unit probes them.
+    fn scopes(&self) -> Vec<ScopeReport> {
+        Vec::new()
+    }
 }
 
 /// The execution node of this machine. Cloning it shares it.
@@ -457,6 +467,26 @@ impl ExecutionNode {
         }
     }
 
+    /// The launch commit's fit of a pin's placement on this node's devices
+    /// (pass 34, section 2.1, the sum rule): the host memory the placement
+    /// leases, the request's own and each leased unified device's claim
+    /// together, is within the template's memory ceiling.
+    ///
+    /// # Errors
+    ///
+    /// The refusal reason, for the key's end.
+    pub fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+    ) -> Result<(), String> {
+        match self.settings() {
+            Ok(Some(settings)) => settings.admit_placement(pin, placement),
+            Ok(None) => Err("node_disabled".to_owned()),
+            Err(why) => Err(format!("node_settings_unreadable: {why}")),
+        }
+    }
+
     /// The digest of the template named `template` now; `None` when this
     /// node holds no such template.
     #[must_use]
@@ -544,6 +574,7 @@ impl ExecutionNode {
             paused: snapshot.controls.paused.clone(),
             drained: snapshot.controls.drained.clone(),
             templates,
+            scopes: keys.map(|keys| keys.scopes()).unwrap_or_default(),
             disk_free_bytes,
             disk_reserved_bytes: self.booked_disk_bytes(),
             disk_reserve_bytes,

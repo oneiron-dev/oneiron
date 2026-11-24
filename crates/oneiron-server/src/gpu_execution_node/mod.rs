@@ -30,7 +30,7 @@ pub use node::{
     AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, NodeSnapshot,
     execution_node_file,
 };
-pub use node_settings::{ExecutionNodeSettings, NodeTemplate, ScopeBound};
+pub use node_settings::{ExecutionNodeSettings, NodeTemplate};
 pub use selection::{
     GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement,
     LocalGpuSlotPeer, gpu_node_candidates, select_gpu_slot,
