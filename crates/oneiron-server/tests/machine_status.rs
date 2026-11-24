@@ -12,10 +12,9 @@ use std::sync::Mutex;
 use oneiron::EntityId;
 use oneiron::machine_capacity::{MachineCapacity, MachinePower};
 use oneiron::machine_names::MachineNameSource;
-use oneiron::machine_status::{
-    MachineCapacityView, MachineNodeView, MachineStatusItem, MachineStatusReply,
+use oneiron::task_verb::sdk::{
+    MachineCapacityView, MachineListItem, MachineNodeView, MachineStatusItem, MachineStatusReply,
 };
-use oneiron::task_verb::sdk::MachineListItem;
 use oneiron_server::gpu_execution_node::issuer::node_status::ask_nodes;
 use oneiron_server::gpu_execution_node::issuer::{JobNodeClient, NodeCallError};
 use oneiron_server::gpu_execution_node::wire::{

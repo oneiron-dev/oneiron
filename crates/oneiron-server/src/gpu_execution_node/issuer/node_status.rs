@@ -4,13 +4,16 @@
 //! invariant I3). The calls run at once, one thread each, so the read waits at most one call
 //! timeout however many machines the vault has.
 use oneiron::EntityId;
-use oneiron::machine_status::{MachineNodeAnswer, MachineNodeView, MachineStatusReply};
+use oneiron::task_verb::sdk::{
+    MachineNodeAnswer, MachineNodeView, MachineStatusItem, MachineStatusReply,
+};
 
+use super::job_refusal_code;
 use super::node_client::{JobNodeClient, NodeCallError};
 use crate::gpu_execution_node::wire::{JobAnswer, JobRequest, NodeAnswer};
 
 /// Why a machine of the list is not asked: this install, or a removed machine.
-fn not_asked_why(item: &oneiron::machine_status::MachineStatusItem) -> Option<&'static str> {
+fn not_asked_why(item: &MachineStatusItem) -> Option<&'static str> {
     if item.machine.this_install {
         Some("this_install")
     } else if item.machine.role.as_deref() == Some("removed") {
@@ -21,7 +24,9 @@ fn not_asked_why(item: &oneiron::machine_status::MachineStatusItem) -> Option<&'
 }
 
 /// Asks every machine of `reply` that is not this install and not removed for its `Node`
-/// answer through `client`, at `asked_at_ms`, and writes what came back on its row.
+/// answer through `client`, at `asked_at_ms`, and writes what came back on its row. A call
+/// that could not start leaves its machine `not_asked` with why; a call that started and did
+/// not come back leaves it `unknown`. The other rows keep their answers.
 pub fn ask_nodes(reply: &mut MachineStatusReply, client: &dyn JobNodeClient, asked_at_ms: u64) {
     let asks: Vec<(usize, EntityId)> = reply
         .machines
@@ -39,22 +44,35 @@ pub fn ask_nodes(reply: &mut MachineStatusReply, client: &dyn JobNodeClient, ask
             item.node = MachineNodeView::not_asked(why);
         }
     }
-    let answers: Vec<(usize, MachineNodeView)> = std::thread::scope(|scope| {
+    let views: Vec<(usize, MachineNodeView)> = std::thread::scope(|scope| {
         let calls: Vec<_> = asks
             .iter()
             .map(|&(index, machine)| {
-                scope.spawn(move || {
-                    let answer = client.job(machine, &JobRequest::Node);
-                    (index, node_view(answer, asked_at_ms))
-                })
+                let call = std::thread::Builder::new()
+                    .name("machine-status-node".to_owned())
+                    .spawn_scoped(scope, move || {
+                        node_view(client.job(machine, &JobRequest::Node), asked_at_ms)
+                    });
+                (index, call)
             })
             .collect();
         calls
             .into_iter()
-            .filter_map(|call| call.join().ok())
+            .map(|(index, call)| {
+                let view = match call {
+                    Err(_) => MachineNodeView::not_asked("call_not_started"),
+                    Ok(call) => call.join().unwrap_or_else(|_| {
+                        MachineNodeView::unknown(
+                            "the call to the machine failed".to_owned(),
+                            asked_at_ms,
+                        )
+                    }),
+                };
+                (index, view)
+            })
             .collect()
     });
-    for (index, view) in answers {
+    for (index, view) in views {
         reply.machines[index].node = view;
     }
 }
@@ -65,26 +83,13 @@ pub fn node_view(answer: Result<JobAnswer, NodeCallError>, asked_at_ms: u64) -> 
     match answer {
         Ok(JobAnswer::Node(node)) => MachineNodeView::answered(node_answer(node), asked_at_ms),
         Ok(JobAnswer::Refused(refusal)) => {
-            MachineNodeView::refused(refusal_code(&refusal), asked_at_ms)
+            MachineNodeView::refused(job_refusal_code(&refusal).to_owned(), asked_at_ms)
         }
         Ok(other) => MachineNodeView::unknown(
             format!("the machine answered another request: {other:?}"),
             asked_at_ms,
         ),
         Err(error) => MachineNodeView::unknown(error.to_string(), asked_at_ms),
-    }
-}
-
-/// A refusal's wire name (`not_enabled`, `not_issuer`, `paused`, ...).
-fn refusal_code(refusal: &crate::gpu_execution_node::wire::JobRefusal) -> String {
-    match serde_json::to_value(refusal) {
-        Ok(serde_json::Value::String(code)) => code,
-        Ok(serde_json::Value::Object(map)) => map
-            .keys()
-            .next()
-            .cloned()
-            .unwrap_or_else(|| format!("{refusal:?}")),
-        _ => format!("{refusal:?}"),
     }
 }
 

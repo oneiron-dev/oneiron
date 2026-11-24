@@ -3,12 +3,12 @@
 //! "My machines" panel and an agent's program read the same answer.
 //!
 //! Two halves, each figure with its age:
-//! - from the vault: the built list ([`crate::task_verb::sdk::list_machines_as`]: class, role,
-//!   whether it stands live, the name it is shown by) and the machine's latest capacity claim
-//!   ([`Vault::machine_capacity`]: cores, memory, GPU memory, disk, power, the agents it can
-//!   run, and when the machine measured them). The capacity claim is the machine's own sample,
-//!   written by it and carried to every replica, so it stands for the last thing the machine
-//!   said even while it does not answer;
+//! - from the vault: the built list ([`list_machines_as`]: class, role, whether it stands live,
+//!   the name it is shown by) and the machine's latest capacity claim (cores, memory, GPU
+//!   memory, disk, power, the agents it can run, and when the machine measured them), listed as
+//!   a producer of the answer. The capacity claim is the machine's own sample, written by it and
+//!   carried to every replica, so it stands for the last thing the machine said even while it
+//!   does not answer;
 //! - from the node, only on `refresh`: the issuer asks each machine its `Node` answer on
 //!   `oneiron/job/1` with the call timeout, and says what came back. A machine that does not
 //!   answer is `unknown`: never idle, never stopped (pass 34 invariant I3). The answer is a
@@ -20,12 +20,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::machine_capacity::{MachineCapacity, MachinePower};
-use crate::memory::MemoryResult;
-use crate::task_verb::sdk::{MachineListItem, list_machines_as};
+use crate::memory::{Memory, MemoryResult};
+
+use super::machine_names::{MachineListItem, list_machines_as};
 
 /// The verb's registered name.
 pub const MACHINE_STATUS_VERB: &str = "vault.machines.status";
@@ -206,25 +206,29 @@ pub struct MachineNodeAnswer {
 }
 
 /// The vault's half of `vault.machines.status` under the owner's proof: every machine with its
-/// latest capacity claim, each node `not_asked` with `why`.
+/// latest capacity claim, each node `not_asked` with `why`. Each capacity claim read is listed
+/// as a producer of the answer on `memory`, when its host collects them.
 ///
 /// # Errors
 ///
 /// Every refusal of [`list_machines_as`]; a store read failure.
 pub fn machine_status_from_vault(
-    vault: &Vault,
+    memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
     read_at_ms: u64,
     why: &str,
 ) -> MemoryResult<MachineStatusReply> {
+    let vault = memory.vault();
     let mut machines = Vec::new();
     for machine in list_machines_as(vault, owner)?.machines {
-        let capacity = match EntityId::from_hex(&machine.machine) {
-            Ok(id) => vault
-                .machine_capacity(id)?
-                .map(|capacity| MachineCapacityView::of(&capacity, read_at_ms)),
+        let claim = match EntityId::from_hex(&machine.machine) {
+            Ok(id) => vault.machine_capacity_claim(id)?,
             Err(_) => None,
         };
+        let capacity = claim.map(|(claim, capacity)| {
+            memory.produced_from([claim]);
+            MachineCapacityView::of(&capacity, read_at_ms)
+        });
         machines.push(MachineStatusItem {
             machine,
             capacity,
