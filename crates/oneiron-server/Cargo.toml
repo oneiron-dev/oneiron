@@ -724,6 +724,13 @@ name = "job_protocol_grant"
 path = "tests/job_protocol_grant.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# MESH-PAIRING-CEILING = A: an enrolled machine's binding may be granted every protocol the
+# engine serves (SERVED_MESH_ALPNS), and no other; the listeners need the `mesh` feature.
+[[test]]
+name = "mesh_pairing_ceiling"
+path = "tests/mesh_pairing_ceiling.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"

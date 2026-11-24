@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActSurface, MachineOwnership, MachineRole, MeshBindingIdentity, MeshEnrolment,
-    MeshMachineAddress, PairingPrincipal, pairing_binding_transcript_pinned,
+    MeshEnrolmentAsk, MeshMachineAddress, PairingPrincipal, pairing_binding_transcript_pinned,
 };
 use oneiron::federation::Scope;
 use oneiron::sync::mesh_path::{
@@ -166,7 +166,13 @@ impl Home {
                 &holder.sign(&transcript).to_bytes(),
                 &request,
                 Some(&possession),
-                (&identity, SYNC_ALPN),
+                // The binding's ceiling is every protocol the engine serves
+                // (MESH-PAIRING-CEILING = A); each grant stays the owner's.
+                MeshEnrolmentAsk {
+                    identity: &identity,
+                    granted: SYNC_ALPN,
+                    ceiling: &oneiron_server::SERVED_MESH_ALPNS,
+                },
             )
             .map_err(at("the home redeems the device's enrolment"))?;
         let pairing_slip_id = match redeemed.mesh {

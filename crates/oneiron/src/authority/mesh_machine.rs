@@ -26,7 +26,7 @@ mod endpoint_index;
 mod enrolment;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
-pub use enrolment::{MeshBindRefusal, MeshEnrolment};
+pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
