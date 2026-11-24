@@ -1,0 +1,29 @@
+//! `vault.planner.card` (design pass 32 section 5, row 12): the planner card
+//! of one project and task type, with the digest of the answer. A read: the
+//! owner under their own proof, or an agent whose own Grant lists the verb
+//! (`verb_grant_caller`). The engine reads (`oneiron::team::planner_card_door`);
+//! the door writes nothing and lists no row.
+
+use std::sync::Arc;
+
+use oneiron::team::planner_card_door::{
+    PLANNER_CARD_VERB, PlannerCardRequest, PlannerCardView, planner_card_as,
+};
+
+use super::support::Listed;
+use super::verb_grant::verb_grant_door;
+use crate::auth::CoreAuth;
+use crate::server::SyncServer;
+
+/// `vault.planner.card`: the card the planner's deterministic floor reads
+/// for `input`'s project, task type and executor models.
+pub(crate) async fn vault_planner_card(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PlannerCardRequest,
+) -> Listed<PlannerCardView> {
+    verb_grant_door(server, auth, PLANNER_CARD_VERB, move |_, memory, owner| {
+        planner_card_as(memory, owner, &input)
+    })
+    .await
+}

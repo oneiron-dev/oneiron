@@ -22,8 +22,10 @@ mod diary;
 mod gpu_jobs;
 mod media;
 mod packs;
+mod planner_card;
 mod proactivity;
 pub(in crate::api) mod support;
+mod verb_grant;
 mod verdict_hooks;
 mod vision;
 
@@ -34,6 +36,7 @@ pub(crate) use self::diary::*;
 pub(crate) use self::gpu_jobs::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
+pub(crate) use self::planner_card::*;
 pub(crate) use self::proactivity::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;

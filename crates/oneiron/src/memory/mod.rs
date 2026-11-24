@@ -171,6 +171,7 @@ mod support;
 pub(crate) use support::TranscriptRetainedCaller;
 mod transcript;
 pub mod usage_repair;
+pub mod verb_grant_caller;
 pub use oneiron_web_fetch::web_acquisition;
 mod web_fetch;
 mod witness;
