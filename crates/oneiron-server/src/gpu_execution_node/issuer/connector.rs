@@ -31,7 +31,7 @@ use super::clock::IssuerClock;
 use super::node_client::{JobNodeClient, NodeCallError};
 use super::reconcile::{OrphanKeys, Reconciled};
 use super::{job_answer_kind, job_refusal_code, status_answer_kind, vault_machine_inputs};
-use crate::config::VaultMachineSettings;
+use crate::config::gpu_jobs::VaultMachineSettings;
 use crate::gpu_execution_node::wire::{
     HoldRef, JobAnswer, JobEnd, JobReceipt, JobRequest, JobReserve, JobState, JobStatusAnswer,
     JobStatusRequest, JobSubmit, SignedJobReceipt, SignedJobSubmit, Starter,

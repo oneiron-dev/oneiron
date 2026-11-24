@@ -38,7 +38,8 @@ use oneiron::machine_signature::{
 };
 use oneiron::test_doors::steward;
 use oneiron::{EntityId, Vault};
-use oneiron_server::config::{SyncServerConfig, VaultMachineSettings};
+use oneiron_server::config::SyncServerConfig;
+use oneiron_server::config::gpu_jobs::VaultMachineSettings;
 use oneiron_server::gpu_execution_node::issuer::{
     IssuerClock, JobNodeClient, LoggedOrphanKeys, NodeCallError, VAULT_MACHINE_BACKEND,
     VaultMachineConnector, VaultMachineNotRegistered, VaultMachineParts, not_the_issuer,
