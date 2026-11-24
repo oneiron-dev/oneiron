@@ -244,7 +244,7 @@ mod file_tier {
         a_value_out_of_bounds_is_refused(home);
         assert_eq!(
             file_names(&dir),
-            ["CACHEDIR.TAG"],
+            ["CACHEDIR.TAG", "temp-writers.lock"],
             "the home left a file behind after every value was removed"
         );
 
@@ -255,7 +255,7 @@ mod file_tier {
             .expect("the device PIN key is replaced");
         assert_eq!(
             file_names(&dir),
-            ["CACHEDIR.TAG", "device-pin-key.sealed"],
+            ["CACHEDIR.TAG", "device-pin-key.sealed", "temp-writers.lock"],
             "a put left a temporary file, or named its file otherwise"
         );
         let mode = fs::metadata(sealed_file(&dir, &device))
@@ -301,7 +301,11 @@ mod file_tier {
         );
         assert_eq!(
             file_names(&dir),
-            [format!("{}.sealed", slot.name()), "CACHEDIR.TAG".to_owned()],
+            [
+                format!("{}.sealed", slot.name()),
+                "CACHEDIR.TAG".to_owned(),
+                "temp-writers.lock".to_owned()
+            ],
             "the slot's hex name sorts before the tag file"
         );
 

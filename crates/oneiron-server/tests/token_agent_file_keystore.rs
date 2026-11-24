@@ -3,7 +3,9 @@
 //! as an unsigned macOS source build, mint its agent credential. Its slots are
 //! 0600 files in the 0700 key directory the config names, which must lie
 //! outside the vault. These tests run the shipped binary: `init`, then
-//! `token agent --out`, as the agent quickstart does.
+//! `token agent --out`, as the agent quickstart does, and `token revoke`. On
+//! Apple each open warns that file modes alone guard the slots, and nothing
+//! a command's log or stderr does stops the open.
 #![cfg(unix)]
 #![allow(
     clippy::disallowed_methods,
@@ -14,7 +16,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 
@@ -51,9 +53,9 @@ impl Install {
         install
     }
 
-    /// `oneiron <args> --config <config>`, with no keystore, vault or URL
-    /// setting of the caller's environment.
-    fn oneiron(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
+    /// `oneiron <args> --config <config>`, with no keystore, vault, URL or
+    /// log setting of the caller's environment.
+    fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
         command
             .args(args)
@@ -65,8 +67,14 @@ impl Install {
             .env_remove("ONEIRON_KEYSTORE_BACKEND")
             .env_remove("ONEIRON_KEYSTORE_DIR")
             .env_remove("ONEIRON_KEYSTORE_SERVICE")
+            .env_remove("RUST_LOG")
             .envs(env.iter().copied());
-        command.output().expect("run oneiron")
+        command
+    }
+
+    /// [`Self::command`], run to its end.
+    fn oneiron(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
+        self.command(args, env).output().expect("run oneiron")
     }
 
     /// `init` with no models, with `env`. A fresh vault is not rooted yet, so
@@ -89,8 +97,8 @@ impl Install {
     }
 
     /// `token agent --out` for one full-access agent, with `env`.
-    fn mint(&self, env: &[(&str, &str)]) -> Output {
-        self.oneiron(
+    fn mint_command(&self, env: &[(&str, &str)]) -> Command {
+        self.command(
             &[
                 "token",
                 "agent",
@@ -104,6 +112,27 @@ impl Install {
             env,
         )
     }
+
+    /// [`Self::mint_command`], run to its end.
+    fn mint(&self, env: &[(&str, &str)]) -> Output {
+        self.mint_command(env).output().expect("run token agent")
+    }
+}
+
+/// An install whose config names the file tier, with its key directory
+/// `keys` beside the vault.
+fn file_tier_install() -> Install {
+    Install::with_config(|root| {
+        format!(
+            "[keystore]\nbackend = \"file\"\ndir = {:?}\n",
+            path_str(&root.join("keys"))
+        )
+    })
+}
+
+/// Whether `output`'s stderr carries the file tier's warning.
+fn warned(output: &Output) -> bool {
+    String::from_utf8_lossy(&output.stderr).contains("keystore.backend = \"file\"")
 }
 
 fn path_str(path: &Path) -> &str {
@@ -170,24 +199,65 @@ fn assert_minted_on_the_file_tier(install: &Install, minted: &Value, keys: &Path
 
 #[test]
 fn the_config_file_tier_mints_an_agent_credential_with_its_slots_in_the_key_directory() {
-    let install = Install::with_config(|root| {
-        format!(
-            "[keystore]\nbackend = \"file\"\ndir = {:?}\n",
-            path_str(&root.join("keys"))
-        )
-    });
+    let install = file_tier_install();
     let keys = install.vault.with_file_name("keys");
     install.init(&[]);
     let output = install.mint(&[]);
     // `token agent` installs no log: on Apple the file tier's warning reaches
     // stderr, and stdout keeps only the JSON. Elsewhere on Unix it is the
     // platform tier, and nothing is said.
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
-        stderr.contains("keystore.backend = \"file\""),
+        warned(&output),
         cfg!(target_vendor = "apple"),
-        "token agent's stderr: {stderr}"
+        "token agent's stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let minted = minted(&output);
+    assert_minted_on_the_file_tier(&install, &minted, &keys);
+}
+
+/// `token revoke` logs to stderr through a filter, and `RUST_LOG=error`
+/// drops every warning: on Apple the file tier's warning reaches stderr all
+/// the same, and the revoke goes on.
+#[test]
+fn the_file_tier_warning_reaches_stderr_when_the_log_filter_drops_warnings() {
+    let install = file_tier_install();
+    install.init(&[]);
+    let minted = minted(&install.mint(&[]));
+    let slip_id = minted["slip_id"].as_str().expect("slip_id");
+    let output = install.oneiron(
+        &["token", "revoke", "--jti", slip_id],
+        &[("RUST_LOG", "error")],
+    );
+    succeeded(&output, "token revoke");
+    assert_eq!(
+        warned(&output),
+        cfg!(target_vendor = "apple"),
+        "token revoke's stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let answer: Value = serde_json::from_slice(&output.stdout).expect("token revoke prints JSON");
+    assert_eq!(answer["revoked"], true, "the agent's slip is revoked");
+}
+
+/// A stderr whose reader is gone loses only the file tier's warning on
+/// Apple: `token agent --out` still mints, and its credential file holds the
+/// credential.
+#[test]
+fn token_agent_mints_on_the_file_tier_with_a_closed_stderr() {
+    let install = file_tier_install();
+    let keys = install.vault.with_file_name("keys");
+    install.init(&[]);
+    let mut child = install
+        .mint_command(&[])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start token agent");
+    // The pipe's only reader closes before the child writes, so each write
+    // to stderr fails with a broken pipe.
+    drop(child.stderr.take());
+    let output = child.wait_with_output().expect("token agent ends");
     let minted = minted(&output);
     assert_minted_on_the_file_tier(&install, &minted, &keys);
 }

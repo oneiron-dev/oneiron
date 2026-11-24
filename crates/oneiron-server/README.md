@@ -293,8 +293,9 @@ service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVI
   0600 files in the 0700 `dir`, as on other Unix systems. File modes alone guard
   them: any process running as this user can read them, and Time Machine copies
   them unless you exclude the directory (`tmutil addexclusion <dir>`). Every
-  command that opens them warns so: serve in its log, and a command that keeps
-  no log, such as `token agent`, on stderr. A directory or slot file that
+  command that opens them warns so: in its log, or on stderr where no log would
+  show the warning (a command that keeps none, such as `token agent`, or a log
+  filter that drops warnings, such as `RUST_LOG=error`). A directory or slot file that
   carries an access control list (`ls -le`) is refused. It is never the
   default and never a fallback. On other Unix systems it is the same tier as `platform`; on
   Windows it is refused.

@@ -19,6 +19,7 @@
 //!   Windows), and it must lie outside the vault.
 //! - `service` is the Apple keychain service name.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -193,19 +194,19 @@ const APPLE_FILE_KEYSTORE_WARNING: &str = "keystore.backend = \"file\": this ins
 
 /// On Apple the file tier stands in for the keychain only because the owner
 /// chose it: say at each open what it does not give. The log takes it where
-/// the command installed one; a command that installs none (`token agent`,
-/// whose stdout is its JSON) writes it to stderr itself, so it is never
-/// dropped. Elsewhere on Unix it is the platform tier, and there is nothing
-/// to say.
+/// the command installed one that passes a warning. Where none would pass it,
+/// because the command installs no log (`token agent`, whose stdout is its
+/// JSON) or its filter drops warnings (`RUST_LOG=error`), it goes to stderr,
+/// so it is never dropped. A stderr that cannot be written, such as a closed
+/// pipe, loses only the warning: the keystore still opens. Elsewhere on Unix
+/// it is the platform tier, and there is nothing to say.
 fn warn_apple_file_keystore(dir: &Path) {
     if cfg!(target_vendor = "apple") {
-        let logged = !tracing::dispatcher::get_default(|dispatch| {
-            dispatch.is::<tracing::subscriber::NoSubscriber>()
-        });
-        if logged {
+        if tracing::enabled!(tracing::Level::WARN) {
             tracing::warn!(dir = %dir.display(), "{APPLE_FILE_KEYSTORE_WARNING}");
         } else {
-            eprintln!(
+            let _ = writeln!(
+                std::io::stderr().lock(),
                 "warning: {APPLE_FILE_KEYSTORE_WARNING} (key directory {})",
                 dir.display()
             );
