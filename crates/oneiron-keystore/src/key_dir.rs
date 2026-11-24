@@ -277,19 +277,13 @@ mod tests {
         let vault = root.path().join("vault");
         fs::create_dir(&vault).expect("the vault directory");
         let later = root.path().join("later-vault");
-        let mut refused = vec![
-            (vault.clone(), vault.clone()),
-            (vault.join("keys"), vault.clone()),
-            (vault.join("a/b/keys"), vault.clone()),
-            (root.path().join("x/../vault/keys"), vault.clone()),
-            (later.join("keys"), later.clone()),
+        let refused = [
+            (vault.clone(), &vault),
+            (vault.join("keys"), &vault),
+            (vault.join("a/b/keys"), &vault),
+            (root.path().join("x/../vault/keys"), &vault),
+            (later.join("keys"), &later),
         ];
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&vault, root.path().join("link"))
-                .expect("a link to the vault");
-            refused.push((root.path().join("link/keys"), vault.clone()));
-        }
         for (dir, vault_dir) in &refused {
             let made = create_key_dir(dir, &[vault_dir.as_path()], |d| fs::create_dir_all(d));
             assert_eq!(
@@ -297,6 +291,16 @@ mod tests {
                 Err(KeystoreError::Unavailable(INSIDE_A_VAULT)),
                 "{}",
                 dir.display()
+            );
+        }
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&vault, &link).expect("a link to the vault");
+            assert_eq!(
+                create_key_dir(&link.join("keys"), &[&vault], |d| fs::create_dir_all(d)),
+                Err(KeystoreError::Unavailable(INSIDE_A_VAULT)),
+                "a key directory reached through a link"
             );
         }
         assert_eq!(
