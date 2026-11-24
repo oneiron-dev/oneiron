@@ -418,6 +418,51 @@ mod tests {
         );
     }
 
+    /// Review of #10420: a writer that died between its link and its unlink
+    /// left a copy of the old seed. Replacing the slot removes it, so the
+    /// old seed is gone once the new one is in place.
+    #[test]
+    fn replace_removes_a_dead_writers_copy_of_the_old_seed() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        keys.create(&slot(), &[1; 32]).unwrap();
+        // pid 1 is the system's first process: alive, and never this writer.
+        let copy = keys.dir.join(format!(".{}.1.1.tmp", slot().name()));
+        fs::hard_link(keys.path(&slot()), &copy).unwrap();
+        assert!(keys.replace(&slot(), &[2; 32]).unwrap());
+        assert_eq!(*keys.get(&slot()).unwrap().unwrap(), [2; 32]);
+        assert!(
+            !copy.exists(),
+            "the dead writer's copy of the old seed is removed"
+        );
+    }
+
+    /// Review of #10420: an erase that leaves a stale copy behind says so.
+    /// Here the copy's name holds a directory, which no file removal takes.
+    #[test]
+    fn an_erase_reports_a_stale_copy_it_could_not_remove() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        let name = SealedBytesName::DevicePinKey;
+        keys.create(&slot(), &[1; 32]).unwrap();
+        keys.put_sealed(&name, b"sealed").unwrap();
+        for stem in [slot().name(), sealed_file_name(&name)] {
+            let stuck = keys.dir.join(format!(".{stem}.1.1.tmp"));
+            fs::create_dir(&stuck).unwrap();
+            fs::write(stuck.join("inner"), [1; 32]).unwrap();
+        }
+        assert!(matches!(
+            keys.delete(&slot()),
+            Err(KeystoreError::Platform("io", _))
+        ));
+        assert_eq!(keys.get(&slot()).unwrap(), None);
+        assert!(matches!(
+            keys.delete_sealed(&name),
+            Err(KeystoreError::Platform("io", _))
+        ));
+        assert_eq!(keys.get_sealed(&name).unwrap(), None);
+    }
+
     /// The open-time sweep does not wait for a writer in flight: while one
     /// holds the key directory, every temporary file stays, and the next open
     /// after the hold ends removes another process's stale one.

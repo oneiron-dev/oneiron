@@ -264,6 +264,10 @@ mod tests {
                 resolved(&base.join("link/keys")).expect("a path through a link"),
                 base.join("vault/keys")
             );
+            assert_eq!(
+                resolved(&base.join("gap/../link/keys")).expect("a link past a missing part"),
+                base.join("vault/keys")
+            );
         }
     }
 
@@ -318,6 +322,56 @@ mod tests {
         let made = create_key_dir(&keys, &[&vault, &later], |d| fs::create_dir_all(d))
             .expect("a key directory outside every vault");
         assert_eq!(made, keys.canonicalize().expect("the made directory"));
+    }
+
+    /// Review of #10420: a link reached past a missing part and a `..`
+    /// (`gap/../link/keys`, the link naming the vault directory) is refused
+    /// before anything is made: neither the missing part nor a directory
+    /// inside the vault.
+    #[cfg(unix)]
+    #[test]
+    fn a_key_directory_through_a_link_past_a_missing_part_is_refused_before_it_is_made() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let vault = root.path().join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        std::os::unix::fs::symlink(&vault, root.path().join("link")).expect("a link to the vault");
+        let dir = root.path().join("gap").join("..").join("link").join("keys");
+        assert_eq!(
+            create_key_dir(&dir, &[&vault], |d| fs::create_dir_all(d)),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert_eq!(
+            fs::read_dir(&vault).expect("the vault lists").count(),
+            0,
+            "a refused key directory was made inside the vault"
+        );
+        assert!(
+            !root.path().join("gap").exists(),
+            "a refusal made a directory"
+        );
+    }
+
+    /// Review of #10420: a vault directory may resolve only once a directory
+    /// of the key directory's path exists, as `vault` does when `VAULT` is
+    /// made on a volume that ignores case. Here the vault directory is a
+    /// link to `x/y`, which is missing until made. The directory that makes
+    /// it resolve is refused as soon as it is made, nothing is made inside
+    /// it, and the directories made are removed.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_resolves_as_a_vault_once_made_is_refused_and_removed() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault-link");
+        std::os::unix::fs::symlink(base.join("x/y"), &vault).expect("a link to a missing vault");
+        assert_eq!(
+            create_key_dir(&base.join("x/y/keys"), &[&vault], |d| fs::create_dir_all(d)),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert!(
+            !base.join("x").exists(),
+            "a refusal left a directory it made"
+        );
     }
 
     /// While one writer holds the directory, the open-time sweep keeps every
