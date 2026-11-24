@@ -10,7 +10,11 @@
 //!    awaited until the deadline, never aborted;
 //! 4. then the organ work still running is cancelled (each organ call with
 //!    the protocol's shutdown reason) and the ticks' blocking work reaped,
-//!    while the model service cancels its own at the same deadline;
+//!    while the model service cancels its own at the same deadline; the
+//!    organ connections are awaited until each closed, bounded by
+//!    [`CUT_SHORT_REPLY_WAIT`]: one closes once its calls ended and their
+//!    replies, a cut-short call's "interrupted" among them, reached the
+//!    asking node;
 //! 5. a held call the stop cut short or never tried stays held, as it was,
 //!    for the next start, and the log says how many;
 //! 6. then the endpoint closes, and the connections still open are awaited.
@@ -22,6 +26,13 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::host::MeshTick;
+
+/// How long the stop waits, after its cancel, for the organ connections to
+/// close before the endpoint closes them: a cancelled call's organ takes its
+/// cancel grace to end, and its reply then waits for the asking node's
+/// acknowledgement. Without the wait, the endpoint's close overtook those
+/// replies (blind-review P1 on #10402).
+const CUT_SHORT_REPLY_WAIT: Duration = Duration::from_secs(15);
 
 /// The stop of the work the mesh's routes admitted, beside its sync
 /// streams' own.
@@ -64,8 +75,19 @@ impl MeshShutdown {
             tracing::info!("mesh work still runs at the stop's deadline; cancelling it");
         }
         self.organs.cancel();
-        if let Some(ticks) = ticks {
-            let _ = ticks.await;
+        let reaped = async {
+            if let Some(ticks) = ticks {
+                let _ = ticks.await;
+            }
+        };
+        let ((), replied) = tokio::join!(
+            reaped,
+            tokio::time::timeout(CUT_SHORT_REPLY_WAIT, self.organs.served())
+        );
+        if replied.is_err() {
+            tracing::info!(
+                "an organ connection still runs at the stop's reply wait; the endpoint closes it"
+            );
         }
         accepts
     }

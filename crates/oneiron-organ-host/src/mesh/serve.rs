@@ -33,6 +33,9 @@ use crate::spec::{LentInput, OrganCall, OrganInput};
 /// decoded, each staged input leases under the call's own deadline instead.
 /// A wait that finds no room refuses the call, as an input's does.
 const STAGED_CALL_PROVISIONAL_WAIT: Duration = Duration::from_secs(5);
+/// How long a stream waits, after its reply is queued, for the asking node
+/// to acknowledge it, before the stream ends and lets the connection close.
+const REPLY_DELIVERY_WAIT: Duration = Duration::from_secs(5);
 
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
 /// node's host. The transport has already admitted the peer (its MACHINE
@@ -182,6 +185,9 @@ impl OrganService {
             return;
         }
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
+        // Open until the connection closes below: a mesh stop closes its
+        // endpoint only once every served connection closed, bounded.
+        let _served = self.cancel.serving();
         let staging = Arc::new(self.staging());
         let mut streams = JoinSet::new();
         loop {
@@ -305,7 +311,16 @@ impl OrganService {
             }
         };
         let message = track_bytes(encode(&reply.value)?, self.host.floor().as_ref());
-        stream.send(&message.value).await
+        stream.send(&message.value).await?;
+        // The reply is queued, not yet received. The connection closes once
+        // its streams end, and a close that overtakes a queued reply drops
+        // it: a call the stop cut short would reach the asking node as a
+        // broken connection, without this node's word that the stop cut it
+        // (blind-review P1 on #10402). So the stream ends once the asking
+        // node acknowledged the reply, or the wait runs out; a reply that
+        // never reached it leaves it to retry or try another node.
+        drop(tokio::time::timeout(REPLY_DELIVERY_WAIT, stream.delivered()).await);
+        Ok(())
     }
 
     async fn call(
