@@ -155,8 +155,11 @@ def main():
     print("Initializing a model-free vault and minting its agent credential...", flush=True)
     run([binary, "init", directory / "vault", "--config", config,
          "--embedder", "none", "--oneironer", "none"], env)
+    # The two verbs it writes with; every read verb is allowed without naming.
     minted = json.loads(run([binary, "token", "agent", "--name", "agent-quickstart",
-                             "--tier", "full-access", "--out", credential, "--config", config], env))
+                             "--tier", "full-access",
+                             "--verbs", "self.memory.diary,vault.notes.create",
+                             "--out", credential, "--config", config], env))
     agent = minted["principal_ref"]
 
     paired = credential.read_text().strip()

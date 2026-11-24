@@ -63,9 +63,11 @@ Contributors to this repository: the build rules are in [AGENTS.md](../AGENTS.md
    --embedder none --oneironer none`. Both choices are explicit; init cannot
    prompt or download a model.
 5. On the stopped vault, runs `oneiron token agent --name agent-quickstart
-   --tier full-access --out <directory>/agent.cred --config
-   <directory>/oneiron.toml`. This creates an agent-bound slip, binding seed,
-   and the agent's grant. It does not require an owner pairing-link click.
+   --tier full-access --verbs self.memory.diary,vault.notes.create --out
+   <directory>/agent.cred --config <directory>/oneiron.toml`. This creates an
+   agent-bound slip, binding seed, and the agent's grant. It does not require
+   an owner pairing-link click. `--verbs` names the two verbs the demo writes
+   with; the credential may also call every read verb, and nothing else.
 6. Starts `oneiron serve --config <directory>/oneiron.toml`, with logs in
    `server.log`, and waits up to 60 seconds for `/api/health`.
 7. Saves a private diary NOTE with `POST /v1/core/facade/self.memory.diary`
