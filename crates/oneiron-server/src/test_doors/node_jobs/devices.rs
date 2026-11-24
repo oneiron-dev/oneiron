@@ -4,6 +4,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use oneiron::job_workload::{
+    DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory, DeviceState, HeldDevice,
+    Sharing,
+};
 use oneiron::machine_capacity::GpuDevice;
 use oneiron_organ_host::GpuSlotGrant;
 
@@ -16,6 +20,9 @@ use crate::gpu_execution_node::jobs::node_parts::{
 #[derive(Debug, Clone)]
 struct ScriptedDevice {
     device: GpuDevice,
+    /// Whether the device shares the host's memory.
+    unified: bool,
+    features: Vec<String>,
     offered: bool,
     /// Compute processes of another account on the device.
     foreign_pids: Vec<u32>,
@@ -51,11 +58,57 @@ impl ScriptedDevices {
                 model: "scripted".to_owned(),
                 memory_total_mib,
             },
+            unified: false,
+            features: Vec::new(),
             offered: true,
             foreign_pids: Vec::new(),
             taken_by: None,
         });
         Arc::new(devices)
+    }
+
+    /// Adds an offered, free device of `memory_total_mib`.
+    pub fn add_device(&self, device_id: &str, memory_total_mib: u64) {
+        locked(&self.state).devices.push(ScriptedDevice {
+            device: GpuDevice {
+                device_id: device_id.to_owned(),
+                model: "scripted".to_owned(),
+                memory_total_mib,
+            },
+            unified: false,
+            features: Vec::new(),
+            offered: true,
+            foreign_pids: Vec::new(),
+            taken_by: None,
+        });
+    }
+
+    /// Makes the device share the host's memory (a unified-memory machine)
+    /// or have its own.
+    pub fn set_unified(&self, device_id: &str, unified: bool) {
+        let mut state = locked(&self.state);
+        if let Some(device) = state
+            .devices
+            .iter_mut()
+            .find(|device| device.device.device_id == device_id)
+        {
+            device.unified = unified;
+        }
+    }
+
+    /// The features the device reports.
+    pub fn set_features(&self, device_id: &str, features: &[&str]) {
+        let mut state = locked(&self.state);
+        if let Some(device) = state
+            .devices
+            .iter_mut()
+            .find(|device| device.device.device_id == device_id)
+        {
+            device.features = features
+                .iter()
+                .map(|feature| (*feature).to_owned())
+                .collect();
+        }
     }
 
     /// Puts compute processes of another account on the device.
@@ -181,18 +234,43 @@ impl Drop for ScriptedLease {
 }
 
 impl NodeDevices for ScriptedDevices {
-    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String> {
+    fn devices(&self) -> Result<Vec<HeldDevice>, String> {
         let state = locked(&self.state);
-        state
+        Ok(state
             .devices
             .iter()
-            .any(|device| {
-                device.offered
-                    && !state.quarantined.contains_key(&device.device.device_id)
-                    && request.admits(&device.device)
+            .map(|device| {
+                let id = &device.device.device_id;
+                let mib = device.device.memory_total_mib;
+                let condition = match (&device.taken_by, state.quarantined.get(id)) {
+                    _ if !device.offered => DeviceState::Withheld,
+                    (_, Some(why)) => DeviceState::Quarantined { why: why.clone() },
+                    (Some(key), None) => DeviceState::Leased {
+                        keys: vec![key.clone()],
+                    },
+                    (None, None) => DeviceState::Offered,
+                };
+                HeldDevice {
+                    facts: DeviceFacts {
+                        id: id.clone(),
+                        id_source: DeviceIdSource::VendorUuid,
+                        kind: DeviceKind::Gpu,
+                        vendor: "scripted".to_owned(),
+                        model: device.device.model.clone(),
+                        memory: if device.unified {
+                            DeviceMemory::Unified { mib }
+                        } else {
+                            DeviceMemory::Dedicated { mib }
+                        },
+                        features: device.features.clone(),
+                        closure: DeviceClosure::Closed,
+                        state: condition,
+                        max_claimants: 1,
+                    },
+                    holders: device.taken_by.iter().map(|_| Sharing::Exclusive).collect(),
+                }
             })
-            .then_some(())
-            .ok_or_else(|| "no_device".to_owned())
+            .collect())
     }
 
     fn lease_for_launch(

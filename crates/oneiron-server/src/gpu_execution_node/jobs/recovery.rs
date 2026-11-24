@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use super::admission::{memory_bytes, withdrawn};
+use super::admission::{mib_bytes, withdrawn};
 use super::job_unit::{CONTROL_DIR_NAME, JobKeyId};
 use super::journal::{JobJournal, JournalEvent, NodeKey};
 use super::journal_file::{JournalFile, JournalOpening, JournalWriterLock};
@@ -330,7 +330,7 @@ impl NodeJobs {
     }
 
     /// The memory floor of a launched key on the boot it launched in, as the
-    /// launch commit took it: the key's whole request, reserved. When the
+    /// launch commit took it: the placement's host memory, reserved. When the
     /// floor cannot take that now (the job's own bytes are in the machine's
     /// live reading), the request is recorded as allocated instead, so the
     /// floor still never lends it.
@@ -341,12 +341,7 @@ impl NodeJobs {
         if book.floors.contains_key(&known.key) {
             return;
         }
-        let bytes = known
-            .reserve
-            .as_ref()
-            .map_or(launch.memory_mib.saturating_mul(1024 * 1024), |reserve| {
-                memory_bytes(&reserve.pin)
-            });
+        let bytes = mib_bytes(launch.host_memory_mib);
         let floor = match self.parts().floor.try_lease(bytes) {
             Ok(Some(floor)) => floor,
             Ok(None) | Err(_) => self.parts().floor.track_allocated(bytes),
@@ -354,18 +349,21 @@ impl NodeJobs {
         book.floors.insert(known.key.clone(), floor);
     }
 
-    /// The key's device, taken again under its key so no other key can take
-    /// it before the gate opens.
+    /// The key's devices, taken again under its key so no other key can
+    /// take them before the gate opens. A key with no device claim takes
+    /// none.
     fn take_device_again(&self, known: &NodeKey) -> Result<(), String> {
         let Some(launch) = &known.launch else {
             return Ok(());
         };
-        self.parts()
-            .devices
-            .reattach(&known.key, &launch.device_id)
-            .map_err(|refusal| format!("job_recovery.reattach {}: {refusal}", known.key))?;
+        for lease in &launch.devices {
+            self.parts()
+                .devices
+                .reattach(&known.key, &lease.device_id)
+                .map_err(|refusal| format!("job_recovery.reattach {}: {refusal}", known.key))?;
+        }
         // The slot table keeps quarantines in memory: the journal's comes
-        // back with the device.
+        // back with the devices.
         if let DeviceRelease::Unconfirmed { why } = &known.release {
             self.quarantine_device(known, why);
         }

@@ -49,7 +49,10 @@ pub fn receipt_of(
         key: key.key.clone(),
         machine,
         epoch: epoch.to_hex(),
-        device_id: key.launch.as_ref().map(|launch| launch.device_id.clone()),
+        device_id: key
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.device_id().map(str::to_owned)),
         issuer: key.issuer,
         starter,
         hold: submit.map(|submit| submit.hold.clone()),

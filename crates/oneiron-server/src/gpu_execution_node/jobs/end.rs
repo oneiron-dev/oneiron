@@ -39,7 +39,7 @@ use super::job_unit::{
     EndRecord, JobUnitPhase, RECEIPT_FILE_NAME, TICK_FILE_NAME, read_end_record, write_file_synced,
 };
 use super::journal::{EndingCause, JournalEvent, NodeKey};
-use super::node_parts::{GpuLeaseEnd, NodeJobSettings};
+use super::node_parts::{GpuDeviceProcesses, GpuLeaseEnd, NodeJobSettings};
 use super::receipt::{receipt_of, sign_receipt};
 use super::{NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
@@ -443,8 +443,8 @@ impl NodeJobs {
     /// journal just recorded (design 7.6): the slot table counts it again
     /// only after the key's clean release. Recovery replays it.
     pub(super) fn quarantine_device(&self, known: &NodeKey, why: &str) {
-        if let Some(launch) = &known.launch {
-            self.parts().devices.quarantine(&launch.device_id, why);
+        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
+            self.parts().devices.quarantine(&lease.device_id, why);
         }
     }
 
@@ -565,7 +565,8 @@ impl NodeJobs {
         }
     }
 
-    /// Step 2: the release check of an ended key that holds its device.
+    /// Step 2: the release check of an ended key that holds its leases. A
+    /// key with no device lease is released once its unit is gone.
     pub(super) fn release_check(
         &self,
         book: &mut NodeBook,
@@ -601,12 +602,20 @@ impl NodeJobs {
                 return;
             }
         }
-        let processes = match self.parts().devices.end_check(&known.key) {
-            Ok(processes) => processes,
-            Err(refusal) => {
-                quarantine(format!("device_probe: {refusal}"), Vec::new(), journal);
-                return;
+        let has_device_lease = known
+            .launch
+            .as_ref()
+            .is_some_and(super::journal::KeyLaunch::has_device_lease);
+        let processes = if has_device_lease {
+            match self.parts().devices.end_check(&known.key) {
+                Ok(processes) => processes,
+                Err(refusal) => {
+                    quarantine(format!("device_probe: {refusal}"), Vec::new(), journal);
+                    return;
+                }
             }
+        } else {
+            GpuDeviceProcesses::default()
         };
         // The unit's control group is gone, so a compute entry with a process
         // id is another process's. One with no process id cannot be told
@@ -624,15 +633,19 @@ impl NodeJobs {
         };
         match journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event) {
             Ok(released) => {
-                let end = drain_end(
-                    released,
-                    self.parts().admission.job_settings().fast_exit_secs,
-                );
-                if unconfirmed && let Some(launch) = &known.launch {
-                    // The clean probe ends the quarantine the journal set.
-                    self.parts().devices.clear_quarantine(&launch.device_id);
+                if has_device_lease {
+                    let end = drain_end(
+                        released,
+                        self.parts().admission.job_settings().fast_exit_secs,
+                    );
+                    if unconfirmed {
+                        // The clean probe ends the quarantine the journal set.
+                        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
+                            self.parts().devices.clear_quarantine(&lease.device_id);
+                        }
+                    }
+                    self.parts().devices.finish(&known.key, &end);
                 }
-                self.parts().devices.finish(&known.key, &end);
                 book.floors.remove(&known.key);
             }
             Err(error) => log_write_error(&known.key, &error),

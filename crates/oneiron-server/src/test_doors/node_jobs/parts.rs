@@ -6,6 +6,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::job_workload::{BoundRequirement, DevicePlacement, ScopeBound};
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
 use oneiron_contracts::fingerprint::ContentHasher;
 use oneiron_organ_host::{FloorLease, FloorRefusal, MachineFloor};
@@ -15,14 +16,15 @@ use crate::gpu_execution_node::jobs::{
     AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeJobSettings, StageFailure,
     StageOrder, Stager,
 };
-use crate::gpu_execution_node::node_settings::ScopeBound;
 use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
 
 #[derive(Debug, Clone)]
 struct AdmissionState {
     controls: NodeControls,
     templates: BTreeMap<String, String>,
-    require: Vec<ScopeBound>,
+    require: Vec<BoundRequirement>,
+    /// The template's memory ceiling, in MiB; `None`: no ceiling.
+    memory_ceiling_mib: Option<u64>,
     pin_refusal: Option<String>,
     disk_free_mib: u64,
     disk_reserve_mib: u64,
@@ -52,7 +54,17 @@ impl ScriptedAdmission {
                     ..NodeControls::default()
                 },
                 templates: BTreeMap::from([(template.to_owned(), digest.to_owned())]),
-                require: vec![ScopeBound::FileWall, ScopeBound::NetworkClosed],
+                require: vec![
+                    BoundRequirement {
+                        bound: ScopeBound::FileWall,
+                        kernel: false,
+                    },
+                    BoundRequirement {
+                        bound: ScopeBound::NetworkClosed,
+                        kernel: false,
+                    },
+                ],
+                memory_ceiling_mib: None,
                 pin_refusal: None,
                 disk_free_mib: 1 << 20,
                 disk_reserve_mib: 0,
@@ -76,8 +88,14 @@ impl ScriptedAdmission {
 
     /// The scope bounds every template requires (default: the file wall
     /// and the closed network, as R1's file defaults them).
-    pub fn set_template_requires(&self, require: Vec<ScopeBound>) {
+    pub fn set_template_requires(&self, require: Vec<BoundRequirement>) {
         locked(&self.state).require = require;
+    }
+
+    /// The templates' memory ceiling, in MiB, that a placement's host memory
+    /// must stay within (`None`: none).
+    pub fn set_memory_ceiling_mib(&self, ceiling_mib: Option<u64>) {
+        locked(&self.state).memory_ceiling_mib = ceiling_mib;
     }
 
     /// The template check's refusal for every pin.
@@ -138,7 +156,20 @@ impl NodeAdmission for ScriptedAdmission {
         locked(&self.state).templates.get(template).cloned()
     }
 
-    fn template_requires(&self, template: &str) -> Option<Vec<ScopeBound>> {
+    fn admit_placement(
+        &self,
+        _pin: &WorkloadPin,
+        placement: &DevicePlacement,
+    ) -> Result<(), String> {
+        match locked(&self.state).memory_ceiling_mib {
+            Some(ceiling) if placement.host_memory_mib > ceiling => {
+                Err("request_above_ceiling: host_memory_mib".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>> {
         let state = locked(&self.state);
         state
             .templates

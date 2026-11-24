@@ -5,13 +5,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use oneiron::job_workload::{BoundReport, BoundStrength, ScopeCapabilities};
+
 use super::{ScriptedNodeClock, locked};
 use crate::gpu_execution_node::jobs::job_unit::{
     END_RECORD_FILE_NAME, LAUNCH_FILE_NAME, write_file_synced,
 };
 use crate::gpu_execution_node::jobs::{
-    BoundReport, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
-    LaunchFile, NodeClock, ScopeCapabilities, Strength,
+    EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
 };
 
 /// What the scripted service manager does with the next start.
@@ -108,7 +109,7 @@ impl ScriptedJobUnits {
     #[must_use]
     pub fn kernel_scope() -> ScopeCapabilities {
         let kernel = || BoundReport {
-            strength: Strength::Kernel,
+            strength: BoundStrength::Kernel,
             evidence: "scripted".to_owned(),
         };
         ScopeCapabilities {

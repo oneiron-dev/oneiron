@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 
 use oneiron::EntityId;
+use oneiron::job_workload::DeviceLease;
 use serde::{Deserialize, Serialize};
 
 use super::job_unit::JobKeyId;
@@ -47,14 +48,19 @@ pub enum JournalEvent {
     Accepted { submit: SignedJobSubmit },
     /// Staging began.
     Staged,
-    /// The launch commit: the device and the memory are claimed here, and
+    /// The launch commit: every lease of the request is claimed here, and
     /// occupancy starts at this record.
     Launching {
-        device_id: String,
+        /// The devices leased, one per placed claim; empty for a request
+        /// with no device claim.
+        devices: Vec<DeviceLease>,
         launch_boot_ns: u64,
         /// The latest boot-clock time the unit can be alive.
         cutoff_boot_ns: u64,
-        memory_mib: u64,
+        /// The host memory leased from the machine's floor (the placement's
+        /// `host_memory_mib`: the request's memory plus each unified
+        /// device's claim memory).
+        host_memory_mib: u64,
     },
     /// The unit was seen active.
     Running,
@@ -128,12 +134,29 @@ impl EndingCause {
 /// The launch commit of a key, as journaled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyLaunch {
-    pub device_id: String,
+    pub devices: Vec<DeviceLease>,
     pub boot_id: String,
     pub launch_boot_ns: u64,
     pub cutoff_boot_ns: u64,
-    pub memory_mib: u64,
+    pub host_memory_mib: u64,
     pub launch_at_ms: u64,
+}
+
+impl KeyLaunch {
+    /// The device the key holds, by the vendor's id: the first lease, as
+    /// a key holds at most one device in this slice; `None` for a key with
+    /// no device claim.
+    #[must_use]
+    pub fn device_id(&self) -> Option<&str> {
+        self.devices.first().map(|lease| lease.device_id.as_str())
+    }
+
+    /// Whether the launch commit leased a device, so the release check
+    /// probes one.
+    #[must_use]
+    pub fn has_device_lease(&self) -> bool {
+        !self.devices.is_empty()
+    }
 }
 
 /// One key as the journal holds it.
@@ -190,8 +213,9 @@ impl NodeKey {
         self.launch.is_some() && !matches!(self.end, Some(JobEnd::LaunchRefused { .. }))
     }
 
-    /// Whether the key holds a device lease and the memory now: from the
-    /// launch commit until the release check passes.
+    /// Whether the key holds its leases now (its device, when it claimed
+    /// one, and its memory): from the launch commit until the release check
+    /// passes.
     #[must_use]
     pub fn holds_device(&self) -> bool {
         self.launch.is_some() && !matches!(self.release, DeviceRelease::Confirmed { .. })
@@ -339,19 +363,19 @@ impl KeyTable {
             }
             (
                 JournalEvent::Launching {
-                    device_id,
+                    devices,
                     launch_boot_ns,
                     cutoff_boot_ns,
-                    memory_mib,
+                    host_memory_mib,
                 },
                 Some(JobState::Staging),
             ) => {
                 next.launch = Some(KeyLaunch {
-                    device_id: device_id.clone(),
+                    devices: devices.clone(),
                     boot_id: record.boot_id.clone(),
                     launch_boot_ns: *launch_boot_ns,
                     cutoff_boot_ns: *cutoff_boot_ns,
-                    memory_mib: *memory_mib,
+                    host_memory_mib: *host_memory_mib,
                     launch_at_ms: record.at_ms,
                 });
                 next.release = DeviceRelease::Held;
