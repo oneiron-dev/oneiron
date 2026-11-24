@@ -20,7 +20,7 @@ use super::job_unit::read_end_record;
 use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, NodeKey};
 use super::node_parts::GpuSlotRequest;
 use super::receipt::{ReceiptClock, receipt_of, sign_receipt};
-use super::{BUSY_RETRY_AFTER_MS, ISSUED_AT_SLACK_MS, NodeBook, NodeGate, NodeJobs};
+use super::{BUSY_RETRY_AFTER_MS, NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobEnd, JobRefusal, JobReserve, JobState, JobStatusAnswer, SignedJobSubmit,
     SlotSelector, WorkloadPin,
@@ -201,9 +201,11 @@ impl NodeJobs {
         if let Some(reason) = admission.controls().refusal() {
             return Some(reason);
         }
-        if now_ms.saturating_add(ISSUED_AT_SLACK_MS) < reserve.issued_at_ms
-            || now_ms > reserve.not_after_ms
-        {
+        let skew_ms = admission
+            .job_settings()
+            .submit_skew_secs
+            .saturating_mul(1_000);
+        if now_ms.saturating_add(skew_ms) < reserve.issued_at_ms || now_ms > reserve.not_after_ms {
             return Some("outside_window".to_owned());
         }
         if reserve.pin.request.maximum_secs == 0 {

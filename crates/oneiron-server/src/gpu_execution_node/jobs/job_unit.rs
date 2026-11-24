@@ -141,10 +141,102 @@ pub struct JobUnitError {
     pub reason: String,
 }
 
-/// The service manager, as the node's job service uses it. The engine's
-/// account may start and stop instances of the job unit template and
-/// nothing else.
+/// How a launch scope enforces one bound (pass 34, 2.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Strength {
+    /// The operating system enforces it with no process of ours alive.
+    Kernel,
+    /// A privileged process that is not the engine enforces it, at most
+    /// `lateness_ms` late.
+    Supervised { lateness_ms: u64 },
+    /// Nothing enforces it.
+    None,
+}
+
+/// One bound as a launch scope reports it: its strength and one line of
+/// evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundReport {
+    pub strength: Strength,
+    pub evidence: String,
+}
+
+impl BoundReport {
+    /// Whether something enforces the bound.
+    #[must_use]
+    pub fn enforced(&self) -> bool {
+        self.strength != Strength::None
+    }
+}
+
+/// What a launch scope can enforce on this machine now, bound by bound
+/// (pass 34, 2.2). The first three are the minimum contract: a machine
+/// whose scope cannot kill the whole tree, enforce the cutoff with the
+/// engine stopped and tell when the tree is empty runs no job (I4, I5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeCapabilities {
+    pub tree_kill: BoundReport,
+    pub cutoff_without_engine: BoundReport,
+    pub emptiness: BoundReport,
+    pub memory_cap: BoundReport,
+    pub cpu_cap: BoundReport,
+    pub file_wall: BoundReport,
+    pub network_closed: BoundReport,
+    pub device_closure: BoundReport,
+    pub processes_hidden: BoundReport,
+    pub write_rate_cap: BoundReport,
+}
+
+impl ScopeCapabilities {
+    /// The bounds of the minimum contract this scope cannot enforce, by
+    /// name; empty when it meets the contract.
+    #[must_use]
+    pub fn minimum_contract_missing(&self) -> Vec<&'static str> {
+        [
+            ("tree_kill", &self.tree_kill),
+            ("cutoff_without_engine", &self.cutoff_without_engine),
+            ("emptiness", &self.emptiness),
+        ]
+        .into_iter()
+        .filter(|(_, report)| !report.enforced())
+        .map(|(name, _)| name)
+        .collect()
+    }
+}
+
+/// Why a unit's cutoff was not renewed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RenewRefusal {
+    /// This scope cannot renew a cutoff (until row W1's sessions).
+    #[error("job_unit.renew_unsupported: this launch scope does not renew a cutoff")]
+    Unsupported,
+    #[error(transparent)]
+    Unit(#[from] JobUnitError),
+}
+
+/// The service manager, as the node's job service uses it: the launch
+/// scope seam of pass 34, 2.2. The engine's account may start and stop
+/// instances of the job unit template and nothing else. Every call returns
+/// within a bounded time: an implementation that asks a service manager
+/// puts its own timeout on the ask and answers [`JobUnitError`] past it,
+/// since the end handling asks under the admission lock.
 pub trait JobUnit: Send + Sync {
+    /// What this machine's scope can enforce now, bound by bound. The
+    /// launch commit refuses a launch while the minimum contract is not met.
+    fn probe(&self) -> ScopeCapabilities;
+
+    /// Moves the unit's cutoff to `cutoff_boot_ns`, only from a journaled
+    /// renewal (pass 34, 2.5; row W1).
+    ///
+    /// # Errors
+    ///
+    /// [`RenewRefusal::Unsupported`] until row W1 builds it.
+    fn renew(&self, unit: &JobKeyId, cutoff_boot_ns: u64) -> Result<(), RenewRefusal> {
+        let _ = (unit, cutoff_boot_ns);
+        Err(RenewRefusal::Unsupported)
+    }
+
     /// Asks the service manager to start the key's unit. It returns once the
     /// start is queued; it does not wait for the workload.
     ///

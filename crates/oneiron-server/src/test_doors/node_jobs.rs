@@ -30,9 +30,10 @@ use crate::gpu_execution_node::jobs::node_parts::{
     GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotRefusal, GpuSlotRequest,
 };
 use crate::gpu_execution_node::jobs::{
-    AuthorityPosition, EndRecord, IssuerNotLive, JobKeyId, JobUnit, JobUnitError, JobUnitPhase,
-    JobUnitStatus, LaunchFile, NodeAdmission, NodeClock, NodeControls, NodeDevices, NodeJobParts,
-    NodeJobPaths, NodeJobs, StageFailure, StageOrder, Stager,
+    AuthorityPosition, BoundReport, EndRecord, IssuerNotLive, JobKeyId, JobUnit, JobUnitError,
+    JobUnitPhase, JobUnitStatus, LaunchFile, NodeAdmission, NodeClock, NodeControls, NodeDevices,
+    NodeJobParts, NodeJobPaths, NodeJobSettings, NodeJobs, ScopeCapabilities, StageFailure,
+    StageOrder, Stager, Strength,
 };
 use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
 
@@ -311,6 +312,25 @@ impl ScriptedJobUnits {
 }
 
 impl JobUnit for ScriptedJobUnits {
+    fn probe(&self) -> ScopeCapabilities {
+        let kernel = || BoundReport {
+            strength: Strength::Kernel,
+            evidence: "scripted".to_owned(),
+        };
+        ScopeCapabilities {
+            tree_kill: kernel(),
+            cutoff_without_engine: kernel(),
+            emptiness: kernel(),
+            memory_cap: kernel(),
+            cpu_cap: kernel(),
+            file_wall: kernel(),
+            network_closed: kernel(),
+            device_closure: kernel(),
+            processes_hidden: kernel(),
+            write_rate_cap: kernel(),
+        }
+    }
+
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
         let next = {
             let mut state = locked(&self.state);
@@ -803,8 +823,11 @@ impl NodeAdmission for ScriptedAdmission {
             .ok_or_else(|| "disk_short".to_owned())
     }
 
-    fn staging_limit_secs(&self) -> u64 {
-        locked(&self.state).staging_limit_secs
+    fn job_settings(&self) -> NodeJobSettings {
+        NodeJobSettings {
+            staging_limit_secs: locked(&self.state).staging_limit_secs,
+            ..NodeJobSettings::default()
+        }
     }
 }
 

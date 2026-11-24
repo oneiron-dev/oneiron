@@ -39,21 +39,12 @@ use super::job_unit::{
     EndRecord, JobUnitPhase, RECEIPT_FILE_NAME, TICK_FILE_NAME, read_end_record, write_file_synced,
 };
 use super::journal::{EndingCause, JournalEvent, NodeKey};
-use super::node_parts::GpuLeaseEnd;
+use super::node_parts::{GpuLeaseEnd, NodeJobSettings};
 use super::receipt::{receipt_of, sign_receipt};
 use super::{NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
-    DeviceRelease, FETCH_MAX_BYTES, JobEnd, JobState, OutputDigest, OutputsState, WorkloadPin,
+    DeviceRelease, JobEnd, JobState, OutputDigest, OutputsState, WorkloadPin,
 };
-
-/// The most time the hashing of one key's outputs takes in all.
-pub const OUTPUT_HASH_LIMIT_SECS: u64 = 60;
-
-/// The most bytes an output may hold and still travel to the issuer.
-pub const RETURNABLE_OUTPUT_MAX_BYTES: u64 = FETCH_MAX_BYTES;
-
-/// An exit this soon after the launch counts against the machine.
-const EARLY_EXIT_NS: u64 = 5_000_000_000;
 
 /// What the tick does with one launched key after reading it under the lock.
 enum KeyFollowUp {
@@ -144,9 +135,9 @@ fn signal_number(status: &str) -> i32 {
 
 /// How a key's end counts for the machine's drain guard (design 7.9): a
 /// cause that is the machine's counts, a caller's stop neither counts nor
-/// resets, a run past 5 s resets.
+/// resets, a run past `fast_exit_secs` resets.
 #[must_use]
-pub fn drain_end(key: &NodeKey) -> GpuLeaseEnd {
+pub fn drain_end(key: &NodeKey, fast_exit_secs: u64) -> GpuLeaseEnd {
     let occupied_ns = key.launch.as_ref().and_then(|launch| {
         key.end_boot_ns
             .map(|end| end.saturating_sub(launch.launch_boot_ns))
@@ -161,9 +152,11 @@ pub fn drain_end(key: &NodeKey) -> GpuLeaseEnd {
                 reason: reason.clone(),
             }
         }
-        _ if occupied_ns.is_none_or(|ns| ns < EARLY_EXIT_NS) => GpuLeaseEnd::Failed {
-            reason: "ended_within_5_s".to_owned(),
-        },
+        _ if occupied_ns.is_none_or(|ns| ns < fast_exit_secs.saturating_mul(1_000_000_000)) => {
+            GpuLeaseEnd::Failed {
+                reason: format!("ended_within_{fast_exit_secs}_s"),
+            }
+        }
         _ => GpuLeaseEnd::Succeeded,
     }
 }
@@ -550,7 +543,10 @@ impl NodeJobs {
         };
         match journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event) {
             Ok(released) => {
-                let end = drain_end(released);
+                let end = drain_end(
+                    released,
+                    self.parts().admission.job_settings().fast_exit_secs,
+                );
                 self.parts().devices.finish(&known.key, &end);
                 book.floors.remove(&known.key);
             }
@@ -562,11 +558,8 @@ impl NodeJobs {
     /// and keeps the signed terminal receipt.
     fn hash_and_seal(&self, key: &str, pin: &WorkloadPin) {
         let payload_dir = super::JobKeyId::for_key(key).payload_dir(&self.paths().work_dir);
-        let outputs = hash_outputs(
-            &payload_dir,
-            pin,
-            Duration::from_secs(OUTPUT_HASH_LIMIT_SECS),
-        );
+        let settings = self.parts().admission.job_settings();
+        let outputs = hash_outputs(&payload_dir, pin, &settings);
         let now = self.now();
         let mut book = self.lock();
         let Some(journal) = book.journal.as_mut() else {
@@ -612,11 +605,18 @@ impl NodeJobs {
 
 /// Hashes the pin's declared outputs beneath `<payload_dir>/out/`: only
 /// declared names, only regular files, opened without following a link,
-/// within `limit` in all.
+/// each within the key's disk request, within the settings' hash limit in
+/// all. An output above the returnable bound is hashed and kept on the node,
+/// not returnable.
 #[must_use]
-pub fn hash_outputs(payload_dir: &Path, pin: &WorkloadPin, limit: Duration) -> OutputsState {
+pub fn hash_outputs(
+    payload_dir: &Path,
+    pin: &WorkloadPin,
+    settings: &NodeJobSettings,
+) -> OutputsState {
     use rustix::fs::{FileType, Mode, OFlags};
     let started = Instant::now();
+    let limit = Duration::from_secs(settings.output_hash_limit_secs);
     let directory = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let base = match rustix::fs::open(payload_dir, directory, Mode::empty()) {
         Ok(base) => base,
@@ -706,7 +706,7 @@ pub fn hash_outputs(payload_dir: &Path, pin: &WorkloadPin, limit: Duration) -> O
             name: name.to_owned(),
             sha256: oneiron_hex::encode(&hasher.finalize()),
             bytes,
-            returnable: decl.returnable && bytes <= RETURNABLE_OUTPUT_MAX_BYTES,
+            returnable: decl.returnable && bytes <= settings.returnable_bound(),
         });
     }
     OutputsState::Hashed(digests)

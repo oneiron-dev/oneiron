@@ -37,8 +37,55 @@ pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobReserve, SignedJobSubmit, WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, SignedJobSubmit, WorkloadPin,
 };
+
+/// The `jobs.*` settings this service reads (pass 34, section 6), each with
+/// the engine's default. Policy is a setting, never a constant in this code
+/// (lead 25 Nov 00:04). Until row P0 a node obeys its box file only (EM-17 =
+/// A): R1's `[execution_node]` file sets `staging_limit_secs`, and every
+/// other key takes its default. Read once per use, through
+/// [`NodeAdmission::job_settings`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeJobSettings {
+    /// `jobs.submit.skew_secs`: how far before its `issued_at_ms` a reserve
+    /// may arrive, as two machines' clocks differ. Default 120.
+    pub submit_skew_secs: u64,
+    /// `jobs.staging.limit_secs`: the longest staging may take before the
+    /// launch commit. Default 600.
+    pub staging_limit_secs: u64,
+    /// `jobs.outputs.hash_limit_secs`: the longest the hashing of one key's
+    /// outputs takes in all. Default 60.
+    pub output_hash_limit_secs: u64,
+    /// `jobs.outputs.returnable_max_bytes`: the most bytes an output may
+    /// hold and still travel to the issuer. Default, and ceiling, one
+    /// message piece ([`FETCH_MAX_BYTES`], 1,044,480): a wire bound.
+    pub returnable_max_bytes: u64,
+    /// `jobs.drain.fast_exit_secs`: an end this soon after the launch counts
+    /// against the machine's drain guard. Default 5.
+    pub fast_exit_secs: u64,
+}
+
+impl Default for NodeJobSettings {
+    fn default() -> Self {
+        Self {
+            submit_skew_secs: 120,
+            staging_limit_secs: 600,
+            output_hash_limit_secs: 60,
+            returnable_max_bytes: FETCH_MAX_BYTES,
+            fast_exit_secs: 5,
+        }
+    }
+}
+
+impl NodeJobSettings {
+    /// The returnable bound in force: the setting, never above one message
+    /// piece.
+    #[must_use]
+    pub fn returnable_bound(&self) -> u64 {
+        self.returnable_max_bytes.min(FETCH_MAX_BYTES)
+    }
+}
 
 /// Why the node's own fold does not authorise an issuer's work now.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,9 +136,8 @@ pub trait NodeAdmission: Send + Sync {
     /// The refusal reason, for the key's end.
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String>;
 
-    /// The longest staging may take before the launch, in seconds: the
-    /// node file's `staging_limit_secs` (default 600).
-    fn staging_limit_secs(&self) -> u64;
+    /// The node's `jobs.*` settings now.
+    fn job_settings(&self) -> NodeJobSettings;
 }
 
 /// The machine's GPUs, as the job service leases them. The server's
@@ -259,8 +305,11 @@ impl NodeAdmission for ExecutionNode {
         ExecutionNode::disk_room(self, booked_mib, request_mib)
     }
 
-    fn staging_limit_secs(&self) -> u64 {
-        ExecutionNode::staging_limit_secs(self)
+    fn job_settings(&self) -> NodeJobSettings {
+        NodeJobSettings {
+            staging_limit_secs: ExecutionNode::staging_limit_secs(self),
+            ..NodeJobSettings::default()
+        }
     }
 }
 

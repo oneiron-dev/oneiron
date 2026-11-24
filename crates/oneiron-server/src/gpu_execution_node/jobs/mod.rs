@@ -38,10 +38,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron_organ_host::FloorLease;
 
-pub use end::{OUTPUT_HASH_LIMIT_SECS, RETURNABLE_OUTPUT_MAX_BYTES};
 pub use job_unit::{
-    EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
-    SystemNodeClock,
+    BoundReport, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
+    LaunchFile, NodeClock, RenewRefusal, ScopeCapabilities, Strength, SystemNodeClock,
 };
 pub use journal::{EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey};
 pub use journal_file::{
@@ -49,16 +48,13 @@ pub use journal_file::{
 };
 pub use node_parts::{
     AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeDevices, NodeJobParts,
-    NodeJobPaths, StageFailure, StageOrder, Stager, StagingNotBuilt,
+    NodeJobPaths, NodeJobSettings, StageFailure, StageOrder, Stager, StagingNotBuilt,
 };
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 
-/// How long a `Busy` answer asks the issuer to wait before it asks again.
+/// How long a `Busy` answer asks the issuer to wait before it asks again: a
+/// protocol hint, not a policy.
 pub const BUSY_RETRY_AFTER_MS: u64 = 2_000;
-
-/// How far before its `issued_at_ms` a reserve may arrive: the clocks of two
-/// machines differ.
-pub const ISSUED_AT_SLACK_MS: u64 = 120_000;
 
 /// Whether the node answers admitting requests.
 #[derive(Debug, Clone, PartialEq, Eq)]

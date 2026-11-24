@@ -7,7 +7,9 @@
 //!    (read again under the lock, so a wait for the lock counts), and it is
 //!    not closed;
 //! 2. the local policy, read now: enabled, not paused, not drained, the
-//!    template's digest unchanged;
+//!    template's digest unchanged, and the launch scope meets the minimum
+//!    contract (it kills the whole tree, enforces the cutoff with the engine
+//!    stopped, and tells when the tree is empty);
 //! 3. the authority, read now: the node's fold holds the position the
 //!    issuer signed the submit at (EM-11 = B; the worker waits for it up to
 //!    the staging limit), and the grants and the issuer's standing are live;
@@ -124,7 +126,7 @@ impl NodeJobs {
         }
         let reserve = known.reserve?;
         let submit = known.submit?;
-        let limit = Duration::from_secs(self.parts().admission.staging_limit_secs());
+        let limit = Duration::from_secs(self.parts().admission.job_settings().staging_limit_secs);
         Some(StagingRun {
             order: StageOrder {
                 key: key.to_owned(),
@@ -316,6 +318,10 @@ impl NodeJobs {
         if admission.template_digest(&pin.template).as_deref() != Some(pin.template_digest.as_str())
         {
             return Some("template_changed".to_owned());
+        }
+        let missing = self.parts().units.probe().minimum_contract_missing();
+        if !missing.is_empty() {
+            return Some(format!("no_scope: {}", missing.join(", ")));
         }
         if !authority_fresh
             || !self
