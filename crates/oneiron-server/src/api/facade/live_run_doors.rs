@@ -67,8 +67,10 @@ pub(crate) async fn tasks_consult_result(
     }
 }
 
-/// The read key of the caller's own verified credential, at its locality:
-/// the lane a live-run landing must read every ref it names on.
+/// The read key of the caller's own verified credential, bound where the
+/// connection's rows go: its locality with the machine it proved, as every
+/// facade read binds it (FIX 4937). The lane a live-run landing must read
+/// every ref it names on.
 fn credential_reader(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -85,7 +87,7 @@ fn credential_reader(
         .vault()
         .credential_read_key(proof)?
         .ok_or_else(refused)?;
-    Ok(key.at(auth.locality()))
+    Ok(key.for_destination(&auth.destination()))
 }
 
 /// `self.report_blocked` (`host_door_lists`): the reply is the witnessed

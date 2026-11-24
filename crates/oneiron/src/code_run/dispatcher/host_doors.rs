@@ -10,7 +10,7 @@ use crate::code_run::{
     ReportBlockedOutput, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
     TaskWaitAgentsRequest,
 };
-use crate::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 use crate::task_verb::run_doors::{ConsultLandReply, ConsultLandRequest};
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -304,10 +304,11 @@ impl<'a> HostSelfDispatcher<'a> {
     /// answer, citing its evidence, or its abstention, giving its reason, on
     /// the consult TASK its live run leased, under `read_as`, the read key of
     /// the credential that attached. Every landing rule is the run row's
-    /// (`dispatch_consult_result`). A host call cannot park, so while the
-    /// consult's assignee fact has not reached this device the landing is
-    /// refused, where a code-mode run would wait for it. The answer is the
-    /// landing and the rows it read.
+    /// (`dispatch_consult_result`), read admission first. A host call cannot
+    /// park, so while the consult's assignee fact has not reached this
+    /// device the landing refuses it as not yet in a state to land, where a
+    /// code-mode run would wait for it. The answer is the landing and the
+    /// rows it read.
     pub fn land_consult_from_host(
         &self,
         input: ConsultLandRequest,
@@ -320,24 +321,15 @@ impl<'a> HostSelfDispatcher<'a> {
             .map(crate::skill_attribution::enter_run_writes);
         // The call holds its leased run's tool witness open (FIX 8521).
         let _tool = self.activity_tool();
-        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+        if !matches!(
+            self.storage,
+            crate::code_run::storage::ExecutorStorage::Canonical(_)
+        ) {
             return Err(MemoryError::bad_request(
                 "a live-run consult landing requires canonical live-run storage",
             ));
-        };
-        // Facts only land, so a consult not pending here stays not pending
-        // through the landing below: it never parks.
-        let pending = vault
-            .memory(self.actor.entity_ref(), self.actor.actor_class())
-            .consult_assignee_pending(input.task_ref)?;
-        if pending {
-            return Err(MemoryError::new(
-                MEMORY_CODE_INVALID_STATE,
-                "this consult's assignment has not reached this device yet",
-                &["Land it again once the consult's assignment arrives."],
-            ));
         }
-        match self.dispatch_consult_result(input, Some(read_as))? {
+        match self.dispatch_consult_result(input, Some(read_as), false)? {
             SelfDispatchOutcome::AgentVerb(answer) => {
                 let reply =
                     serde_json::from_value(answer.output).map_err(|_| host_result_mismatch())?;
