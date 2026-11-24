@@ -195,6 +195,8 @@ mod host {
     use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
+    use crate::gpu_execution_node::wire::{JOB_ALPN, JOB_STATUS_ALPN};
+    use crate::gpu_execution_node::{JobService, JobStatusService};
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -337,6 +339,10 @@ mod host {
                 FILES_SEARCH_ALPN,
                 Arc::new(FilesSearchService::new(Arc::clone(vault))),
             )
+            // This machine's job protocols (pass 33, EM-1 = A): new work on
+            // one, the keys it holds on the other, each its own grant.
+            .route(JOB_ALPN, Arc::new(JobService))
+            .route(JOB_STATUS_ALPN, Arc::new(JobStatusService))
             .tick(organ_redrive(
                 router,
                 Arc::clone(vault),
