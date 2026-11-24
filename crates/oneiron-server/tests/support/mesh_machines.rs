@@ -102,6 +102,12 @@ impl Home {
     /// possession proof and its mesh identity; H enrols it, and binds and
     /// grants its endpoint on sync in the same redemption.
     pub(crate) fn enrol(&self, holder_seed: u8) -> TestResult<Device> {
+        self.enrol_with(holder_seed, &oneiron_server::SERVED_MESH_ALPNS)
+    }
+
+    /// As [`Self::enrol`], the binding's pairing covering the protocols of
+    /// `ceiling` alone.
+    pub(crate) fn enrol_with(&self, holder_seed: u8, ceiling: &[&[u8]]) -> TestResult<Device> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())
             .map_err(at("open the device's vault"))?;
@@ -114,6 +120,70 @@ impl Home {
             )
             .map_err(at("the device takes the home's authority history"))?;
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let device_owner = steward::owner(&vault).map_err(at("the device's owner proof"))?;
+        let identity = vault
+            .mesh_binding_identity_as_owner(&device_owner)
+            .map_err(at("the device's mesh identity"))?;
+        let (machine, mesh) = self.redeem_enrolment(&vault, &identity, holder_seed, ceiling)?;
+        let pairing_slip_id = match mesh {
+            Some(MeshEnrolment::Bound {
+                pairing_slip_id, ..
+            }) => pairing_slip_id,
+            other => {
+                return Err(format!("FIXTURE: the home did not bind the device: {other:?}").into());
+            }
+        };
+        Ok(Device {
+            _dir: dir,
+            vault: Arc::new(vault),
+            machine,
+            identity,
+            mesh_pairing: pairing_slip_id,
+        })
+    }
+
+    /// `device` enrols on H again with a new machine link, its binding's
+    /// pairing covering `ceiling`: what H's redemption made of its mesh
+    /// binding.
+    pub(crate) fn re_enrol(
+        &self,
+        device: &Device,
+        holder_seed: u8,
+        ceiling: &[&[u8]],
+    ) -> TestResult<Option<MeshEnrolment>> {
+        let (_, mesh) =
+            self.redeem_enrolment(&device.vault, &device.identity, holder_seed, ceiling)?;
+        Ok(mesh)
+    }
+
+    /// H grants `device` the protocol `alpn`, as the owner does with
+    /// `vault.mesh.set_alpn_grant` on the home.
+    pub(crate) fn grant(&self, device: &Device, alpn: &[u8]) -> TestResult {
+        self.vault
+            .set_mesh_alpn_grant(
+                &test_host_issuer(),
+                device.machine,
+                device.identity.endpoint_key,
+                alpn,
+                true,
+            )
+            .map_err(at("the home grants the device a protocol"))?;
+        Ok(())
+    }
+
+    /// The device of `vault` redeems a new machine pairing link of H's with a
+    /// holder key of its own (seeded by `holder_seed`), its enrolment
+    /// request, its machine key's possession proof and its mesh `identity`;
+    /// H enrols it, and binds and grants its endpoint on sync in the same
+    /// redemption under `ceiling`. The enrolled MACHINE and the mesh
+    /// binding's outcome.
+    fn redeem_enrolment(
+        &self,
+        vault: &Vault,
+        identity: &MeshBindingIdentity,
+        holder_seed: u8,
+        ceiling: &[&[u8]],
+    ) -> TestResult<(EntityId, Option<MeshEnrolment>)> {
         let vault_id = vault
             .authority_vault_id()
             .map_err(at("the device's vault id"))?
@@ -126,10 +196,6 @@ impl Home {
                     .map_err(at("the device's encryption key"))?,
             )
             .map_err(at("the device's enrolment request"))?;
-        let device_owner = steward::owner(&vault).map_err(at("the device's owner proof"))?;
-        let identity = vault
-            .mesh_binding_identity_as_owner(&device_owner)
-            .map_err(at("the device's mesh identity"))?;
         let issuer = test_host_issuer();
         let link = self
             .vault
@@ -166,30 +232,16 @@ impl Home {
                 &holder.sign(&transcript).to_bytes(),
                 &request,
                 Some(&possession),
-                // The binding's ceiling is every protocol the engine serves
+                // The binding's pairing covers `ceiling`
                 // (MESH-PAIRING-CEILING = A); each grant stays the owner's.
                 MeshEnrolmentAsk {
-                    identity: &identity,
+                    identity,
                     granted: SYNC_ALPN,
-                    ceiling: &oneiron_server::SERVED_MESH_ALPNS,
+                    ceiling,
                 },
             )
             .map_err(at("the home redeems the device's enrolment"))?;
-        let pairing_slip_id = match redeemed.mesh {
-            Some(MeshEnrolment::Bound {
-                pairing_slip_id, ..
-            }) => pairing_slip_id,
-            other => {
-                return Err(format!("FIXTURE: the home did not bind the device: {other:?}").into());
-            }
-        };
-        Ok(Device {
-            _dir: dir,
-            vault: Arc::new(vault),
-            machine: request.machine,
-            identity,
-            mesh_pairing: pairing_slip_id,
-        })
+        Ok((request.machine, redeemed.mesh))
     }
 
     /// Every device takes H's authority history once all have enrolled, so
