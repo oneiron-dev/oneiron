@@ -11,7 +11,8 @@
 //!   standing are part of the proof: a removed machine, or one whose grant
 //!   ended, is never proven.
 //! - [`ExecutionNode::controls`] are the local controls: enabled (the file,
-//!   and `disable` at the box), paused (`pause <why>` at the box) and
+//!   and `disable` at the box), paused (`pause <why>` at the box, handed to
+//!   the GPU slot table's pause on each tick and each `Availability`) and
 //!   drained (the GPU slot table's drain, cleared only by `resume` at the
 //!   box).
 //! - [`ExecutionNode::admit_pin`] is the template check of reserve step 5.
@@ -489,16 +490,24 @@ impl ExecutionNode {
     }
 
     /// A fresh sample of the node's GPUs (`Availability`): a reading, not a
-    /// hold.
+    /// hold. The pause at the box is the slot table's pause too, so the
+    /// sample shows it and the table leases nothing new while it stands.
     ///
     /// # Errors
     ///
     /// Why the driver could not be read.
     pub fn availability(&self, now_ms: u64) -> Result<GpuAvailability, String> {
+        self.sync_pause();
         self.shared
             .slots
             .availability(now_ms)
             .map_err(|error| error.to_string())
+    }
+
+    /// Hands the pause at the box (its marker) to the GPU slot table, which
+    /// keeps it in memory: one pause per machine.
+    fn sync_pause(&self) {
+        self.shared.slots.set_paused(self.controls().paused);
     }
 
     /// One authority tick (design 7.1 and EN-4 A, every mesh tick while the
@@ -507,6 +516,7 @@ impl ExecutionNode {
     /// node's keys, which stop the work it authorised. A `disable --stop`
     /// at the box stops every job. A change is logged once.
     pub fn authority_tick(&self) {
+        self.sync_pause();
         let Some(settings) = self.enabled_settings() else {
             return;
         };
