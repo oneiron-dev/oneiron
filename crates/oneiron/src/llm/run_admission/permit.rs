@@ -13,8 +13,9 @@ use super::host::{
     Unpriced, convert,
 };
 use super::receipt::{PermitFacts, RunStreamUsage};
-use super::resident::ResidentDraw;
+use super::resident::{ResidentDraw, ResidentShareScope};
 use super::settle::CallOutcome;
+use super::slot::{Slot, SlotMiss, select};
 
 /// A one-use admission for one call: the lease to send with it and every fact
 /// the admission bound. It is not `Clone`; a cloned lease still dispatches
@@ -446,15 +447,17 @@ impl RunInner {
             .map_err(|denied| RunDenied::Budget { denied })
     }
 
-    /// Reserves a host-paid call on the vault's live allocation, and on the
-    /// share of it `resident` holds when the host keeps residents (FIX 7767).
-    /// A refused fresh allocation only matters once the live one cannot fit
-    /// the call. A run with no host account has no allocation to draw on, so
-    /// it admits no host-paid call. A memory-work run takes no hold at all
-    /// (FIX 11003): memory work never needs funds. A run an owner's agent
-    /// Grant funds (FIX 7766) holds only on a live allocation the host named
-    /// that Grant's wallet for, checked before anything is reserved; any
-    /// other is refused, never used as a default.
+    /// Reserves a host-paid call on the live allocation of its slot (row
+    /// M2-I, [`super::slot`]), and on the share of it `resident` holds when
+    /// the host keeps residents (FIX 7767). A refused fresh allocation only
+    /// matters once that allocation cannot fit the call. A run with no host
+    /// account has no allocation to draw on, so it admits no host-paid call.
+    /// A memory-work run takes no hold at all (FIX 11003): memory work never
+    /// needs funds. A run an owner's agent Grant funds (FIX 7766) holds only
+    /// on a live allocation the host named that Grant's wallet for, chosen
+    /// before anything is reserved; any other is refused, never used as a
+    /// default. The chosen allocation holds the call or refuses it: no other
+    /// unit or wallet stands in for it.
     fn hold_allocation(
         &self,
         payer: Payer,
@@ -469,24 +472,40 @@ impl RunInner {
         let Some(host) = self.host.as_ref() else {
             return Err(RunDenied::NoAllocation);
         };
-        let (live, refused) = host.live();
+        let (mut selected, refused) = host.selected();
         let short = || match refused {
             Some(reason) => RunDenied::AllocationRefused { reason },
             None => RunDenied::AllocationExhausted,
         };
-        let Some(LiveAllocation {
+        let slots: Vec<Slot<'_>> = selected
+            .iter()
+            .map(|live| Slot {
+                unit: &live.unit,
+                wallet: live.wallet.as_ref(),
+            })
+            .collect();
+        let funding = self.funding.as_ref().map(|funding| &funding.wallet_ref);
+        let index = select(&slots, native, rates, funding).map_err(|miss| match miss {
+            SlotMiss::Empty => match refused {
+                Some(reason) => RunDenied::AllocationRefused { reason },
+                None => RunDenied::NoAllocation,
+            },
+            SlotMiss::Wallet { expected, live } => {
+                RunDenied::AllocationWalletMismatch { expected, live }
+            }
+            SlotMiss::Unpriced { to } => RunDenied::UnitMismatch {
+                from: native.clone(),
+                to,
+            },
+            SlotMiss::Ambiguous { units } => RunDenied::AllocationAmbiguous { units },
+        })?;
+        drop(slots);
+        let LiveAllocation {
             reference,
             unit,
             meter,
             wallet,
-        }) = live
-        else {
-            return Err(match refused {
-                Some(reason) => RunDenied::AllocationRefused { reason },
-                None => RunDenied::NoAllocation,
-            });
-        };
-        funding_admits_allocation(self.funding.as_ref(), wallet.as_ref())?;
+        } = selected.swap_remove(index);
         let units = priced(native_units, native, &unit, rates)?;
         let lease = meter
             .admit_reserve(units)
@@ -499,7 +518,8 @@ impl RunInner {
         let resident = match residents {
             Some((residents, resident)) => {
                 let allocation_units = meter.read().limit_units;
-                match residents.draw(resident, &reference, allocation_units, units) {
+                let scope = ResidentShareScope::of_wallet(wallet.as_ref());
+                match residents.draw(resident, &reference, allocation_units, units, scope) {
                     Ok(draw) => Some(draw),
                     Err(denied) => {
                         // Not dispatched, so the abort releases the hold.
@@ -519,31 +539,6 @@ impl RunInner {
                 resident,
             },
         )))
-    }
-}
-
-/// Whether the allocation a host-paid call is about to hold on, whose
-/// host-delivered wallet identity is `wallet`, may fund a run whose frozen
-/// funding binding is `funding` (FIX 7766, Engine 19:59 W-D): any allocation
-/// when no owner's agent Grant funds the run; else only one the host named
-/// that Grant's wallet for, compared byte for byte. Judged on the exact
-/// allocation the hold then takes, before anything is reserved or written:
-/// the live one in [`RunInner::hold_allocation`], and the one a persistent
-/// allocation ledger's reserve writer selected, inside that writer, before
-/// it freezes the hold. A mismatch, or an allocation with no wallet named,
-/// is [`RunDenied::AllocationWalletMismatch`], never a default wallet.
-pub(crate) fn funding_admits_allocation(
-    funding: Option<&crate::agent_dispatch::GrantSpendBinding>,
-    wallet: Option<&crate::federation::WalletRef>,
-) -> Result<(), RunDenied> {
-    match funding {
-        Some(funding) if wallet != Some(&funding.wallet_ref) => {
-            Err(RunDenied::AllocationWalletMismatch {
-                expected: funding.wallet_ref.clone(),
-                live: wallet.cloned(),
-            })
-        }
-        _ => Ok(()),
     }
 }
 

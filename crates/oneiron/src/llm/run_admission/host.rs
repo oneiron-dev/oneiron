@@ -1,6 +1,7 @@
 //! What a host feeds the run admission: the offers it bound, the money a
 //! vault may commit and the account's status. Bindings and numbers, never a
 //! rule list.
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -269,8 +270,36 @@ pub enum AllocationRefusal {
 /// What the host says about the account right now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountStatus {
-    pub allocation: Option<AllocationRef>,
+    /// Every allocation the account selects, one per slot (row M2-I): a
+    /// unit and the wallet the host named for it.
+    pub allocations: Vec<SelectedAllocation>,
     pub fresh_allocation_refused: Option<AllocationRefusal>,
+}
+
+impl AccountStatus {
+    /// The allocation the owner's resident shares govern (FIX 7767, row
+    /// M2-I): the host's one walletless allocation. `None` when the account
+    /// selects none, or walletless ones in several units.
+    #[must_use]
+    pub fn resident_share_allocation(&self) -> Option<&AllocationRef> {
+        let mut walletless = self
+            .allocations
+            .iter()
+            .filter(|selected| selected.wallet.is_none());
+        match (walletless.next(), walletless.next()) {
+            (Some(only), None) => Some(&only.reference),
+            _ => None,
+        }
+    }
+}
+
+/// One allocation an account selects, with its slot: its unit and the
+/// wallet the host named for it (`None`: the host's own, named for none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedAllocation {
+    pub reference: AllocationRef,
+    pub unit: LeaseUnit,
+    pub wallet: Option<WalletRef>,
 }
 
 /// One vault's host-paid money and account status, shared by every run the
@@ -285,8 +314,11 @@ pub struct HostAccount {
 
 #[derive(Debug, Default)]
 struct AccountState {
-    live: Option<LiveAllocation>,
-    newest_generation: Option<u64>,
+    /// One live allocation per slot (unit, wallet), in grant order.
+    selected: Vec<LiveAllocation>,
+    /// The newest generation each allocation id held, so a consumed
+    /// generation of an id never comes back, whatever other ids hold.
+    newest_generations: HashMap<String, u64>,
     refused: Option<AllocationRefusal>,
 }
 
@@ -320,17 +352,25 @@ impl HostAccount {
         self.residents.as_ref()
     }
 
-    /// Installs a fresh allocation. Leases on the one it replaces still
-    /// settle there.
+    /// Installs a fresh allocation in its slot: its unit and the wallet the
+    /// host named for it (row M2-I). It replaces the allocation selected in
+    /// that slot and any older generation of its own id, and nothing else;
+    /// leases on a replaced allocation still settle there. Its generation
+    /// must be newer than every one its own id held; other ids' generations
+    /// do not count.
     pub fn grant(&self, allocation: Allocation) -> Result<(), AllocationGrantError> {
         let mut state = self.lock();
+        let reference = &allocation.reference;
         if state
-            .newest_generation
-            .is_some_and(|newest| allocation.reference.generation <= newest)
+            .newest_generations
+            .get(&reference.id)
+            .is_some_and(|newest| reference.generation <= *newest)
         {
             return Err(AllocationGrantError::StaleGeneration);
         }
-        state.newest_generation = Some(allocation.reference.generation);
+        state
+            .newest_generations
+            .insert(reference.id.clone(), reference.generation);
         let meter = BudgetGuard::with_reserve_units(
             format!(
                 "allocation:{}:{}",
@@ -340,7 +380,11 @@ impl HostAccount {
             1,
             BudgetExhaustionPolicy::Suspend,
         );
-        state.live = Some(LiveAllocation {
+        state.selected.retain(|live| {
+            live.reference.id != allocation.reference.id
+                && (live.unit != allocation.unit || live.wallet != allocation.wallet)
+        });
+        state.selected.push(LiveAllocation {
             reference: allocation.reference,
             unit: allocation.unit,
             meter,
@@ -350,7 +394,7 @@ impl HostAccount {
     }
 
     /// The host holds fresh allocations for `reason`. What is left of the
-    /// live one stays spendable.
+    /// live ones stays spendable.
     pub fn refuse_fresh(&self, reason: AllocationRefusal) {
         self.lock().refused = Some(reason);
     }
@@ -364,14 +408,24 @@ impl HostAccount {
     pub fn status(&self) -> AccountStatus {
         let state = self.lock();
         AccountStatus {
-            allocation: state.live.as_ref().map(|live| live.reference.clone()),
+            allocations: state
+                .selected
+                .iter()
+                .map(|live| SelectedAllocation {
+                    reference: live.reference.clone(),
+                    unit: live.unit.clone(),
+                    wallet: live.wallet.clone(),
+                })
+                .collect(),
             fresh_allocation_refused: state.refused,
         }
     }
 
-    pub(super) fn live(&self) -> (Option<LiveAllocation>, Option<AllocationRefusal>) {
+    /// Every live allocation, one per slot, and the host's refusal of fresh
+    /// ones.
+    pub(super) fn selected(&self) -> (Vec<LiveAllocation>, Option<AllocationRefusal>) {
         let state = self.lock();
-        (state.live.clone(), state.refused)
+        (state.selected.clone(), state.refused)
     }
 
     fn lock(&self) -> MutexGuard<'_, AccountState> {

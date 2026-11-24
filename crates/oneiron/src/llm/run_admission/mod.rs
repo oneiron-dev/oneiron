@@ -27,6 +27,7 @@ mod receipt;
 mod resident;
 pub mod resident_doors;
 mod settle;
+mod slot;
 mod wire;
 mod work_context;
 
@@ -46,7 +47,7 @@ pub use gate::GatedBackend;
 pub use host::{
     AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount,
     KeyCustody, OfferBinding, OfferRoute, OfferRouteError, PaidConnector, Payer, PayerAccount,
-    PayerPerson, UnitRate, offer_id, offer_place,
+    PayerPerson, SelectedAllocation, UnitRate, offer_id, offer_place,
 };
 pub use job_maximum::{
     AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused,
@@ -61,7 +62,7 @@ pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunOverageSource, RunReceipt,
     RunReceiptSink, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
 };
-pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
+pub use resident::{ResidentLedger, ResidentShare, ResidentShareScope, ResidentStanding};
 pub use settle::{CallCharge, CallOutcome};
 pub use wire::{WireCallError, WireSeat};
 pub use work_context::{
