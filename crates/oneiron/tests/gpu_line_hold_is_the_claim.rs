@@ -7,10 +7,11 @@
 //!   generation was installed, and takes no new admission (T49);
 //! - the wallet agrees with the claims on both sides of the terminal write, across a reopen
 //!   (T50);
-//! - a claim past the room is refused and writes nothing;
+//! - a claim past the room is refused and writes nothing, and so is a claim on another line's
+//!   allocation or on an allocation its own wallet does not fund;
 //! - an orphan's occupied seconds shrink the room and charge no family (EM-15);
 //! - a generation admits nothing until every machine of the line has answered since this
-//!   start (EM-15);
+//!   start (EM-15), and an orphan still running keeps its machine unanswered until it ends;
 //! - only a claim draws on a line's allocation: neither host-account backend installs it, so a
 //!   plain unfunded `gpu_seconds` job never draws on it (Engine HOLD-IS-CLAIM-FOLD = A, 00:25).
 //!
@@ -306,6 +307,37 @@ fn a_claim_past_the_room_is_refused_and_writes_nothing() {
         stored(&vault, &other_line.key()).is_none(),
         "no claim written"
     );
+    // Review 10413 round 2 P1: a claim of this line that names another wallet is refused, as
+    // is any claim on an allocation that names no wallet; this line's room is unchanged.
+    let other_wallet = UnitClaim {
+        wallet: WalletRef {
+            issuer: "home".to_owned(),
+            id: "other".to_owned(),
+        },
+        ..claim(5, 6, 10)
+    };
+    assert_eq!(
+        admit(&vault, &period, &[], &other_wallet),
+        Err(ClaimAdmissionRefused::OtherWallet {
+            funded_by: Some(wallet())
+        })
+    );
+    assert!(
+        stored(&vault, &other_wallet.key()).is_none(),
+        "no claim written"
+    );
+    let walletless = Allocation {
+        wallet: None,
+        ..period.clone()
+    };
+    assert_eq!(
+        admit(&vault, &walletless, &[], &claim(6, 6, 10)),
+        Err(ClaimAdmissionRefused::OtherWallet { funded_by: None })
+    );
+    assert!(
+        stored(&vault, &claim(6, 6, 10).key()).is_none(),
+        "no claim written"
+    );
     assert_standing(&standing(&vault, &period, &[]), 0, RESERVED, 1);
 
     let released = UnitEndReport::Refused {
@@ -328,6 +360,7 @@ fn unattributed_seconds_shrink_the_room_and_charge_no_family() {
     let orphan = UnattributedJob {
         node_key: "job-from-before-the-restore:0".to_owned(),
         secs: 500,
+        ended: true,
     };
     for _ in 0..2 {
         vault
@@ -359,6 +392,78 @@ fn unattributed_seconds_shrink_the_room_and_charge_no_family() {
     admit(&vault, &period, &[machine], &claim(2, 6, GRANTED - 500)).expect("what is left");
     let other = standing(&vault, &allocation(7), &[]);
     assert_eq!(other.unattributed_secs, 0, "only its own generation");
+}
+
+/// EM-15, review 10413 round 2 P1. An orphan still running when its machine answers has no
+/// final seconds: the machine stays unanswered, and the generation admits nothing, until a later
+/// answer lists the orphan ended. Its final seconds then shrink the room, and a late repeat of
+/// the running answer changes nothing.
+#[test]
+fn a_live_orphan_keeps_its_machine_unanswered_until_it_ends() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open(dir.path());
+    let period = allocation(6);
+    let machine = id(9);
+    let orphan = |secs: u64, ended: bool| UnattributedJob {
+        node_key: "job-from-before-the-restore:0".to_owned(),
+        secs,
+        ended,
+    };
+    let answer = |job: UnattributedJob| {
+        vault
+            .with_write_txn(|txn| {
+                record_node_answer_in_txn(
+                    &vault,
+                    txn,
+                    &period.reference,
+                    machine,
+                    std::slice::from_ref(&job),
+                    NOW,
+                )
+            })
+            .expect("node answer");
+    };
+
+    answer(orphan(1_000, false));
+    let running = standing(&vault, &period, &[machine]);
+    assert_eq!(running.unattributed_secs, 1_000);
+    assert_eq!(
+        running.unanswered_machines,
+        vec![machine],
+        "a machine with a live orphan has not answered"
+    );
+    let fits_while_running = claim(1, 6, GRANTED - 1_000);
+    assert_eq!(
+        admit(&vault, &period, &[machine], &fits_while_running),
+        Err(ClaimAdmissionRefused::NodesUnanswered {
+            machines: vec![machine]
+        })
+    );
+    assert!(
+        stored(&vault, &fits_while_running.key()).is_none(),
+        "no claim written"
+    );
+
+    answer(orphan(1_500, true));
+    let stopped = standing(&vault, &period, &[machine]);
+    assert_eq!(stopped.unattributed_secs, 1_500);
+    assert!(stopped.unanswered_machines.is_empty());
+    assert_eq!(
+        admit(&vault, &period, &[machine], &fits_while_running),
+        Err(ClaimAdmissionRefused::Exhausted {
+            room: GRANTED - 1_500
+        })
+    );
+    admit(&vault, &period, &[machine], &claim(2, 6, GRANTED - 1_500)).expect("what is left");
+
+    answer(orphan(1_000, false));
+    let repeated = standing(&vault, &period, &[machine]);
+    assert_eq!(repeated.unattributed_secs, 1_500, "the larger seconds stay");
+    assert!(
+        repeated.unanswered_machines.is_empty(),
+        "an ended orphan stays ended"
+    );
+    assert_eq!(repeated.used_secs() + repeated.held_secs, GRANTED);
 }
 
 /// EM-15. A generation admits nothing until every machine of the line has answered since this

@@ -7,18 +7,22 @@
 //! to rebuild, nothing can drift from the claims, and a unit of period n settles on n after n+1
 //! is installed.
 //!
-//! - [`open_claim_in_txn`] is the reserve: the room check and the claim's put, in one write.
+//! - [`open_claim_in_txn`] is the reserve: the room check and the claim's put, in one write. A
+//!   claim draws only on its own line's allocation, funded by its own wallet.
 //! - [`claim_hold_in_txn`] is the take-up after a restart: the claim's own hold, no admission.
 //! - [`super::settle_unit_in_txn`] is the settle: the claim's terminal, written in the job's
 //!   terminal transaction, is the allocation's settle.
 //! - [`record_node_answer_in_txn`] (EM-15) records that a machine answered since this start of
 //!   the vault, with the occupied seconds of jobs it ran that this vault has no row for (after a
 //!   restore). Those seconds shrink the room and charge no family, and a generation admits
-//!   nothing until every machine of its line has answered since this start.
+//!   nothing until every machine of its line has answered since this start. An answer that lists
+//!   a job still running is not yet an answer: the issuer stops a live orphan, and its seconds are
+//!   final only at its terminal receipt (pass 33 section 8.5).
 
 use serde::{Deserialize, Serialize};
 
 use super::{CLAIMS, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitTerminal};
+use crate::federation::WalletRef;
 use crate::llm::run_admission::{Allocation, AllocationRef, gpu_line_allocation_id};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, Vault};
@@ -50,6 +54,10 @@ pub struct UnattributedJob {
     pub node_key: String,
     /// Its occupied device seconds.
     pub secs: u64,
+    /// The machine holds the job's terminal receipt, so `secs` is final. While the job runs,
+    /// the issuer sends it `Stop` (pass 33 section 8.5), and its machine counts as unanswered:
+    /// a live job's seconds still grow (review 10413 round 2).
+    pub ended: bool,
 }
 
 /// Where one allocation generation stands: the fold over its claims and its machines' answers.
@@ -65,8 +73,8 @@ pub struct AllocationStanding {
     /// Reserved, in full, by the generation's open claims. An unconfirmed job is open.
     pub held_secs: u64,
     pub open_claims: u32,
-    /// The machines of the line with no answer since this start, in the order the caller
-    /// named them.
+    /// The machines of the line with no answer since this start, or whose answer lists an
+    /// unattributed job that has not ended, in the order the caller named them.
     pub unanswered_machines: Vec<EntityId>,
 }
 
@@ -94,11 +102,15 @@ pub enum ClaimAdmissionRefused {
     /// The allocation is not the claim's own line's: a line's claims draw only on its own
     /// allocation (review 10413 P1).
     OtherLine { line: EntityId },
+    /// The allocation is not funded by the wallet the claim names (review 10413 round 2).
+    /// `funded_by` is the allocation's wallet; `None` when the host named none.
+    OtherWallet { funded_by: Option<WalletRef> },
     /// A new claim is written `Claimed`.
     NotNew,
     /// A claim already stands under this logical attempt.
     ClaimExists,
-    /// These machines of the line have not answered since this start (EM-15).
+    /// These machines of the line have not answered since this start, or a job their answer
+    /// lists as unattributed is still running (EM-15).
     NodesUnanswered { machines: Vec<EntityId> },
     /// The reservation does not fit what is left.
     Exhausted { room: u64 },
@@ -117,11 +129,22 @@ impl std::fmt::Display for ClaimAdmissionRefused {
                 "the allocation is not line {}'s allocation",
                 line.to_hex()
             ),
+            Self::OtherWallet {
+                funded_by: Some(wallet),
+            } => write!(
+                f,
+                "the allocation is funded by wallet {}/{}, not the claim's",
+                wallet.issuer, wallet.id
+            ),
+            Self::OtherWallet { funded_by: None } => {
+                f.write_str("the allocation names no wallet, so no claim draws on it")
+            }
             Self::NotNew => f.write_str("a new unit claim is written as claimed"),
             Self::ClaimExists => f.write_str("a unit claim already stands under this attempt"),
             Self::NodesUnanswered { machines } => write!(
                 f,
-                "{} machine(s) of the line have not answered since this start",
+                "{} machine(s) of the line have not answered since this start, or still run an \
+                 unattributed job",
                 machines.len()
             ),
             Self::Exhausted { room } => {
@@ -173,7 +196,8 @@ impl std::error::Error for ClaimHoldRefused {}
 
 /// The standing of `allocation`'s generation: its claims folded (open ones hold their full
 /// reservation, settled ones their charge, any other end nothing) and its machines' answers
-/// since this start. `machines` are the machines the line names.
+/// since this start. `machines` are the machines the line names. A machine has answered once
+/// its answer since this start lists no unattributed job still running.
 ///
 /// # Errors
 ///
@@ -223,7 +247,7 @@ pub fn allocation_standing_in_txn(
             .fold(standing.unattributed_secs, |sum, job| {
                 sum.saturating_add(job.secs)
             });
-        if serving == Some(row.answered_in) {
+        if serving == Some(row.answered_in) && row.unattributed.iter().all(|job| job.ended) {
             answered.push(row.machine);
         }
     }
@@ -236,8 +260,8 @@ pub fn allocation_standing_in_txn(
 }
 
 /// Writes the new claim `claim` on `allocation`, in the caller's write transaction, if
-/// `allocation` is the claim's own line's, every machine of the line (`machines`) has answered
-/// since this start, and its reservation fits.
+/// `allocation` is the claim's own line's and funded by the claim's wallet, every machine of the
+/// line (`machines`) has answered since this start, and its reservation fits.
 /// The claim's row is its hold. Answers the standing with the claim in it, or why nothing was
 /// written.
 ///
@@ -258,6 +282,11 @@ pub fn open_claim_in_txn(
     }
     if allocation.reference.id != gpu_line_allocation_id(&claim.line) {
         return Ok(Err(ClaimAdmissionRefused::OtherLine { line: claim.line }));
+    }
+    if allocation.wallet.as_ref() != Some(&claim.wallet) {
+        return Ok(Err(ClaimAdmissionRefused::OtherWallet {
+            funded_by: allocation.wallet.clone(),
+        }));
     }
     if claim.state != ClaimState::Claimed {
         return Ok(Err(ClaimAdmissionRefused::NotNew));
@@ -324,7 +353,8 @@ pub fn claim_hold_in_txn(
 /// Records that `machine` answered for `allocation`'s generation since this start of the
 /// vault, with `unattributed`, the jobs it ran against that generation that no row of this
 /// vault names. A node key counts once: a repeat keeps the larger seconds, since a live job's
-/// seconds only grow. Written by the issuer's reconcile once the machine answered its keys.
+/// seconds only grow, and a job that ended stays ended. Written by the issuer's reconcile once
+/// the machine answered its keys, and again at each receipt of a job it stopped.
 ///
 /// # Errors
 ///
@@ -361,7 +391,10 @@ pub fn record_node_answer_in_txn(
             .iter_mut()
             .find(|kept| kept.node_key == job.node_key)
         {
-            Some(kept) => kept.secs = kept.secs.max(job.secs),
+            Some(kept) => {
+                kept.secs = kept.secs.max(job.secs);
+                kept.ended |= job.ended;
+            }
             None => row.unattributed.push(job.clone()),
         }
     }
