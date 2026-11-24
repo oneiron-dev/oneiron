@@ -30,18 +30,30 @@
 //! [gpu_jobs.vault_machine]
 //! enabled = true
 //! issuer = "<this install's MACHINE id, 32 hex>"
+//!
+//! [gpu_jobs.offers.own-a6000]
+//! backend = "vault_machine"
+//! at_maximum = "stop"
+//! # class, provider, region, price and seconds as above
 //! ```
 //!
 //! `[gpu_jobs.vault_machine]` sets up the `vault_machine` backend, which runs a pinned workload
 //! on one of the vault's own machines (pass 33 section 8). It registers only on the install whose
 //! MACHINE is the `issuer`, never on a managed server; `paused` stops new dispatches and cancels
 //! nothing. The windows are settings with the design's values as defaults.
+//!
+//! An offer's `at_maximum` says what follows the cutoff at the job's maximum (pass 34, 9.2; the
+//! cutoff itself is invariant I5). A `vault_machine` offer states `"stop"`: its node ends the run
+//! at the maximum, with or without a checkpoint (pass 33, 8.6). An offer that leaves it out
+//! follows C2 at the maximum (warning, checkpoint first, resume), which is what a customer buys.
 use std::collections::BTreeMap;
 
 use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use oneiron::{EntityId, ModelLocality};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::gpu_execution_node::issuer::VAULT_MACHINE_BACKEND;
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -110,6 +122,18 @@ struct GpuOfferFile {
     startup_secs: u64,
     teardown_secs: u64,
     rounding_secs: u64,
+    #[serde(default)]
+    at_maximum: Option<AtMaximum>,
+}
+
+/// What follows the cutoff at a job's maximum, as an offer states it (pass 34, 9.2). Row W1 adds
+/// `renew`, a paid next chunk for a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AtMaximum {
+    /// The run ends at the maximum, with or without a checkpoint; its end reason says the
+    /// maximum was reached (pass 33, 8.6).
+    Stop,
 }
 
 /// The GPU offers this host posts, and how its worker steps their jobs.
@@ -213,6 +237,8 @@ pub struct GpuOfferSettings {
     /// The backend registry's name for the provisioning connector.
     pub backend: String,
     pub offer: GpuOffer,
+    /// What follows the cutoff at the maximum; `None` follows C2 (a checkpoint first).
+    pub at_maximum: Option<AtMaximum>,
 }
 
 impl GpuJobsSettings {
@@ -287,6 +313,17 @@ impl GpuOfferFile {
             !self.catalog_revision.trim().is_empty(),
             "{at}.catalog_revision must name the price list the quote freezes"
         );
+        if self.backend == VAULT_MACHINE_BACKEND {
+            anyhow::ensure!(
+                self.at_maximum == Some(AtMaximum::Stop),
+                "{at}.at_maximum must be \"stop\" for the {VAULT_MACHINE_BACKEND} backend: its node ends the run at the maximum"
+            );
+        } else {
+            anyhow::ensure!(
+                self.at_maximum.is_none(),
+                "{at}.at_maximum is for the {VAULT_MACHINE_BACKEND} backend only: a provisioned offer follows C2 at the maximum"
+            );
+        }
         let cost_unit = LeaseUnit::new(self.cost_unit)
             .map_err(|error| anyhow::anyhow!("{at}.cost_unit: {error}"))?;
         let route = OfferRoute::new(
@@ -320,6 +357,7 @@ impl GpuOfferFile {
         Ok(GpuOfferSettings {
             backend: self.backend,
             offer,
+            at_maximum: self.at_maximum,
         })
     }
 }

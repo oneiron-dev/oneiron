@@ -39,7 +39,7 @@ use oneiron::machine_signature::{
 use oneiron::test_doors::steward;
 use oneiron::{EntityId, Vault};
 use oneiron_server::config::SyncServerConfig;
-use oneiron_server::config::gpu_jobs::VaultMachineSettings;
+use oneiron_server::config::gpu_jobs::{AtMaximum, VaultMachineSettings};
 use oneiron_server::gpu_execution_node::issuer::{
     IssuerClock, JobNodeClient, LoggedOrphanKeys, NodeCallError, VAULT_MACHINE_BACKEND,
     VaultMachineConnector, VaultMachineNotRegistered, VaultMachineParts, not_the_issuer,
@@ -51,6 +51,7 @@ use oneiron_server::gpu_execution_node::wire::{
     NodeAnswer, OutputsState, ScopeClass, SignedJobReceipt, TemplateOffer,
 };
 use oneiron_server::server::SyncServer;
+use oneiron_server::test_doors::gpu_backend::gpu_jobs_section;
 use serde::Serialize;
 use serde_json::json;
 
@@ -1322,4 +1323,48 @@ fn a_caller_who_may_not_read_machines_gets_a_refusal_that_names_none() {
         Err("device_id_invalid"),
         "a device selector must be a string",
     );
+}
+
+/// A `[gpu_jobs]` section with one own-machine offer.
+const OWN_MACHINE_SECTION: &str = r#"
+[offers.own-a6000]
+class = "a6000"
+provider = "own"
+region = "home"
+backend = "vault_machine"
+at_maximum = "stop"
+price_per_second = 1
+cost_unit = "credit-micros"
+catalog_revision = "own-prices-1"
+startup_secs = 0
+teardown_secs = 0
+rounding_secs = 1
+"#;
+
+/// Pass 34, 9.2: a `vault_machine` offer states `at_maximum = "stop"`, because its node ends the
+/// run at the maximum (pass 33, 8.6); a provisioned offer leaves it out and follows C2.
+#[test]
+fn a_vault_machine_offer_states_at_maximum_stop() {
+    let settings = gpu_jobs_section(OWN_MACHINE_SECTION).expect("an own-machine offer that stops");
+    assert_eq!(
+        settings.offer("own-a6000").map(|offer| offer.at_maximum),
+        Some(Some(AtMaximum::Stop)),
+    );
+    let unstated = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("at_maximum = \"stop\"\n", ""))
+        .expect_err("a vault_machine offer that states no at_maximum");
+    assert!(
+        format!("{unstated:#}").contains("at_maximum must be \"stop\""),
+        "{unstated:#}"
+    );
+    let provisioned = gpu_jobs_section(
+        &OWN_MACHINE_SECTION.replace("backend = \"vault_machine\"", "backend = \"skypilot\""),
+    )
+    .expect_err("at_maximum on a provisioned offer");
+    assert!(
+        format!("{provisioned:#}").contains("vault_machine backend only"),
+        "{provisioned:#}"
+    );
+    let renew = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
+        .expect_err("renew comes with row W1");
+    assert!(format!("{renew:#}").contains("renew"), "{renew:#}");
 }

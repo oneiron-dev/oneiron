@@ -181,6 +181,10 @@ tower-http = { version = "0.6", features = ["cors"] }
 tower = { version = "0.5", features = ["util"] }
 anyhow = "1"
 serde_bytes = "0.11"
+# On unix, the sealed, read-only shared regions a native EXL3 call's input
+# rides in. On every platform, the codec the job protocols' machine signatures
+# cover (gpu_execution_node/wire.rs), so the dependency is not unix-only.
+oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
 # `oneiron import notes` reads each note's YAML frontmatter; the tests also
 # parse memory-reason YAML in quoted-scalar control-character regressions.
 serde_yaml_ng = "0.10"
@@ -249,8 +253,6 @@ dirs = "6"
 # descriptor with SCM_RIGHTS (models/native_exl3). `time`: the vault_machine
 # connector's boot clock (gpu_execution_node/issuer/clock.rs).
 rustix = { version = "1.1", features = ["fs", "net", "process", "time"] }
-# The sealed, read-only shared regions a native EXL3 call's input rides in.
-oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }
@@ -725,6 +727,14 @@ name = "job_protocol_grant"
 path = "tests/job_protocol_grant.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# The job service answers each stream of a connection on its own: a stream that never finishes
+# its request, or whose answer cannot be sent, costs only itself (review round 1 of #10407). An
+# in-process stand-in for the mesh connection; no vault, no grant.
+[[test]]
+name = "job_service_streams"
+path = "tests/job_service_streams.rs"
+required-features = ["mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
@@ -871,3 +881,11 @@ oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
 name = "vault_workflows_doors"
 path = "tests/vault_workflows_doors.rs"
 required-features = ["oneiron/test-support"]
+
+# Pinned workloads (pass 33 row R2): the issuer's vault is the mesh harness's,
+# whose devices keep their install keys in a `MemoryKeystore`
+# (`oneiron/test-support`); the listeners need the `mesh` feature.
+[[test]]
+name = "job_workloads"
+path = "tests/job_workloads.rs"
+required-features = ["oneiron/test-support", "mesh"]
