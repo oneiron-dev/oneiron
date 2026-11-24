@@ -24,6 +24,7 @@ pub mod observations;
 pub mod owner_outcome;
 pub mod pattern;
 pub mod payoff;
+pub mod planner_card_door;
 pub mod receipt;
 pub mod run;
 pub mod run_binding;
