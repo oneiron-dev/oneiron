@@ -3,6 +3,7 @@ use super::{
     AllocationServingFence, AllocationStoreError, AllocationTerminal, DurableAllocationHold,
     DurableAllocationRead, ReservationParties, VaultAllocationLedger,
 };
+use crate::Vault;
 use crate::federation::WalletRef;
 use crate::llm::VaultResidentLedger;
 use crate::llm::run_admission::host::{Unpriced, convert};
@@ -12,7 +13,6 @@ use crate::llm::run_admission::{
     SelectedAllocation, UnitRate,
 };
 use crate::store::Callback;
-use crate::Vault;
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, AllocationStoreError>;
