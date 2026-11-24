@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.workloads.approve",
+  "description": "Approves one pinned workload on the named machines, for the named Grants, until its expiry. The vault owner's own act, with presence; no agent's Grant admits it.",
+  "input": "crate::job_workload::WorkloadApproveRequest",
+  "output": "crate::job_workload::WorkloadChange",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.approve\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "job_workload_caller"
+}
