@@ -54,8 +54,8 @@ pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
 /// unit's write rate to the payload device.
 pub const WRITE_MIB_PER_SEC_DEFAULT: u64 = 200;
 
-/// Default of a template's `max_gpus`.
-pub const MAX_GPUS_DEFAULT: u32 = 1;
+/// Default of a template's `max_devices`: the devices one pin may claim.
+pub const MAX_DEVICES_DEFAULT: u32 = 1;
 
 /// The longest template name, in bytes.
 const TEMPLATE_NAME_MAX: usize = 64;
@@ -70,13 +70,27 @@ struct ExecutionNodeFile {
     execution_node: ExecutionNodeSettings,
 }
 
-/// What a machine that cannot build a job's scope does.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnfencedPolicy {
-    /// It refuses the job (section 7.8).
-    #[default]
-    Refuse,
+/// A bound a job's scope gives the workload (pass 34 section 2.2). A
+/// template lists the bounds it requires; a required bound the scope cannot
+/// give blocks the job, and one that is not required and not available is
+/// recorded in the receipt as unproven (row R3b proves them on the machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ScopeBound {
+    /// The workload reads and writes only its paths: never the vault.
+    #[serde(rename = "file_wall")]
+    FileWall,
+    /// The workload reaches no network.
+    #[serde(rename = "network_closed")]
+    NetworkClosed,
+    /// The workload opens its claimed devices and no other.
+    #[serde(rename = "device_closure")]
+    DeviceClosure,
+    /// The kernel caps the workload's memory.
+    #[serde(rename = "memory_cap:kernel")]
+    MemoryCapKernel,
+    /// The kernel enforces the cutoff, with no engine alive.
+    #[serde(rename = "cutoff:kernel")]
+    CutoffKernel,
 }
 
 /// The node's `[execution_node]` table.
@@ -108,8 +122,6 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
-    #[serde(default)]
-    pub unfenced: UnfencedPolicy,
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
@@ -148,17 +160,22 @@ pub struct NodeTemplate {
     #[serde(default)]
     pub returnable: Vec<String>,
     /// The arguments a pin may pass, by name, each with the pattern its
-    /// whole value matches. Empty: the arguments are not checked by name.
-    #[serde(default)]
-    pub params: BTreeMap<String, String>,
+    /// whole value matches. Absent: the arguments are not checked by name;
+    /// declared, even empty, every argument must be one of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<BTreeMap<String, String>>,
     /// The longest run, in seconds.
     pub max_secs: u64,
     /// The job's memory ceiling.
     pub memory_gib: u64,
     /// The job's disk ceiling on the payload disk.
     pub disk_gib: u64,
-    #[serde(default = "max_gpus_default")]
-    pub max_gpus: u32,
+    /// The bounds the job's scope must give, else the job is blocked. The
+    /// default keeps a workload out of the vault and off the network.
+    #[serde(default = "require_default")]
+    pub require: Vec<ScopeBound>,
+    #[serde(default = "max_devices_default")]
+    pub max_devices: u32,
     /// The operating-system signal a checkpoint notice delivers to the
     /// workload (design 7.1 `Signal`), one of [`CHECKPOINT_SIGNALS`]. None:
     /// the notice is a no-op. Absent from the digest when unset, so a
@@ -189,8 +206,11 @@ fn job_account_default() -> String {
 fn write_mib_per_sec_default() -> u64 {
     WRITE_MIB_PER_SEC_DEFAULT
 }
-fn max_gpus_default() -> u32 {
-    MAX_GPUS_DEFAULT
+fn max_devices_default() -> u32 {
+    MAX_DEVICES_DEFAULT
+}
+fn require_default() -> Vec<ScopeBound> {
+    vec![ScopeBound::FileWall, ScopeBound::NetworkClosed]
 }
 fn host_scope() -> Vec<ScopeClass> {
     vec![ScopeClass::Host]
@@ -391,7 +411,7 @@ impl NodeTemplate {
                 "checkpoint_signal {signal:?} must be one of {CHECKPOINT_SIGNALS:?}"
             ));
         }
-        for (name, pattern) in &self.params {
+        for (name, pattern) in self.params.iter().flatten() {
             if name.is_empty() || name.contains('=') {
                 return Err(format!(
                     "params name {name:?} must be non-empty with no '='"
@@ -430,7 +450,7 @@ impl NodeTemplate {
         }
         let request = &pin.request;
         for (field, asked, ceiling) in [
-            ("gpus", u64::from(request.gpus), u64::from(self.max_gpus)),
+            ("gpus", u64::from(request.gpus), u64::from(self.max_devices)),
             ("maximum_secs", request.maximum_secs, self.max_secs),
             (
                 "memory_mib",
@@ -447,12 +467,12 @@ impl NodeTemplate {
                 return Err(format!("request_above_ceiling: {field}"));
             }
         }
-        if !self.params.is_empty() {
+        if let Some(params) = &self.params {
             for arg in &pin.args {
                 let Some((name, value)) = arg.split_once('=') else {
                     return Err("arg_not_name_value".to_owned());
                 };
-                let Some(pattern) = self.params.get(name) else {
+                let Some(pattern) = params.get(name) else {
                     return Err(format!("arg_not_declared: {name}"));
                 };
                 let matches = param_pattern(pattern).is_ok_and(|pattern| pattern.is_match(value));
@@ -465,12 +485,17 @@ impl NodeTemplate {
     }
 }
 
-/// `pattern` compiled to match a whole value.
+/// `pattern` compiled to match a whole value. The pattern must compile on
+/// its own first, so its text cannot close the group it is placed in.
 fn param_pattern(pattern: &str) -> Result<regex::Regex, String> {
-    regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
-        .size_limit(PARAM_PATTERN_SIZE_MAX)
-        .build()
-        .map_err(|error| error.to_string())
+    let alone = |source: &str| {
+        regex::RegexBuilder::new(source)
+            .size_limit(PARAM_PATTERN_SIZE_MAX)
+            .build()
+            .map_err(|error| error.to_string())
+    };
+    alone(pattern)?;
+    alone(&format!(r"\A(?:{pattern})\z"))
 }
 
 /// Whether `path` is relative, non-empty, and every one of its segments is

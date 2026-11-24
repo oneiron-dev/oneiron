@@ -9,7 +9,8 @@
 //! 2. the local policy, read now: enabled, not paused, not drained, the
 //!    template's digest unchanged, and the launch scope meets the minimum
 //!    contract (it kills the whole tree, enforces the cutoff with the engine
-//!    stopped, and tells when the tree is empty);
+//!    stopped, and tells when the tree is empty) and gives every bound the
+//!    template requires (pass 34 section 2.2; else `no_scope: <names>`);
 //! 3. the authority, read now: the node's fold holds the position the
 //!    issuer signed the submit at (EM-11 = B; the worker waits for it up to
 //!    the staging limit), and the grants and the issuer's standing are live;
@@ -31,7 +32,7 @@ use super::job_unit::{LAUNCH_FILE_NAME, LaunchFile, write_file_synced};
 use super::journal::{JournalEvent, NodeKey};
 use super::node_parts::{GpuSlotRefusal, StageFailure, StageOrder};
 use super::{JobKeyId, NodeBook, NodeGate, NodeJobs};
-use crate::gpu_execution_node::wire::{JobEnd, JobState, NetworkMode, SignedJobSubmit};
+use crate::gpu_execution_node::wire::{JobEnd, JobState, SignedJobSubmit};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -249,18 +250,8 @@ impl NodeJobs {
             .saturating_add(maximum_secs.saturating_mul(NANOS_PER_SEC));
         let launch_file = LaunchFile {
             key: key.to_owned(),
-            template: pin.template.clone(),
-            template_digest: pin.template_digest.clone(),
-            commit: pin.commit.clone(),
-            entry: pin.entry.clone(),
-            args: pin.args.clone(),
-            network: match pin.network {
-                NetworkMode::None => "none".to_owned(),
-                NetworkMode::Host => "host".to_owned(),
-            },
+            pin: pin.clone(),
             device_id: device_id.clone(),
-            memory_mib: pin.request.memory_mib,
-            disk_mib: pin.request.disk_mib,
             maximum_secs,
             boot_id: now.boot_id.clone(),
             launch_boot_ns: now.boot_ns,
@@ -319,7 +310,10 @@ impl NodeJobs {
         {
             return Some("template_changed".to_owned());
         }
-        let missing = self.parts().units.probe().minimum_contract_missing();
+        let Some(required) = admission.template_requires(&pin.template) else {
+            return Some("template_changed".to_owned());
+        };
+        let missing = self.parts().units.probe().missing_for(&required);
         if !missing.is_empty() {
             return Some(format!("no_scope: {}", missing.join(", ")));
         }

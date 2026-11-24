@@ -11,8 +11,9 @@
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron_server::gpu_execution_node::ScopeBound;
 use oneiron_server::gpu_execution_node::jobs::{
-    JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey,
+    BoundReport, JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey, Strength,
 };
 use oneiron_server::gpu_execution_node::wire::{
     DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState,
@@ -20,7 +21,7 @@ use oneiron_server::gpu_execution_node::wire::{
     SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
 use oneiron_server::test_doors::node_jobs::{
-    ScriptedNode, ScriptedSigner, ScriptedStart, fail_journal_sync,
+    ScriptedJobUnits, ScriptedNode, ScriptedSigner, ScriptedStart, fail_journal_sync,
 };
 
 const TEMPLATE: &str = "open-models";
@@ -516,6 +517,76 @@ fn a_disable_a_withhold_or_a_template_edit_before_the_start_refuses_the_launch()
         fixture.node.admission.set_template_digest(TEMPLATE, DIGEST);
     }
     assert_eq!(fixture.node.devices.leases_given(), 0);
+}
+
+#[test]
+fn a_scope_that_cannot_give_a_bound_the_launch_needs_refuses_the_launch() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let mut no_cutoff = ScriptedJobUnits::kernel_scope();
+    no_cutoff.cutoff_without_engine = BoundReport {
+        strength: Strength::None,
+        evidence: "scripted: no timer outlives the engine".to_owned(),
+    };
+    let mut supervised_memory = ScriptedJobUnits::kernel_scope();
+    supervised_memory.memory_cap = BoundReport {
+        strength: Strength::Supervised { lateness_ms: 1_000 },
+        evidence: "scripted: a supervisor reads the usage".to_owned(),
+    };
+    let mut open_network = ScriptedJobUnits::kernel_scope();
+    open_network.network_closed = BoundReport {
+        strength: Strength::None,
+        evidence: "scripted: no network namespace".to_owned(),
+    };
+    let default_require = vec![ScopeBound::FileWall, ScopeBound::NetworkClosed];
+    let cases = [
+        // The minimum contract holds whatever the template requires.
+        (
+            "job-12/minimum",
+            no_cutoff,
+            default_require.clone(),
+            "no_scope: cutoff_without_engine",
+        ),
+        // A kernel bound is not given by a supervisor.
+        (
+            "job-12/kernel",
+            supervised_memory.clone(),
+            vec![ScopeBound::FileWall, ScopeBound::MemoryCapKernel],
+            "no_scope: memory_cap:kernel",
+        ),
+        // The template's default list keeps a workload off the network.
+        (
+            "job-12/network",
+            open_network.clone(),
+            default_require,
+            "no_scope: network_closed",
+        ),
+    ];
+    for (key, scope, require, reason) in cases {
+        fixture.node.units.set_probe(scope);
+        fixture.node.admission.set_template_requires(require);
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+        receipt(jobs.submit(fixture.issuer, fixture.submit(key, &pin)));
+        let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+        assert!(
+            matches!(&ended.end, Some(JobEnd::LaunchRefused { reason: found }) if found == reason),
+            "{key}: {:?}",
+            ended.end
+        );
+        assert!(!ended.started());
+        assert_eq!(fixture.node.units.starts(key), 0);
+    }
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+    // A bound the template does not require does not block: the same
+    // supervised memory cap launches under the default list.
+    fixture.node.units.set_probe(supervised_memory);
+    fixture
+        .node
+        .admission
+        .set_template_requires(vec![ScopeBound::FileWall, ScopeBound::NetworkClosed]);
+    let running = fixture.run(&jobs, "job-12/unrequired");
+    assert!(running.started());
 }
 
 #[test]

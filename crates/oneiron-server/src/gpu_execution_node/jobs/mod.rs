@@ -161,6 +161,24 @@ impl NodeJobs {
             .map_or(0, |journal| journal.table().booked_disk_mib())
     }
 
+    /// The issuers of every key that has not ended: the authority tick
+    /// checks each one's standing, whatever the node's file names now.
+    #[must_use]
+    pub fn live_issuers(&self) -> BTreeSet<oneiron::EntityId> {
+        self.lock()
+            .journal
+            .as_ref()
+            .map(|journal| {
+                journal
+                    .table()
+                    .iter()
+                    .filter(|key| !key.is_ended())
+                    .map(|key| key.issuer)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Every key the journal holds now, as it holds them.
     #[must_use]
     pub fn keys(&self) -> Vec<NodeKey> {

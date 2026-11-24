@@ -35,6 +35,7 @@ use crate::gpu_execution_node::jobs::{
     NodeJobParts, NodeJobPaths, NodeJobSettings, NodeJobs, ScopeCapabilities, StageFailure,
     StageOrder, Stager, Strength,
 };
+use crate::gpu_execution_node::node_settings::ScopeBound;
 use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -148,6 +149,7 @@ struct UnitsState {
     next_start: ScriptedStart,
     /// Every signal delivered, in order: the unit and the signal's name.
     signals: Vec<(JobKeyId, String)>,
+    probe: ScopeCapabilities,
 }
 
 /// The service manager, scripted. It writes `ended.json` as the unit's root
@@ -172,6 +174,7 @@ impl ScriptedJobUnits {
                 answering: true,
                 next_start: ScriptedStart::Run,
                 signals: Vec::new(),
+                probe: Self::kernel_scope(),
             }),
         })
     }
@@ -186,6 +189,33 @@ impl ScriptedJobUnits {
             .filter(|(unit, _)| *unit == id)
             .map(|(_, signal)| signal.clone())
             .collect()
+    }
+
+    /// A scope whose kernel gives every bound: what `probe` answers until a
+    /// test sets another.
+    #[must_use]
+    pub fn kernel_scope() -> ScopeCapabilities {
+        let kernel = || BoundReport {
+            strength: Strength::Kernel,
+            evidence: "scripted".to_owned(),
+        };
+        ScopeCapabilities {
+            tree_kill: kernel(),
+            cutoff_without_engine: kernel(),
+            emptiness: kernel(),
+            memory_cap: kernel(),
+            cpu_cap: kernel(),
+            file_wall: kernel(),
+            network_closed: kernel(),
+            device_closure: kernel(),
+            processes_hidden: kernel(),
+            write_rate_cap: kernel(),
+        }
+    }
+
+    /// What `probe` answers from now on.
+    pub fn set_probe(&self, scope: ScopeCapabilities) {
+        locked(&self.state).probe = scope;
     }
 
     /// How many times the key's unit was started.
@@ -328,22 +358,7 @@ impl ScriptedJobUnits {
 
 impl JobUnit for ScriptedJobUnits {
     fn probe(&self) -> ScopeCapabilities {
-        let kernel = || BoundReport {
-            strength: Strength::Kernel,
-            evidence: "scripted".to_owned(),
-        };
-        ScopeCapabilities {
-            tree_kill: kernel(),
-            cutoff_without_engine: kernel(),
-            emptiness: kernel(),
-            memory_cap: kernel(),
-            cpu_cap: kernel(),
-            file_wall: kernel(),
-            network_closed: kernel(),
-            device_closure: kernel(),
-            processes_hidden: kernel(),
-            write_rate_cap: kernel(),
-        }
+        locked(&self.state).probe.clone()
     }
 
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
@@ -732,6 +747,7 @@ struct AdmissionState {
     /// Each template's checkpoint signal, when it names one.
     signals: BTreeMap<String, String>,
     receipt_keep_days: u64,
+    require: Vec<ScopeBound>,
     pin_refusal: Option<String>,
     disk_free_mib: u64,
     disk_reserve_mib: u64,
@@ -763,6 +779,7 @@ impl ScriptedAdmission {
                 templates: BTreeMap::from([(template.to_owned(), digest.to_owned())]),
                 signals: BTreeMap::new(),
                 receipt_keep_days: 30,
+                require: vec![ScopeBound::FileWall, ScopeBound::NetworkClosed],
                 pin_refusal: None,
                 disk_free_mib: 1 << 20,
                 disk_reserve_mib: 0,
@@ -782,6 +799,12 @@ impl ScriptedAdmission {
         locked(&self.state)
             .templates
             .insert(template.to_owned(), digest.to_owned());
+    }
+
+    /// The scope bounds every template requires (default: the file wall
+    /// and the closed network, as R1's file defaults them).
+    pub fn set_template_requires(&self, require: Vec<ScopeBound>) {
+        locked(&self.state).require = require;
     }
 
     /// The template check's refusal for every pin.
@@ -859,6 +882,14 @@ impl NodeAdmission for ScriptedAdmission {
 
     fn template_digest(&self, template: &str) -> Option<String> {
         locked(&self.state).templates.get(template).cloned()
+    }
+
+    fn template_requires(&self, template: &str) -> Option<Vec<ScopeBound>> {
+        let state = locked(&self.state);
+        state
+            .templates
+            .contains_key(template)
+            .then(|| state.require.clone())
     }
 
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {

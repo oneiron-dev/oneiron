@@ -59,7 +59,7 @@ enum KeyFollowUp {
 /// then the cause the engine journaled before it stopped the unit; then the
 /// workload's own exit.
 #[must_use]
-pub fn end_of(record: &EndRecord, cause: Option<EndingCause>) -> JobEnd {
+pub(super) fn end_of(record: &EndRecord, cause: Option<EndingCause>) -> JobEnd {
     if !record.workload_started {
         return JobEnd::LaunchRefused {
             reason: record.refusal.clone().unwrap_or_else(|| "unit".to_owned()),
@@ -137,7 +137,7 @@ fn signal_number(status: &str) -> i32 {
 /// cause that is the machine's counts, a caller's stop neither counts nor
 /// resets, a run past `fast_exit_secs` resets.
 #[must_use]
-pub fn drain_end(key: &NodeKey, fast_exit_secs: u64) -> GpuLeaseEnd {
+pub(super) fn drain_end(key: &NodeKey, fast_exit_secs: u64) -> GpuLeaseEnd {
     let occupied_ns = key.launch.as_ref().and_then(|launch| {
         key.end_boot_ns
             .map(|end| end.saturating_sub(launch.launch_boot_ns))
@@ -610,7 +610,7 @@ impl NodeJobs {
 /// all. An output above the returnable bound is hashed and kept on the node,
 /// not returnable.
 #[must_use]
-pub fn hash_outputs(
+pub(super) fn hash_outputs(
     payload_dir: &Path,
     pin: &WorkloadPin,
     settings: &NodeJobSettings,

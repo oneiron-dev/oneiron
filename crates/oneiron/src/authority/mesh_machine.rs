@@ -26,7 +26,7 @@ mod endpoint_index;
 mod enrolment;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
-pub use enrolment::{MeshBindRefusal, MeshEnrolment};
+pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -341,6 +341,30 @@ impl Vault {
             }
             _ => Ok(super::PeerMachine::Unknown),
         }
+    }
+    /// Whether `machine`'s grant of `alpn` was ended by an act this vault
+    /// folded, and not by time alone: the grant withdrawn or its slip
+    /// revoked, the machine's binding revoked or gone, or the machine
+    /// removed. A grant that only expired is not withdrawn, and neither is
+    /// one whose mint this replica has not folded yet: that is unknown here
+    /// (pass 33 EN-4 A: a revoke stops what it authorised; an expiry does
+    /// not).
+    pub fn mesh_grant_withdrawn(&self, machine: EntityId, alpn: &[u8]) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some(claims) = self.mesh_authority_in_txn(&txn, machine)? else {
+            return Ok(true);
+        };
+        let Some(grant_id) = claims.alpns.get(alpn).filter(|_| !claims.revoked) else {
+            return Ok(true);
+        };
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        if fold
+            .machine(machine)
+            .is_some_and(|folded| enrolment::machine_removed(folded, fold.pinned_root.as_ref()))
+        {
+            return Ok(true);
+        }
+        Ok(fold.slips.mints.get(grant_id).is_some() && !fold.slip_is_live(grant_id))
     }
     fn mesh_grant_permits_in_txn(
         &self,

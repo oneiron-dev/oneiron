@@ -21,6 +21,7 @@
 //! [`AuthorityPosition`], [`GpuSlotTable`] the [`NodeDevices`], and
 //! [`super::NodeJobs`] is R1's [`NodeKeys`].
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -35,6 +36,7 @@ pub use oneiron_organ_host::{
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
+use crate::gpu_execution_node::node_settings::ScopeBound;
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, SignedJobSubmit,
@@ -132,6 +134,10 @@ pub trait NodeAdmission: Send + Sync {
     /// The template's digest now; `None` when the node holds no such
     /// template.
     fn template_digest(&self, template: &str) -> Option<String>;
+
+    /// The scope bounds the template requires now (its `require`, pass 34
+    /// section 2.2); `None` when the node holds no such template.
+    fn template_requires(&self, template: &str) -> Option<Vec<ScopeBound>>;
 
     /// Design 7.3 reserve step 6: the payload disk's free space, less what
     /// live keys booked (`booked_mib`), covers `request_mib` plus the disk
@@ -315,6 +321,14 @@ impl NodeAdmission for ExecutionNode {
         ExecutionNode::template_digest(self, template)
     }
 
+    fn template_requires(&self, template: &str) -> Option<Vec<ScopeBound>> {
+        let settings = ExecutionNode::settings(self).ok().flatten()?;
+        settings
+            .templates
+            .get(template)
+            .map(|held| held.require.clone())
+    }
+
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {
         ExecutionNode::disk_room(self, booked_mib, request_mib)
     }
@@ -416,6 +430,10 @@ impl NodeKeys for super::NodeJobs {
 
     fn booked_disk_mib(&self) -> u64 {
         super::NodeJobs::booked_disk_mib(self)
+    }
+
+    fn live_issuers(&self) -> BTreeSet<EntityId> {
+        super::NodeJobs::live_issuers(self)
     }
 
     fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str) {
