@@ -5,10 +5,11 @@
 //!
 //! Money moves one way: the owner's Grant funds a wallet (a host allocation
 //! in `gpu_seconds`, one generation per period), a unit leases a slice of it
-//! through one GPU job, and the job settles the seconds its fleet record
+//! through one GPU job, and the job settles the seconds the machine
 //! measured. The economy is the rule about who may take a lease: the pinned
-//! share, the floor per family and the market ceilings the mint divides by
-//! payoff.
+//! share, the floor per seat, the new-idea slots and the market ceilings the
+//! mint divides by payoff. Every number of it is a setting of the line
+//! ([`defaults`]).
 pub mod defaults;
 mod doors;
 mod doors_caller;
