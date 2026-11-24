@@ -46,13 +46,11 @@ pub struct LocalFileKeystore {
 
 impl LocalFileKeystore {
     /// Creates `dir` (0700) when absent. It refuses a directory that others can read,
-    /// and one inside any of `vault_dirs`, which it never creates.
+    /// and one inside any of `vault_dirs`; that refusal leaves no directory it
+    /// made behind.
     pub fn open(dir: &Path, vault_dirs: &[&Path]) -> Result<Self> {
         let dir = key_dir::create_key_dir(dir, vault_dirs, |dir| {
-            fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(dir)
+            fs::DirBuilder::new().mode(0o700).create(dir)
         })?;
         let meta = fs::metadata(&dir).map_err(io)?;
         if !meta.is_dir() || meta.permissions().mode() & 0o077 != 0 {
@@ -67,8 +65,9 @@ impl LocalFileKeystore {
             fs::write(&tag, CACHEDIR_TAG).map_err(io)?;
         }
         let this = Self { dir };
-        // FIX 8019: sweep every slot's and sealed value's stale temporary files once.
-        this.sweep_temps(None);
+        // FIX 8019: sweep every slot's and sealed value's stale temporary
+        // files once; a file it cannot remove waits for a later sweep.
+        let _ = this.sweep_temps(None);
         Ok(this)
     }
 
@@ -107,9 +106,18 @@ impl LocalFileKeystore {
     }
 
     /// Removes stale temporary files for one slot, or for every slot and
-    /// sealed value (FIX 8019, [`key_dir::sweep_temps`]).
-    pub(crate) fn sweep_temps(&self, slot: Option<&KeystoreSlot>) {
-        key_dir::sweep_temps(&self.dir, slot.map(KeystoreSlot::name).as_deref());
+    /// sealed value (FIX 8019, [`key_dir::sweep_temps`]), and reports a file
+    /// it could not remove.
+    pub(crate) fn sweep_temps(&self, slot: Option<&KeystoreSlot>) -> std::io::Result<()> {
+        key_dir::sweep_temps(&self.dir, slot.map(KeystoreSlot::name).as_deref())
+    }
+
+    /// Ends an erase: syncs the directory, so neither the removal of the
+    /// file nor of a stale copy comes back after a crash, then reports a
+    /// stale copy that `swept` could not remove.
+    pub(crate) fn sync_erase(&self, swept: std::io::Result<()>) -> Result<()> {
+        self.sync_dir()?;
+        swept.map_err(io)
     }
 }
 
@@ -149,7 +157,9 @@ impl DeviceKeystore for LocalFileKeystore {
     /// either no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
         // FIX 8019: sweep this slot's stale temporary files before writing.
-        self.sweep_temps(Some(slot));
+        // The slot is empty, so a file that stays holds no value of it; its
+        // delete reports such a file.
+        let _ = self.sweep_temps(Some(slot));
         let path = self.path(slot);
         let (tmp, written) = self.write_temp(&slot.name(), secret);
         let linked = written.and_then(|()| fs::hard_link(&tmp.path, &path));
@@ -162,26 +172,24 @@ impl DeviceKeystore for LocalFileKeystore {
         }
     }
 
+    /// Removes the slot's file, and then every stale temporary copy of it
+    /// (FIX 8019), also when the slot's file is gone already. A copy that
+    /// stays is an error.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
         match fs::remove_file(self.path(slot)) {
-            Ok(()) => {
-                // FIX 8019: sweep this slot's stale temporary files, then sync.
-                self.sweep_temps(Some(slot));
-                self.sync_dir()
-            }
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                // FIX 8019: no slot file, still sweep this slot's stale files.
-                self.sweep_temps(Some(slot));
-                Ok(())
-            }
-            Err(e) => Err(io(e)),
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io(e)),
         }
+        self.sync_erase(self.sweep_temps(Some(slot)))
     }
 
     /// Writes a private temporary file, then renames it over the filled slot:
     /// one rename, so a reader opens the old file or the new one, never none.
     /// An empty slot is `Ok(false)` and nothing is written; a delete racing
-    /// the rename may leave the slot holding `secret`.
+    /// the rename may leave the slot holding `secret`. A stale copy of the
+    /// old secret goes first, and one that stays is an error before
+    /// anything is written.
     fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
         let path = self.path(slot);
         match fs::symlink_metadata(&path) {
@@ -190,6 +198,7 @@ impl DeviceKeystore for LocalFileKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
+        self.sweep_temps(Some(slot)).map_err(io)?;
         let (tmp, written) = self.write_temp(&slot.name(), secret);
         let renamed = written.and_then(|()| fs::rename(&tmp.path, &path));
         if renamed.is_err() {
@@ -244,8 +253,9 @@ impl SealedBytesStore for LocalFileKeystore {
     /// leaves one of the two whole.
     fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<()> {
         check_sealed_len(sealed)?;
-        // A stale copy of an earlier value under this name goes first.
-        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
+        // A stale copy of an earlier value under this name goes first, and
+        // one that stays is an error before anything is written.
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name))).map_err(io)?;
         let (tmp, written) = self.write_temp(&sealed_file_name(name), sealed);
         let renamed = written.and_then(|()| fs::rename(&tmp.path, self.sealed_path(name)));
         if renamed.is_err() {
@@ -255,15 +265,19 @@ impl SealedBytesStore for LocalFileKeystore {
         self.sync_dir()
     }
 
-    /// Removes the value's file, and then every stale temporary copy of it.
+    /// Removes the value's file, and then every stale temporary copy of it,
+    /// also when the value's file is gone already. A copy that stays is an
+    /// error.
     fn delete_sealed(&self, name: &SealedBytesName) -> Result<()> {
-        let removed = match fs::remove_file(self.sealed_path(name)) {
-            Ok(()) => true,
-            Err(e) if e.kind() == ErrorKind::NotFound => false,
+        match fs::remove_file(self.sealed_path(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(e) => return Err(io(e)),
-        };
-        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
-        if removed { self.sync_dir() } else { Ok(()) }
+        }
+        self.sync_erase(key_dir::sweep_temps(
+            &self.dir,
+            Some(&sealed_file_name(name)),
+        ))
     }
 }
 
@@ -416,6 +430,51 @@ mod tests {
             !copy.exists(),
             "the dead writer's copy of the seed is removed"
         );
+    }
+
+    /// Review of #10420: a writer that died between its link and its unlink
+    /// left a copy of the old seed. Replacing the slot removes it, so the
+    /// old seed is gone once the new one is in place.
+    #[test]
+    fn replace_removes_a_dead_writers_copy_of_the_old_seed() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        keys.create(&slot(), &[1; 32]).unwrap();
+        // pid 1 is the system's first process: alive, and never this writer.
+        let copy = keys.dir.join(format!(".{}.1.1.tmp", slot().name()));
+        fs::hard_link(keys.path(&slot()), &copy).unwrap();
+        assert!(keys.replace(&slot(), &[2; 32]).unwrap());
+        assert_eq!(*keys.get(&slot()).unwrap().unwrap(), [2; 32]);
+        assert!(
+            !copy.exists(),
+            "the dead writer's copy of the old seed is removed"
+        );
+    }
+
+    /// Review of #10420: an erase that leaves a stale copy behind says so.
+    /// Here the copy's name holds a directory, which no file removal takes.
+    #[test]
+    fn an_erase_reports_a_stale_copy_it_could_not_remove() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        let name = SealedBytesName::DevicePinKey;
+        keys.create(&slot(), &[1; 32]).unwrap();
+        keys.put_sealed(&name, b"sealed").unwrap();
+        for stem in [slot().name(), sealed_file_name(&name)] {
+            let stuck = keys.dir.join(format!(".{stem}.1.1.tmp"));
+            fs::create_dir(&stuck).unwrap();
+            fs::write(stuck.join("inner"), [1; 32]).unwrap();
+        }
+        assert!(matches!(
+            keys.delete(&slot()),
+            Err(KeystoreError::Platform("io", _))
+        ));
+        assert_eq!(keys.get(&slot()).unwrap(), None);
+        assert!(matches!(
+            keys.delete_sealed(&name),
+            Err(KeystoreError::Platform("io", _))
+        ));
+        assert_eq!(keys.get_sealed(&name).unwrap(), None);
     }
 
     /// The open-time sweep does not wait for a writer in flight: while one

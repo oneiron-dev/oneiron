@@ -16,11 +16,13 @@
 //! slot's file opens as the other.
 //!
 //! The directory follows the Unix file tier's rules ([`crate::key_dir`]): one
-//! inside a vault directory is refused before it is made, and each file is
-//! written to a temporary file under a shared hold on `temp-writers.lock`. A
-//! writer killed before its link or rename leaves that file, which DPAPI
-//! opens for this user; the sweeps at open, at each create and put, and at
-//! each delete remove it once no writer holds the directory.
+//! inside a vault directory is refused and leaves nothing behind, and each
+//! file is written to a temporary file under a shared hold on
+//! `temp-writers.lock`. A writer killed before its link or rename leaves that
+//! file, which DPAPI opens for this user; the sweeps at open, at each create,
+//! replace and put, and at each delete remove it once no writer holds the
+//! directory. A replace, a put or a delete reports a copy it could not
+//! remove.
 
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read};
@@ -60,16 +62,17 @@ pub struct WindowsDpapiKeystore {
 
 impl WindowsDpapiKeystore {
     /// Creates `dir` when absent. It refuses one inside any of `vault_dirs`,
-    /// which it never creates.
+    /// and the refusal leaves no directory it made behind.
     pub fn open(dir: &Path, vault_dirs: &[&Path]) -> Result<Self> {
-        let dir = key_dir::create_key_dir(dir, vault_dirs, |dir| fs::create_dir_all(dir))?;
+        let dir = key_dir::create_key_dir(dir, vault_dirs, |dir| fs::create_dir(dir))?;
         if !fs::metadata(&dir).map_err(io)?.is_dir() {
             return Err(KeystoreError::Corrupt(
                 "the key directory is not a directory",
             ));
         }
-        // Every slot's and sealed value's stale temporary files, once.
-        key_dir::sweep_temps(&dir, None);
+        // Every slot's and sealed value's stale temporary files, once; a file
+        // it cannot remove waits for a later sweep.
+        let _ = key_dir::sweep_temps(&dir, None);
         Ok(Self { dir })
     }
 
@@ -137,7 +140,9 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     /// no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
         // FIX 8019: sweep this slot's stale temporary files before writing.
-        key_dir::sweep_temps(&self.dir, Some(&slot.name()));
+        // The slot is empty, so a file that stays holds no value of it; its
+        // delete reports such a file.
+        let _ = key_dir::sweep_temps(&self.dir, Some(&slot.name()));
         let path = self.path(slot);
         let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;
         let linked = fs::hard_link(&tmp.path, &path);
@@ -150,19 +155,22 @@ impl DeviceKeystore for WindowsDpapiKeystore {
         }
     }
 
-    /// Removes the slot's file, and then every stale temporary copy of it.
+    /// Removes the slot's file, and then every stale temporary copy of it,
+    /// also when the slot's file is gone already. A copy that stays (one a
+    /// reader holds open without sharing its delete) is an error.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
         match fs::remove_file(self.path(slot)) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(e) => return Err(io(e)),
         }
-        key_dir::sweep_temps(&self.dir, Some(&slot.name()));
-        Ok(())
+        key_dir::sweep_temps(&self.dir, Some(&slot.name())).map_err(io)
     }
 
     /// Writes a sealed temporary file, then renames it over the filled slot:
     /// one rename, so a reader opens the old slot or the new one, never none.
+    /// A stale copy of the old slot goes first, and one that stays is an
+    /// error before anything is written.
     fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
         let path = self.path(slot);
         match fs::symlink_metadata(&path) {
@@ -171,6 +179,7 @@ impl DeviceKeystore for WindowsDpapiKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
+        key_dir::sweep_temps(&self.dir, Some(&slot.name())).map_err(io)?;
         let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;
         let renamed = fs::rename(&tmp.path, &path);
         if renamed.is_err() {
@@ -221,8 +230,9 @@ impl SealedBytesStore for WindowsDpapiKeystore {
     /// leaves one of the two whole.
     fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<()> {
         check_sealed_len(sealed)?;
-        // A stale copy of an earlier value under this name goes first.
-        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
+        // A stale copy of an earlier value under this name goes first, and
+        // one that stays is an error before anything is written.
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name))).map_err(io)?;
         let tmp = self.write_temp(
             &sealed_file_name(name),
             sealed,
@@ -236,15 +246,16 @@ impl SealedBytesStore for WindowsDpapiKeystore {
         renamed.map_err(io)
     }
 
-    /// Removes the value's file, and then every stale temporary copy of it.
+    /// Removes the value's file, and then every stale temporary copy of it,
+    /// also when the value's file is gone already. A copy that stays is an
+    /// error.
     fn delete_sealed(&self, name: &SealedBytesName) -> Result<()> {
         match fs::remove_file(self.sealed_path(name)) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(e) => return Err(io(e)),
         }
-        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name)));
-        Ok(())
+        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name))).map_err(io)
     }
 }
 

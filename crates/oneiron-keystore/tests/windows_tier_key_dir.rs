@@ -6,6 +6,7 @@
 #![cfg(windows)]
 
 use std::fs::{self, OpenOptions};
+use std::os::windows::fs::OpenOptionsExt;
 
 use oneiron_keystore::{
     DeviceKeystore, KeystoreError, KeystoreSlot, SealedBytesName, SlotKind, WindowsDpapiKeystore,
@@ -46,6 +47,86 @@ fn a_key_directory_refused_inside_a_vault_is_never_made() {
         !later.exists(),
         "a refused key directory made the vault directory"
     );
+}
+
+/// Review of #10420: NTFS ignores case, so `VAULT` names the vault directory
+/// `vault`, which is not made yet. The key directory under it is refused, and
+/// the refusal leaves neither name behind.
+#[test]
+fn a_key_directory_under_a_vault_named_in_another_case_is_never_made() {
+    let root = tempfile::tempdir().expect("a temporary directory");
+    let vault = root.path().join("vault");
+    assert_eq!(
+        WindowsDpapiKeystore::open(&root.path().join("VAULT").join("keys"), &[&vault])
+            .expect_err("refused"),
+        KeystoreError::Unavailable("the key directory is inside a vault directory")
+    );
+    assert!(!vault.exists(), "a refusal left the vault directory made");
+}
+
+/// Review of #10420: Windows locks each handle apart, so a dead writer's
+/// copy under the pid this process now has is stale too, and the slot's
+/// delete removes it.
+#[test]
+fn delete_removes_a_dead_writers_copy_under_this_process_pid() {
+    let root = tempfile::tempdir().expect("a temporary directory");
+    let dir = root.path().join("keys");
+    let keys = WindowsDpapiKeystore::open(&dir, &[]).expect("the key directory opens");
+    keys.create(&slot(), &[1; 32]).expect("the slot is filled");
+    let copy = dir.join(format!(".{}.{}.1.tmp", slot().name(), std::process::id()));
+    fs::copy(dir.join(format!("{}.dpapi", slot().name())), &copy).expect("the copy");
+    keys.delete(&slot()).expect("the slot is emptied");
+    assert!(
+        !copy.exists(),
+        "the dead writer's copy under this process's pid is removed"
+    );
+}
+
+/// Review of #10420: replacing the slot removes a dead writer's copy of the
+/// old slot, so the old key is gone once the new one is in place.
+#[test]
+fn replace_removes_a_dead_writers_copy_of_the_old_slot() {
+    let root = tempfile::tempdir().expect("a temporary directory");
+    let dir = root.path().join("keys");
+    let keys = WindowsDpapiKeystore::open(&dir, &[]).expect("the key directory opens");
+    keys.create(&slot(), &[1; 32]).expect("the slot is filled");
+    let copy = dir.join(format!(".{}.1.1.tmp", slot().name()));
+    fs::copy(dir.join(format!("{}.dpapi", slot().name())), &copy).expect("the copy");
+    assert!(
+        keys.replace(&slot(), &[2; 32])
+            .expect("the slot is replaced")
+    );
+    assert!(
+        !copy.exists(),
+        "the dead writer's copy of the old slot is removed"
+    );
+}
+
+/// Review of #10420: a stale copy that a reader holds open without sharing
+/// its delete stays, and the delete says so; once the reader is gone, the
+/// next delete removes it.
+#[test]
+fn delete_reports_a_copy_a_reader_holds_open() {
+    // FILE_SHARE_READ alone: the reader shares no delete.
+    const FILE_SHARE_READ: u32 = 0x1;
+    let root = tempfile::tempdir().expect("a temporary directory");
+    let dir = root.path().join("keys");
+    let keys = WindowsDpapiKeystore::open(&dir, &[]).expect("the key directory opens");
+    keys.create(&slot(), &[1; 32]).expect("the slot is filled");
+    let copy = dir.join(format!(".{}.1.1.tmp", slot().name()));
+    fs::copy(dir.join(format!("{}.dpapi", slot().name())), &copy).expect("the copy");
+    let reader = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&copy)
+        .expect("a reader of the copy");
+    assert!(
+        matches!(keys.delete(&slot()), Err(KeystoreError::Platform("io", _))),
+        "a delete that left a copy reported success"
+    );
+    drop(reader);
+    keys.delete(&slot()).expect("the copy is removed");
+    assert!(!copy.exists(), "the second delete kept the copy");
 }
 
 /// A writer killed between its link and its unlink left a copy of the slot's

@@ -4,7 +4,7 @@
 //!
 //! - It lies outside every vault directory, because a vault's checkpoints and
 //!   backups copy what is inside it. A directory that would lie inside one is
-//!   refused before anything is made ([`create_key_dir`]).
+//!   refused, and the refusal leaves nothing behind ([`create_key_dir`]).
 //! - Each new file is written to a temporary file beside it, then linked or
 //!   renamed into place. A writer that dies in between leaves that file, which
 //!   holds a copy of the secret, so a sweep removes it ([`sweep_temps`], FIX
@@ -13,6 +13,9 @@
 //!   of a temporary file locks shared and each sweep locks exclusively. The
 //!   system ends a process's hold when the process ends, however it ends, so
 //!   under the exclusive lock every temporary file is one whose writer is gone.
+//!   Each write that puts a new value over an old one, and each erase, sweeps
+//!   the file's temporary files first or after and reports a copy it could
+//!   not remove.
 
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -38,22 +41,66 @@ pub(crate) struct TempFile {
     _hold: Option<File>,
 }
 
-/// Makes the key directory `dir` with `create` and answers its canonical path.
-/// A directory at or inside any of `vault_dirs` is refused before `create`
-/// runs, so a refusal leaves nothing behind: each path is taken as it will
-/// resolve once made ([`resolved`]). The check runs again on the made
-/// directory, for a link that moved meanwhile. A vault directory that does
-/// not resolve is not compared.
+/// Makes the key directory `dir` and answers its canonical path. `make`
+/// makes one directory whose parent exists. A directory at or inside any of
+/// `vault_dirs` is refused, and a refusal leaves nothing behind:
+///
+/// - First `dir` is taken as it will resolve once made ([`resolved`]), so a
+///   directory refused by its name, through a link, or past a `..` is
+///   refused before anything is made.
+/// - Then each missing directory is made alone, from the root down, and the
+///   path made so far is checked against every vault directory as soon as
+///   it exists ([`make_each`]). So the volume's own rules for names decide
+///   (`VAULT` names a vault directory `vault` not made yet, where the volume
+///   ignores case), and so does a link that moved meanwhile. A refusal there
+///   removes the directories this call made.
+///
+/// A vault directory that does not resolve is not compared.
 pub(crate) fn create_key_dir(
     dir: &Path,
     vault_dirs: &[&Path],
-    create: impl FnOnce(&Path) -> io::Result<()>,
+    make: impl Fn(&Path) -> io::Result<()>,
 ) -> Result<PathBuf> {
     refuse_inside_vaults(&resolved(dir).map_err(io_error)?, vault_dirs)?;
-    create(dir).map_err(io_error)?;
-    let dir = dir.canonicalize().map_err(io_error)?;
-    refuse_inside_vaults(&dir, vault_dirs)?;
-    Ok(dir)
+    let mut made = Vec::new();
+    let walked = make_each(dir, vault_dirs, make, &mut made);
+    if walked.is_err() {
+        // The last one made first. A directory something was put in stays.
+        for path in made.iter().rev() {
+            let _ = fs::remove_dir(path);
+        }
+    }
+    walked
+}
+
+/// Makes each missing directory of `dir` with `make`, from the root down,
+/// recording each one in `made`, and refuses as soon as the path made so
+/// far resolves at or inside a vault directory. Answers the canonical path.
+fn make_each(
+    dir: &Path,
+    vault_dirs: &[&Path],
+    make: impl Fn(&Path) -> io::Result<()>,
+    made: &mut Vec<PathBuf>,
+) -> Result<PathBuf> {
+    let absolute = std::path::absolute(dir).map_err(io_error)?;
+    let mut ancestors: Vec<&Path> = absolute.ancestors().collect();
+    ancestors.reverse();
+    let mut walked = PathBuf::new();
+    for ancestor in ancestors {
+        // Every part before the last one exists by now, so only the last
+        // one can be missing.
+        let at = resolved(ancestor).map_err(io_error)?;
+        if fs::symlink_metadata(&at).is_err() {
+            match make(&at) {
+                Ok(()) => made.push(at.clone()),
+                Err(_) if at.is_dir() => {}
+                Err(e) => return Err(io_error(e)),
+            }
+        }
+        walked = at.canonicalize().map_err(io_error)?;
+        refuse_inside_vaults(&walked, vault_dirs)?;
+    }
+    Ok(walked)
 }
 
 fn refuse_inside_vaults(dir: &Path, vault_dirs: &[&Path]) -> Result<()> {
@@ -67,36 +114,37 @@ fn refuse_inside_vaults(dir: &Path, vault_dirs: &[&Path]) -> Result<()> {
     Ok(())
 }
 
-/// `path` as it will resolve once its missing directories are made: the
-/// canonical path of its nearest existing ancestor, then the parts after it,
-/// each `..` taking back the part before it as making them would. For a path
-/// that exists, its canonical path.
+/// `path` as it will resolve once its missing directories are made, taken
+/// part by part from the root as the system takes it: each part against the
+/// canonical path of the parts before it, so a link counts wherever it lies,
+/// also one reached past a missing part and a `..`. A missing part stays as
+/// named, and a `..` after it takes it back, as making it would. A link
+/// whose target is missing is an error: no directory is made through it.
 fn resolved(path: &Path) -> io::Result<PathBuf> {
-    let absolute = std::path::absolute(path)?;
-    for ancestor in absolute.ancestors() {
-        let mut resolved = match ancestor.canonicalize() {
-            Ok(resolved) => resolved,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-        };
-        let rest = absolute
-            .strip_prefix(ancestor)
-            .map_err(|_| io::Error::from(ErrorKind::InvalidInput))?;
-        for part in rest.components() {
-            match part {
-                Component::Normal(name) => resolved.push(name),
-                Component::ParentDir => {
-                    resolved.pop();
-                }
-                Component::CurDir => {}
-                Component::Prefix(_) | Component::RootDir => {
-                    return Err(io::Error::from(ErrorKind::InvalidInput));
-                }
+    let mut resolved = PathBuf::new();
+    for part in std::path::absolute(path)?.components() {
+        match part {
+            Component::Prefix(_) => {
+                resolved.push(part);
+                continue;
             }
+            Component::CurDir => continue,
+            // The path so far is canonical or missing, so its parent is the
+            // directory `..` names.
+            Component::ParentDir => {
+                resolved.pop();
+                continue;
+            }
+            Component::RootDir | Component::Normal(_) => resolved.push(part),
         }
-        return Ok(resolved);
+        match resolved.canonicalize() {
+            Ok(canonical) => resolved = canonical,
+            Err(e)
+                if e.kind() == ErrorKind::NotFound && fs::symlink_metadata(&resolved).is_err() => {}
+            Err(e) => return Err(e),
+        }
     }
-    Err(io::Error::from(ErrorKind::NotFound))
+    Ok(resolved)
 }
 
 /// The key directory's lock file, open for reading and writing: NFS grants an
@@ -147,43 +195,56 @@ pub(crate) fn write_temp(
 /// after it is gone ([`write_temp`]). So under the exclusive lock each
 /// temporary file is one whose writer died or failed to remove it, whichever
 /// process its pid names now: the system may have given that pid to another.
-/// One stem's sweep, at a create or a delete, waits for the writers in
+/// One stem's sweep, at a write or an erase, waits for the writers in
 /// flight; the open-time sweep of every stem does not wait, and leaves the
 /// files to a later sweep while one writes. Where the file system gives no
-/// lock, nothing is removed.
-pub(crate) fn sweep_temps(dir: &Path, stem: Option<&str>) {
-    let Ok(lock) = temp_writers_lock(dir) else {
-        return;
-    };
+/// lock, nothing is removed. Every file is tried; the first removal that
+/// failed, other than of a file already gone, is the answer.
+pub(crate) fn sweep_temps(dir: &Path, stem: Option<&str>) -> io::Result<()> {
+    let lock = temp_writers_lock(dir)?;
     let locked = if stem.is_some() {
         lock.lock().is_ok()
     } else {
         lock.try_lock().is_ok()
     };
     if !locked {
-        return;
+        return Ok(());
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let own = std::process::id();
-    for entry in entries.flatten() {
+    let mut swept = Ok(());
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
         let file_name = entry.file_name();
         let Some((file_stem, pid)) = file_name.to_str().and_then(temp_name_parts) else {
             continue;
         };
-        if stem.is_some_and(|wanted| wanted != file_stem) {
+        if stem.is_some_and(|wanted| wanted != file_stem) || left_to_another_process(pid) {
             continue;
         }
-        // This process leaves its own files to another process's sweep:
-        // where the file system keeps locks per process (NFS), its own
-        // writers' holds do not stop its sweep.
-        if pid == own {
-            continue;
+        if let Err(e) = fs::remove_file(entry.path())
+            && e.kind() != ErrorKind::NotFound
+            && swept.is_ok()
+        {
+            swept = Err(e);
         }
-        let _ = fs::remove_file(entry.path());
     }
     // Dropping `lock` here closes it, which ends the exclusive hold.
+    swept
+}
+
+/// Unix: this process leaves its own temporary files to another process's
+/// sweep. Where the file system keeps locks per process (NFS), its own
+/// writers' shared holds do not stop its exclusive lock.
+#[cfg(unix)]
+fn left_to_another_process(pid: u32) -> bool {
+    pid == std::process::id()
+}
+
+/// Windows locks each handle apart: a shared hold on another handle stops the
+/// exclusive lock, also within this process, so a file under this process's
+/// pid is stale too (a dead writer's pid handed on to this process).
+#[cfg(not(unix))]
+fn left_to_another_process(_pid: u32) -> bool {
+    false
 }
 
 /// The stem and the writer's pid of a temporary file's name,
@@ -236,9 +297,9 @@ mod tests {
         }
     }
 
-    /// A path whose directories do not exist yet resolves under its nearest
-    /// existing ancestor, through a link in that ancestor and with `..`
-    /// taking back a part not yet made.
+    /// A path whose directories do not exist yet resolves part by part:
+    /// through a link wherever it lies, also one reached past a missing part
+    /// and a `..`, and with `..` taking back a part not yet made.
     #[test]
     fn a_path_resolves_as_it_will_once_made() {
         let root = tempfile::tempdir().expect("a temporary directory");
@@ -262,6 +323,10 @@ mod tests {
                 .expect("a link to the vault");
             assert_eq!(
                 resolved(&base.join("link/keys")).expect("a path through a link"),
+                base.join("vault/keys")
+            );
+            assert_eq!(
+                resolved(&base.join("gap/../link/keys")).expect("a link past a missing part"),
                 base.join("vault/keys")
             );
         }
@@ -320,6 +385,74 @@ mod tests {
         assert_eq!(made, keys.canonicalize().expect("the made directory"));
     }
 
+    /// Review of #10420: a link reached past a missing part and a `..`
+    /// (`gap/../link/keys`, the link naming the vault directory) is refused
+    /// before anything is made: neither the missing part nor a directory
+    /// inside the vault.
+    #[cfg(unix)]
+    #[test]
+    fn a_key_directory_through_a_link_past_a_missing_part_is_refused_before_it_is_made() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let vault = root.path().join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        std::os::unix::fs::symlink(&vault, root.path().join("link")).expect("a link to the vault");
+        let dir = root.path().join("gap").join("..").join("link").join("keys");
+        assert_eq!(
+            create_key_dir(&dir, &[&vault], |d| fs::create_dir_all(d)),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert_eq!(
+            fs::read_dir(&vault).expect("the vault lists").count(),
+            0,
+            "a refused key directory was made inside the vault"
+        );
+        assert!(
+            !root.path().join("gap").exists(),
+            "a refusal made a directory"
+        );
+    }
+
+    /// Review of #10420: a vault directory may resolve only once a directory
+    /// of the key directory's path exists, as `vault` does when `VAULT` is
+    /// made on a volume that ignores case. Here the vault directory is a
+    /// link to `x/y`, which is missing until made. The directory that makes
+    /// it resolve is refused as soon as it is made, nothing is made inside
+    /// it, and the directories made are removed.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_resolves_as_a_vault_once_made_is_refused_and_removed() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault-link");
+        std::os::unix::fs::symlink(base.join("x/y"), &vault).expect("a link to a missing vault");
+        assert_eq!(
+            create_key_dir(&base.join("x/y/keys"), &[&vault], |d| fs::create_dir_all(d)),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert!(
+            !base.join("x").exists(),
+            "a refusal left a directory it made"
+        );
+    }
+
+    /// Review of #10420: a stale file the sweep cannot remove is reported,
+    /// and the sweep still removes every other one.
+    #[test]
+    fn a_sweep_reports_a_stale_file_it_could_not_remove() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let dir = root.path();
+        let stuck = dir.join(".slot.1.1.tmp");
+        fs::create_dir(&stuck).expect("a directory under a temporary file's name");
+        fs::write(stuck.join("inner"), [2; 32]).expect("a file inside it");
+        let stale = dir.join(".slot.1.2.tmp");
+        fs::write(&stale, [2; 32]).expect("a stale file");
+        assert!(
+            sweep_temps(dir, Some("slot")).is_err(),
+            "the sweep reported no failure"
+        );
+        assert!(!stale.exists(), "the sweep stopped at the failure");
+    }
+
     /// While one writer holds the directory, the open-time sweep keeps every
     /// temporary file; once the hold ends, a sweep removes another process's
     /// stale file and leaves every other file.
@@ -335,17 +468,17 @@ mod tests {
         for path in [&stale, &other, &kept] {
             fs::write(path, [2; 32]).expect("a file is written");
         }
-        sweep_temps(dir, None);
+        sweep_temps(dir, None).expect("the open-time sweep");
         assert!(stale.exists() && other.exists(), "a sweep did not wait");
         fs::remove_file(&writing.path).expect("the writer removes its file");
         drop(writing);
-        sweep_temps(dir, Some("slot"));
+        sweep_temps(dir, Some("slot")).expect("the stem's sweep");
         assert!(!stale.exists(), "the stem's sweep kept a stale file");
         assert!(
             other.exists(),
             "the stem's sweep removed another stem's file"
         );
-        sweep_temps(dir, None);
+        sweep_temps(dir, None).expect("the open-time sweep");
         assert!(!other.exists(), "the open-time sweep kept a stale file");
         assert!(
             kept.exists(),

@@ -298,7 +298,9 @@ impl DeviceKeystore for LinuxTpmKeystore {
     /// it into place. A crash leaves either no slot or a whole one, and the
     /// link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
-        self.files.sweep_temps(Some(slot));
+        // The slot is empty, so a stale file that stays holds no value of
+        // it; its delete reports such a file.
+        let _ = self.files.sweep_temps(Some(slot));
         let path = self.path(slot);
         if fs::symlink_metadata(&path).is_ok() {
             return Err(KeystoreError::AlreadyExists);
@@ -316,20 +318,23 @@ impl DeviceKeystore for LinuxTpmKeystore {
         }
     }
 
+    /// Removes the slot's file, and then every stale temporary copy of it,
+    /// also when the slot's file is gone already. A copy that stays is an
+    /// error.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
-        let removed = fs::remove_file(self.path(slot));
-        self.files.sweep_temps(Some(slot));
-        match removed {
-            Ok(()) => self.sync_dir(),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(io(e)),
+        match fs::remove_file(self.path(slot)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io(e)),
         }
+        self.files.sync_erase(self.files.sweep_temps(Some(slot)))
     }
 
     /// Seals `secret` in the TPM, writes a private temporary file, then
     /// renames it over the filled slot: one rename, so a reader opens the old
     /// file or the new one, never none. An empty slot is `Ok(false)` and
-    /// nothing is sealed or written.
+    /// nothing is sealed or written. A stale copy of the old sealed slot goes
+    /// first, and one that stays is an error before anything is sealed.
     fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
         let path = self.path(slot);
         match fs::symlink_metadata(&path) {
@@ -338,6 +343,7 @@ impl DeviceKeystore for LinuxTpmKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
+        self.files.sweep_temps(Some(slot)).map_err(io)?;
         let sealed = self.seal(&SLOT, &[], secret)?;
         let (tmp, written) = self.files.write_temp(&slot.name(), &sealed);
         let renamed = written.and_then(|()| fs::rename(&tmp.path, &path));
