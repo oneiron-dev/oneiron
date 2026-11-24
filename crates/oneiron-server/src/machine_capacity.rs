@@ -34,8 +34,8 @@ fn power_source() -> MachinePower {
     }
 }
 
-/// Measures this machine now: its cores, memory, GPU memory, power, and the
-/// disk holding `data_dir`. A figure the platform does not give reads 0
+/// Measures this machine now: its cores, memory, GPUs and their memory,
+/// power, and the disk holding `data_dir`. A figure the platform does not give reads 0
 /// (no GPU known reads empty).
 #[must_use]
 pub fn measure_this_machine(data_dir: &Path, measured_at: u64) -> MachineCapacity {
@@ -48,6 +48,7 @@ pub fn measure_this_machine(data_dir: &Path, measured_at: u64) -> MachineCapacit
             memory_available_bytes: oneiron_contracts::limit_ask::available_memory_bytes()
                 .unwrap_or(0),
             gpu_memory_mib: crate::machine::gpu_memory_mib(),
+            gpus: crate::gpu_execution_node::recorded_gpu_devices(),
             disk_total_bytes: crate::machine::disk_total_bytes(data_dir).unwrap_or(0),
             disk_free_bytes: crate::machine::free_disk_bytes(data_dir).unwrap_or(0),
             power: power_source(),

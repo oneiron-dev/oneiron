@@ -210,6 +210,10 @@ impl SyncServer {
         // Reader children wake this server's runner, which also keeps their
         // cutoff.
         let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
+        let gpu_slots = Arc::new(crate::gpu_execution_node::GpuSlotTable::new(
+            Arc::new(crate::gpu_execution_node::NvidiaSmiProbe),
+            config.gpu_jobs.devices.clone(),
+        ));
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
@@ -432,6 +436,7 @@ impl SyncServer {
             connector_elicitations: Arc::default(),
             connector_stdio: Arc::default(),
             gpu_jobs: Arc::default(),
+            gpu_slots,
             browser_guest: None,
             browser_readiness: Default::default(),
             runner_fence: std::sync::OnceLock::new(),

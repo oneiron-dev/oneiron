@@ -64,6 +64,7 @@ fn sixteen_gib_machine(available: u64) -> MachineMeasurement {
         memory_total_bytes: 16 * GIB,
         memory_available_bytes: available,
         gpu_memory_mib: vec![24_576],
+        gpus: Vec::new(),
         disk_total_bytes: 512 * GIB,
         disk_free_bytes: 100 * GIB,
         power: MachinePower::Mains,

@@ -1,0 +1,253 @@
+//! The home's choice of a GPU slot among the vault's machines. A machine is
+//! a candidate when it is admitted (the caller names the admitted machines)
+//! and its `machine.capacity` record lists a GPU that meets the request.
+//! That record says only what the cards are. Whether a card is free comes
+//! from the machine's own answer now: a machine that does not answer is not
+//! live, and stale data never admits. The slot is then reserved atomically
+//! on the chosen machine, and an uncertain reservation is never rerouted.
+
+use std::sync::Arc;
+
+use oneiron::{EntityId, Vault};
+
+use super::device::GpuDevice;
+use super::slots::{GpuAvailability, GpuSlotGrant, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable};
+
+/// How the home reaches a machine's GPU slots. The authenticated peer
+/// transport implements it for other machines; [`LocalGpuSlotPeer`]
+/// answers for this install's own GPUs.
+pub trait GpuSlotPeer: Send + Sync {
+    /// What `machine`'s GPUs are doing now.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuSlotPeerError`]: an unreachable or uncertain answer means the
+    /// machine is not live now.
+    fn availability(&self, machine: EntityId) -> Result<GpuAvailability, GpuSlotPeerError>;
+
+    /// Reserves a slot on `machine` under `request.key`.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuSlotPeerError`]; `Uncertain` means the reservation may stand.
+    fn reserve(
+        &self,
+        machine: EntityId,
+        request: &GpuSlotRequest,
+    ) -> Result<GpuSlotGrant, GpuSlotPeerError>;
+
+    /// Ends the slot under `key` on `machine`.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuSlotPeerError`] when the machine did not take the release.
+    fn release(&self, machine: EntityId, key: &str) -> Result<(), GpuSlotPeerError>;
+}
+
+/// Why a machine's GPU slot call did not answer a grant.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GpuSlotPeerError {
+    /// The machine answered and refused; nothing took effect.
+    #[error(transparent)]
+    Refused(#[from] GpuSlotRefusal),
+    /// The request never reached the machine; nothing took effect.
+    #[error("gpu_slots.unreachable: the machine did not take the request: {reason}")]
+    Unreachable { reason: String },
+    /// The answer was lost after the request was sent: it may have taken
+    /// effect.
+    #[error(
+        "gpu_slots.uncertain: the machine's answer was lost, and the request may have taken effect: {reason}"
+    )]
+    Uncertain { reason: String },
+}
+
+/// This install's own GPU slots, reached with no transport.
+#[derive(Debug, Clone)]
+pub struct LocalGpuSlotPeer {
+    machine: EntityId,
+    table: Arc<GpuSlotTable>,
+}
+
+impl LocalGpuSlotPeer {
+    /// The slots of `table`, which is the table of this install's machine
+    /// `machine`.
+    #[must_use]
+    pub fn new(machine: EntityId, table: Arc<GpuSlotTable>) -> Self {
+        Self { machine, table }
+    }
+
+    fn own(&self, machine: EntityId) -> Result<(), GpuSlotPeerError> {
+        if machine == self.machine {
+            Ok(())
+        } else {
+            Err(GpuSlotPeerError::Unreachable {
+                reason: format!(
+                    "this install answers only for its own GPUs, not for machine {}",
+                    machine.to_hex()
+                ),
+            })
+        }
+    }
+}
+
+impl GpuSlotPeer for LocalGpuSlotPeer {
+    fn availability(&self, machine: EntityId) -> Result<GpuAvailability, GpuSlotPeerError> {
+        self.own(machine)?;
+        self.table
+            .availability(oneiron_base::unix_millis_now())
+            .map_err(|probe| GpuSlotRefusal::Unmeasured { probe }.into())
+    }
+
+    fn reserve(
+        &self,
+        machine: EntityId,
+        request: &GpuSlotRequest,
+    ) -> Result<GpuSlotGrant, GpuSlotPeerError> {
+        self.own(machine)?;
+        Ok(self
+            .table
+            .reserve(request, oneiron_base::unix_millis_now())?)
+    }
+
+    fn release(&self, machine: EntityId, key: &str) -> Result<(), GpuSlotPeerError> {
+        self.own(machine)?;
+        self.table.release(key);
+        Ok(())
+    }
+}
+
+/// An admitted machine and the GPUs its capacity record lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuNodeCandidate {
+    pub machine: EntityId,
+    /// What its cards are: never whether they are free.
+    pub inventory: Vec<GpuDevice>,
+}
+
+/// The admitted machines whose capacity record lists a GPU, in machine id
+/// order. `admitted` comes from whatever admits a machine to run jobs.
+///
+/// # Errors
+///
+/// What reading a capacity record returns.
+pub fn gpu_node_candidates(
+    vault: &Vault,
+    admitted: &[EntityId],
+) -> oneiron::Result<Vec<GpuNodeCandidate>> {
+    let mut machines = admitted.to_vec();
+    machines.sort();
+    machines.dedup();
+    let mut candidates = Vec::new();
+    for machine in machines {
+        if let Some(capacity) = vault.machine_capacity(machine)?
+            && !capacity.gpus.is_empty()
+        {
+            candidates.push(GpuNodeCandidate {
+                machine,
+                inventory: capacity.gpus,
+            });
+        }
+    }
+    Ok(candidates)
+}
+
+/// The slot the home reserved: on which machine, and its grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuSlotPlacement {
+    pub machine: EntityId,
+    pub grant: GpuSlotGrant,
+}
+
+/// Why no slot was reserved.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GpuSelectionRefusal {
+    #[error("gpu_slots.no_candidate: no admitted machine records a GPU that meets the request")]
+    NoCandidate,
+    #[error("gpu_slots.none_live: no admitted machine with a matching GPU answered now")]
+    NoneLive,
+    #[error("gpu_slots.none_free: no admitted machine that answered has a matching GPU free now")]
+    NoneFree,
+    /// The reservation on `machine` may stand: ask that machine again under
+    /// the same key, never another machine.
+    #[error(
+        "gpu_slots.uncertain: the reservation on machine {} may stand ({}); ask that machine again under the same key",
+        .machine.to_hex(),
+        .reason
+    )]
+    Uncertain { machine: EntityId, reason: String },
+}
+
+/// Reserves one GPU slot for `request` among `candidates`:
+/// 1. a candidate whose record lists no GPU that meets the request is never
+///    asked;
+/// 2. every other candidate is asked what its GPUs are doing now, and one
+///    that does not answer is not live;
+/// 3. the free matching GPUs those answers show are tried in best-fit order
+///    (the least memory first, then machine id, then device id), each
+///    reserved by its device id under the request's key. A refusal (the GPU
+///    was taken in between) or an unreachable machine moves to the next.
+///    An uncertain answer stops there and names its machine, so the slot is
+///    never held twice.
+///
+/// # Errors
+///
+/// [`GpuSelectionRefusal`]: why no slot was reserved.
+pub fn select_gpu_slot(
+    candidates: &[GpuNodeCandidate],
+    peer: &dyn GpuSlotPeer,
+    request: &GpuSlotRequest,
+) -> Result<GpuSlotPlacement, GpuSelectionRefusal> {
+    let matching: Vec<EntityId> = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .inventory
+                .iter()
+                .any(|device| request.admits(device))
+        })
+        .map(|candidate| candidate.machine)
+        .collect();
+    if matching.is_empty() {
+        return Err(GpuSelectionRefusal::NoCandidate);
+    }
+    let mut live = false;
+    let mut free: Vec<(EntityId, GpuDevice)> = Vec::new();
+    for machine in matching {
+        match peer.availability(machine) {
+            Ok(answer) => {
+                live = true;
+                free.extend(
+                    answer
+                        .free_matching(request)
+                        .map(|device| (machine, device.clone())),
+                );
+            }
+            // It answered: it is live, and it offers nothing now.
+            Err(GpuSlotPeerError::Refused(_)) => live = true,
+            Err(GpuSlotPeerError::Unreachable { .. } | GpuSlotPeerError::Uncertain { .. }) => {}
+        }
+    }
+    if !live {
+        return Err(GpuSelectionRefusal::NoneLive);
+    }
+    free.sort_by(|(a_machine, a), (b_machine, b)| {
+        a.memory_total_mib
+            .cmp(&b.memory_total_mib)
+            .then_with(|| a_machine.cmp(b_machine))
+            .then_with(|| a.device_id.cmp(&b.device_id))
+    });
+    for (machine, device) in free {
+        let pinned = GpuSlotRequest {
+            device_id: Some(device.device_id),
+            ..request.clone()
+        };
+        match peer.reserve(machine, &pinned) {
+            Ok(grant) => return Ok(GpuSlotPlacement { machine, grant }),
+            Err(GpuSlotPeerError::Refused(_) | GpuSlotPeerError::Unreachable { .. }) => {}
+            Err(GpuSlotPeerError::Uncertain { reason }) => {
+                return Err(GpuSelectionRefusal::Uncertain { machine, reason });
+            }
+        }
+    }
+    Err(GpuSelectionRefusal::NoneFree)
+}

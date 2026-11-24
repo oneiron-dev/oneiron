@@ -27,12 +27,31 @@
 //! teardown_secs = 30
 //! rounding_secs = 60
 //! ```
-use std::collections::BTreeMap;
+//!
+//! `[gpu_jobs.devices]` names the GPUs of this machine that it offers to the
+//! vault's GPU jobs, by the driver's device id (`nvidia-smi -L` shows each
+//! UUID). There is none by default, so a machine offers no GPU until its
+//! owner lists one. `withheld_file` names a file of the GPUs another booker
+//! holds now, one device id per line, read at every ask: such a GPU is never
+//! offered, and once the file is named, a file that cannot be read offers
+//! nothing. `hold_secs` is how long a reservation holds its GPU before the
+//! job's launch confirms it.
+//!
+//! ```toml
+//! [gpu_jobs.devices]
+//! offered = ["GPU-0b3c5f52-6e1d-4a8e-9f0a-2d7c1e4b8a61"]
+//! withheld_file = "/var/lib/oneiron/gpu-withheld"
+//! hold_secs = 120
+//! ```
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use oneiron::ModelLocality;
 use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use serde::Deserialize;
+
+use crate::gpu_execution_node::{GPU_SLOT_HOLD_SECS, GpuDeviceOffer};
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -51,6 +70,20 @@ pub(crate) struct GpuJobsFile {
     step_secs: Option<u64>,
     #[serde(default)]
     offers: BTreeMap<String, GpuOfferFile>,
+    #[serde(default)]
+    devices: Option<GpuDevicesFile>,
+}
+
+/// `[gpu_jobs.devices]` as written.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GpuDevicesFile {
+    #[serde(default)]
+    offered: Vec<String>,
+    #[serde(default)]
+    withheld_file: Option<PathBuf>,
+    #[serde(default)]
+    hold_secs: Option<u64>,
 }
 
 /// `[gpu_jobs.offers.<name>]` as written.
@@ -82,6 +115,8 @@ pub struct GpuJobsSettings {
     /// How often the worker steps each live job, in seconds.
     pub step_secs: u64,
     pub offers: BTreeMap<String, GpuOfferSettings>,
+    /// The GPUs of this machine it offers to the vault's GPU jobs.
+    pub devices: GpuDeviceOffer,
 }
 
 impl Default for GpuJobsSettings {
@@ -90,6 +125,7 @@ impl Default for GpuJobsSettings {
             default_maximum_secs: GPU_JOB_DEFAULT_MAXIMUM_SECS,
             step_secs: GPU_JOB_STEP_SECS,
             offers: BTreeMap::new(),
+            devices: GpuDeviceOffer::default(),
         }
     }
 }
@@ -138,6 +174,40 @@ impl GpuJobsFile {
             default_maximum_secs,
             step_secs,
             offers,
+            devices: self.devices.unwrap_or_default().resolve()?,
+        })
+    }
+}
+
+impl GpuDevicesFile {
+    fn resolve(self) -> anyhow::Result<GpuDeviceOffer> {
+        let mut offered = BTreeSet::new();
+        for device in self.offered {
+            anyhow::ensure!(
+                plain_name(&device),
+                "gpu_jobs.devices.offered: {device:?} is not a device id (it has whitespace or control characters, or is empty)"
+            );
+            anyhow::ensure!(
+                offered.insert(device.clone()),
+                "gpu_jobs.devices.offered names {device} twice"
+            );
+        }
+        if let Some(file) = &self.withheld_file {
+            anyhow::ensure!(
+                file.is_absolute(),
+                "gpu_jobs.devices.withheld_file must be an absolute path: {}",
+                file.display()
+            );
+        }
+        let hold_secs = self.hold_secs.unwrap_or(GPU_SLOT_HOLD_SECS);
+        anyhow::ensure!(
+            hold_secs > 0,
+            "gpu_jobs.devices.hold_secs must be greater than zero: a reservation holds its GPU until its launch"
+        );
+        Ok(GpuDeviceOffer {
+            offered,
+            withheld_file: self.withheld_file,
+            hold_secs,
         })
     }
 }
