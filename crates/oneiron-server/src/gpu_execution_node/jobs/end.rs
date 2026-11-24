@@ -7,19 +7,26 @@
 //!    a process remained keeps the key `Ending` and quarantines the device:
 //!    nothing settles until a reboot ends it as `Lost` or the owner writes
 //!    it off.
+//!    With no end record, a unit that is inactive with a process left is
+//!    the same unconfirmed kill; only an inactive, empty unit whose end
+//!    record is still missing when read again ends as `Lost`.
 //! 2. The release check: the unit is inactive with its control group gone,
-//!    and the device probe answers. Then `released`, and the device and the
-//!    memory go back. A probe that fails or cannot answer quarantines the
+//!    and the device probe answers with every compute entry named by a
+//!    process id (none is the unit's: its control group is gone). Then
+//!    `released`, and the device and the memory go back. A probe that fails,
+//!    cannot answer, or lists an entry with no process id quarantines the
 //!    device: it is never read as an empty device. A later clean probe
 //!    releases it.
 //! 3. The declared outputs are hashed after the release, never before:
-//!    regular files opened beneath `out/` without following a link, within
-//!    60 s in all.
+//!    regular files opened beneath `out/` without following a link, each
+//!    within the key's disk request, within 60 s in all.
 //! 4. The terminal receipt is signed and kept in the control directory.
 //!
 //! The tick also closes a `Held` key past its `not_after_ms`, restarts a
 //! staging worker that is not running, and writes each running key's tick
-//! file, the last boot-clock time a host reset can be dated by.
+//! file, the last boot-clock time a host reset can be dated by. While the
+//! history is lost, each tick asks the service manager again to stop every
+//! job unit.
 
 use std::io::Read as _;
 use std::path::Path;
@@ -32,7 +39,7 @@ use super::job_unit::{
     EndRecord, JobUnitPhase, RECEIPT_FILE_NAME, TICK_FILE_NAME, read_end_record, write_file_synced,
 };
 use super::journal::{EndingCause, JournalEvent, NodeKey};
-use super::node_parts::GpuJobEnd;
+use super::node_parts::GpuLeaseEnd;
 use super::receipt::{receipt_of, sign_receipt};
 use super::{NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
@@ -89,6 +96,8 @@ pub fn end_of(record: &EndRecord, cause: Option<EndingCause>) -> JobEnd {
     }
 }
 
+/// The Linux signal number the service manager's `EXIT_STATUS` names, by
+/// number or by name; -1, which no signal has, for a name it does not know.
 fn signal_number(status: &str) -> i32 {
     if let Ok(number) = status.parse() {
         return number;
@@ -110,6 +119,23 @@ fn signal_number(status: &str) -> i32 {
         ("PIPE", 13),
         ("ALRM", 14),
         ("TERM", 15),
+        ("STKFLT", 16),
+        ("CHLD", 17),
+        ("CONT", 18),
+        ("STOP", 19),
+        ("TSTP", 20),
+        ("TTIN", 21),
+        ("TTOU", 22),
+        ("URG", 23),
+        ("XCPU", 24),
+        ("XFSZ", 25),
+        ("VTALRM", 26),
+        ("PROF", 27),
+        ("WINCH", 28),
+        ("IO", 29),
+        ("POLL", 29),
+        ("PWR", 30),
+        ("SYS", 31),
     ]
     .iter()
     .find(|(known, _)| *known == name)
@@ -120,23 +146,25 @@ fn signal_number(status: &str) -> i32 {
 /// cause that is the machine's counts, a caller's stop neither counts nor
 /// resets, a run past 5 s resets.
 #[must_use]
-pub fn drain_end(key: &NodeKey) -> GpuJobEnd {
+pub fn drain_end(key: &NodeKey) -> GpuLeaseEnd {
     let occupied_ns = key.launch.as_ref().and_then(|launch| {
         key.end_boot_ns
             .map(|end| end.saturating_sub(launch.launch_boot_ns))
     });
     match &key.end {
-        Some(JobEnd::Stopped | JobEnd::Revoked | JobEnd::Withdrawn) => GpuJobEnd::Cancelled,
-        Some(JobEnd::Lost { reason, .. }) => GpuJobEnd::Failed {
+        Some(JobEnd::Stopped | JobEnd::Revoked | JobEnd::Withdrawn) => GpuLeaseEnd::Cancelled,
+        Some(JobEnd::Lost { reason, .. }) => GpuLeaseEnd::Failed {
             reason: format!("lost: {reason}"),
         },
-        Some(JobEnd::LaunchRefused { reason } | JobEnd::Refused { reason }) => GpuJobEnd::Failed {
-            reason: reason.clone(),
-        },
-        _ if occupied_ns.is_none_or(|ns| ns < EARLY_EXIT_NS) => GpuJobEnd::Failed {
+        Some(JobEnd::LaunchRefused { reason } | JobEnd::Refused { reason }) => {
+            GpuLeaseEnd::Failed {
+                reason: reason.clone(),
+            }
+        }
+        _ if occupied_ns.is_none_or(|ns| ns < EARLY_EXIT_NS) => GpuLeaseEnd::Failed {
             reason: "ended_within_5_s".to_owned(),
         },
-        _ => GpuJobEnd::Succeeded,
+        _ => GpuLeaseEnd::Succeeded,
     }
 }
 
@@ -147,8 +175,13 @@ impl NodeJobs {
         if self.gate() == NodeGate::Recovering {
             self.recover();
         }
-        if self.gate() != NodeGate::Open {
-            return;
+        match self.gate() {
+            NodeGate::Open => {}
+            NodeGate::HistoryLost { .. } => {
+                self.stop_every_unit();
+                return;
+            }
+            NodeGate::Recovering => return,
         }
         self.close_expired_held_keys();
         for key in self.keys_without_staging_worker() {
@@ -263,44 +296,18 @@ impl NodeJobs {
     }
 
     /// Step 1: reads the key's end record and its unit, and moves the key.
-    fn read_unit_end(&self, book: &mut NodeBook, known: &NodeKey, now: &super::ReceiptClock) {
+    pub(super) fn read_unit_end(
+        &self,
+        book: &mut NodeBook,
+        known: &NodeKey,
+        now: &super::ReceiptClock,
+    ) {
         let Some(journal) = book.journal.as_mut() else {
             return;
         };
         let control_dir = known.id.control_dir(&self.paths().state_dir);
-        let record = |event: JournalEvent, journal: &mut super::JobJournal| {
-            if let Err(error) =
-                journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
-            {
-                log_write_error(&known.key, &error);
-            }
-        };
         match read_end_record(&control_dir, &known.key) {
-            Ok(Some(end_record)) if end_record.cgroup_empty => {
-                let end = end_of(&end_record, known.ending_cause);
-                let event = JournalEvent::Ended {
-                    end,
-                    end_boot_ns: Some(end_record.end_boot_ns),
-                };
-                record(event, journal);
-            }
-            Ok(Some(_)) => {
-                if known.state != JobState::Ending {
-                    record(
-                        JournalEvent::Ending {
-                            cause: EndingCause::UnitStopping,
-                        },
-                        journal,
-                    );
-                }
-                if !matches!(known.release, DeviceRelease::Unconfirmed { .. }) {
-                    let event = JournalEvent::Quarantined {
-                        why: "kill_unconfirmed".to_owned(),
-                        other_compute_pids: Vec::new(),
-                    };
-                    record(event, journal);
-                }
-            }
+            Ok(Some(end_record)) => self.apply_end_record(journal, known, &end_record, now),
             Ok(None) => self.read_unit_phase(journal, known, now),
             Err(error) => {
                 tracing::warn!(key = %known.key, %error, "job end record unreadable; asking again at the next tick");
@@ -308,7 +315,64 @@ impl NodeJobs {
         }
     }
 
-    /// Step 1 with no end record: the unit's phase alone.
+    /// An end record ends the key when the unit's control group was empty;
+    /// else the kill is unconfirmed.
+    fn apply_end_record(
+        &self,
+        journal: &mut super::JobJournal,
+        known: &NodeKey,
+        end_record: &EndRecord,
+        now: &super::ReceiptClock,
+    ) {
+        if !end_record.cgroup_empty {
+            self.kill_unconfirmed(journal, known, now);
+            return;
+        }
+        let event = JournalEvent::Ended {
+            end: end_of(end_record, known.ending_cause),
+            end_boot_ns: Some(end_record.end_boot_ns),
+        };
+        if let Err(error) =
+            journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
+        {
+            log_write_error(&known.key, &error);
+        }
+    }
+
+    /// A process of the unit remained: the key stays `Ending` and its device
+    /// is quarantined until a reboot ends it or the owner writes it off.
+    fn kill_unconfirmed(
+        &self,
+        journal: &mut super::JobJournal,
+        known: &NodeKey,
+        now: &super::ReceiptClock,
+    ) {
+        let mut record = |event: JournalEvent| {
+            journal
+                .record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
+                .map(drop)
+                .map_err(|error| log_write_error(&known.key, &error))
+        };
+        if known.state != JobState::Ending
+            && record(JournalEvent::Ending {
+                cause: EndingCause::UnitStopping,
+            })
+            .is_err()
+        {
+            return;
+        }
+        if !matches!(known.release, DeviceRelease::Unconfirmed { .. }) {
+            let _ = record(JournalEvent::Quarantined {
+                why: "kill_unconfirmed".to_owned(),
+                other_compute_pids: Vec::new(),
+            });
+        }
+    }
+
+    /// Step 1 with no end record: the unit's phase alone. An inactive unit
+    /// ends the key as `Lost` only when its control group is empty and its
+    /// end record is still missing when read again: the unit may have
+    /// written it between the two reads.
     fn read_unit_phase(
         &self,
         journal: &mut super::JobJournal,
@@ -322,6 +386,24 @@ impl NodeJobs {
                 return;
             }
         };
+        if status.phase == JobUnitPhase::Inactive {
+            if !status.cgroup_empty {
+                self.kill_unconfirmed(journal, known, now);
+                return;
+            }
+            let control_dir = known.id.control_dir(&self.paths().state_dir);
+            match read_end_record(&control_dir, &known.key) {
+                Ok(Some(end_record)) => {
+                    self.apply_end_record(journal, known, &end_record, now);
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(key = %known.key, %error, "job end record unreadable; asking again at the next tick");
+                    return;
+                }
+            }
+        }
         let event = match (status.phase, known.state) {
             (JobUnitPhase::Active, JobState::Launching) => Some(JournalEvent::Running),
             (JobUnitPhase::Stopping, JobState::Launching | JobState::Running) => {
@@ -356,6 +438,23 @@ impl NodeJobs {
             self.stop_unit(&known.key);
         } else if matches!(known.state, JobState::Launching | JobState::Running) {
             self.write_tick(known, now);
+        }
+    }
+
+    /// While the history is lost: asks the service manager again to stop
+    /// every job unit that still runs.
+    pub(super) fn stop_every_unit(&self) {
+        match self.parts().units.live_units() {
+            Ok(units) => {
+                for (id, _) in units {
+                    if let Err(error) = self.parts().units.stop(&id) {
+                        tracing::warn!(unit = %id, %error, "job unit stop not taken; the next tick asks again");
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "job units not listed; the next tick asks again");
+            }
         }
     }
 
@@ -435,6 +534,17 @@ impl NodeJobs {
                 return;
             }
         };
+        // The unit's control group is gone, so a compute entry with a process
+        // id is another process's. One with no process id cannot be told
+        // from a leftover of the unit's: the device stays out.
+        if processes.hidden > 0 {
+            let why = format!(
+                "device_probe_unattributed: {} compute entries with no process id",
+                processes.hidden
+            );
+            quarantine(why, processes.pids, journal);
+            return;
+        }
         let event = JournalEvent::Released {
             other_compute_pids: processes.pids,
         };
@@ -526,6 +636,7 @@ pub fn hash_outputs(payload_dir: &Path, pin: &WorkloadPin, limit: Duration) -> O
             };
         }
     };
+    let size_bound = pin.request.disk_mib.saturating_mul(1024 * 1024);
     let mut digests = Vec::new();
     for decl in &pin.outputs {
         let name = decl.name.as_str();
@@ -544,11 +655,22 @@ pub fn hash_outputs(payload_dir: &Path, pin: &WorkloadPin, limit: Duration) -> O
                 };
             }
         };
-        let regular = rustix::fs::fstat(&descriptor)
-            .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile);
-        if !regular {
+        let stat = match rustix::fs::fstat(&descriptor) {
+            Ok(stat) => stat,
+            Err(error) => {
+                return OutputsState::Failed {
+                    why: format!("{name}: {error}"),
+                };
+            }
+        };
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
             return OutputsState::Failed {
                 why: format!("{name}: not a regular file"),
+            };
+        }
+        if u64::try_from(stat.st_size).unwrap_or(u64::MAX) > size_bound {
+            return OutputsState::Failed {
+                why: format!("{name}: larger than the key's disk request"),
             };
         }
         let mut file = std::fs::File::from(descriptor);
@@ -566,6 +688,11 @@ pub fn hash_outputs(payload_dir: &Path, pin: &WorkloadPin, limit: Duration) -> O
                 Ok(read) => {
                     hasher.update(&buffer[..read]);
                     bytes = bytes.saturating_add(read as u64);
+                    if bytes > size_bound {
+                        return OutputsState::Failed {
+                            why: format!("{name}: larger than the key's disk request"),
+                        };
+                    }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => {

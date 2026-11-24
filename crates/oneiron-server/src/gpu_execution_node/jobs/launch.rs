@@ -3,7 +3,9 @@
 //! Staging runs outside the admission lock, on a worker of its own, after a
 //! submit is accepted. The launch commit is one critical section under the
 //! lock, and the only place a job can start:
-//! 1. the key is `Staging`, its staging completed, and it is not closed;
+//! 1. the key is `Staging`, its staging completed within the staging limit
+//!    (read again under the lock, so a wait for the lock counts), and it is
+//!    not closed;
 //! 2. the local policy, read now: enabled, not paused, not drained, the
 //!    template's digest unchanged;
 //! 3. the authority, read now: the node's fold holds the position the
@@ -12,7 +14,8 @@
 //! 4. the device and the memory, both or neither: a device lease confirmed
 //!    with no compute process on it, and the memory floor;
 //! 5. `launch.json`, then the `launching` record, synced. Occupancy starts
-//!    at this record;
+//!    at this record: its clock is read after both leases are taken, so the
+//!    lock wait and the device probe are not occupancy;
 //! 6. the unit's start.
 //!
 //! A no at 1 to 4 ends the key as `LaunchRefused`, not started, with nothing
@@ -87,7 +90,7 @@ impl NodeJobs {
         };
         let fresh =
             failure.is_none() && self.wait_for_authority(key, &run.authority_heads, deadline);
-        self.launch_commit(key, failure, fresh);
+        self.launch_commit(key, failure, fresh, deadline);
     }
 
     /// Records that staging began (an `accepted` key) or takes up a key
@@ -159,9 +162,15 @@ impl NodeJobs {
     }
 
     /// The launch commit, under the admission lock.
-    fn launch_commit(&self, key: &str, staging_failure: Option<String>, authority_fresh: bool) {
-        let now = self.now();
+    fn launch_commit(
+        &self,
+        key: &str,
+        staging_failure: Option<String>,
+        authority_fresh: bool,
+        deadline: Instant,
+    ) {
         let mut guard = self.lock();
+        let now = self.now();
         let book: &mut NodeBook = &mut guard;
         if book.gate != NodeGate::Open {
             return;
@@ -178,6 +187,7 @@ impl NodeJobs {
             return;
         };
         let refusal = staging_failure
+            .or_else(|| (Instant::now() >= deadline).then(|| "staging_limit".to_owned()))
             .or_else(|| self.launch_policy_refusal(&known, &signed, authority_fresh));
         if let Some(reason) = refusal {
             if let Err(error) = journal.record(
@@ -192,12 +202,7 @@ impl NodeJobs {
             return;
         }
         let pin = &reserve.pin;
-        let device_id = signed
-            .submit
-            .device_id
-            .as_deref()
-            .or(reserve.device_id.as_deref());
-        let request = slot_request(key, pin, device_id);
+        let request = slot_request(key, pin, &reserve.slot);
         let lease = match self.parts().devices.lease_for_launch(&request) {
             Ok(lease) => lease,
             Err(refusal) => {
@@ -233,7 +238,9 @@ impl NodeJobs {
                 return;
             }
         };
-        let device_id = lease.hold().device.device_id.clone();
+        // Occupancy starts here, with both leases taken.
+        let now = self.now();
+        let device_id = lease.grant().device.device_id.clone();
         let maximum_secs = signed.submit.maximum_secs;
         let cutoff_boot_ns = now
             .boot_ns
@@ -318,6 +325,9 @@ impl NodeJobs {
         {
             return Some("authority_stale".to_owned());
         }
-        admission.issuer_live(known.issuer).err()
+        admission
+            .issuer_live(known.issuer)
+            .err()
+            .map(|not_live| not_live.reason)
     }
 }

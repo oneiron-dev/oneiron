@@ -8,33 +8,34 @@
 //! it is one of the node's issuers (row R1's gate). Here every request that
 //! names a key is answered only to the issuer the journal recorded for it,
 //! and known keys are resolved before any refusal, so a refusal never hides
-//! a key that already took effect.
+//! a key that already took effect. Under the admission lock, before any new
+//! record, `Reserve` and `Submit` read the clock and the issuer's authority
+//! again: a grant that ended after the gate is refused as the gate refuses
+//! it, with nothing journaled.
 
 use oneiron::EntityId;
 
+use super::end::end_of;
+use super::job_unit::read_end_record;
 use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, NodeKey};
 use super::node_parts::GpuSlotRequest;
 use super::receipt::{ReceiptClock, receipt_of, sign_receipt};
 use super::{BUSY_RETRY_AFTER_MS, ISSUED_AT_SLACK_MS, NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobEnd, JobRefusal, JobReserve, JobState, JobStatusAnswer, SignedJobSubmit,
-    WorkloadPin,
+    SlotSelector, WorkloadPin,
 };
 
 const MIB: u64 = 1024 * 1024;
 
-/// The GPU slot request a key's pin makes. The journal books the key's disk
-/// at `Reserve`, so the slot claims none of it again.
+/// The GPU slot request a key's pin and slot selector make. The journal
+/// books the key's disk at `Reserve`, so the slot claims none of it again.
 #[must_use]
-pub(super) fn slot_request(
-    key: &str,
-    pin: &WorkloadPin,
-    device_id: Option<&str>,
-) -> GpuSlotRequest {
+pub(super) fn slot_request(key: &str, pin: &WorkloadPin, slot: &SlotSelector) -> GpuSlotRequest {
     GpuSlotRequest {
         key: key.to_owned(),
-        device_id: device_id.map(str::to_owned),
-        model: None,
+        device_id: slot.device_id.clone(),
+        model: slot.model.clone(),
         min_memory_mib: pin.request.vram_mib,
         disk_bytes: 0,
     }
@@ -149,8 +150,8 @@ impl NodeJobs {
         if peer != reserve.issuer {
             return JobAnswer::Refused(JobRefusal::NotIssuer);
         }
-        let now = self.now();
         let mut book = self.lock();
+        let now = self.now();
         let journal = match admitting(&mut book) {
             Ok(journal) => journal,
             Err(answer) => return answer,
@@ -161,6 +162,9 @@ impl NodeJobs {
             }
             let known = known.clone();
             return self.receipt_answer(&known, journal.epoch(), &now);
+        }
+        if let Err(not_live) = self.parts().admission.issuer_live(peer) {
+            return JobAnswer::Refused(not_live.refusal);
         }
         let key = reserve.key.clone();
         let event =
@@ -211,7 +215,7 @@ impl NodeJobs {
         if let Err(reason) = admission.disk_room(booked_mib, reserve.pin.request.disk_mib) {
             return Some(reason);
         }
-        let request = slot_request(&reserve.key, &reserve.pin, reserve.device_id.as_deref());
+        let request = slot_request(&reserve.key, &reserve.pin, &reserve.slot);
         self.parts().devices.could_take(&request).err()
     }
 
@@ -221,8 +225,8 @@ impl NodeJobs {
     /// its receipt; a key past `Held` is refused.
     #[must_use]
     pub fn release(&self, peer: EntityId, key: &str) -> JobAnswer {
-        let now = self.now();
         let mut book = self.lock();
+        let now = self.now();
         let journal = match admitting(&mut book) {
             Ok(journal) => journal,
             Err(answer) => return answer,
@@ -260,10 +264,10 @@ impl NodeJobs {
         if signed.verify(self.parts().signer.as_ref()).is_err() {
             return JobAnswer::Refused(JobRefusal::SubmitSignatureInvalid);
         }
-        let now = self.now();
         let key = signed.submit.key.clone();
         let answer = {
             let mut book = self.lock();
+            let now = self.now();
             let journal = match admitting(&mut book) {
                 Ok(journal) => journal,
                 Err(answer) => return answer,
@@ -281,11 +285,27 @@ impl NodeJobs {
                 return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
             }
             let digest = signed.submit.pin.digest().ok();
-            if known.pin_digest.is_some() && digest != known.pin_digest {
+            let other_slot = known
+                .reserve
+                .as_ref()
+                .is_some_and(|reserve| reserve.slot != signed.submit.slot);
+            if (known.pin_digest.is_some() && digest != known.pin_digest) || other_slot {
                 return JobAnswer::Refused(JobRefusal::KeyConflict);
             }
             if known.state != JobState::Held {
                 return self.receipt_answer(&known, journal.epoch(), &now);
+            }
+            // A reserve past its window is closed here, before any submit
+            // could take it up, even when the tick has not closed it yet.
+            if known
+                .reserve
+                .as_ref()
+                .is_some_and(|reserve| now.wall_ms > reserve.not_after_ms)
+            {
+                return self.record_and_answer(journal, &key, peer, withdrawn(), &now);
+            }
+            if let Err(not_live) = self.parts().admission.issuer_live(peer) {
+                return JobAnswer::Refused(not_live.refusal);
             }
             let event = match self.submit_refusal(&signed, &known, now.wall_ms) {
                 Some(reason) => JournalEvent::Ended {
@@ -322,11 +342,6 @@ impl NodeJobs {
         if submit.maximum_secs == 0 || submit.maximum_secs > reserve.pin.request.maximum_secs {
             return Some("maximum_above_pin".to_owned());
         }
-        if let (Some(reserved), Some(submitted)) = (&reserve.device_id, &submit.device_id)
-            && reserved != submitted
-        {
-            return Some("device_mismatch".to_owned());
-        }
         let admission = &self.parts().admission;
         if let Some(reason) = admission.controls().refusal() {
             return Some(reason);
@@ -345,8 +360,8 @@ impl NodeJobs {
     /// ended key answers its receipt.
     #[must_use]
     pub fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        let now = self.now();
         let mut book = self.lock();
+        let now = self.now();
         let journal = match answering(&mut book) {
             Ok(journal) => journal,
             Err(answer) => return answer,
@@ -363,12 +378,22 @@ impl NodeJobs {
                 self.record_and_answer(journal, key, peer, withdrawn(), &now)
             }
             Some(JobState::Launching | JobState::Running) => {
-                let event = JournalEvent::Ending {
-                    cause: EndingCause::Stopped,
+                let Some(known) = journal.table().get(key).cloned() else {
+                    return status_busy();
                 };
-                let answer = self.record_and_answer(journal, key, peer, event, &now);
-                self.stop_unit(key);
-                answer
+                match self.begin_ending(journal, &known, EndingCause::Stopped, &now) {
+                    Ok(()) => journal
+                        .table()
+                        .get(key)
+                        .cloned()
+                        .map_or_else(busy, |known| {
+                            self.receipt_answer(&known, journal.epoch(), &now)
+                        }),
+                    Err(error) => {
+                        log_write_error(key, &error);
+                        busy()
+                    }
+                }
             }
             Some(JobState::Ending) => {
                 self.stop_unit(key);
@@ -394,8 +419,8 @@ impl NodeJobs {
     /// the journal's epoch, history lost, or `Busy` while not swept.
     #[must_use]
     pub fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        let now = self.now();
         let mut book = self.lock();
+        let now = self.now();
         let journal = match answering(&mut book) {
             Ok(journal) => journal,
             Err(answer) => return answer,
@@ -425,8 +450,8 @@ impl NodeJobs {
     /// Why the change was not made (the gate is closed, or the record did
     /// not land).
     pub fn end_key(&self, key: &str, cause: EndingCause) -> Result<(), String> {
-        let now = self.now();
         let mut book = self.lock();
+        let now = self.now();
         if book.gate != NodeGate::Open {
             return Err(format!("job_service.gate_closed: {:?}", book.gate));
         }
@@ -436,22 +461,56 @@ impl NodeJobs {
         let Some(known) = journal.table().get(key).cloned() else {
             return Ok(());
         };
-        let event = match known.state {
-            JobState::Held | JobState::Accepted | JobState::Staging => withdrawn(),
-            JobState::Launching | JobState::Running => JournalEvent::Ending { cause },
+        match known.state {
+            JobState::Held | JobState::Accepted | JobState::Staging => journal
+                .record(key, known.issuer, &now.boot_id, now.wall_ms, withdrawn())
+                .map(drop)
+                .map_err(|error| error.to_string()),
+            JobState::Launching | JobState::Running => self
+                .begin_ending(journal, &known, cause, &now)
+                .map_err(|error| error.to_string()),
             JobState::Ending => {
                 self.stop_unit(key);
-                return Ok(());
+                Ok(())
             }
-            JobState::Ended => return Ok(()),
-        };
-        let stops_unit = matches!(event, JournalEvent::Ending { .. });
-        journal
-            .record(key, known.issuer, &now.boot_id, now.wall_ms, event)
-            .map_err(|error| error.to_string())?;
-        if stops_unit {
-            self.stop_unit(key);
+            JobState::Ended => Ok(()),
         }
+    }
+
+    /// Moves a launched key to `Ending { cause }`, and only once that record
+    /// is on disk asks the service manager to stop its unit. A key whose
+    /// unit already ended (its end record is complete) ends as that record
+    /// says: a stop that came after the exit does not rename its end.
+    ///
+    /// # Errors
+    ///
+    /// The record did not land; the unit was not asked to stop.
+    pub(super) fn begin_ending(
+        &self,
+        journal: &mut JobJournal,
+        known: &NodeKey,
+        cause: EndingCause,
+        now: &ReceiptClock,
+    ) -> Result<(), JournalWriteError> {
+        let control_dir = known.id.control_dir(&self.paths().state_dir);
+        if let Ok(Some(end_record)) = read_end_record(&control_dir, &known.key)
+            && end_record.cgroup_empty
+        {
+            let event = JournalEvent::Ended {
+                end: end_of(&end_record, known.ending_cause),
+                end_boot_ns: Some(end_record.end_boot_ns),
+            };
+            journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)?;
+            return Ok(());
+        }
+        journal.record(
+            &known.key,
+            known.issuer,
+            &now.boot_id,
+            now.wall_ms,
+            JournalEvent::Ending { cause },
+        )?;
+        self.stop_unit(&known.key);
         Ok(())
     }
 

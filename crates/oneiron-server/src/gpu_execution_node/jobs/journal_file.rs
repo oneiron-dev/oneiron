@@ -5,18 +5,26 @@
 //! - The file starts with a header: [`JOURNAL_MAGIC`], the format version,
 //!   and the epoch it was made with. A header whose epoch differs from the
 //!   epoch file is a journal from another history.
-//! - Each record is one frame: its payload length (u32, little endian), the
+//! - Each record is one frame: its payload length (u32, little endian), a
+//!   check of that length (the first 4 bytes of its blake3 hash), the
 //!   payload, and the first 16 bytes of the blake3 hash of length and
-//!   payload.
+//!   payload. The length's own check tells a torn write from a damaged
+//!   length: a length that fails its check is damage, never a torn tail.
 //! - [`JournalFile::append`] returns only after the frame is synced to disk.
 //!   A write or a sync that fails is rolled back to the length before the
 //!   append, so no reply can go out for a record that is not on disk and the
 //!   record does not appear after a restart. When the rollback fails too,
 //!   the file is poisoned: every later append is refused until the journal
 //!   is opened again.
-//! - At open, a torn last frame (one that runs past the end of the file, or
-//!   whose bytes from its start to the end are all zero) was never answered:
-//!   it is cut off. A bad frame anywhere else is a damaged history.
+//! - At open, a torn last frame was never answered: it is cut off. A frame
+//!   is torn when its checked length runs past the end of the file, when
+//!   fewer bytes than a length and its check remain, or when its bytes from
+//!   its start to the end are all zero. Any other bad frame, last or not, is
+//!   a damaged history.
+//! - One writer per `state_dir`: [`JournalWriterLock`] holds an exclusive
+//!   lock on `<state_dir>/journal.lock` for as long as the job service
+//!   lives, so a second service on the same directory is refused before it
+//!   reads the journal.
 //!
 //! The file knows bytes only; [`super::journal`] gives the records their
 //! meaning.
@@ -41,6 +49,9 @@ pub const JOURNAL_FILE_NAME: &str = "journal";
 /// The epoch's file name inside `state_dir`.
 pub const EPOCH_FILE_NAME: &str = "epoch";
 
+/// The writer lock's file name inside `state_dir`.
+pub const WRITER_LOCK_FILE_NAME: &str = "journal.lock";
+
 /// The largest payload one frame may carry. A record is a key's event; the
 /// largest (`accepted`, with its signed submit) is a few KiB.
 pub const MAX_FRAME_PAYLOAD_BYTES: u32 = 1 << 20;
@@ -48,6 +59,8 @@ pub const MAX_FRAME_PAYLOAD_BYTES: u32 = 1 << 20;
 const EPOCH_BYTES: usize = 16;
 const HEADER_BYTES: u64 = 8 + 4 + EPOCH_BYTES as u64;
 const LENGTH_BYTES: u64 = 4;
+const LENGTH_CHECK_BYTES: u64 = 4;
+const FRAME_HEAD_BYTES: u64 = LENGTH_BYTES + LENGTH_CHECK_BYTES;
 const CHECKSUM_BYTES: u64 = 16;
 
 /// A hook a test sets to fail an append between its write and its sync.
@@ -90,6 +103,42 @@ impl std::fmt::Display for JournalEpoch {
     }
 }
 
+/// The exclusive lock of the one journal writer of a `state_dir`, held until
+/// it drops.
+#[derive(Debug)]
+pub struct JournalWriterLock {
+    _file: File,
+}
+
+impl JournalWriterLock {
+    /// Takes the lock, never waiting.
+    ///
+    /// # Errors
+    ///
+    /// [`io::ErrorKind::WouldBlock`] when another writer holds it, or the
+    /// I/O error that stopped it.
+    pub fn take(state_dir: &Path) -> io::Result<Self> {
+        std::fs::create_dir_all(state_dir)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(state_dir.join(WRITER_LOCK_FILE_NAME))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(std::fs::TryLockError::WouldBlock) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!(
+                    "job_journal.locked: another job service holds {}",
+                    state_dir.display()
+                ),
+            )),
+            Err(std::fs::TryLockError::Error(error)) => Err(error),
+        }
+    }
+}
+
 /// Why the journal's history cannot be read. Every case is answered as
 /// history lost: the node never reads a damaged journal as "no such key".
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -112,9 +161,7 @@ pub enum JournalDamage {
         "job_journal.epoch_mismatch: the journal was made with epoch {journal}, the epoch file says {file}"
     )]
     EpochMismatch { journal: String, file: String },
-    #[error(
-        "job_journal.bad_frame: the record at byte {offset} is damaged and is not the last one"
-    )]
+    #[error("job_journal.bad_frame: the record at byte {offset} is damaged")]
     BadFrame { offset: u64 },
 }
 
@@ -182,8 +229,22 @@ impl JournalFile {
     pub fn open(state_dir: &Path) -> JournalOpening {
         let journal_path = state_dir.join(JOURNAL_FILE_NAME);
         let epoch_path = state_dir.join(EPOCH_FILE_NAME);
-        let journal_exists = journal_path.exists();
-        let epoch_exists = epoch_path.exists();
+        let exists = |path: &Path| {
+            path.try_exists().map_err(|error| {
+                JournalOpening::Damaged(JournalDamage::Unreadable(format!(
+                    "{}: {error}",
+                    path.display()
+                )))
+            })
+        };
+        let journal_exists = match exists(&journal_path) {
+            Ok(exists) => exists,
+            Err(opening) => return opening,
+        };
+        let epoch_exists = match exists(&epoch_path) {
+            Ok(exists) => exists,
+            Err(opening) => return opening,
+        };
         match (journal_exists, epoch_exists) {
             (false, false) => return JournalOpening::Absent,
             (false, true) => return JournalOpening::Damaged(JournalDamage::JournalMissing),
@@ -264,9 +325,10 @@ impl JournalFile {
         let journal_path = state_dir.join(JOURNAL_FILE_NAME);
         let epoch_path = state_dir.join(EPOCH_FILE_NAME);
         let epoch = JournalEpoch::random();
-        if epoch_path.exists() {
-            std::fs::remove_file(&epoch_path)?;
-            sync_dir(state_dir)?;
+        match std::fs::remove_file(&epoch_path) {
+            Ok(()) => sync_dir(state_dir)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
         let mut header = Vec::with_capacity(HEADER_BYTES as usize);
         header.extend_from_slice(&JOURNAL_MAGIC);
@@ -391,11 +453,20 @@ impl JournalFile {
 
 fn frame(payload_length: u32, payload: &[u8]) -> Vec<u8> {
     let length = payload_length.to_le_bytes();
-    let mut frame = Vec::with_capacity(payload.len() + (LENGTH_BYTES + CHECKSUM_BYTES) as usize);
+    let mut frame =
+        Vec::with_capacity(payload.len() + (FRAME_HEAD_BYTES + CHECKSUM_BYTES) as usize);
     frame.extend_from_slice(&length);
+    frame.extend_from_slice(&length_check(&length));
     frame.extend_from_slice(payload);
     frame.extend_from_slice(&frame_checksum(&length, payload));
     frame
+}
+
+fn length_check(length: &[u8; 4]) -> [u8; LENGTH_CHECK_BYTES as usize] {
+    let hash = blake3::hash(length);
+    let mut check = [0u8; LENGTH_CHECK_BYTES as usize];
+    check.copy_from_slice(&hash.as_bytes()[..LENGTH_CHECK_BYTES as usize]);
+    check
 }
 
 fn frame_checksum(length: &[u8; 4], payload: &[u8]) -> [u8; CHECKSUM_BYTES as usize] {
@@ -440,13 +511,23 @@ fn parse_journal(bytes: &[u8], file_epoch: JournalEpoch) -> Result<ParsedJournal
         if rest.iter().all(|byte| *byte == 0) {
             break;
         }
-        if (rest.len() as u64) < LENGTH_BYTES {
+        if (rest.len() as u64) < FRAME_HEAD_BYTES {
             break;
         }
         let mut length = [0u8; 4];
         length.copy_from_slice(&rest[..4]);
+        if rest[LENGTH_BYTES as usize..FRAME_HEAD_BYTES as usize] != length_check(&length) {
+            // A length whose check was never written (the rest is zero) is a
+            // torn write; any other mismatch is a damaged length.
+            if rest[LENGTH_BYTES as usize..].iter().all(|byte| *byte == 0) {
+                break;
+            }
+            return Err(JournalDamage::BadFrame {
+                offset: offset as u64,
+            });
+        }
         let payload_length = u64::from(u32::from_le_bytes(length));
-        let frame_length = LENGTH_BYTES + payload_length + CHECKSUM_BYTES;
+        let frame_length = FRAME_HEAD_BYTES + payload_length + CHECKSUM_BYTES;
         // No frame this build wrote is longer than the limit, so such a length
         // is damage, not a torn write.
         if payload_length > u64::from(MAX_FRAME_PAYLOAD_BYTES) {
@@ -454,11 +535,13 @@ fn parse_journal(bytes: &[u8], file_epoch: JournalEpoch) -> Result<ParsedJournal
                 offset: offset as u64,
             });
         }
+        // The length passed its check, so a frame that runs past the end is
+        // one whose append never completed.
         if (rest.len() as u64) < frame_length {
             break;
         }
-        let payload_end = (LENGTH_BYTES + payload_length) as usize;
-        let payload = &rest[LENGTH_BYTES as usize..payload_end];
+        let payload_end = (FRAME_HEAD_BYTES + payload_length) as usize;
+        let payload = &rest[FRAME_HEAD_BYTES as usize..payload_end];
         let checksum = &rest[payload_end..frame_length as usize];
         if frame_checksum(&length, payload)[..] != *checksum {
             return Err(JournalDamage::BadFrame {
