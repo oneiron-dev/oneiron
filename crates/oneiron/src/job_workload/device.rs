@@ -44,7 +44,8 @@ pub enum Sharing {
 #[serde(deny_unknown_fields)]
 pub struct DeviceClaim {
     pub kind: DeviceKind,
-    /// Whole devices of this kind.
+    /// Whole devices of this kind. A count of 0 takes no lease; R2's pin
+    /// shape check refuses it before placement.
     pub count: u32,
     /// The least device memory, in MiB; 0 takes any. On a device that
     /// shares the machine's memory it is leased from that pool with the
