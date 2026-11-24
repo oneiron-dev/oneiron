@@ -78,6 +78,14 @@ pub enum JournalEvent {
     },
     /// The declared outputs were hashed, after the release.
     Hashed { outputs: OutputsState },
+    /// The issuer holds every returnable output it wants (`Ack`, design
+    /// 7.1): the node keeps the payload for the keep time from here, and
+    /// then may clean it. Never written for a key whose outputs a launch
+    /// left unhashed.
+    Acknowledged,
+    /// The key's payload directory was removed, after its acknowledgement
+    /// and the keep time: its outputs can no longer be fetched.
+    Cleaned,
 }
 
 impl JournalEvent {
@@ -93,6 +101,8 @@ impl JournalEvent {
             Self::Released { .. } => "released",
             Self::Quarantined { .. } => "quarantined",
             Self::Hashed { .. } => "hashed",
+            Self::Acknowledged => "acknowledged",
+            Self::Cleaned => "cleaned",
         }
     }
 }
@@ -153,6 +163,10 @@ pub struct NodeKey {
     pub release: DeviceRelease,
     pub outputs: OutputsState,
     pub other_compute_pids: Vec<u32>,
+    /// When the issuer acknowledged custody of the key's outputs (`Ack`).
+    pub acknowledged_at_ms: Option<u64>,
+    /// Whether the key's payload directory was removed.
+    pub cleaned: bool,
     /// The sequence of the key's newest record.
     pub seq: u64,
     /// The boot of the key's newest record.
@@ -177,6 +191,8 @@ impl NodeKey {
             release: DeviceRelease::NotHeld,
             outputs: OutputsState::Pending,
             other_compute_pids: Vec::new(),
+            acknowledged_at_ms: None,
+            cleaned: false,
             seq: record.seq,
             boot_id: record.boot_id.clone(),
             updated_at_ms: record.at_ms,
@@ -198,20 +214,32 @@ impl NodeKey {
     }
 
     /// The disk the key keeps booked on the payload disk, in MiB: a live key
-    /// its request, an ended key that launched its request too (its outputs
-    /// stay until the issuer acknowledges them), a key that never launched
-    /// nothing once it ended.
+    /// its request, an ended key that launched its request too until the
+    /// issuer acknowledges its outputs (design 7.6 step 5: an output nobody
+    /// acknowledged keeps its space), a key that never launched nothing once
+    /// it ended. After the acknowledgement the payload's own bytes count in
+    /// the disk's free space until the cleaning removes them.
     #[must_use]
     pub fn booked_disk_mib(&self) -> u64 {
         let request = self
             .reserve
             .as_ref()
             .map_or(0, |reserve| reserve.pin.request.disk_mib);
-        if self.state != JobState::Ended || self.launch.is_some() {
+        let keeps_payload = self.launch.is_some() && self.acknowledged_at_ms.is_none();
+        if self.state != JobState::Ended || keeps_payload {
             request
         } else {
             0
         }
+    }
+
+    /// Whether the issuer may acknowledge the key's outputs now: it ended,
+    /// and a key that launched has its outputs hashed (or failed to), so a
+    /// payload is never cleaned before the receipt names what it held.
+    #[must_use]
+    pub fn acknowledgeable(&self) -> bool {
+        self.state == JobState::Ended
+            && (self.launch.is_none() || self.outputs != OutputsState::Pending)
     }
 
     /// Whether the key is past every change but the release check, the
@@ -413,6 +441,16 @@ impl KeyTable {
                     && next.outputs == OutputsState::Pending =>
             {
                 next.outputs = outputs.clone();
+            }
+            (JournalEvent::Acknowledged, Some(JobState::Ended))
+                if next.acknowledged_at_ms.is_none() && next.acknowledgeable() =>
+            {
+                next.acknowledged_at_ms = Some(record.at_ms);
+            }
+            (JournalEvent::Cleaned, Some(JobState::Ended))
+                if next.acknowledged_at_ms.is_some() && !next.cleaned =>
+            {
+                next.cleaned = true;
             }
             _ => return Err(refuse()),
         }

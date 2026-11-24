@@ -37,7 +37,8 @@ pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, SignedJobSubmit, WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, SignedJobSubmit,
+    WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -64,6 +65,10 @@ pub struct NodeJobSettings {
     /// `jobs.drain.fast_exit_secs`: an end this soon after the launch counts
     /// against the machine's drain guard. Default 5.
     pub fast_exit_secs: u64,
+    /// `jobs.receipts.keep_days`: how long an acknowledged key's payload
+    /// stays on the node before the cleaning removes it (design 7.6 step 5).
+    /// Default 30, longer than an allocation period.
+    pub receipt_keep_days: u64,
 }
 
 impl Default for NodeJobSettings {
@@ -74,6 +79,7 @@ impl Default for NodeJobSettings {
             output_hash_limit_secs: 60,
             returnable_max_bytes: FETCH_MAX_BYTES,
             fast_exit_secs: 5,
+            receipt_keep_days: 30,
         }
     }
 }
@@ -138,6 +144,14 @@ pub trait NodeAdmission: Send + Sync {
 
     /// The node's `jobs.*` settings now.
     fn job_settings(&self) -> NodeJobSettings;
+
+    /// The operating-system signal the template delivers as a checkpoint
+    /// notice (design 7.1 `Signal`); `None`, the default: the notice is a
+    /// no-op for this template.
+    fn template_signal(&self, template: &str) -> Option<String> {
+        let _ = template;
+        None
+    }
 }
 
 /// The machine's GPUs, as the job service leases them. The server's
@@ -308,8 +322,13 @@ impl NodeAdmission for ExecutionNode {
     fn job_settings(&self) -> NodeJobSettings {
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
+            receipt_keep_days: ExecutionNode::receipt_keep_days(self),
             ..NodeJobSettings::default()
         }
+    }
+
+    fn template_signal(&self, template: &str) -> Option<String> {
+        ExecutionNode::template_signal(self, template)
     }
 }
 
@@ -405,5 +424,29 @@ impl NodeKeys for super::NodeJobs {
 
     fn stop_live_keys(&self) {
         super::NodeJobs::stop_live_keys(self);
+    }
+
+    fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        super::NodeJobs::find(self, peer, key)
+    }
+
+    fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        super::NodeJobs::stop(self, peer, key)
+    }
+
+    fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
+        super::NodeJobs::keys_page(self, peer, after)
+    }
+
+    fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
+        super::NodeJobs::signal(self, peer, key, signal)
+    }
+
+    fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
+        super::NodeJobs::fetch(self, peer, key, name)
+    }
+
+    fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        super::NodeJobs::acknowledge(self, peer, key)
     }
 }

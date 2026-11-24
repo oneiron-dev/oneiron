@@ -53,7 +53,7 @@ fn busy() -> JobAnswer {
     }
 }
 
-fn status_busy() -> JobStatusAnswer {
+pub(super) fn status_busy() -> JobStatusAnswer {
     JobStatusAnswer::Busy {
         retry_after_ms: BUSY_RETRY_AFTER_MS,
     }
@@ -73,7 +73,7 @@ fn admitting(book: &mut NodeBook) -> Result<&mut JobJournal, JobAnswer> {
 }
 
 /// The journal, when the node answers key questions now.
-fn answering(book: &mut NodeBook) -> Result<&mut JobJournal, JobStatusAnswer> {
+pub(super) fn answering(book: &mut NodeBook) -> Result<&mut JobJournal, JobStatusAnswer> {
     match &book.gate {
         NodeGate::Recovering => return Err(status_busy()),
         NodeGate::HistoryLost { .. } => return Err(JobStatusAnswer::HistoryLost),
@@ -107,7 +107,7 @@ impl NodeJobs {
         }
     }
 
-    fn status_receipt(
+    pub(super) fn status_receipt(
         &self,
         key: &NodeKey,
         epoch: super::JournalEpoch,

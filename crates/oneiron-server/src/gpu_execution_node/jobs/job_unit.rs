@@ -266,6 +266,23 @@ pub trait JobUnit: Send + Sync {
     ///
     /// [`JobUnitError`] when the service manager did not answer.
     fn live_units(&self) -> Result<Vec<(JobKeyId, JobUnitStatus)>, JobUnitError>;
+
+    /// Sends the operating-system signal `signal` (a name such as `USR1`,
+    /// which the template chose) to the unit's main process: a checkpoint
+    /// notice (design 7.1 `Signal`). It never stops the unit or moves its
+    /// cutoff.
+    ///
+    /// # Errors
+    ///
+    /// [`JobUnitError`] when the service manager did not take it. A scope
+    /// that cannot deliver one answers so, and the notice is lost, as a
+    /// notice may be.
+    fn signal(&self, unit: &JobKeyId, signal: &str) -> Result<(), JobUnitError> {
+        Err(JobUnitError {
+            unit: unit.unit_name(),
+            reason: format!("signal {signal}: this launch scope delivers no signal"),
+        })
+    }
 }
 
 /// The boot this node runs in and its boot clock. The boot clock counts

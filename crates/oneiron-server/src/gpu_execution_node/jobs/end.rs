@@ -192,6 +192,7 @@ impl NodeJobs {
                 KeyFollowUp::HashOutputs { pin } => self.hash_and_seal(&key, &pin),
             }
         }
+        self.clean_acknowledged_payloads();
     }
 
     fn close_expired_held_keys(&self) {

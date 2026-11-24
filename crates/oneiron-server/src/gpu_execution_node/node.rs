@@ -37,7 +37,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, NodeAnswer, SignedJobSubmit, WorkloadPin,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, SignedJobSubmit,
+    WorkloadPin,
 };
 
 /// Where Linux names this boot.
@@ -180,6 +181,45 @@ pub trait NodeKeys: Send + Sync {
     /// `disable --stop` at the box: every key that has not ended ends; a
     /// launched one is stopped.
     fn stop_live_keys(&self);
+
+    /// `Find` and `Status` from the proven issuer `peer` (row R4): the key's
+    /// newest receipt.
+    fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Stop` from `peer`: closes a key that has not launched (also one the
+    /// node never saw), ends one that has.
+    fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Keys` from `peer`: one page of its keys after `after`.
+    fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
+        let _ = (peer, after);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Signal` from `peer`: a checkpoint notice to the key's workload.
+    fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
+        let _ = (peer, key, signal);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Fetch` from `peer`: the bytes of one returnable output.
+    fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
+        let _ = (peer, key, name);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Ack` from `peer`: it holds every returnable output of the key it
+    /// wants.
+    fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
 }
 
 /// The execution node of this machine. Cloning it shares it.
@@ -437,6 +477,29 @@ impl ExecutionNode {
         Ok(())
     }
 
+    /// `receipt_keep_days` of the node's file: how long an acknowledged
+    /// key's payload stays before it is cleaned.
+    #[must_use]
+    pub fn receipt_keep_days(&self) -> u64 {
+        self.settings().ok().flatten().map_or(
+            u64::from(super::node_settings::RECEIPT_KEEP_DAYS_DEFAULT),
+            |settings| u64::from(settings.receipt_keep_days),
+        )
+    }
+
+    /// The operating-system signal `template` delivers as a checkpoint
+    /// notice; `None` when it names none (the notice is then a no-op).
+    #[must_use]
+    pub fn template_signal(&self, template: &str) -> Option<String> {
+        self.settings()
+            .ok()
+            .flatten()?
+            .templates
+            .get(template)?
+            .checkpoint_signal
+            .clone()
+    }
+
     /// The longest staging may take before the launch, in seconds.
     #[must_use]
     pub fn staging_limit_secs(&self) -> u64 {
@@ -498,10 +561,22 @@ impl ExecutionNode {
     /// Why the driver could not be read.
     pub fn availability(&self, now_ms: u64) -> Result<GpuAvailability, String> {
         self.sync_pause();
-        self.shared
+        let mut availability = self
+            .shared
             .slots
             .availability(now_ms)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if let Some(settings) = self.enabled_settings()
+            && let Ok(free_bytes) = disk_free_bytes(&settings.work_dir)
+        {
+            availability.disk = Some(job_disk_reading(
+                free_bytes,
+                settings.disk_reserve_bytes(),
+                availability.disk.map_or(0, |disk| disk.claimed_bytes),
+                self.keys().map_or(0, |keys| keys.booked_disk_mib()),
+            ));
+        }
+        Ok(availability)
     }
 
     /// Hands the pause at the box (its marker) to the GPU slot table, which
@@ -578,6 +653,24 @@ fn read_marker(path: &Path) -> Option<Option<String>> {
 }
 
 /// `mib` MiB in bytes.
+/// The payload disk as `Availability` reports it (design 7.9, row R4): its
+/// free bytes, the reserve no booking takes, and every claim on it: the
+/// slot table's and the bytes the journal's keys keep booked since their
+/// `Reserve`. So the start gate on the issuer refuses a request the node's
+/// own booking would refuse, before any money is held.
+fn job_disk_reading(
+    free_bytes: u64,
+    reserve_bytes: u64,
+    slot_claimed_bytes: u64,
+    booked_mib: u64,
+) -> super::availability::GpuDiskReading {
+    super::availability::GpuDiskReading {
+        free_bytes,
+        reserve_bytes,
+        claimed_bytes: slot_claimed_bytes.saturating_add(mib_bytes(booked_mib)),
+    }
+}
+
 fn mib_bytes(mib: u64) -> u64 {
     mib.saturating_mul(1 << 20)
 }
