@@ -1,11 +1,10 @@
-//! The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5). The
-//! owner approves each exact workload (card EN-1 A). Pass 34's check-in of
-//! an agent's pin under a standing grant is R2's follow-up PR.
+//! The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5; pass 34,
+//! section 6.5).
 //!
 //! - `pin`: the owner, or an agent whose own live Grant names the verb, pins
-//!   one exact workload. A pin approves nothing, and it is written once. The
-//!   pin is its own key, so no handle can stand in for a secret in it: the
-//!   vault's secret scan refuses one before it is stored.
+//!   one exact workload, and the pin checks in ([`super::pin_door`]). It is
+//!   written once. The pin is its own key, so no handle can stand in for a
+//!   secret in it: the vault's secret scan refuses one before it is stored.
 //! - `approve`: the owner's own act, with presence at `Important`, since it
 //!   widens what runs on the owner's machines.
 //! - `revoke`: the owner's own act; the issuer then stops the workload's
@@ -25,16 +24,14 @@ use crate::memory::{
 use crate::world_keys::OwnerActImportance;
 use crate::{EntityId, Vault};
 
-use super::pin_shape::check_pin_shape;
+use super::JOB_ALPN;
 use super::record::{
     JOB_WORKLOADS, JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadRevocation,
     digest_key,
 };
 use super::wire::{
-    WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadPinRequest, WorkloadRef,
-    WorkloadView, parse_ids,
+    WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadRef, WorkloadView, parse_ids,
 };
-use super::{JOB_ALPN, WorkloadPin};
 
 /// The `vault.jobs.workloads.*` verbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +164,7 @@ impl WorkloadAgent {
     /// rule picks it: never for the owner's own acts; its actor binding
     /// holds, its presented credential is still live, and one live Grant from
     /// a live owner names it and lists the verb.
-    fn grant_in_txn(
+    pub(super) fn grant_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
@@ -261,12 +258,12 @@ fn refused(verb: WorkloadVerb, why: &str) -> MemoryError {
     )
 }
 
-/// Who the caller is in a read or write: the owner's id, or the agent and
-/// its Grant for `verb`.
+/// Who the caller is in a read or write: the owner's id, or the agent's
+/// Grant for `verb`.
 #[derive(Clone, Copy)]
 enum Resolved {
     Owner(EntityId),
-    Agent { actor: EntityId, grant: EntityId },
+    Agent { grant: EntityId },
 }
 
 fn resolve_in_txn(
@@ -280,10 +277,7 @@ fn resolve_in_txn(
             Ok(Ok(Resolved::Owner(owner.revalidate_in_txn(vault, txn)?)))
         }
         WorkloadCaller::Agent(agent) => Ok(match agent.grant_in_txn(vault, txn, verb) {
-            Ok(grant) => Ok(Resolved::Agent {
-                actor: agent.actor(),
-                grant,
-            }),
+            Ok(grant) => Ok(Resolved::Agent { grant }),
             Err(refusal) => Err(WorkloadError::Caller(refusal)),
         }),
     }
@@ -293,7 +287,7 @@ fn resolve_in_txn(
 /// pinned it, or the workload is not revoked and its approval, unexpired,
 /// names that Grant as a starter. A starter that may no longer start it
 /// reads nothing of it.
-fn agent_reads(row: &JobWorkload, grant: EntityId, now_ms: u64) -> bool {
+pub(super) fn agent_reads(row: &JobWorkload, grant: EntityId, now_ms: u64) -> bool {
     row.pinned_under == Some(grant)
         || (row.revoked.is_none()
             && row.approval.as_ref().is_some_and(|approval| {
@@ -309,82 +303,6 @@ fn id_set(mut ids: Vec<EntityId>) -> Vec<EntityId> {
 }
 
 impl Vault {
-    /// `caller` pins the exact workload `request.pin`. Pinning approves
-    /// nothing. A pin is written once: pinning the same workload again
-    /// answers the row that stands.
-    ///
-    /// # Errors
-    ///
-    /// [`WorkloadError::BadPin`] for a pin of the wrong shape;
-    /// [`WorkloadError::PinConflict`] for a digest pinned with other content;
-    /// the secret scan's refusal for a new pin that holds a secret;
-    /// [`WorkloadError::PinnedElsewhere`] for an agent's pin of a workload
-    /// that stands under a Grant it may not read it through, so the answer
-    /// carries no approval it may not read;
-    /// [`WorkloadError::Caller`] for a caller the door does not admit.
-    pub fn pin_job_workload(
-        &self,
-        caller: WorkloadCaller<'_>,
-        request: &WorkloadPinRequest,
-        now_ms: u64,
-    ) -> Result<WorkloadChange, WorkloadError> {
-        check_pin_shape(&request.pin).map_err(|why| WorkloadError::BadPin { why })?;
-        let digest = request.pin.digest()?;
-        let key = digest_key(&digest).ok_or(crate::Error::InvariantViolation(
-            "a workload digest is 64 lower hex",
-        ))?;
-        if let WorkloadCaller::Owner(owner) = caller {
-            owner.revalidate(self)?;
-        }
-        self.with_write_txn_grouped(
-            |txn| -> crate::Result<Result<WorkloadChange, WorkloadError>> {
-                let resolved = match resolve_in_txn(self, txn, caller, WorkloadVerb::Pin)? {
-                    Ok(resolved) => resolved,
-                    Err(refused) => return Ok(Err(refused)),
-                };
-                if let Some(row) = JOB_WORKLOADS.get(&self.store, txn, &key)? {
-                    if row.pin != request.pin {
-                        return Ok(Err(WorkloadError::PinConflict));
-                    }
-                    if let Resolved::Agent { grant, .. } = resolved
-                        && !agent_reads(&row, grant, now_ms)
-                    {
-                        return Ok(Err(WorkloadError::PinnedElsewhere));
-                    }
-                    return Ok(Ok(WorkloadChange {
-                        changed: false,
-                        workload: WorkloadView::of(&row, now_ms),
-                    }));
-                }
-                // The pin is hashed into its own key and compared on a
-                // repeat, so no custody handle can stand in for a secret in
-                // it: the batch door's scan refuses one, under the owner's
-                // switch, before the row is written.
-                let pin_bytes = crate::llm::canonical_json_bytes(&request.pin)
-                    .map_err(|_| crate::Error::InvariantViolation("workload pin encode"))?;
-                crate::batch::secret_scan::scan_content_in_txn(&self.store, txn, &pin_bytes)?;
-                let (pinned_by, pinned_under) = match resolved {
-                    Resolved::Owner(owner) => (owner, None),
-                    Resolved::Agent { actor, grant, .. } => (actor, Some(grant)),
-                };
-                let row = JobWorkload {
-                    digest,
-                    pin: request.pin.clone(),
-                    pinned_by: Some(pinned_by),
-                    pinned_under,
-                    pinned_at_ms: now_ms,
-                    approval: None,
-                    revoked: None,
-                };
-                JOB_WORKLOADS.put(&self.store, txn, &key, &row)?;
-                Ok(Ok(WorkloadChange {
-                    changed: true,
-                    workload: WorkloadView::of(&row, now_ms),
-                }))
-            },
-        )?
-    }
-
     /// `caller` approves the workload `request.workload` on
     /// `request.machines`, for `request.starters`, until
     /// `request.expires_at_ms`. The owner's approval widens what runs on the

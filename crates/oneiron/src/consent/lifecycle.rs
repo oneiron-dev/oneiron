@@ -21,8 +21,9 @@ pub use crate::gate::weave_grant::{
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::consent::lifecycle::{
-    ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, DenyConsentRequest,
-    DisclosureBoundRequest, DisclosureEnvelopeRequest, RevokeGrantRequest,
+    ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, ComputeEnvelopeRequest,
+    ComputeNetwork, ComputeScope, DenyConsentRequest, DisclosureBoundRequest,
+    DisclosureEnvelopeRequest, RevokeGrantRequest,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -48,12 +49,25 @@ impl StandingGrantBound {
     fn into_bound(self) -> crate::Result<GrantBound> {
         match self {
             Self::Action(bound) => {
-                let project = normalized_ref("project", bound.envelope.project)?;
+                let compute =
+                    crate::job_workload::compute_selectors(&bound.class, bound.envelope.compute)?;
+                let mut project = normalized_ref("project", bound.envelope.project)?;
+                if !compute.is_empty() {
+                    // A pin names its project as an id; the bound spells it as the pin does.
+                    project = crate::EntityId::from_hex(&project)
+                        .map_err(|_| {
+                            crate::Error::Gate(crate::error::GateError::InvalidConsentBound(
+                                "a compute.pin bound's project is an id in hex",
+                            ))
+                        })?
+                        .to_hex();
+                }
                 let mut selectors = vec![format!("project:{project}")];
                 for member in bound.envelope.audience {
                     let member = normalized_ref("action audience member", member)?;
                     selectors.push(format!("audience:{member}"));
                 }
+                selectors.extend(compute);
                 let mut envelope = ActionEnvelope::new(selectors)?.with_target(project)?;
                 if let Some(budget) = bound.envelope.budget {
                     envelope = envelope.with_budget(budget);
