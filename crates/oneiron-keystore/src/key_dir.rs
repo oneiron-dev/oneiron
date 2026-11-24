@@ -236,9 +236,9 @@ mod tests {
         }
     }
 
-    /// A path whose directories do not exist yet resolves under its nearest
-    /// existing ancestor, through a link in that ancestor and with `..`
-    /// taking back a part not yet made.
+    /// A path whose directories do not exist yet resolves part by part:
+    /// through a link wherever it lies, also one reached past a missing part
+    /// and a `..`, and with `..` taking back a part not yet made.
     #[test]
     fn a_path_resolves_as_it_will_once_made() {
         let root = tempfile::tempdir().expect("a temporary directory");
@@ -269,6 +269,11 @@ mod tests {
                 base.join("vault/keys")
             );
         }
+        fs::write(base.join("file"), b"").expect("a file");
+        assert!(
+            resolved(&base.join("file/../keys")).is_err(),
+            "a file has no `..`"
+        );
     }
 
     /// FIX FILE-KEYSTORE-CREATES-DIR-BEFORE-VAULT-CHECK: a key directory at
@@ -351,15 +356,15 @@ mod tests {
         );
     }
 
-    /// Review of #10420: a vault directory may resolve only once a directory
-    /// of the key directory's path exists, as `vault` does when `VAULT` is
-    /// made on a volume that ignores case. Here the vault directory is a
-    /// link to `x/y`, which is missing until made. The directory that makes
-    /// it resolve is refused as soon as it is made, nothing is made inside
-    /// it, and the directories made are removed.
+    /// Review of #10420: a vault directory reached through a dangling link
+    /// (one whose target is missing) stands for that target as it will be
+    /// made, so a key directory inside it is refused before anything is
+    /// made. Also when the vault directory leaves that target by `..`
+    /// (`alias/..`, the link naming `store/keys`), which makes it `store` once
+    /// `store/keys` exists.
     #[cfg(unix)]
     #[test]
-    fn a_directory_that_resolves_as_a_vault_once_made_is_refused_and_removed() {
+    fn a_key_directory_inside_a_vault_behind_a_dangling_link_is_refused_before_it_is_made() {
         let root = tempfile::tempdir().expect("a temporary directory");
         let base = root.path().canonicalize().expect("the root resolves");
         let vault = base.join("vault-link");
@@ -368,9 +373,73 @@ mod tests {
             create_key_dir(&base.join("x/y/keys"), &[&vault], |d| fs::create_dir_all(d)),
             Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
         );
+        assert!(!base.join("x").exists(), "a refusal made a directory");
+
+        fs::create_dir(base.join("store")).expect("a directory");
+        std::os::unix::fs::symlink(base.join("store/keys"), base.join("alias"))
+            .expect("a link to a missing directory");
+        let vault = base.join("alias/..");
+        let keys = base.join("store/keys");
+        assert_eq!(
+            create_key_dir(&keys, &[&vault], |d| fs::create_dir_all(d)),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert!(!keys.exists(), "a refusal made a directory");
+    }
+
+    /// Review of #10420: a vault directory may come to name a directory only
+    /// once that directory is made, as `vault` names `VAULT` on a volume that
+    /// ignores case. Here the vault directory's link appears as `x/y` is made.
+    /// That directory is refused as soon as it exists, nothing is made inside
+    /// it, and the directories made are removed.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_a_vault_names_once_made_is_refused_and_removed() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault-link");
+        let named = base.join("x/y");
+        let make = |d: &Path| -> io::Result<()> {
+            fs::create_dir_all(d)?;
+            if named.exists() && fs::symlink_metadata(&vault).is_err() {
+                std::os::unix::fs::symlink(&named, &vault)?;
+            }
+            Ok(())
+        };
+        assert_eq!(
+            create_key_dir(&base.join("x/y/keys"), &[&vault], make),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
         assert!(
             !base.join("x").exists(),
             "a refusal left a directory it made"
+        );
+    }
+
+    /// Review of #10420: a path may pass through a vault directory and leave
+    /// it by `..`, but a directory it would make inside the vault directory on
+    /// the way is refused before it is made.
+    #[test]
+    fn a_path_through_a_vault_makes_nothing_inside_it() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        assert_eq!(
+            create_key_dir(&vault.join("a/../../keys"), &[&vault], |d| {
+                fs::create_dir_all(d)
+            }),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+        assert_eq!(
+            fs::read_dir(&vault).expect("the vault lists").count(),
+            0,
+            "a directory was made inside the vault"
+        );
+        assert!(!base.join("keys").exists(), "a refusal made a directory");
+        assert_eq!(
+            create_key_dir(&vault.join("../keys"), &[&vault], |d| fs::create_dir_all(d)),
+            Ok(base.join("keys"))
         );
     }
 

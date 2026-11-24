@@ -426,8 +426,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
         keys.create(&slot(), &[1; 32]).unwrap();
-        // pid 1 is the system's first process: alive, and never this writer.
-        let copy = keys.dir.join(format!(".{}.1.1.tmp", slot().name()));
+        // A pid no process has: above every Unix pid limit.
+        let copy = keys
+            .dir
+            .join(format!(".{}.4294967295.1.tmp", slot().name()));
         fs::hard_link(keys.path(&slot()), &copy).unwrap();
         assert!(keys.replace(&slot(), &[2; 32]).unwrap());
         assert_eq!(*keys.get(&slot()).unwrap().unwrap(), [2; 32]);
@@ -447,7 +449,8 @@ mod tests {
         keys.create(&slot(), &[1; 32]).unwrap();
         keys.put_sealed(&name, b"sealed").unwrap();
         for stem in [slot().name(), sealed_file_name(&name)] {
-            let stuck = keys.dir.join(format!(".{stem}.1.1.tmp"));
+            // A pid no process has: above every Unix pid limit.
+            let stuck = keys.dir.join(format!(".{stem}.4294967295.1.tmp"));
             fs::create_dir(&stuck).unwrap();
             fs::write(stuck.join("inner"), [1; 32]).unwrap();
         }
@@ -461,6 +464,26 @@ mod tests {
             Err(KeystoreError::Platform("io", _))
         ));
         assert_eq!(keys.get_sealed(&name).unwrap(), None);
+    }
+
+    /// Review of #10420: a writer that died between its link and its unlink
+    /// left a copy of the seed under the pid the system has since given this
+    /// process. The slot's delete waits for this process's own writers too
+    /// (a local volume locks each open file apart), so it removes the copy.
+    #[test]
+    fn delete_removes_a_dead_writers_copy_of_the_seed_under_this_process_pid() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        keys.create(&slot(), &[1; 32]).unwrap();
+        let copy = keys
+            .dir
+            .join(format!(".{}.{}.1.tmp", slot().name(), std::process::id()));
+        fs::hard_link(keys.path(&slot()), &copy).unwrap();
+        keys.delete(&slot()).unwrap();
+        assert!(
+            !copy.exists(),
+            "the dead writer's copy under this process's pid is removed"
+        );
     }
 
     /// The open-time sweep does not wait for a writer in flight: while one
