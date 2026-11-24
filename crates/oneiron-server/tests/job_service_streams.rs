@@ -2,7 +2,9 @@
 //! The job service answers each stream of a connection on its own (review
 //! round 1 of #10407): a stream whose request never finishes, or whose peer
 //! stops reading its answer, costs only that stream, and the next stream on
-//! the same connection is still answered.
+//! the same connection is still answered. A stream whose request never
+//! finishes is dropped at the read deadline, which frees its slot among the
+//! connection's streams (review round 2).
 //!
 //! The connection is an in-process stand-in for the mesh seam
 //! (`MeshConnection`), so the test needs no vault and no grant: each stream
@@ -20,6 +22,7 @@ use oneiron_mesh_transport::{
     MachineId, MeshConnection, MeshDuplex, MeshError, MeshFuture, MeshService, MeshStream,
 };
 use oneiron_server::gpu_execution_node::JobService;
+use oneiron_server::gpu_execution_node::service::REQUEST_READ_DEADLINE;
 use oneiron_server::gpu_execution_node::wire::{JOB_ALPN, JOB_PROTOCOL, JobAnswer, JobRequest};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
@@ -33,6 +36,8 @@ struct ScriptedStream {
     /// Where the peer reads the answer; `None` is a peer that stopped
     /// reading, so sending the answer fails.
     answer: Option<oneshot::Sender<Vec<u8>>>,
+    /// Closed when the service drops the stream.
+    _drop_signal: Option<oneshot::Sender<()>>,
 }
 
 impl MeshStream for ScriptedStream {
@@ -127,7 +132,7 @@ async fn answer_while_serving(
     let service = JobService;
     let bytes = tokio::select! {
         served = service.serve(Box::new(connection)) => {
-            panic!("the service closed the connection before the second stream was answered: {served:?}")
+            panic!("the service closed the connection before the second answer: {served:?}")
         }
         bytes = tokio::time::timeout(ANSWER_WAIT, answer) => bytes
             .expect("the second stream is answered while the first one is still open")
@@ -153,6 +158,7 @@ async fn a_request_that_never_finishes_holds_up_no_later_stream() {
         .send(ScriptedStream {
             request: None,
             answer: None,
+            _drop_signal: None,
         })
         .expect("queue the unfinished stream");
     let (reader, answer) = oneshot::channel();
@@ -160,6 +166,7 @@ async fn a_request_that_never_finishes_holds_up_no_later_stream() {
         .send(ScriptedStream {
             request: Some(node_request()),
             answer: Some(reader),
+            _drop_signal: None,
         })
         .expect("queue the second stream");
 
@@ -175,6 +182,7 @@ async fn a_peer_that_stops_reading_one_answer_still_gets_the_next() {
         .send(ScriptedStream {
             request: Some(node_request()),
             answer: None,
+            _drop_signal: None,
         })
         .expect("queue the stream whose answer cannot be sent");
     let (reader, answer) = oneshot::channel();
@@ -182,10 +190,37 @@ async fn a_peer_that_stops_reading_one_answer_still_gets_the_next() {
         .send(ScriptedStream {
             request: Some(node_request()),
             answer: Some(reader),
+            _drop_signal: None,
         })
         .expect("queue the second stream");
 
     let answered = answer_while_serving(connection, answer).await;
     assert_not_enabled_node(&answered);
+    drop(opens);
+}
+
+#[tokio::test]
+async fn a_request_that_never_finishes_is_dropped_at_the_read_deadline() {
+    let (opens, connection) = scripted_connection();
+    let (drop_signal, dropped) = oneshot::channel::<()>();
+    opens
+        .send(ScriptedStream {
+            request: None,
+            answer: None,
+            _drop_signal: Some(drop_signal),
+        })
+        .expect("queue the unfinished stream");
+
+    let service = JobService;
+    let waited = tokio::select! {
+        served = service.serve(Box::new(connection)) => {
+            panic!("the service closed the connection while the peer kept it: {served:?}")
+        }
+        waited = tokio::time::timeout(REQUEST_READ_DEADLINE + ANSWER_WAIT, dropped) => waited,
+    };
+    assert!(
+        matches!(waited, Ok(Err(_))),
+        "the unfinished stream is dropped by the read deadline, freeing its slot",
+    );
     drop(opens);
 }
