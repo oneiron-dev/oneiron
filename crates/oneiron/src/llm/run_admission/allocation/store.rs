@@ -1,7 +1,7 @@
 use super::{
     ACCOUNT, AccountRow, AllocationCallKey, AllocationCommit, AllocationRow,
     AllocationServingFence, AllocationStoreError, AllocationTerminal, DurableAllocationHold,
-    DurableAllocationRead, VaultAllocationLedger,
+    DurableAllocationRead, ReservationParties, VaultAllocationLedger,
 };
 use crate::federation::WalletRef;
 use crate::llm::VaultResidentLedger;
@@ -12,7 +12,7 @@ use crate::llm::run_admission::{
     SelectedAllocation, UnitRate, is_gpu_line_allocation,
 };
 use crate::store::Callback;
-use crate::{EntityId, Vault};
+use crate::Vault;
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, AllocationStoreError>;
@@ -199,22 +199,22 @@ impl VaultAllocationLedger {
 
     /// Reserves against the explicit durable selection: the allocation of the
     /// call's slot (the one rule the in-memory account uses), of the funding
-    /// Grant's wallet when `funding` names one (FIX 7766), chosen and checked
-    /// inside this writer before anything is held. `freeze` must persist the
+    /// Grant's wallet when `parties.funding` names one (FIX 7766), chosen and
+    /// checked inside this writer before anything is held, and on the share
+    /// `parties.resident` holds of it (FIX 7767). `freeze` must persist the
     /// ORIGINAL producer in this same writer before the hold returns. A
     /// failure aborts both writes. It must not call a void receipt sink or
     /// rebuild prices/owner from a later catalog during recovery.
-    #[allow(clippy::too_many_arguments)]
     pub fn reserve<T>(
         &self,
         key: AllocationCallKey,
         native_units: u128,
         native: &LeaseUnit,
         rates: &[UnitRate],
-        resident: Option<EntityId>,
-        funding: Option<&WalletRef>,
+        parties: ReservationParties<'_>,
         freeze: impl FnOnce(&mut heed::RwTxn<'_>, &DurableAllocationHold) -> Result<T>,
     ) -> Result<AllocationCommit<(DurableAllocationHold, T)>> {
+        let ReservationParties { resident, funding } = parties;
         self.write(true, |txn, row| {
             if row
                 .allocations
