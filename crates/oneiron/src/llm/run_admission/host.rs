@@ -331,6 +331,24 @@ pub(super) struct LiveAllocation {
     pub(super) wallet: Option<WalletRef>,
 }
 
+/// The id prefix of a GPU line period's allocation (row M2-I2).
+const GPU_LINE_ALLOCATION_PREFIX: &str = "gpu-line:";
+
+/// The allocation id of the GPU line of lane project `project`: one id, with one generation
+/// per period.
+#[must_use]
+pub fn gpu_line_allocation_id(project: &EntityId) -> String {
+    format!("{GPU_LINE_ALLOCATION_PREFIX}{}", project.to_hex())
+}
+
+/// Whether `reference` names a GPU line's allocation. Only that line's unit claims draw on it,
+/// because their rows are its hold (row M2-I2; Engine HOLD-IS-CLAIM-FOLD = A). So neither
+/// host-account backend installs it, and no plain job's slot can select it.
+#[must_use]
+pub fn is_gpu_line_allocation(reference: &AllocationRef) -> bool {
+    reference.id.starts_with(GPU_LINE_ALLOCATION_PREFIX)
+}
+
 impl HostAccount {
     #[must_use]
     pub fn new() -> Arc<Self> {
@@ -357,8 +375,11 @@ impl HostAccount {
     /// that slot and any older generation of its own id, and nothing else;
     /// leases on a replaced allocation still settle there. Its generation
     /// must be newer than every one its own id held; other ids' generations
-    /// do not count.
+    /// do not count. A GPU line's allocation is refused: only its claims draw on it.
     pub fn grant(&self, allocation: Allocation) -> Result<(), AllocationGrantError> {
+        if is_gpu_line_allocation(&allocation.reference) {
+            return Err(AllocationGrantError::LineManaged);
+        }
         let mut state = self.lock();
         let reference = &allocation.reference;
         if state

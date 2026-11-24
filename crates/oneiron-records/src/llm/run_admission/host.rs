@@ -152,4 +152,10 @@ pub enum AllocationGrantError {
     /// generations do not count (row M2-I).
     #[error("allocation generation is not newer than one its allocation id already held")]
     StaleGeneration,
+    /// The allocation is a GPU line's. Only that line's unit claims draw on it, so no host
+    /// account installs it (row M2-I2).
+    #[error(
+        "a GPU line's allocation is drawn only by its unit claims; no host account installs it"
+    )]
+    LineManaged,
 }

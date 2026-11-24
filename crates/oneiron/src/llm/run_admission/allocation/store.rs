@@ -9,7 +9,7 @@ use crate::llm::run_admission::host::{Unpriced, convert};
 use crate::llm::run_admission::slot::{Slot, SlotMiss, select};
 use crate::llm::run_admission::{
     AccountStatus, Allocation, AllocationRef, AllocationRefusal, LeaseUnit, ResidentShareScope,
-    SelectedAllocation, UnitRate,
+    SelectedAllocation, UnitRate, is_gpu_line_allocation,
 };
 use crate::store::Callback;
 use crate::{EntityId, Vault};
@@ -114,8 +114,12 @@ impl VaultAllocationLedger {
     /// allocation selected in that slot and any older generation of its own
     /// id, and nothing else. Old captured holds keep their own allocation;
     /// closing the old selection releases nothing. Its generation must be
-    /// newer than every one its own id held; other ids' do not count.
+    /// newer than every one its own id held; other ids' do not count. A GPU
+    /// line's allocation is refused: only its claims draw on it (row M2-I2).
     pub fn grant(&self, allocation: Allocation) -> Result<AllocationCommit<()>> {
+        if is_gpu_line_allocation(&allocation.reference) {
+            return Err(AllocationStoreError::LineManaged);
+        }
         self.write(true, |_txn, row| {
             let reference = &allocation.reference;
             if row.allocations.iter().any(|held| {

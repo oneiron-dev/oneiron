@@ -56,6 +56,11 @@ pub enum AllocationStoreError {
     ServingChanged,
     #[error("allocation generation is not newer than one its allocation id already held")]
     StaleGeneration,
+    /// The allocation is a GPU line's: only that line's unit claims draw on it (row M2-I2).
+    #[error(
+        "a GPU line's allocation is drawn only by its unit claims; no host account installs it"
+    )]
+    LineManaged,
     #[error("the host has delivered no allocation")]
     NoAllocation,
     /// The funding Grant's wallet is `expected`, and no selected allocation
