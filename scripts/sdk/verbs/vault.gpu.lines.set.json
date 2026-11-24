@@ -1,6 +1,6 @@
 {
   "name": "vault.gpu.lines.set",
-  "description": "Sets the GPU line of one lane project: its wallet, periods, pinned share, floors, rung caps and allowance rules. It takes effect at the next period, its hosts at once. The vault owner's own act.",
+  "description": "Sets the GPU line of one lane project: its wallet, offers, machines, role lists, periods and budget policy. The budget applies from the next period, the rest at once. The vault owner's own act.",
   "input": "crate::gpu_line::GpuLineSetRequest",
   "output": "crate::gpu_line::GpuLineView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.set\", &input)?",
