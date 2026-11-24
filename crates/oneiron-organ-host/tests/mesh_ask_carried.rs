@@ -24,7 +24,13 @@
 //! would: a receipt an earlier call earned, a report or a body other than
 //! the ones the receipt names, and a result that does not decode are each
 //! refused as a broken rule, never taken and never tried on another node
-//! (blind-review P1s on #10409).
+//! (blind-review P1s on #10409). It can also sign again what it changed, as
+//! a node that signs what it should not would: a receipt naming the lent
+//! input as a vault version is refused, and a report the JSON writer cannot
+//! render leaves the signed receipt whole where a proposal keeps it. A
+//! staged result or output whose pieces the serving node then refuses ends
+//! the call as that node's failure, never as an absent node to run it again
+//! on (round-2 blind-review P1s on #10409).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-organ-host --test mesh_ask_carried` (the home's owner proof is a
@@ -54,8 +60,8 @@ use oneiron_mesh_transport::{
 };
 use oneiron_organ_host::{
     Answered, AskGrant, AskHandler, AskHandlers, AskReceipt, AskRequest, CallClass, CallReceipt,
-    HostConfig, HostError, ORGAN_ALPN, OrganCall, OrganHost, OrganNodes, OrganOutcome, OrganRouter,
-    OrganService, OrganSpec, RanOn, Routed,
+    HostConfig, HostError, LentInput, ORGAN_ALPN, OrganCall, OrganHost, OrganNodes, OrganOutcome,
+    OrganRouter, OrganService, OrganSpec, RanOn, Routed,
 };
 use oneiron_organ_protocol::{AskRefusal, Value, from_slice, to_vec};
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -63,6 +69,12 @@ use tokio::sync::{Notify, mpsc, oneshot};
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const ASK_VERB: &str = "probe.answer";
 const CALL_VERB: &str = "probe.ask";
+const OUTPUTS_VERB: &str = "probe.outputs";
+/// The media type of the bytes a call lends; the probe's install grants it.
+const LENT_MEDIA_TYPE: &str = "text/plain";
+/// An output past the organ service's 64 KiB inline bound: the serving node
+/// stages it.
+const STAGED_OUTPUT_BYTES: u64 = 128 * 1024;
 
 /// Bytes past which one transport message fails: the real transport's
 /// `MAX_MESSAGE`, mirrored by the pair below.
@@ -235,8 +247,9 @@ impl Home {
 
 fn spec() -> OrganSpec {
     let mut spec = OrganSpec::first_party("probe", PROBE);
-    spec.verbs = vec!["organ.echo".into(), CALL_VERB.into()];
+    spec.verbs = vec!["organ.echo".into(), CALL_VERB.into(), OUTPUTS_VERB.into()];
     spec.asks = vec![AskGrant::new(ASK_VERB, 4)];
+    spec.media_types = vec![LENT_MEDIA_TYPE.into()];
     spec
 }
 
@@ -256,6 +269,26 @@ fn ask_call(value: Value) -> OrganCall {
         deadline: Duration::from_secs(30),
         grant: "g".into(),
     }
+}
+
+/// A `probe.outputs` call: `count` outputs of `bytes` bytes each.
+fn outputs_call(count: u64, bytes: u64) -> OrganCall {
+    OrganCall {
+        verb: OUTPUTS_VERB.into(),
+        args: Value::Map(vec![
+            ("count".into(), count.into()),
+            ("bytes".into(), bytes.into()),
+        ]),
+        ..ask_call(Value::Nil)
+    }
+}
+
+/// `bytes`, lent to the call.
+fn lent(bytes: &[u8]) -> Vec<LentInput> {
+    vec![LentInput {
+        media_type: LENT_MEDIA_TYPE.into(),
+        bytes: bytes.to_vec(),
+    }]
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
@@ -628,8 +661,8 @@ impl OrganNodes for OneNode {
     }
 }
 
-/// Runs one `probe.ask` call from the home over the in-memory pair: the
-/// router dials `dialed`, whose endpoint key the asking end's handshake
+/// Runs `call` from the home over the in-memory pair, lending it `lent`:
+/// the router dials `dialed`, whose endpoint key the asking end's handshake
 /// proves, while `serving`'s host runs the probe, its replies going through
 /// `rewrite`, and `handler` answers the organ's ask back on the home.
 /// Returns what the router said and how many streams the serving end
@@ -638,7 +671,7 @@ async fn run_on(
     home: &Home,
     dialed: &Device,
     serving: &Device,
-    value: Value,
+    (call, lent): (OrganCall, Vec<LentInput>),
     handler: &'static dyn AskHandler,
     rewrite: Option<Rewrite>,
 ) -> (Result<Routed, HostError>, usize) {
@@ -658,7 +691,6 @@ async fn run_on(
     });
     let nodes = Arc::new(OneNode(dialed.machine));
     let asks = AskHandlers::none().with(ASK_VERB, handler);
-    let call = ask_call(value);
     let asking_vault = Arc::clone(&home.vault);
     // The router blocks on this runtime from the call's thread, while this
     // thread drives it: the serving end, and the timers of the mesh's
@@ -668,7 +700,7 @@ async fn run_on(
     let runtime = tokio::runtime::Handle::current();
     let calling = tokio::task::spawn_blocking(move || {
         let router = OrganRouter::new().with_mesh(transport, nodes, runtime);
-        router.call_with(&asking_vault, call, Vec::new(), &asks)
+        router.call_with(&asking_vault, call, lent, &asks)
     });
     let serving_conn = serving_rx.recv().await.expect("the router dials");
     let served = tokio::spawn(async move {
@@ -691,7 +723,8 @@ async fn run_over_mesh_on(
 ) -> (OrganOutcome, usize, Home, Device) {
     let home = home();
     let serving = home.enrol(0x51);
-    let (routed, accepted) = run_on(&home, &serving, &serving, value, handler, None).await;
+    let called = (ask_call(value), Vec::new());
+    let (routed, accepted) = run_on(&home, &serving, &serving, called, handler, None).await;
     let outcome = match routed {
         Ok(Routed::Done { outcome, ran_on }) => {
             assert_eq!(
@@ -795,15 +828,8 @@ async fn a_receipt_signed_by_another_machine_than_the_one_proved_is_refused() {
     let proved = home.enrol(0x52);
     // The handshake proves `proved`, the machine the router dialed; the host
     // that answers and signs is `serving`'s.
-    let (routed, _) = run_on(
-        &home,
-        &proved,
-        &serving,
-        Value::String("a small ask".into()),
-        &ECHO,
-        None,
-    )
-    .await;
+    let called = (ask_call(Value::String("a small ask".into())), Vec::new());
+    let (routed, _) = run_on(&home, &proved, &serving, called, &ECHO, None).await;
     match routed {
         Err(HostError::ReplyInvalid(why)) => assert!(
             why.contains(&serving.machine.to_hex()),
@@ -825,8 +851,8 @@ async fn run_rewritten(
     value: &str,
     rewrite: Rewrite,
 ) -> Result<Routed, HostError> {
-    let value = Value::String(value.into());
-    run_on(home, serving, serving, value, &ECHO, Some(rewrite))
+    let called = (ask_call(Value::String(value.into())), Vec::new());
+    run_on(home, serving, serving, called, &ECHO, Some(rewrite))
         .await
         .0
 }
@@ -958,4 +984,168 @@ async fn a_result_that_does_not_decode_is_refused_not_tried_on_another_node() {
         why.contains("does not decode"),
         "the refusal must say the result does not decode: {why}"
     );
+}
+
+/// A rewrite that hands `change` the outcome in each call reply the serving
+/// end sends, with its receipt, then signs that receipt again as `serving`'s
+/// machine, over the call's nonce and the report the outcome then holds:
+/// the word of a node that signs what it should not, which the signature
+/// check alone takes.
+fn resigned(
+    serving: &Device,
+    change: impl Fn(&mut Value, &mut CallReceipt) + Send + Sync + 'static,
+) -> Rewrite {
+    let signer = Arc::clone(&serving.vault);
+    rewrite_done(move |done| {
+        let held = field(done, "receipt").expect("the outcome holds its receipt");
+        let mut receipt: CallReceipt =
+            from_slice(&to_vec(held).expect("the receipt encodes")).expect("the receipt decodes");
+        change(done, &mut receipt);
+        let nonce = receipt
+            .signed_by
+            .as_ref()
+            .expect("the serving node signed its receipt")
+            .call_nonce
+            .clone();
+        let report = field(done, "report")
+            .cloned()
+            .expect("the outcome holds its report");
+        receipt
+            .sign(&*signer, &nonce, &report)
+            .expect("the serving machine signs again");
+        *entry_mut(done, "receipt").expect("the outcome holds its receipt") =
+            from_slice(&to_vec(&receipt).expect("the receipt encodes"))
+                .expect("the receipt reads as a value");
+    })
+}
+
+/// A rewrite that answers each `Get` with a refusal: a node that ran the
+/// call and then lost what it staged.
+fn refuse_pieces() -> Rewrite {
+    Arc::new(|bytes: Vec<u8>| match from_slice::<Value>(&bytes) {
+        Ok(reply) if field(&reply, "piece").is_some() => to_vec(&Value::Map(vec![(
+            "refused".into(),
+            "the staged bytes are gone".into(),
+        )]))
+        .expect("the refusal encodes"),
+        _ => bytes,
+    })
+}
+
+/// The call ran on `serving` and what it returned did not come: the asking
+/// node must end it as that node's failure, never wait to run it again on
+/// another node.
+fn not_fetched(routed: Result<Routed, HostError>, serving: &Device) {
+    match routed {
+        Err(HostError::Remote { machine, detail }) => {
+            assert_eq!(machine, serving.machine.to_hex());
+            assert!(
+                detail.contains("ran there"),
+                "the failure must say the call ran there: {detail}"
+            );
+        }
+        Ok(Routed::Waiting(wait)) => panic!(
+            "the call that ran waits to run again, as for an absent node: {}",
+            wait.reason
+        ),
+        Ok(Routed::Done { ran_on, .. }) => {
+            panic!("the call took what was refused, as run on {ran_on:?}")
+        }
+        Err(err) => panic!("the call fails otherwise: {err}"),
+    }
+}
+
+#[tokio::test]
+async fn a_receipt_naming_another_input_than_the_one_sent_is_refused() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    // The serving node signs a receipt that names the bytes this node lent,
+    // under their own hash, as a vault version this node never sent: a
+    // landing would take that version as the output's base.
+    let rewrite = resigned(&serving, |_, receipt| {
+        let line = receipt
+            .inputs
+            .first_mut()
+            .expect("the receipt names the lent input");
+        line.artifact = asking_id().to_hex();
+        line.version = 2;
+        line.lent = false;
+    });
+    let called = (
+        ask_call(Value::String("a small ask".into())),
+        lent(b"the lent bytes"),
+    );
+    let (routed, _) = run_on(&home, &serving, &serving, called, &ECHO, Some(rewrite)).await;
+    let why = refused(routed);
+    assert!(
+        why.contains("another call"),
+        "the refusal must say the receipt describes another call: {why}"
+    );
+}
+
+#[tokio::test]
+async fn a_report_the_json_writer_cannot_render_keeps_the_signed_receipt() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    // The serving node returns one output and a report with a nil map key,
+    // and signs that report as its word.
+    let rewrite = resigned(&serving, |done, _| {
+        *entry_mut(done, "report").expect("the outcome holds its report") =
+            Value::Map(vec![(Value::Nil, "a nil key".into())]);
+    });
+    let called = (outputs_call(1, 16), Vec::new());
+    let (routed, _) = run_on(&home, &serving, &serving, called, &ECHO, Some(rewrite)).await;
+    let outcome = match routed {
+        Ok(Routed::Done { outcome, .. }) => outcome,
+        Ok(Routed::Waiting(wait)) => panic!("the call waits: {}", wait.reason),
+        Err(err) => panic!("the call fails: {err}"),
+    };
+    let native = outcome.native_outputs("run", None);
+    assert_eq!(native.len(), 1, "the call made one output");
+    let stored = &native[0].report;
+    assert!(
+        stored.starts_with(r#"{"report":null,"receipt":{"#),
+        "the report the writer cannot render is null beside the receipt: {stored}"
+    );
+    let signed = format!(r#""signed_by":{{"machine":"{}""#, serving.machine.to_hex());
+    assert!(
+        stored.contains(&signed),
+        "the proposal must keep the serving machine's signed receipt: {stored}"
+    );
+}
+
+#[tokio::test]
+async fn a_staged_result_that_does_not_come_is_not_run_again() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    // The big answer rides in the probe's report, so the serving node
+    // stages the result; then it refuses the result's pieces.
+    let called = (ask_call(Value::String("a small ask".into())), Vec::new());
+    let (routed, _) = run_on(
+        &home,
+        &serving,
+        &serving,
+        called,
+        &BIG_ANSWER,
+        Some(refuse_pieces()),
+    )
+    .await;
+    not_fetched(routed, &serving);
+}
+
+#[tokio::test]
+async fn a_staged_output_that_does_not_come_is_not_run_again() {
+    let home = home();
+    let serving = home.enrol(0x51);
+    let called = (outputs_call(1, STAGED_OUTPUT_BYTES), Vec::new());
+    let (routed, _) = run_on(
+        &home,
+        &serving,
+        &serving,
+        called,
+        &ECHO,
+        Some(refuse_pieces()),
+    )
+    .await;
+    not_fetched(routed, &serving);
 }
