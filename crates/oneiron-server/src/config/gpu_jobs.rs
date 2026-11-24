@@ -188,6 +188,59 @@ impl GpuJobsFile {
     }
 }
 
+/// Refuses a GPU `[gpu_jobs.devices]` offers that a model worker runs on
+/// (`[models.workers].device`), so one GPU has one booker inside Oneiron too.
+pub(crate) fn refuse_offered_worker_devices(
+    devices: &GpuDeviceOffer,
+    models: Option<&super::ModelsConfig>,
+) -> anyhow::Result<()> {
+    let Some(models) = models else {
+        return Ok(());
+    };
+    refuse_worker_device_overlap(
+        &devices.offered,
+        models
+            .workers
+            .iter()
+            .filter_map(|worker| Some((worker.id.as_str(), worker.device.as_deref()?))),
+    )
+}
+
+/// Refuses an offered GPU that one of `workers` (each its id and its
+/// `CUDA_VISIBLE_DEVICES` entry) names. An index (`0`) names no device id
+/// until the driver is read, and CUDA may number the cards otherwise, so
+/// while any GPU is offered a worker names its GPU by device id.
+///
+/// # Errors
+///
+/// The worker and the GPU that overlap, or the worker that names a GPU by
+/// index.
+pub fn refuse_worker_device_overlap<'a>(
+    offered: &BTreeSet<String>,
+    workers: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> anyhow::Result<()> {
+    if offered.is_empty() {
+        return Ok(());
+    }
+    for (worker, named) in workers {
+        for entry in named
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            anyhow::ensure!(
+                !offered.contains(entry),
+                "gpu_jobs.devices.offered names GPU {entry}, which the model worker {worker} runs on: a GPU has one booker"
+            );
+            anyhow::ensure!(
+                !entry.chars().all(|c| c.is_ascii_digit()),
+                "the model worker {worker} names its GPU by index ({entry}) while gpu_jobs.devices offers GPUs: name it by device id (nvidia-smi -L), so no offered GPU is one it runs on"
+            );
+        }
+    }
+    Ok(())
+}
+
 impl GpuDevicesFile {
     fn resolve(self) -> anyhow::Result<GpuDeviceOffer> {
         let mut offered = BTreeSet::new();

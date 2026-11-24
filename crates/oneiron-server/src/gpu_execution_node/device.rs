@@ -30,7 +30,8 @@ pub struct GpuComputeProcess {
 }
 
 /// Why this machine could not say what its GPUs are, what runs on them,
-/// which of them another booker holds, or whether it is drained.
+/// which of them another booker holds, whether it is drained, or what its
+/// jobs' disk holds.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "error", rename_all = "snake_case")]
 pub enum GpuProbeError {
@@ -44,6 +45,8 @@ pub enum GpuProbeError {
     WithheldUnreadable { reason: String },
     #[error("gpu_probe.drain_unreadable: the GPU drain file could not be read: {reason}")]
     DrainUnreadable { reason: String },
+    #[error("gpu_probe.disk_unreadable: the GPU jobs' disk could not be read: {reason}")]
+    DiskUnreadable { reason: String },
 }
 
 /// What the slot table asks of this machine's GPU driver, at each ask.

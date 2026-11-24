@@ -17,6 +17,7 @@ pub use selection::{
 };
 pub use slots::{
     GPU_DRAIN_AFTER_FAILURES, GPU_SLOT_HOLD_SECS, GpuAvailability, GpuDeviceAvailability,
-    GpuDeviceLease, GpuDeviceOffer, GpuDeviceState, GpuJobDisk, GpuJobEnd, GpuSlotHold,
-    GpuSlotLease, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable, MachineGpus,
+    GpuDeviceLease, GpuDeviceOffer, GpuDeviceProcesses, GpuDeviceState, GpuDiskReading, GpuJobDisk,
+    GpuJobEnd, GpuSlotHold, GpuSlotLease, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable,
+    MachineGpus,
 };

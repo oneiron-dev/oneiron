@@ -86,7 +86,10 @@ pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };
-pub use resource_gpu::{GpuDeviceLease, GpuJobEnd, GpuSlotRefusal, GpuSlotRequest, MachineGpus};
+pub use resource_gpu::{
+    GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotHold, GpuSlotRefusal, GpuSlotRequest,
+    MachineGpus,
+};
 pub use resource_memory::{FloorLease, FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,

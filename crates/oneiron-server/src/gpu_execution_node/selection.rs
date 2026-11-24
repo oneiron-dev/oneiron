@@ -172,6 +172,9 @@ pub enum GpuSelectionRefusal {
     NoneLive,
     #[error("gpu_slots.none_free: no admitted machine that answered has a matching GPU free now")]
     NoneFree,
+    /// The caller's assignment for `machine` failed, so it was not asked.
+    #[error("gpu_slots.assignment_failed: the assignment to machine {} was not written ({})", .machine.to_hex(), .reason)]
+    AssignmentFailed { machine: EntityId, reason: String },
     /// The hold on `machine` may stand: ask that machine again under the
     /// same key, never another machine.
     #[error(
@@ -190,7 +193,12 @@ pub enum GpuSelectionRefusal {
 ///    request's key already taking a GPU is asked to hold it again (the same
 ///    key answers the same hold), so one key never holds GPUs on two
 ///    machines;
-/// 3. the free matching GPUs those answers show are tried in best-fit order
+/// 3. before each machine is asked to hold, `assign` runs with that
+///    machine and the request as it will be sent: the caller writes its
+///    durable assignment there, so a retry after an uncertain hold asks the
+///    same machine, also after the home restarts. An assignment that fails
+///    stops the selection there;
+/// 4. the free matching GPUs those answers show are tried in best-fit order
 ///    (the least memory first, then machine id, then device id), each held
 ///    by its device id under the request's key. A refusal (the GPU was
 ///    taken in between, or the disk is under its reserve) or an unreachable
@@ -204,6 +212,7 @@ pub fn select_gpu_slot(
     candidates: &[GpuNodeCandidate],
     peer: &dyn GpuSlotPeer,
     request: &GpuSlotRequest,
+    assign: &mut dyn FnMut(EntityId, &GpuSlotRequest) -> Result<(), String>,
 ) -> Result<GpuSlotPlacement, GpuSelectionRefusal> {
     let matching: Vec<EntityId> = candidates
         .iter()
@@ -232,6 +241,9 @@ pub fn select_gpu_slot(
                     // The key already takes a GPU there (a retry, or a twin
                     // call): that machine answers it again, and no other
                     // machine is asked.
+                    assign(machine, request).map_err(|reason| {
+                        GpuSelectionRefusal::AssignmentFailed { machine, reason }
+                    })?;
                     return peer
                         .hold(machine, request)
                         .map(|hold| GpuSlotPlacement { machine, hold })
@@ -265,6 +277,8 @@ pub fn select_gpu_slot(
             device_id: Some(device.device_id),
             ..request.clone()
         };
+        assign(machine, &pinned)
+            .map_err(|reason| GpuSelectionRefusal::AssignmentFailed { machine, reason })?;
         match peer.hold(machine, &pinned) {
             Ok(hold) => return Ok(GpuSlotPlacement { machine, hold }),
             Err(GpuSlotPeerError::Refused(_) | GpuSlotPeerError::Unreachable { .. }) => {}

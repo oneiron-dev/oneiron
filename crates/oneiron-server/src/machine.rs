@@ -372,6 +372,13 @@ impl DiskFloor {
         self.admit(&claim, bytes)?;
         Ok(claim)
     }
+
+    /// What this floor measures now: the disk's free bytes, its reserve and
+    /// the bytes claimed past it.
+    pub(crate) fn measured(&self) -> std::io::Result<(u64, u64, u64)> {
+        let claimed = *lock(&self.claimed);
+        Ok((self.free()?, self.reserve, claimed))
+    }
 }
 
 impl DiskClaim {
