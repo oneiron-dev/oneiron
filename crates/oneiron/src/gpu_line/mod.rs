@@ -10,6 +10,11 @@
 //! share, the floor per family and the market ceilings the mint divides by
 //! payoff.
 mod fold;
+mod intent;
+pub(crate) mod tables;
+
+pub(crate) use intent::erase_intent_asker_in_txn;
+pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 
 pub use fold::{
     AllowanceHold, AllowanceRule, AllowanceTable, Bucket, BudgetDenied, Draw, DrawAsk, DrawPurpose,
