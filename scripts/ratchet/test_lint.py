@@ -15,7 +15,8 @@ code only, the others also read string literals:
                `OffsetDateTime::now_utc`. Use oneiron_testkit::clock::FakeClock.
   network      an http(s)/ws(s) URL to a host other than loopback, a reserved test name
                (example.com/.org/.net, .test, .example, .invalid, .localhost) or a host whose
-               URIs are names only (XML namespaces and JSON schema dialects).
+               URIs are names only (XML namespaces, JSON schema dialects and the Git LFS
+               pointer's version line).
   fixed-port   a fixed loopback port (`127.0.0.1:8080`). Bind port 0.
   real-model   provider API key names, provider hosts, model files (.gguf, .safetensors, .onnx)
                and local model servers. Use ScriptedProvider and HashingEmbedder.
@@ -76,7 +77,9 @@ LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1", "0.0.0.0")
 PORT_HOSTS = ("127.0.0.1", "localhost", "[::1]", "0.0.0.0")
 RESERVED_SUFFIXES = ("example.com", "example.org", "example.net", ".test", ".example", ".invalid", ".localhost")
 # Hosts whose URIs are names, not addresses: XML namespaces and schema dialects (`xmlns`,
-# `$schema`), which a parser compares as text and no client fetches.
+# `$schema`), which a parser compares as text and no client fetches, and the Git LFS pointer's
+# version line (`version https://git-lfs.github.com/spec/v1`), which Git LFS compares as text; an
+# LFS transfer goes to the repository's own host, never to this one.
 IDENTIFIER_HOSTS = (
     "schemas.openxmlformats.org",
     "schemas.microsoft.com",
@@ -84,6 +87,7 @@ IDENTIFIER_HOSTS = (
     "json-schema.org",
     "www.w3.org",
     "purl.org",
+    "git-lfs.github.com",
 )
 SCHEMES = ("http://", "https://", "ws://", "wss://")
 ALLOW_MARK = "testkit-lint: allow("

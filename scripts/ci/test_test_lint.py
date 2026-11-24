@@ -56,14 +56,16 @@ class Rules(unittest.TestCase):
         )
         self.assertEqual(rules(TEST_FILE, source), [(1, "network"), (5, "fixed-port")])
 
-    def test_xml_namespaces_and_schema_identifiers_are_not_network(self):
+    def test_xml_namespaces_schema_and_lfs_pointer_identifiers_are_not_network(self):
         source = (
             'const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";\n'
             "let s = \"{$schema:'http://json-schema.org/draft-07/schema#'}\";\n"
             'let x = "http://www.w3.org/2000/svg";\n'
             'let d = "https://schemas.openxmlformats.org.cdn.net/x";\n'
+            'let p = "version https://git-lfs.github.com/spec/v1\\noid sha256:{}\\nsize 12\\n";\n'
+            'let l = "https://github.com/o/r.git/info/lfs/objects/batch";\n'
         )
-        self.assertEqual(rules(TEST_FILE, source), [(4, "network")])
+        self.assertEqual(rules(TEST_FILE, source), [(4, "network"), (6, "network")])
 
     def test_real_model_keys_hosts_and_files_are_found(self):
         source = 'env::var("OPENAI_API_KEY");\nlet u = "https://api.openai.com/v1";\nlet m = "model.gguf";\n'
