@@ -1036,7 +1036,7 @@ fn billed_seconds_never_pass_the_issuers_bracket_and_a_job_between_two_polls_is_
 }
 
 #[test]
-fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
+fn a_job_that_never_started_settles_nothing_and_its_dispatch_keeps_the_nodes_reason() {
     with_rig(|rig| {
         let workload = rig.approve("never-started", FAR_EXPIRY_MS);
         rig.node.refuse_submits(Some("no_device"));
@@ -1044,9 +1044,9 @@ fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
         assert_eq!(
             refused.job.state,
             GpuJobState::Held {
-                reason: "no_device".to_owned()
+                reason: "not_available_to_this_caller".to_owned()
             },
-            "create preserves the node's refusal",
+            "the job's reason does not disclose what the machine said (section 6; review round 1 of #10414)",
         );
         assert_eq!(
             refused.settled(),
