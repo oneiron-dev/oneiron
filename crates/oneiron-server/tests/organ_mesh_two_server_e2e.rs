@@ -75,8 +75,9 @@ const PROBE_ENV: &str = "ONEIRON_TEST_ORGAN_PROBE";
 const PROBE_BIN: &str = "oneiron-organ-probe";
 /// The verbs B's install grants: the runtime's `organ.touch` (reads every
 /// input byte and reports their length and fold), `probe.outputs` (answers
-/// with outputs of a given size) and `probe.sleep` (a long call).
-const PROBE_VERBS: [&str; 3] = ["organ.touch", "probe.outputs", "probe.sleep"];
+/// with outputs of a given size), `probe.sleep` (a long call) and
+/// `probe.ask` (asks, then sleeps).
+const PROBE_VERBS: [&str; 4] = ["organ.touch", "probe.outputs", "probe.sleep", "probe.ask"];
 const BIN: &str = "application/octet-stream";
 /// Past the transport's 1 MiB message, and not a whole number of the
 /// staging's pieces, so it crosses as several pieces, the last one short.
@@ -89,6 +90,10 @@ const DRAIN_GRACE: Duration = Duration::from_secs(10);
 const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// The call the stop cuts short asks the probe to sleep this long.
 const LONG_SLEEP_MS: u64 = 120_000;
+/// Asks for a verb B's install does not grant, each refused there with a
+/// receipt line: with this many, the reply of the call they belong to is
+/// past the organ service's 64 KiB inline bound, so B stages it.
+const DENIED_ASKS: u64 = 1_500;
 
 /// Maps any error into the test's error with the step that failed.
 fn at<E: std::fmt::Debug>(step: &'static str) -> impl FnOnce(E) -> Box<dyn std::error::Error> {
@@ -720,50 +725,12 @@ async fn call_in_flight_when_the_server_stops() -> TestResult {
         ("ms".into(), LONG_SLEEP_MS.into()),
         ("obey_cancel".into(), true.into()),
     ]);
-    let router = organ_router(&mesh.a.served.server);
-    let vault = Arc::clone(&mesh.a.device.vault);
     let sleeping = call("probe.sleep", args, Duration::from_secs(300));
-    let in_flight = tokio::task::spawn_blocking(move || {
-        router.call_with(&vault, sleeping, Vec::new(), &AskHandlers::none())
-    });
-    let b_server = Arc::clone(&mesh.b.served.server);
-    let running = eventually(Duration::from_secs(60), || {
-        organ_status(&b_server, PROBE)
-            .is_some_and(|status| status.spawns >= 1 && matches!(status.state, OrganState::Warm))
-    })
-    .await;
-    assert!(running, "B's host never started the probe for A's call");
-
-    // B's listener stops: it admits nothing new, the admitted call runs on
-    // until the drain deadline, then the stop cancels it.
-    // testkit-lint: allow(wall-clock) the drain deadline runs on the listener's own clock: this measures it
-    let stopping = std::time::Instant::now();
-    let listener = mesh
-        .b
-        .served
-        .listener
-        .take()
-        .ok_or("B's listener is gone")?;
-    let stopped = tokio::spawn(listener.stop());
-    let routed = in_flight
-        .await
-        .map_err(at("the call's thread"))?
-        .map_err(at("A's sleep"))?;
-    let ended_after = stopping.elapsed();
-    let reason = waited(routed, "A's sleep")?;
-    assert!(
-        ended_after >= DRAIN_GRACE.saturating_sub(Duration::from_secs(2)),
-        "the admitted call must run on until the drain deadline: it ended {ended_after:?} after the stop"
-    );
-    assert!(
-        ended_after < DRAIN_GRACE + STOP_MARGIN,
-        "the stop must cut the call at its drain deadline, not after its {LONG_SLEEP_MS} ms: it ended {ended_after:?} after the stop"
-    );
+    let reason = cut_short_by_the_stop(&mut mesh, sleeping).await?;
     assert!(
         reason.contains(&b_hex) && reason.contains("interrupted by the host's stop"),
         "A's call must wait with B's word that its stop cut the call short: {reason}"
     );
-    stopped.await.map_err(at("B's listener stop"))?;
 
     // Once B stopped, a new call from A reaches no node and waits.
     let routed = call_from(&mesh.a, touch(), lent(b"after the stop".to_vec()))
@@ -776,4 +743,80 @@ async fn call_in_flight_when_the_server_stops() -> TestResult {
     );
     mesh.stop().await;
     Ok(())
+}
+
+#[test]
+fn a_staged_reply_of_a_call_the_stop_cut_short_reaches_the_asker() -> TestResult {
+    on_engine_stack(staged_reply_of_a_call_the_stop_cut_short)
+}
+
+/// B's reply to a call its stop cut short is staged, so A takes it by `Get`
+/// on new streams after B's stop cancelled its work: B's connection must
+/// still serve them (round-2 blind-review P1 on #10402). Without that, A's
+/// `Get` finds no one accepting, and A's call waits on a broken connection,
+/// without B's word that its stop cut the call short.
+async fn staged_reply_of_a_call_the_stop_cut_short() -> TestResult {
+    let mut mesh = Mesh::start().await?;
+    let b_hex = mesh.b.device.machine.to_hex();
+
+    // Each denied ask leaves a receipt line in the reply that says the stop
+    // cut the call short; then the probe sleeps far past the stop.
+    let args = Value::Map(vec![
+        ("verb".into(), "probe.denied".into()),
+        ("times".into(), DENIED_ASKS.into()),
+        ("sleep_ms".into(), LONG_SLEEP_MS.into()),
+    ]);
+    let asking = call("probe.ask", args, Duration::from_secs(300));
+    let reason = cut_short_by_the_stop(&mut mesh, asking).await?;
+    assert!(
+        reason.contains(&b_hex) && reason.contains("interrupted by the host's stop"),
+        "A's call must wait with B's word, staged, that its stop cut the call short: {reason}"
+    );
+    mesh.stop().await;
+    Ok(())
+}
+
+/// Runs `cut` from A on B, stops B's listener once B's host runs it, and
+/// returns why A's call waits. B's listener admits nothing new once its stop
+/// begins; the admitted call runs on until the drain deadline, then the stop
+/// cancels it, so it must end there, not at its own end.
+async fn cut_short_by_the_stop(mesh: &mut Mesh, cut: OrganCall) -> TestResult<String> {
+    let router = organ_router(&mesh.a.served.server);
+    let vault = Arc::clone(&mesh.a.device.vault);
+    let in_flight = tokio::task::spawn_blocking(move || {
+        router.call_with(&vault, cut, Vec::new(), &AskHandlers::none())
+    });
+    let b_server = Arc::clone(&mesh.b.served.server);
+    let running = eventually(Duration::from_secs(60), || {
+        organ_status(&b_server, PROBE)
+            .is_some_and(|status| status.spawns >= 1 && matches!(status.state, OrganState::Warm))
+    })
+    .await;
+    assert!(running, "B's host never started the probe for A's call");
+
+    // testkit-lint: allow(wall-clock) the drain deadline runs on the listener's own clock: this measures it
+    let stopping = std::time::Instant::now();
+    let listener = mesh
+        .b
+        .served
+        .listener
+        .take()
+        .ok_or("B's listener is gone")?;
+    let stopped = tokio::spawn(listener.stop());
+    let routed = in_flight
+        .await
+        .map_err(at("the call's thread"))?
+        .map_err(at("A's call B's stop cut short"))?;
+    let ended_after = stopping.elapsed();
+    let reason = waited(routed, "A's call B's stop cut short")?;
+    assert!(
+        ended_after >= DRAIN_GRACE.saturating_sub(Duration::from_secs(2)),
+        "the admitted call must run on until the drain deadline: it ended {ended_after:?} after the stop"
+    );
+    assert!(
+        ended_after < DRAIN_GRACE + STOP_MARGIN,
+        "the stop must cut the call at its drain deadline, not after its {LONG_SLEEP_MS} ms: it ended {ended_after:?} after the stop"
+    );
+    stopped.await.map_err(at("B's listener stop"))?;
+    Ok(reason)
 }
