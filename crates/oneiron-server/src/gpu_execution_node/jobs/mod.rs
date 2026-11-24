@@ -27,6 +27,7 @@ pub mod journal;
 pub mod journal_file;
 pub mod node_parts;
 pub mod receipt;
+pub mod staging;
 
 mod admission;
 mod end;
@@ -51,6 +52,7 @@ pub use node_parts::{
     NodeJobPaths, NodeJobSettings, StageFailure, StageOrder, Stager, StagingNotBuilt,
 };
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
+pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 
 /// How long a `Busy` answer asks the issuer to wait before it asks again: a
 /// protocol hint, not a policy.
