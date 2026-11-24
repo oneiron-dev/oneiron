@@ -45,6 +45,18 @@ fn absent(err: MeshError) -> PeerError {
     PeerError::Absent(err.to_string())
 }
 
+/// Bytes a reply named that did not come once the node had answered the
+/// call: the call ran there, so it is that node's failure, never an absent
+/// node to run the call again on (round-2 blind-review P1 on #10409).
+fn not_fetched(machine: EntityId) -> impl Fn(MeshError) -> PeerError {
+    move |err| {
+        PeerError::Failed(HostError::Remote {
+            machine: machine.to_hex(),
+            detail: format!("the call ran there, but what it returned did not come: {err}"),
+        })
+    }
+}
+
 fn unexpected(reply: &Reply) -> MeshError {
     match reply {
         Reply::Refused(why) => MeshError::Io(format!("refused: {why}")),
@@ -272,7 +284,7 @@ pub(crate) async fn call_on(
     let result = match decode::<Reply>(&reply.map_err(absent)?).map_err(absent)? {
         Reply::Call(carried) => {
             let _held = here.hold(&carried)?;
-            let bytes = take(conn, carried).await.map_err(absent)?;
+            let bytes = take(conn, carried).await.map_err(not_fetched(machine))?;
             // The call ran there once its result came: a result that does
             // not decode is a broken rule, never an absent node to run the
             // call on again (blind-review P1 on #10409).
@@ -295,7 +307,7 @@ pub(crate) async fn call_on(
             // node's own ask evidence is reconciled into the lines the
             // handlers keep.
             receipts.reconcile(outcome.receipt.asks.clone());
-            received(conn, outcome, here).await
+            received(conn, machine, outcome, here).await
         }
         PeerResult::Failed(failure) => {
             receipts.reconcile(failure.asks);
@@ -335,9 +347,10 @@ fn draw_call_nonce() -> Result<String, PeerError> {
 /// is signed by `machine`, the node the handshake proved, against its
 /// MACHINE row there (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE); the
 /// signature names this call's nonce and the report beside it; and the
-/// receipt describes the call this node sent, with its inputs, and the
-/// body it returned (blind-review P1s on #10409). The output files are
-/// checked against the receipt as they are taken.
+/// receipt describes the call this node sent, with its inputs (each one's
+/// artifact, version, lent mark, length and hash), and the body it returned
+/// (blind-review P1s on #10409). The output files are checked against the
+/// receipt as they are taken.
 fn answers_this_call(
     outcome: &PeerOutcome,
     machine: EntityId,
@@ -374,7 +387,13 @@ fn answers_this_call(
             .inputs
             .iter()
             .zip(inputs)
-            .all(|(line, (_, lent))| line.content_hash == Hash32::of(&lent.bytes));
+            .all(|(line, (read, lent))| {
+                line.artifact == read.map(|read| read.artifact.to_hex()).unwrap_or_default()
+                    && line.version == read.map_or(0, |read| read.version)
+                    && line.lent == read.is_none()
+                    && line.len == lent.bytes.len() as u64
+                    && line.content_hash == Hash32::of(&lent.bytes)
+            });
     if receipt.organ.name != call.organ
         || receipt.verb != call.verb
         || receipt.schema != call.schema
@@ -464,10 +483,11 @@ impl Drop for AttemptReceipts<'_> {
     }
 }
 
-/// Takes the outputs back and checks each against the serving host's
-/// receipt: the bytes that came are the bytes it hashed.
+/// Takes the outputs back from `machine`, which ran the call, and checks
+/// each against its receipt: the bytes that came are the bytes it hashed.
 async fn received(
     conn: &dyn MeshConnection,
+    machine: EntityId,
     outcome: PeerOutcome,
     here: Here<'_>,
 ) -> Result<OrganOutcome, PeerError> {
@@ -485,7 +505,9 @@ async fn received(
     let mut outputs = Vec::with_capacity(wire.len());
     for (output, line) in wire.into_iter().zip(&receipt.outputs) {
         let leased = here.hold(&output.bytes)?;
-        let bytes = take(conn, output.bytes).await.map_err(absent)?;
+        let bytes = take(conn, output.bytes)
+            .await
+            .map_err(not_fetched(machine))?;
         let content_hash = Hash32::of(&bytes);
         if content_hash != output.content_hash
             || content_hash != line.content_hash
