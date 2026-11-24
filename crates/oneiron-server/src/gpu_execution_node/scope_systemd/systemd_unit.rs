@@ -9,9 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::super::jobs::{JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus};
+use super::super::jobs::{
+    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, ScopeCapabilities,
+};
 use super::capabilities;
-use super::records::BoundProof;
+use super::records::BoundReport;
 
 /// How long one `systemctl` call may take before it counts as no answer.
 pub const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -154,24 +156,12 @@ impl SystemdJobUnit {
         Self { node_file }
     }
 
-    /// What this machine can enforce now, bound by bound, each with one line
-    /// of evidence (pass 34, 2.2 `LaunchScope::probe`).
+    /// What this machine can enforce now, by bound name, each with one line
+    /// of evidence; [`JobUnit::probe`] gives the same as R3a's
+    /// `ScopeCapabilities`.
     #[must_use]
-    pub fn probe(&self) -> BTreeMap<String, BoundProof> {
+    pub fn bound_reports(&self) -> BTreeMap<String, BoundReport> {
         capabilities::report(&self.node_file)
-    }
-
-    /// Moves a running key's cutoff (pass 34, W1). Not built: the cutoff
-    /// stays where the prepare step armed it.
-    ///
-    /// # Errors
-    ///
-    /// Always: `renew` is unsupported until row W1.
-    pub fn renew(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
-        Err(JobUnitError {
-            unit: unit.unit_name(),
-            reason: "renew_unsupported: the systemd scope moves no cutoff before row W1".to_owned(),
-        })
     }
 
     fn error(unit: &JobKeyId, reason: String) -> JobUnitError {
@@ -183,6 +173,10 @@ impl SystemdJobUnit {
 }
 
 impl JobUnit for SystemdJobUnit {
+    fn probe(&self) -> ScopeCapabilities {
+        capabilities::scope_capabilities(&self.bound_reports())
+    }
+
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
         run_tool(
             "systemctl",

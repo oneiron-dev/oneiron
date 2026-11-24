@@ -24,7 +24,7 @@ use super::super::wire::NetworkMode;
 use super::capabilities::kernel_facts;
 use super::device_files;
 use super::records::{
-    BoundProof, CutoffPlan, ExecFile, PreparedRecord, ScopeRecord, ScopeReport, bound,
+    BoundReport, CutoffPlan, ExecFile, PreparedRecord, ScopeRecord, ScopeReport, bound,
 };
 use super::safe_fs::{
     self, borrow, boot_id, boot_ns, make_dir_beneath, make_fifo_beneath, open_dir_beneath,
@@ -468,7 +468,7 @@ fn configured_bounds(
     unit: &str,
     write_rate_failure: Option<String>,
     has_denied_device: bool,
-) -> BTreeMap<String, BoundProof> {
+) -> BTreeMap<String, BoundReport> {
     let facts = kernel_facts();
     let found = show(
         unit,
@@ -499,9 +499,9 @@ fn configured_bounds(
     let io_max = cgroup_file("io.max");
     let on = |holds: bool, evidence: String| {
         if holds {
-            BoundProof::kernel(evidence)
+            BoundReport::kernel(evidence)
         } else {
-            BoundProof::none(evidence)
+            BoundReport::none(evidence)
         }
     };
     let unified = !facts.cgroup_controllers.is_empty();
@@ -515,7 +515,7 @@ fn configured_bounds(
     );
     out.insert(
         bound::CUTOFF_WITHOUT_ENGINE.to_owned(),
-        BoundProof::kernel("the service manager's cutoff timer, armed before the workload"),
+        BoundReport::kernel("the service manager's cutoff timer, armed before the workload"),
     );
     out.insert(
         bound::EMPTINESS.to_owned(),
@@ -532,7 +532,7 @@ fn configured_bounds(
     );
     out.insert(
         bound::CPU_CAP.to_owned(),
-        BoundProof::none("this scope sets no CPU cap yet"),
+        BoundReport::none("this scope sets no CPU cap yet"),
     );
     out.insert(
         bound::FILE_WALL.to_owned(),
@@ -577,13 +577,13 @@ fn configured_bounds(
         bound::WRITE_RATE_CAP.to_owned(),
         match (write_rate_failure, io_max.as_deref()) {
             (None, Some(text)) if text.contains("wbps=") && !text.contains("wbps=max") => {
-                BoundProof::kernel(format!("io.max {text}"))
+                BoundReport::kernel(format!("io.max {text}"))
             }
-            (None, text) => BoundProof::none(format!(
+            (None, text) => BoundReport::none(format!(
                 "IOWriteBandwidthMax= accepted, but io.max holds no write rate ({}): no block device under the payload directory?",
                 text.unwrap_or("unreadable")
             )),
-            (Some(why), _) => BoundProof::none(format!("IOWriteBandwidthMax= not applied: {why}")),
+            (Some(why), _) => BoundReport::none(format!("IOWriteBandwidthMax= not applied: {why}")),
         },
     );
     out
@@ -682,7 +682,7 @@ fn read_and_judge(context: &StepContext, deadline: Duration) -> Result<ScopeRepo
             !report
                 .proofs
                 .get(name.as_str())
-                .is_some_and(BoundProof::holds)
+                .is_some_and(BoundReport::enforced)
         })
     {
         report.refusal = Some(format!("required_bound_not_proved: {missing}"));

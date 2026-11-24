@@ -21,7 +21,7 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::records::{BoundProof, ExecFile, ScopeReport, bound};
+use super::records::{BoundReport, ExecFile, ScopeReport, bound};
 use super::{EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_PIPE_NAME, exec_status, is_job_instance};
 
 /// How long `job-exec` waits for the gate's read end, and then for its go.
@@ -61,7 +61,7 @@ pub fn run(args: &[String]) -> i32 {
         bound::FILE_WALL.to_owned(),
         match &wall {
             Ok(()) => prove_file_wall(&exec, &exchange),
-            Err(why) => BoundProof::none(format!("Landlock not applied: {why}")),
+            Err(why) => BoundReport::none(format!("Landlock not applied: {why}")),
         },
     );
     proofs.insert(bound::NETWORK_CLOSED.to_owned(), prove_network_closed());
@@ -72,7 +72,7 @@ pub fn run(args: &[String]) -> i32 {
     let refusal = exec
         .require
         .iter()
-        .find(|name| !proofs.get(name.as_str()).is_some_and(BoundProof::holds))
+        .find(|name| !proofs.get(name.as_str()).is_some_and(BoundReport::enforced))
         .map(|name| {
             let evidence = proofs
                 .get(name.as_str())
@@ -159,23 +159,23 @@ fn open_raw(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
 /// each allowed device opens, and a device outside the allow-list fails
 /// with the device policy's EPERM. Run before the file wall, which would
 /// refuse it first with its own error.
-fn prove_device_closure(exec: &ExecFile) -> BoundProof {
+fn prove_device_closure(exec: &ExecFile) -> BoundReport {
     for path in &exec.devices_allowed {
         if let Err(error) = open_raw(path, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
-            return BoundProof::none(format!("the leased device {} does not open: {error}", path.display()));
+            return BoundReport::none(format!("the leased device {} does not open: {error}", path.display()));
         }
     }
     let Some(other) = exec.devices_denied.first() else {
-        return BoundProof::kernel("DevicePolicy=closed; no other device exists here to try");
+        return BoundReport::kernel("DevicePolicy=closed; no other device exists here to try");
     };
     match open_raw(other, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
-        Ok(_) => BoundProof::none(format!("{} opened: the device policy did not apply", other.display())),
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) => BoundProof::kernel(format!(
+        Ok(_) => BoundReport::none(format!("{} opened: the device policy did not apply", other.display())),
+        Err(error) if error.raw_os_error() == Some(libc::EPERM) => BoundReport::kernel(format!(
             "{} refused by the device policy (EPERM); {} leased device(s) open",
             other.display(),
             exec.devices_allowed.len()
         )),
-        Err(error) => BoundProof::none(format!(
+        Err(error) => BoundReport::none(format!(
             "{} failed with {error}, not the device policy's EPERM",
             other.display()
         )),
@@ -197,28 +197,28 @@ fn apply_file_wall(exec: &ExecFile) -> Result<(), String> {
 /// The inner wall holds: the job writes its own `out`, cannot write the
 /// private `/tmp` the kernel would let it write, cannot read its own
 /// exchange directory again, and cannot open any protected path.
-fn prove_file_wall(exec: &ExecFile, exchange: &Path) -> BoundProof {
+fn prove_file_wall(exec: &ExecFile, exchange: &Path) -> BoundReport {
     let out_probe = exec.cwd.join("out").join(".oneiron-wall-probe");
     match std::fs::File::create(&out_probe) {
         Ok(_) => {
             let _ = std::fs::remove_file(&out_probe);
         }
-        Err(error) => return BoundProof::none(format!("out/ is not writable: {error}")),
+        Err(error) => return BoundReport::none(format!("out/ is not writable: {error}")),
     }
     let outside = Path::new("/tmp/.oneiron-wall-probe");
     if std::fs::File::create(outside).is_ok() {
         let _ = std::fs::remove_file(outside);
-        return BoundProof::none("/tmp was writable: the wall did not apply".to_owned());
+        return BoundReport::none("/tmp was writable: the wall did not apply".to_owned());
     }
     if std::fs::read(exchange.join(EXEC_FILE_NAME)).is_ok() {
-        return BoundProof::none("the exchange directory was readable: the wall did not apply".to_owned());
+        return BoundReport::none("the exchange directory was readable: the wall did not apply".to_owned());
     }
     for path in &exec.protected {
         if open_raw(path, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC).is_ok() {
-            return BoundProof::none(format!("{} opened", path.display()));
+            return BoundReport::none(format!("{} opened", path.display()));
         }
     }
-    BoundProof::kernel(format!(
+    BoundReport::kernel(format!(
         "Landlock ABI {}: /tmp and the exchange directory refused; {} protected path(s) refused",
         oneiron_container::landlock_abi(),
         exec.protected.len()
@@ -227,10 +227,10 @@ fn prove_file_wall(exec: &ExecFile, exchange: &Path) -> BoundProof {
 
 /// The job is alone with its loopback: `/proc/net/dev` lists the job's own
 /// network namespace.
-fn prove_network_closed() -> BoundProof {
+fn prove_network_closed() -> BoundReport {
     let text = match std::fs::read_to_string("/proc/net/dev") {
         Ok(text) => text,
-        Err(error) => return BoundProof::none(format!("/proc/net/dev unreadable: {error}")),
+        Err(error) => return BoundReport::none(format!("/proc/net/dev unreadable: {error}")),
     };
     let interfaces: Vec<&str> = text
         .lines()
@@ -239,20 +239,20 @@ fn prove_network_closed() -> BoundProof {
         .map(str::trim)
         .collect();
     if interfaces == ["lo"] {
-        BoundProof::kernel("a private network namespace: only lo")
+        BoundReport::kernel("a private network namespace: only lo")
     } else {
-        BoundProof::none(format!("interfaces {}", interfaces.join(" ")))
+        BoundReport::none(format!("interfaces {}", interfaces.join(" ")))
     }
 }
 
 /// Process 1 and the engine's processes are not visible under `/proc`.
-fn prove_processes_hidden(exec: &ExecFile) -> BoundProof {
+fn prove_processes_hidden(exec: &ExecFile) -> BoundReport {
     for pid in &exec.hidden_pids {
         if Path::new("/proc").join(pid.to_string()).exists() {
-            return BoundProof::none(format!("process {pid} is visible under /proc"));
+            return BoundReport::none(format!("process {pid} is visible under /proc"));
         }
     }
-    BoundProof::kernel(format!(
+    BoundReport::kernel(format!(
         "ProtectProc=invisible: {} process(es) of root and the engine are not visible",
         exec.hidden_pids.len()
     ))
@@ -260,25 +260,25 @@ fn prove_processes_hidden(exec: &ExecFile) -> BoundProof {
 
 /// The unit's own cgroup limits, read from inside: `memory.max` and
 /// `io.max`.
-fn prove_cgroup_limits() -> (BoundProof, BoundProof) {
+fn prove_cgroup_limits() -> (BoundReport, BoundReport) {
     let Some(group) = own_cgroup() else {
-        let none = || BoundProof::none("this process's cgroup v2 group is unknown");
+        let none = || BoundReport::none("this process's cgroup v2 group is unknown");
         return (none(), none());
     };
     let read = |name: &str| std::fs::read_to_string(group.join(name)).ok();
     let memory = match read("memory.max").map(|text| text.trim().to_owned()) {
         Some(value) if value != "max" && value.parse::<u64>().is_ok() => {
-            BoundProof::kernel(format!("memory.max {value}"))
+            BoundReport::kernel(format!("memory.max {value}"))
         }
-        Some(value) => BoundProof::none(format!("memory.max {value}")),
-        None => BoundProof::none("memory.max unreadable"),
+        Some(value) => BoundReport::none(format!("memory.max {value}")),
+        None => BoundReport::none("memory.max unreadable"),
     };
     let write_rate = match read("io.max") {
         Some(text) if text.contains("wbps=") && !text.contains("wbps=max") => {
-            BoundProof::kernel(format!("io.max {}", text.trim()))
+            BoundReport::kernel(format!("io.max {}", text.trim()))
         }
-        Some(text) => BoundProof::none(format!("io.max has no write rate: {:?}", text.trim())),
-        None => BoundProof::none("io.max unreadable"),
+        Some(text) => BoundReport::none(format!("io.max has no write rate: {:?}", text.trim())),
+        None => BoundReport::none("io.max unreadable"),
     };
     (memory, write_rate)
 }

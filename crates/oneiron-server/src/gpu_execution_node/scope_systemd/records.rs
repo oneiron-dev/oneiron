@@ -9,14 +9,16 @@
 //!   and `cutoff.json` ([`CutoffMark`]): root's records in the key's control
 //!   directory, which the end step and the engine read.
 //!
-//! A bound is named as pass 34 names it (section 2.2, `ScopeCapabilities`),
-//! and its strength is `kernel`, `supervised` or `none`.
+//! A bound is named as pass 34 names it (section 2.2, R3a's
+//! [`ScopeCapabilities`](super::super::jobs::ScopeCapabilities)), with R3a's
+//! [`BoundReport`] for its strength and evidence.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub use super::super::jobs::{BoundReport, Strength};
 use super::super::wire::{ScopeClass, ScopeFacts};
 
 /// The bounds a scope reports, by pass 34's names (section 2.2).
@@ -48,45 +50,24 @@ pub mod bound {
     pub use crate::gpu_execution_node::node_settings::REQUIRED_BOUNDS_DEFAULT as REQUIRED_DEFAULT;
 }
 
-/// How strongly a bound holds: the operating system enforces it with no
-/// process of ours alive (`Kernel`), a privileged process that is not the
-/// engine does (`Supervised`), or nothing proved it (`None`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BoundStrength {
-    None,
-    Supervised,
-    Kernel,
-}
-
-/// One bound's strength with one line of evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BoundProof {
-    pub strength: BoundStrength,
-    pub evidence: String,
-}
-
-impl BoundProof {
+/// R3a's bound report (pass 34, 2.2), made here with one line of evidence.
+impl BoundReport {
+    /// A bound the kernel enforces with no process of ours alive.
     #[must_use]
     pub fn kernel(evidence: impl Into<String>) -> Self {
         Self {
-            strength: BoundStrength::Kernel,
+            strength: Strength::Kernel,
             evidence: evidence.into(),
         }
     }
 
+    /// A bound nothing enforces or proved.
     #[must_use]
     pub fn none(evidence: impl Into<String>) -> Self {
         Self {
-            strength: BoundStrength::None,
+            strength: Strength::None,
             evidence: evidence.into(),
         }
-    }
-
-    /// Whether the bound holds at all.
-    #[must_use]
-    pub fn holds(&self) -> bool {
-        self.strength != BoundStrength::None
     }
 }
 
@@ -134,7 +115,7 @@ pub struct ExecFile {
 pub struct ScopeReport {
     pub instance: String,
     /// Each bound `job-exec` can prove from inside, by name.
-    pub proofs: BTreeMap<String, BoundProof>,
+    pub proofs: BTreeMap<String, BoundReport>,
     /// The first required bound that is not proved, or the wall that could
     /// not be applied; `None` when the workload may start.
     pub refusal: Option<String>,
@@ -160,7 +141,7 @@ pub struct PreparedRecord {
     /// The sleep inhibitor's unit, when the step started one.
     pub awake_unit: Option<String>,
     /// Each bound as the effective unit properties and this kernel give it.
-    pub configured: BTreeMap<String, BoundProof>,
+    pub configured: BTreeMap<String, BoundReport>,
 }
 
 /// The cutoff timer the prepare step armed.
@@ -207,9 +188,9 @@ pub fn scope_facts(prepared: &PreparedRecord, scope: Option<&ScopeRecord>) -> Sc
     for name in bound::ALL {
         let inside = proved.and_then(|report| report.proofs.get(name));
         let line = match (inside, prepared.configured.get(name)) {
-            (Some(proof), _) => format!("{name}={}", strength_word(proof.strength)),
-            (None, Some(proof)) if proof.holds() => {
-                format!("{name}={} configured", strength_word(proof.strength))
+            (Some(proof), _) => format!("{name}={}", strength_word(&proof.strength)),
+            (None, Some(proof)) if proof.enforced() => {
+                format!("{name}={} configured", strength_word(&proof.strength))
             }
             _ => format!("{name}=none"),
         };
@@ -228,10 +209,10 @@ pub fn scope_facts(prepared: &PreparedRecord, scope: Option<&ScopeRecord>) -> Sc
     }
 }
 
-fn strength_word(strength: BoundStrength) -> &'static str {
+fn strength_word(strength: &Strength) -> &'static str {
     match strength {
-        BoundStrength::Kernel => "kernel",
-        BoundStrength::Supervised => "supervised",
-        BoundStrength::None => "none",
+        Strength::Kernel => "kernel",
+        Strength::Supervised { .. } => "supervised",
+        Strength::None => "none",
     }
 }

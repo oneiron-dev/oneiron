@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::records::{BoundProof, BoundStrength, bound};
+use super::super::jobs::ScopeCapabilities;
+use super::records::{BoundReport, bound};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::{CHECK_REPORT_SUFFIX, POLKIT_RULE_PATH, UNIT_TEMPLATE_PATH};
 
@@ -65,7 +66,7 @@ pub struct CheckReport {
     pub at_ms: u64,
     pub facts: KernelFacts,
     /// Each bound the probe unit proved or failed from inside.
-    pub proofs: BTreeMap<String, BoundProof>,
+    pub proofs: BTreeMap<String, BoundReport>,
     /// Why the probe unit did not report, when it did not.
     pub probe_failure: Option<String>,
 }
@@ -80,7 +81,7 @@ pub fn check_report_path(node_file: &Path) -> PathBuf {
 
 /// The machine's capability report for jobs (pass 34, 2.2).
 #[must_use]
-pub fn report(node_file: &Path) -> BTreeMap<String, BoundProof> {
+pub fn report(node_file: &Path) -> BTreeMap<String, BoundReport> {
     let facts = kernel_facts();
     let boot = super::safe_fs::boot_id();
     let probed = std::fs::read(check_report_path(node_file))
@@ -97,16 +98,16 @@ pub fn report(node_file: &Path) -> BTreeMap<String, BoundProof> {
 pub fn capabilities_of(
     facts: &KernelFacts,
     probed: Option<&CheckReport>,
-) -> BTreeMap<String, BoundProof> {
+) -> BTreeMap<String, BoundReport> {
     let manager = facts.systemd_is_init && facts.systemd_version.is_some();
     let unified = !facts.cgroup_controllers.is_empty();
     let installed = manager && unified && facts.unit_installed;
     let has = |controller: &str| facts.cgroup_controllers.contains(controller);
     let promise = |holds: bool, yes: &str, no: &str| {
         if holds {
-            BoundProof::kernel(yes)
+            BoundReport::kernel(yes)
         } else {
-            BoundProof::none(no)
+            BoundReport::none(no)
         }
     };
     let mut out = BTreeMap::new();
@@ -144,7 +145,7 @@ pub fn capabilities_of(
     );
     out.insert(
         bound::CPU_CAP.to_owned(),
-        BoundProof::none("this scope sets no CPU cap yet"),
+        BoundReport::none("this scope sets no CPU cap yet"),
     );
     out.insert(
         bound::FILE_WALL.to_owned(),
@@ -189,7 +190,7 @@ pub fn capabilities_of(
     if let Some(report) = probed {
         for (name, proof) in &report.proofs {
             if let Some(slot) = out.get_mut(name) {
-                if proof.strength == BoundStrength::None || slot.holds() {
+                if !proof.enforced() || slot.enforced() {
                     *slot = proof.clone();
                 }
             }
@@ -198,12 +199,36 @@ pub fn capabilities_of(
     out
 }
 
+/// R3a's [`ScopeCapabilities`] from the report by name; a bound the report
+/// lacks is `none`.
+#[must_use]
+pub fn scope_capabilities(report: &BTreeMap<String, BoundReport>) -> ScopeCapabilities {
+    let get = |name: &str| {
+        report
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| BoundReport::none("not reported"))
+    };
+    ScopeCapabilities {
+        tree_kill: get(bound::TREE_KILL),
+        cutoff_without_engine: get(bound::CUTOFF_WITHOUT_ENGINE),
+        emptiness: get(bound::EMPTINESS),
+        memory_cap: get(bound::MEMORY_CAP),
+        cpu_cap: get(bound::CPU_CAP),
+        file_wall: get(bound::FILE_WALL),
+        network_closed: get(bound::NETWORK_CLOSED),
+        device_closure: get(bound::DEVICE_CLOSURE),
+        processes_hidden: get(bound::PROCESSES_HIDDEN),
+        write_rate_cap: get(bound::WRITE_RATE_CAP),
+    }
+}
+
 /// Whether a machine meets the minimum contract (pass 34, I4 and I5): tree
 /// kill, a cutoff with the engine stopped, and emptiness. One that does not
 /// offers no jobs.
 #[must_use]
-pub fn meets_minimum_contract(capabilities: &BTreeMap<String, BoundProof>) -> bool {
+pub fn meets_minimum_contract(capabilities: &BTreeMap<String, BoundReport>) -> bool {
     bound::MINIMUM_CONTRACT
         .iter()
-        .all(|name| capabilities.get(*name).is_some_and(BoundProof::holds))
+        .all(|name| capabilities.get(*name).is_some_and(BoundReport::enforced))
 }

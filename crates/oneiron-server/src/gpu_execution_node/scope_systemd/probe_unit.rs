@@ -18,7 +18,7 @@ use super::capabilities::{
     CheckReport, capabilities_of, check_report_path, kernel_facts, meets_minimum_contract,
 };
 use super::device_files;
-use super::records::{BoundProof, ExecFile, ScopeReport};
+use super::records::{BoundReport, ExecFile, ScopeReport};
 use super::safe_fs::{self, account, boot_id, borrow, make_dir_beneath, open_dir_path};
 use super::systemd_unit::tool_path;
 use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, REPORT_PIPE_NAME, UNIT_TEMPLATE_PATH};
@@ -73,7 +73,7 @@ pub fn check_scope(node_file: &Path, settings: &ExecutionNodeSettings) -> Vec<St
     }
     for (template_name, template) in &settings.templates {
         for required in &template.require {
-            if !capabilities.get(required).is_some_and(BoundProof::holds) {
+            if !capabilities.get(required).is_some_and(BoundReport::enforced) {
                 refusals.push(format!(
                     "template {template_name} requires {required}, which this machine's scope lacks"
                 ));
