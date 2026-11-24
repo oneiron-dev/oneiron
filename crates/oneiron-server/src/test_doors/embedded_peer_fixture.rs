@@ -132,6 +132,7 @@ fn paired_credential(
             org_ref: None,
             write_facet: None,
             comm: None,
+            verb_allowlist: None,
         },
     )?;
     let key = ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng);

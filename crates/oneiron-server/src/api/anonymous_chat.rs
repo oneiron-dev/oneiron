@@ -77,6 +77,12 @@ pub(super) async fn chat(
     if let Err(error) = auth.require(CoreScope::Read) {
         return error.into_response();
     }
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    if let Err(error) =
+        crate::api::credential_verbs::require_listed_verb(&server, Some(&auth), "ai.anonymous_chat")
+    {
+        return super::FacadeApiError::from(error).into_response();
+    }
     let Ok(Json(request)) = payload else {
         return refusal(StatusCode::BAD_REQUEST, "invalid_anonymous_chat_request");
     };

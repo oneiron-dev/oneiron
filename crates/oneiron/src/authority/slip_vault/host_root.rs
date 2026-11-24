@@ -105,6 +105,7 @@ impl Vault {
             comm: None,
             trusted_contact: None,
             seat_claim: None,
+            verb_allowlist: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(

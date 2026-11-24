@@ -143,6 +143,15 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // next call (FIX 10633): release what that answer kept now, so a
         // read's renderer turn cannot survive into this call.
         self.answer_recorded();
+        // The run's credential calls only its verbs, a browser row's too
+        // (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+        if let Err(refusal) = crate::api::credential_verbs::code_mode_listed_verb(
+            &self.server,
+            self.actor.auth.as_ref(),
+            call.verb.as_str(),
+        ) {
+            return Ok(Err(refusal));
+        }
         if call.verb.is_browser() {
             // The run's worker thread holds the call while the guest acts.
             return self.call_browser(call, origin, invocation);
@@ -217,6 +226,13 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // A new call means the run holds the previous answer (FIX 10633):
         // release what it kept before this one runs.
         self.answer_recorded();
+        if let Err(refusal) = crate::api::credential_verbs::code_mode_listed_verb(
+            &self.server,
+            self.actor.auth.as_ref(),
+            "connector.answer",
+        ) {
+            return Ok(Err(refusal));
+        }
         let Some(auth) = self.actor.auth.clone() else {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
@@ -268,10 +284,17 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             hook_notice: None,
             code: error.kind.to_owned(),
         };
-        if let RunCall::Bridge(effect) = call
-            && let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect)
-        {
-            mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
+        if let RunCall::Bridge(effect) = call {
+            // The run's credential calls only its verbs: every run row that
+            // makes this effect (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+            crate::api::credential_verbs::code_mode_listed_effect(
+                &self.server,
+                self.actor.auth.as_ref(),
+                effect,
+            )?;
+            if let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect) {
+                mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
+            }
         }
         mcp_run_call_gate(&self.server, &self.actor, call).map_err(refused)?;
         // Reading the reason is capture-only; a missing key must not refuse the decline.
@@ -306,9 +329,14 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     /// and needs Write (`mcp_run_speech_gate`). It reads nothing.
     fn admit_run_speech(
         &self,
-        _effect: SelfEffect,
+        effect: SelfEffect,
         destination: oneiron::code_run::RunSpeechDestination,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        crate::api::credential_verbs::code_mode_listed_effect(
+            &self.server,
+            self.actor.auth.as_ref(),
+            effect,
+        )?;
         mcp_run_speech_gate(&self.server, &self.actor, destination).map_err(|error| {
             AgentVerbRefusal {
                 hook_notice: None,

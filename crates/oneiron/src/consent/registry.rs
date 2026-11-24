@@ -9,9 +9,10 @@ use oneiron_authority::federation::Scope;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::consent::registry::{
-    AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistryAgentGrant,
-    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegrantAction, ConsentRevokeAction,
-    GrantlessAgentConvertAction, GrantlessAgentRow, SUPPORT_GRANT_CLASS,
+    AGENT_GRANT_CLASS, AGENT_VERB_LIST_WIDEN_COMMAND, AgentVerbListRow, AgentVerbListWidenAction,
+    CONSENT_REVOKE_COMMAND, ConsentRegistryAgentGrant, ConsentRegistryDelegation,
+    ConsentRegistryQuery, ConsentRegrantAction, ConsentRevokeAction, GrantlessAgentConvertAction,
+    GrantlessAgentRow, SUPPORT_GRANT_CLASS,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::consent::registry::{render_scope, render_selectors, render_subject};
@@ -69,6 +70,12 @@ pub struct ConsentRegistry {
     /// none. Each reads as its Scope allows until the owner converts it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grantless_agents: Vec<GrantlessAgentRow>,
+    /// The live agent credentials the owner minted with a verb list
+    /// (AGENT-CREDENTIAL-VERB-ALLOWLIST), newest issued first; absent when
+    /// there are none. Each calls every read verb and the verbs it lists,
+    /// and the owner widens it with a Grant that names a verb.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_verb_lists: Vec<AgentVerbListRow>,
 }
 
 impl ConsentRegistryRow {

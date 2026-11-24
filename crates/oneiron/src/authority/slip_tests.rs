@@ -1062,6 +1062,7 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
         comm: None,
         trusted_contact: None,
         seat_claim: None,
+        verb_allowlist: None,
     };
     let entry = issuer
         .sign_entry(

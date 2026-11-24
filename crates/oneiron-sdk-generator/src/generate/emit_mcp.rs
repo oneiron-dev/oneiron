@@ -667,6 +667,9 @@ async fn execute_agent_verb_input_held(
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
         held: Option<&crate::mcp::McpHeldContent>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
+        // A credential the owner minted with a verb list calls only its verbs,
+        // on every MCP door, before any hook or row (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+        crate::api::credential_verbs::require_listed_verb(server, actor.auth.as_ref(), tool).map_err(mcp_facade_error)?;
         let producers = oneiron::memory::ProducerRows::default();
         // An owner's erase or revoke reads the restriction-only clock through
         // its hooks and door, as the engine classifies it (FIX 11201).

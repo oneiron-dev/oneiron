@@ -158,6 +158,45 @@ pub struct GrantlessAgentRow {
     pub convert_action: GrantlessAgentConvertAction,
 }
 
+/// A live agent credential the owner minted with a verb list
+/// (AGENT-CREDENTIAL-VERB-ALLOWLIST), as the owner's sheet shows it: the
+/// verbs it may call beyond every read verb, signed at mint, and the owner's
+/// widening, a Grant that names a verb for its holder.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct AgentVerbListRow {
+    /// The named agent's PERSON the slip names as its holder.
+    pub holder: EntityId,
+    /// The slip's id (64 hex).
+    pub slip_ref: String,
+    /// When its mint issued it (Unix seconds).
+    pub issued_at: u64,
+    /// When it stops (Unix seconds).
+    pub expires_at: u64,
+    /// The verbs it may call beyond every read verb, by their verb-table
+    /// names; empty: the read verbs alone. A live Grant that names a verb
+    /// for its holder admits that verb too.
+    pub verbs: std::collections::BTreeSet<String>,
+    /// The owner's widening of the list.
+    pub widen_action: AgentVerbListWidenAction,
+}
+
+/// The owner's widening of an agent credential's verb list: a Grant for its
+/// holder that lists the verb beside `read`.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct AgentVerbListWidenAction {
+    /// Pinned command name: [`AGENT_VERB_LIST_WIDEN_COMMAND`].
+    pub command: String,
+    /// The agent the Grant names.
+    pub agent: EntityId,
+}
+
+/// The command that widens an agent credential's verb list.
+pub const AGENT_VERB_LIST_WIDEN_COMMAND: &str = "vault.agents.grants.mint";
+
 /// The owner's conversion of a grantless slip and its argument.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,

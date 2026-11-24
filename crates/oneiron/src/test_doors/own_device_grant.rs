@@ -71,6 +71,7 @@ pub fn mint_grant_bound_slip(
             comm: None,
             trusted_contact: None,
             seat_claim: None,
+            verb_allowlist: None,
         };
         Ok(vault.mint_slip_in_txn(wtxn, issuer, claims)?.claims.slip_id)
     })

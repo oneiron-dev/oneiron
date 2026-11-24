@@ -894,8 +894,11 @@ const CALL_VERB: &str = "/// Runs facade verb `verb` for `call` over `input`, as
 /// other name is refused as an unknown verb, with its correction when it is a
 /// canonical verb under the wrong root. An owner's erase or revoke, as the
 /// engine classifies the verb and its own input, reads the restriction-only
-/// clock through its owner proof, hooks and door (FIX 11201).
+/// clock through its owner proof, hooks and door (FIX 11201). A credential
+/// the owner minted with a verb list calls only its verbs here, before any
+/// row is touched (AGENT-CREDENTIAL-VERB-ALLOWLIST).
 pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {
+crate::api::credential_verbs::require_listed_verb(server, Some(call.auth()), verb)?;
 let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
 super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
 }

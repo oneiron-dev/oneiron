@@ -144,6 +144,8 @@ pub(crate) use facade::is_slim_lifecycle_observation;
 pub(crate) mod legal_hold_schema;
 // FIX 2222: who a host credential acts as at every door, through one resolver.
 pub(crate) mod host_action;
+// AGENT-CREDENTIAL-VERB-ALLOWLIST: a credential calls only its verbs, on every door.
+pub(crate) mod credential_verbs;
 // OF-489: the held socket runs every facade verb through the facade's one
 // generated dispatch, under the credential its connection bound, and claims
 // the invocation a call names as the HTTP facade does (FIX 2059).

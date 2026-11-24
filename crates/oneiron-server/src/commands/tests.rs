@@ -1022,6 +1022,7 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
         verbs,
         30 * 24 * 60 * 60,
         None,
+        None,
     )
     .unwrap();
     vault

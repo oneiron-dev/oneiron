@@ -180,6 +180,7 @@ impl Vault {
                 comm: None,
                 trusted_contact: None,
                 seat_claim: None,
+                verb_allowlist: None,
             },
         )?;
         let pairing_slip_id = pairing.claims.slip_id;

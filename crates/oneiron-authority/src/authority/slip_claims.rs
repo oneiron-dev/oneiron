@@ -73,7 +73,19 @@ pub struct SlipClaims {
     /// unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_claim: Option<super::SeatClaimSlipBinding>,
+    /// The verbs the holder may call beyond every read verb, by their verb
+    /// table names (AGENT-CREDENTIAL-VERB-ALLOWLIST): set by the owner at
+    /// mint, never at redeem or call time. `None` is no list: the holder
+    /// calls every verb its Scope admits, as every slip minted before the
+    /// list does. An empty list leaves the read verbs alone. A live Grant
+    /// the owner gives the holder for a verb admits that verb too.
+    /// Delegation keeps it or narrows it, and never drops it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verb_allowlist: Option<BTreeSet<String>>,
 }
+
+/// The longest verb name a slip's verb list may carry.
+pub const VERB_ALLOWLIST_NAME_MAX_BYTES: usize = 256;
 
 /// The signed SlipMint payload. The credential signature is not log material.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +155,11 @@ impl SlipClaims {
                 .iter()
                 .chain(self.channels.iter())
                 .any(|v| v.is_empty() || v.len() > 512 || crate::credential_door::names_a_floor(v))
+            || self.verb_allowlist.as_ref().is_some_and(|verbs| {
+                verbs
+                    .iter()
+                    .any(|verb| verb.is_empty() || verb.len() > VERB_ALLOWLIST_NAME_MAX_BYTES)
+            })
             || canonical(self)?.len() > MAX_WIRE_BYTES / 2
         {
             return Err(invalid_authority());
@@ -276,6 +293,7 @@ impl SlipClaims {
             && !self.single_use
             && self.trusted_contact.is_none()
             && self.seat_claim.is_none()
+            && self.verb_allowlist.is_none()
     }
     /// True when `self` is a valid narrowing of `parent`. Public so `oneiron`'s slip
     /// verifier (its one caller outside this crate) checks caveat chains across the line.
@@ -305,6 +323,13 @@ impl SlipClaims {
                         || self.records.is_subset(&parent.records))))
             && (self.channels == parent.channels
                 || (!self.channels.is_empty() && self.channels.is_subset(&parent.channels)))
+            // A child keeps its parent's verb list or a part of it; one that
+            // names none never erases a parent's list.
+            && match (&self.verb_allowlist, &parent.verb_allowlist) {
+                (_, None) => true,
+                (Some(child), Some(parent)) => child.is_subset(parent),
+                (None, Some(_)) => false,
+            }
     }
 }
 

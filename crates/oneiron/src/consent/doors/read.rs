@@ -151,6 +151,9 @@ impl Vault {
         // AGENT-GRANTLESS-VISIBLE) is listed apart, with no Grant id and no
         // revoke, and with the owner's conversion into a Grant.
         let mut grantless_agents = self.grantless_agent_registry_rows_in_txn(&rtxn)?;
+        // A named agent's live credential the owner minted with a verb list
+        // (AGENT-CREDENTIAL-VERB-ALLOWLIST), with the owner's widening.
+        let mut agent_verb_lists = self.agent_verb_list_registry_rows_in_txn(&rtxn)?;
         drop(rtxn);
         rows.sort_by(|left, right| {
             right
@@ -160,9 +163,11 @@ impl Vault {
         });
         rows.truncate(query.limit);
         grantless_agents.truncate(query.limit);
+        agent_verb_lists.truncate(query.limit);
         Ok(ConsentRegistry {
             rows,
             grantless_agents,
+            agent_verb_lists,
         })
     }
 }

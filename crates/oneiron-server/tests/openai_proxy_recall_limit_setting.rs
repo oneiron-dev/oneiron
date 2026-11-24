@@ -115,6 +115,7 @@ fn pair_connector(
                 org_ref: None,
                 write_facet: None,
                 comm: None,
+                verb_allowlist: None,
             },
         )
         .expect("recall limit pairing link");

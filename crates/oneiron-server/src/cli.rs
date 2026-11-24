@@ -644,6 +644,16 @@ pub struct TokenAgentArgs {
     #[arg(long, value_parser = COMM_REACHES)]
     pub comm: Option<String>,
 
+    /// The verbs the credential may call beyond every read verb, by their
+    /// verb-table names, comma-separated (e.g.
+    /// `vault.notes.create,vault.notes.lifecycle`), signed into the slip.
+    /// Omit it for the read verbs alone; `all` leaves the credential no
+    /// list, so it calls every verb its tier admits. The owner widens a list
+    /// later by naming a verb in a Grant for the agent
+    /// (`vault.agents.grants.mint`).
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    pub verbs: Option<Vec<String>>,
+
     /// Write the credential to this new file, readable by its owner only, and
     /// print only its slip id and principal. Without it the credential is
     /// printed.
