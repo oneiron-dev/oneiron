@@ -82,10 +82,16 @@ fn pin_json(tag: &str) -> Value {
             "entry": "arms/inkling/run.py",
             "args": ["--arm", tag],
             "request": {
-                "gpus": 1,
-                "vram_mib": 22_528,
+                "cpu_threads": 0,
                 "memory_mib": 22_528,
                 "disk_mib": 2_048,
+                "devices": [{
+                    "kind": "gpu",
+                    "count": 1,
+                    "memory_mib": 22_528,
+                    "features": ["cuda"],
+                    "sharing": "exclusive",
+                }],
                 "maximum_secs": MAXIMUM_SECS,
             },
             "scope": "host",

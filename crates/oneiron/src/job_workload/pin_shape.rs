@@ -2,7 +2,14 @@
 //! look like before it is hashed and stored. The node judges the rest
 //! against its own template: the allow-list, the ceilings, the scope.
 
-use super::{PIN_ARG_BYTES_MAX, PIN_ARGS_MAX, PIN_OUTPUTS_MAX, ScopeKind, WorkloadPin};
+use super::{
+    DeviceKind, PIN_ARG_BYTES_MAX, PIN_ARGS_MAX, PIN_OUTPUTS_MAX, REQUEST_DEVICE_CLAIMS_MAX,
+    ScopeKind, WorkloadPin,
+};
+
+/// The grammar of a name a pin carries: a template, a device kind outside
+/// the built ones, a device feature.
+const NAME_GRAMMAR: &str = "a name of 1-64 characters a-z, 0-9, '-', '_' or '.'";
 
 /// Whether `text` is `len` lower-hex characters.
 fn is_lower_hex(text: &str, len: usize) -> bool {
@@ -24,17 +31,21 @@ fn is_relative_path(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
+/// Whether `text` follows [`NAME_GRAMMAR`].
+fn is_name(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 64
+        && text.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"-_.".contains(&byte)
+        })
+}
+
 /// Why `pin` has the wrong shape, if it does (door 2's refusals). The node
 /// judges the rest against its own template: the allow-list, the ceilings,
 /// the scope.
 pub(super) fn check_pin_shape(pin: &WorkloadPin) -> Result<(), String> {
-    if pin.template.is_empty()
-        || pin.template.len() > 64
-        || !pin.template.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"-_.".contains(&byte)
-        })
-    {
-        return Err("template is a name of 1-64 characters a-z, 0-9, '-', '_' or '.'".into());
+    if !is_name(&pin.template) {
+        return Err(format!("template is {NAME_GRAMMAR}"));
     }
     if !is_lower_hex(&pin.template_digest, 64) {
         return Err("template_digest is a content hash in 64 lower hex".into());
@@ -64,6 +75,28 @@ pub(super) fn check_pin_shape(pin: &WorkloadPin) -> Result<(), String> {
     }
     if pin.request.maximum_secs == 0 {
         return Err("request.maximum_secs is above 0".into());
+    }
+    // The general request (pass 34 row G1): a CPU-only run claims no device;
+    // a claim of 0 devices would take no lease, so it is refused here.
+    if pin.request.devices.len() > REQUEST_DEVICE_CLAIMS_MAX {
+        return Err(format!(
+            "request.devices carries at most {REQUEST_DEVICE_CLAIMS_MAX} claims"
+        ));
+    }
+    for claim in &pin.request.devices {
+        if claim.count == 0 {
+            return Err("a device claim's count is at least 1".into());
+        }
+        if let DeviceKind::Other(kind) = &claim.kind
+            && !is_name(kind)
+        {
+            return Err(format!(
+                "a device kind beyond gpu, npu and fpga is {NAME_GRAMMAR}"
+            ));
+        }
+        if !claim.features.iter().all(|feature| is_name(feature)) {
+            return Err(format!("a device feature is {NAME_GRAMMAR}"));
+        }
     }
     if let ScopeKind::Container { image } = &pin.scope {
         let pinned = image
