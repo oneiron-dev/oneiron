@@ -21,10 +21,15 @@
 //! [`AuthorityPosition`], [`GpuSlotTable`] the [`NodeDevices`], and
 //! [`super::NodeJobs`] is R1's [`NodeKeys`].
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use oneiron::EntityId;
+use oneiron::job_workload::{
+    BoundRequirement, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory,
+    DeviceState, HeldDevice, Sharing,
+};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron_organ_host::MachineFloor;
 
@@ -127,6 +132,10 @@ pub trait NodeAdmission: Send + Sync {
     /// template.
     fn template_digest(&self, template: &str) -> Option<String>;
 
+    /// The scope bounds the template requires now (its `require`, pass 34
+    /// section 2.2); `None` when the node holds no such template.
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>>;
+
     /// Design 7.3 reserve step 6: the payload disk's free space, less what
     /// live keys booked (`booked_mib`), covers `request_mib` plus the disk
     /// reserve, and `state_dir` keeps its own floor.
@@ -140,17 +149,19 @@ pub trait NodeAdmission: Send + Sync {
     fn job_settings(&self) -> NodeJobSettings;
 }
 
-/// The machine's GPUs, as the job service leases them. The server's
-/// implementation is OPUS-LE-FLEET's GPU slot table.
+/// The machine's devices, as the job service places and leases them. The
+/// server's implementation is OPUS-LE-FLEET's GPU slot table.
 pub trait NodeDevices: Send + Sync {
-    /// Design 7.3 reserve step 7: a device that could take `request` exists
-    /// now (offered, not withheld, not quarantined, enough memory). A look,
-    /// not a hold.
+    /// Every device of the machine now, from a fresh reading, with the
+    /// sharing of each claim that holds it: what
+    /// `ResourceRequest::place_devices` reads (pass 34, 2.1). A look, not a
+    /// hold.
     ///
     /// # Errors
     ///
-    /// The refusal reason, for the key's end.
-    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String>;
+    /// The refusal reason, for the key's end: the devices cannot be read,
+    /// or the table is paused or drained.
+    fn devices(&self) -> Result<Vec<HeldDevice>, String>;
 
     /// Design 7.5 step 4: leases a device under `request.key` from a fresh
     /// reading, and confirms the launch at once: offered, not withheld, no
@@ -301,6 +312,14 @@ impl NodeAdmission for ExecutionNode {
         ExecutionNode::template_digest(self, template)
     }
 
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>> {
+        let settings = ExecutionNode::settings(self).ok().flatten()?;
+        settings
+            .templates
+            .get(template)
+            .map(|held| held.require.clone())
+    }
+
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {
         ExecutionNode::disk_room(self, booked_mib, request_mib)
     }
@@ -319,9 +338,48 @@ impl AuthorityPosition for ExecutionNode {
     }
 }
 
+/// One GPU of the slot table as placement reads it (pass 34, 2.1), until
+/// OPUS-LE-FLEET's table reports `DeviceFacts` itself: a GPU with its own
+/// memory and no named features, which its job opens alone, one claim at a
+/// time. A compute process of another account does not show here: the
+/// lease's confirmation refuses it inside the launch commit.
+fn held_gpu(slot: &crate::gpu_execution_node::availability::GpuDeviceAvailability) -> HeldDevice {
+    use crate::gpu_execution_node::availability::GpuDeviceState;
+    let (state, holder) = match &slot.state {
+        GpuDeviceState::Free | GpuDeviceState::Busy { .. } => (DeviceState::Offered, None),
+        GpuDeviceState::Leased { key } | GpuDeviceState::Launched { key } => (
+            DeviceState::Leased {
+                keys: vec![key.clone()],
+            },
+            Some(Sharing::Exclusive),
+        ),
+        GpuDeviceState::Quarantined { why, key } => (
+            DeviceState::Quarantined { why: why.clone() },
+            key.as_ref().map(|_| Sharing::Exclusive),
+        ),
+        GpuDeviceState::Withheld | GpuDeviceState::NotOffered => (DeviceState::Withheld, None),
+    };
+    HeldDevice {
+        facts: DeviceFacts {
+            id: slot.device.device_id.clone(),
+            id_source: DeviceIdSource::VendorUuid,
+            kind: DeviceKind::Gpu,
+            vendor: String::new(),
+            model: slot.device.model.clone(),
+            memory: DeviceMemory::Dedicated {
+                mib: slot.device.memory_total_mib,
+            },
+            features: Vec::new(),
+            closure: DeviceClosure::Closed,
+            state,
+            max_claimants: 1,
+        },
+        holders: holder.into_iter().collect(),
+    }
+}
+
 impl NodeDevices for GpuSlotTable {
-    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String> {
-        use crate::gpu_execution_node::availability::GpuDeviceState;
+    fn devices(&self) -> Result<Vec<HeldDevice>, String> {
         let availability = self
             .availability(oneiron_base::unix_millis_now())
             .map_err(|error| format!("devices_unreadable: {error}"))?;
@@ -331,20 +389,7 @@ impl NodeDevices for GpuSlotTable {
         if let Some(why) = &availability.drained {
             return Err(format!("node_drained: {why}"));
         }
-        let open = availability.devices.iter().any(|device| {
-            request.admits(&device.device)
-                && !matches!(
-                    device.state,
-                    GpuDeviceState::NotOffered
-                        | GpuDeviceState::Withheld
-                        | GpuDeviceState::Quarantined { .. }
-                )
-        });
-        if open {
-            Ok(())
-        } else {
-            Err("no_device".to_owned())
-        }
+        Ok(availability.devices.iter().map(held_gpu).collect())
     }
 
     fn lease_for_launch(
@@ -397,6 +442,10 @@ impl NodeKeys for super::NodeJobs {
 
     fn booked_disk_mib(&self) -> u64 {
         super::NodeJobs::booked_disk_mib(self)
+    }
+
+    fn live_issuers(&self) -> BTreeSet<EntityId> {
+        super::NodeJobs::live_issuers(self)
     }
 
     fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str) {

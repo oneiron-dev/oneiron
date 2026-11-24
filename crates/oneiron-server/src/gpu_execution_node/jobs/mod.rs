@@ -39,8 +39,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use oneiron_organ_host::FloorLease;
 
 pub use job_unit::{
-    BoundReport, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
-    LaunchFile, NodeClock, RenewRefusal, ScopeCapabilities, Strength, SystemNodeClock,
+    EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
+    RenewRefusal, SystemNodeClock, scope_missing,
 };
 pub use journal::{EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey};
 pub use journal_file::{
@@ -155,6 +155,24 @@ impl NodeJobs {
             .journal
             .as_ref()
             .map_or(0, |journal| journal.table().booked_disk_mib())
+    }
+
+    /// The issuers of every key that has not ended: the authority tick
+    /// checks each one's standing, whatever the node's file names now.
+    #[must_use]
+    pub fn live_issuers(&self) -> BTreeSet<oneiron::EntityId> {
+        self.lock()
+            .journal
+            .as_ref()
+            .map(|journal| {
+                journal
+                    .table()
+                    .iter()
+                    .filter(|key| !key.is_ended())
+                    .map(|key| key.issuer)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Every key the journal holds now, as it holds them.

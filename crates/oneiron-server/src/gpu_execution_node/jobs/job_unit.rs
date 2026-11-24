@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use oneiron::job_workload::{BoundRequirement, DeviceLease, ScopeBound, ScopeCapabilities};
+
 /// The name every job unit instance starts with.
 pub const JOB_UNIT_TEMPLATE_PREFIX: &str = "oneiron-job@";
 
@@ -141,68 +143,27 @@ pub struct JobUnitError {
     pub reason: String,
 }
 
-/// How a launch scope enforces one bound (pass 34, 2.2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Strength {
-    /// The operating system enforces it with no process of ours alive.
-    Kernel,
-    /// A privileged process that is not the engine enforces it, at most
-    /// `lateness_ms` late.
-    Supervised { lateness_ms: u64 },
-    /// Nothing enforces it.
-    None,
-}
-
-/// One bound as a launch scope reports it: its strength and one line of
-/// evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BoundReport {
-    pub strength: Strength,
-    pub evidence: String,
-}
-
-impl BoundReport {
-    /// Whether something enforces the bound.
-    #[must_use]
-    pub fn enforced(&self) -> bool {
-        self.strength != Strength::None
-    }
-}
-
-/// What a launch scope can enforce on this machine now, bound by bound
-/// (pass 34, 2.2). The first three are the minimum contract: a machine
-/// whose scope cannot kill the whole tree, enforce the cutoff with the
-/// engine stopped and tell when the tree is empty runs no job (I4, I5).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScopeCapabilities {
-    pub tree_kill: BoundReport,
-    pub cutoff_without_engine: BoundReport,
-    pub emptiness: BoundReport,
-    pub memory_cap: BoundReport,
-    pub cpu_cap: BoundReport,
-    pub file_wall: BoundReport,
-    pub network_closed: BoundReport,
-    pub device_closure: BoundReport,
-    pub processes_hidden: BoundReport,
-    pub write_rate_cap: BoundReport,
-}
-
-impl ScopeCapabilities {
-    /// The bounds of the minimum contract this scope cannot enforce, by
-    /// name; empty when it meets the contract.
-    #[must_use]
-    pub fn minimum_contract_missing(&self) -> Vec<&'static str> {
-        [
-            ("tree_kill", &self.tree_kill),
-            ("cutoff_without_engine", &self.cutoff_without_engine),
-            ("emptiness", &self.emptiness),
-        ]
+/// What a launch under a template that requires `required` lacks on
+/// `scope`, by name: each bound of the minimum contract the scope does not
+/// enforce (it kills the whole tree, enforces the cutoff with the engine
+/// stopped and tells when the tree is empty, I4 and I5), then each
+/// requirement it does not meet, as the template spells it
+/// (`memory_cap:kernel`; pass 34 section 2.2, the blocker
+/// `NoScope { missing }`). Empty when the launch may go on.
+#[must_use]
+pub fn scope_missing(scope: &ScopeCapabilities, required: &[BoundRequirement]) -> Vec<String> {
+    let mut missing: Vec<String> = ScopeBound::MINIMUM_CONTRACT
         .into_iter()
-        .filter(|(_, report)| !report.enforced())
-        .map(|(name, _)| name)
-        .collect()
+        .filter(|bound| !scope.report(*bound).strength.is_enforced())
+        .map(|bound| bound.name().to_owned())
+        .collect();
+    for requirement in scope.missing(required) {
+        let name = requirement.to_string();
+        if !missing.contains(&name) {
+            missing.push(name);
+        }
     }
+    missing
 }
 
 /// Why a unit's cutoff was not renewed.
@@ -346,8 +307,14 @@ pub struct LaunchFile {
     pub key: String,
     /// The pin the key was reserved and submitted with.
     pub pin: crate::gpu_execution_node::wire::WorkloadPin,
-    /// The one device the unit may open, by the vendor's id.
-    pub device_id: String,
+    /// The devices the unit may open, one per placed claim, by the
+    /// vendor's id; empty for a request with no device claim (no device is
+    /// allowed).
+    pub devices: Vec<DeviceLease>,
+    /// The host memory leased for the key, in MiB: the scope's memory
+    /// limit (the request's memory plus each unified device's claim
+    /// memory).
+    pub host_memory_mib: u64,
     /// The submit's maximum: at most the pin's.
     pub maximum_secs: u64,
     /// The boot and the boot-clock time of the launch commit; the prepare

@@ -9,7 +9,9 @@
 //! and is one of the node's `issuers`, and a request that admits work also
 //! needs the node's own job grant live in its own fold.
 //!
-//! `Node` and `Availability` are answered here. A request that names a key
+//! `Node` is answered to an issuer the file names, enabled or not (it says
+//! which); `Availability` and every request that names a key need the node
+//! enabled. `Node` and `Availability` are answered here. A request that names a key
 //! goes to the node's keys (row R3a's journal, [`super::node::NodeKeys`])
 //! once they are attached; until then it is refused as `NotEnabled`, and
 //! nothing is written. The status side's answers are row R4's: past the
@@ -18,8 +20,10 @@
 use std::future::Future;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use oneiron_mesh_transport::message::{decode_message, encode_message};
-use oneiron_mesh_transport::{MeshConnection, MeshFuture, MeshService};
+use oneiron_mesh_transport::{MeshConnection, MeshFuture, MeshService, MeshStream};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -62,29 +66,30 @@ impl JobService {
 /// The node's answer to `request` on [`JOB_ALPN`].
 fn answer_job(node: &ExecutionNode, endpoint_key: [u8; 32], request: JobRequest) -> JobAnswer {
     let ask = match &request {
+        JobRequest::Node => GateAsk::Offer,
+        JobRequest::Availability | JobRequest::Release { .. } => GateAsk::Read,
         JobRequest::Reserve(_) | JobRequest::Submit(_) => GateAsk::Admit,
-        JobRequest::Node | JobRequest::Availability | JobRequest::Release { .. } => GateAsk::Read,
     };
-    let peer = match node.gate(endpoint_key, JOB_ALPN, ask) {
-        Ok(peer) => peer,
-        // A proven peer learns that this node takes no work now, and why.
-        Err(JobRefusal::NotEnabled) if request == JobRequest::Node => {
-            return JobAnswer::Node(node.node_answer());
-        }
+    let (peer, snapshot) = match node.gate(endpoint_key, JOB_ALPN, ask) {
+        Ok(passed) => passed,
         Err(refusal) => return JobAnswer::Refused(refusal),
     };
     let keys = node.keys();
     match request {
-        JobRequest::Node => JobAnswer::Node(node.node_answer()),
-        JobRequest::Availability => match node.availability(now_ms()) {
+        JobRequest::Node => JobAnswer::Node(node.node_answer_from(&snapshot)),
+        JobRequest::Availability => match node.availability_from(&snapshot, now_ms()) {
             Ok(availability) => JobAnswer::Availability(availability),
             Err(why) => JobAnswer::Refused(JobRefusal::DevicesUnreadable { why }),
         },
         JobRequest::Reserve(reserve) => {
-            keys.map_or(not_enabled(), |keys| keys.reserve(peer, reserve))
+            keys.map_or_else(not_enabled, |keys| keys.reserve(peer, reserve))
         }
-        JobRequest::Release { key } => keys.map_or(not_enabled(), |keys| keys.release(peer, &key)),
-        JobRequest::Submit(signed) => keys.map_or(not_enabled(), |keys| keys.submit(peer, signed)),
+        JobRequest::Release { key } => {
+            keys.map_or_else(not_enabled, |keys| keys.release(peer, &key))
+        }
+        JobRequest::Submit(signed) => {
+            keys.map_or_else(not_enabled, |keys| keys.submit(peer, signed))
+        }
     }
 }
 
@@ -184,28 +189,52 @@ fn now_ms() -> u64 {
 }
 
 /// Serves `conn` until it ends: each stream it accepts carries one request,
-/// which `answer` answers on the same stream. A stream whose request does
-/// not decode gets no answer.
-async fn serve_each_stream<Q, A, F, Fut>(conn: &dyn MeshConnection, mut answer: F)
+/// which `answer` answers on the same stream. The streams are served side by
+/// side, so a stream whose request never finishes, or whose peer stops
+/// reading its answer, loses only itself; the next stream is still accepted
+/// and answered. Each accept checks the peer's live grant, and the loop ends
+/// when the connection closes or the grant ends; a request still in flight
+/// then ends with it.
+async fn serve_each_stream<Q, A, F, Fut>(conn: &dyn MeshConnection, answer: F)
 where
     Q: DeserializeOwned,
     A: Serialize,
-    F: FnMut(Q) -> Fut,
+    F: Fn(Q) -> Fut,
     Fut: Future<Output = A>,
 {
-    while let Ok(mut stream) = conn.accept_stream().await {
-        let Ok(bytes) = stream.recv().await else {
-            continue;
-        };
-        let Ok(request) = decode_message::<Q>(JOB_PROTOCOL, &bytes) else {
-            continue;
-        };
-        let reply = answer(request).await;
-        let Ok(reply) = encode_message(JOB_PROTOCOL, &reply) else {
-            continue;
-        };
-        if stream.send(&reply).await.is_err() {
-            break;
+    let answer = &answer;
+    let mut streams = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            Some(()) = streams.next(), if !streams.is_empty() => {}
+            accepted = conn.accept_stream() => match accepted {
+                Ok(stream) => streams.push(serve_stream::<Q, A, F, Fut>(stream, answer)),
+                Err(_) => break,
+            },
         }
     }
+}
+
+/// One stream's request and its answer. A stream whose request does not
+/// decode gets no answer; a failure ends this stream alone.
+async fn serve_stream<Q, A, F, Fut>(mut stream: Box<dyn MeshStream>, answer: &F)
+where
+    Q: DeserializeOwned,
+    A: Serialize,
+    F: Fn(Q) -> Fut,
+    Fut: Future<Output = A>,
+{
+    let Ok(bytes) = stream.recv().await else {
+        return;
+    };
+    let Ok(request) = decode_message::<Q>(JOB_PROTOCOL, &bytes) else {
+        return;
+    };
+    let reply = answer(request).await;
+    let Ok(reply) = encode_message(JOB_PROTOCOL, &reply) else {
+        return;
+    };
+    // A peer that stopped reading loses this answer; it asks again on a new
+    // stream.
+    drop(stream.send(&reply).await);
 }

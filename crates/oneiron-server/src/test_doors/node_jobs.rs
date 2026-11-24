@@ -19,6 +19,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::job_workload::{
+    BoundReport, BoundRequirement, BoundStrength, DeviceClosure, DeviceFacts, DeviceIdSource,
+    DeviceKind, DeviceMemory, DeviceState, HeldDevice, ScopeBound, ScopeCapabilities, Sharing,
+};
 use oneiron::machine_capacity::GpuDevice;
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
 use oneiron_organ_host::{FloorLease, FloorRefusal, GpuSlotGrant, MachineFloor};
@@ -30,10 +34,9 @@ use crate::gpu_execution_node::jobs::node_parts::{
     GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotRefusal, GpuSlotRequest,
 };
 use crate::gpu_execution_node::jobs::{
-    AuthorityPosition, BoundReport, EndRecord, IssuerNotLive, JobKeyId, JobUnit, JobUnitError,
-    JobUnitPhase, JobUnitStatus, LaunchFile, NodeAdmission, NodeClock, NodeControls, NodeDevices,
-    NodeJobParts, NodeJobPaths, NodeJobSettings, NodeJobs, ScopeCapabilities, StageFailure,
-    StageOrder, Stager, Strength,
+    AuthorityPosition, EndRecord, IssuerNotLive, JobKeyId, JobUnit, JobUnitError, JobUnitPhase,
+    JobUnitStatus, LaunchFile, NodeAdmission, NodeClock, NodeControls, NodeDevices, NodeJobParts,
+    NodeJobPaths, NodeJobSettings, NodeJobs, StageFailure, StageOrder, Stager,
 };
 use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
 
@@ -146,6 +149,7 @@ struct UnitsState {
     starts: BTreeMap<JobKeyId, u32>,
     answering: bool,
     next_start: ScriptedStart,
+    probe: ScopeCapabilities,
 }
 
 /// The service manager, scripted. It writes `ended.json` as the unit's root
@@ -169,8 +173,36 @@ impl ScriptedJobUnits {
                 starts: BTreeMap::new(),
                 answering: true,
                 next_start: ScriptedStart::Run,
+                probe: Self::kernel_scope(),
             }),
         })
+    }
+
+    /// A scope whose kernel gives every bound: what `probe` answers until a
+    /// test sets another.
+    #[must_use]
+    pub fn kernel_scope() -> ScopeCapabilities {
+        let kernel = || BoundReport {
+            strength: BoundStrength::Kernel,
+            evidence: "scripted".to_owned(),
+        };
+        ScopeCapabilities {
+            tree_kill: kernel(),
+            cutoff_without_engine: kernel(),
+            emptiness: kernel(),
+            memory_cap: kernel(),
+            cpu_cap: kernel(),
+            file_wall: kernel(),
+            network_closed: kernel(),
+            device_closure: kernel(),
+            processes_hidden: kernel(),
+            write_rate_cap: kernel(),
+        }
+    }
+
+    /// What `probe` answers from now on.
+    pub fn set_probe(&self, scope: ScopeCapabilities) {
+        locked(&self.state).probe = scope;
     }
 
     /// How many times the key's unit was started.
@@ -313,22 +345,7 @@ impl ScriptedJobUnits {
 
 impl JobUnit for ScriptedJobUnits {
     fn probe(&self) -> ScopeCapabilities {
-        let kernel = || BoundReport {
-            strength: Strength::Kernel,
-            evidence: "scripted".to_owned(),
-        };
-        ScopeCapabilities {
-            tree_kill: kernel(),
-            cutoff_without_engine: kernel(),
-            emptiness: kernel(),
-            memory_cap: kernel(),
-            cpu_cap: kernel(),
-            file_wall: kernel(),
-            network_closed: kernel(),
-            device_closure: kernel(),
-            processes_hidden: kernel(),
-            write_rate_cap: kernel(),
-        }
+        locked(&self.state).probe.clone()
     }
 
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
@@ -450,6 +467,9 @@ impl JobUnit for ScriptedJobUnits {
 #[derive(Debug, Clone)]
 struct ScriptedDevice {
     device: GpuDevice,
+    /// Whether the device shares the host's memory.
+    unified: bool,
+    features: Vec<String>,
     offered: bool,
     /// Compute processes of another account on the device.
     foreign_pids: Vec<u32>,
@@ -482,11 +502,29 @@ impl ScriptedDevices {
                 model: "scripted".to_owned(),
                 memory_total_mib,
             },
+            unified: false,
+            features: Vec::new(),
             offered: true,
             foreign_pids: Vec::new(),
             taken_by: None,
         });
         Arc::new(devices)
+    }
+
+    /// Adds an offered, free device of `memory_total_mib`.
+    pub fn add_device(&self, device_id: &str, memory_total_mib: u64) {
+        locked(&self.state).devices.push(ScriptedDevice {
+            device: GpuDevice {
+                device_id: device_id.to_owned(),
+                model: "scripted".to_owned(),
+                memory_total_mib,
+            },
+            unified: false,
+            features: Vec::new(),
+            offered: true,
+            foreign_pids: Vec::new(),
+            taken_by: None,
+        });
     }
 
     /// Puts compute processes of another account on the device.
@@ -498,6 +536,34 @@ impl ScriptedDevices {
             .find(|device| device.device.device_id == device_id)
         {
             device.foreign_pids = pids;
+        }
+    }
+
+    /// Makes the device share the host's memory (a unified-memory machine)
+    /// or have its own.
+    pub fn set_unified(&self, device_id: &str, unified: bool) {
+        let mut state = locked(&self.state);
+        if let Some(device) = state
+            .devices
+            .iter_mut()
+            .find(|device| device.device.device_id == device_id)
+        {
+            device.unified = unified;
+        }
+    }
+
+    /// The features the device reports.
+    pub fn set_features(&self, device_id: &str, features: &[&str]) {
+        let mut state = locked(&self.state);
+        if let Some(device) = state
+            .devices
+            .iter_mut()
+            .find(|device| device.device.device_id == device_id)
+        {
+            device.features = features
+                .iter()
+                .map(|feature| (*feature).to_owned())
+                .collect();
         }
     }
 
@@ -600,14 +666,44 @@ impl Drop for ScriptedLease {
 }
 
 impl NodeDevices for ScriptedDevices {
-    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String> {
+    fn devices(&self) -> Result<Vec<HeldDevice>, String> {
         let state = locked(&self.state);
-        state
+        if state.probe_fails {
+            return Err("devices_unreadable: scripted probe failure".to_owned());
+        }
+        Ok(state
             .devices
             .iter()
-            .any(|device| device.offered && request.admits(&device.device))
-            .then_some(())
-            .ok_or_else(|| "no_device".to_owned())
+            .map(|device| {
+                let mib = device.device.memory_total_mib;
+                let state = match (&device.taken_by, device.offered) {
+                    (_, false) => DeviceState::Withheld,
+                    (Some(key), true) => DeviceState::Leased {
+                        keys: vec![key.clone()],
+                    },
+                    (None, true) => DeviceState::Offered,
+                };
+                HeldDevice {
+                    facts: DeviceFacts {
+                        id: device.device.device_id.clone(),
+                        id_source: DeviceIdSource::VendorUuid,
+                        kind: DeviceKind::Gpu,
+                        vendor: "scripted".to_owned(),
+                        model: device.device.model.clone(),
+                        memory: if device.unified {
+                            DeviceMemory::Unified { mib }
+                        } else {
+                            DeviceMemory::Dedicated { mib }
+                        },
+                        features: device.features.clone(),
+                        closure: DeviceClosure::Closed,
+                        state,
+                        max_claimants: 1,
+                    },
+                    holders: device.taken_by.iter().map(|_| Sharing::Exclusive).collect(),
+                }
+            })
+            .collect())
     }
 
     fn lease_for_launch(
@@ -705,6 +801,7 @@ impl NodeDevices for ScriptedDevices {
 struct AdmissionState {
     controls: NodeControls,
     templates: BTreeMap<String, String>,
+    require: Vec<BoundRequirement>,
     pin_refusal: Option<String>,
     disk_free_mib: u64,
     disk_reserve_mib: u64,
@@ -734,6 +831,16 @@ impl ScriptedAdmission {
                     ..NodeControls::default()
                 },
                 templates: BTreeMap::from([(template.to_owned(), digest.to_owned())]),
+                require: vec![
+                    BoundRequirement {
+                        bound: ScopeBound::FileWall,
+                        kernel: false,
+                    },
+                    BoundRequirement {
+                        bound: ScopeBound::NetworkClosed,
+                        kernel: false,
+                    },
+                ],
                 pin_refusal: None,
                 disk_free_mib: 1 << 20,
                 disk_reserve_mib: 0,
@@ -753,6 +860,12 @@ impl ScriptedAdmission {
         locked(&self.state)
             .templates
             .insert(template.to_owned(), digest.to_owned());
+    }
+
+    /// The scope bounds every template requires (default: the file wall
+    /// and the closed network, as R1's file defaults them).
+    pub fn set_template_requires(&self, require: Vec<BoundRequirement>) {
+        locked(&self.state).require = require;
     }
 
     /// The template check's refusal for every pin.
@@ -811,6 +924,14 @@ impl NodeAdmission for ScriptedAdmission {
 
     fn template_digest(&self, template: &str) -> Option<String> {
         locked(&self.state).templates.get(template).cloned()
+    }
+
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>> {
+        let state = locked(&self.state);
+        state
+            .templates
+            .contains_key(template)
+            .then(|| state.require.clone())
     }
 
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {

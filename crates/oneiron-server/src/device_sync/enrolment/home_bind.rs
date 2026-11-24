@@ -18,6 +18,20 @@ pub(crate) fn enrolment_alpn() -> Option<&'static [u8]> {
     Some(oneiron_mesh_transport::SYNC_ALPN)
 }
 
+/// The protocols an enrolled machine's binding may be granted later: every
+/// protocol this engine serves (MESH-PAIRING-CEILING = A). Each grant stays
+/// the owner's own act.
+#[cfg(feature = "mesh")]
+pub(crate) fn enrolment_ceiling() -> &'static [&'static [u8]] {
+    &crate::handler::mesh::SERVED_MESH_ALPNS
+}
+
+/// A build without the `mesh` feature serves no protocol.
+#[cfg(not(feature = "mesh"))]
+pub(crate) fn enrolment_ceiling() -> &'static [&'static [u8]] {
+    &[]
+}
+
 /// A build without the `mesh` feature runs no listener and binds nothing.
 #[cfg(not(feature = "mesh"))]
 pub(crate) fn enrolment_alpn() -> Option<&'static [u8]> {
