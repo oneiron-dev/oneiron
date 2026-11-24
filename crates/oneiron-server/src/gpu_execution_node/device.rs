@@ -4,6 +4,8 @@
 //! recheck, so a card is never offered from an old reading.
 
 use std::io::Read;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -68,23 +70,35 @@ pub trait GpuDeviceProbe: Send + Sync {
     fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError>;
 }
 
-/// The shipped probe: `nvidia-smi`, one query per ask.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NvidiaSmiProbe;
+/// The shipped probe: `nvidia-smi`, one query per ask. Each query runs in
+/// its own process group, and a query past its deadline is killed with its
+/// whole group, so a helper it started cannot hold the output pipe open.
+/// While a reader of an earlier query is still blocked, the next query is
+/// refused, so a stuck driver never piles up threads or pipes.
+#[derive(Debug, Clone, Default)]
+pub struct NvidiaSmiProbe {
+    open_readers: Arc<AtomicUsize>,
+}
 
 impl GpuDeviceProbe for NvidiaSmiProbe {
     fn devices(&self) -> Result<Vec<GpuDevice>, GpuProbeError> {
-        parse_device_lines(&query(&[
-            "--query-gpu=uuid,name,memory.total",
-            "--format=csv,noheader,nounits",
-        ])?)
+        parse_device_lines(&query(
+            &self.open_readers,
+            &[
+                "--query-gpu=uuid,name,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+        )?)
     }
 
     fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError> {
-        parse_compute_process_lines(&query(&[
-            "--query-compute-apps=gpu_uuid,pid",
-            "--format=csv,noheader,nounits",
-        ])?)
+        parse_compute_process_lines(&query(
+            &self.open_readers,
+            &[
+                "--query-compute-apps=gpu_uuid,pid",
+                "--format=csv,noheader,nounits",
+            ],
+        )?)
     }
 }
 
@@ -92,7 +106,7 @@ impl GpuDeviceProbe for NvidiaSmiProbe {
 /// driver is absent or fails, as on a machine with no NVIDIA GPU.
 #[must_use]
 pub fn recorded_gpu_devices() -> Vec<GpuDevice> {
-    NvidiaSmiProbe.devices().unwrap_or_default()
+    NvidiaSmiProbe::default().devices().unwrap_or_default()
 }
 
 /// Reads `nvidia-smi --query-gpu=uuid,name,memory.total
@@ -159,25 +173,56 @@ fn plain_device_id(id: &str) -> Option<String> {
         .then(|| id.to_owned())
 }
 
+/// Counts a reader thread as open until it ends.
+struct OpenReader(Arc<AtomicUsize>);
+
+impl OpenReader {
+    fn open(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::AcqRel);
+        Self(Arc::clone(count))
+    }
+}
+
+impl Drop for OpenReader {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Runs one driver query and answers its output, within
 /// [`GPU_QUERY_TIMEOUT`]: its exit and the end of its output both wait no
-/// longer, and a query past it is killed and reaped off the caller's path.
-fn query(args: &[&str]) -> Result<String, GpuProbeError> {
+/// longer, and a query past it is killed with its process group and reaped
+/// off the caller's path. `open_readers` counts the readers of earlier
+/// queries that are still blocked; while there is one, this query refuses.
+fn query(open_readers: &Arc<AtomicUsize>, args: &[&str]) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
-    let mut child = oneiron_spawn::command(NVIDIA_SMI)
+    if open_readers.load(Ordering::Acquire) > 0 {
+        return Err(unavailable(format!(
+            "an earlier {NVIDIA_SMI} query still holds its output open"
+        )));
+    }
+    let mut command = oneiron_spawn::command(NVIDIA_SMI);
+    command
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // Its own process group, so whatever it starts is killed with it.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command
         .spawn()
         .map_err(|error| unavailable(format!("{NVIDIA_SMI} did not start: {error}")))?;
+    let group = child.id();
     let Some(mut stdout) = child.stdout.take() else {
         abandon(child);
         return Err(unavailable(format!("{NVIDIA_SMI} gave no output pipe")));
     };
     // Read while it runs, so a long answer never fills the pipe and stalls it.
     let (sender, output) = std::sync::mpsc::channel();
+    let reader = OpenReader::open(open_readers);
     std::thread::spawn(move || {
+        let _reader = reader;
         let mut text = String::new();
         let read = stdout.read_to_string(&mut text).map(|_| text);
         // An abandoned query has no receiver left; its output is dropped.
@@ -206,19 +251,37 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
             }
         }
     };
-    let text = output
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .map_err(|_| late())?
-        .map_err(|error| unavailable(format!("{NVIDIA_SMI}'s output: {error}")))?;
+    // The leader has exited; a helper of its group may still hold the pipe.
+    let Ok(read) = output.recv_timeout(deadline.saturating_duration_since(Instant::now())) else {
+        kill_group(group);
+        return Err(late());
+    };
+    let text = read.map_err(|error| unavailable(format!("{NVIDIA_SMI}'s output: {error}")))?;
     if !status.success() {
         return Err(unavailable(format!("{NVIDIA_SMI} exited with {status}")));
     }
     Ok(text)
 }
 
-/// Kills a query no longer waited for and reaps it on its own thread, so a
-/// driver call that never returns holds that thread, not the caller.
+/// Kills every process left in the query's process group, so the pipe its
+/// reader waits on closes.
+fn kill_group(group: u32) {
+    #[cfg(unix)]
+    if let Some(group) = i32::try_from(group)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    #[cfg(not(unix))]
+    let _ = group;
+}
+
+/// Kills a query no longer waited for, with its process group, and reaps it
+/// on its own thread, so a driver call that never returns holds that
+/// thread, not the caller.
 fn abandon(mut child: std::process::Child) {
+    kill_group(child.id());
     if let Err(error) = child.kill() {
         tracing::debug!(%error, "the GPU driver query had already ended");
     }

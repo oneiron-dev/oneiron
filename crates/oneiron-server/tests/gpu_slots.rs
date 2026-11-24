@@ -1117,9 +1117,21 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
         gpu_jobs_section("[devices]\noffered = [\"GPU-aaaa\"]\n")?
             .devices
             .owner_lock_dir,
-        Some(std::env::temp_dir().join("oneiron-gpu-owners")),
+        Some(oneiron_server::config::gpu_jobs::default_owner_lock_dir()),
         "an offering server takes owner locks by default"
     );
+    let machine_wide = if cfg!(target_os = "linux") {
+        "/dev/shm/oneiron-gpu-owners"
+    } else {
+        "/tmp/oneiron-gpu-owners"
+    };
+    if cfg!(unix) {
+        assert_eq!(
+            oneiron_server::config::gpu_jobs::default_owner_lock_dir(),
+            std::path::PathBuf::from(machine_wide),
+            "one owner lock directory per machine, whatever TMPDIR or a private /tmp says"
+        );
+    }
 
     for refused in [
         "[devices]\noffered = [\"GPU-aaaa\", \"GPU-aaaa\"]\n",
@@ -1311,6 +1323,49 @@ fn an_offered_gpu_that_a_model_worker_runs_on_is_refused() -> TestResult {
     let by_index = refuse_worker_device_overlap(&offered, [("voice", "0")])
         .expect_err("an index cannot be told apart from an offered GPU");
     assert!(by_index.to_string().contains("by index"), "{by_index}");
+    // CUDA takes a unique UUID prefix, in any case, and the older MIG form
+    // holds its GPU's id (review-10425 P1 4).
+    for named in ["GPU-aa", "gpu-AAAA", "MIG-GPU-aaaa/1/0"] {
+        let refused = refuse_worker_device_overlap(&offered, [("chat", named)])
+            .expect_err("a worker naming an offered GPU by another form is refused");
+        assert!(
+            refused.to_string().contains("GPU-aaaa"),
+            "{named}: {refused}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_drain_written_after_a_failed_write_clears_when_its_file_is_deleted() -> TestResult {
+    // review-10425 P1 7: a drain kept in memory after a failed write must
+    // not outlive a later drain that the file holds.
+    let dir = tempfile::tempdir()?;
+    let drain_file = dir.path().join("later").join("gpu-drained");
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(
+        &probe,
+        GpuDeviceOffer {
+            drain_file: Some(drain_file.clone()),
+            ..offering(&["GPU-aaaa"])
+        },
+    );
+    slots.drain("first".to_owned());
+    assert_eq!(
+        slots.drained()?,
+        Some("first".to_owned()),
+        "kept in memory while its file cannot be written"
+    );
+    std::fs::create_dir(dir.path().join("later"))?;
+    slots.drain("second".to_owned());
+    assert!(drain_file.is_file(), "the second drain is written");
+    assert_eq!(slots.drained()?, Some("second".to_owned()));
+    std::fs::remove_file(&drain_file)?;
+    assert_eq!(
+        slots.drained()?,
+        None,
+        "deleting the written drain clears it"
+    );
     Ok(())
 }
 
@@ -1339,6 +1394,13 @@ fn two_servers_on_one_machine_never_offer_the_same_gpu() -> TestResult {
     );
     assert_eq!(
         second.lease(&pinned("b", "GPU-aaaa"), T0).map(|_| ()),
+        Err(GpuSlotRefusal::Withheld {
+            device_id: "GPU-aaaa".to_owned()
+        })
+    );
+    // A restarted server takes back only a GPU it owns (review-10425 P1 3).
+    assert_eq!(
+        second.reattach("b", "GPU-aaaa", T0).map(|_| ()),
         Err(GpuSlotRefusal::Withheld {
             device_id: "GPU-aaaa".to_owned()
         })

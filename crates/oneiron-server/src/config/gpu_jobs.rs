@@ -39,8 +39,11 @@
 //! clears the drain. `drain_file` keeps the drain across a restart, and
 //! deleting it clears the drain. `owner_lock_dir` is where the server takes
 //! one lock file per offered GPU while it runs, so a second Oneiron server
-//! on the machine does not offer the same GPU; it is the temp directory's
-//! `oneiron-gpu-owners` unless named.
+//! on the machine does not offer the same GPU. Unless named it is one path
+//! for the whole machine, `/dev/shm/oneiron-gpu-owners` on Linux (else
+//! `/tmp/oneiron-gpu-owners`), which neither TMPDIR nor a private `/tmp`
+//! changes. Every server of one machine that names it must name the same
+//! directory.
 //!
 //! ```toml
 //! [gpu_jobs.devices]
@@ -60,8 +63,20 @@ use serde::Deserialize;
 
 use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GpuDeviceOffer};
 
-/// The owner lock directory, under the temp directory, when none is named.
-const GPU_OWNER_LOCK_DIR: &str = "oneiron-gpu-owners";
+/// The owner lock directory when none is named: one path for every server
+/// on the machine, whatever its TMPDIR or a private `/tmp` says (the shipped
+/// `oneiron.service` sets `PrivateTmp=true`), so two servers lock the same
+/// file for one GPU.
+#[must_use]
+pub fn default_owner_lock_dir() -> PathBuf {
+    if cfg!(target_os = "linux") {
+        PathBuf::from("/dev/shm/oneiron-gpu-owners")
+    } else if cfg!(unix) {
+        PathBuf::from("/tmp/oneiron-gpu-owners")
+    } else {
+        std::env::temp_dir().join("oneiron-gpu-owners")
+    }
+}
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -215,9 +230,12 @@ pub(crate) fn refuse_offered_worker_devices(
 }
 
 /// Refuses an offered GPU that one of `workers` (each its id and its
-/// `CUDA_VISIBLE_DEVICES` entry) names. An index (`0`) names no device id
-/// until the driver is read, and CUDA may number the cards otherwise, so
-/// while any GPU is offered a worker names its GPU by device id.
+/// `CUDA_VISIBLE_DEVICES` entry) names. CUDA takes a unique prefix of a
+/// UUID, and the older MIG form `MIG-GPU-<uuid>/<gi>/<ci>` holds its GPU's
+/// id, so an entry names an offered GPU when it is a prefix of the GPU's id
+/// or holds it, in any letter case. An index (`0`) names no device id until
+/// the driver is read, and CUDA may number the cards otherwise, so while
+/// any GPU is offered a worker names its GPU by device id.
 ///
 /// # Errors
 ///
@@ -236,10 +254,15 @@ pub fn refuse_worker_device_overlap<'a>(
             .map(str::trim)
             .filter(|entry| !entry.is_empty())
         {
-            anyhow::ensure!(
-                !offered.contains(entry),
-                "gpu_jobs.devices.offered names GPU {entry}, which the model worker {worker} runs on: a GPU has one booker"
-            );
+            let lower = entry.to_ascii_lowercase();
+            if let Some(gpu) = offered.iter().find(|gpu| {
+                let gpu = gpu.to_ascii_lowercase();
+                gpu.starts_with(&lower) || lower.contains(&gpu)
+            }) {
+                anyhow::bail!(
+                    "gpu_jobs.devices.offered names GPU {gpu}, which the model worker {worker} runs on ({entry}): a GPU has one booker"
+                );
+            }
             anyhow::ensure!(
                 !entry.chars().all(|c| c.is_ascii_digit()),
                 "the model worker {worker} names its GPU by index ({entry}) while gpu_jobs.devices offers GPUs: name it by device id (nvidia-smi -L), so no offered GPU is one it runs on"
@@ -289,9 +312,9 @@ impl GpuDevicesFile {
                 .drain_after_failures
                 .unwrap_or(GPU_DRAIN_AFTER_FAILURES),
             drain_file: self.drain_file,
-            owner_lock_dir: self.owner_lock_dir.or_else(|| {
-                (!offered.is_empty()).then(|| std::env::temp_dir().join(GPU_OWNER_LOCK_DIR))
-            }),
+            owner_lock_dir: self
+                .owner_lock_dir
+                .or_else(|| (!offered.is_empty()).then(default_owner_lock_dir)),
             offered,
         })
     }

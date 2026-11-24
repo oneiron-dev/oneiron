@@ -349,6 +349,17 @@ impl GpuSlotTable {
             .ok_or_else(|| GpuSlotRefusal::UnknownDevice {
                 device_id: device_id.to_owned(),
             })?;
+        // A GPU another server of this machine owns is not this table's to
+        // take back, whatever runs on it.
+        if reading
+            .owned
+            .as_ref()
+            .is_some_and(|owned| !owned.contains(device_id))
+        {
+            return Err(GpuSlotRefusal::Withheld {
+                device_id: device_id.to_owned(),
+            });
+        }
         if slot_on(&state.slots, device_id).is_some() {
             return Err(GpuSlotRefusal::Taken {
                 device_id: device_id.to_owned(),
@@ -704,7 +715,11 @@ impl Shared {
                 "{drain}\nDelete this file to clear the drain; the machine then takes GPU jobs again.\n"
             );
             match std::fs::write(path, text) {
-                Ok(()) => return,
+                // The file now holds the drain, so deleting it clears it.
+                Ok(()) => {
+                    state.drain_in_memory = None;
+                    return;
+                }
                 Err(error) => tracing::warn!(
                     %error,
                     path = %path.display(),

@@ -218,7 +218,7 @@ impl SyncServer {
         // A GPU job's booking claims its disk bytes on the floor uploads,
         // backups and spools claim theirs on.
         let gpu_slots = Arc::new(crate::gpu_execution_node::GpuSlotTable::with_disk(
-            Arc::new(crate::gpu_execution_node::NvidiaSmiProbe),
+            Arc::new(crate::gpu_execution_node::NvidiaSmiProbe::default()),
             config.gpu_jobs.devices.clone(),
             Some(Arc::new(transfers.disk.clone())),
         ));
