@@ -2,7 +2,8 @@
 //! of one project and task type, with the digest of the answer. A read: the
 //! owner under their own proof, or an agent whose own Grant lists the verb
 //! (`verb_grant_caller`). The engine reads (`oneiron::team::planner_card_door`);
-//! the door writes nothing and lists no row.
+//! the door writes nothing and lists every row the card was read from, so the
+//! facade withholds a card one of them keeps from the caller's destination.
 
 use std::sync::Arc;
 
