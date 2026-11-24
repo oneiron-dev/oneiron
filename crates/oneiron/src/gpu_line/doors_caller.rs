@@ -6,8 +6,10 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
-/// Admits `memory`'s caller to `verb` in `txn`: `Some(owner actor)` when the
-/// owner's own proof admitted it, `None` for an agent its Grant admitted.
+/// Admits `memory`'s caller to `verb` in `txn` on the line of `project`:
+/// `Some(owner actor)` when the owner's own proof admitted it, `None` for an
+/// agent whose Grant admitted it and reaches the line (its scope names no
+/// project, the lane or an ancestor of it).
 ///
 /// # Errors
 ///
@@ -17,13 +19,13 @@ pub(super) fn admit_in_txn(
     txn: &heed::RoTxn<'_>,
     owner: Option<&AuthenticatedOwner>,
     verb: &str,
+    project: EntityId,
 ) -> MemoryResult<Option<EntityId>> {
-    Ok(
-        match memory.verb_grant_caller_admits_in_txn(txn, owner, verb)? {
-            VerbGrantCaller::Owner => Some(memory.actor()),
-            VerbGrantCaller::Agent { .. } => None,
-        },
-    )
+    let caller = memory.verb_grant_caller_admits_over_in_txn(txn, owner, verb, project)?;
+    Ok(match caller {
+        VerbGrantCaller::Owner => Some(memory.actor()),
+        VerbGrantCaller::Agent { .. } => None,
+    })
 }
 
 /// The refusal of an agent at an act that is the owner's alone.

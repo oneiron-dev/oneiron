@@ -12,6 +12,7 @@
 mod doors;
 mod doors_caller;
 mod fold;
+mod intent;
 mod mint;
 mod store;
 pub(crate) mod tables;
@@ -20,6 +21,8 @@ mod wire;
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
+pub(crate) use intent::erase_intent_asker_in_txn;
+pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 pub use mint::{
     BUILT_RULES, GPU_SECONDS, LineInvalid, MintError, NO_WIN_PRIOR_RUNGS, PAYOFF_SCORE_SCALE,
     SettledTally, inputs_digest, mint_period, payoff_share,

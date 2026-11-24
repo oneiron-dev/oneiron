@@ -16,6 +16,7 @@
 //! then its seat's ladder admits, sends and settles each rung it reaches.
 
 mod admission;
+mod arms;
 mod artifacts_audit;
 mod authority_clock;
 mod diary;
@@ -31,6 +32,7 @@ mod verdict_hooks;
 mod vision;
 
 pub(super) use self::admission::*;
+pub(crate) use self::arms::*;
 pub(crate) use self::artifacts_audit::*;
 pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;

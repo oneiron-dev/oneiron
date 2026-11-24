@@ -122,7 +122,8 @@ impl Memory<'_> {
         )
         .map_err(GpuLineError::Intent)?;
         vault.with_write_txn_grouped(|txn| -> crate::Result<Result<GpuLineView, GpuLineError>> {
-            let set_by = match admit_in_txn(self, txn, owner, VAULT_GPU_LINES_SET) {
+            let set_by = match admit_in_txn(self, txn, owner, VAULT_GPU_LINES_SET, request.project)
+            {
                 Ok(Some(owner)) => owner,
                 Ok(None) => {
                     return Ok(Err(GpuLineError::Caller(refused_owner_act(
@@ -206,7 +207,7 @@ impl Memory<'_> {
     ) -> Result<GpuLineView, GpuLineError> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        if let Err(refusal) = admit_in_txn(self, &txn, owner, VAULT_GPU_LINES_GET) {
+        if let Err(refusal) = admit_in_txn(self, &txn, owner, VAULT_GPU_LINES_GET, *project) {
             return Err(GpuLineError::Caller(refusal));
         }
         let Some(line) = line_in_txn(vault, &txn, project)? else {
@@ -245,7 +246,13 @@ impl Memory<'_> {
         )
         .map_err(GpuLineError::Intent)?;
         vault.with_write_txn_grouped(|txn| -> crate::Result<Result<GpuLineView, GpuLineError>> {
-            let by_owner = match admit_in_txn(self, txn, owner, VAULT_GPU_LINES_FAMILIES_ADMIT) {
+            let by_owner = match admit_in_txn(
+                self,
+                txn,
+                owner,
+                VAULT_GPU_LINES_FAMILIES_ADMIT,
+                request.project,
+            ) {
                 Ok(owner) => owner,
                 Err(refusal) => return Ok(Err(GpuLineError::Caller(refusal))),
             };
