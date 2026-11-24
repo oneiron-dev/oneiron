@@ -106,6 +106,10 @@ pub enum GpuJobError {
     /// per-job maximum, or on a job it did not start.
     #[error(transparent)]
     Caller(crate::memory::MemoryError),
+    /// The work order an attempt belongs to refused it in the start's own
+    /// read or write: it changed, its authority ended, or a blocker stands.
+    #[error(transparent)]
+    Order(crate::work_order::AttemptRefused),
 }
 
 /// The verb doors' refusal: a malformed request is the caller's, a quote or
@@ -120,6 +124,12 @@ impl From<GpuJobError> for crate::memory::MemoryError {
         let refusal = match error {
             GpuJobError::Vault(error) => return error.into(),
             GpuJobError::Caller(error) => return error,
+            GpuJobError::Order(refused) => {
+                let mut error =
+                    MemoryError::new(MEMORY_CODE_INVALID_STATE, refused.to_string(), &[]);
+                error.reason_codes = vec![refused.code().to_owned()];
+                return error;
+            }
             refusal => refusal,
         };
         let code = match &refusal {
@@ -135,9 +145,10 @@ impl From<GpuJobError> for crate::memory::MemoryError {
             | GpuJobError::Ended => MEMORY_CODE_INVALID_STATE,
             GpuJobError::Denied(_) => MEMORY_CODE_BUDGET_SPENT,
             GpuJobError::NotFound => MEMORY_CODE_NOT_FOUND,
-            GpuJobError::Vault(_) | GpuJobError::Connector(_) | GpuJobError::Caller(_) => {
-                MEMORY_CODE_INTERNAL
-            }
+            GpuJobError::Vault(_)
+            | GpuJobError::Connector(_)
+            | GpuJobError::Caller(_)
+            | GpuJobError::Order(_) => MEMORY_CODE_INTERNAL,
         };
         MemoryError::new(code, refusal.to_string(), &[])
     }
