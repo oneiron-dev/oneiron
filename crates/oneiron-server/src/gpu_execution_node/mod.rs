@@ -3,11 +3,14 @@
 //! runs on them now ([`device`]), what it offers and answers when asked
 //! ([`availability`]), the slots it holds and leases on them, beside its
 //! memory floor ([`slots`]), the home's choice of a GPU among the vault's
-//! machines ([`selection`]), the job protocols' messages ([`wire`]) and the
-//! node's two mesh services ([`service`]).
+//! machines ([`selection`]), the job protocols' messages ([`wire`]), the
+//! node's two mesh services ([`service`]), and the node's job service with
+//! its journal ([`jobs`]).
 
 pub mod availability;
 pub mod device;
+#[cfg(unix)]
+pub mod jobs;
 pub mod selection;
 #[cfg(feature = "mesh")]
 pub mod service;
