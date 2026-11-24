@@ -35,7 +35,7 @@ pub use check::{
     WorkloadStartRefusal, WorkloadStarter,
 };
 pub use compute_bound::COMPUTE_PIN_CLASS;
-pub(crate) use compute_bound::compute_selectors;
+pub(crate) use compute_bound::{compute_id, compute_selectors};
 pub use doors::{WorkloadAgent, WorkloadCaller, WorkloadError, WorkloadVerb};
 pub(crate) use record::erase_workload_actor_in_txn;
 pub use record::{

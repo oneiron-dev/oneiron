@@ -73,6 +73,17 @@ fn refused(what: &'static str) -> Error {
     Error::Gate(GateError::InvalidConsentBound(what))
 }
 
+/// `value`, an id in hex, spelled as a pin's candidate spells it: lower hex.
+///
+/// # Errors
+///
+/// `InvalidConsentBound` naming `what` when `value` is not an id in hex.
+pub(crate) fn compute_id(what: &'static str, value: &str) -> Result<String> {
+    EntityId::from_hex(value.trim())
+        .map(|id| id.to_hex())
+        .map_err(|_| refused(what))
+}
+
 /// The selectors the mint's `compute` field adds to an action bound of class
 /// `class`: one per template, network mode, scope kind and machine. A
 /// `compute` field goes only with class [`COMPUTE_PIN_CLASS`], and that class
