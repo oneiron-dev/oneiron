@@ -164,7 +164,7 @@ pub struct GrantlessAgentRow {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialVerbs {
-    /// No list: every verb its Scope admits (`token agent --all-verbs`, and
+    /// No list: every verb its Scope admits (`token agent --verbs all`, and
     /// every credential minted before verb lists).
     All,
     /// Every read verb and these verbs, by their verb-table names, signed

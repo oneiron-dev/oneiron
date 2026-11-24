@@ -647,17 +647,12 @@ pub struct TokenAgentArgs {
     /// The verbs the credential may call beyond every read verb, by their
     /// verb-table names, comma-separated (e.g.
     /// `vault.notes.create,vault.notes.lifecycle`), signed into the slip.
-    /// Omit it (and `--all-verbs`) for the read verbs alone. The owner
-    /// widens a list later by naming a verb in a Grant for the agent
-    /// (`vault.agents.grants.mint`).
-    #[arg(long, value_delimiter = ',', num_args = 1.., conflicts_with = "all_verbs")]
+    /// Omit it for the read verbs alone; `all` (alone) signs no list, so the
+    /// credential calls every verb its tier admits, and the owner's sheet
+    /// shows it as `all`. The owner widens a list later by naming a verb in
+    /// a Grant for the agent (`vault.agents.grants.mint`).
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
     pub verbs: Option<Vec<String>>,
-
-    /// Sign no verb list: the credential calls every verb its tier admits,
-    /// as every credential minted before verb lists does. The owner's sheet
-    /// shows it as `all`.
-    #[arg(long = "all-verbs")]
-    pub all_verbs: bool,
 
     /// Write the credential to this new file, readable by its owner only, and
     /// print only its slip id and principal. Without it the credential is

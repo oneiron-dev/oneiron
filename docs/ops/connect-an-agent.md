@@ -48,10 +48,10 @@ oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
   (`--verbs vault.remember,vault.notes.create`), signed into its slip. Every
   read verb (a verb whose act class is `read`) is always allowed. Without
   `--verbs` the credential calls the read verbs alone, whatever its tier:
-  name what the agent writes, or pass `--all-verbs` instead to let it call
-  every verb its tier admits (no list, as before). A name that is not a verb
-  is refused at mint. The output shows the list as `verb_allowlist` (`null`
-  under `--all-verbs`). The server
+  name what the agent writes, or pass `--verbs all` to let it call every
+  verb its tier admits (no list, as before). A name that is not a verb is
+  refused at mint. The output shows the list as `verb_allowlist` (`null`
+  for `all`). The server
   refuses any other verb on every door (HTTP, MCP tools, code-mode
   programs, the REST write routes) with `FORBIDDEN` and "is not among this
   credential's verbs". To let the agent call one more verb later, name it

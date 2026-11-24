@@ -220,7 +220,8 @@ impl Vault {
                 "full-access",
                 // The load lives write: the agent calls every verb its tier
                 // admits (AGENT-CREDENTIAL-VERB-ALLOWLIST).
-                "--all-verbs",
+                "--verbs",
+                "all",
                 "--config",
                 &config_arg,
                 "--vault-path",
