@@ -54451,6 +54451,7 @@
       "AllocationCommit",
       "AllocationStoreError",
       "DurableAllocationRead",
+      "ReservationParties",
       "VaultAllocationLedger"
      ],
      "path": "src/llm/run_admission/allocation/mod.rs",
@@ -54459,7 +54460,7 @@
       "crate-vis": 1,
       "enum": 1,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -54515,16 +54516,17 @@
       "OfferBinding",
       "OfferRoute",
       "PaidConnector",
-      "PayerPerson"
+      "PayerPerson",
+      "SelectedAllocation"
      ],
      "path": "src/llm/run_admission/host.rs",
      "purpose": "What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -54583,7 +54585,7 @@
      "path": "src/llm/run_admission/permit.rs",
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 1
      }
@@ -54625,12 +54627,15 @@
      "kind": "src",
      "notable": [
       "ResidentLedger",
+      "ResidentShareScope",
       "ResidentStanding"
      ],
      "path": "src/llm/run_admission/resident.rs",
      "purpose": "Each resident's share of the vault's host-paid allocation (ARCH-0011 `#budget-lease`, FIX 7767)",
      "surface": {
       "crate-vis": 6,
+      "enum": 1,
+      "fn": 1,
       "re-export": 1,
       "struct": 1,
       "trait": 1
@@ -54643,7 +54648,7 @@
      "path": "src/llm/run_admission/resident_doors.rs",
      "purpose": "Typed owner doors over the resident shares (FIX 11310): set one resident's share of the host-paid…",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "re-export": 1
      }
     },
@@ -54661,6 +54666,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/slot.rs",
+     "purpose": "Which selected allocation a host-paid call holds on (row M2-I, allocations by wallet)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -109614,6 +109629,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/allocation_ledger_by_wallet.rs",
+     "purpose": "Row M2-I on the durable allocation ledger ([`VaultAllocationLedger`]): one selection per slot (a unit and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/analyzer_khmer_coeng.rs",
      "purpose": "ONE-COENG (ARCH-0031 #deferred, L8-40): Khmer text reaches the index in UTN #61 canonical order (the…",
      "surface": {}
@@ -113950,6 +113973,14 @@
      "notable": [],
      "path": "tests/hooks_replay_owner_revalidated.rs",
      "purpose": "FIX row HOOKS-REPLAY-OWNER-NOT-RECHECKED: `vault.hooks.replay`'s owner call…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_account_allocations_by_wallet.rs",
+     "purpose": "Row M2-I (allocations by wallet): one host account selects one live allocation per slot, a slot being a unit…",
      "surface": {}
     },
     {
@@ -122256,7 +122287,7 @@
     },
     "llm": {
      "entry": "crates/oneiron/src/llm/mod.rs",
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -123442,8 +123473,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8517,
-   "test_files": 2295
+   "source_files": 8518,
+   "test_files": 2297
   },
   "oneiron-agent-runtime": {
    "files": [
