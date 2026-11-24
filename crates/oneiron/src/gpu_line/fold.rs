@@ -192,7 +192,8 @@ pub struct FamilySeat {
     pub project: EntityId,
     pub track: Track,
     pub seed: Option<PayoffSeed>,
-    pub admitted_by: EntityId,
+    /// Who seated it; `None` after their erase.
+    pub admitted_by: Option<EntityId>,
     /// The vault's clock.
     pub admitted_at_ms: u64,
 }
@@ -232,6 +233,7 @@ pub struct GpuLine {
     /// Hosts a unit may ask for.
     pub hosts: Vec<String>,
     pub families: Vec<FamilySeat>,
+    /// Who set the policy last; `None` after their erase.
     pub set_by: Option<EntityId>,
     pub set_at_ms: u64,
     /// Bumped at every write; a period record names the revision it read.
