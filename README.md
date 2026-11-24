@@ -1,21 +1,68 @@
 # Oneiron
 
-**Long-context AI memory for agents, built around a local Rust vault.**
+Oneiron is an open-source memory engine for AI agents, written in Rust. An agent saves
+memories to a local vault and recalls them in a later session. Each saved entry records
+where it came from. Embed Oneiron as a Rust library, or run its daemon and connect over
+HTTP or MCP.
 
-## Agent quickstart: install, connect, remember
+Oneiron is pre-release. There is no release yet, so you build it from source. It is
+licensed under [Apache-2.0](./LICENSE).
 
-From this checkout on a Linux/macOS development host:
+Oneironは、AIエージェント向けのRust製オープンソース・メモリエンジンです。エージェントは記憶をローカルに保存し、別のセッションで取り出せます。保存した記憶には、情報の出どころが記録されます。現在はリリース前で、ビルド済みのバイナリもまだ公開していないため、ソースからビルドして使います。テスト環境では、ビルドに2時間以上かかり、メモリを最大で約37 GiB使いました。下のクイックスタートは、x86-64のLinuxで動作を確認しています。
+
+[Agent setup](./docs/agent-setup.md) · [Status and contributing](#status-and-contributing) · [Storage layout](#storage-layout) · [HTTP API](./oneiron.skills.md)
+
+## Agent quickstart
+
+The quickstart script creates a local vault with authentication on and mints a
+credential for one agent. Over HTTP, the agent writes an entry to its private diary
+and reads it back, then saves a research note and recalls it. The script checks that
+MCP initializes, writes a client configuration for Claude Code, Codex or OpenCode,
+and prints its path. It uses no model and no external API key.
+
+It needs Linux on x86-64, a built `oneiron` binary, Python 3.11 or newer and curl
+7.76 or newer.
+
+No prebuilt binary is published yet, so you build one from source. The build needs
+Git, rustup, a C/C++ compiler, CMake and pkg-config. The
+[prerequisites](./docs/agent-setup.md#prerequisites) name the Debian and Ubuntu packages.
 
 ```sh
-python3 examples/agent-quickstart/quickstart.py --keep-running
+git clone https://github.com/oneiron-dev/oneiron.git
+cd oneiron
+CARGO_BUILD_JOBS=1 cargo install --locked --path crates/oneiron-server --bin oneiron
 ```
 
-Installs the engine, starts a fresh authenticated vault, saves and recalls an
-agent-private memory over HTTP, and connects MCP. No account, API key, model,
-or manual pairing. Needs Python 3.11+, curl 7.76+, and Rust/native build tools.
-It prints the URL, stop command, and ready MCP config with absolute paths for
-Claude Code, Codex, or OpenCode. See [setup and repair](./docs/agent-setup.md)
-and the [complete example](./examples/agent-quickstart/).
+On our Linux x86-64 test host, in a job limited to 40 GiB of memory, this build took
+about 2 h 7 min and peaked at about 37.2 GiB. It reused part of the work of two
+earlier parallel attempts, with 16 and 4 jobs, which reached the 40 GiB limit and
+were stopped. We have not finished a build with less memory.
+
+Cargo installs the binary as `$HOME/.cargo/bin/oneiron` by default. Run the
+quickstart with it:
+
+```sh
+python3 examples/agent-quickstart/quickstart.py --binary "$HOME/.cargo/bin/oneiron" --keep-running
+```
+
+With an existing binary, the run took about two seconds on the test host.
+`--keep-running` leaves the vault running and prints the command that stops it.
+
+On macOS, the script needs a signed `oneiron` binary with a keychain access group. A
+plain Cargo build cannot mint the agent credential there. No signed macOS build has
+been tested.
+
+[Setup and repair](./docs/agent-setup.md) shows how to add the vault to a client. The
+[complete example](./examples/agent-quickstart/) lists every option.
+
+Last checked 2026-11-24: this script with a binary built from `01222999f56`, on an
+Arch Linux x86-64 host.
+
+## Status and contributing
+
+The open pull requests are our own work in progress, merged into `main` in batches after
+we check them on our own machines while GitHub CI is paused. To report a bug or propose a
+change, open an issue; [CONTRIBUTING.md](./CONTRIBUTING.md) says what to include.
 
 ## Why
 
@@ -99,18 +146,17 @@ initialized vault and never creates one.
 
 ## Manual installation from source
 
-The [agent quickstart](./examples/agent-quickstart/) installs and connects in
-one run. To install only the CLI, use the Rust toolchain pinned in
-[rust-toolchain.toml](./rust-toolchain.toml), from the repository root:
+This is the build from the [agent quickstart](#agent-quickstart), which gives its
+measured time and memory. Run it from the repository root:
 
 ```sh
-cargo install --locked --path crates/oneiron-server --bin oneiron
+CARGO_BUILD_JOBS=1 cargo install --locked --path crates/oneiron-server --bin oneiron
 ```
 
-This installs `oneiron` in Cargo's bin directory. Without `--bin oneiron`, the
-package also installs `oneiron-server` (the same CLI) and `oneiron-broker`.
-Oneiron is pre-release; this path uses source builds rather than assuming a
-published package or release binary. For the exact noninteractive init, agent
+Cargo uses the Rust toolchain pinned in [rust-toolchain.toml](./rust-toolchain.toml)
+and installs `oneiron` in its bin directory. Without `--bin oneiron`, the
+package also installs its companion binaries. Oneiron is pre-release and is not
+published on crates.io, so install from a checkout. For the exact noninteractive init, agent
 credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 
@@ -135,8 +181,9 @@ outputs on every train top (TRAIN-REGEN).
 The SDK packages make their generated files in their own builds: `bun run build` in `packages/oneiron` and
 `bun run prepare` in `packages/oneiron-client` (each runs the generator with `cargo run`), and `maturin build`
 for `oneiron-py`. The agent-SDK reference generated from the verb table (`types.md`, `facade-types.md`,
-`verbs.md`) is published from main at https://oneiron-dev.github.io/oneiron/agent-sdk/, and every cargo build
-keeps a local copy in `target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build).
+`verbs.md`) is not published online yet. Every cargo build keeps a local copy in
+`target/debug/sdk-generated/agent-sdk/` (`target/release/...` for a release build). The SDK
+[quickstart](./docs/agent-sdk/quickstart.md) and [error reference](./docs/agent-sdk/errors.md) are in this repository.
 
 Debug information is adjustable (details in [build performance](./docs/ops/build-performance.md)):
 
@@ -146,11 +193,9 @@ Debug information is adjustable (details in [build performance](./docs/ops/build
 
 ## Web frontend
 
-The engine's web frontend lives in [`apps/web`](./apps/web/README.md), imported
-with its complete Git history from `oneiron-dev/oneiron-web`. It includes the
-TanStack Start console/workbench and its existing Tauri desktop shell. The UI
-still uses fixtures and is not connected to an engine; moving it does not enable
-vault operations or change its design.
+The web console and its desktop shell live in [`apps/web`](./apps/web/README.md):
+a TanStack Start console and workbench, and a Tauri desktop shell. The console
+uses fixtures and does not connect to the engine.
 
 Run its Bun commands from `apps/web`. Its Tauri package keeps its own Cargo
 workspace and lockfile, separate from the engine workspace and the existing

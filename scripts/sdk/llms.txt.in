@@ -1,17 +1,18 @@
 # Oneiron — Memory Wire
 
 > Actor-bound memory for agents. Start with vault.witness, vault.recall and vault.receipts.
-> The mirror below is full fidelity, generated from shipped SDK sources. CI publishes the generated
-> files (types, facade types, verb census) at https://oneiron-dev.github.io/oneiron/agent-sdk/ from main;
-> a cargo build keeps a local copy in target/debug/sdk-generated/agent-sdk/.
+> Start with the agent setup guide. The SDK quickstart and error reference below are in this
+> repository. The generated reference (types, facade types, verb census) is not published online
+> yet; a cargo build keeps a local copy in target/debug/sdk-generated/agent-sdk/.
 
 ## Memory Wire SDK
 
+- [Agent setup](docs/agent-setup.md): install from a checkout, start a vault, save and recall over HTTP, connect MCP.
 - [Complete quickstarts and API](docs/agent-sdk/quickstart.md): JS/Python, embedded/remote, complete imports and typed errors.
-- [Type declarations](https://oneiron-dev.github.io/oneiron/agent-sdk/types.md): full TypeScript DTOs and Python stubs.
-- [Facade types](https://oneiron-dev.github.io/oneiron/agent-sdk/facade-types.md): generated verb wire types.
+- Type declarations: full TypeScript DTOs and Python stubs, in target/debug/sdk-generated/agent-sdk/types.md after a cargo build.
+- Facade types: generated verb wire types, in target/debug/sdk-generated/agent-sdk/facade-types.md after a cargo build.
 - [Error catalogue](docs/agent-sdk/errors.md): stable codes, suggestions and remediation.
-- [Verb census](https://oneiron-dev.github.io/oneiron/agent-sdk/verbs.md): authoritative shipped facade and stable names.
+- Verb census: authoritative shipped facade and stable names, in target/debug/sdk-generated/agent-sdk/verbs.md after a cargo build.
 - [Vercel AI SDK tools](packages/oneiron-ai-sdk/README.md): thin three-verb satellite and runnable agent sample.
 - [LangGraph BaseStore](packages/oneiron-langgraph/README.md): exact actor-owned long-term keyed memory, not checkpoints.
 - [HTTP API](oneiron.skills.md): endpoint activation index, endpoint details and error schemas.

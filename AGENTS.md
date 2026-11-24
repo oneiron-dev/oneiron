@@ -13,29 +13,39 @@ public.
 
 ## Use the engine from an agent
 
-On a Linux/macOS development/build host, from the repo root:
+On a Linux x86-64 build host, from the repo root, with a built `oneiron` binary:
 
 ```sh
-python3 examples/agent-quickstart/quickstart.py --keep-running
+python3 examples/agent-quickstart/quickstart.py --binary /absolute/path/to/oneiron --keep-running
 ```
 
-This installs this checkout, initializes a fresh vault with no model downloads,
-mints an agent credential, starts loopback HTTP, saves and recalls a private diary
-memory, and connects MCP stdio. Needs Python 3.11+, curl 7.76+, rustup and native
-compiler tools; `--binary /absolute/path/to/oneiron` skips the build. It ignores
-inherited `ONEIRON_*` overrides and never overwrites a vault. It prints the URL,
-stop command, and absolute-path MCP config for Claude Code, Codex, or OpenCode.
-No account, dashboard, API key, or interactive pairing is needed. Follow the
-build-host rules below; never source-build this example on the owner's Mac.
+This initializes a fresh vault with no model downloads, mints an agent credential,
+starts loopback HTTP, writes an entry to the agent's private diary and reads it
+back, saves a research note and recalls it, and checks MCP stdio initialization.
+Needs Python 3.11+ and curl 7.76+. Without `--binary` the script builds this
+checkout first; that needs rustup and native compiler tools, and the release build
+takes hours and tens of GiB of memory (the README has the measured figures). On
+macOS the script needs a signed binary with a keychain access group; a plain Cargo
+build cannot mint the credential there. It ignores inherited `ONEIRON_*` overrides
+and never overwrites a vault. It prints the URL, stop command, and absolute-path
+MCP config for Claude Code, Codex, or OpenCode. No account, dashboard, API key, or
+interactive pairing is needed. Follow the build-host rules below; never
+source-build this example on the owner's Mac.
 
 Read `docs/agent-setup.md` for prerequisites, client config and repair. The complete
-script is `examples/agent-quickstart/quickstart.py`. For direct HTTP use
-`POST /v1/core/facade/self.memory.diary` with `{"content":"project note"}`, then
+script is `examples/agent-quickstart/quickstart.py`. For direct HTTP, write a private
+entry with `POST /v1/core/facade/self.memory.diary` and `{"content":"project note"}`,
+and read it back with `POST /v1/core/facade/self.memory.diary.query` and
+`{"agent":"<your principal id>","reason":"Read my project note"}`. Default
+`vault.recall` does not return diary entries. For a memory that recall returns,
+save a note with `POST /v1/core/facade/vault.notes.create` and
+`{"kind":"research","markdown":"project note"}`, then call
 `POST /v1/core/facade/vault.recall` with
 `{"query":"project note","effort":"light","limit":5}`. Authenticate with the
 paired credential and holder proof (`oneiron api` signs it). For MCP, use the
 printed `oneiron mcp --surface tool-first --credential-file <file> --url <origin>`
-command, call `tools/list`, and pass verb inputs under `arguments.spec`.
+command, call `tools/list`, and build each call from the input schema it lists
+(`schema_version`, `consent`, `arguments`).
 A stopped vault needs `serve --config <config>`; the MCP bridge does not start it.
 
 ## The vibe build (owner decree, 2026-10-17)

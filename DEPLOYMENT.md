@@ -5,13 +5,8 @@ not enabled.
 
 ## Install
 
-From crates.io after publication:
-
-```sh
-cargo install oneiron-server
-```
-
-From a checkout:
+The CLI is not published on crates.io yet, so `cargo install oneiron-server`
+does not work. Install it from a checkout:
 
 ```sh
 cargo install --path crates/oneiron-server
