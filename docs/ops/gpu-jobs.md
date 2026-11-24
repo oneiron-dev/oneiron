@@ -110,28 +110,22 @@ side table `JOB_WORKLOAD` (pass 33, row R2).
 - `vault.jobs.workloads.revoke`: the owner's act. No later start passes the
   gate, and a revoked workload is never approved again.
 
-Who approves is the owner's Setting `jobs.workloads.agent_may_approve`
-(vault scope, default `false`: only the owner approves and revokes, card
-EN-1 A). Set to `true`, which only the owner can do, an agent whose own
-Grant names `vault.jobs.workloads.approve` or `.revoke` does that act too.
-Even then, an agent never approves a workload it pinned, nor one that a
-Grant it holds would start, whichever of its Grants it acts under, and it
-revokes only a workload it may read. The gate admits an agent's approval
-only while the key is on and that agent still holds a live Grant naming the
-approve verb, so turning the key off ends every agent approval at the next
-start. An approval that is not in force blocks nothing: the owner's approval
-replaces an agent's.
+Only the owner approves and revokes (card EN-1 A); no agent's Grant admits
+either act. Pass 34 moves an agent's own pins onto the built check-in under a
+standing grant (R2's follow-up PR); the owner's approval of an exact digest
+stays as its `manual` value.
 
 - `vault.jobs.workloads.get` and `.list`: the owner reads every workload; an
-  agent reads the workloads its Grant pinned, and those whose approval in
-  force names its Grant as a starter or was its own. A revoked or expired
-  workload shows nothing to its starters.
+  agent reads the workloads its Grant pinned, and those whose approval,
+  unexpired and not revoked, names its Grant as a starter. A revoked or
+  expired workload shows nothing to its starters. Neither read keeps its reply
+  for a retry under the same invocation id: the retry reads again.
 
 Before a start on a pinned workload reserves anything, the start gate checks
 the workload with `Vault::check_workload_start`. The pin must exist and must
-not be revoked; its approval must be in force and must not have expired; it must
-name the starter and the quoted machine; and the quote's maximum must be no
-more than the pin's. The machine's own answer must then hold the pin's
+not be revoked; it must hold the owner's approval, which must not have
+expired; it must name the starter and the quoted machine; and the quote's
+maximum must be no more than the pin's. The machine's own answer must then hold the pin's
 template under the pinned digest and must not refuse. A refusal names
 `workload_unknown`, `workload_not_approved`, `workload_revoked`,
 `workload_expired`, `starter_not_named`, `request_above_pin`,

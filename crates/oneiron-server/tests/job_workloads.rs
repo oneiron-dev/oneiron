@@ -1,16 +1,15 @@
-//! Pinned workloads (pass 33 row R2; tests T10, T10b, T11, T12, T12b of
-//! section 11): by default the owner approves each exact workload (EN-1 A)
-//! and an agent cannot; the owner's Setting `jobs.workloads.agent_may_approve`
-//! lets an agent approve under its own Grant, never its own pin; and the
-//! check the start gate calls before the reservation refuses a revoked or
-//! expired approval, an agent's approval once the key is off, a starter the
-//! approval does not name, and a machine it does not list. T9 (the gate
-//! itself refuses before the reservation) is carried by the gate's own PR
-//! (OPUS-LE-FLEET, LM-8 = A).
+//! Pinned workloads (pass 33 row R2; tests T10, T11, T12, T12b of section
+//! 11): the owner approves each exact workload (EN-1 A) and no agent
+//! approves or revokes; an agent reads only what its Grant pinned or may
+//! start now; a pin that holds a secret is refused; and the check the start
+//! gate calls before the reservation refuses a revoked or expired approval,
+//! a starter the approval does not name, and a machine it does not list. T9
+//! (the gate itself refuses before the reservation) is carried by the gate's
+//! own PR (OPUS-LE-FLEET, LM-8 = A).
 //!
-//! T10 runs over the served doors. T10b, T11, T12 and T12b run on the
-//! owner's machines from the mesh harness, whose first machine's vault grants
-//! the second the job protocol, so an approval can name it.
+//! T10 runs over the served doors. The rest run on the owner's machines from
+//! the mesh harness, whose first machine's vault grants the second the job
+//! protocol, so an approval can name it.
 //!
 //! Run on the fleet, never on a workstation:
 //! RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --features oneiron/test-support --test job_workloads
@@ -44,7 +43,6 @@ use oneiron::job_workload::{
     WorkloadChange, WorkloadError, WorkloadNodeAnswer, WorkloadPin, WorkloadPinRequest,
     WorkloadRef, WorkloadStanding, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter,
 };
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::steward;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -66,8 +64,6 @@ const FAR_EXPIRY_MS: u64 = 4_102_444_800_000;
 /// wall clock. The doors and the gate take the time they judge an expiry
 /// at, and every expiry here is set from this one.
 const NOW_MS: u64 = 1_800_000_000_000;
-/// The owner's Setting that lets an agent approve and revoke.
-const AGENT_MAY_APPROVE: &str = "jobs.workloads.agent_may_approve";
 const PIN: &str = "vault.jobs.workloads.pin";
 const APPROVE: &str = "vault.jobs.workloads.approve";
 const REVOKE: &str = "vault.jobs.workloads.revoke";
@@ -239,7 +235,7 @@ impl Rack {
                 agent_def_ref: agent,
                 definition: serde_json::from_value(json!({
                     "agent_id": agent_id,
-                    "desc": "Pins and approves workloads",
+                    "desc": "Pins and reads workloads",
                     "version": "1.0.0",
                     "ceiling": "auto",
                     "enabled": true,
@@ -248,17 +244,6 @@ impl Rack {
             },
         )
         .expect("the owner defines the agent");
-        let grant = self.grant_for(agent, verbs);
-        let caller = self
-            .vault()
-            .memory(agent, EdgeActorClass::Agent)
-            .workload_agent();
-        (caller, grant)
-    }
-
-    /// The owner gives the agent `agent` one more Grant, naming `verbs`;
-    /// answers the Grant.
-    fn grant_for(&self, agent: EntityId, verbs: &[&str]) -> EntityId {
         let mut authority_scope = Scope::top();
         authority_scope.verbs =
             ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
@@ -278,36 +263,29 @@ impl Rack {
             },
         )
         .expect("the owner mints the agent's Grant");
-        minted.grant.grant_ref
+        let caller = self
+            .vault()
+            .memory(agent, EdgeActorClass::Agent)
+            .workload_agent();
+        (caller, minted.grant.grant_ref)
     }
 
-    /// `caller`'s read of `digest`.
-    fn get_as(&self, caller: WorkloadCaller<'_>, digest: &str) -> Result<(), WorkloadError> {
+    /// `caller`'s read of `digest` at `now_ms`.
+    fn get_at(
+        &self,
+        caller: WorkloadCaller<'_>,
+        digest: &str,
+        now_ms: u64,
+    ) -> Result<(), WorkloadError> {
         self.vault()
             .get_job_workload(
                 caller,
                 &WorkloadRef {
                     workload: digest.to_owned(),
                 },
-                NOW_MS,
+                now_ms,
             )
             .map(drop)
-    }
-
-    /// The owner sets `jobs.workloads.agent_may_approve` to `on` at the
-    /// vault scope.
-    fn let_agents_approve(&self, on: bool) {
-        let outcome = self
-            .vault()
-            .set_setting(
-                SettingCaller::Owner(&self.owner),
-                SetSetting::vault_value(AGENT_MAY_APPROVE, json!(on)),
-            )
-            .expect("the owner sets the key");
-        assert!(
-            matches!(outcome, SetSettingOutcome::Applied { .. }),
-            "FIXTURE: the owner's change of {AGENT_MAY_APPROVE} did not apply: {outcome:?}"
-        );
     }
 
     /// The owner pins `tag` and approves it on the granted machine.
@@ -691,8 +669,7 @@ async fn as_agent(served: &Served, agent: &Agent, verb: &str, body: Value) -> (S
     post(served, verb, &agent.token, binding, body).await
 }
 
-/// T10: by default (`jobs.workloads.agent_may_approve` off, EN-1 A)
-/// approving is the owner's own act. An agent whose Grant names every
+/// T10: approving is the owner's own act (EN-1 A). An agent whose Grant names every
 /// workload verb pins a workload under that Grant, and its approve and
 /// revoke are refused; the workload stays pinned, with no approval, and the
 /// gate refuses it as not approved without asking any machine.
@@ -808,217 +785,82 @@ fn an_agent_cannot_approve_a_workload() {
     });
 }
 
-/// T10b: who approves is the owner's Setting `jobs.workloads.agent_may_approve`.
-/// Off, an agent whose Grant names the approve verb is refused. On, it
-/// approves a workload another agent's Grant pinned, and the gate admits the
-/// pinner's start; it is refused on a workload pinned under its own Grant and
-/// on an approval naming its own Grant as a starter. Turned off again, the
-/// gate no longer admits that approval and asks no machine; on again, it
-/// does, and the agent's revoke ends it.
+/// Review rounds 1 and 2: an agent reads a workload only while it may start
+/// it, and never approves or revokes. A starter named by the owner's
+/// approval reads the workload until the approval expires or the owner
+/// revokes it; the agent whose Grant pinned it reads it throughout. An agent
+/// whose Grant names approve and revoke is refused both, and the row stays as
+/// it was.
 #[test]
-fn an_agent_approves_a_workload_only_while_the_owner_lets_agents_approve() {
-    run_on_engine_stack("job-workloads-agent-may-approve", || async {
+fn a_starter_reads_a_workload_only_while_its_approval_stands() {
+    run_on_engine_stack("job-workloads-starter-reads", || async {
         let rack = Rack::start().await;
-        let (approver, approver_grant) = rack.agent("workload-approver", &[PIN, APPROVE, REVOKE]);
-        let (pinner, pinner_grant) = rack.agent("workload-pinner", &[PIN]);
-        let digest = rack.pin_as(WorkloadCaller::Agent(&pinner), "pinned-by-agent");
-        let own = rack.pin_as(WorkloadCaller::Agent(&approver), "pinned-by-approver");
-        let machines = [rack.machine];
-        let by_approver = WorkloadCaller::Agent(&approver);
-
+        let (pinner, _) = rack.agent("workload-pinner-reads", &[PIN, GET]);
+        let (starter, starter_grant) = rack.agent("workload-starter-reads", &[GET]);
+        let (would_approve, _) = rack.agent("workload-would-approve", &[APPROVE, REVOKE, GET]);
+        let by_pinner = WorkloadCaller::Agent(&pinner);
+        let by_starter = WorkloadCaller::Agent(&starter);
+        let expires_at_ms = NOW_MS + 3_600_000;
+        let digest = rack.pin_as(by_pinner, "starter-reads");
         assert!(
             matches!(
-                rack.approve_as(by_approver, &digest, &machines, &[], FAR_EXPIRY_MS),
+                rack.get_at(by_starter, &digest, NOW_MS),
+                Err(WorkloadError::NotFound)
+            ),
+            "no approval names the starter yet"
+        );
+        rack.approve(&digest, &[rack.machine], &[starter_grant], expires_at_ms)
+            .expect("the owner approves for the starter");
+        rack.get_at(by_starter, &digest, NOW_MS)
+            .expect("the starter reads a workload it may start");
+        assert!(
+            matches!(
+                rack.get_at(by_starter, &digest, expires_at_ms),
+                Err(WorkloadError::NotFound)
+            ),
+            "from the approval's expiry on, the starter reads nothing of it"
+        );
+        let listed = rack
+            .vault()
+            .list_job_workloads(by_starter, expires_at_ms)
+            .expect("the starter lists");
+        assert!(
+            listed.workloads.iter().all(|view| view.digest != digest),
+            "nor does its list show it"
+        );
+
+        let by_agent = WorkloadCaller::Agent(&would_approve);
+        assert!(
+            matches!(
+                rack.approve_as(by_agent, &digest, &[rack.machine], &[], FAR_EXPIRY_MS),
                 Err(WorkloadError::Caller(_))
             ),
-            "with the key off, an agent's approve is refused"
+            "no agent approves, whatever its Grant names"
         );
-
-        rack.let_agents_approve(true);
-        assert!(
-            matches!(
-                rack.approve_as(by_approver, &own, &machines, &[], FAR_EXPIRY_MS),
-                Err(WorkloadError::SelfApproval)
-            ),
-            "an agent does not approve a workload pinned under its own Grant"
-        );
-        assert!(
-            matches!(
-                rack.approve_as(
-                    by_approver,
-                    &digest,
-                    &machines,
-                    &[approver_grant],
-                    FAR_EXPIRY_MS
-                ),
-                Err(WorkloadError::SelfApproval)
-            ),
-            "an agent's approval does not name its own Grant as a starter"
-        );
-        let approved = rack
-            .approve_as(by_approver, &digest, &machines, &[], FAR_EXPIRY_MS)
-            .expect("with the key on, the agent approves another Grant's pin");
-        assert!(approved.changed, "the agent's approval is written");
-        assert_eq!(approved.workload.standing, WorkloadStanding::Approved);
-        let approval = approved.workload.approval.expect("the approval's view");
-        assert_eq!(approval.owner, None, "no owner gave it");
-        assert_eq!(approval.agent, Some(approver.actor().to_hex()));
-        assert_eq!(approval.under, Some(approver_grant.to_hex()));
-
-        let pinner_starts = WorkloadStarter::Grant(pinner_grant);
-        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
-        assert!(
-            verdict.is_ok(),
-            "the agent's approval admits the pinner: {verdict:?}"
-        );
-        assert!(asked, "the machine is asked once the vault half passes");
-
-        rack.let_agents_approve(false);
-        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
-        assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadNotApproved));
-        assert!(!asked, "an approval not in force asks no machine");
-
-        rack.let_agents_approve(true);
-        let (verdict, _) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
-        assert!(
-            verdict.is_ok(),
-            "with the key on again it admits: {verdict:?}"
-        );
-        let revoked = rack
-            .vault()
-            .revoke_job_workload(
-                by_approver,
-                &WorkloadRef {
-                    workload: digest.clone(),
-                },
-                NOW_MS,
-            )
-            .expect("with the key on, the agent revokes");
-        assert!(revoked.changed, "the agent's revoke is written");
-        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
-        assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadRevoked));
-        assert!(!asked, "a revoked workload asks no machine");
-        rack.mesh.stop().await;
-    });
-}
-
-/// Review-1 P1-1: an agent never approves its own work, whichever of its
-/// Grants it acts under. One agent holds a Grant naming the pin verb and
-/// another naming approve: it cannot approve the workload it pinned, nor an
-/// owner's pin for a starter Grant it holds; it approves one for another
-/// agent's Grant.
-#[test]
-fn an_agent_with_two_grants_does_not_approve_its_own_work() {
-    run_on_engine_stack("job-workloads-two-grants", || async {
-        let rack = Rack::start().await;
-        let (agent, pin_grant) = rack.agent("workload-two-grants", &[PIN]);
-        let approve_grant = rack.grant_for(agent.actor(), &[APPROVE]);
-        assert_ne!(pin_grant, approve_grant, "FIXTURE: two Grants");
-        let (_, other_grant) = rack.agent("workload-other-starter", &[PIN]);
-        rack.let_agents_approve(true);
-        let by_agent = WorkloadCaller::Agent(&agent);
-        let machines = [rack.machine];
-
-        let own = rack.pin_as(by_agent, "pinned-under-the-first-grant");
-        assert!(
-            matches!(
-                rack.approve_as(by_agent, &own, &machines, &[], FAR_EXPIRY_MS),
-                Err(WorkloadError::SelfApproval)
-            ),
-            "an agent does not approve a workload it pinned under its other Grant"
-        );
-        let owners = rack.pin("pinned-by-the-owner");
-        assert!(
-            matches!(
-                rack.approve_as(by_agent, &owners, &machines, &[pin_grant], FAR_EXPIRY_MS),
-                Err(WorkloadError::SelfApproval)
-            ),
-            "an agent does not name a Grant it holds as a starter"
-        );
-        let approved = rack
-            .approve_as(by_agent, &owners, &machines, &[other_grant], FAR_EXPIRY_MS)
-            .expect("the agent approves the owner's pin for another agent's Grant");
-        assert!(approved.changed, "the agent's approval is written");
-        rack.mesh.stop().await;
-    });
-}
-
-/// Review-1 P1-2, P1-3 and P1-4: an approval that no longer stands shows
-/// nothing and blocks nothing. A starter reads the workload only while an
-/// approval in force names its Grant; an agent with the revoke verb but no
-/// read of the workload revokes nothing; and once an agent's approval is not
-/// in force, the owner's approval on the same terms is written as the
-/// owner's.
-#[test]
-fn an_approval_that_no_longer_stands_shows_and_blocks_nothing() {
-    run_on_engine_stack("job-workloads-lapsed-approval", || async {
-        let rack = Rack::start().await;
-        let (approver, _) = rack.agent("workload-lapsing-approver", &[APPROVE, REVOKE, GET]);
-        let (starter, starter_grant) = rack.agent("workload-lapsing-starter", &[GET]);
-        let (outsider, _) = rack.agent("workload-outsider", &[REVOKE, GET]);
-        let machines = [rack.machine];
-        let starters = [starter_grant];
-        let digest = rack.pin("lapsing");
-        rack.let_agents_approve(true);
-        rack.approve_as(
-            WorkloadCaller::Agent(&approver),
-            &digest,
-            &machines,
-            &starters,
-            FAR_EXPIRY_MS,
-        )
-        .expect("the agent approves the owner's pin for the starter");
-        rack.get_as(WorkloadCaller::Agent(&starter), &digest)
-            .expect("the starter reads a workload it may start");
-        rack.get_as(WorkloadCaller::Agent(&approver), &digest)
-            .expect("the approver reads the approval it gave");
-        let outsider_revoke = rack.vault().revoke_job_workload(
-            WorkloadCaller::Agent(&outsider),
+        let agent_revoke = rack.vault().revoke_job_workload(
+            by_agent,
             &WorkloadRef {
                 workload: digest.clone(),
             },
             NOW_MS,
         );
         assert!(
-            matches!(outsider_revoke, Err(WorkloadError::NotFound)),
-            "an agent revokes nothing it may not read: {outsider_revoke:?}"
+            matches!(agent_revoke, Err(WorkloadError::Caller(_))),
+            "no agent revokes, whatever its Grant names: {agent_revoke:?}"
         );
-        assert!(
-            rack.vault()
-                .job_workload(&digest)
-                .expect("the row reads")
-                .is_some_and(|row| row.revoked.is_none()),
-            "the outsider's revoke wrote nothing"
+        let row = rack
+            .vault()
+            .job_workload(&digest)
+            .expect("the row reads")
+            .expect("the row stands");
+        assert!(row.revoked.is_none(), "the agent's revoke wrote nothing");
+        assert_eq!(
+            row.approval.map(|approval| approval.expires_at_ms),
+            Some(expires_at_ms),
+            "the agent's approve wrote nothing"
         );
 
-        rack.let_agents_approve(false);
-        assert!(
-            matches!(
-                rack.get_as(WorkloadCaller::Agent(&starter), &digest),
-                Err(WorkloadError::NotFound)
-            ),
-            "a starter whose approval is no longer in force reads nothing of it"
-        );
-        let listed = rack
-            .vault()
-            .list_job_workloads(WorkloadCaller::Agent(&starter), NOW_MS)
-            .expect("the starter lists");
-        assert!(
-            listed.workloads.iter().all(|view| view.digest != digest),
-            "nor does its list show it"
-        );
-        let by_owner = rack
-            .approve(&digest, &machines, &starters, FAR_EXPIRY_MS)
-            .expect("an approval not in force does not block the owner's");
-        assert!(by_owner.changed, "the owner's approval is written");
-        let approval = by_owner.workload.approval.expect("the approval's view");
-        assert_eq!(approval.owner, Some(rack.owner_id.to_hex()));
-        assert_eq!(approval.agent, None, "the agent's approval is replaced");
-        rack.get_as(WorkloadCaller::Agent(&starter), &digest)
-            .expect("the owner's approval lets the starter read it again");
-
-        let revoked = rack
-            .vault()
+        rack.vault()
             .revoke_job_workload(
                 WorkloadCaller::Owner(&rack.owner),
                 &WorkloadRef {
@@ -1027,14 +869,15 @@ fn an_approval_that_no_longer_stands_shows_and_blocks_nothing() {
                 NOW_MS,
             )
             .expect("the owner revokes");
-        assert!(revoked.changed, "the revoke is written");
         assert!(
             matches!(
-                rack.get_as(WorkloadCaller::Agent(&starter), &digest),
+                rack.get_at(by_starter, &digest, NOW_MS),
                 Err(WorkloadError::NotFound)
             ),
             "a starter reads nothing of a revoked workload"
         );
+        rack.get_at(by_pinner, &digest, NOW_MS)
+            .expect("the pinner's Grant still reads its own pin");
         rack.mesh.stop().await;
     });
 }
