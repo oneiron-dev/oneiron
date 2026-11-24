@@ -292,6 +292,20 @@ fn a_claim_past_the_room_is_refused_and_writes_nothing() {
             claim: period.reference.clone()
         })
     );
+    // Review 10413 P1: a claim of another line that names this line's allocation is refused,
+    // and this line's room is unchanged.
+    let other_line = UnitClaim {
+        line: id(8),
+        ..claim(4, 6, 10)
+    };
+    assert_eq!(
+        admit(&vault, &period, &[], &other_line),
+        Err(ClaimAdmissionRefused::OtherLine { line: id(8) })
+    );
+    assert!(
+        stored(&vault, &other_line.key()).is_none(),
+        "no claim written"
+    );
     assert_standing(&standing(&vault, &period, &[]), 0, RESERVED, 1);
 
     let released = UnitEndReport::Refused {

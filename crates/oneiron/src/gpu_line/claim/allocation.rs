@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{CLAIMS, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitTerminal};
-use crate::llm::run_admission::{Allocation, AllocationRef};
+use crate::llm::run_admission::{Allocation, AllocationRef, gpu_line_allocation_id};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, Vault};
 
@@ -91,6 +91,9 @@ impl AllocationStanding {
 pub enum ClaimAdmissionRefused {
     /// The claim names another allocation generation than the one it is admitted on.
     OtherAllocation { claim: AllocationRef },
+    /// The allocation is not the claim's own line's: a line's claims draw only on its own
+    /// allocation (review 10413 P1).
+    OtherLine { line: EntityId },
     /// A new claim is written `Claimed`.
     NotNew,
     /// A claim already stands under this logical attempt.
@@ -108,6 +111,11 @@ impl std::fmt::Display for ClaimAdmissionRefused {
                 f,
                 "the claim names allocation {} generation {}",
                 claim.id, claim.generation
+            ),
+            Self::OtherLine { line } => write!(
+                f,
+                "the allocation is not line {}'s allocation",
+                line.to_hex()
             ),
             Self::NotNew => f.write_str("a new unit claim is written as claimed"),
             Self::ClaimExists => f.write_str("a unit claim already stands under this attempt"),
@@ -227,8 +235,9 @@ pub fn allocation_standing_in_txn(
     Ok(standing)
 }
 
-/// Writes the new claim `claim` on `allocation`, in the caller's write transaction, if every
-/// machine of the line (`machines`) has answered since this start and its reservation fits.
+/// Writes the new claim `claim` on `allocation`, in the caller's write transaction, if
+/// `allocation` is the claim's own line's, every machine of the line (`machines`) has answered
+/// since this start, and its reservation fits.
 /// The claim's row is its hold. Answers the standing with the claim in it, or why nothing was
 /// written.
 ///
@@ -246,6 +255,9 @@ pub fn open_claim_in_txn(
         return Ok(Err(ClaimAdmissionRefused::OtherAllocation {
             claim: claim.allocation.clone(),
         }));
+    }
+    if allocation.reference.id != gpu_line_allocation_id(&claim.line) {
+        return Ok(Err(ClaimAdmissionRefused::OtherLine { line: claim.line }));
     }
     if claim.state != ClaimState::Claimed {
         return Ok(Err(ClaimAdmissionRefused::NotNew));
