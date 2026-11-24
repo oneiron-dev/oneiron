@@ -4,7 +4,12 @@ fn main() -> anyhow::Result<()> {
     // beside it.
     #[cfg(target_os = "linux")]
     {
-        let args: Vec<String> = std::env::args().collect();
+        // Lossy, so an argument that is not UTF-8 never panics here; the
+        // steps take ASCII arguments only, and every other command reads its
+        // own arguments again.
+        let args: Vec<String> = std::env::args_os()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
         if let Some(status) =
             oneiron_server::gpu_execution_node::scope_systemd::run_unit_step(&args)
         {

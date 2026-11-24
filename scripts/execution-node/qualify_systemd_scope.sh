@@ -256,9 +256,9 @@ EOF
   wait_ended 280 || { result "$FUNCNAME" FAIL "no end record"; return; }
   local rate cap=$((20 * 1048576)) applied
   rate=$(cat "$P/out/rate" 2> /dev/null || echo 0)
-  applied=$(jq -r '.configured.write_rate_cap.strength' "$C/prepared.json")
+  applied=$(jq -r '.report.proofs.write_rate_cap.strength' "$C/scope.json")
   if [ "$applied" != kernel ]; then
-    result "$FUNCNAME" UNPROVEN "the write-rate cap could not be set here: $(jq -r '.configured.write_rate_cap.evidence' "$C/prepared.json"); measured $((rate / 1048576)) MiB/s. The 5 s payload check is the engine's (server test)"
+    result "$FUNCNAME" UNPROVEN "the write-rate cap does not hold here: $(jq -r '.report.proofs.write_rate_cap.evidence' "$C/scope.json"); measured $((rate / 1048576)) MiB/s. The 5 s payload check is the engine's (server test)"
   elif [ "$rate" -gt 0 ] && [ "$rate" -le $((cap * 3 / 2)) ]; then
     result "$FUNCNAME" PASS "write rate $((rate / 1048576)) MiB/s under a cap of 20 MiB/s, so request + rate x 5 s bounds the overrun; the 5 s payload check is the engine's (server test)"
   else

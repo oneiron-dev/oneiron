@@ -78,13 +78,7 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
             reset_history(&node_file(&args.node))
         }
         ExecutionNodeCommand::Install(args) => install(&args),
-        ExecutionNodeCommand::UnitName(args) => {
-            println!(
-                "{}",
-                crate::gpu_execution_node::jobs::JobKeyId::for_key(&args.key).unit_name()
-            );
-            Ok(())
-        }
+        ExecutionNodeCommand::UnitName(args) => unit_name(&args.key),
     }
 }
 
@@ -266,8 +260,10 @@ fn reset_history(file: &Path) -> anyhow::Result<()> {
 /// `execution-node install` (row R3b): the job unit on Linux with systemd.
 #[cfg(target_os = "linux")]
 fn install(args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
-    use crate::gpu_execution_node::scope_systemd::install::{InstallRequest, install};
-    install(&InstallRequest {
+    use crate::gpu_execution_node::scope_systemd::install::{
+        InstallRequest, install as install_job_unit,
+    };
+    install_job_unit(&InstallRequest {
         node_file: node_file(&args.node),
         engine_account: args.engine_account.clone(),
         protect: args.protect.clone(),
@@ -280,4 +276,20 @@ fn install(args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn install(_args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
     anyhow::bail!("install: the job unit needs Linux with systemd (pass 33, EM-4)")
+}
+
+/// `execution-node unit-name`: the job unit of a key.
+#[cfg(unix)]
+fn unit_name(key: &str) -> anyhow::Result<()> {
+    println!(
+        "{}",
+        crate::gpu_execution_node::jobs::JobKeyId::for_key(key).unit_name()
+    );
+    Ok(())
+}
+
+/// Job units exist on Linux only.
+#[cfg(not(unix))]
+fn unit_name(_key: &str) -> anyhow::Result<()> {
+    anyhow::bail!("unit-name: the job unit needs Linux with systemd (pass 33, EM-4)")
 }

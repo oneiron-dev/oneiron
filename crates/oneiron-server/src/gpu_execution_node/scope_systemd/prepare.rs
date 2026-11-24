@@ -460,7 +460,7 @@ fn hold_awake(unit: &str, instance: &str) -> Option<String> {
         SYSTEMCTL_TIMEOUT,
     )
     .ok()
-    .map(|()| format!("{awake}.service"))
+    .map(|_| format!("{awake}.service"))
 }
 
 /// Each bound as the unit's effective properties and this kernel give it.
@@ -484,6 +484,19 @@ fn configured_bounds(
     )
     .unwrap_or_default();
     let is = |name: &str, value: &str| found.get(name).is_some_and(|got| got == value);
+    // What the kernel holds for the unit's cgroup now, not only what the
+    // service manager accepted.
+    let group = found
+        .get("ControlGroup")
+        .map(|group| Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/')));
+    let cgroup_file = |name: &str| {
+        group
+            .as_ref()
+            .and_then(|dir| std::fs::read_to_string(dir.join(name)).ok())
+            .map(|text| text.trim().to_owned())
+    };
+    let memory_max = cgroup_file("memory.max");
+    let io_max = cgroup_file("io.max");
     let on = |holds: bool, evidence: String| {
         if holds {
             BoundProof::kernel(evidence)
@@ -511,9 +524,10 @@ fn configured_bounds(
     out.insert(
         bound::MEMORY_CAP.to_owned(),
         on(
-            facts.cgroup_controllers.contains("memory")
-                && found.get("MemoryMax").is_some_and(|value| value != "infinity"),
-            format!("MemoryMax={}", found.get("MemoryMax").map_or("?", String::as_str)),
+            memory_max
+                .as_deref()
+                .is_some_and(|value| value.parse::<u64>().is_ok()),
+            format!("memory.max {}", memory_max.as_deref().unwrap_or("unreadable")),
         ),
     );
     out.insert(
@@ -561,9 +575,15 @@ fn configured_bounds(
     );
     out.insert(
         bound::WRITE_RATE_CAP.to_owned(),
-        match write_rate_failure {
-            None => BoundProof::kernel("IOWriteBandwidthMax= on the payload device"),
-            Some(why) => BoundProof::none(format!("IOWriteBandwidthMax= not applied: {why}")),
+        match (write_rate_failure, io_max.as_deref()) {
+            (None, Some(text)) if text.contains("wbps=") && !text.contains("wbps=max") => {
+                BoundProof::kernel(format!("io.max {text}"))
+            }
+            (None, text) => BoundProof::none(format!(
+                "IOWriteBandwidthMax= accepted, but io.max holds no write rate ({}): no block device under the payload directory?",
+                text.unwrap_or("unreadable")
+            )),
+            (Some(why), _) => BoundProof::none(format!("IOWriteBandwidthMax= not applied: {why}")),
         },
     );
     out
