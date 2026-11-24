@@ -190,7 +190,7 @@ fn the_device_pin_key_and_a_slot_never_share_a_name() {
 }
 
 /// The names of the files in a key directory, sorted.
-#[cfg(any(all(unix, not(target_vendor = "apple")), windows))]
+#[cfg(any(unix, windows))]
 fn file_names(dir: &std::path::Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .expect("the key directory lists")
@@ -206,7 +206,9 @@ fn file_names(dir: &std::path::Path) -> Vec<String> {
     names
 }
 
-#[cfg(all(unix, not(target_vendor = "apple")))]
+// Every Unix: on Apple the file tier is the owner's explicit choice
+// (`oneiron_keystore::file_keystore`), never the platform tier.
+#[cfg(unix)]
 mod file_tier {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

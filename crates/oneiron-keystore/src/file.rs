@@ -1,4 +1,7 @@
-//! Unix (not Apple): one 0600 file per slot in a 0700 directory of its own.
+//! Unix: one 0600 file per slot in a 0700 directory of its own. It is the
+//! platform tier on Unix systems other than Apple, and on Apple the file tier
+//! an owner chooses for a build the keychain will not serve
+//! ([`crate::file_keystore`]); Time Machine does not honour the tag below.
 //!
 //! The directory must lie outside every vault directory, because a vault's
 //! checkpoints and backups copy what is inside it. It carries a `CACHEDIR.TAG`, so
