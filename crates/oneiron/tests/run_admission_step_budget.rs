@@ -420,6 +420,7 @@ fn pin_share(
             units: Some(units),
             pinned: true,
         },
+        None,
     )?;
     Ok(())
 }
