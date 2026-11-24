@@ -61,6 +61,8 @@ enum Sent {
     Receipt(JobReceipt),
     /// An answer with no receipt: busy, a refusal before any journal, or another answer.
     NoReceipt(String),
+    /// No answer arrived: the request may have reached the node.
+    NoAnswer(GpuConnectorError),
 }
 
 /// Whether a reserve or a submit may go out now.
@@ -295,11 +297,11 @@ impl VaultMachineConnector {
             issued_at_ms: submit.issued_at_ms,
             not_after_ms: submit.not_after_ms,
         });
-        let answer = self
-            .parts
-            .client
-            .job(row.machine, &reserve)
-            .map_err(call_error)?;
+        let answer = self.parts.client.job(row.machine, &reserve);
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(error) => return Ok(Sent::NoAnswer(call_error(error))),
+        };
         let JobAnswer::Receipt(signed) = answer else {
             return Ok(Sent::NoReceipt(job_answer_label(&answer)));
         };
@@ -332,8 +334,11 @@ impl VaultMachineConnector {
         let answer = self
             .parts
             .client
-            .job(row.machine, &JobRequest::Submit(signed.clone()))
-            .map_err(call_error)?;
+            .job(row.machine, &JobRequest::Submit(signed.clone()));
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(error) => return Ok(Sent::NoAnswer(call_error(error))),
+        };
         let JobAnswer::Receipt(receipt) = answer else {
             return Ok(Sent::NoReceipt(job_answer_label(&answer)));
         };
@@ -426,7 +431,7 @@ impl VaultMachineConnector {
         }
         Ok(match self.send_reserve(row, &signed.submit)? {
             Sent::Receipt(receipt) if receipt.state == JobState::Ended => receipt_status(&receipt),
-            Sent::Receipt(_) | Sent::NoReceipt(_) => GpuResourceStatus::Pending,
+            Sent::Receipt(_) | Sent::NoReceipt(_) | Sent::NoAnswer(_) => GpuResourceStatus::Pending,
         })
     }
 
@@ -459,7 +464,7 @@ impl VaultMachineConnector {
                 }
                 Ok(match self.send_submit(&row, signed)? {
                     Sent::Receipt(receipt) => receipt_status(&receipt),
-                    Sent::NoReceipt(_) => GpuResourceStatus::Pending,
+                    Sent::NoReceipt(_) | Sent::NoAnswer(_) => GpuResourceStatus::Pending,
                 })
             }
             JobState::Accepted | JobState::Staging | JobState::Launching => {
@@ -605,6 +610,7 @@ impl GpuJobConnector for VaultMachineConnector {
         let receipt = match self.send_reserve(&row, &signed.submit)? {
             Sent::Receipt(receipt) => receipt,
             Sent::NoReceipt(why) => return Err(unavailable(why)),
+            Sent::NoAnswer(error) => return Err(error),
         };
         let receipt = match receipt.state {
             JobState::Held => {
@@ -616,6 +622,7 @@ impl GpuJobConnector for VaultMachineConnector {
                 match self.send_submit(&row, &signed)? {
                     Sent::Receipt(receipt) => receipt,
                     Sent::NoReceipt(why) => return Err(unavailable(why)),
+                    Sent::NoAnswer(error) => return Err(error),
                 }
             }
             _ => receipt,
