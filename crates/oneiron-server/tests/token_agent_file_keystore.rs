@@ -178,7 +178,17 @@ fn the_config_file_tier_mints_an_agent_credential_with_its_slots_in_the_key_dire
     });
     let keys = install.vault.with_file_name("keys");
     install.init(&[]);
-    let minted = minted(&install.mint(&[]));
+    let output = install.mint(&[]);
+    // `token agent` installs no log: on Apple the file tier's warning reaches
+    // stderr, and stdout keeps only the JSON. Elsewhere on Unix it is the
+    // platform tier, and nothing is said.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.contains("keystore.backend = \"file\""),
+        cfg!(target_vendor = "apple"),
+        "token agent's stderr: {stderr}"
+    );
+    let minted = minted(&output);
     assert_minted_on_the_file_tier(&install, &minted, &keys);
 }
 

@@ -183,19 +183,33 @@ pub enum KeystoreInstall {
     Installed { signing: bool },
 }
 
+/// What the file tier does not give on Apple, where it stands in for the
+/// keychain ([`warn_apple_file_keystore`]).
+const APPLE_FILE_KEYSTORE_WARNING: &str = "keystore.backend = \"file\": this install's key \
+     slots are plain 0600 files, not keychain items. Any process running as this user can \
+     read them, and Time Machine copies them unless the directory is excluded (tmutil \
+     addexclusion). A signed build with backend = \"platform\" keeps them in the \
+     data-protection keychain instead";
+
 /// On Apple the file tier stands in for the keychain only because the owner
-/// chose it: say at each open what it does not give. Elsewhere on Unix it is
-/// the platform tier, and there is nothing to say.
+/// chose it: say at each open what it does not give. The log takes it where
+/// the command installed one; a command that installs none (`token agent`,
+/// whose stdout is its JSON) writes it to stderr itself, so it is never
+/// dropped. Elsewhere on Unix it is the platform tier, and there is nothing
+/// to say.
 fn warn_apple_file_keystore(dir: &Path) {
     if cfg!(target_vendor = "apple") {
-        tracing::warn!(
-            dir = %dir.display(),
-            "keystore.backend = \"file\": this install's key slots are plain 0600 files, not \
-             keychain items. Any process running as this user can read them, and Time \
-             Machine copies them unless the directory is excluded (tmutil addexclusion). A \
-             signed build with backend = \"platform\" keeps them in the data-protection \
-             keychain instead"
-        );
+        let logged = !tracing::dispatcher::get_default(|dispatch| {
+            dispatch.is::<tracing::subscriber::NoSubscriber>()
+        });
+        if logged {
+            tracing::warn!(dir = %dir.display(), "{APPLE_FILE_KEYSTORE_WARNING}");
+        } else {
+            eprintln!(
+                "warning: {APPLE_FILE_KEYSTORE_WARNING} (key directory {})",
+                dir.display()
+            );
+        }
     }
 }
 

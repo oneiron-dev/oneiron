@@ -292,9 +292,11 @@ service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVI
   keychain will not serve, such as an unsigned source build. The slots become
   0600 files in the 0700 `dir`, as on other Unix systems. File modes alone guard
   them: any process running as this user can read them, and Time Machine copies
-  them unless you exclude the directory (`tmutil addexclusion <dir>`). Serve
-  logs that warning each time it opens them. It is never the default and never
-  a fallback. On other Unix systems it is the same tier as `platform`; on
+  them unless you exclude the directory (`tmutil addexclusion <dir>`). Every
+  command that opens them warns so: serve in its log, and a command that keeps
+  no log, such as `token agent`, on stderr. A directory or slot file that
+  carries an access control list (`ls -le`) is refused. It is never the
+  default and never a fallback. On other Unix systems it is the same tier as `platform`; on
   Windows it is refused.
 - `backend = "hardware"` seals each slot to a P-256 key the Secure Enclave holds
   and never releases, on Apple systems (signed builds, as above). Elsewhere it is
