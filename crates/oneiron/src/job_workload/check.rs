@@ -207,7 +207,9 @@ impl Vault {
     /// owner's always is; an agent's is while
     /// `jobs.workloads.agent_may_approve` is on and the agent still holds a
     /// live Grant from a live owner naming `vault.jobs.workloads.approve`.
-    fn approval_in_force_in_txn(
+    /// The doors read it too: an approval that is not in force neither lets
+    /// a starter read the workload nor blocks a new approval.
+    pub(super) fn approval_in_force_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         by: &WorkloadApprovedBy,

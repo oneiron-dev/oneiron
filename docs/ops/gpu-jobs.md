@@ -100,7 +100,9 @@ It never names a program or a host path. The issuer keeps each pin in the
 side table `JOB_WORKLOAD` (pass 33, row R2).
 
 - `vault.jobs.workloads.pin`: the owner, or an agent whose Grant names the
-  verb, pins a workload. A pin approves nothing, and it is written once.
+  verb, pins a workload. A pin approves nothing, and it is written once. The
+  pin is hashed into its own key, so the vault's secret scan refuses a pin
+  that holds a secret (a token in an argument, say) instead of masking it.
 - `vault.jobs.workloads.approve`: the owner's act, with presence asked at
   `Important`. It names the machines the workload may run on (each must hold
   a live `oneiron/job/1` grant), the Grants that may start it (none named:
@@ -112,14 +114,18 @@ Who approves is the owner's Setting `jobs.workloads.agent_may_approve`
 (vault scope, default `false`: only the owner approves and revokes, card
 EN-1 A). Set to `true`, which only the owner can do, an agent whose own
 Grant names `vault.jobs.workloads.approve` or `.revoke` does that act too.
-Even then, an agent never approves a workload pinned under its own Grant and
-never names its own Grant as a starter. The gate admits an agent's approval
+Even then, an agent never approves a workload it pinned, nor one that a
+Grant it holds would start, whichever of its Grants it acts under, and it
+revokes only a workload it may read. The gate admits an agent's approval
 only while the key is on and that agent still holds a live Grant naming the
 approve verb, so turning the key off ends every agent approval at the next
-start.
+start. An approval that is not in force blocks nothing: the owner's approval
+replaces an agent's.
 
 - `vault.jobs.workloads.get` and `.list`: the owner reads every workload; an
-  agent reads the workloads its Grant pinned or may start.
+  agent reads the workloads its Grant pinned, and those whose approval in
+  force names its Grant as a starter or was its own. A revoked or expired
+  workload shows nothing to its starters.
 
 Before a start on a pinned workload reserves anything, the start gate checks
 the workload with `Vault::check_workload_start`. The pin must exist and must

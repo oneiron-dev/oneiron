@@ -724,6 +724,14 @@ name = "job_protocol_grant"
 path = "tests/job_protocol_grant.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# Pinned workloads (pass 33 row R2): the issuer's vault is the mesh harness's,
+# whose devices keep their install keys in a `MemoryKeystore`
+# (`oneiron/test-support`); the listeners need the `mesh` feature.
+[[test]]
+name = "job_workloads"
+path = "tests/job_workloads.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
 [[test]]
 name = "lens_frame_state_door"
