@@ -2633,6 +2633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/task_brief_egress.rs` | test | s | — | — | The task-brief composer's model call never reaches a model its prompt may not go to (census L8-07; review… |
 | `tests/thing_child_fences_lent_source_rows.rs` | test | m | — | — | A Dreamer thing child sends nothing of its input again once a row its lent slices were read from is erased… |
 | `tests/timeline_shell_projection_recheck.rs` | test | m | — | — | [TIMELINE-SHELL-TWO-SNAPSHOT-CAP]: the core memory timeline route (`GET /v1/core/memory/{id}/timeline`)… |
+| `tests/token_agent_file_keystore.rs` | test | m | — | — | `[keystore] backend = "file"` (MACOS-UNSIGNED-FILE-KEYSTORE): the owner's explicit file tier lets a build… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/turn_program_resume_doors.rs` | test | m | — | — | Public facade doors for resuming paused turn programs on a copy beside its source |
 | `tests/unauthenticated_embedder_peer.rs` | test | s | — | — | An app made by `build_app` keeps the unauthenticated development hatch on this device, however its embedder… |

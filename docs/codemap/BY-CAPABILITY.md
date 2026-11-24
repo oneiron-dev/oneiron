@@ -632,7 +632,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under | `crates/oneiron-keystore/src/apple_names.rs` | s | OF-168 |
 | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) | `crates/oneiron-keystore/src/auth_bound.rs` | s | — |
 | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… | `crates/oneiron-keystore/src/dpapi_names.rs` | s | OF-168 |
-| Unix (not Apple): one 0600 file per slot in a 0700 directory of its own | `crates/oneiron-keystore/src/file.rs` | m | — |
+| Unix: one 0600 file per slot in a 0700 directory of its own | `crates/oneiron-keystore/src/file.rs` | m | — |
 | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) | `crates/oneiron-keystore/src/linux_tpm.rs` | m | OF-168 |
 | macOS: the device's own unlock sheet, and the window server's word on the screen lock (row… | `crates/oneiron-keystore/src/macos_presence.rs` | s | — |
 | Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its… | `crates/oneiron-keystore/src/memory.rs` | s | — |

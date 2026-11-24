@@ -140542,9 +140542,9 @@
       "LocalFileKeystore"
      ],
      "path": "src/file.rs",
-     "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own",
+     "purpose": "Unix: one 0600 file per slot in a 0700 directory of its own",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -140566,7 +140566,7 @@
      "surface": {
       "const": 1,
       "enum": 5,
-      "fn": 8,
+      "fn": 9,
       "re-export": 12,
       "struct": 1,
       "trait": 1,
@@ -140739,6 +140739,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/file_tier_access_control.rs",
+     "purpose": "The file tier on Apple (MACOS-UNSIGNED-FILE-KEYSTORE): macOS keeps a file's access control list apart from…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -140821,7 +140829,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own",
+     "purpose": "Unix: one 0600 file per slot in a 0700 directory of its own",
      "spec_ids": []
     },
     "linux_tpm": {
@@ -140895,7 +140903,7 @@
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
    "source_files": 20,
-   "test_files": 3
+   "test_files": 4
   },
   "oneiron-lens-wire": {
    "files": [
@@ -188926,6 +188934,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/token_agent_file_keystore.rs",
+     "purpose": "`[keystore] backend = \"file\"` (MACOS-UNSIGNED-FILE-KEYSTORE): the owner's explicit file tier lets a build…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -190418,7 +190434,7 @@
    "over_bar": 66,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2115,
-   "test_files": 577
+   "test_files": 578
   },
   "oneiron-setting-contract": {
    "files": [
