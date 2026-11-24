@@ -12,12 +12,16 @@
 //!
 //! The caller is the vault owner under their own proof, or an agent whose
 //! own live Grant from a live owner lists the verb
-//! ([`crate::memory::verb_grant_caller`]), judged at each call.
+//! ([`crate::memory::verb_grant_caller`]), judged at each call in the
+//! snapshot the card is read in. A host that collects producers is handed
+//! every row the card was read from
+//! ([`super::payoff::planner_card_sources_in_txn`]), so an answer derived
+//! from a row its destination may not see is withheld there.
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -29,7 +33,9 @@ use crate::receipt::task_type_ref::TypeRef;
 use crate::skill::skill_loadable;
 
 use super::pattern::{TeamPattern, pattern_skills_in_txn};
-use super::payoff::{PatternCardEntry, PayoffRow, PlannerCard, planner_card_in_txn};
+use super::payoff::{
+    PatternCardEntry, PayoffRow, PlannerCard, planner_card_in_txn, planner_card_sources_in_txn,
+};
 
 /// The verb's registered name.
 pub const PLANNER_CARD_VERB: &str = "vault.planner.card";
@@ -148,8 +154,10 @@ pub struct PlannerCardView {
     pub rows: Vec<PlannerCardPayoffRow>,
     /// Highest score first; ties by skill id.
     pub patterns: Vec<PlannerCardPattern>,
-    /// sha256, lower hex, of this answer's JSON with this field empty: one
-    /// card answers one digest.
+    /// The content hash (BLAKE3, lower hex) of the card's JSON as the engine
+    /// read it, with this field empty: one card answers one digest. It names
+    /// the engine's card, so a verb hook that rewrites the view on its way
+    /// out leaves it naming the card the door read.
     pub digest: String,
 }
 
@@ -165,7 +173,7 @@ impl PlannerCardView {
         };
         let bytes = serde_json::to_vec(&view)
             .map_err(|_| Error::InvalidClaimBody("the planner card does not encode"))?;
-        view.digest = format!("{:x}", Sha256::digest(&bytes));
+        view.digest = ContentHash::of(&bytes).to_hex();
         Ok(view)
     }
 }
@@ -177,6 +185,17 @@ impl PlannerCardView {
 /// A malformed project id, type stamp or model list; a type stamp the
 /// project's recorded task-type tree does not hold; storage errors.
 pub fn planner_card_view(vault: &Vault, input: &PlannerCardRequest) -> Result<PlannerCardView> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(planner_card_read_in_txn(vault, &txn, input)?.0)
+}
+
+/// [`planner_card_view`] in the caller's snapshot, beside every row the card
+/// was read from ([`planner_card_sources_in_txn`]).
+fn planner_card_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    input: &PlannerCardRequest,
+) -> Result<(PlannerCardView, Vec<EntityId>)> {
     let project = EntityId::from_hex(&input.project_ref)
         .map_err(|_| Error::InvalidClaimBody("the planner card's project_ref is an entity id"))?;
     if input.models.len() > PLANNER_CARD_MODELS_MAX {
@@ -185,19 +204,23 @@ pub fn planner_card_view(vault: &Vault, input: &PlannerCardRequest) -> Result<Pl
         ));
     }
     input.type_ref.validate()?;
-    let tree = crate::task_type::type_tree_at(vault, Some(project), input.type_ref.tree_version)?
-        .filter(|tree| tree.contains(&input.type_ref))
-        .ok_or(Error::InvalidClaimBody(
-            "the planner card's type_ref must name a node of the project's recorded task-type tree",
-        ))?;
+    let tree = crate::task_type::type_tree_at_in_txn(
+        vault,
+        txn,
+        Some(project),
+        input.type_ref.tree_version,
+    )?
+    .filter(|tree| tree.contains(&input.type_ref))
+    .ok_or(Error::InvalidClaimBody(
+        "the planner card's type_ref must name a node of the project's recorded task-type tree",
+    ))?;
     let parents = tree.ancestors(&input.type_ref);
-    let txn = vault.store.env.read_txn()?;
     // The candidates the planner reads at spawn: every bound pattern skill
     // whose skill record is loadable.
     let mut candidates = Vec::new();
-    for binding in pattern_skills_in_txn(vault, &txn)? {
+    for binding in pattern_skills_in_txn(vault, txn)? {
         if vault
-            .get_skill_record_in_txn(&txn, &binding.skill)?
+            .get_skill_record_in_txn(txn, &binding.skill)?
             .is_some_and(|record| skill_loadable(&record))
         {
             candidates.push(binding.skill);
@@ -205,18 +228,19 @@ pub fn planner_card_view(vault: &Vault, input: &PlannerCardRequest) -> Result<Pl
     }
     let card = planner_card_in_txn(
         vault,
-        &txn,
+        txn,
         Some(project),
         &input.type_ref,
         &parents,
         &input.models,
         &candidates,
     )?;
-    drop(txn);
-    PlannerCardView::of(project, card)
+    let sources = planner_card_sources_in_txn(vault, txn, &card)?;
+    Ok((PlannerCardView::of(project, card)?, sources))
 }
 
-/// `vault.planner.card` for the owner under `owner`'s proof.
+/// `vault.planner.card` for the owner under `owner`'s proof, judged in the
+/// card's own snapshot.
 ///
 /// # Errors
 ///
@@ -226,12 +250,17 @@ pub fn planner_card_as_owner(
     owner: &AuthenticatedOwner,
     input: &PlannerCardRequest,
 ) -> Result<PlannerCardView> {
-    owner.revalidate(vault)?;
-    planner_card_view(vault, input)
+    let txn = vault.store.env.read_txn()?;
+    owner.revalidate_in_txn(vault, &txn)?;
+    Ok(planner_card_read_in_txn(vault, &txn, input)?.0)
 }
 
 /// `vault.planner.card` for this handle's caller: the owner under `owner`,
-/// or an agent whose own live Grant lists the verb.
+/// or an agent whose own live Grant lists the verb, judged in the snapshot
+/// the card is read in. That snapshot judges at the store's clock and
+/// refreshes none, so the door commits no write (T24), as the GPU job
+/// caller's reads judge. The rows the card was read from go to the
+/// handle's producer listing.
 ///
 /// # Errors
 ///
@@ -242,8 +271,13 @@ pub fn planner_card_as(
     owner: Option<&AuthenticatedOwner>,
     input: &PlannerCardRequest,
 ) -> MemoryResult<PlannerCardView> {
-    memory.verb_grant_caller_admits(owner, PLANNER_CARD_VERB)?;
-    Ok(planner_card_view(memory.vault(), input)?)
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    memory.verb_grant_caller_admits_in_txn(&txn, owner, PLANNER_CARD_VERB)?;
+    let (view, sources) = planner_card_read_in_txn(vault, &txn, input)?;
+    drop(txn);
+    memory.produced_from(sources);
+    Ok(view)
 }
 
 /// `vault.planner.card` on a bound handle: the embedded owner reads under
