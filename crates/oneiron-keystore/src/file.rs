@@ -515,7 +515,11 @@ mod tests {
         let keys = LocalFileKeystore::open(&dir, &[]).unwrap();
         let (writing, written) = keys.write_temp(&slot().name(), &[1; 32]);
         written.unwrap();
-        let stale = keys.dir.join(format!(".{}.1.1.tmp", slot().name()));
+        // A pid no process has, so the open-time sweep never takes it for
+        // this process's own.
+        let stale = keys
+            .dir
+            .join(format!(".{}.4294967295.1.tmp", slot().name()));
         fs::write(&stale, [2; 32]).unwrap();
         LocalFileKeystore::open(&dir, &[]).unwrap();
         assert!(

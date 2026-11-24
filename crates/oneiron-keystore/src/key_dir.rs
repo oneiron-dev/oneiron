@@ -238,10 +238,10 @@ pub(crate) fn write_temp(
 /// process, or to this one.
 ///
 /// - One stem's sweep serves an erase or a write over an old value, which
-///   must leave no copy behind. It waits for the writers in flight, then
-///   removes every file of its stem, also where the file system gives no
-///   lock: a writer whose file it takes fails its own write and leaves no
-///   copy.
+///   must leave no copy behind. It waits for the writers in flight, so a lock
+///   file it cannot open is an error. Then it removes every file of its stem,
+///   also where the file system gives no lock: a writer whose file it takes
+///   fails its own write and leaves no copy.
 /// - The open-time sweep of every stem does not wait. While a writer holds
 ///   the directory, or where the file system gives no lock, it removes
 ///   nothing, and on Unix it leaves this process's own files
@@ -250,22 +250,20 @@ pub(crate) fn write_temp(
 /// Every file is tried; the first removal that failed, other than of a file
 /// already gone, is the answer. A key directory that is gone holds no file.
 pub(crate) fn sweep_temps(dir: &Path, stem: Option<&str>) -> io::Result<()> {
-    let lock = temp_writers_lock(dir).ok();
-    match (&lock, stem) {
-        (Some(lock), Some(_)) => {
-            let _ = lock.lock();
-        }
-        (None, Some(_)) => {}
-        (Some(lock), None) if lock.try_lock().is_ok() => {}
-        (_, None) => return Ok(()),
-    }
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
+    let lock = match temp_writers_lock(dir) {
+        Ok(lock) => lock,
+        // The key directory is gone, and every file in it with it.
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
+        Err(e) if stem.is_some() => return Err(e),
+        Err(_) => return Ok(()),
     };
+    if stem.is_some() {
+        let _ = lock.lock();
+    } else if lock.try_lock().is_err() {
+        return Ok(());
+    }
     let mut swept = Ok(());
-    for entry in entries {
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let file_name = entry.file_name();
         let Some((file_stem, pid)) = file_name.to_str().and_then(temp_name_parts) else {
@@ -389,11 +387,16 @@ mod tests {
                 base.join("vault/keys")
             );
         }
-        fs::write(base.join("file"), b"").expect("a file");
-        assert!(
-            resolved(&base.join("file/../keys")).is_err(),
-            "a file has no `..`"
-        );
+        // Windows takes `..` by name before any lookup, as joining onto a
+        // canonical path already does.
+        #[cfg(unix)]
+        {
+            fs::write(base.join("file"), b"").expect("a file");
+            assert!(
+                resolved(&base.join("file/../keys")).is_err(),
+                "a file has no `..`"
+            );
+        }
     }
 
     /// FIX FILE-KEYSTORE-CREATES-DIR-BEFORE-VAULT-CHECK: a key directory at
@@ -538,7 +541,9 @@ mod tests {
 
     /// Review of #10420: a path may pass through a vault directory and leave
     /// it by `..`, but a directory it would make inside the vault directory on
-    /// the way is refused before it is made.
+    /// the way is refused before it is made. Unix only: Windows takes `..` by
+    /// name before any lookup, so it makes nothing on the way.
+    #[cfg(unix)]
     #[test]
     fn a_path_through_a_vault_makes_nothing_inside_it() {
         let root = tempfile::tempdir().expect("a temporary directory");
@@ -592,8 +597,10 @@ mod tests {
         let dir = root.path();
         let (writing, written) = write_temp(dir, "slot", &[1; 32], |_| Ok(()));
         written.expect("the temporary file is written");
-        let stale = dir.join(".slot.1.1.tmp");
-        let other = dir.join(".other.sealed.1.1.tmp");
+        // A pid no process has, so the open-time sweep never takes it for
+        // this process's own.
+        let stale = dir.join(".slot.4294967295.1.tmp");
+        let other = dir.join(".other.sealed.4294967295.1.tmp");
         let kept = dir.join("slot.key");
         for path in [&stale, &other, &kept] {
             fs::write(path, [2; 32]).expect("a file is written");
