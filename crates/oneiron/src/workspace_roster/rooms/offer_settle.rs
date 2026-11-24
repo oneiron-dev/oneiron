@@ -35,7 +35,7 @@ use super::offers::{
     join_refused,
 };
 use super::participation::{JoinCause, record_participation_in_txn};
-use crate::check_in::DoorCheckIn;
+use crate::check_in::{CheckInDecision, DoorCheckIn};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::memory::{
@@ -82,6 +82,26 @@ pub(super) struct RecordedOfferAnswer {
     pub(super) intent_key: String,
     /// Unix seconds.
     pub(super) at: u64,
+    /// The check-in decision the join answer's admission yes recorded, so
+    /// an exact replay answers the same join. Absent on a not now, and for
+    /// a host with no role on the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) check_in: Option<CheckInDecision>,
+}
+
+impl RecordedOfferAnswer {
+    /// Takes `actor` out of this answer: the host who gave it, and the
+    /// asker its check-in decision names. Whether it named the actor.
+    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
+        let mut named = self.by.forget(actor);
+        if let Some(check_in) = &mut self.check_in
+            && check_in.requester.as_deref() == Some(actor.to_hex().as_str())
+        {
+            check_in.requester = None;
+            named = true;
+        }
+        named
+    }
 }
 
 /// The verb whose door answers an offer card.
@@ -111,8 +131,15 @@ impl Settled {
         txn: &heed::RoTxn<'_>,
         stored: StoredOffer,
     ) -> Result<Self> {
-        let join = live_join(&vault.store, txn, &stored.card.join_ref)?
+        let mut join = live_join(&vault.store, txn, &stored.card.join_ref)?
             .map(|receipt| JoinOutcome::of(&receipt));
+        // The join's receipt keeps no check-in: the answer stored it.
+        if let Some(join) = join.as_mut() {
+            join.check_in = stored
+                .answer
+                .as_ref()
+                .and_then(|answer| answer.check_in.clone());
+        }
         Ok(Self {
             card: stored.into_card(),
             join,
@@ -448,6 +475,7 @@ fn answer_in_txn(
         by: RosterActor::Actor(caller.entity_ref()),
         intent_key: request.intent_key.clone(),
         at: now,
+        check_in: join.check_in.clone(),
     };
     match request.action {
         OfferAnswer::NotNow => {

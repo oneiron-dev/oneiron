@@ -375,6 +375,15 @@ fn the_owners_join_answer_records_her_check_in_decision() -> TestResult {
         }),
         "her join answer is her own add: {join:?}"
     );
+    // COORDINATION-03: the exact replay answers the same join, her
+    // check-in decision included (FIX 32642).
+    let again = host.rooms_offer_answer(&OfferAnswerRequest {
+        offer_id: card.offer_id.clone(),
+        action: OfferAnswer::Join,
+        intent_key: "offer-check-in-join".to_owned(),
+        check_in_ref: None,
+    })?;
+    assert_eq!(again.join, accepted.join, "a replay answers the first join");
     Ok(())
 }
 

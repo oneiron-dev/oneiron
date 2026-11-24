@@ -28,6 +28,7 @@ use super::offer_settle::RecordedOfferAnswer;
 use super::offers::{OFFER_CURRENT, OfferState, StoredOffer, current_key};
 use super::participation::{FACTS, FactKey};
 use super::replica::{RoomSideRow, SideMerge, TurnMergeRefusal};
+use crate::check_in::CheckInDecision;
 use crate::deletion::carrier_actor_merged;
 use crate::error::Result;
 use crate::side_table::{LegacyJson, SideTable};
@@ -435,9 +436,43 @@ pub(super) fn offer_answer_erased_wins(
     match (ours, theirs) {
         (Some(ours), Some(theirs)) => {
             let by = carrier_actor_merged(ours.by, theirs.by, RosterActor::Erased)?;
-            let merged = RecordedOfferAnswer { by, ..ours.clone() };
+            let check_in = check_in_erased_wins(&ours.check_in, &theirs.check_in)?;
+            let merged = RecordedOfferAnswer {
+                by,
+                check_in: check_in.clone(),
+                ..ours.clone()
+            };
             let other = RecordedOfferAnswer {
                 by,
+                check_in,
+                ..theirs.clone()
+            };
+            (merged == other).then_some(Some(merged))
+        }
+        (None, None) => Some(None),
+        _ => None,
+    }
+}
+
+/// Two copies of one answer's check-in decision as one: an asker either
+/// copy erased names no one; every other field must match.
+fn check_in_erased_wins(
+    ours: &Option<CheckInDecision>,
+    theirs: &Option<CheckInDecision>,
+) -> Option<Option<CheckInDecision>> {
+    match (ours, theirs) {
+        (Some(ours), Some(theirs)) => {
+            let requester = match (&ours.requester, &theirs.requester) {
+                (Some(a), Some(b)) if a != b => return None,
+                (Some(a), Some(_)) => Some(a.clone()),
+                _ => None,
+            };
+            let merged = CheckInDecision {
+                requester: requester.clone(),
+                ..ours.clone()
+            };
+            let other = CheckInDecision {
+                requester,
                 ..theirs.clone()
             };
             (merged == other).then_some(Some(merged))
