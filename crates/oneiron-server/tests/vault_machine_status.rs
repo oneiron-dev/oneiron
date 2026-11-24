@@ -1,8 +1,9 @@
 #![cfg(all(oneiron_test_support, feature = "mesh"))]
 //! DESIGN 33 tests T26-T33c, the issuer's halves (row R4): the four status fields of a job on one
 //! of the vault's machines, a stop's confirmation, a sequence that never goes back, a node
-//! reset, the keys the issuer does not know, the issuer's drain guard with door 12, and the
-//! write-off of door 10. The node's halves are in `node_job_status.rs`.
+//! reset, the keys the issuer does not know, the issuer's drain guard with door 12, the
+//! write-off of door 10, and the returned result (EM-12 = A). The node's halves are in
+//! `node_job_status.rs`.
 //!
 //! Run on the fleet, not on a workstation:
 //! ```sh
@@ -18,22 +19,29 @@ mod vault_machine_rig;
 
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use oneiron::blob_artifact::ArtifactCreateRequest;
 use oneiron::gpu_job::{
     GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobError,
-    GpuJobLifecycle, GpuJobNodeView, GpuJobState, MeterVerdict,
+    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, MeterVerdict,
 };
 use oneiron::job_dispatch::machine_records::{
-    MachineDrainClearRequest, UnattributedSeconds, clear_drain_as,
+    MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
+use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::task_verb::TaskCreateSpec;
 use oneiron::{EdgeActorClass, EntityId};
 use oneiron_server::gpu_execution_node::issuer::{IssuerClock, JobOrphanKeys, UnattributedLedger};
 use oneiron_server::gpu_execution_node::wire::{
-    DeviceRelease, HoldRef, JobEnd, JobState, SignedJobReceipt, SignedJobSubmit,
+    DeviceRelease, HoldRef, JobEnd, JobState, JobStatusRequest, OutputDigest, OutputsState,
+    SignedJobReceipt, SignedJobSubmit,
 };
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use vault_machine_rig::{
     Call, FAR_EXPIRY_MS, JobRun, NOW_MS, Rig, ScriptedNode, make_connector_with, with_rig,
 };
@@ -878,6 +886,245 @@ fn a_write_off_is_final_and_a_later_receipt_does_not_settle() {
         assert_eq!(
             guard.last_failure.as_deref(),
             Some("receipt_after_write_off")
+        );
+    });
+}
+
+/// A JSON artifact with one version and a live task, both the owner's: where a job's result
+/// lands, and the task its made_by names.
+fn result_binding(rig: &Rig) -> GpuJobResultBinding {
+    let vault = rig.vault().as_ref();
+    let owner = rig
+        .owner
+        .revalidate(vault)
+        .expect("the owner on this vault");
+    let human = vault.memory(owner, EdgeActorClass::Human);
+    let task = human
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("Read the GPU verdict"),
+            None,
+            None,
+            None,
+        ))
+        .expect("the owner creates a task")
+        .task_ref
+        .expect("a landed task");
+    let artifact = human
+        .artifacts_create(&ArtifactCreateRequest {
+            name: "verdict.json".to_owned(),
+            media_type: "application/json".to_owned(),
+            content_base64: STANDARD.encode(b"{}"),
+            run_ref: None,
+            made_by: None,
+        })
+        .expect("the owner uploads the artifact")
+        .expect("the artifact's view")
+        .artifact_id;
+    GpuJobResultBinding { artifact, task }
+}
+
+fn bound_inputs(rig: &Rig, binding: &GpuJobResultBinding) -> serde_json::Value {
+    json!({"machine": rig.node.machine.to_hex(), "result": binding})
+}
+
+/// The node ends `run` after 20 measured seconds, its device released clean, having hashed
+/// `outputs` (name, bytes, returnable).
+fn end_with_outputs(rig: &Rig, run: &JobRun, outputs: &[(&str, &[u8], bool)]) {
+    let at_ms = rig.clock.now_ms();
+    let digests: Vec<OutputDigest> = outputs
+        .iter()
+        .map(|(name, bytes, returnable)| OutputDigest {
+            name: (*name).to_owned(),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            bytes: u64::try_from(bytes.len()).expect("a small output"),
+            returnable: *returnable,
+        })
+        .collect();
+    rig.node.revise(run.key(), |receipt| {
+        receipt.state = JobState::Ended;
+        receipt.started = true;
+        receipt.end = Some(JobEnd::Exited { code: 0 });
+        receipt.measured_secs = Some(20);
+        receipt.device_id = Some("scripted-gpu".to_owned());
+        receipt.release = DeviceRelease::Confirmed { at_ms };
+        receipt.outputs = OutputsState::Hashed(digests);
+    });
+}
+
+/// The names `calls` fetched for `key`, in order.
+fn fetched(calls: &[Call], key: &str) -> Vec<String> {
+    calls
+        .iter()
+        .filter(|call| call.kind == "fetch" && call.key.as_deref() == Some(key))
+        .map(|call| {
+            match oneiron_organ_protocol::from_slice::<JobStatusRequest>(&call.bytes)
+                .expect("decode the recorded fetch")
+            {
+                JobStatusRequest::Fetch { name, .. } => name,
+                other => panic!("a fetch call recorded {other:?}"),
+            }
+        })
+        .collect()
+}
+
+/// T33b, the issuer's half (EM-12 = A): with a quote that binds a result, the returnable
+/// output is fetched, checked against the machine's signed digest and length, and proposed as
+/// the artifact's next version, pending Keep, made by the task; then the node is told it may
+/// clean. A file that is not returnable is never asked for, bytes that do not match the digest
+/// land nothing, and a quote with no binding fetches nothing.
+#[test]
+fn a_returnable_output_is_fetched_and_checked_and_no_other_file_can_be() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        let head = vault
+            .blob_artifact_head(&binding.artifact)
+            .expect("read the artifact's head");
+        assert!(head.is_some(), "the artifact has its first version");
+        let workload = rig.approve("result", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"pass"}"#;
+        let notes: &[u8] = b"kept on the machine";
+
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(30);
+        end_with_outputs(
+            rig,
+            &run,
+            &[("verdict.json", verdict, true), ("notes.txt", notes, false)],
+        );
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.node.put_output(run.key(), "notes.txt", notes);
+        rig.settle(&run);
+        let calls = rig.node.calls();
+        assert_eq!(
+            fetched(&calls, run.key()),
+            vec!["verdict.json".to_owned()],
+            "only the returnable output is fetched",
+        );
+        assert!(
+            position(&calls, "fetch", Some(run.key())) < position(&calls, "ack", Some(run.key())),
+            "the node is told to clean only after the landing: {calls:?}",
+        );
+        let waiting = vault
+            .pending_proposals(&binding.artifact)
+            .expect("list the artifact's proposals");
+        assert_eq!(waiting.len(), 1, "one proposal waits");
+        let made_by = waiting[0].made_by.as_ref().expect("its made_by");
+        assert_eq!(made_by.trigger, Some(MadeByTrigger::Task(binding.task)));
+        assert_eq!(
+            vault
+                .blob_artifact_head(&binding.artifact)
+                .expect("read the artifact's head"),
+            head,
+            "pending Keep: the head did not move",
+        );
+        let returned = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(returned.landed, vec!["verdict.json".to_owned()]);
+        assert!(returned.refused.is_empty());
+        assert!(returned.acknowledged_at_ms.is_some());
+
+        let tampered =
+            rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &tampered, &[("verdict.json", verdict, true)]);
+        rig.node
+            .put_output(tampered.key(), "verdict.json", br#"{"verdict":"fail"}"#);
+        rig.settle(&tampered);
+        let returned = vault
+            .job_return(tampered.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(
+            returned.refused,
+            vec![ReturnRefusal {
+                name: "verdict.json".to_owned(),
+                why: "digest_mismatch".to_owned(),
+            }],
+        );
+        assert!(returned.landed.is_empty());
+        assert_eq!(
+            vault
+                .pending_proposals(&binding.artifact)
+                .expect("list the artifact's proposals")
+                .len(),
+            1,
+            "bytes that do not match the signed digest land nothing",
+        );
+
+        let unbound = rig.start_job(&workload);
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &unbound, &[("verdict.json", verdict, true)]);
+        rig.node.put_output(unbound.key(), "verdict.json", verdict);
+        rig.settle(&unbound);
+        let kinds = kinds_for(&rig.node.calls(), unbound.key());
+        assert!(!kinds.contains(&"fetch"), "no binding, no fetch: {kinds:?}");
+        assert!(kinds.contains(&"ack"), "and the node may clean: {kinds:?}");
+    });
+}
+
+/// A fetch that does not arrive leaves the output owed and the node unacknowledged; the next
+/// housekeeping pass lands it and acknowledges, and a pass after that asks nothing.
+#[test]
+fn a_result_that_does_not_arrive_is_returned_by_the_next_housekeeping_pass() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        let workload = rig.approve("result-late", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"late"}"#;
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &run, &[("verdict.json", verdict, true)]);
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.node.drop_next("fetch");
+        rig.settle(&run);
+        let owed = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert!(owed.landed.is_empty() && owed.refused.is_empty());
+        assert_eq!(
+            owed.acknowledged_at_ms, None,
+            "no Ack while an output is owed"
+        );
+        assert!(!kinds_for(&rig.node.calls(), run.key()).contains(&"ack"));
+        assert_eq!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .len(),
+            1
+        );
+
+        rig.connector.housekeeping();
+        let done = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(done.landed, vec!["verdict.json".to_owned()]);
+        assert!(done.acknowledged_at_ms.is_some());
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .is_empty()
+        );
+        assert_eq!(
+            vault
+                .pending_proposals(&binding.artifact)
+                .expect("list the artifact's proposals")
+                .len(),
+            1
+        );
+
+        let before = rig.node.calls().len();
+        rig.connector.housekeeping();
+        assert_eq!(
+            rig.node.calls().len(),
+            before,
+            "nothing is owed: a further pass asks nothing"
         );
     });
 }

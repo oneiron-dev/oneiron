@@ -30,6 +30,7 @@ mod connector;
 mod node_view;
 mod offer;
 mod permits;
+mod result_landing;
 mod start;
 mod step;
 pub(crate) mod tables;
@@ -49,6 +50,7 @@ pub use node_view::{
 };
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
+pub use result_landing::{GpuJobResultBinding, GpuJobResultFile};
 pub use start::GpuJobStart;
 pub use wire::{
     GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest,

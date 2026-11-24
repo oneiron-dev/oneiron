@@ -29,6 +29,10 @@ pub trait OrphanKeys: Send + Sync {
     fn written_off_key(&self, node: EntityId, row: &JobDispatch, entry: &KeyEntry) {
         let _ = (node, row, entry);
     }
+
+    /// The housekeeping pass over the live orphans of every node: each is asked to stop again
+    /// until its node answers its end.
+    fn follow_live(&self) {}
 }
 
 /// The hook until row R4's `JOB_ORPHAN` lands: it logs the key.

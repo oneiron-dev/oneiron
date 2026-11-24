@@ -545,9 +545,23 @@ impl VaultMachineConnector {
             .put_job_observation(&observation)
             .map_err(store)?;
         self.update(&row.key, |row| row.phase = DispatchPhase::Closed)?;
+        // Row R4, EM-12 = A: the outputs land when the quote binds a result, then the node is
+        // told it may clean them. What does not finish here is owed to the housekeeping pass.
+        self.result_returns().return_outputs(row, ended);
         Ok(GpuTermination::Confirmed {
             billed_secs: billing.billed_secs,
         })
+    }
+
+    /// The returned result's parts, from this connector's.
+    fn result_returns(&self) -> super::returns::ResultReturns {
+        super::returns::ResultReturns {
+            vault: Arc::clone(&self.parts.vault),
+            issuer: self.parts.issuer,
+            client: Arc::clone(&self.parts.client),
+            signer: Arc::clone(&self.parts.signer),
+            clock: Arc::clone(&self.parts.clock),
+        }
     }
 }
 
@@ -831,6 +845,12 @@ impl GpuJobConnector for VaultMachineConnector {
             });
         })?;
         Ok(())
+    }
+
+    /// Row R4: the live orphans are asked to stop again, and the owed results returned.
+    fn housekeeping(&self) {
+        self.parts.orphans.follow_live();
+        self.result_returns().follow_owed_returns();
     }
 }
 

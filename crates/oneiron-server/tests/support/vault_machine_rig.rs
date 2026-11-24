@@ -685,6 +685,17 @@ impl Rig {
     }
 
     pub fn start_job_with(&self, workload: &str, connector: &dyn GpuJobConnector) -> JobRun {
+        let inputs = json!({"machine": self.node.machine.to_hex()});
+        self.start_job_with_inputs(workload, inputs, connector)
+    }
+
+    /// [`Self::start_job_with`] on a quote whose inputs are `inputs`.
+    pub fn start_job_with_inputs(
+        &self,
+        workload: &str,
+        inputs: serde_json::Value,
+        connector: &dyn GpuJobConnector,
+    ) -> JobRun {
         let now = self.clock.now_ms();
         let quote = self
             .offer
@@ -693,7 +704,7 @@ impl Rig {
                     job_type: "pinned_workload".to_owned(),
                     image: workload.to_owned(),
                     maximum_secs: Some(MAXIMUM_SECS),
-                    inputs: json!({"machine": self.node.machine.to_hex()}),
+                    inputs,
                 },
                 None,
                 MAXIMUM_SECS,
