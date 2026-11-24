@@ -11,13 +11,17 @@ tree:
   docs/codemap/BY-SPEC.md        each OF and ARCH id a leading doc block names -> its files
   docs/codemap/BY-CAPABILITY.md  reviewed capability aliases, then every module's purpose
 
-The capability aliases are a reviewed input, scripts/codemap/capability_aliases.json.
-Every alias target must be a file the map lists. A target the map does not list is
-marked on the page and printed as `CODEMAP-ALIAS-MISSING: ...`; regenerating still
-exits 0, so the main-only writer keeps the rest of the map current.
+The capability aliases are a reviewed input, scripts/codemap/capability_aliases.md: one
+Markdown table (phrase | synonyms | paths | spec_ids | note), then an optional
+`## Phrases not placed` list. A malformed alias file fails closed (CODEMAP-ERROR).
+Every alias path must name a file in the repo (a mapped one shows its size bucket). A
+path that names no file (moved or deleted) is marked on the page and printed as
+`CODEMAP-ALIAS-MISSING: ...`, and the run fails: regenerating writes the map and exits 3,
+so the main-only writer can still push the rest of the map before it reports the failure.
 
 Modes:
-  (default)   regenerate the artifacts in place
+  (default)   regenerate the artifacts in place; exit 3 after writing them when an
+              alias path names no file in the repo
   --check     regenerate in memory and byte-compare with the committed artifacts;
               exit 1 with `CODEMAP-STALE: run python3 scripts/codemap/codemap.py`
               when they differ or an artifact is missing, and exit 1 on any
@@ -88,13 +92,21 @@ GENERATED_PAGE_NOTE = (
 )
 SPEC_PATH = DIR_PATH / "BY-SPEC.md"
 CAPABILITY_PATH = DIR_PATH / "BY-CAPABILITY.md"
-ALIASES_PATH = PurePosixPath("scripts/codemap/capability_aliases.json")
-ALIAS_KEYS = ("capability", "synonyms", "targets", "note")
-# Canon spec ids: OF-<n> feature rows and ARCH-<nnnn> specs, with the optional
-# ONEIRON-/CROSS- prefix and lowercase part suffix. FIX numbers are FIX-LIST
-# rows, not spec ids, and are not indexed.
+ALIASES_PATH = PurePosixPath("scripts/codemap/capability_aliases.md")
+ALIAS_COLUMNS = ("phrase", "synonyms", "paths", "spec_ids", "note")
+ALIAS_LIST_COLUMNS = ("synonyms", "paths", "spec_ids")
+ALIAS_UNPLACED_HEADING = "## Phrases not placed"
+TABLE_SEPARATOR_CELL_RE = re.compile(r":?-{3,}:?")
+# Regenerate mode: the map is written, but an alias path names no file in the repo.
+EXIT_ALIAS_MISSING = 3
+# Canon spec ids: OF-<n> feature rows and ARCH-<nnnn> specs, each with an optional
+# lowercase part suffix (OF-498c, ARCH-0023b); an ARCH id may carry one uppercase
+# family prefix (CROSS-, ONEIRON-, EIRI-ARCH-0002). A three-digit ARCH number is
+# padded to four (ARCH-023b is ARCH-0023b). FIX numbers are FIX-LIST rows, not spec
+# ids, and are not indexed; nor are review, plan and issue ids (REVIEW-, ONE-, DEC-).
 SPEC_ID_RE = re.compile(
-    r"(?<![\w-])(?:OF-\d{3,}|(?:(?:ONEIRON|CROSS)-)?ARCH-\d{4}[a-z]?)(?![\w-])"
+    r"(?<![\w-])(?:(?P<of>OF-\d{3,}[a-z]?)"
+    r"|(?P<prefix>[A-Z][A-Z0-9]*-)?ARCH-(?P<arch>\d{3,4})(?P<part>[a-z]?))(?![\w-])"
 )
 SPEC_ID_PARTS_RE = re.compile(r"^(?P<family>.*?)(?P<number>\d+)(?P<suffix>[a-z]?)$")
 
@@ -257,7 +269,14 @@ def spec_sort_key(spec_id: str) -> tuple[str, int, str, str]:
 
 def extract_spec_ids(block: list[str]) -> list[str]:
     """Every OF and ARCH id the whole leading doc block names, before any display trim."""
-    return sorted(set(SPEC_ID_RE.findall(" ".join(block))), key=spec_sort_key)
+    ids: set[str] = set()
+    for match in SPEC_ID_RE.finditer(" ".join(block)):
+        if match["of"]:
+            ids.add(match["of"])
+        else:
+            prefix = match["prefix"] or ""
+            ids.add(f"{prefix}ARCH-{match['arch'].zfill(4)}{match['part']}")
+    return sorted(ids, key=spec_sort_key)
 
 
 def scan_file(path: Path, rel: str) -> dict:
@@ -649,7 +668,9 @@ def render_spec_index(data: dict) -> str:
         "# Code by spec ID",
         "",
         "Every OF and ARCH id that the leading `//!` doc block of a non-test source file names, "
-        "one row per id and file. Grep it: `rg -n 'OF-575' docs/codemap/BY-SPEC.md`.",
+        "with its part suffix and any family prefix (`OF-498c`, `CROSS-ARCH-0019`, "
+        "`EIRI-ARCH-0002`), one row per id and file. Grep it: "
+        "`rg -n 'OF-575' docs/codemap/BY-SPEC.md`.",
         "Paths are repo-relative. A row is a pointer the file itself states, not proof of "
         "ownership or status. An id with no row is not absent: search the source too "
         "(`git grep -n 'OF-575' -- crates`).",
@@ -663,23 +684,40 @@ def render_spec_index(data: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_capability_index(data: dict, aliases: list[dict]) -> tuple[str, list[str]]:
-    """The capability page, and each alias target the map does not list."""
+def render_capability_index(
+    root: Path, data: dict, aliases: list[dict], unplaced: list[str]
+) -> tuple[str, list[str]]:
+    """The capability page, and each alias path that names no file in the repo.
+
+    A mapped path shows its size bucket; a file outside the map (a pack's
+    Markdown, a script's README) shows `outside the map`.
+    """
     files = file_index(data)
     missing: list[str] = []
     alias_rows = []
     for entry in aliases:
-        synonyms = "; ".join(entry["synonyms"])
-        for target in entry["targets"]:
-            info = files.get(target)
-            if info is None:
-                missing.append(f"{entry['capability']} -> {target}")
-                size, purpose = "—", f"NOT IN THE MAP: fix this target in `{ALIASES_PATH}`"
+        shown = []
+        for path in entry["paths"]:
+            info = files.get(path)
+            if info is not None:
+                shown.append(f"`{path}` ({file_bucket(info)})")
+            elif (root / path).is_file():
+                shown.append(f"`{path}` (outside the map)")
             else:
-                size, purpose = file_bucket(info), info["purpose"]
-            alias_rows.append(
-                [entry["capability"], synonyms, f"`{target}`", size, purpose, entry["note"]]
-            )
+                missing.append(
+                    f"{ALIASES_PATH}:{entry['line']}: {path} is not a file in the repo "
+                    f"(moved or deleted?), in {entry['phrase']!r}"
+                )
+                shown.append(f"`{path}` (MISSING: fix it in `{ALIASES_PATH}`)")
+        alias_rows.append(
+            [
+                entry["phrase"],
+                "; ".join(entry["synonyms"]),
+                "; ".join(shown),
+                "; ".join(entry["spec_ids"]),
+                entry["note"],
+            ]
+        )
     module_rows = []
     for name, crate in data["crates"].items():
         for mod_name, mod in crate["modules"].items():
@@ -706,12 +744,23 @@ def render_capability_index(data: dict, aliases: list[dict]) -> tuple[str, list[
         "",
         "## Reviewed aliases",
         "",
-        f"The capabilities in `{ALIASES_PATH}`, one row per target file. The purpose is the "
-        "file's own, from the map; the note says what the code does. Add an alias there when a "
-        "capability is hard to find by the words its code uses.",
+        f"The capabilities in `{ALIASES_PATH}`, one row each: its synonyms, its owning files "
+        "with their size bucket, the spec IDs those files' docs name, and what it is and is not. "
+        "Add a row there when a capability is hard to find by the words its code uses, and fix "
+        "a row when you move or delete a file it names.",
         "",
     ]
-    lines += table(["capability", "synonyms", "file", "bucket", "purpose", "note"], alias_rows)
+    lines += table(["capability", "synonyms", "files", "spec IDs", "note"], alias_rows)
+    if unplaced:
+        lines += [
+            "",
+            "## Not located",
+            "",
+            "Capabilities the alias review searched for and could not place, with the terms it "
+            "tried. Report them as not located; do not name an owner for them.",
+            "",
+            *(f"- {item}" for item in unplaced),
+        ]
     lines += [
         "",
         "## Modules by purpose",
@@ -726,53 +775,127 @@ def render_capability_index(data: dict, aliases: list[dict]) -> tuple[str, list[
 
 
 def render_artifacts(
-    data: dict, aliases: list[dict]
+    root: Path, data: dict, aliases: list[dict], unplaced: list[str]
 ) -> tuple[dict[PurePosixPath, bytes], list[str]]:
-    """Every artifact's bytes, and each alias target the map does not list."""
+    """Every artifact's bytes, and each alias path that names no file in the repo."""
     artifacts = {MAP_PATH: render_top(data).encode("utf-8")}
     for name, crate in data["crates"].items():
         artifacts[DIR_PATH / f"{name}.md"] = render_crate(name, crate).encode("utf-8")
     artifacts[JSON_PATH] = render_json(data).encode("utf-8")
     artifacts[SPEC_PATH] = render_spec_index(data).encode("utf-8")
-    capability_page, missing = render_capability_index(data, aliases)
+    capability_page, missing = render_capability_index(root, data, aliases, unplaced)
     artifacts[CAPABILITY_PATH] = capability_page.encode("utf-8")
     return artifacts, missing
 
 
-def one_line(value: object) -> bool:
-    return isinstance(value, str) and bool(value.strip()) and not ({"\n", "\r"} & set(value))
+def table_cells(line: str) -> list[str] | None:
+    """The stripped cells of a Markdown table row `| a | b |`, or None for any other line."""
+    row = line.strip()
+    if len(row) < 2 or not (row.startswith("|") and row.endswith("|")):
+        return None
+    return [cell.strip() for cell in row[1:-1].split("|")]
 
 
-def load_aliases(root: Path) -> list[dict]:
-    """The reviewed capability aliases.  A malformed file fails closed."""
+def alias_list(text: str, where: str, column: str) -> list[str]:
+    """A `; `-separated list cell.  An empty cell is an empty list; an empty item fails."""
+    if not text:
+        return []
+    items = [item.strip() for item in text.split(";")]
+    if not all(items):
+        raise CodemapError(f"{where}: {column} has an empty item; separate items with `; `")
+    return items
+
+
+def check_alias_path(path: str, where: str) -> None:
+    parts = PurePosixPath(path).parts
+    if (
+        path.startswith("/")
+        or "\\" in path
+        or any(part in (".", "..") for part in parts)
+        or any(c.isspace() for c in path)
+    ):
+        raise CodemapError(f"{where}: {path!r} is not a repo-relative file path")
+
+
+def load_aliases(root: Path) -> tuple[list[dict], list[str]]:
+    """The reviewed capability aliases and the phrases the review could not place.
+
+    The file holds exactly one table with the header `| phrase | synonyms | paths |
+    spec_ids | note |`, its separator row, then one row of five cells per capability.
+    Anything else that looks like a table row, a missing or renamed column, an extra
+    cell, an empty phrase, note or path list, an empty list item, a path that is not
+    repo-relative and a repeated phrase or path all fail closed, as does any line
+    under `## Phrases not placed` that is not a one-line `- ` bullet.
+    """
+    rel = ALIASES_PATH
     try:
-        doc = json.loads((root / ALIASES_PATH).read_bytes().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError) as error:
-        raise CodemapError(f"unreadable alias file {ALIASES_PATH}: {error}") from error
-    entries = doc.get("aliases") if isinstance(doc, dict) else None
-    if not isinstance(entries, list) or not entries:
-        raise CodemapError(f"{ALIASES_PATH}: `aliases` must be a non-empty list")
-    seen: set[str] = set()
-    for index, entry in enumerate(entries):
-        where = f"{ALIASES_PATH}: aliases[{index}]"
-        if not isinstance(entry, dict) or sorted(entry) != sorted(ALIAS_KEYS):
-            raise CodemapError(f"{where} must have exactly the keys {', '.join(ALIAS_KEYS)}")
-        lists_ok = all(
-            isinstance(entry[key], list) and all(one_line(item) for item in entry[key])
-            for key in ("synonyms", "targets")
+        text = (root / rel).read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise CodemapError(f"unreadable alias file {rel}: {error}") from error
+    lines = text.split("\n")
+    header = list(ALIAS_COLUMNS)
+    starts = [i for i, line in enumerate(lines) if table_cells(line) == header]
+    if len(starts) != 1:
+        raise CodemapError(
+            f"{rel}: needs exactly one alias table with the header | {' | '.join(header)} |"
         )
-        if not (one_line(entry["capability"]) and one_line(entry["note"]) and lists_ok):
+    start = starts[0]
+    separator = table_cells(lines[start + 1]) if start + 1 < len(lines) else None
+    if (
+        separator is None
+        or len(separator) != len(header)
+        or not all(TABLE_SEPARATOR_CELL_RE.fullmatch(c) for c in separator)
+    ):
+        raise CodemapError(f"{rel}:{start + 2}: the table header needs its `| --- |` separator row")
+    end = start + 2
+    while end < len(lines) and table_cells(lines[end]) is not None:
+        end += 1
+    for i, line in enumerate(lines):
+        if not start <= i < end and line.lstrip().startswith("|"):
+            raise CodemapError(f"{rel}:{i + 1}: a table row outside the alias table")
+    entries: list[dict] = []
+    phrases: set[str] = set()
+    for i in range(start + 2, end):
+        where = f"{rel}:{i + 1}"
+        cells = table_cells(lines[i])
+        if len(cells) != len(header):
             raise CodemapError(
-                f"{where}: capability and note are one-line strings; synonyms and targets "
-                "are lists of one-line strings"
+                f"{where}: a row has exactly {len(header)} cells ({', '.join(header)}); "
+                "a `|` inside a cell is not supported"
             )
-        if not entry["targets"]:
-            raise CodemapError(f"{where}: targets must name at least one file")
-        key = entry["capability"].casefold()
-        if key in seen:
-            raise CodemapError(f"{where}: duplicate capability {entry['capability']!r}")
-        seen.add(key)
-    return entries
+        entry: dict = {"line": i + 1}
+        for column, value in zip(ALIAS_COLUMNS, cells):
+            if column in ALIAS_LIST_COLUMNS:
+                entry[column] = alias_list(value, where, column)
+            elif not value:
+                raise CodemapError(f"{where}: {column} must not be empty")
+            else:
+                entry[column] = value
+        if not entry["paths"]:
+            raise CodemapError(f"{where}: paths must name at least one file")
+        for path in entry["paths"]:
+            check_alias_path(path, where)
+        if len(set(entry["paths"])) != len(entry["paths"]):
+            raise CodemapError(f"{where}: a path is listed twice")
+        key = entry["phrase"].casefold()
+        if key in phrases:
+            raise CodemapError(f"{where}: duplicate phrase {entry['phrase']!r}")
+        phrases.add(key)
+        entries.append(entry)
+    if not entries:
+        raise CodemapError(f"{rel}: the alias table has no rows")
+    unplaced: list[str] = []
+    in_unplaced = False
+    for i, line in enumerate(lines):
+        if line.startswith("#"):
+            in_unplaced = line.strip() == ALIAS_UNPLACED_HEADING
+        elif in_unplaced and line.strip():
+            if not line.startswith("- ") or not line[2:].strip():
+                raise CodemapError(
+                    f"{rel}:{i + 1}: each line under {ALIAS_UNPLACED_HEADING!r} is one `- ` bullet"
+                )
+            unplaced.append(line[2:].strip())
+    return entries, unplaced
 
 
 def mapped_files(data: dict) -> int:
@@ -856,9 +979,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.sizes:
             print_sizes(root, data)
             return 0
-        artifacts, missing = render_artifacts(data, load_aliases(root))
+        aliases, unplaced = load_aliases(root)
+        artifacts, missing = render_artifacts(root, data, aliases, unplaced)
         for item in missing:
-            print(f"CODEMAP-ALIAS-MISSING: {item} (fix the target in {ALIASES_PATH})")
+            print(f"CODEMAP-ALIAS-MISSING: {item}")
         if args.check:
             stale = check_artifacts(root, artifacts)
             for item in stale:
@@ -870,10 +994,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"CODEMAP-OK: {mapped_files(data)} files mapped, {len(artifacts)} artifacts current")
             return 0
         changed = write_artifacts(root, artifacts)
-        print(
-            f"CODEMAP-OK: {mapped_files(data)} files mapped, "
-            f"{len(changed)} of {len(artifacts)} artifacts updated"
+        summary = (
+            f"{mapped_files(data)} files mapped, {len(changed)} of {len(artifacts)} artifacts updated"
         )
+        if missing:
+            print(
+                f"CODEMAP-ALIAS-MISSING: {summary}, but {len(missing)} alias path(s) above name "
+                f"no file in the repo; fix them in {ALIASES_PATH} (exit {EXIT_ALIAS_MISSING})"
+            )
+            return EXIT_ALIAS_MISSING
+        print(f"CODEMAP-OK: {summary}")
         return 0
     except CodemapError as error:
         print(f"CODEMAP-ERROR: {error}")

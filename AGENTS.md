@@ -106,9 +106,11 @@ macOS app lives at `apps/macos/src-tauri/` and is linked from the overview.
 
 `scripts/codemap/` generates both map levels, the machine-readable `docs/codemap/codemap.json`
 and the two lookup pages `docs/codemap/BY-CAPABILITY.md` and `docs/codemap/BY-SPEC.md`. Besides
-the source, it reads one reviewed input, `scripts/codemap/capability_aliases.json`: add an alias
-there in your PR when a capability is hard to find by the words its code uses. Only `main` writes
-the generated files: `.github/workflows/codemap.yml` regenerates and commits the map after every
+the source, it reads one reviewed input, `scripts/codemap/capability_aliases.md` (a table of
+phrase, synonyms, paths, spec IDs and a note on what it is and is not): add a row there in your PR
+when a capability is hard to find by the words its code uses, and fix its rows when you move or
+delete a file they name, since a path that names no file fails the map run on `main`.
+Only `main` writes the generated files: `.github/workflows/codemap.yml` regenerates and commits the map after every
 push to `main`. Never hand-edit the map and never commit map output from a branch, so a branch's
 map can lag its own changes. To read a fresh map for your branch, run
 `python3 scripts/codemap/codemap.py`, then drop the output with
