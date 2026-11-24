@@ -10,9 +10,9 @@
 //! submit carries it to the node, which computes the digest again from the
 //! pin it runs. A changed field is a new pin.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// The most arguments one pin passes (argv, no shell).
 pub const PIN_ARGS_MAX: usize = 64;
@@ -67,9 +67,13 @@ pub struct ResourceRequest {
     pub maximum_secs: u64,
 }
 
-/// Which kind of scope the job unit runs in (section 7.8).
+/// Which kind of scope the job unit runs in (section 7.8). Externally
+/// tagged (`"host"`, or `{"container": {"image": ...}}`), so a node decodes
+/// it without buffering the sender's input: an internally tagged enum would
+/// nest as deep as a granted peer's bytes do (the organ codec's one
+/// exception to its no-recursion rule).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ScopeKind {
     /// The host scope: the job unit's own OS account and cgroup on the node.
     Host,
@@ -99,8 +103,8 @@ pub struct OutputDecl {
 }
 
 impl WorkloadPin {
-    /// The pin's digest: sha256, lower hex, of its canonical JSON (every
-    /// object's keys sorted), the encoding the GPU quote digest uses. The
+    /// The pin's digest: the content hash, lower hex, of its canonical JSON
+    /// (every object's keys sorted), as the GPU quote digest is made. The
     /// issuer keys `JOB_WORKLOAD` by it, and the node computes it again
     /// from the pin it runs.
     ///
@@ -110,6 +114,6 @@ impl WorkloadPin {
     pub fn digest(&self) -> crate::Result<String> {
         let bytes = crate::llm::canonical_json_bytes(self)
             .map_err(|_| crate::Error::InvariantViolation("workload pin encode"))?;
-        Ok(oneiron_hex::encode(&Sha256::digest(&bytes)))
+        Ok(ContentHash::of(&bytes).to_hex())
     }
 }
