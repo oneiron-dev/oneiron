@@ -1,0 +1,149 @@
+//! The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a
+//! job's chunk on one of the vault's own machines over the job protocols, and what registers it.
+//!
+//! - [`connector`]: [`VaultMachineConnector`], the backend itself.
+//! - [`node_client`]: the calls to a node, over the mesh or by script.
+//! - [`billing`]: the bracket, the billed seconds and the typed terminal.
+//! - [`reconcile`]: the reconcile of a node before the first dispatch to it.
+//! - [`clock`]: the wall and boot clocks the dispatch and the bracket read.
+//! - [`register`]: where the backend may exist, and the one-issuer check of the start gate.
+//!
+//! The rows it writes are oneiron's `job_dispatch` tables. The quote names the machine
+//! (`inputs.machine`), so the job row fixes the target before any network call.
+
+pub mod billing;
+pub mod clock;
+pub mod connector;
+pub mod node_client;
+pub mod reconcile;
+pub mod register;
+
+use oneiron::EntityId;
+use oneiron::job_workload::WorkloadStartRefusal;
+
+pub use clock::{IssuerClock, SystemIssuerClock};
+pub use connector::{VaultMachineConnector, VaultMachineParts};
+#[cfg(feature = "mesh")]
+pub use node_client::MeshJobNodeClient;
+pub use node_client::{JobNodeClient, NodeCallError};
+pub use reconcile::{LoggedOrphanKeys, OrphanKeys};
+#[cfg(oneiron_test_support)]
+pub use register::register_vault_machine;
+pub use register::{
+    NotTheIssuer, VaultMachineNotRegistered, issuer_machine, not_the_issuer, vault_machine_backend,
+};
+
+use crate::gpu_execution_node::wire::{JobAnswer, JobRefusal, JobStatusAnswer, SlotSelector};
+
+/// The backend registry's name for the connector, as an offer's `backend` names it.
+pub const VAULT_MACHINE_BACKEND: &str = "vault_machine";
+
+/// What a refusal of door 6 or 7 says to a caller who may not read
+/// `vault.machines.execution.get`.
+pub const NOT_AVAILABLE_TO_THIS_CALLER: &str = "not_available_to_this_caller";
+
+/// A `vault_machine` quote's inputs: the machine that runs the job (required) and the GPU it
+/// may take. Other fields (a lane's arm binding) pass through untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultMachineInputs {
+    pub machine: EntityId,
+    pub device_id: Option<String>,
+    pub model: Option<String>,
+}
+
+impl VaultMachineInputs {
+    /// The GPU slot selectors a reserve and a submit carry.
+    #[must_use]
+    pub fn slot(&self) -> SlotSelector {
+        SlotSelector {
+            device_id: self.device_id.clone(),
+            model: self.model.clone(),
+        }
+    }
+}
+
+/// Reads a `vault_machine` quote's inputs.
+///
+/// # Errors
+///
+/// `machine_missing` when `inputs.machine` is absent or not a MACHINE id in hex;
+/// `device_id_invalid` or `model_invalid` when one is present and not a string.
+pub fn vault_machine_inputs(
+    inputs: &serde_json::Value,
+) -> Result<VaultMachineInputs, &'static str> {
+    let machine = inputs
+        .get("machine")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .ok_or("machine_missing")?;
+    let text = |name: &str, refusal: &'static str| match inputs.get(name) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
+        Some(_) => Err(refusal),
+    };
+    Ok(VaultMachineInputs {
+        machine,
+        device_id: text("device_id", "device_id_invalid")?,
+        model: text("model", "model_invalid")?,
+    })
+}
+
+/// The code a start-gate refusal shows the caller (section 6: a refusal does not disclose). A
+/// refusal that names the machine or what it said is shown only to a caller who may read
+/// `vault.machines.execution.get`; any other caller gets [`NOT_AVAILABLE_TO_THIS_CALLER`].
+#[must_use]
+pub fn refusal_code_for_caller(
+    refusal: &WorkloadStartRefusal,
+    may_read_machines: bool,
+) -> &'static str {
+    if refusal.discloses_machine() && !may_read_machines {
+        NOT_AVAILABLE_TO_THIS_CALLER
+    } else {
+        refusal.code()
+    }
+}
+
+/// A node's refusal before any journal, by name.
+#[must_use]
+pub fn job_refusal_code(refusal: &JobRefusal) -> &'static str {
+    match refusal {
+        JobRefusal::NotEnabled => "not_enabled",
+        JobRefusal::PeerNotProven => "peer_not_proven",
+        JobRefusal::NotIssuer => "not_issuer",
+        JobRefusal::OwnGrantEnded => "own_grant_ended",
+        JobRefusal::IssuerStandingEnded => "issuer_standing_ended",
+        JobRefusal::Paused { .. } => "paused",
+        JobRefusal::Drained { .. } => "drained",
+        JobRefusal::NotReleasable { .. } => "not_releasable",
+        JobRefusal::HistoryLost => "history_lost",
+        JobRefusal::KeyConflict => "key_conflict",
+        JobRefusal::NotTheKeysIssuer => "not_the_keys_issuer",
+        JobRefusal::SubmitSignatureInvalid => "submit_signature_invalid",
+    }
+}
+
+/// An answer on the new-work protocol, by kind: what a log names without its body.
+#[must_use]
+pub fn job_answer_kind(answer: &JobAnswer) -> &'static str {
+    match answer {
+        JobAnswer::Node(_) => "node",
+        JobAnswer::Receipt(_) => "receipt",
+        JobAnswer::Busy { .. } => "busy",
+        JobAnswer::Refused(_) => "refused",
+    }
+}
+
+/// An answer on the status protocol, by kind.
+#[must_use]
+pub fn status_answer_kind(answer: &JobStatusAnswer) -> &'static str {
+    match answer {
+        JobStatusAnswer::Known(_) => "known",
+        JobStatusAnswer::Absent { .. } => "absent",
+        JobStatusAnswer::HistoryLost => "history_lost",
+        JobStatusAnswer::Busy { .. } => "busy",
+        JobStatusAnswer::Keys(_) => "keys",
+        JobStatusAnswer::Output { .. } => "output",
+        JobStatusAnswer::Acknowledged => "acknowledged",
+        JobStatusAnswer::Refused(_) => "refused",
+    }
+}

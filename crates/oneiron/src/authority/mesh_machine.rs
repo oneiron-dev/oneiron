@@ -289,6 +289,40 @@ impl Vault {
         }
         Ok(granted)
     }
+    /// Until when, in vault seconds, `machine` holds a live grant on `alpn` under its current
+    /// address key, as [`Self::mesh_grant_permits`] judges it now: the earlier of the grant's
+    /// expiry and its pairing's. `None` when no grant permits it now. The `vault_machine`
+    /// connector's live recheck reads it before each dispatch (pass 33 section 8.2: no grant may
+    /// end inside the submit window and the staging limit).
+    pub(crate) fn mesh_grant_live_until_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+        alpn: &[u8],
+    ) -> Result<Option<u64>> {
+        let Some(row) = self.mesh_machine_in_txn(txn, machine)? else {
+            return Ok(None);
+        };
+        if !self.mesh_grant_permits_in_txn(txn, machine, row.endpoint_key, alpn)? {
+            return Ok(None);
+        }
+        let Some(claims) = self.mesh_authority_in_txn(txn, machine)? else {
+            return Ok(None);
+        };
+        let Some(grant_id) = claims.alpns.get(alpn) else {
+            return Ok(None);
+        };
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let expires_at = |slip: &[u8; 32]| {
+            fold.slips
+                .mints
+                .get(slip)
+                .map(|mint| mint.action.claims.expires_at)
+        };
+        Ok(expires_at(grant_id)
+            .zip(expires_at(&claims.pairing_slip_id))
+            .map(|(grant, pairing)| grant.min(pairing)))
+    }
     /// This install's MACHINE id and the seed of its mesh transport key, or
     /// `None` before it has a machine id (OF-535). The seed is derived from the
     /// machine key, the key a mesh binding pairs and a machine proof signs
