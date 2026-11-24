@@ -15,8 +15,9 @@ code only, the others also read string literals:
                `OffsetDateTime::now_utc`. Use oneiron_testkit::clock::FakeClock.
   network      an http(s)/ws(s) URL to a host other than loopback, a reserved test name
                (example.com/.org/.net, .test, .example, .invalid, .localhost) or a host whose
-               URIs are names only (XML namespaces, JSON schema dialects and the Git LFS
-               pointer's version line).
+               URIs are names only (XML namespaces and JSON schema dialects). The Git LFS
+               pointer's version line (`version https://git-lfs.github.com/spec/v1`) is a name
+               too; any other URL to that host counts.
   fixed-port   a fixed loopback port (`127.0.0.1:8080`). Bind port 0.
   real-model   provider API key names, provider hosts, model files (.gguf, .safetensors, .onnx)
                and local model servers. Use ScriptedProvider and HashingEmbedder.
@@ -77,9 +78,7 @@ LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1", "0.0.0.0")
 PORT_HOSTS = ("127.0.0.1", "localhost", "[::1]", "0.0.0.0")
 RESERVED_SUFFIXES = ("example.com", "example.org", "example.net", ".test", ".example", ".invalid", ".localhost")
 # Hosts whose URIs are names, not addresses: XML namespaces and schema dialects (`xmlns`,
-# `$schema`), which a parser compares as text and no client fetches, and the Git LFS pointer's
-# version line (`version https://git-lfs.github.com/spec/v1`), which Git LFS compares as text; an
-# LFS transfer goes to the repository's own host, never to this one.
+# `$schema`), which a parser compares as text and no client fetches.
 IDENTIFIER_HOSTS = (
     "schemas.openxmlformats.org",
     "schemas.microsoft.com",
@@ -87,8 +86,15 @@ IDENTIFIER_HOSTS = (
     "json-schema.org",
     "www.w3.org",
     "purl.org",
-    "git-lfs.github.com",
 )
+# The Git LFS pointer's version line names the pointer grammar: Git LFS compares
+# `version https://git-lfs.github.com/spec/v1` as text and nothing fetches it (an LFS transfer goes
+# to the repository's own host). Only that exact line is a name; any other URL to the host counts.
+LFS_POINTER_VERSION_KEY = "version "
+LFS_POINTER_VERSION_URI = "https://git-lfs.github.com/spec/v1"
+# What ends the version line in Rust source after the URI: the `\n` escape or the literal's closing
+# quote. The end of the source line ends it too (a literal that spans lines).
+LFS_POINTER_LINE_ENDS = ("\\n", '"')
 SCHEMES = ("http://", "https://", "ws://", "wss://")
 ALLOW_MARK = "testkit-lint: allow("
 SKIPPED_DIRS = ("target", "vendor", "node_modules", ".git", "fixtures-out")
@@ -369,6 +375,18 @@ def is_identifier_host(host):
     return host.rstrip(".").translate(ASCII_LOWER) in IDENTIFIER_HOSTS
 
 
+def is_lfs_pointer_version(text, at):
+    """Whether the URL at `at` in `text` is the URI of a Git LFS pointer's version line, exactly:
+    `version ` before it, and the line's end right after it."""
+    if not text.startswith(LFS_POINTER_VERSION_URI, at):
+        return False
+    key_at = at - len(LFS_POINTER_VERSION_KEY)
+    if key_at < 0 or not text.startswith(LFS_POINTER_VERSION_KEY, key_at):
+        return False
+    end = at + len(LFS_POINTER_VERSION_URI)
+    return end == len(text) or text.startswith(LFS_POINTER_LINE_ENDS, end)
+
+
 def line_rules(code, text):
     """The rules one line breaks, given its code-only text and its code-and-strings text."""
     rules = []
@@ -390,6 +408,8 @@ def line_rules(code, text):
     )
     for scheme in SCHEMES:
         for at in find_all(text, scheme):
+            if is_lfs_pointer_version(text, at):
+                continue
             authority = []
             for ch in text[at + len(scheme):]:
                 if ch in AUTHORITY_END:

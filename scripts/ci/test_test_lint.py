@@ -56,16 +56,32 @@ class Rules(unittest.TestCase):
         )
         self.assertEqual(rules(TEST_FILE, source), [(1, "network"), (5, "fixed-port")])
 
-    def test_xml_namespaces_schema_and_lfs_pointer_identifiers_are_not_network(self):
+    def test_xml_namespaces_and_schema_identifiers_are_not_network(self):
         source = (
             'const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";\n'
             "let s = \"{$schema:'http://json-schema.org/draft-07/schema#'}\";\n"
             'let x = "http://www.w3.org/2000/svg";\n'
             'let d = "https://schemas.openxmlformats.org.cdn.net/x";\n'
-            'let p = "version https://git-lfs.github.com/spec/v1\\noid sha256:{}\\nsize 12\\n";\n'
+        )
+        self.assertEqual(rules(TEST_FILE, source), [(4, "network")])
+
+    def test_lfs_pointer_version_line_is_a_name_and_other_urls_to_its_host_are_network(self):
+        source = (
+            'let p = format!("version https://git-lfs.github.com/spec/v1\\noid sha256:{}\\nsize 12\\n", oid);\n'
+            'writeln!(out, "version https://git-lfs.github.com/spec/v1")?;\n'
+            'let r = r"\n'
+            "version https://git-lfs.github.com/spec/v1\n"
+            '";\n'
+            'reqwest::get("https://git-lfs.github.com/").await;\n'
+            'reqwest::get("https://git-lfs.github.com/spec/v1").await;\n'
+            'let v = "version https://git-lfs.github.com/spec/v1.1\\n";\n'
+            'let b = "version https://git-lfs.github.com/spec/v1/batch\\n";\n'
             'let l = "https://github.com/o/r.git/info/lfs/objects/batch";\n'
         )
-        self.assertEqual(rules(TEST_FILE, source), [(4, "network"), (6, "network")])
+        self.assertEqual(
+            rules(TEST_FILE, source),
+            [(6, "network"), (7, "network"), (8, "network"), (9, "network"), (10, "network")],
+        )
 
     def test_real_model_keys_hosts_and_files_are_found(self):
         source = 'env::var("OPENAI_API_KEY");\nlet u = "https://api.openai.com/v1";\nlet m = "model.gguf";\n'
