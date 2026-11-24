@@ -20,6 +20,14 @@ use super::place::place;
 use super::record::{
     CancelAsk, CancelWhy, OrderCharge, OrderState, OrderedBy, WORK_ORDERS, WaitRule, WorkOrder,
 };
+
+/// Why a cancel's write changed nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelRefused {
+    NotFound,
+    /// The order is at an end.
+    Ended,
+}
 use super::wire::{
     MachinesPlaceRequest, MachinesPlaceView, WorkOrderList, WorkOrderListRequest, WorkOrderRef,
     WorkOrderRequest, WorkOrderView,
@@ -275,7 +283,7 @@ pub fn work_order_cancel_as(
                     Ok(caller) => caller,
                     Err(refused) => return Ok(Err(refused)),
                 };
-            let Some(mut order) = WORK_ORDERS.get(&vault.store, txn, &input.order)? else {
+            let Some(order) = WORK_ORDERS.get(&vault.store, txn, &input.order)? else {
                 return Ok(Err(MemoryError::new(
                     MEMORY_CODE_NOT_FOUND,
                     "no such work order",
@@ -289,33 +297,25 @@ pub fn work_order_cancel_as(
                     &["Ask the vault owner to cancel it."],
                 )));
             }
-            let by = Some(memory.actor());
-            match order.state {
-                OrderState::Open { .. } => {
-                    order.state = OrderState::Cancelled {
-                        why: CancelWhy::Asked { by },
-                    };
+            let cancelled =
+                vault.cancel_work_order_in_txn(txn, &order.id, Some(memory.actor()), now_ms)?;
+            let order = match cancelled {
+                Ok(order) => order,
+                Err(CancelRefused::NotFound) => {
+                    return Ok(Err(MemoryError::new(
+                        MEMORY_CODE_NOT_FOUND,
+                        "no such work order",
+                        &[],
+                    )));
                 }
-                OrderState::Running { .. } => {
-                    if order.cancel.is_none() {
-                        order.cancel = Some(CancelAsk { at_ms: now_ms, by });
-                    }
-                }
-                OrderState::Done | OrderState::GivenUp { .. } | OrderState::Cancelled { .. } => {
+                Err(CancelRefused::Ended) => {
                     return Ok(Err(MemoryError::new(
                         MEMORY_CODE_INVALID_STATE,
                         "the work order has ended",
                         &["Read its end with vault.jobs.orders.get."],
                     )));
                 }
-            }
-            if !vault.put_work_order_in_txn(txn, &mut order, now_ms)? {
-                return Ok(Err(MemoryError::new(
-                    MEMORY_CODE_INVALID_STATE,
-                    "the work order changed; read it again",
-                    &[],
-                )));
-            }
+            };
             Ok(Ok(WorkOrderView {
                 order,
                 replayed: false,
@@ -412,5 +412,59 @@ pub fn machines_place_as(
             "the caller's authority to order this work has ended",
             &[Blocker::GrantNotLive],
         )),
+    }
+}
+
+impl Vault {
+    /// The cancel's write, in `txn`: an open order is cancelled at once and is never dispatched;
+    /// a running order keeps its state with the cancel recorded, the loop stops its attempt,
+    /// and the order is cancelled when that attempt's end is in. The write bumps the order's
+    /// revision, so a dispatch that read the order before refuses in its own write.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors. Every refusal is the inner `Err`.
+    pub fn cancel_work_order_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        by: Option<EntityId>,
+        now_ms: u64,
+    ) -> crate::Result<Result<WorkOrder, CancelRefused>> {
+        let Some(mut order) = WORK_ORDERS.get(&self.store, txn, id)? else {
+            return Ok(Err(CancelRefused::NotFound));
+        };
+        match order.state {
+            OrderState::Open { .. } => {
+                order.state = OrderState::Cancelled {
+                    why: CancelWhy::Asked { by },
+                };
+            }
+            OrderState::Running { .. } => {
+                if order.cancel.is_none() {
+                    order.cancel = Some(CancelAsk { at_ms: now_ms, by });
+                }
+            }
+            OrderState::Done | OrderState::GivenUp { .. } | OrderState::Cancelled { .. } => {
+                return Ok(Err(CancelRefused::Ended));
+            }
+        }
+        // The row was read in this write, so it is at its stored revision.
+        self.put_work_order_in_txn(txn, &mut order, now_ms)?;
+        Ok(Ok(order))
+    }
+
+    /// [`Self::cancel_work_order_in_txn`] in its own write.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors. Every refusal is the inner `Err`.
+    pub fn cancel_work_order(
+        &self,
+        id: &EntityId,
+        by: Option<EntityId>,
+        now_ms: u64,
+    ) -> crate::Result<Result<WorkOrder, CancelRefused>> {
+        self.with_write_txn_grouped(|txn| self.cancel_work_order_in_txn(txn, id, by, now_ms))
     }
 }

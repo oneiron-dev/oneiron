@@ -25,7 +25,7 @@ mod wire;
 pub use after::{AFTER_RULE, AfterPick, RetryPolicy, RetryRule, after_rule};
 pub use blocker::{BlockedOn, Blocker, Clearing};
 pub use doors::{
-    ORDER_INTENT_KEY_MAX, machines_place_as, order_refusal, order_work_as, work_order_cancel_as,
+    CancelRefused, ORDER_INTENT_KEY_MAX, machines_place_as, order_refusal, order_work_as, work_order_cancel_as,
     work_order_get_as, work_order_list_as,
 };
 pub use fit::{DeviceFact, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact, fit};

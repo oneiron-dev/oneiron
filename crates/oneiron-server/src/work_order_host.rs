@@ -268,7 +268,7 @@ impl OrderHost for ServerOrderHost<'_> {
 /// # Errors
 ///
 /// [`Blocker::NotTheIssuer`] on a replica that is not the issuer.
-pub(crate) fn dispatches_offer(server: &SyncServer, name: &str) -> Result<(), Blocker> {
+pub fn dispatches_offer(server: &SyncServer, name: &str) -> Result<(), Blocker> {
     let Some(offer) = server.config.gpu_jobs.offer(name) else {
         return Ok(());
     };
