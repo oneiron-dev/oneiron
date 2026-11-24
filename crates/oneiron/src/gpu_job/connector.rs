@@ -67,6 +67,106 @@ pub enum GpuTermination {
     Pending,
 }
 
+/// How a job ended, as its machine established it (design pass 33 section 5.3, the receipt's
+/// end; pass 32 r2 section 7.3). A connector maps its backend's own end cause to this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "end", rename_all = "snake_case")]
+pub enum GpuJobEnd {
+    /// The workload process exited with this code.
+    Exited { code: i32 },
+    /// The workload process ended on this signal.
+    Signalled { signal: i32 },
+    /// The machine ended it at the job's maximum seconds.
+    TimeLimit,
+    /// The machine ended it at its memory limit.
+    MemoryLimit,
+    /// The machine ended it at its disk limit.
+    DiskLimit,
+    /// The engine asked for the stop, after the launch.
+    Stopped,
+    /// The machine saw the job's grant or the machine's enrolment end.
+    Revoked,
+    /// Stopped before the launch: the workload never ran.
+    Withdrawn,
+    /// The machine refused the job at admission: the workload never ran.
+    Refused { reason: String },
+    /// A check inside the launch failed: the workload never ran.
+    LaunchRefused { reason: String },
+    /// The machine attests the job lost (a host reset, or a launch that left no trace).
+    /// `last_seen_secs` is the run time the engine last saw, a lower bound.
+    Lost { reason: String, last_seen_secs: u64 },
+}
+
+impl GpuJobEnd {
+    /// Whether the workload never ran, so nothing is billed.
+    #[must_use]
+    pub fn never_ran(&self) -> bool {
+        matches!(
+            self,
+            Self::Withdrawn | Self::Refused { .. } | Self::LaunchRefused { .. }
+        )
+    }
+
+    /// The end as views show it: `exited(0)`, `time_limit`, `refused(no_device)`, ...
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Exited { code } => format!("exited({code})"),
+            Self::Signalled { signal } => format!("signalled({signal})"),
+            Self::TimeLimit => "time_limit".to_owned(),
+            Self::MemoryLimit => "memory_limit".to_owned(),
+            Self::DiskLimit => "disk_limit".to_owned(),
+            Self::Stopped => "stopped".to_owned(),
+            Self::Revoked => "revoked".to_owned(),
+            Self::Withdrawn => "withdrawn".to_owned(),
+            Self::Refused { reason } => format!("refused({reason})"),
+            Self::LaunchRefused { reason } => format!("launch_refused({reason})"),
+            Self::Lost { reason, .. } => format!("lost({reason})"),
+        }
+    }
+}
+
+/// How a job's billed seconds were found (design pass 33 section 8.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "meter", rename_all = "snake_case")]
+pub enum MeterVerdict {
+    /// The machine's measured seconds lie inside the engine's own bracket.
+    Agreed,
+    /// The machine's figure was above the engine's bracket: the bracket is billed.
+    Bracketed { billed_secs: u64 },
+    /// No measured seconds (a lost machine).
+    Unknown,
+}
+
+/// One output file of a job, by hash: never its body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuJobOutput {
+    pub name: String,
+    /// Lower hex.
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+/// A confirmed end, typed, as the job's machine established it (pass 32 r2 section 7.2 point 7;
+/// pass 33 section 8.4). A lane's settle reads it, so a refused start, a lost machine and a time
+/// limit reach the settle as what they are; the generic job states alone cannot carry them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuJobTerminal {
+    pub end: GpuJobEnd,
+    /// Occupied device time on the machine's clock, from the launch to the empty unit;
+    /// `None` when unknown (a lost machine).
+    pub measured_secs: Option<u64>,
+    /// The seconds billed: never above the quote, the measured seconds or the engine's bracket;
+    /// 0 when the workload never ran or the machine was lost.
+    pub billed_secs: u64,
+    pub meter: MeterVerdict,
+    /// The machine that ran it.
+    pub machine: Option<crate::EntityId>,
+    /// The vendor's device id of the GPU it held.
+    pub device_id: Option<String>,
+    pub outputs: Vec<GpuJobOutput>,
+}
+
 /// Why a provider call did not answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(tag = "error", rename_all = "snake_case")]
