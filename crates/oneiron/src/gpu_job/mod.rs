@@ -38,8 +38,8 @@ pub use allowance::GpuJobAllowance;
 pub(crate) use allowance::erase_allowance_actor_in_txn;
 pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
 pub use connector::{
-    GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
-    GpuResourceStatus, GpuTermination,
+    GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
+    GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
 };
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;

@@ -454,6 +454,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ESIGN_RULES_NOTICE",
         "ESIGN_RULES_PENDING",
         "EXPERIMENT_ARM",
+        "EXPERIMENT_ARM_UNIT",
         "EXPORT_RECEIPT",
         "FEDERATION_ACTOR_CONTENT_INFLIGHT",
         "FEDERATION_PARKED_FACET_LANE",

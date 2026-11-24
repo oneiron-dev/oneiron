@@ -9,10 +9,16 @@
 //! measured. The economy is the rule about who may take a lease: the pinned
 //! share, the floor per family and the market ceilings the mint divides by
 //! payoff.
+pub(crate) mod claim;
 mod fold;
 mod intent;
 pub(crate) mod tables;
 
+pub use claim::{
+    AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
+    UnitSettleRefused, UnitSettlement, UnitTerminal, claim_in_txn, claims_at_rung_in_txn,
+    settle_unit_in_txn,
+};
 pub(crate) use intent::erase_intent_asker_in_txn;
 pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 
