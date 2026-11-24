@@ -465,3 +465,171 @@ fn the_share_view_shows_no_named_wallets_usage_beside_the_owners_pin() {
         "the embedded view: the newest charged generation"
     );
 }
+
+/// A run on its own `limit`-unit line in `connector`'s unit, whose meter
+/// the test keeps.
+fn run_on_line(
+    connector: &PaidConnector,
+    account: &Arc<HostAccount>,
+    limit: u64,
+) -> (RunAdmission, BudgetGuard) {
+    let line = BudgetLine {
+        limit_units: limit,
+        reserve_units: 1,
+        unit: connector.cost_unit.clone(),
+    };
+    let declaration = RunDeclaration::declared(line).with_connector(connector.connector.clone());
+    let meter = BudgetGuard::with_reserve_units(
+        format!("line-{limit}"),
+        limit,
+        1,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let receipts = Arc::new(MemoryReceipts::default()) as Arc<dyn RunReceiptSink>;
+    let run = RunAdmission::with_funding(
+        format!("line-{limit}"),
+        declaration,
+        meter.clone(),
+        Some(Arc::clone(account)),
+        receipts,
+        None,
+        None,
+    );
+    (run, meter)
+}
+
+/// Review 10403 round 2, P1-1: the allocation holds before the run's line,
+/// so a call its allocation cannot fit leaves the line's ladder unfired.
+#[test]
+fn a_call_its_allocation_cannot_fit_leaves_the_runs_ladder_unfired() {
+    let account = HostAccount::new();
+    account
+        .grant(allocation("money", 1, 1, MONEY, None))
+        .expect("one unit of money");
+    let search = search();
+    let (run, meter) = run_on_line(&search, &account, 100);
+    match run.admit_paid(&search, 100) {
+        Ok(_) => panic!("one unit left in the allocation"),
+        Err(denied) => assert!(
+            matches!(denied, RunDenied::AllocationExhausted),
+            "{denied:?}"
+        ),
+    }
+    let admission = meter
+        .admit_reserve(100)
+        .expect("the run's line is untouched");
+    assert_eq!(admission.ladder_events.len(), 3);
+}
+
+/// The other order: when the run's line refuses a call the allocation
+/// already held, the allocation's hold and the resident's draw are released
+/// uncharged, so the same room admits the next call.
+#[test]
+fn a_call_the_runs_line_refuses_releases_its_allocation_hold() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("vault"));
+    let resident = EntityId::now();
+    vault
+        .set_resident_share(
+            resident,
+            ResidentShare {
+                units: Some(100),
+                pinned: true,
+            },
+        )
+        .expect("the owner pins 100 units");
+    let account = HostAccount::with_residents(VaultResidentLedger::new(Arc::clone(&vault)));
+    account
+        .grant(allocation("money", 1, 100, MONEY, None))
+        .expect("100 units of money");
+    let search = search();
+    let (narrow, _) = run_on_line(&search, &account, 50);
+    match narrow.initiated_by(Some(resident)).admit_paid(&search, 100) {
+        Ok(_) => panic!("the run's line holds 50"),
+        Err(denied) => assert!(
+            !matches!(
+                denied,
+                RunDenied::AllocationExhausted | RunDenied::ResidentShareSpent { .. }
+            ),
+            "the run's line refuses, not the allocation: {denied:?}"
+        ),
+    }
+    let (wide, _) = run_on_line(&search, &account, 1_000);
+    let permit = wide
+        .initiated_by(Some(resident))
+        .admit_paid(&search, 100)
+        .expect("the allocation and the pinned share are whole again");
+    assert_eq!(held_on(&permit), ("money".to_owned(), 1, Some(unit(MONEY))));
+    permit.settle(CallOutcome::Used(100)).expect("settles");
+}
+
+/// Review 10403 round 2, P1-3: with walletless allocations in two units,
+/// both enforce the owner's pin, and the server's view shows the one of the
+/// highest generation, with its depletion.
+#[test]
+fn the_share_view_with_two_walletless_units_shows_the_highest_generation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("vault"));
+    let resident = EntityId::now();
+    vault
+        .set_resident_share(
+            resident,
+            ResidentShare {
+                units: Some(50),
+                pinned: true,
+            },
+        )
+        .expect("the owner pins 50 units");
+    let account = HostAccount::with_residents(VaultResidentLedger::new(Arc::clone(&vault)));
+    account
+        .grant(allocation("money", 7, 1_000, MONEY, None))
+        .expect("money at generation 7");
+    let search = search();
+    run(&search, &account, None)
+        .initiated_by(Some(resident))
+        .admit_paid(&search, 10)
+        .expect("10 micro_usd")
+        .settle(CallOutcome::Used(10))
+        .expect("settles");
+    account
+        .grant(allocation("gpu", 1, 1_000, GPU, None))
+        .expect("walletless gpu at generation 1");
+
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let status = account.status();
+    assert_eq!(
+        status.resident_share_allocation(),
+        Some(&AllocationRef {
+            id: "money".to_owned(),
+            generation: 7
+        })
+    );
+    let view = resident_shares_on_allocation_as_owner(
+        &vault,
+        &owner,
+        &ResidentSharesRequest {},
+        status.resident_share_allocation(),
+    )
+    .expect("server view");
+    let row = view
+        .residents
+        .iter()
+        .find(|row| row.resident == resident.to_hex())
+        .expect("the resident's row");
+    assert_eq!(
+        (
+            row.allocation.as_deref(),
+            row.allocation_generation,
+            row.used_units
+        ),
+        (Some("money"), Some(7), 10)
+    );
+}

@@ -6,7 +6,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::{BudgetExhaustionPolicy, BudgetGuard, DispatchBinding, ModelId, ModelLocality};
+use super::super::{
+    BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, DispatchBinding, ModelId,
+    ModelLocality,
+};
+use super::admission::RunDenied;
 use super::declaration::LeaseUnit;
 use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
@@ -277,20 +281,29 @@ pub struct AccountStatus {
 }
 
 impl AccountStatus {
-    /// The allocation the owner's resident shares govern (FIX 7767, row
-    /// M2-I): the host's one walletless allocation. `None` when the account
-    /// selects none, or walletless ones in several units.
+    /// The allocation the owner's resident shares are shown on (FIX 7767,
+    /// row M2-I): the host's walletless allocation. With walletless
+    /// allocations in several units, each enforces the shares, and the view
+    /// shows the one of the highest generation (review 10403; the setting
+    /// names no unit yet, FIX RESIDENT-SHARE-NO-UNIT). `None` only when the
+    /// account selects no walletless allocation.
     #[must_use]
     pub fn resident_share_allocation(&self) -> Option<&AllocationRef> {
-        let mut walletless = self
-            .allocations
+        self.allocations
             .iter()
-            .filter(|selected| selected.wallet.is_none());
-        match (walletless.next(), walletless.next()) {
-            (Some(only), None) => Some(&only.reference),
-            _ => None,
-        }
+            .filter(|selected| selected.wallet.is_none())
+            .map(|selected| &selected.reference)
+            .max_by_key(|reference| reference.generation)
     }
+}
+
+/// A reservation [`HostAccount::reserve_on_selected`] took on a selected
+/// allocation, or the meter's refusal of it.
+pub(super) struct SelectedReservation {
+    pub(super) live: LiveAllocation,
+    pub(super) units: u64,
+    pub(super) refused: Option<AllocationRefusal>,
+    pub(super) admitted: Result<BudgetLease, BudgetDenied>,
 }
 
 /// One allocation an account selects, with its slot: its unit and the
@@ -444,9 +457,40 @@ impl HostAccount {
 
     /// Every live allocation, one per slot, and the host's refusal of fresh
     /// ones.
+    #[cfg(test)]
     pub(super) fn selected(&self) -> (Vec<LiveAllocation>, Option<AllocationRefusal>) {
         let state = self.lock();
         (state.selected.clone(), state.refused)
+    }
+
+    /// Reserves on the selected allocation `choose` picks, the units
+    /// `choose` prices, under the account's lock: a grant cannot replace the
+    /// chosen allocation between the choice and the hold (review 10403).
+    /// `choose` sees every selected allocation and the host's refusal of a
+    /// fresh one. The meter's refusal comes back in `admitted`, for the
+    /// caller to report once the lock is released.
+    pub(super) fn reserve_on_selected(
+        &self,
+        choose: impl FnOnce(
+            &[LiveAllocation],
+            Option<AllocationRefusal>,
+        ) -> Result<(usize, u64), RunDenied>,
+    ) -> Result<SelectedReservation, RunDenied> {
+        let state = self.lock();
+        let refused = state.refused;
+        let (index, units) = choose(&state.selected, refused)?;
+        let live = state.selected[index].clone();
+        let admitted = live
+            .meter
+            .admit_reserve(units)
+            .map(|admission| admission.lease);
+        drop(state);
+        Ok(SelectedReservation {
+            live,
+            units,
+            refused,
+            admitted,
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, AccountState> {

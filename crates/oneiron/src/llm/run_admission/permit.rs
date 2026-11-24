@@ -9,8 +9,8 @@ use super::super::{
 use super::admission::{CallOrigin, RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
-    AllocationRef, AllocationRefusal, KeyCustody, LiveAllocation, OfferBinding, PaidConnector,
-    Payer, UnitRate, Unpriced, convert,
+    AllocationRef, KeyCustody, LiveAllocation, OfferBinding, PaidConnector, Payer,
+    SelectedReservation, UnitRate, Unpriced, convert,
 };
 use super::receipt::{PermitFacts, RunStreamUsage};
 use super::resident::{ResidentDraw, ResidentShareScope};
@@ -231,36 +231,41 @@ impl RunInner {
             request_digest,
             ..offer.dispatch_binding()
         };
-        let chosen = self.choose_allocation(
+        // The host's allocation first: a call it refuses never reserves on
+        // the run's line, so the line's ladder stays as it was (review 10403).
+        let allocation = self.hold_allocation(
             offer.payer,
             u128::from(line.reserve_units),
             &tokens,
             &offer.rates,
+            resident,
         )?;
-        let free = self.free_lease(offer.payer, offer.custody, &binding)?;
-        let metered = free.is_none();
-        let (lease, reserved_units) = match free {
-            Some(lease) => (lease, 0),
-            None => {
-                let reserve = priced(
-                    u128::from(line.reserve_units),
-                    &tokens,
-                    &line.unit,
-                    &offer.rates,
-                )?;
-                let lease = self
-                    .guard
-                    .admit_call_bound(reserve, &request.envelope.purpose, binding)
-                    .map_err(|denied| RunDenied::Budget { denied })?
-                    .lease;
-                (lease, reserve)
-            }
-        };
-        let allocation = match self.hold_allocation(chosen, resident) {
-            Ok(allocation) => allocation,
+        let line_lease = (|| -> Result<(BudgetLease, u64, bool), RunDenied> {
+            let free = self.free_lease(offer.payer, offer.custody, &binding)?;
+            let metered = free.is_none();
+            let (lease, reserve) = match free {
+                Some(lease) => (lease, 0),
+                None => {
+                    let reserve = priced(
+                        u128::from(line.reserve_units),
+                        &tokens,
+                        &line.unit,
+                        &offer.rates,
+                    )?;
+                    let lease = self
+                        .guard
+                        .admit_call_bound(reserve, &request.envelope.purpose, binding)
+                        .map_err(|denied| RunDenied::Budget { denied })?
+                        .lease;
+                    (lease, reserve)
+                }
+            };
+            Ok((lease, reserve, metered))
+        })();
+        let (lease, reserved_units, metered) = match line_lease {
+            Ok(line_lease) => line_lease,
             Err(denied) => {
-                // Not dispatched, so the abort releases the line's reservation.
-                self.guard.abort(&lease).ok();
+                release_unsent(allocation);
                 return Err(denied);
             }
         };
@@ -344,30 +349,36 @@ impl RunInner {
         let line = declaration.budget();
         let native = u128::from(connector.unit_cost) * u128::from(quantity);
         let binding = connector.dispatch_binding();
-        let chosen = self.choose_allocation(
+        // The host's allocation first, as in `admit_model`.
+        let allocation = self.hold_allocation(
             connector.payer,
             native,
             &connector.cost_unit,
             &connector.rates,
+            resident,
         )?;
-        let free = self.free_lease(connector.payer, connector.custody, &binding)?;
-        let metered = free.is_none();
-        let (lease, reserve) = match free {
-            Some(lease) => (lease, 0),
-            None => {
-                let reserve = priced(native, &connector.cost_unit, &line.unit, &connector.rates)?;
-                let lease = self
-                    .guard
-                    .admit_reserve_bound(reserve, binding)
-                    .map_err(|denied| RunDenied::Budget { denied })?
-                    .lease;
-                (lease, reserve)
-            }
-        };
-        let allocation = match self.hold_allocation(chosen, resident) {
-            Ok(allocation) => allocation,
+        let line_lease = (|| -> Result<(BudgetLease, u64, bool), RunDenied> {
+            let free = self.free_lease(connector.payer, connector.custody, &binding)?;
+            let metered = free.is_none();
+            let (lease, reserve) = match free {
+                Some(lease) => (lease, 0),
+                None => {
+                    let reserve =
+                        priced(native, &connector.cost_unit, &line.unit, &connector.rates)?;
+                    let lease = self
+                        .guard
+                        .admit_reserve_bound(reserve, binding)
+                        .map_err(|denied| RunDenied::Budget { denied })?
+                        .lease;
+                    (lease, reserve)
+                }
+            };
+            Ok((lease, reserve, metered))
+        })();
+        let (lease, reserve, metered) = match line_lease {
+            Ok(line_lease) => line_lease,
             Err(denied) => {
-                self.guard.abort(&lease).ok();
+                release_unsent(allocation);
                 return Err(denied);
             }
         };
@@ -447,72 +458,37 @@ impl RunInner {
             .map_err(|denied| RunDenied::Budget { denied })
     }
 
-    /// Chooses the live allocation a host-paid call holds on, of its slot
-    /// (row M2-I, [`super::slot`]), and prices the call there, before
-    /// anything is reserved: a call the slots refuse leaves the run's line
-    /// untouched, its ladder unfired (review 10403 P1-1). A run with no host
-    /// account has no allocation to draw on, so it admits no host-paid call.
-    /// A memory-work run takes no hold at all (FIX 11003): memory work never
-    /// needs funds. A run an owner's agent Grant funds (FIX 7766) holds only
-    /// on a live allocation the host named that Grant's wallet for; any other
-    /// is refused, never used as a default. The chosen allocation holds the
-    /// call or refuses it: no other unit or wallet stands in for it.
-    fn choose_allocation(
+    /// Reserves a host-paid call on the live allocation of its slot (row
+    /// M2-I, [`super::slot`]), and on the share of it `resident` holds when
+    /// the host keeps residents (FIX 7767). The account chooses the slot,
+    /// prices the call there and reserves under its own lock, so a grant
+    /// cannot replace the chosen allocation between the choice and the hold
+    /// (review 10403). Callers take this before the run's line, so a call
+    /// the allocation refuses leaves the line and its ladder untouched. A
+    /// refused fresh allocation only matters once the chosen one cannot fit
+    /// the call. A run with no host account has no allocation to draw on, so
+    /// it admits no host-paid call. A memory-work run takes no hold at all
+    /// (FIX 11003): memory work never needs funds. A run an owner's agent
+    /// Grant funds (FIX 7766) holds only on a live allocation the host named
+    /// that Grant's wallet for; any other is refused, never used as a
+    /// default. The chosen allocation holds the call or refuses it: no other
+    /// unit or wallet stands in for it.
+    fn hold_allocation(
         &self,
         payer: Payer,
         native_units: u128,
         native: &LeaseUnit,
         rates: &[UnitRate],
-    ) -> Result<Option<ChosenAllocation>, RunDenied> {
+        resident: Option<crate::EntityId>,
+    ) -> Result<Option<(AllocationRef, AllocationHold)>, RunDenied> {
         if payer != Payer::Host || self.memory_work() {
             return Ok(None);
         }
         let Some(host) = self.host.as_ref() else {
             return Err(RunDenied::NoAllocation);
         };
-        let (mut selected, refused) = host.selected();
-        let slots: Vec<Slot<'_>> = selected
-            .iter()
-            .map(|live| Slot {
-                unit: &live.unit,
-                wallet: live.wallet.as_ref(),
-            })
-            .collect();
         let funding = self.funding.as_ref().map(|funding| &funding.wallet_ref);
-        let index = select(&slots, native, rates, funding).map_err(|miss| match miss {
-            SlotMiss::Empty => match refused {
-                Some(reason) => RunDenied::AllocationRefused { reason },
-                None => RunDenied::NoAllocation,
-            },
-            SlotMiss::Wallet { expected, live } => {
-                RunDenied::AllocationWalletMismatch { expected, live }
-            }
-            SlotMiss::Unpriced { to } => RunDenied::UnitMismatch {
-                from: native.clone(),
-                to,
-            },
-            SlotMiss::Ambiguous { units } => RunDenied::AllocationAmbiguous { units },
-        })?;
-        drop(slots);
-        let live = selected.swap_remove(index);
-        let units = priced(native_units, native, &live.unit, rates)?;
-        Ok(Some(ChosenAllocation {
-            live,
-            units,
-            refused,
-        }))
-    }
-
-    /// Reserves a host-paid call on the allocation [`Self::choose_allocation`]
-    /// chose, and on the share of it `resident` holds when the host keeps
-    /// residents (FIX 7767). A refused fresh allocation only matters once that
-    /// allocation cannot fit the call.
-    fn hold_allocation(
-        &self,
-        chosen: Option<ChosenAllocation>,
-        resident: Option<crate::EntityId>,
-    ) -> Result<Option<(AllocationRef, AllocationHold)>, RunDenied> {
-        let Some(ChosenAllocation {
+        let SelectedReservation {
             live:
                 LiveAllocation {
                     reference,
@@ -522,27 +498,42 @@ impl RunInner {
                 },
             units,
             refused,
-        }) = chosen
-        else {
-            return Ok(None);
-        };
-        let short = || match refused {
-            Some(reason) => RunDenied::AllocationRefused { reason },
-            None => RunDenied::AllocationExhausted,
-        };
-        let lease = meter
-            .admit_reserve(units)
+            admitted,
+        } = host.reserve_on_selected(|selected, refused| {
+            let slots: Vec<Slot<'_>> = selected
+                .iter()
+                .map(|live| Slot {
+                    unit: &live.unit,
+                    wallet: live.wallet.as_ref(),
+                })
+                .collect();
+            let index = select(&slots, native, rates, funding).map_err(|miss| match miss {
+                SlotMiss::Empty => match refused {
+                    Some(reason) => RunDenied::AllocationRefused { reason },
+                    None => RunDenied::NoAllocation,
+                },
+                SlotMiss::Wallet { expected, live } => {
+                    RunDenied::AllocationWalletMismatch { expected, live }
+                }
+                SlotMiss::Unpriced { to } => RunDenied::UnitMismatch {
+                    from: native.clone(),
+                    to,
+                },
+                SlotMiss::Ambiguous { units } => RunDenied::AllocationAmbiguous { units },
+            })?;
+            let units = priced(native_units, native, &selected[index].unit, rates)?;
+            Ok((index, units))
+        })?;
+        let lease = admitted
             .inspect_err(|denied| self.budget_hit(&reference.id, &meter, denied))
             .map_err(|denied| match denied {
-                BudgetDenied::Exhausted => short(),
+                BudgetDenied::Exhausted => match refused {
+                    Some(reason) => RunDenied::AllocationRefused { reason },
+                    None => RunDenied::AllocationExhausted,
+                },
                 denied => RunDenied::Budget { denied },
             })?;
-        let residents = self
-            .host
-            .as_ref()
-            .and_then(|host| host.residents())
-            .zip(resident);
-        let resident = match residents {
+        let resident = match host.residents().zip(resident) {
             Some((residents, resident)) => {
                 let allocation_units = meter.read().limit_units;
                 let scope = ResidentShareScope::of_wallet(wallet.as_ref());
@@ -550,7 +541,7 @@ impl RunInner {
                     Ok(draw) => Some(draw),
                     Err(denied) => {
                         // Not dispatched, so the abort releases the hold.
-                        meter.abort(&lease.lease).ok();
+                        meter.abort(&lease).ok();
                         return Err(denied);
                     }
                 }
@@ -561,7 +552,7 @@ impl RunInner {
             reference,
             AllocationHold {
                 meter,
-                lease: lease.lease,
+                lease,
                 unit,
                 resident,
             },
@@ -569,14 +560,17 @@ impl RunInner {
     }
 }
 
-/// The allocation a host-paid call holds on, chosen before anything is
-/// reserved, with the call's price in its unit.
-struct ChosenAllocation {
-    live: LiveAllocation,
-    units: u64,
-    /// The host's refusal of a fresh allocation, named when this one is
-    /// spent.
-    refused: Option<AllocationRefusal>,
+/// Releases an allocation hold whose call was never sent: the run's line
+/// refused it after the allocation held it. The abort frees the
+/// reservation, and the resident's draw leaves the in-flight tally
+/// uncharged.
+fn release_unsent(allocation: Option<(AllocationRef, AllocationHold)>) {
+    if let Some((_, hold)) = allocation {
+        hold.meter.abort(&hold.lease).ok();
+        if let Some(draw) = &hold.resident {
+            draw.settle(0);
+        }
+    }
 }
 
 /// Whether a call is free work (FIX 9482): nobody pays per call
