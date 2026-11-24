@@ -69,6 +69,10 @@ oneiron-container = { path = "../oneiron-container" }
 [dev-dependencies]
 # Unseeded test vaults keep the blob write door open without a policy fixture.
 oneiron = { path = "../oneiron", features = ["test-support"] }
+# The mesh tests enrol a serving device as `oneiron device enrol` does: its
+# keystore holds its machine key, and a holder key signs the pairing.
+ed25519-dalek = { workspace = true }
+oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 tempfile = "3"
 toml = "0.8"
 

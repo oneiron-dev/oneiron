@@ -2,8 +2,9 @@
 //! the organ's notes, every one of them, whole (Rule 5): how many and how
 //! long they run are `[limits]` rows, which ask whether everything is okay.
 
-use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
+use oneiron::machine_signature::MachineSignatures;
+use oneiron::{EntityId, Vault};
 use oneiron_organ_protocol::{
     AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion, to_vec,
 };
@@ -52,6 +53,80 @@ pub struct CallReceipt {
     /// does not count.
     #[serde(default)]
     pub room_wait_us: u64,
+    /// The serving machine's signature over this receipt, on a call another
+    /// node of the owner's ran (OF-575; Engine ruling
+    /// ORGAN-MESH-RECEIPT-SIGNATURE). `None` on a call this machine ran
+    /// itself, and on a record written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_by: Option<ReceiptSignature>,
+}
+
+/// The domain a machine signs a [`CallReceipt`] under, in
+/// [`oneiron::machine_signature::machine_signature_transcript`].
+pub const CALL_RECEIPT_SIGNATURE_DOMAIN: &[u8] = b"oneiron/organ-call-receipt/v1\0";
+
+/// A machine's signature over a [`CallReceipt`]: its Ed25519 signature
+/// under [`CALL_RECEIPT_SIGNATURE_DOMAIN`] over the receipt in the organ
+/// codec without this field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptSignature {
+    /// The MACHINE that signed, hex.
+    pub machine: String,
+    /// The 64-byte signature, hex.
+    pub signature: String,
+}
+
+impl CallReceipt {
+    /// The bytes a machine signs for this receipt: the receipt in the organ
+    /// codec, with no signature.
+    fn signed_bytes(&self) -> Result<Vec<u8>, String> {
+        let unsigned = Self {
+            signed_by: None,
+            ..self.clone()
+        };
+        to_vec(&unsigned).map_err(|err| format!("the receipt did not encode: {err}"))
+    }
+
+    /// Signs this receipt as `signer`'s machine, in place of any signature
+    /// it held.
+    ///
+    /// # Errors
+    /// The receipt did not encode, or `signer` could not sign.
+    pub fn sign(&mut self, signer: &dyn MachineSignatures) -> Result<(), String> {
+        let bytes = self.signed_bytes()?;
+        let (machine, signature) = signer
+            .sign(CALL_RECEIPT_SIGNATURE_DOMAIN, &bytes)
+            .map_err(|err| err.to_string())?;
+        self.signed_by = Some(ReceiptSignature {
+            machine: machine.to_hex(),
+            signature: oneiron_hex::encode(&signature),
+        });
+        Ok(())
+    }
+
+    /// The machine whose signature this receipt carries, once `verifier`
+    /// finds it that machine's over this receipt, against the key its
+    /// MACHINE row holds there.
+    ///
+    /// # Errors
+    /// The receipt is unsigned, its signature is malformed, or it is not
+    /// the named machine's over this receipt.
+    pub fn signer(&self, verifier: &dyn MachineSignatures) -> Result<EntityId, String> {
+        let signed = self.signed_by.as_ref().ok_or("the receipt is not signed")?;
+        let machine = EntityId::from_hex(&signed.machine)
+            .map_err(|_| "the receipt's signer is not a machine id".to_owned())?;
+        let signature = oneiron_hex::decode::<64>(&signed.signature)
+            .ok_or("the receipt's signature is not 64 bytes of hex")?;
+        verifier
+            .verify(
+                machine,
+                CALL_RECEIPT_SIGNATURE_DOMAIN,
+                &self.signed_bytes()?,
+                &signature,
+            )
+            .map_err(|err| err.to_string())?;
+        Ok(machine)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

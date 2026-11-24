@@ -13,6 +13,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::machine_signature::MachineSignatures;
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshStream};
 use oneiron_organ_protocol::{ASK_MEMORY_GROW, AskCode, AskRefusal, ByteBuf, Hash32};
 
@@ -197,6 +198,7 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
 pub(crate) async fn call_on(
     conn: &dyn MeshConnection,
     machine: EntityId,
+    verifier: &dyn MachineSignatures,
     call: &OrganCall,
     inputs: &[(Option<OrganInput>, LentInput)],
     asks: &AskHandlers<'_>,
@@ -272,9 +274,30 @@ pub(crate) async fn call_on(
         other => return Err(absent(unexpected(&other))),
     };
     match result {
-        PeerResult::Done(mut outcome) => {
-            receipts.reconcile(std::mem::take(&mut outcome.receipt.asks));
-            outcome.receipt.asks = receipts.lines.clone();
+        PeerResult::Done(outcome) => {
+            // The serving machine's word, before anything of the outcome is
+            // used: its signature over the receipt, by the machine the
+            // handshake proved (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE).
+            // A reply that fails it is a broken rule, not an absent node: the
+            // call already ran there.
+            match outcome.receipt.signer(verifier) {
+                Ok(signer) if signer == machine => {}
+                Ok(signer) => {
+                    return Err(PeerError::Failed(HostError::ReplyInvalid(format!(
+                        "the node's receipt is signed by machine {}, not by the node that ran the call",
+                        signer.to_hex()
+                    ))));
+                }
+                Err(why) => {
+                    return Err(PeerError::Failed(HostError::ReplyInvalid(format!(
+                        "the node's receipt does not hold: {why}"
+                    ))));
+                }
+            }
+            // The receipt stays as the serving machine signed it; this
+            // node's own ask evidence is reconciled into the lines the
+            // handlers keep.
+            receipts.reconcile(outcome.receipt.asks.clone());
             received(conn, outcome, here).await
         }
         PeerResult::Failed(failure) => {

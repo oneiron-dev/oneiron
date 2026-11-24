@@ -27,8 +27,25 @@ conflicting positive signing evidence is never overwritten. When repeated
 identities leave an occurrence ambiguous, local evidence stays separate rather
 than being attached to an earlier refusal. Unmatched local lines are appended
 only after matching is complete, then stable ask-id order is restored for that
-one serving call. The returned successful `CallReceipt` and the lines retained
-by the supplied handlers use the same reconciled records.
+one serving call. The lines retained by the supplied handlers are these
+reconciled records. The returned successful `CallReceipt` keeps the serving
+host's own ask lines, exactly as the serving machine signed them (below).
+
+## The serving machine's signature
+
+The serving node signs each successful call's `CallReceipt` with its machine key
+(`signed_by`: the machine and its Ed25519 signature under the domain
+`oneiron/organ-call-receipt/v1\0`, over the receipt in the organ codec without
+that field), through the vault's `MachineSignatures`, the one key path pass 33's
+job submit and job receipt use too. The asking node reads the machine its
+handshake proved (`Vault::mesh_peer_machine` on the connection's endpoint key)
+before it sends anything, and refuses a node not proven as the machine it
+dialed. Before it takes any output it checks that the receipt is signed by that
+machine, against the machine key its MACHINE row holds in this replica. An
+unsigned receipt, another machine's, or one that does not verify is
+`ReplyInvalid`: the call ran there, so it is not retried on another node. A
+serving node that cannot sign answers the call as failed, never as an unsigned
+success. A call this machine runs itself carries no signature.
 
 ## Attempt identity and rollout
 
@@ -42,4 +59,7 @@ Roll out matching engine/organ-host builds on both mesh peers. `PeerAsk` now
 requires the real `call` and `id` fields, and receipt readers must understand
 `unanswered: "unknown"`. There is no old-peer fallback or fabricated identity.
 The mesh ALPN and organ process protocol version are unchanged. No organ binary,
-SDK, configuration or stored-format migration is required by this change.
+SDK, configuration or stored-format migration is required by this change. An
+asking node with the signature check refuses every success from a serving node
+without it, so both peers take the signing build together. A receipt written
+before it reads with no `signed_by`.
