@@ -45,7 +45,7 @@ use super::node_settings::{
 use super::slots::GpuSlotTable;
 use super::wire::{
     JOB_ALPN, JobAnswer, JobRefusal, JobReserve, NodeAnswer, ScopeReport, SignedJobSubmit,
-    WorkloadPin,
+    TemplateOffer, WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -228,6 +228,27 @@ pub trait NodeKeys: Send + Sync {
     fn scopes(&self) -> Vec<ScopeReport> {
         Vec::new()
     }
+}
+
+/// `offers`, each keeping only the scope kinds a probed scope of `scopes`
+/// can run it in: the scope meets the minimum contract and gives every bound
+/// the template requires (pass 34, section 2.2). A scope that fails the
+/// minimum contract runs nothing, and a template no scope can run is still
+/// listed, with no scope.
+fn offered_in_scopes(offers: Vec<TemplateOffer>, scopes: &[ScopeReport]) -> Vec<TemplateOffer> {
+    offers
+        .into_iter()
+        .map(|mut offer| {
+            offer.scopes.retain(|class| {
+                scopes.iter().any(|scope| {
+                    scope.class == *class
+                        && scope.capabilities.meets_minimum_contract()
+                        && scope.capabilities.missing(&offer.require).is_empty()
+                })
+            });
+            offer
+        })
+        .collect()
 }
 
 /// The execution node of this machine. Cloning it shares it.
@@ -554,10 +575,13 @@ impl ExecutionNode {
         self.node_answer_from(&self.snapshot())
     }
 
-    /// What the node offers, as `snapshot` reads it.
+    /// What the node offers, as `snapshot` reads it. Once the keys are
+    /// attached, each template is offered only in the scopes their unit's
+    /// probe says can run it ([`offered_in_scopes`]).
     #[must_use]
     pub fn node_answer_from(&self, snapshot: &NodeSnapshot) -> NodeAnswer {
         let keys = self.keys();
+        let scopes = keys.map(|keys| keys.scopes());
         let (templates, disk_free_bytes, disk_reserve_bytes) = match snapshot.settings() {
             Some(settings) => (
                 settings.template_offers().unwrap_or_else(|why| {
@@ -573,8 +597,11 @@ impl ExecutionNode {
             enabled: snapshot.controls.enabled,
             paused: snapshot.controls.paused.clone(),
             drained: snapshot.controls.drained.clone(),
-            templates,
-            scopes: keys.map(|keys| keys.scopes()).unwrap_or_default(),
+            templates: match &scopes {
+                Some(scopes) => offered_in_scopes(templates, scopes),
+                None => templates,
+            },
+            scopes: scopes.unwrap_or_default(),
             disk_free_bytes,
             disk_reserved_bytes: self.booked_disk_bytes(),
             disk_reserve_bytes,
