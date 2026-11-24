@@ -14,6 +14,11 @@
 //! - The intent key replays the first answer and refuses a changed ask.
 //! - Setting a line is the owner's own act; reading one takes the owner or a
 //!   Grant that names the verb.
+//! - Astra pass-32 findings 6, 8 and 17 at the doors: a seat counts from the
+//!   next mint, and every seat's floor fits its own side; the record freezes
+//!   the rung caps and the forecast rule while hosts change at once; a period
+//!   once passed never reopens when the clock or the schedule goes back; a
+//!   seed past its bounds is refused. Every refusal writes nothing.
 //!
 //! On the base the module does not exist, so every test fails there.
 //!
@@ -29,8 +34,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, WalletRef};
 use oneiron::gpu_line::{
     GpuLineError, GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineSetRequest, GpuLineView,
-    InvalidCost, PinnedMode, RuleRef, Track, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET,
-    VAULT_GPU_LINES_SET, mint_period,
+    InvalidCost, LineInvalid, MAX_SEED_WINS, MintError, PayoffSeed, PinnedMode, RuleRef, Track,
+    VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET, mint_period,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError,
@@ -156,13 +161,13 @@ impl Fixture {
         );
     }
 
-    fn owner_set(
+    fn try_set(
         &self,
         key: &str,
         lane: EntityId,
         policy: GpuLinePolicy,
         now_ms: u64,
-    ) -> GpuLineView {
+    ) -> Result<GpuLineView, GpuLineError> {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
             .set_gpu_line(
@@ -174,6 +179,16 @@ impl Fixture {
                 },
                 now_ms,
             )
+    }
+
+    fn owner_set(
+        &self,
+        key: &str,
+        lane: EntityId,
+        policy: GpuLinePolicy,
+        now_ms: u64,
+    ) -> GpuLineView {
+        self.try_set(key, lane, policy, now_ms)
             .unwrap_or_else(|error| panic!("the owner sets lane {lane:?}'s line: {error:?}"))
     }
 
@@ -185,23 +200,48 @@ impl Fixture {
         family: EntityId,
         track: Track,
     ) -> Result<GpuLineView, GpuLineError> {
+        self.admit_at(caller, key, lane, family, track, None, NOW_MS)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn admit_at(
+        &self,
+        caller: Option<EntityId>,
+        key: &str,
+        lane: EntityId,
+        family: EntityId,
+        track: Track,
+        seed: Option<PayoffSeed>,
+        now_ms: u64,
+    ) -> Result<GpuLineView, GpuLineError> {
         let request = GpuLineFamilyAdmitRequest {
             intent_key: key.to_owned(),
             project: lane,
             family,
             track,
-            seed: None,
+            seed,
         };
         match caller {
             None => self
                 .vault
                 .memory(self.owner, EdgeActorClass::Human)
-                .admit_gpu_line_family(Some(&self.owner_proof), &request, NOW_MS),
+                .admit_gpu_line_family(Some(&self.owner_proof), &request, now_ms),
             Some(agent) => self
                 .vault
                 .memory(agent, EdgeActorClass::Agent)
-                .admit_gpu_line_family(None, &request, NOW_MS),
+                .admit_gpu_line_family(None, &request, now_ms),
         }
+    }
+
+    /// The owner's read of `lane`'s line at `now_ms`.
+    fn view(&self, lane: EntityId, now_ms: u64) -> Result<GpuLineView, GpuLineError> {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .gpu_line_view(Some(&self.owner_proof), &lane, now_ms)
+    }
+
+    fn line(&self, lane: EntityId) -> oneiron::gpu_line::GpuLine {
+        self.vault.gpu_line(&lane).expect("read").expect("the line")
     }
 }
 
@@ -455,4 +495,227 @@ fn setting_a_line_is_the_owners_act_and_reading_one_needs_the_grant() {
         .expect("a Grant that names the read admits it");
     assert_eq!(view.line.project, lane);
     assert!(view.period_minted);
+}
+
+/// Finding 6 at the door: a family seated in a period already minted has no
+/// floor and no market ceiling there; both start with the next mint.
+#[test]
+fn a_seat_counts_from_the_next_mint() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    fixture.owner_set("set", lane, policy(), NOW_MS);
+    let demand = fixture.project_under(lane, 0);
+    let seated = fixture
+        .admit(None, "seat", lane, demand, Track::Demand)
+        .expect("the owner seats a demand family");
+    assert!(seated.period_minted);
+    let current = seated.period.expect("period 0 has begun");
+    assert_eq!(current.floor_of(&demand), 0, "no floor this period");
+    assert_eq!(current.ceiling_of(&demand, RuleRef::PAYOFF_SHARE_1), 0);
+
+    let next = fixture
+        .view(lane, ANCHOR_MS + PERIOD_MS + 5)
+        .expect("the owner reads the line");
+    let preview = next.period.expect("period 1 has begun");
+    assert_eq!(preview.floor_of(&demand), 3_600, "the next mint seats it");
+    assert!(preview.ceiling_of(&demand, RuleRef::PAYOFF_SHARE_1) > 0);
+}
+
+/// Finding 6: one more floor than its side holds is refused at the seat, and
+/// a policy edit under which the seated floors no longer fit is refused at
+/// the set. Neither writes.
+#[test]
+fn every_floor_fits_its_own_side_of_the_allowance() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    // 10,800 s a period, a third pinned: 3,600 s for the interest floors
+    // (one floor) and 7,200 s for the demand floors (two).
+    let mut small = policy();
+    small.allowance_units = 10_800;
+    fixture.owner_set("set", lane, small.clone(), NOW_MS);
+    for (n, track) in [Track::Demand, Track::Demand, Track::Interest]
+        .into_iter()
+        .enumerate()
+    {
+        let family = fixture.project_under(lane, 0);
+        fixture
+            .admit(None, &format!("seat-{n}"), lane, family, track)
+            .unwrap_or_else(|error| panic!("seat {n} on {track:?} fits: {error:?}"));
+    }
+    let seated = fixture.line(lane);
+    assert_eq!(seated.families.len(), 3);
+
+    for (n, track) in [Track::Demand, Track::Interest].into_iter().enumerate() {
+        let family = fixture.project_under(lane, 0);
+        let refused = fixture
+            .admit(None, &format!("full-{n}"), lane, family, track)
+            .expect_err("the side is full");
+        assert!(
+            matches!(refused, GpuLineError::FloorDoesNotFit),
+            "{track:?}: seen {refused:?}"
+        );
+        assert_eq!(code(refused), MEMORY_CODE_INVALID_STATE);
+    }
+
+    let mut wider_floors = small;
+    wider_floors.floor_arms = 3;
+    let refused = fixture
+        .try_set("set-wider", lane, wider_floors, NOW_MS + 10)
+        .expect_err("three floor arms do not fit two demand seats in 7,200 s");
+    assert!(
+        matches!(refused, GpuLineError::Invalid(LineInvalid::FloorsDoNotFit)),
+        "seen {refused:?}"
+    );
+    assert_eq!(code(refused), MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(fixture.line(lane), seated, "the refusals wrote nothing");
+}
+
+/// Finding 8: the period record freezes the rung caps and the forecast rule
+/// it read; an edit later in the period changes them from the next mint,
+/// and only the hosts at once.
+#[test]
+fn the_period_record_freezes_its_caps_and_its_forecast_rule() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    let first = fixture.owner_set("set-1", lane, policy(), NOW_MS);
+    let minted = first.period.expect("period 0 has begun");
+    assert_eq!(minted.rung_caps_secs, vec![1_800, 10_800, 172_800]);
+    assert!(minted.forecast_required);
+
+    let mut edited = policy();
+    edited.rung_caps_secs = vec![900, 3_600];
+    edited.forecast_required = false;
+    edited.hosts = vec!["nelly".to_owned()];
+    let second = fixture.owner_set("set-2", lane, edited, NOW_MS + 10);
+    let current = second.period.expect("period 0");
+    assert_eq!(current, minted, "the minted record stands");
+    assert_eq!(
+        second.line.hosts,
+        vec!["nelly".to_owned()],
+        "hosts are read from the line at once"
+    );
+
+    let next = fixture
+        .view(lane, ANCHOR_MS + PERIOD_MS + 5)
+        .expect("the owner reads the line")
+        .period
+        .expect("period 1 has begun");
+    assert_eq!(next.rung_caps_secs, vec![900, 3_600]);
+    assert!(!next.forecast_required);
+}
+
+/// Finding 8: once a later period is minted, a clock that went back, or a
+/// schedule edit that puts the clock before it, is refused at every door:
+/// an earlier period never reopens.
+#[test]
+fn a_period_once_passed_never_reopens() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    fixture.owner_set("set", lane, policy(), NOW_MS);
+    let period_two = ANCHOR_MS + 2 * PERIOD_MS + 5;
+    let demand = fixture.project_under(lane, 0);
+    let seated = fixture
+        .admit_at(None, "seat", lane, demand, Track::Demand, None, period_two)
+        .expect("a seat in period 2 mints period 2");
+    assert_eq!(seated.period.map(|period| period.index), Some(2));
+    let before = fixture.line(lane);
+
+    let back = ANCHOR_MS + PERIOD_MS + 5;
+    let other = fixture.project_under(lane, 0);
+    let refused = fixture
+        .admit_at(None, "seat-back", lane, other, Track::Demand, None, back)
+        .expect_err("the clock went back to period 1");
+    assert!(
+        matches!(
+            refused,
+            GpuLineError::Mint(MintError::BehindMintedPeriod {
+                index: 1,
+                newest: 2
+            })
+        ),
+        "seen {refused:?}"
+    );
+    assert_eq!(code(refused), MEMORY_CODE_INVALID_STATE);
+    let read = fixture
+        .view(lane, back)
+        .expect_err("the read refuses the same period");
+    assert!(
+        matches!(
+            read,
+            GpuLineError::Mint(MintError::BehindMintedPeriod { .. })
+        ),
+        "seen {read:?}"
+    );
+    assert_eq!(
+        fixture.vault.gpu_line_period(&lane, 1).expect("read"),
+        None,
+        "period 1 was never minted"
+    );
+
+    // Three-fortnight periods put period 2's moment in period 0, and a later
+    // anchor puts it before period 0: both would reopen a past period.
+    let mut longer = policy();
+    longer.period_secs = 3 * PERIOD_SECS;
+    let mut later_anchor = policy();
+    later_anchor.period_anchor_ms = period_two + PERIOD_MS;
+    for (key, schedule) in [("set-longer", longer), ("set-later-anchor", later_anchor)] {
+        let refused = fixture
+            .try_set(key, lane, schedule, period_two)
+            .expect_err("the schedule edit puts the clock behind period 2");
+        assert!(
+            matches!(refused, GpuLineError::ScheduleBehindMint { newest: 2 }),
+            "{key}: seen {refused:?}"
+        );
+        assert_eq!(code(refused), MEMORY_CODE_INVALID_STATE);
+    }
+    assert_eq!(fixture.line(lane), before, "the refusals wrote nothing");
+}
+
+/// Finding 17: a seed past its bounds is refused at the seat.
+#[test]
+fn a_seed_past_its_bounds_is_refused() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    fixture.owner_set("set", lane, policy(), NOW_MS);
+    let family = fixture.project_under(lane, 0);
+    let seed = PayoffSeed {
+        wins: MAX_SEED_WINS + 1,
+        losses: 0,
+        cost_secs: 3_600,
+        weight_periods: 2,
+        origin: "ledger.jsonl sha256:00".to_owned(),
+    };
+    let refused = fixture
+        .admit_at(
+            None,
+            "seat",
+            lane,
+            family,
+            Track::Demand,
+            Some(seed.clone()),
+            NOW_MS,
+        )
+        .expect_err("too many wins");
+    assert!(
+        matches!(refused, GpuLineError::Invalid(LineInvalid::Seed)),
+        "seen {refused:?}"
+    );
+    assert_eq!(code(refused), MEMORY_CODE_BAD_REQUEST);
+    assert!(fixture.line(lane).seat(&family).is_none());
+
+    let seated = fixture
+        .admit_at(
+            None,
+            "seat-bounded",
+            lane,
+            family,
+            Track::Demand,
+            Some(PayoffSeed {
+                wins: MAX_SEED_WINS,
+                ..seed
+            }),
+            NOW_MS,
+        )
+        .expect("a seed within its bounds seats");
+    assert!(seated.line.seat(&family).is_some());
 }

@@ -14,13 +14,18 @@
 //! - Invalid time is cost in the divisor when the line says so (the default)
 //!   and nowhere otherwise; it never moves a win or a loss.
 //! - Two mints of one line, period and tally give the same bytes.
+//! - Astra pass-32 findings 6, 8 and 17: a late seat has no floor until the
+//!   next mint, the record freezes the rung caps and the forecast rule, the
+//!   policy's bounds hold before it is stored, and the arithmetic neither
+//!   divides by a zero prior nor overflows.
 use std::collections::BTreeMap;
 
 use oneiron::EntityId;
 use oneiron::federation::WalletRef;
 use oneiron::gpu_line::{
-    FamilySeat, GpuLine, InvalidCost, PinnedMode, RuleRef, SettledTally, Track, gpu_seconds,
-    mint_period,
+    Bucket, FamilySeat, GpuLine, InvalidCost, LineInvalid, MAX_SEED_COST_SECS,
+    MAX_SEED_ORIGIN_BYTES, MAX_SEED_WEIGHT_PERIODS, MAX_SEED_WINS, PayoffSeed, PeriodRoom,
+    PinnedMode, RuleRef, SettledTally, Track, gpu_seconds, mint_period,
 };
 
 const ANCHOR_MS: u64 = 1_000;
@@ -273,26 +278,197 @@ fn the_mint_is_a_pure_function_of_the_line_and_the_settled_outcomes() {
         oneiron::gpu_line::inputs_digest(&first.inputs)
     );
     assert_eq!(first.line_revision, 1);
-    // A family seated after the period began has its floor at once but no
-    // market ceiling until the next mint.
-    let mut later = lane.clone();
+    assert_eq!(
+        (first.rung_caps_secs.as_slice(), first.forecast_required),
+        (lane.rung_caps_secs.as_slice(), lane.forecast_required),
+        "the record freezes the rung caps and the forecast rule it read"
+    );
+}
+
+/// Finding 6: a seat counts from the first mint after it. In the period
+/// already begun it has neither a floor nor a market ceiling, so it cannot
+/// spend room that period's record promised elsewhere.
+#[test]
+fn a_late_seat_has_no_floor_until_the_next_mint() {
+    let mut later = line(five_families(), PinnedMode::FloorPlusMarket);
+    let (start_ms, _) = later.period_bounds(2).expect("period 2");
     later.families.push(FamilySeat {
-        admitted_at_ms: first.start_ms + 1,
+        admitted_at_ms: start_ms + 1,
         ..seat(13, Track::Demand)
     });
-    let same_period = mint_period(&later, 2, &tallies, ANCHOR_MS + 7).expect("the mint");
+    let same_period = mint_period(&later, 2, &BTreeMap::new(), start_ms + 7).expect("the mint");
     assert!(
         same_period.tables[0]
             .ceilings
             .iter()
-            .all(|(family, _)| *family != id(13))
+            .all(|(family, _)| *family != id(13)),
+        "no market ceiling in the period it joined"
     );
-    assert_eq!(same_period.floor_of(&id(13)), same_period.floor_units);
-    let next_period = mint_period(&later, 3, &tallies, ANCHOR_MS + 7).expect("the next mint");
+    assert_eq!(same_period.floor_of(&id(13)), 0, "no floor either");
+    let room = PeriodRoom::fold(&same_period, &[]);
+    assert_eq!(room.left(Bucket::Floor { family: id(13) }), 0);
+    assert_eq!(
+        room.left(Bucket::Floor { family: id(10) }),
+        same_period.floor_units,
+        "a family seated at the mint keeps its floor"
+    );
+
+    let next_period =
+        mint_period(&later, 3, &BTreeMap::new(), start_ms + 7).expect("the next mint");
+    assert_eq!(next_period.floor_of(&id(13)), next_period.floor_units);
     assert!(
         next_period.tables[0]
             .ceilings
             .iter()
             .any(|(family, _)| *family == id(13))
     );
+}
+
+/// Findings 6 and 17: the policy's bounds hold before a line is stored.
+#[test]
+fn a_line_keeps_its_bounds() {
+    let lane = || line(five_families(), PinnedMode::FloorPlusMarket);
+    assert_eq!(lane().validate(), Ok(()));
+
+    let mut caps = lane();
+    caps.rung_caps_secs = vec![1_800, 1_800, 172_800];
+    assert_eq!(
+        caps.validate(),
+        Err(LineInvalid::RungCaps),
+        "caps rise strictly"
+    );
+    caps.rung_caps_secs = vec![10_800, 1_800];
+    assert_eq!(caps.validate(), Err(LineInvalid::RungCaps));
+
+    let mut rules = lane();
+    rules.rules = vec![
+        RuleRef::PAYOFF_SHARE_1,
+        RuleRef::EVEN_SPLIT_1,
+        RuleRef::POSTERIOR_SAMPLING_1,
+    ];
+    assert_eq!(
+        rules.validate(),
+        Err(LineInvalid::Rules),
+        "at most two rules"
+    );
+
+    let bounded = PayoffSeed {
+        wins: MAX_SEED_WINS,
+        losses: 0,
+        cost_secs: MAX_SEED_COST_SECS,
+        weight_periods: MAX_SEED_WEIGHT_PERIODS,
+        origin: "ledger.jsonl sha256:00".to_owned(),
+    };
+    assert!(bounded.is_bounded());
+    for unbounded in [
+        PayoffSeed {
+            wins: MAX_SEED_WINS + 1,
+            ..bounded.clone()
+        },
+        PayoffSeed {
+            cost_secs: MAX_SEED_COST_SECS + 1,
+            ..bounded.clone()
+        },
+        PayoffSeed {
+            weight_periods: 0,
+            ..bounded.clone()
+        },
+        PayoffSeed {
+            weight_periods: MAX_SEED_WEIGHT_PERIODS + 1,
+            ..bounded.clone()
+        },
+        PayoffSeed {
+            origin: "x".repeat(MAX_SEED_ORIGIN_BYTES + 1),
+            ..bounded.clone()
+        },
+    ] {
+        assert!(!unbounded.is_bounded(), "{unbounded:?}");
+        let mut seeded = lane();
+        seeded.families[0].seed = Some(unbounded);
+        assert_eq!(seeded.validate(), Err(LineInvalid::Seed));
+    }
+
+    // 345,600 s with a third pinned: 230,400 s for the demand floors, 64
+    // of 3,600 s; 115,200 s for the interest floors, 32 of them.
+    let mut full = lane();
+    full.families = (0..64)
+        .map(|n| seat(100 + n, Track::Demand))
+        .chain((0..32).map(|n| seat(200 + n, Track::Interest)))
+        .collect();
+    assert!(full.floors_fit());
+    assert_eq!(full.validate(), Ok(()));
+    let mut one_more = full.clone();
+    one_more.families.push(seat(99, Track::Demand));
+    assert_eq!(
+        one_more.validate(),
+        Err(LineInvalid::FloorsDoNotFit),
+        "a demand floor is never paid from the pinned side"
+    );
+    let mut wider = full;
+    wider.floor_arms = 3;
+    assert_eq!(
+        wider.validate(),
+        Err(LineInvalid::FloorsDoNotFit),
+        "a policy edit under which the seated floors no longer fit is refused"
+    );
+}
+
+/// Finding 17: a lane whose wins cost almost nothing keeps a prior of at
+/// least one second, so its scores stay finite and ordered.
+#[test]
+fn the_payoff_prior_is_at_least_one_second() {
+    let mut lane = line(
+        vec![seat(10, Track::Demand), seat(11, Track::Demand)],
+        PinnedMode::FloorPlusMarket,
+    );
+    lane.allowance_units = 50_000;
+    lane.pinned_parts = (0, 3);
+    lane.floor_arms = 0;
+    // Two wins for one second: the lane's cost per win rounds to zero, and
+    // the prior is one second. Scores: 3/2 for family 10, 1/1 for 11.
+    let tallies = BTreeMap::from([(
+        id(10),
+        SettledTally {
+            wins: 2,
+            losses: 0,
+            cost_secs: 1,
+            invalid_secs: 0,
+        },
+    )]);
+    assert_eq!(
+        ceilings(&lane, &tallies),
+        vec![(id(10), 30_000), (id(11), 20_000)]
+    );
+}
+
+/// Finding 17: numbers at the edge of the types neither overflow nor leave
+/// a unit unaccounted for.
+#[test]
+fn the_mint_does_not_overflow_at_the_edge_of_its_numbers() {
+    let mut lane = line(
+        vec![seat(10, Track::Demand), seat(11, Track::Demand)],
+        PinnedMode::FloorPlusMarket,
+    );
+    lane.allowance_units = u64::MAX;
+    lane.pinned_parts = (0, 3);
+    lane.floor_arms = 0;
+    let tallies = BTreeMap::from([(
+        id(10),
+        SettledTally {
+            wins: u64::MAX / 2,
+            losses: 0,
+            cost_secs: 1,
+            invalid_secs: 0,
+        },
+    )]);
+    let given = ceilings(&lane, &tallies);
+    assert_eq!(
+        given
+            .iter()
+            .map(|(_, units)| u128::from(*units))
+            .sum::<u128>(),
+        u128::from(u64::MAX),
+        "every unit of the pool is a ceiling: {given:?}"
+    );
+    assert!(given[0].1 > given[1].1, "the winning family leads");
 }

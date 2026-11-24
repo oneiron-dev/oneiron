@@ -174,6 +174,7 @@ impl std::fmt::Display for RuleRef {
 
 /// A family's history from the lane's own lab ledger: a prior with an origin
 /// and a weight, never an outcome (ARCH-0079). Box-lost units are not in it.
+/// A line admits only a seed within the bounds of `PayoffSeed::is_bounded`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PayoffSeed {
     pub wins: u64,
@@ -185,7 +186,9 @@ pub struct PayoffSeed {
     pub origin: String,
 }
 
-/// One family's seat on a GPU line.
+/// One family's seat on a GPU line. A seat counts from the first mint after
+/// it: its floor and its market ceiling start in that period's record, never
+/// in a period already minted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FamilySeat {
     /// The family: a child project of the lane.
@@ -343,11 +346,17 @@ pub struct GpuLinePeriod {
     pub pinned_track: Track,
     pub pinned_mode: PinnedMode,
     pub pinned_units: u64,
-    /// One family's floor this period; a family seated after the mint gets
-    /// this floor at once (the wallet still caps the total).
+    /// One family's floor this period, as each family seated at the mint
+    /// holds it. A family seated after the mint has no floor until the next
+    /// mint.
     pub floor_units: u64,
     /// The floors of the families seated at the mint.
     pub floors: Vec<FamilyFloor>,
+    /// The rung caps in force this period; `rung_caps_secs[0]` is rung 1.
+    pub rung_caps_secs: Vec<u64>,
+    /// Whether a unit needs its runner's forecast before it reserves, this
+    /// period.
+    pub forecast_required: bool,
     pub invalid_cost: InvalidCost,
     pub inputs: Vec<FamilyPayoff>,
     /// sha256 (lower hex) of the canonical bytes of `inputs`.
@@ -366,18 +375,18 @@ impl GpuLinePeriod {
             .floors
             .iter()
             .filter(|floor| floor.track == self.pinned_track)
-            .map(|floor| floor.units)
-            .sum();
+            .fold(0, |sum, floor| sum.saturating_add(floor.units));
         self.pinned_units.saturating_sub(floors)
     }
 
-    /// The floor of `family` this period.
+    /// The floor of `family` this period; zero for a family seated after
+    /// the mint.
     #[must_use]
     pub fn floor_of(&self, family: &EntityId) -> u64 {
         self.floors
             .iter()
             .find(|floor| floor.family == *family)
-            .map_or(self.floor_units, |floor| floor.units)
+            .map_or(0, |floor| floor.units)
     }
 
     /// The market ceiling of `family` under `rule`; zero when the rule is not
@@ -662,31 +671,21 @@ impl PeriodRoom {
         self.arm_rule.get(arm).copied()
     }
 
-    /// The rule a new market draw of `arm` in `family` takes: the rule the
-    /// arm already drew this period; else the only rule in force; else the
-    /// one rule whose ceiling for the family has room; else, when several
-    /// have room, the pick of the low bits of
-    /// `blake3(line, period, arm)` among them (section 4.2). `None` when no
-    /// rule is in force.
+    /// The rule a new market draw of `arm` takes: the rule the arm already
+    /// drew this period; else the only rule in force; else the rule at the
+    /// low bits of `blake3(line, period, arm)` modulo the rules in force
+    /// (section 4.2). The assignment is seeded and never looks at room, so
+    /// which rule still has room does not choose it; the rule's own ceiling
+    /// then admits or refuses the draw. `None` when no rule is in force.
     #[must_use]
-    pub fn market_rule(&self, arm: &EntityId, family: &EntityId) -> Option<RuleRef> {
+    pub fn market_rule(&self, arm: &EntityId) -> Option<RuleRef> {
         if let Some(rule) = self.arm_rule(arm) {
             return Some(rule);
         }
         let rules: Vec<RuleRef> = self.period.tables.iter().map(|table| table.rule).collect();
-        let with_room: Vec<RuleRef> = rules
-            .iter()
-            .copied()
-            .filter(|rule| {
-                self.left(Bucket::Market {
-                    family: *family,
-                    rule: *rule,
-                }) > 0
-            })
-            .collect();
-        match with_room.len() {
-            0 => rules.first().copied(),
-            1 => Some(with_room[0]),
+        match rules.len() {
+            0 => None,
+            1 => Some(rules[0]),
             count => {
                 let mut hasher = blake3::Hasher::new();
                 hasher.update(b"oneiron.gpu_line.market_rule:v1");
@@ -697,7 +696,7 @@ impl PeriodRoom {
                 let mut low = [0u8; 8];
                 low.copy_from_slice(&digest.as_bytes()[..8]);
                 let pick = (u64::from_le_bytes(low) % count as u64) as usize;
-                Some(with_room[pick])
+                Some(rules[pick])
             }
         }
     }
@@ -760,7 +759,7 @@ pub fn draw_order(room: &PeriodRoom, ask: &DrawAsk) -> Vec<Bucket> {
         order.push(Bucket::Pinned);
     }
     if period.draws_market(ask.track)
-        && let Some(rule) = room.market_rule(&ask.arm, &ask.family)
+        && let Some(rule) = room.market_rule(&ask.arm)
     {
         order.push(Bucket::Market {
             family: ask.family,

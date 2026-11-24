@@ -4,6 +4,8 @@
 //! never in exclusive mode, a family's floor goes before its market ceiling,
 //! a settled unit frees its uncharged tail, and unused room never crosses a
 //! period boundary. The fold is pure, so these run without a vault.
+use std::collections::BTreeSet;
+
 use oneiron::EntityId;
 use oneiron::gpu_line::{
     AllowanceHold, AllowanceTable, Bucket, Draw, DrawAsk, DrawPurpose, DrawSource, FamilyFloor,
@@ -70,6 +72,8 @@ fn period(
                 units: FLOOR,
             },
         ],
+        rung_caps_secs: vec![RUNG_1, 10_800, 172_800],
+        forecast_required: true,
         invalid_cost: InvalidCost::CountsAsCost,
         inputs: Vec::new(),
         inputs_digest: String::new(),
@@ -428,5 +432,67 @@ fn unused_room_does_not_cross_a_period_boundary() {
     assert_eq!(
         total, second.allowance_units,
         "the buckets add up to the period's allowance"
+    );
+}
+
+/// Astra pass-32 finding 12: an arm's market rule is a seeded assignment
+/// that never looks at which rule still has room. Swapping the two rules'
+/// ceilings for the family leaves every arm's rule as it was, and the rule's
+/// own ceiling then admits or refuses the draw.
+#[test]
+fn the_market_rule_is_assigned_without_looking_at_room() {
+    let two_rules = |payoff_ceiling: u64, even_ceiling: u64| {
+        let mut record = period(0, PinnedMode::FloorPlusMarket, payoff_ceiling, 0);
+        let pool = record.tables[0].pool_units / 2;
+        record.tables[0].pool_units = pool;
+        record.tables.push(AllowanceTable {
+            rule: RuleRef::EVEN_SPLIT_1,
+            pool_units: pool,
+            ceilings: vec![(demand(), even_ceiling)],
+        });
+        PeriodRoom::fold(&record, &[])
+    };
+    let payoff_only = two_rules(50_000, 0);
+    let even_only = two_rules(0, 50_000);
+    let mut assigned = BTreeSet::new();
+    for n in 60..90 {
+        let arm = id(n);
+        let rule = payoff_only
+            .market_rule(&arm)
+            .expect("two rules are in force");
+        assert_eq!(
+            even_only.market_rule(&arm),
+            Some(rule),
+            "arm {n}: the rule does not follow the room"
+        );
+        assigned.insert(rule);
+        let room = if rule == RuleRef::PAYOFF_SHARE_1 {
+            &even_only
+        } else {
+            &payoff_only
+        };
+        let denied = plan_draws(
+            room,
+            &ask(
+                arm,
+                demand(),
+                Track::Demand,
+                DrawPurpose::Unit { rung: 2 },
+                600,
+            ),
+        )
+        .expect_err("the assigned rule has no room here, and no other rule is drawn");
+        assert_eq!(
+            denied.short,
+            Some(Bucket::Market {
+                family: demand(),
+                rule
+            })
+        );
+    }
+    assert_eq!(
+        assigned,
+        BTreeSet::from([RuleRef::PAYOFF_SHARE_1, RuleRef::EVEN_SPLIT_1]),
+        "the seed spreads the arms over both rules"
     );
 }

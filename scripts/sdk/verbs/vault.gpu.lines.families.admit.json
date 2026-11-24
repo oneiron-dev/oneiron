@@ -1,6 +1,6 @@
 {
   "name": "vault.gpu.lines.families.admit",
-  "description": "Seats one child project of a lane as a family on the lane's GPU line, on the demand or interest track. An agent whose Grant names it seats a demand family; an interest seat is the owner's own act.",
+  "description": "Seats one child project of a lane as a family on the lane's GPU line, on the demand or interest track. The seat counts from the next period. An agent whose Grant names it seats a demand family; an interest seat is the owner's own act.",
   "input": "crate::gpu_line::GpuLineFamilyAdmitRequest",
   "output": "crate::gpu_line::GpuLineView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.families.admit\", &input)?",

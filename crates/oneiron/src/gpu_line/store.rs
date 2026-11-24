@@ -36,7 +36,8 @@ impl GpuLine {
     /// The host allocation that funds period `index` (LM-1): the period's
     /// allowance in `gpu_seconds` on the line's wallet. Each period is a new
     /// generation, so unused room lapses with its period and holds made in
-    /// an older one still settle there.
+    /// an older one still settle there. The host account's generation
+    /// watermark is account-wide today; row M2-I keys it by allocation id.
     #[must_use]
     pub fn period_allocation(&self, index: u32) -> Allocation {
         Allocation {
@@ -94,6 +95,36 @@ pub fn stored_period_in_txn(
     PERIODS.get(&vault.store, txn, &(*project, index))
 }
 
+/// [`MintError::BehindMintedPeriod`] when `project`'s line already minted a
+/// period after `index`: the vault clock went back, and a period once passed
+/// never reopens, minted or not.
+fn behind_minted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: &EntityId,
+    index: u32,
+) -> crate::Result<Option<MintError>> {
+    Ok(newest_minted_in_txn(vault, txn, project)?
+        .filter(|newest| index < *newest)
+        .map(|newest| MintError::BehindMintedPeriod { index, newest }))
+}
+
+/// The index of the newest period `project`'s line minted, if any.
+///
+/// # Errors
+///
+/// A store read failure.
+pub(super) fn newest_minted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: &EntityId,
+) -> crate::Result<Option<u32>> {
+    Ok(PERIODS
+        .scan_keys(&vault.store, txn, project.as_bytes())?
+        .last()
+        .map(|(_, index)| *index))
+}
+
 /// What the outcomes settled inside the window of period `index` say about
 /// each family seated on `line`.
 ///
@@ -146,7 +177,8 @@ pub fn settled_tallies_in_txn(
 /// # Errors
 ///
 /// A store failure as `Ok(Err)`'s outer error; [`MintError`] when the line
-/// names a rule the mint cannot fund.
+/// names a rule the mint cannot fund, or when `now_ms` falls in a period
+/// before the newest one minted.
 pub fn period_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -156,6 +188,9 @@ pub fn period_in_txn(
     let Some(index) = line.period_index(now_ms) else {
         return Ok(Ok(None));
     };
+    if let Some(behind) = behind_minted_in_txn(vault, wtxn, &line.project, index)? {
+        return Ok(Err(behind));
+    }
     if let Some(stored) = stored_period_in_txn(vault, wtxn, &line.project, index)? {
         return Ok(Ok(Some(stored)));
     }
@@ -185,6 +220,9 @@ pub fn period_view_in_txn(
     let Some(index) = line.period_index(now_ms) else {
         return Ok(Ok(None));
     };
+    if let Some(behind) = behind_minted_in_txn(vault, txn, &line.project, index)? {
+        return Ok(Err(behind));
+    }
     if let Some(stored) = stored_period_in_txn(vault, txn, &line.project, index)? {
         return Ok(Ok(Some((stored, true))));
     }

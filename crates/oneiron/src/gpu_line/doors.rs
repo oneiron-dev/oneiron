@@ -4,19 +4,25 @@
 //!
 //! - `vault.gpu.lines.set`: the owner's own act. A changed policy takes
 //!   effect at the next mint (the current period's record is minted first,
-//!   from the line as it stood), except `hosts`, which units read at once.
+//!   from the line as it stood, and freezes its caps, rules and forecast
+//!   rule), except `hosts`, which units read at once. A schedule edit may not
+//!   put the vault clock behind a period already minted.
 //! - `vault.gpu.lines.get`: a read, for the owner or an agent whose Grant
 //!   names the verb. Before the period's first write it shows the mint's
 //!   preview of the record.
 //! - `vault.gpu.lines.families.admit`: seats a child project of the lane as a
 //!   family. An agent whose Grant names the verb seats a demand family; an
 //!   interest seat is the owner's own act (the owner names the interest
-//!   topics).
+//!   topics). The seat counts from the next mint, and every seat's floor must
+//!   fit its own side of the allowance.
 use super::doors_caller::{admit_in_txn, refused_owner_act};
 use super::fold::{FamilySeat, GpuLine, Track};
 use super::intent::{IntentAsk, IntentRefused, IntentStand};
 use super::mint::{LineInvalid, MintError};
-use super::store::{gpu_seconds, line_in_txn, period_in_txn, period_view_in_txn, put_line_in_txn};
+use super::store::{
+    gpu_seconds, line_in_txn, newest_minted_in_txn, period_in_txn, period_view_in_txn,
+    put_line_in_txn,
+};
 use super::wire::{GpuLineFamilyAdmitRequest, GpuLineSetRequest, GpuLineView};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -54,6 +60,15 @@ pub enum GpuLineError {
     NotChild,
     #[error("this family already holds a seat on the line")]
     SeatTaken,
+    /// One more seat's floor would not fit its own side of the allowance:
+    /// the pinned share for the pinned track, the rest for the other.
+    #[error("one more floor on this track does not fit its side of the allowance")]
+    FloorDoesNotFit,
+    /// A schedule edit that puts the vault clock before a period the line
+    /// already minted, or before the new period 0: a past period would
+    /// reopen.
+    #[error("the new schedule puts the vault clock before period {newest}, which the line minted")]
+    ScheduleBehindMint { newest: u32 },
 }
 
 impl From<GpuLineError> for MemoryError {
@@ -66,7 +81,10 @@ impl From<GpuLineError> for MemoryError {
         };
         let code = match &refusal {
             GpuLineError::Invalid(_) | GpuLineError::NotChild => MEMORY_CODE_BAD_REQUEST,
-            GpuLineError::Mint(_) | GpuLineError::SeatTaken => MEMORY_CODE_INVALID_STATE,
+            GpuLineError::Mint(_)
+            | GpuLineError::SeatTaken
+            | GpuLineError::FloorDoesNotFit
+            | GpuLineError::ScheduleBehindMint { .. } => MEMORY_CODE_INVALID_STATE,
             GpuLineError::NoLine | GpuLineError::NoProject => MEMORY_CODE_NOT_FOUND,
             GpuLineError::Vault(_) | GpuLineError::Caller(_) | GpuLineError::Intent(_) => {
                 MEMORY_CODE_FORBIDDEN
@@ -104,9 +122,10 @@ impl Memory<'_> {
     ///
     /// [`GpuLineError`]: a caller who is not the owner under their own
     /// proof (an agent's Grant naming the verb is refused here), a reused
-    /// intent key,
-    /// an unknown project, a policy that breaks a rule of
-    /// [`GpuLine::validate`].
+    /// intent key, an unknown project, a policy that breaks a rule of
+    /// [`GpuLine::validate`] (the seated families' floors included), a
+    /// schedule under which the vault clock falls before a minted period.
+    /// Every refusal comes before the first write.
     pub fn set_gpu_line(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -147,11 +166,6 @@ impl Memory<'_> {
                 return Ok(Err(GpuLineError::NoProject));
             }
             let current = line_in_txn(vault, txn, &request.project)?;
-            if let Some(line) = &current
-                && let Err(refusal) = period_in_txn(vault, txn, line, now_ms)?
-            {
-                return Ok(Err(GpuLineError::Mint(refusal)));
-            }
             let policy = &request.policy;
             let line = GpuLine {
                 project: request.project,
@@ -181,6 +195,24 @@ impl Memory<'_> {
             };
             if let Err(invalid) = line.validate() {
                 return Ok(Err(GpuLineError::Invalid(invalid)));
+            }
+            // The newest period minted once the current one is: a schedule
+            // edit that puts the clock before it would reopen a past period.
+            let newest = newest_minted_in_txn(vault, txn, &request.project)?.max(
+                current
+                    .as_ref()
+                    .and_then(|current| current.period_index(now_ms)),
+            );
+            if let Some(newest) = newest
+                && line.period_index(now_ms).is_none_or(|index| index < newest)
+            {
+                return Ok(Err(GpuLineError::ScheduleBehindMint { newest }));
+            }
+            // The current period is minted first, from the line as it stood.
+            if let Some(current) = &current
+                && let Err(refusal) = period_in_txn(vault, txn, current, now_ms)?
+            {
+                return Ok(Err(GpuLineError::Mint(refusal)));
             }
             put_line_in_txn(vault, txn, &line)?;
             // A new line's current period is minted now, from this line; an
@@ -218,14 +250,17 @@ impl Memory<'_> {
 
     /// `vault.gpu.lines.families.admit`: seats `request.family` on
     /// `request.project`'s line. The family is a child project of the lane
-    /// and holds no seat yet. Its floor holds at once; its market ceiling
-    /// starts with the next mint.
+    /// and holds no seat yet. The seat counts from the next mint: its floor
+    /// and its market ceiling start there, never in the period already
+    /// minted.
     ///
     /// # Errors
     ///
     /// [`GpuLineError`]: a caller the door does not admit, an interest seat
     /// asked by an agent, a reused intent key, no line, a family that is not
-    /// a child of the lane or already holds a seat.
+    /// a child of the lane or already holds a seat, a seed past its bounds,
+    /// one floor more than the seat's side holds. Every refusal comes before
+    /// the first write.
     pub fn admit_gpu_line_family(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -284,18 +319,27 @@ impl Memory<'_> {
             if line.seat(&request.family).is_some() {
                 return Ok(Err(GpuLineError::SeatTaken));
             }
-            // The period's record is minted before the seat, from the line
-            // as it stood.
-            if let Err(refusal) = period_in_txn(vault, txn, &line, now_ms)? {
-                return Ok(Err(GpuLineError::Mint(refusal)));
+            if request.seed.as_ref().is_some_and(|seed| !seed.is_bounded()) {
+                return Ok(Err(GpuLineError::Invalid(LineInvalid::Seed)));
             }
-            line.families.push(FamilySeat {
+            let seat = FamilySeat {
                 project: request.family,
                 track: request.track,
                 seed: request.seed.clone(),
                 admitted_by: Some(by_owner.unwrap_or_else(|| self.actor())),
                 admitted_at_ms: now_ms,
-            });
+            };
+            let mut seated = line.clone();
+            seated.families.push(seat.clone());
+            if !seated.floors_fit() {
+                return Ok(Err(GpuLineError::FloorDoesNotFit));
+            }
+            // The period's record is minted before the seat, from the line
+            // as it stood.
+            if let Err(refusal) = period_in_txn(vault, txn, &line, now_ms)? {
+                return Ok(Err(GpuLineError::Mint(refusal)));
+            }
+            line.families.push(seat);
             line.revision += 1;
             put_line_in_txn(vault, txn, &line)?;
             ask.keep_in_txn(vault, txn, request.family.as_bytes().to_vec(), now_ms)?;

@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::fold::{
     AllowanceRule, AllowanceTable, FamilyFloor, FamilyPayoff, FamilySeat, GpuLine, GpuLinePeriod,
-    InvalidCost, PinnedMode, RuleRef,
+    InvalidCost, PayoffSeed, PinnedMode, RuleRef, Track,
 };
 use crate::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
@@ -28,6 +28,21 @@ pub const PAYOFF_SCORE_SCALE: u128 = 1_000_000_000_000;
 /// A family with no win anywhere on the line is smoothed toward this many
 /// rung-1 caps per win.
 pub const NO_WIN_PRIOR_RUNGS: u64 = 4;
+
+/// The most rules a line funds at once: the starter, and one rival for the
+/// comparison.
+pub const MAX_RULES: usize = 2;
+
+/// The most wins a family's seed may carry.
+pub const MAX_SEED_WINS: u64 = 10_000;
+/// The most losses a family's seed may carry.
+pub const MAX_SEED_LOSSES: u64 = 10_000;
+/// The most GPU-seconds a family's seed may carry: about 31.7 GPU-years.
+pub const MAX_SEED_COST_SECS: u64 = 1_000_000_000;
+/// The most periods a seed stays among the mint's inputs.
+pub const MAX_SEED_WEIGHT_PERIODS: u32 = 52;
+/// The longest origin a seed may name, in bytes.
+pub const MAX_SEED_ORIGIN_BYTES: usize = 1_024;
 
 /// What the outcomes settled inside the window say about one family.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -50,6 +65,11 @@ pub enum MintError {
     PeriodOutOfRange,
     #[error("the allowance rule {0} is not built yet")]
     RuleNotBuilt(RuleRef),
+    /// The vault clock names a period before one this line already minted:
+    /// the clock went back, and a minted line never reopens an earlier
+    /// period.
+    #[error("period {index} is before period {newest}, which this line already minted")]
+    BehindMintedPeriod { index: u32, newest: u32 },
 }
 
 /// Why a line cannot be set.
@@ -67,9 +87,9 @@ pub enum LineInvalid {
     Allowance,
     #[error("the pinned parts must divide: a nonzero denominator at least the numerator")]
     PinnedParts,
-    #[error("a GPU line caps at least one rung, each above zero")]
+    #[error("a GPU line caps at least one rung, each above zero and above the one before")]
     RungCaps,
-    #[error("a GPU line funds at least one allowance rule, each once")]
+    #[error("a GPU line funds one or two allowance rules, each once")]
     Rules,
     #[error(transparent)]
     RuleNotBuilt(MintError),
@@ -77,6 +97,31 @@ pub enum LineInvalid {
     Window,
     #[error("each host is named once and is not blank")]
     Hosts,
+    #[error(
+        "a payoff seed carries at most {wins} wins, {losses} losses and {cost} seconds, stays 1 \
+         to {periods} periods and names an origin of 1 to {origin} bytes",
+        wins = MAX_SEED_WINS,
+        losses = MAX_SEED_LOSSES,
+        cost = MAX_SEED_COST_SECS,
+        periods = MAX_SEED_WEIGHT_PERIODS,
+        origin = MAX_SEED_ORIGIN_BYTES
+    )]
+    Seed,
+    #[error("the seated families' floors do not fit their own side of the allowance")]
+    FloorsDoNotFit,
+}
+
+impl PayoffSeed {
+    /// Whether the seed keeps the bounds a line admits.
+    #[must_use]
+    pub fn is_bounded(&self) -> bool {
+        self.wins <= MAX_SEED_WINS
+            && self.losses <= MAX_SEED_LOSSES
+            && self.cost_secs <= MAX_SEED_COST_SECS
+            && (1..=MAX_SEED_WEIGHT_PERIODS).contains(&self.weight_periods)
+            && !self.origin.trim().is_empty()
+            && self.origin.len() <= MAX_SEED_ORIGIN_BYTES
+    }
 }
 
 impl GpuLine {
@@ -105,13 +150,19 @@ impl GpuLine {
         if denominator == 0 || numerator > denominator {
             return Err(LineInvalid::PinnedParts);
         }
-        if self.rung_caps_secs.is_empty() || self.rung_caps_secs.contains(&0) {
+        if self.rung_caps_secs.first().is_none_or(|first| *first == 0)
+            || self
+                .rung_caps_secs
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+        {
             return Err(LineInvalid::RungCaps);
         }
         let mut rules = self.rules.clone();
         rules.sort();
         rules.dedup();
-        if self.rules.is_empty() || rules.len() != self.rules.len() {
+        if self.rules.is_empty() || self.rules.len() > MAX_RULES || rules.len() != self.rules.len()
+        {
             return Err(LineInvalid::Rules);
         }
         if let Some(rule) = self.rules.iter().find(|rule| !BUILT_RULES.contains(rule)) {
@@ -126,12 +177,49 @@ impl GpuLine {
         if hosts.len() != self.hosts.len() || hosts.iter().any(|host| host.trim().is_empty()) {
             return Err(LineInvalid::Hosts);
         }
+        if self
+            .families
+            .iter()
+            .any(|seat| seat.seed.as_ref().is_some_and(|seed| !seed.is_bounded()))
+        {
+            return Err(LineInvalid::Seed);
+        }
+        if !self.floors_fit() {
+            return Err(LineInvalid::FloorsDoNotFit);
+        }
         Ok(())
     }
 
+    /// The side of the allowance `track`'s floors are paid from: the pinned
+    /// share for the pinned track, the rest of the allowance for the other.
+    #[must_use]
+    pub fn side_units(&self, track: Track) -> u64 {
+        let pinned = self.pinned_units();
+        if track == self.pinned_track {
+            pinned
+        } else {
+            self.allowance_units.saturating_sub(pinned)
+        }
+    }
+
+    /// Whether every seated family's floor fits its own side: the seats on
+    /// a track times one floor stay within that track's side, so no floor
+    /// is paid from the other side.
+    #[must_use]
+    pub fn floors_fit(&self) -> bool {
+        [Track::Demand, Track::Interest].into_iter().all(|track| {
+            let seats = self
+                .families
+                .iter()
+                .filter(|seat| seat.track == track)
+                .count() as u128;
+            seats * u128::from(self.floor_units()) <= u128::from(self.side_units(track))
+        })
+    }
+
     /// The families the mint of period `index` divides over: those seated
-    /// before it started. A family seated later has its floor at once and
-    /// its market ceiling from the next mint.
+    /// before it started. A family seated later has neither floor nor
+    /// market ceiling until the next mint.
     #[must_use]
     pub fn seated_before(&self, start_ms: u64) -> Vec<&FamilySeat> {
         let mut seats: Vec<&FamilySeat> = self
@@ -231,8 +319,7 @@ pub fn mint_period(
     let other_floors: u64 = floors
         .iter()
         .filter(|floor| floor.track != line.pinned_track)
-        .map(|floor| floor.units)
-        .sum();
+        .fold(0, |sum, floor| sum.saturating_add(floor.units));
     let market_pool = demand_units.saturating_sub(other_floors);
     let market_families: Vec<&FamilyPayoff> = inputs
         .iter()
@@ -279,6 +366,8 @@ pub fn mint_period(
         pinned_units,
         floor_units,
         floors,
+        rung_caps_secs: line.rung_caps_secs.clone(),
+        forecast_required: line.forecast_required,
         invalid_cost: line.invalid_cost,
         inputs_digest: inputs_digest(&inputs),
         inputs,
@@ -304,10 +393,23 @@ fn family_wins(input: &FamilyPayoff) -> u64 {
         .saturating_add(input.seed.as_ref().map_or(0, |seed| seed.wins))
 }
 
+/// The fewest low bits every score drops so that `pool` times the highest
+/// one fits a `u128`. All scores drop the same bits, so their ratios hold and
+/// the ceilings they divide still sum to at most the pool.
+fn score_shift(pool: u64, scores: &[(EntityId, u128)]) -> u32 {
+    let top = scores.iter().map(|(_, score)| *score).max().unwrap_or(0);
+    let mut shift = 0;
+    while u128::from(pool).checked_mul(top >> shift).is_none() {
+        shift += 1;
+    }
+    shift
+}
+
 /// `payoff_share@1` (section 4.3): confirmed promotions per GPU-second,
 /// smoothed toward the lane's own base rate. The prior is lane-wide: the
 /// line's whole cost per win over every seated family, or
-/// [`NO_WIN_PRIOR_RUNGS`] rung-1 caps while the lane has no win. Each market
+/// [`NO_WIN_PRIOR_RUNGS`] rung-1 caps while the lane has no win, and at
+/// least one second. Each market
 /// family's ceiling is its share of the scores; the units rounding leaves go
 /// to the highest score, then the lowest id. A family with no history scores
 /// exactly the base rate.
@@ -334,14 +436,20 @@ pub fn payoff_share(
         total_cost / total_wins
     } else {
         u128::from(NO_WIN_PRIOR_RUNGS.saturating_mul(first_rung_secs))
-    };
+    }
+    .max(1);
     let scores: Vec<(EntityId, u128)> = market_families
         .iter()
         .map(|input| {
             let wins = u128::from(family_wins(input)) + 1;
-            let divisor = (u128::from(family_cost(input, invalid_cost)) + prior_secs).max(1);
+            let divisor = u128::from(family_cost(input, invalid_cost)) + prior_secs;
             (input.family, wins * PAYOFF_SCORE_SCALE / divisor)
         })
+        .collect();
+    let shift = score_shift(pool, &scores);
+    let scores: Vec<(EntityId, u128)> = scores
+        .into_iter()
+        .map(|(family, score)| (family, score >> shift))
         .collect();
     let sum: u128 = scores.iter().map(|(_, score)| *score).sum();
     let mut ceilings: Vec<(EntityId, u64)> = scores
@@ -352,7 +460,7 @@ pub fn payoff_share(
             } else {
                 u128::from(pool) * score / sum
             };
-            (*family, u64::try_from(units).unwrap_or(u64::MAX))
+            (*family, u64::try_from(units).unwrap_or(pool))
         })
         .collect();
     let given: u64 = ceilings.iter().map(|(_, units)| *units).sum();
