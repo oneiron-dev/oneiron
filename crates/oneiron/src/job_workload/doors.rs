@@ -21,7 +21,6 @@ use crate::memory::{
 use crate::world_keys::OwnerActImportance;
 use crate::{EntityId, Vault};
 
-use super::WorkloadPin;
 use super::record::{
     JOB_WORKLOADS, JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadRevocation,
     digest_key,
@@ -30,17 +29,7 @@ use super::wire::{
     WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadPinRequest, WorkloadRef,
     WorkloadView, parse_ids,
 };
-
-/// The protocol a machine must be granted for a workload to be approved on
-/// it: the job protocol that admits new work (EM-1 A).
-pub const JOB_ADMISSION_ALPN: &[u8] = b"oneiron/job/1";
-
-/// The most argument strings a pin carries.
-pub const PIN_ARGS_MAX: usize = 64;
-/// The most bytes a pin's argument strings carry together.
-pub const PIN_ARGS_BYTES_MAX: usize = 4_096;
-/// The most outputs a pin declares.
-pub const PIN_OUTPUTS_MAX: usize = 32;
+use super::{JOB_ALPN, PIN_ARG_BYTES_MAX, PIN_ARGS_MAX, PIN_OUTPUTS_MAX, WorkloadPin};
 
 /// The `vault.jobs.workloads.*` verbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,7 +308,7 @@ impl Vault {
         now_ms: u64,
     ) -> Result<WorkloadChange, WorkloadError> {
         check_pin_shape(&request.pin).map_err(|why| WorkloadError::BadPin { why })?;
-        let digest = request.pin.digest();
+        let digest = request.pin.digest()?;
         let key = digest_key(&digest).ok_or(crate::Error::InvariantViolation(
             "a workload digest is 64 lower hex",
         ))?;
@@ -392,7 +381,7 @@ impl Vault {
             return Err(WorkloadError::ExpiryPast);
         }
         owner.revalidate(self)?;
-        let granted = self.mesh_machines_granted(JOB_ADMISSION_ALPN)?;
+        let granted = self.mesh_machines_granted(JOB_ALPN)?;
         if let Some(machine) = machines.iter().find(|machine| !granted.contains(machine)) {
             return Err(WorkloadError::MachineNotGranted {
                 machine: machine.to_hex(),
@@ -583,9 +572,9 @@ fn check_pin_shape(pin: &WorkloadPin) -> Result<(), String> {
     if pin.args.len() > PIN_ARGS_MAX {
         return Err(format!("args carries at most {PIN_ARGS_MAX} strings"));
     }
-    if pin.args.iter().map(String::len).sum::<usize>() > PIN_ARGS_BYTES_MAX {
+    if pin.args.iter().map(String::len).sum::<usize>() > PIN_ARG_BYTES_MAX {
         return Err(format!(
-            "args carries at most {PIN_ARGS_BYTES_MAX} bytes together"
+            "args carries at most {PIN_ARG_BYTES_MAX} bytes together"
         ));
     }
     if pin.args.iter().any(|arg| arg.contains('\0')) {
