@@ -74,12 +74,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/rung_fixture.rs` | src | s | 2 crate-vis | — | Deterministic-arm conformance across first attach and remote rung changes |
 | `src/beam/runner.rs` | src | m | 11 crate-vis | — | Subcommand run entry points and orchestration |
 | `src/beam/scorer.rs` | src | s | 3 crate-vis | — | BeamScorer trait and fixed scorer |
-| `src/beam/tests_community_eval004.rs` | src | s | 7 crate-vis | — | Community and EVAL-004 tests |
-| `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
-| `src/beam/tests_judge_cost.rs` | src | s | 1 crate-vis | — | Judge and cost tests |
-| `src/beam/tests_ppr_vad.rs` | src | s | 2 crate-vis | — | PPR-VAD tests |
-| `src/beam/tests_replicate_pass.rs` | src | m | — | — | ARCH-0042 `beam:D9`: the `beam-replicate@3e12035` column comes from its own judge pass, which shows the… |
-| `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
+| `src/beam/tests_community_eval004.rs` | test | s | 7 crate-vis | — | Community and EVAL-004 tests |
+| `src/beam/tests_jsonl_contract.rs` | test | m | 2 crate-vis | — | JSONL contract tests |
+| `src/beam/tests_judge_cost.rs` | test | s | 1 crate-vis | — | Judge and cost tests |
+| `src/beam/tests_ppr_vad.rs` | test | s | 2 crate-vis | — | PPR-VAD tests |
+| `src/beam/tests_replicate_pass.rs` | test | m | — | — | ARCH-0042 `beam:D9`: the `beam-replicate@3e12035` column comes from its own judge pass, which shows the… |
+| `src/beam/tests_smoke_manifest.rs` | test | m | 1 crate-vis | — | Smoke and manifest tests |
 | `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 19 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
@@ -141,8 +141,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/provider.rs` | src | s | 1 crate-vis | — | Paid-call admission and settlement on the engine ledger, with deadline-bound 429 waits |
 | `src/interface_bench/reports_and_fixture_helpers.rs` | src | m | 19 crate-vis | — | Row aggregation and report tables |
 | `src/interface_bench/taskgen.rs` | src | m | 5 crate-vis | — | Fixture and task generation plus atomic JSON writers |
-| `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
-| `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
+| `src/interface_bench/tests_a.rs` | test | s | 2 crate-vis | — | Taskgen, config, and memo tests |
+| `src/interface_bench/tests_b.rs` | test | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
 | `src/load/client.rs` | src | m | 11 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |

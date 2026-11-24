@@ -286,6 +286,9 @@ pub(in crate::api::facade) fn door_admits(
         Proof::JobWorkloadCaller => {
             super::job_workloads::job_workload_caller_admits(server, auth, verb)
         }
+        // The lane economy's doors (design pass 32 section 5): the owner's own proof, or an
+        // agent's own Grant naming the verb, judged again by the door's own read or act.
+        Proof::VerbGrantCaller => super::verb_grant::verb_grant_caller_admits(server, auth, verb),
         Proof::VideoJobOwnerGrade => owner_grade(auth, VIDEO_JOB_OWNERS),
         // A person's own trusted-contact acts (FIX 8169): the live person whose own slip the engine door
         // revalidates.
