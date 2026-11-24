@@ -12,9 +12,9 @@
 //!    the protocol's shutdown reason) and the ticks' blocking work reaped,
 //!    while the model service cancels its own at the same deadline; the
 //!    organ connections are awaited until each closed, bounded by
-//!    [`CUT_SHORT_REPLY_WAIT`]: one closes once its calls ended and their
-//!    replies, a cut-short call's "interrupted" among them, reached the
-//!    asking node;
+//!    [`CUT_SHORT_REPLY_WAIT`]: one closes once its calls ended and the
+//!    asking node took their replies, a cut-short call's "interrupted" among
+//!    them (a staged one in pieces), and closed it;
 //! 5. a held call the stop cut short or never tried stays held, as it was,
 //!    for the next start, and the log says how many;
 //! 6. then the endpoint closes, and the connections still open are awaited.
@@ -29,9 +29,10 @@ use super::host::MeshTick;
 
 /// How long the stop waits, after its cancel, for the organ connections to
 /// close before the endpoint closes them: a cancelled call's organ takes its
-/// cancel grace to end, and its reply then waits for the asking node's
-/// acknowledgement. Without the wait, the endpoint's close overtook those
-/// replies (blind-review P1 on #10402).
+/// cancel grace to end, and its connection then stays open for the asking
+/// node to take its reply, a staged one in pieces, and close it. Without the
+/// wait, the endpoint's close overtook those replies (blind-review P1s on
+/// #10402).
 const CUT_SHORT_REPLY_WAIT: Duration = Duration::from_secs(15);
 
 /// The stop of the work the mesh's routes admitted, beside its sync

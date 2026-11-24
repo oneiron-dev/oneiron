@@ -34,8 +34,11 @@ use crate::spec::{LentInput, OrganCall, OrganInput};
 /// A wait that finds no room refuses the call, as an input's does.
 const STAGED_CALL_PROVISIONAL_WAIT: Duration = Duration::from_secs(5);
 /// How long a stream waits, after its reply is queued, for the asking node
-/// to acknowledge it, before the stream ends and lets the connection close.
+/// to acknowledge it, before the stream ends.
 const REPLY_DELIVERY_WAIT: Duration = Duration::from_secs(5);
+/// Under a mesh stop, how long a connection with no request in flight stays
+/// open for the asking node to take its replies and close it.
+const REPLY_PICKUP_WAIT: Duration = Duration::from_secs(5);
 
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
 /// node's host. The transport has already admitted the peer (its MACHINE
@@ -173,12 +176,19 @@ impl OrganService {
         self
     }
 
-    /// Serves one admitted connection until it closes, or until the stop
-    /// cancels its work. Each stream the peer opens is one request, a task
-    /// of the connection's own set; a call's asks go back on streams this
-    /// side opens. Every request it took is awaited before it returns, its
-    /// call's thread included. A connection on another ALPN is closed at
-    /// once.
+    /// Serves one admitted connection until it closes. Each stream the peer
+    /// opens is one request, a task of the connection's own set; a call's
+    /// asks go back on streams this side opens. Once the stop cancels its
+    /// work, the connection stays open for the asking node to take the
+    /// replies of the calls the cancel cut short: it still serves `Get` (a
+    /// staged reply is taken in pieces on new streams) and refuses a new
+    /// call, until the asking node closes it or no request was in flight for
+    /// `REPLY_PICKUP_WAIT`; the stop's own wait bounds it either way
+    /// (round-2 blind-review P1s on #10402: a close that came with the reply
+    /// could win the asking node's wait over it, and a staged reply could
+    /// not be taken at all). Every request it took is awaited before it
+    /// returns, its call's thread included. A connection on another ALPN is
+    /// closed at once.
     pub async fn serve_connection(&self, conn: Box<dyn MeshConnection>) {
         if conn.alpn() != ORGAN_ALPN {
             conn.close();
@@ -190,11 +200,19 @@ impl OrganService {
         let _served = self.cancel.serving();
         let staging = Arc::new(self.staging());
         let mut streams = JoinSet::new();
+        let mut stopping = false;
         loop {
+            // The pickup wait starts again whenever the last request in
+            // flight ends.
+            let idle = stopping && streams.is_empty();
             let stream = tokio::select! {
                 biased;
-                () = self.cancel.cancelled() => break,
+                () = self.cancel.cancelled(), if !stopping => {
+                    stopping = true;
+                    continue;
+                }
                 Some(_) = streams.join_next(), if !streams.is_empty() => continue,
+                () = tokio::time::sleep(REPLY_PICKUP_WAIT), if idle => break,
                 accepted = conn.accept_stream() => match accepted {
                     Ok(stream) => stream,
                     Err(_) => break,
@@ -312,13 +330,14 @@ impl OrganService {
         };
         let message = track_bytes(encode(&reply.value)?, self.host.floor().as_ref());
         stream.send(&message.value).await?;
-        // The reply is queued, not yet received. The connection closes once
-        // its streams end, and a close that overtakes a queued reply drops
-        // it: a call the stop cut short would reach the asking node as a
-        // broken connection, without this node's word that the stop cut it
-        // (blind-review P1 on #10402). So the stream ends once the asking
-        // node acknowledged the reply, or the wait runs out; a reply that
-        // never reached it leaves it to retry or try another node.
+        // The reply is queued, not yet received. Under a stop the
+        // connection's pickup wait starts once its last stream ends, and a
+        // close that overtakes a queued reply drops it: a call the stop cut
+        // short would reach the asking node as a broken connection, without
+        // this node's word that the stop cut it (blind-review P1 on #10402).
+        // So the stream ends once the asking node acknowledged the reply, or
+        // the wait runs out; a reply that never reached it leaves it to
+        // retry or try another node.
         drop(tokio::time::timeout(REPLY_DELIVERY_WAIT, stream.delivered()).await);
         Ok(())
     }

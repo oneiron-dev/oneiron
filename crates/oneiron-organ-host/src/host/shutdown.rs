@@ -122,7 +122,8 @@ impl MeshCancel {
 
     /// Returns once no connection the organ service serves under this
     /// cancel is open. After the cancel, each one closes once its calls
-    /// ended and their replies reached the asking node, so a listener that
+    /// ended and the asking node took their replies and closed it, or no
+    /// request was in flight on it for the pickup wait, so a listener that
     /// waits here before its endpoint closes never cuts such a reply off.
     pub async fn served(&self) {
         self.until(|cancel| cancel.0.serving.load(Ordering::SeqCst) == 0)
