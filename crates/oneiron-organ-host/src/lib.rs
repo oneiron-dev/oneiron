@@ -52,6 +52,7 @@ mod process;
 mod receipt;
 #[cfg(unix)]
 mod regions;
+mod resource_gpu;
 mod resource_memory;
 mod route;
 #[cfg(unix)]
@@ -84,6 +85,10 @@ pub use outcome::{OrganOutcome, OrganOutput};
 pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
+};
+pub use resource_gpu::{
+    GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotHold, GpuSlotRefusal, GpuSlotRequest,
+    MachineGpus,
 };
 pub use resource_memory::{FloorLease, FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{

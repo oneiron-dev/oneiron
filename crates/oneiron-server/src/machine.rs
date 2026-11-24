@@ -86,26 +86,6 @@ pub(crate) fn disk_total_bytes(path: &Path) -> std::io::Result<u64> {
     }
 }
 
-/// Each NVIDIA GPU's memory in MiB, as `nvidia-smi` reports it; empty where
-/// it is absent or fails, as on a machine with no such GPU.
-pub(crate) fn gpu_memory_mib() -> Vec<u64> {
-    let Ok(output) = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse().ok())
-        .collect()
-}
-
 /// The disk the vault lives on, the free space it keeps, and the room work in
 /// flight has claimed on it. Free space alone is not the floor: two uploads
 /// that each see room for one stored copy would both take it, so each claims
@@ -377,6 +357,27 @@ impl DiskFloor {
             available: self.free().unwrap_or(0),
             reserve: self.reserve,
         }
+    }
+}
+
+impl DiskFloor {
+    /// A claim on `bytes` of this disk past its reserve and every other
+    /// claim, as a GPU job's booking takes it, held until it drops. 0 bytes
+    /// still requires the disk to be at or above its reserve.
+    pub(crate) fn claim_room(
+        &self,
+        bytes: u64,
+    ) -> Result<Arc<DiskClaim>, oneiron::code_sandbox::SpoolFloorRefusal> {
+        let claim = self.claim();
+        self.admit(&claim, bytes)?;
+        Ok(claim)
+    }
+
+    /// What this floor measures now: the disk's free bytes, its reserve and
+    /// the bytes claimed past it.
+    pub(crate) fn measured(&self) -> std::io::Result<(u64, u64, u64)> {
+        let claimed = *lock(&self.claimed);
+        Ok((self.free()?, self.reserve, claimed))
     }
 }
 
