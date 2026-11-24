@@ -8734,7 +8734,7 @@
         "COORDINATION-08"
       ],
       "disposition": "public behavior slice; see limits",
-      "limit": "Home room, child threads and born-from only (COORDINATION-02). Leaders talking by default is unproved: COORDINATION-08 proves the refusal dial (OF-533) and leaves its leadership-chat half unwritten."
+      "limit": "Ordinary-conversation threading only (COORDINATION-02: a thread reply never moves the trunk HEAD and keeps every record id). Unproved: the project home room, born-from and leaders talking by default; COORDINATION-08 proves the refusal dial (OF-533) and leaves its leadership-chat half unwritten."
     },
     {
       "row": "OF-523",
