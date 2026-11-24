@@ -10,7 +10,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::agent_dispatch::AgentDispatchInput;
-use crate::agent_dispatch::SpawnPlanReceipt;
 use crate::agent_dispatch::decode_agent_dispatch_input;
 use crate::agent_dispatch::load_team_type_tree_in_txn;
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
@@ -34,18 +33,17 @@ use crate::team::team_shape::team_pattern;
 use crate::{EntityId, Vault};
 
 use super::doors::{
-    BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation,
-    LaunchedMember, LearningCellView, LearningEvidenceView, LearningObservation, ObservationIssue,
-    PlanObservation, PlannedSpawnObservation, ProviderPinView, ResolvedTeam, RouteObservation,
-    SkillRevisionView, SpawnAskKnob, SpawnAskObservation, TeamBindingView, TeamReceiptView,
-    TypeStamp,
+    BorrowedCellView, CriticAssociation, CriticObservation, LaunchedMember, LearningCellView,
+    LearningEvidenceView, LearningObservation, ObservationIssue, PlannedSpawnObservation,
+    ResolvedTeam, RouteObservation, SkillRevisionView, TeamBindingView, TeamReceiptView, TypeStamp,
 };
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, placed_ancestry_in_txn, team_receipt_in_txn};
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
 use super::spawn_intent::{SpawnErasure, SpawnPhase};
-use super::spawn_need::SpawnNeed;
-use super::spawn_override::SpawnOverride;
+
+mod plan_projection;
+pub(super) use plan_projection::plan_view;
 
 /// One team start as read: what [`resolve_team`] holds against the plan.
 struct TeamRead<'a> {
@@ -371,64 +369,6 @@ fn leader_loaded(
             && entry.reference == skill.skill_id
             && entry.version == selected.version
     }))
-}
-
-pub(super) fn plan_view(receipt: &SpawnPlanReceipt) -> PlanObservation {
-    let plan = &receipt.plan;
-    PlanObservation {
-        type_ref: TypeStamp::from(&receipt.asked.type_ref),
-        model: plan.model.as_str().to_owned(),
-        width: plan.shape.width,
-        pattern: plan.shape.pattern.into(),
-        hard_cap_units: plan.envelope.hard_cap_units,
-        expected_spend_units: plan.envelope.expected_spend_units,
-        available_units: plan.envelope.available_units,
-        over_budget: plan.over_budget,
-        fitted_to_budget: plan.fitted_to_budget,
-        why: receipt.why.clone(),
-        team_shape: receipt.team_shape.as_ref().map(SkillRevisionView::from),
-        pattern_skill: plan.pattern_skill.as_ref().map(SkillRevisionView::from),
-        rung_skill: receipt.rung_skill.as_ref().map(SkillRevisionView::from),
-        rung_providers: receipt
-            .rung_providers
-            .iter()
-            .map(ProviderPinView::from)
-            .collect(),
-        asked: ask_view(&receipt.asked),
-        what_more_would_buy: plan.what_more_would_buy.clone(),
-    }
-}
-
-/// The knobs the receipt's ask froze, each as the asker set it.
-fn ask_view(asked: &SpawnNeed) -> SpawnAskObservation {
-    SpawnAskObservation {
-        model: asked
-            .model
-            .as_ref()
-            .map(|knob| knob_view(knob, |model| model.as_str().to_owned())),
-        width: asked
-            .width
-            .as_ref()
-            .map(|knob| knob_view(knob, |width| *width)),
-        pattern: asked
-            .pattern
-            .as_ref()
-            .map(|knob| knob_view(knob, |pattern| CoordinationPatternView::from(*pattern))),
-        budget_cap_units: asked
-            .budget_cap_units
-            .as_ref()
-            .map(|knob| knob_view(knob, |cap| *cap)),
-    }
-}
-
-fn knob_view<T, U>(knob: &SpawnOverride<T>, view: impl FnOnce(&T) -> U) -> SpawnAskKnob<U> {
-    match knob {
-        SpawnOverride::Seed { value, weight_runs } => SpawnAskKnob::Seed {
-            value: view(value),
-            weight_runs: *weight_runs,
-        },
-        SpawnOverride::Pin { value } => SpawnAskKnob::Pin { value: view(value) },
-    }
 }
 
 fn binding_view(binding: &TeamRunBinding) -> Result<TeamBindingView> {
