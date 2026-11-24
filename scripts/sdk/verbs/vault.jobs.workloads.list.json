@@ -1,6 +1,6 @@
 {
   "name": "vault.jobs.workloads.list",
-  "description": "Lists the pinned workloads the caller may read, newest pin first. The owner calls it, or an agent whose Grant names it; an agent sees only workloads its Grant pinned or may start.",
+  "description": "Lists the pinned workloads the caller may read, newest pin first. The owner calls it, or an agent whose Grant names it; an agent sees only workloads its Grant pinned, or that an approval in force lets it start or was its own.",
   "input": "crate::job_workload::WorkloadListRequest",
   "output": "crate::job_workload::WorkloadList",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.list\", &input)?",

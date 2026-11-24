@@ -13,7 +13,7 @@
 //! the second the job protocol, so an approval can name it.
 //!
 //! Run on the fleet, never on a workstation:
-//! RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test job_workloads
+//! RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --features oneiron/test-support --test job_workloads
 #![cfg(all(oneiron_test_support, feature = "mesh"))]
 
 #[path = "support/engine_stack.rs"]
@@ -62,11 +62,16 @@ const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const MAXIMUM_SECS: u64 = 1_800;
 /// A far expiry: 2100-01-01.
 const FAR_EXPIRY_MS: u64 = 4_102_444_800_000;
+/// The tests' clock: one fixed instant (2027-01-15), so no test reads the
+/// wall clock. The doors and the gate take the time they judge an expiry
+/// at, and every expiry here is set from this one.
+const NOW_MS: u64 = 1_800_000_000_000;
 /// The owner's Setting that lets an agent approve and revoke.
 const AGENT_MAY_APPROVE: &str = "jobs.workloads.agent_may_approve";
 const PIN: &str = "vault.jobs.workloads.pin";
 const APPROVE: &str = "vault.jobs.workloads.approve";
 const REVOKE: &str = "vault.jobs.workloads.revoke";
+const GET: &str = "vault.jobs.workloads.get";
 
 /// One exact workload, as the pin door takes it; `tag` makes its arguments,
 /// and so its digest, its own.
@@ -137,16 +142,6 @@ fn gate(
     (verdict, asked.get())
 }
 
-fn now_ms() -> u64 {
-    u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time after the epoch")
-            .as_millis(),
-    )
-    .expect("milliseconds fit u64")
-}
-
 // --- The owner's machines (T11, T12, T12b) -------------------------------
 
 /// The issuer's vault (the first machine's), its owner's proof, and the
@@ -188,7 +183,7 @@ impl Rack {
     fn pin_as(&self, caller: WorkloadCaller<'_>, tag: &str) -> String {
         let pinned = self
             .vault()
-            .pin_job_workload(caller, &pin_request(tag), now_ms())
+            .pin_job_workload(caller, &pin_request(tag), NOW_MS)
             .expect("the caller pins");
         assert!(pinned.changed, "a new pin is written");
         assert_eq!(pinned.workload.standing, WorkloadStanding::Pinned);
@@ -229,7 +224,7 @@ impl Rack {
                 starters: starters.iter().map(EntityId::to_hex).collect(),
                 expires_at_ms,
             },
-            now_ms(),
+            NOW_MS,
         )
     }
 
@@ -253,6 +248,17 @@ impl Rack {
             },
         )
         .expect("the owner defines the agent");
+        let grant = self.grant_for(agent, verbs);
+        let caller = self
+            .vault()
+            .memory(agent, EdgeActorClass::Agent)
+            .workload_agent();
+        (caller, grant)
+    }
+
+    /// The owner gives the agent `agent` one more Grant, naming `verbs`;
+    /// answers the Grant.
+    fn grant_for(&self, agent: EntityId, verbs: &[&str]) -> EntityId {
         let mut authority_scope = Scope::top();
         authority_scope.verbs =
             ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
@@ -272,11 +278,20 @@ impl Rack {
             },
         )
         .expect("the owner mints the agent's Grant");
-        let caller = self
-            .vault()
-            .memory(agent, EdgeActorClass::Agent)
-            .workload_agent();
-        (caller, minted.grant.grant_ref)
+        minted.grant.grant_ref
+    }
+
+    /// `caller`'s read of `digest`.
+    fn get_as(&self, caller: WorkloadCaller<'_>, digest: &str) -> Result<(), WorkloadError> {
+        self.vault()
+            .get_job_workload(
+                caller,
+                &WorkloadRef {
+                    workload: digest.to_owned(),
+                },
+                NOW_MS,
+            )
+            .map(drop)
     }
 
     /// The owner sets `jobs.workloads.agent_may_approve` to `on` at the
@@ -316,7 +331,7 @@ fn a_revoked_or_expired_approval_refuses_the_next_start() {
         let rack = Rack::start().await;
         let owner = WorkloadStarter::Owner(rack.owner_id);
         let digest = rack.pin_and_approve("revoked", &[], FAR_EXPIRY_MS);
-        let now = now_ms();
+        let now = NOW_MS;
         let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, owner, now);
         assert!(verdict.is_ok(), "the approved workload starts: {verdict:?}");
         assert!(asked, "the machine is asked once the vault half passes");
@@ -382,7 +397,7 @@ fn an_agent_starts_only_a_workload_that_names_its_grant() {
         let rack = Rack::start().await;
         let named_grant = EntityId::now();
         let other_grant = EntityId::now();
-        let now = now_ms();
+        let now = NOW_MS;
         let start = |digest: &str, starter| gate(rack.vault(), digest, rack.machine, starter, now);
 
         let named = rack.pin_and_approve("named", &[named_grant], FAR_EXPIRY_MS);
@@ -432,7 +447,7 @@ fn a_start_for_a_machine_the_approval_does_not_list_is_refused_before_the_reserv
         let owner = WorkloadStarter::Owner(rack.owner_id);
         let digest = rack.pin_and_approve("one-machine", &[], FAR_EXPIRY_MS);
         let elsewhere = EntityId::now();
-        let now = now_ms();
+        let now = NOW_MS;
         let (verdict, asked) = gate(rack.vault(), &digest, elsewhere, owner, now);
         assert_eq!(verdict, Err(WorkloadStartRefusal::MachineNotApproved));
         assert!(
@@ -786,7 +801,7 @@ fn an_agent_cannot_approve_a_workload() {
             &digest,
             EntityId::now(),
             WorkloadStarter::Grant(grant),
-            now_ms(),
+            NOW_MS,
         );
         assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadNotApproved));
         assert!(!asked, "an unapproved workload asks no machine");
@@ -851,7 +866,7 @@ fn an_agent_approves_a_workload_only_while_the_owner_lets_agents_approve() {
         assert_eq!(approval.under, Some(approver_grant.to_hex()));
 
         let pinner_starts = WorkloadStarter::Grant(pinner_grant);
-        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, now_ms());
+        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
         assert!(
             verdict.is_ok(),
             "the agent's approval admits the pinner: {verdict:?}"
@@ -859,12 +874,12 @@ fn an_agent_approves_a_workload_only_while_the_owner_lets_agents_approve() {
         assert!(asked, "the machine is asked once the vault half passes");
 
         rack.let_agents_approve(false);
-        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, now_ms());
+        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
         assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadNotApproved));
         assert!(!asked, "an approval not in force asks no machine");
 
         rack.let_agents_approve(true);
-        let (verdict, _) = gate(rack.vault(), &digest, rack.machine, pinner_starts, now_ms());
+        let (verdict, _) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
         assert!(
             verdict.is_ok(),
             "with the key on again it admits: {verdict:?}"
@@ -876,13 +891,187 @@ fn an_agent_approves_a_workload_only_while_the_owner_lets_agents_approve() {
                 &WorkloadRef {
                     workload: digest.clone(),
                 },
-                now_ms(),
+                NOW_MS,
             )
             .expect("with the key on, the agent revokes");
         assert!(revoked.changed, "the agent's revoke is written");
-        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, now_ms());
+        let (verdict, asked) = gate(rack.vault(), &digest, rack.machine, pinner_starts, NOW_MS);
         assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadRevoked));
         assert!(!asked, "a revoked workload asks no machine");
+        rack.mesh.stop().await;
+    });
+}
+
+/// Review-1 P1-1: an agent never approves its own work, whichever of its
+/// Grants it acts under. One agent holds a Grant naming the pin verb and
+/// another naming approve: it cannot approve the workload it pinned, nor an
+/// owner's pin for a starter Grant it holds; it approves one for another
+/// agent's Grant.
+#[test]
+fn an_agent_with_two_grants_does_not_approve_its_own_work() {
+    run_on_engine_stack("job-workloads-two-grants", || async {
+        let rack = Rack::start().await;
+        let (agent, pin_grant) = rack.agent("workload-two-grants", &[PIN]);
+        let approve_grant = rack.grant_for(agent.actor(), &[APPROVE]);
+        assert_ne!(pin_grant, approve_grant, "FIXTURE: two Grants");
+        let (_, other_grant) = rack.agent("workload-other-starter", &[PIN]);
+        rack.let_agents_approve(true);
+        let by_agent = WorkloadCaller::Agent(&agent);
+        let machines = [rack.machine];
+
+        let own = rack.pin_as(by_agent, "pinned-under-the-first-grant");
+        assert!(
+            matches!(
+                rack.approve_as(by_agent, &own, &machines, &[], FAR_EXPIRY_MS),
+                Err(WorkloadError::SelfApproval)
+            ),
+            "an agent does not approve a workload it pinned under its other Grant"
+        );
+        let owners = rack.pin("pinned-by-the-owner");
+        assert!(
+            matches!(
+                rack.approve_as(by_agent, &owners, &machines, &[pin_grant], FAR_EXPIRY_MS),
+                Err(WorkloadError::SelfApproval)
+            ),
+            "an agent does not name a Grant it holds as a starter"
+        );
+        let approved = rack
+            .approve_as(by_agent, &owners, &machines, &[other_grant], FAR_EXPIRY_MS)
+            .expect("the agent approves the owner's pin for another agent's Grant");
+        assert!(approved.changed, "the agent's approval is written");
+        rack.mesh.stop().await;
+    });
+}
+
+/// Review-1 P1-2, P1-3 and P1-4: an approval that no longer stands shows
+/// nothing and blocks nothing. A starter reads the workload only while an
+/// approval in force names its Grant; an agent with the revoke verb but no
+/// read of the workload revokes nothing; and once an agent's approval is not
+/// in force, the owner's approval on the same terms is written as the
+/// owner's.
+#[test]
+fn an_approval_that_no_longer_stands_shows_and_blocks_nothing() {
+    run_on_engine_stack("job-workloads-lapsed-approval", || async {
+        let rack = Rack::start().await;
+        let (approver, _) = rack.agent("workload-lapsing-approver", &[APPROVE, REVOKE, GET]);
+        let (starter, starter_grant) = rack.agent("workload-lapsing-starter", &[GET]);
+        let (outsider, _) = rack.agent("workload-outsider", &[REVOKE, GET]);
+        let machines = [rack.machine];
+        let starters = [starter_grant];
+        let digest = rack.pin("lapsing");
+        rack.let_agents_approve(true);
+        rack.approve_as(
+            WorkloadCaller::Agent(&approver),
+            &digest,
+            &machines,
+            &starters,
+            FAR_EXPIRY_MS,
+        )
+        .expect("the agent approves the owner's pin for the starter");
+        rack.get_as(WorkloadCaller::Agent(&starter), &digest)
+            .expect("the starter reads a workload it may start");
+        rack.get_as(WorkloadCaller::Agent(&approver), &digest)
+            .expect("the approver reads the approval it gave");
+        let outsider_revoke = rack.vault().revoke_job_workload(
+            WorkloadCaller::Agent(&outsider),
+            &WorkloadRef {
+                workload: digest.clone(),
+            },
+            NOW_MS,
+        );
+        assert!(
+            matches!(outsider_revoke, Err(WorkloadError::NotFound)),
+            "an agent revokes nothing it may not read: {outsider_revoke:?}"
+        );
+        assert!(
+            rack.vault()
+                .job_workload(&digest)
+                .expect("the row reads")
+                .is_some_and(|row| row.revoked.is_none()),
+            "the outsider's revoke wrote nothing"
+        );
+
+        rack.let_agents_approve(false);
+        assert!(
+            matches!(
+                rack.get_as(WorkloadCaller::Agent(&starter), &digest),
+                Err(WorkloadError::NotFound)
+            ),
+            "a starter whose approval is no longer in force reads nothing of it"
+        );
+        let listed = rack
+            .vault()
+            .list_job_workloads(WorkloadCaller::Agent(&starter), NOW_MS)
+            .expect("the starter lists");
+        assert!(
+            listed.workloads.iter().all(|view| view.digest != digest),
+            "nor does its list show it"
+        );
+        let by_owner = rack
+            .approve(&digest, &machines, &starters, FAR_EXPIRY_MS)
+            .expect("an approval not in force does not block the owner's");
+        assert!(by_owner.changed, "the owner's approval is written");
+        let approval = by_owner.workload.approval.expect("the approval's view");
+        assert_eq!(approval.owner, Some(rack.owner_id.to_hex()));
+        assert_eq!(approval.agent, None, "the agent's approval is replaced");
+        rack.get_as(WorkloadCaller::Agent(&starter), &digest)
+            .expect("the owner's approval lets the starter read it again");
+
+        let revoked = rack
+            .vault()
+            .revoke_job_workload(
+                WorkloadCaller::Owner(&rack.owner),
+                &WorkloadRef {
+                    workload: digest.clone(),
+                },
+                NOW_MS,
+            )
+            .expect("the owner revokes");
+        assert!(revoked.changed, "the revoke is written");
+        assert!(
+            matches!(
+                rack.get_as(WorkloadCaller::Agent(&starter), &digest),
+                Err(WorkloadError::NotFound)
+            ),
+            "a starter reads nothing of a revoked workload"
+        );
+        rack.mesh.stop().await;
+    });
+}
+
+/// Review-1 P1-6: the pin is its own key, so no handle can stand in for a
+/// secret in it. A pin whose arguments hold a provider token is refused by
+/// the vault's secret scan and nothing is stored.
+#[test]
+fn a_pin_that_holds_a_secret_is_refused() {
+    run_on_engine_stack("job-workloads-pin-secret", || async {
+        let rack = Rack::start().await;
+        let mut request = pin_request("holds-a-token");
+        request
+            .pin
+            .args
+            .push("token=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned());
+        let digest = request.pin.digest().expect("the pin's digest");
+        let refused =
+            rack.vault()
+                .pin_job_workload(WorkloadCaller::Owner(&rack.owner), &request, NOW_MS);
+        assert!(
+            matches!(
+                refused,
+                Err(WorkloadError::Vault(oneiron::Error::Gate(
+                    oneiron::error::GateError::GateWriteRejected { .. }
+                )))
+            ),
+            "the secret scan refuses the pin: {refused:?}"
+        );
+        assert!(
+            rack.vault()
+                .job_workload(&digest)
+                .expect("the row reads")
+                .is_none(),
+            "nothing is stored"
+        );
+        rack.pin("holds-no-token");
         rack.mesh.stop().await;
     });
 }
