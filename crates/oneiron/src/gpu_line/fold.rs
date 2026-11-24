@@ -21,7 +21,19 @@ use crate::federation::WalletRef;
 use crate::llm::run_admission::LeaseUnit;
 
 /// The track a family's seat is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Track {
     /// Work a client or the lane's goal asks for now.
@@ -33,7 +45,18 @@ pub enum Track {
 
 /// What the pinned share lets the pinned track draw (LE-1).
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PinnedMode {
@@ -48,7 +71,18 @@ pub enum PinnedMode {
 
 /// Whether the GPU seconds of an invalid rung count in a rule's cost (LE-5).
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum InvalidCost {
@@ -61,7 +95,19 @@ pub enum InvalidCost {
 }
 
 /// An allowance rule the mint can fund (LE-4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AllowanceRule {
     /// Confirmed promotions per GPU-second, smoothed toward the lane's base
@@ -86,7 +132,19 @@ impl AllowanceRule {
 }
 
 /// One version of one allowance rule, such as `payoff_share@1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct RuleRef {
     pub rule: AllowanceRule,
     pub version: u16,
@@ -116,7 +174,7 @@ impl std::fmt::Display for RuleRef {
 
 /// A family's history from the lane's own lab ledger: a prior with an origin
 /// and a weight, never an outcome (ARCH-0079). Box-lost units are not in it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PayoffSeed {
     pub wins: u64,
     pub losses: u64,
@@ -128,7 +186,7 @@ pub struct PayoffSeed {
 }
 
 /// One family's seat on a GPU line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FamilySeat {
     /// The family: a child project of the lane.
     pub project: EntityId,
@@ -140,7 +198,7 @@ pub struct FamilySeat {
 }
 
 /// The owner's policy for one lane's GPU time. Key: id16 of the lane project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GpuLine {
     /// The lane.
     pub project: EntityId,
@@ -233,7 +291,7 @@ impl GpuLine {
 }
 
 /// One family's floor in a period record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FamilyFloor {
     pub family: EntityId,
     pub track: Track,
@@ -242,7 +300,7 @@ pub struct FamilyFloor {
 
 /// What every rule of a period read for one family: settled outcomes of its
 /// closed rungs inside the window, and its live seed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FamilyPayoff {
     pub family: EntityId,
     pub track: Track,
@@ -259,7 +317,7 @@ pub struct FamilyPayoff {
 }
 
 /// The market ceilings one rule gave.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AllowanceTable {
     pub rule: RuleRef,
     /// This rule's share of the market pool.
@@ -271,7 +329,7 @@ pub struct AllowanceTable {
 /// The mint's receipt for one period of one line, written once. Key: id16
 /// of the lane project and the period index. Everything the fold needs is
 /// here, so a change to the line takes effect at the next mint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GpuLinePeriod {
     pub project: EntityId,
     pub index: u32,
@@ -339,7 +397,19 @@ impl GpuLinePeriod {
 }
 
 /// Which bucket a draw takes from, relative to its arm and family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DrawSource {
     /// The arm's own first-allowance hold (rung 1 only).
@@ -353,7 +423,7 @@ pub enum DrawSource {
 }
 
 /// Units taken from one bucket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Draw {
     pub source: DrawSource,
     pub units: u64,
@@ -361,7 +431,7 @@ pub struct Draw {
 
 /// The first allowance an arm holds from its admission: one rung-1 cap, in
 /// the period it was admitted. It lapses at that period's end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AllowanceHold {
     pub period: u32,
     pub units: u64,
@@ -406,7 +476,19 @@ pub enum SpendRow {
 }
 
 /// A bucket of one period, named absolutely (for refusals and views).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Bucket {
     FirstAllowance { arm: EntityId },
@@ -640,7 +722,9 @@ pub struct DrawAsk {
 }
 
 /// The draw order did not cover an ask; nothing may be written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
+)]
 #[error("budget_denied: {short:?} is spent; {fits} units fit now")]
 pub struct BudgetDenied {
     /// The last bucket of the order: the one that ran out. `None` when the
