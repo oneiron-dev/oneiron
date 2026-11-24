@@ -100,6 +100,10 @@ impl NodeJobs {
             Err(StageFailure::Refused(reason)) => Some(reason),
         };
         self.launch_commit(key, failure, deadline);
+        // A staged key that did not launch keeps no code on the node's disk.
+        if !self.key_launched(key) {
+            self.parts().stager.unstage(&run.order);
+        }
     }
 
     /// Records that staging began (an `accepted` key) or takes up a key
@@ -144,6 +148,15 @@ impl NodeJobs {
             authority_heads: submit.submit.authority_heads,
             deadline: Instant::now() + limit,
         })
+    }
+
+    /// Whether the key's launch commit is journaled.
+    fn key_launched(&self, key: &str) -> bool {
+        let book = self.lock();
+        book.journal
+            .as_ref()
+            .and_then(|journal| journal.table().get(key))
+            .is_some_and(|known| known.launch.is_some())
     }
 
     /// Whether the key is closed (or the node's history is lost).

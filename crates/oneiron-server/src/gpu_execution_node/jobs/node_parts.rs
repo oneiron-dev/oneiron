@@ -261,6 +261,11 @@ pub trait Stager: Send + Sync {
     ///
     /// [`StageFailure`]: the key does not launch.
     fn stage(&self, order: &StageOrder, closed: &dyn Fn() -> bool) -> Result<(), StageFailure>;
+
+    /// Removes what a completed [`Stager::stage`] left for `order` when the
+    /// key did not launch after it: a stop, the staging limit, a stale
+    /// authority or a launch refusal. The default has nothing to remove.
+    fn unstage(&self, _order: &StageOrder) {}
 }
 
 /// The stager until row R3c lands: it stages nothing and refuses every

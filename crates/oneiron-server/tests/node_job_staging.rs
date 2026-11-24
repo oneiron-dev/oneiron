@@ -8,7 +8,11 @@
 //! real [`MirrorStager`] in place of the scripted stager, over a real bare
 //! mirror that `git clone --mirror` makes in a temporary directory. The
 //! mirror's origin is a local path that holds one more commit than the
-//! mirror, so a node that fetched would find it.
+//! mirror, so a node that fetched would find it. Review round 1 adds: a
+//! mirror that borrows objects from another repository is refused, the
+//! mirror's own configuration and attributes change nothing in the export,
+//! a work directory other accounts may write in is refused, and a staged
+//! key that does not launch keeps no checkout.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test node_job_staging`.
 #![cfg(all(oneiron_test_support, unix))]
@@ -20,6 +24,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron_server::gpu_execution_node::jobs::staging::CHECKOUT_DIR_NAME;
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, MirrorStager, NodeJobs, NodeKey, StagingRefusal, TemplateMirrors,
@@ -42,6 +47,7 @@ const CONTRACT_V1: &[u8] =
 const CONTRACT_V2: &[u8] =
     b"{\"arm\":\"comparator\",\"forecast\":0.75,\"inputs\":{\"weights\":\"sha256:aa\"}}\n";
 const RUN_SH: &[u8] = b"#!/usr/bin/bash\nset -eu\necho staged\n";
+const NOTES: &[u8] = b"notes the mirror's filter would rewrite\n";
 
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -50,10 +56,17 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// git with no system or global configuration and a fixed author.
+/// git with an empty environment but `PATH` (no inherited `GIT_DIR` or
+/// `GIT_WORK_TREE`), no system or global configuration, and a fixed author.
 fn git(dir: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("git")
+    let mut command = Command::new("git");
+    command.env_clear();
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    command
         .current_dir(dir)
+        .env("LC_ALL", "C")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .args([
@@ -108,6 +121,9 @@ struct Mirror {
     linked: String,
     /// Adds a 3 MiB file.
     big: String,
+    /// The contract is a file again (v1), and `.gitattributes` gives
+    /// `notes.txt` the filter driver `marker`.
+    filtered: String,
     /// Made in the origin after the mirror was cloned.
     origin_only: String,
 }
@@ -140,6 +156,13 @@ impl Mirror {
         std::fs::write(origin.join("weights.bin"), vec![7_u8; 3 * 1024 * 1024]).expect("big");
         let big = commit("a large file");
 
+        std::fs::remove_file(origin.join(CONTRACT)).expect("contract link removed");
+        std::fs::write(origin.join(CONTRACT), CONTRACT_V1).expect("contract v1 again");
+        std::fs::write(origin.join("notes.txt"), NOTES).expect("notes");
+        std::fs::write(origin.join(".gitattributes"), b"notes.txt filter=marker\n")
+            .expect("attributes");
+        let filtered = commit("a file the filter driver marker would convert");
+
         let path = root.join("mirror.git");
         git_ok(
             root,
@@ -162,24 +185,27 @@ impl Mirror {
             changed,
             linked,
             big,
+            filtered,
             origin_only,
         }
     }
 }
 
-/// The node's configuration as the stager reads it: one template, one
-/// mirror.
+/// The node's configuration as the stager reads it: one template at
+/// [`DIGEST`], one mirror.
 struct OneMirror {
     template: String,
     path: PathBuf,
 }
 
 impl TemplateMirrors for OneMirror {
-    fn mirror(&self, template: &str) -> Result<PathBuf, StagingRefusal> {
-        if template == self.template {
-            Ok(self.path.clone())
-        } else {
+    fn mirror(&self, template: &str, template_digest: &str) -> Result<PathBuf, StagingRefusal> {
+        if template != self.template {
             Err(StagingRefusal::TemplateUnknown)
+        } else if template_digest != DIGEST {
+            Err(StagingRefusal::TemplateChanged)
+        } else {
+            Ok(self.path.clone())
         }
     }
 }
@@ -194,13 +220,13 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temp dir");
     let mirror = Mirror::new(dir.path());
-    let node = ScriptedNode::new(
-        &dir.path().join("node"),
-        EntityId::now(),
-        TEMPLATE,
-        DIGEST,
-        NOW_MS,
-    );
+    let node_dir = dir.path().join("node");
+    let node = ScriptedNode::new(&node_dir, EntityId::now(), TEMPLATE, DIGEST, NOW_MS);
+    // The work directory's ancestors are no other account's to write in,
+    // whatever the test's umask made them.
+    std::fs::create_dir_all(&node_dir).expect("node dir");
+    std::fs::set_permissions(&node_dir, std::fs::Permissions::from_mode(0o755))
+        .expect("node dir mode");
     Fixture {
         _dir: dir,
         node,
@@ -219,10 +245,16 @@ fn pin(commit: &str, contract_sha256: &str) -> WorkloadPin {
         entry: ENTRY.to_owned(),
         args: vec!["seed=7".to_owned()],
         request: ResourceRequest {
-            gpus: 1,
-            vram_mib: 22 * 1024,
+            cpu_threads: 0,
             memory_mib: 22 * 1024,
             disk_mib: 2 * 1024,
+            devices: vec![DeviceClaim {
+                kind: DeviceKind::Gpu,
+                count: 1,
+                memory_mib: 22 * 1024,
+                features: Vec::new(),
+                sharing: Sharing::Exclusive,
+            }],
             maximum_secs: 1_800,
         },
         scope: ScopeKind::Host,
@@ -299,10 +331,12 @@ impl Fixture {
         })
     }
 
+    fn payload(&self, key: &str) -> PathBuf {
+        JobKeyId::for_key(key).payload_dir(&self.node.paths.work_dir)
+    }
+
     fn checkout(&self, key: &str) -> PathBuf {
-        JobKeyId::for_key(key)
-            .payload_dir(&self.node.paths.work_dir)
-            .join(CHECKOUT_DIR_NAME)
+        self.payload(key).join(CHECKOUT_DIR_NAME)
     }
 
     /// Stages `key` and checks that it ended as `LaunchRefused` for
@@ -338,6 +372,7 @@ fn entry(jobs: &NodeJobs, key: &str) -> Option<NodeKey> {
 
 /// Waits until the key exists and `done` holds for it.
 fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> NodeKey {
+    // testkit-lint: allow(wall-clock) bounds a wait on the node's own worker threads
     let deadline = Instant::now() + WAIT;
     loop {
         if let Some(found) = entry(jobs, key)
@@ -346,10 +381,12 @@ fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> Node
             return found;
         }
         assert!(
+            // testkit-lint: allow(wall-clock) the same bound
             Instant::now() < deadline,
             "key {key} did not reach the state: {:?}",
             entry(jobs, key)
         );
+        // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -527,4 +564,131 @@ fn a_contract_path_outside_the_checkout_refuses_the_launch() {
         StagingRefusal::ContractMissing,
     );
     assert_eq!(fixture.node.units.total_starts(), 0);
+}
+
+#[test]
+fn a_mirror_that_borrows_objects_from_another_repository_refuses_the_launch() {
+    let fixture = fixture();
+    // The mirror's object directory names the origin's: the commit made in
+    // the origin after the mirror reads through the mirror, and its
+    // contract file is the pinned v1.
+    let info = fixture.mirror.path.join("objects/info");
+    std::fs::create_dir_all(&info).expect("objects/info");
+    std::fs::write(
+        info.join("alternates"),
+        format!("{}\n", fixture.mirror.origin.join(".git/objects").display()),
+    )
+    .expect("alternates");
+    assert!(
+        holds(&fixture.mirror.path, &fixture.mirror.origin_only),
+        "the mirror borrows the origin's objects"
+    );
+    let jobs = fixture.open();
+    fixture.refused(
+        &jobs,
+        "job-24/borrowed",
+        &pin(&fixture.mirror.origin_only, &sha256_hex(CONTRACT_V1)),
+        StagingRefusal::MirrorNotSelfContained,
+    );
+    assert_eq!(fixture.node.units.total_starts(), 0);
+    assert_eq!(fixture.node.devices.leases_given(), 0, "a card was held");
+}
+
+#[test]
+fn the_mirrors_own_configuration_and_attributes_change_nothing_in_the_checkout() {
+    let fixture = fixture();
+    let root = fixture.mirror.path.parent().expect("temp root");
+    let marker = root.join("filter-ran");
+    // The mirror's configuration defines the filter driver the commit's
+    // `.gitattributes` names; the driver leaves a marker when git runs it.
+    git_ok(
+        &fixture.mirror.path,
+        &[
+            "config",
+            "filter.marker.smudge",
+            &format!("touch '{}'; cat", marker.display()),
+        ],
+    );
+    git_ok(
+        &fixture.mirror.path,
+        &["config", "filter.marker.required", "true"],
+    );
+    // The mirror's own attributes would leave the contract out of an export.
+    let info = fixture.mirror.path.join("info");
+    std::fs::create_dir_all(&info).expect("info");
+    std::fs::write(info.join("attributes"), b"contract.json export-ignore\n").expect("attributes");
+
+    let jobs = fixture.open();
+    let key = "job-config/filtered";
+    let launched = fixture.stage(
+        &jobs,
+        key,
+        &pin(&fixture.mirror.filtered, &sha256_hex(CONTRACT_V1)),
+    );
+    assert!(
+        matches!(launched.state, JobState::Launching | JobState::Running),
+        "the key launched: {launched:?}"
+    );
+    assert!(!marker.exists(), "staging ran the mirror's filter driver");
+    let checkout = fixture.checkout(key);
+    assert_eq!(
+        std::fs::read(checkout.join("notes.txt")).expect("notes"),
+        NOTES
+    );
+    assert_eq!(
+        std::fs::read(checkout.join(CONTRACT)).expect("contract"),
+        CONTRACT_V1
+    );
+}
+
+#[test]
+fn a_work_directory_other_accounts_may_write_in_refuses_the_launch() {
+    let fixture = fixture();
+    let work_dir = &fixture.node.paths.work_dir;
+    std::fs::create_dir_all(work_dir).expect("work dir");
+    std::fs::set_permissions(work_dir, std::fs::Permissions::from_mode(0o777))
+        .expect("work dir mode");
+    let jobs = fixture.open();
+    let key = "job-workdir/open";
+    fixture.refused(
+        &jobs,
+        key,
+        &pin(&fixture.mirror.good, &sha256_hex(CONTRACT_V1)),
+        StagingRefusal::WorkDirUnsafe,
+    );
+    assert!(
+        !fixture.payload(key).exists(),
+        "staging made a payload directory in a work directory others may write in"
+    );
+    assert_eq!(fixture.node.devices.leases_given(), 0, "a card was held");
+}
+
+#[test]
+fn a_staged_key_that_does_not_launch_keeps_no_checkout() {
+    let fixture = fixture();
+    // Staging completes; the node's fold never reaches the submit's heads
+    // before the staging limit, so the launch commit refuses the key.
+    fixture.node.admission.set_staging_limit_secs(2);
+    fixture.node.authority.set_stale(true);
+    let jobs = fixture.open();
+    let key = "job-unstaged/stale";
+    let ended = fixture.stage(
+        &jobs,
+        key,
+        &pin(&fixture.mirror.good, &sha256_hex(CONTRACT_V1)),
+    );
+    assert_eq!(ended.state, JobState::Ended, "the key ended: {ended:?}");
+    assert!(
+        matches!(
+            &ended.end,
+            Some(JobEnd::LaunchRefused { reason })
+                if reason == "authority_stale" || reason == "staging_limit"
+        ),
+        "the key ended before its launch: {ended:?}"
+    );
+    assert_eq!(fixture.node.units.starts(key), 0);
+    assert!(
+        !fixture.checkout(key).exists(),
+        "a key that did not launch left its checkout"
+    );
 }
