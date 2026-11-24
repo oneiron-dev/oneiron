@@ -432,6 +432,14 @@ impl GpuSlotTable {
         self.shared.drained(&state)
     }
 
+    /// Drains the machine at its node's word (a job unit ran that no key of
+    /// the node's journal started): it takes no new GPU job until a person
+    /// clears the drain, as after repeated failures.
+    pub fn drain(&self, why: String) {
+        let mut state = self.shared.lock();
+        self.shared.drain(&mut state, why);
+    }
+
     /// A person's clear of the drain: the machine takes GPU work again, and
     /// its count of failed jobs starts over.
     ///

@@ -21,20 +21,21 @@ use std::time::{Duration, Instant};
 use oneiron::EntityId;
 use oneiron::machine_capacity::GpuDevice;
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
-use oneiron_organ_host::{FloorLease, FloorRefusal, GpuSlotHold, MachineFloor};
+use oneiron_organ_host::{FloorLease, FloorRefusal, GpuSlotGrant, MachineFloor};
 
 use crate::gpu_execution_node::jobs::job_unit::{
     END_RECORD_FILE_NAME, LAUNCH_FILE_NAME, write_file_synced,
 };
 use crate::gpu_execution_node::jobs::node_parts::{
-    GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotRefusal, GpuSlotRequest,
+    GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotRefusal, GpuSlotRequest,
 };
 use crate::gpu_execution_node::jobs::{
-    AuthorityPosition, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
-    LaunchFile, NodeAdmission, NodeClock, NodeControls, NodeDevices, NodeJobParts, NodeJobPaths,
-    NodeJobs, StageFailure, StageOrder, Stager,
+    AuthorityPosition, BoundReport, EndRecord, IssuerNotLive, JobKeyId, JobUnit, JobUnitError,
+    JobUnitPhase, JobUnitStatus, LaunchFile, NodeAdmission, NodeClock, NodeControls, NodeDevices,
+    NodeJobParts, NodeJobPaths, NodeJobSettings, NodeJobs, ScopeCapabilities, StageFailure,
+    StageOrder, Stager, Strength,
 };
-use crate::gpu_execution_node::wire::WorkloadPin;
+use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -311,6 +312,25 @@ impl ScriptedJobUnits {
 }
 
 impl JobUnit for ScriptedJobUnits {
+    fn probe(&self) -> ScopeCapabilities {
+        let kernel = || BoundReport {
+            strength: Strength::Kernel,
+            evidence: "scripted".to_owned(),
+        };
+        ScopeCapabilities {
+            tree_kill: kernel(),
+            cutoff_without_engine: kernel(),
+            emptiness: kernel(),
+            memory_cap: kernel(),
+            cpu_cap: kernel(),
+            file_wall: kernel(),
+            network_closed: kernel(),
+            device_closure: kernel(),
+            processes_hidden: kernel(),
+            write_rate_cap: kernel(),
+        }
+    }
+
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
         let next = {
             let mut state = locked(&self.state);
@@ -441,7 +461,8 @@ struct DevicesState {
     devices: Vec<ScriptedDevice>,
     leases: u32,
     probe_fails: bool,
-    finished: Vec<(String, GpuJobEnd)>,
+    finished: Vec<(String, GpuLeaseEnd)>,
+    drains: Vec<String>,
 }
 
 /// The machine's GPUs, scripted: each taken by at most one key.
@@ -513,9 +534,21 @@ impl ScriptedDevices {
         locked(&self.state).leases
     }
 
-    /// Every finished key with how its job ended.
+    /// Every drain the job service asked the slot table for.
     #[must_use]
-    pub fn finished(&self) -> Vec<(String, GpuJobEnd)> {
+    pub fn drains(&self) -> Vec<String> {
+        locked(&self.state).drains.clone()
+    }
+
+    /// The drain that stands, as the slot table answers it.
+    #[must_use]
+    pub fn drained(&self) -> Option<String> {
+        locked(&self.state).drains.last().cloned()
+    }
+
+    /// Every finish the job service recorded, by key.
+    #[must_use]
+    pub fn finished(&self) -> Vec<(String, GpuLeaseEnd)> {
         locked(&self.state).finished.clone()
     }
 
@@ -530,13 +563,13 @@ impl ScriptedDevices {
 
 struct ScriptedLease {
     devices: ScriptedDevices,
-    hold: GpuSlotHold,
+    grant: GpuSlotGrant,
     open: bool,
 }
 
 impl GpuDeviceLease for ScriptedLease {
-    fn hold(&self) -> &GpuSlotHold {
-        &self.hold
+    fn grant(&self) -> &GpuSlotGrant {
+        &self.grant
     }
 
     fn confirm_launch(&mut self) -> Result<(), GpuSlotRefusal> {
@@ -544,24 +577,24 @@ impl GpuDeviceLease for ScriptedLease {
     }
 
     fn end_check(&self) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
-        self.devices.end_check(&self.hold.key)
+        self.devices.end_check(&self.grant.key)
     }
 
-    fn finish(mut self: Box<Self>, end: GpuJobEnd) {
+    fn finish(mut self: Box<Self>, end: GpuLeaseEnd) {
         self.open = false;
-        NodeDevices::finish(&self.devices, &self.hold.key, &end);
+        NodeDevices::finish(&self.devices, &self.grant.key, &end);
     }
 
-    fn keep(mut self: Box<Self>) -> GpuSlotHold {
+    fn keep(mut self: Box<Self>) -> GpuSlotGrant {
         self.open = false;
-        self.hold.clone()
+        self.grant.clone()
     }
 }
 
 impl Drop for ScriptedLease {
     fn drop(&mut self) {
         if self.open {
-            self.devices.free(&self.hold.key);
+            self.devices.free(&self.grant.key);
         }
     }
 }
@@ -603,16 +636,15 @@ impl NodeDevices for ScriptedDevices {
             });
         }
         device.taken_by = Some(request.key.clone());
-        let hold = GpuSlotHold {
+        let grant = GpuSlotGrant {
             key: request.key.clone(),
             device: device.device.clone(),
-            held_at_ms: 0,
-            hold_until_ms: u64::MAX,
+            granted_at_ms: 0,
         };
         state.leases += 1;
         Ok(Box::new(ScriptedLease {
             devices: self.clone(),
-            hold,
+            grant,
             open: true,
         }))
     }
@@ -657,11 +689,15 @@ impl NodeDevices for ScriptedDevices {
             .ok_or(GpuSlotRefusal::NotHeld)
     }
 
-    fn finish(&self, key: &str, end: &GpuJobEnd) {
+    fn finish(&self, key: &str, end: &GpuLeaseEnd) {
         self.free(key);
         locked(&self.state)
             .finished
             .push((key.to_owned(), end.clone()));
+    }
+
+    fn drain(&self, why: &str) {
+        locked(&self.state).drains.push(why.to_owned());
     }
 }
 
@@ -673,34 +709,35 @@ struct AdmissionState {
     disk_free_mib: u64,
     disk_reserve_mib: u64,
     issuer_refusal: Option<String>,
-    drains: Vec<String>,
     staging_limit_secs: u64,
 }
 
 /// The node's configuration and fold, scripted: enabled, one template, room
-/// on the disk, the issuer live.
+/// on the disk, the issuer live. Its drain is the scripted slot table's, as
+/// the node's is the GPU slot table's.
 #[derive(Debug)]
 pub struct ScriptedAdmission {
     state: Mutex<AdmissionState>,
+    devices: Arc<ScriptedDevices>,
 }
 
 impl ScriptedAdmission {
-    /// An enabled node holding `template` at `digest`.
+    /// An enabled node holding `template` at `digest`, draining with
+    /// `devices`.
     #[must_use]
-    pub fn new(template: &str, digest: &str) -> Arc<Self> {
+    pub fn new(template: &str, digest: &str, devices: Arc<ScriptedDevices>) -> Arc<Self> {
         Arc::new(Self {
+            devices,
             state: Mutex::new(AdmissionState {
                 controls: NodeControls {
                     enabled: true,
-                    paused: None,
-                    drained: None,
+                    ..NodeControls::default()
                 },
                 templates: BTreeMap::from([(template.to_owned(), digest.to_owned())]),
                 pin_refusal: None,
                 disk_free_mib: 1 << 20,
                 disk_reserve_mib: 0,
                 issuer_refusal: None,
-                drains: Vec::new(),
                 staging_limit_secs: 600,
             }),
         })
@@ -739,24 +776,25 @@ impl ScriptedAdmission {
     pub fn set_staging_limit_secs(&self, secs: u64) {
         locked(&self.state).staging_limit_secs = secs;
     }
-
-    /// Every drain the job service asked for.
-    #[must_use]
-    pub fn drains(&self) -> Vec<String> {
-        locked(&self.state).drains.clone()
-    }
 }
 
 impl NodeAdmission for ScriptedAdmission {
     fn controls(&self) -> NodeControls {
-        locked(&self.state).controls.clone()
+        let mut controls = locked(&self.state).controls.clone();
+        if controls.drained.is_none() {
+            controls.drained = self.devices.drained();
+        }
+        controls
     }
 
-    fn issuer_live(&self, _issuer: EntityId) -> Result<(), String> {
-        locked(&self.state)
-            .issuer_refusal
-            .clone()
-            .map_or(Ok(()), Err)
+    fn issuer_live(&self, _issuer: EntityId) -> Result<(), IssuerNotLive> {
+        match locked(&self.state).issuer_refusal.clone() {
+            None => Ok(()),
+            Some(reason) => Err(IssuerNotLive {
+                refusal: JobRefusal::IssuerStandingEnded,
+                reason,
+            }),
+        }
     }
 
     fn admit_pin(&self, pin: &WorkloadPin) -> Result<(), String> {
@@ -785,14 +823,11 @@ impl NodeAdmission for ScriptedAdmission {
             .ok_or_else(|| "disk_short".to_owned())
     }
 
-    fn drain(&self, why: &str) {
-        let mut state = locked(&self.state);
-        state.drains.push(why.to_owned());
-        state.controls.drained = Some(why.to_owned());
-    }
-
-    fn staging_limit_secs(&self) -> u64 {
-        locked(&self.state).staging_limit_secs
+    fn job_settings(&self) -> NodeJobSettings {
+        NodeJobSettings {
+            staging_limit_secs: locked(&self.state).staging_limit_secs,
+            ..NodeJobSettings::default()
+        }
     }
 }
 
@@ -1088,12 +1123,13 @@ impl ScriptedNode {
             work_dir: root.join("work"),
         };
         let clock = ScriptedNodeClock::new(wall_ms);
+        let devices = ScriptedDevices::one("GPU-scripted-0", 24 * 1024);
         Self {
             units: ScriptedJobUnits::new(&paths.state_dir, Arc::clone(&clock)),
             paths,
             clock,
-            devices: ScriptedDevices::one("GPU-scripted-0", 24 * 1024),
-            admission: ScriptedAdmission::new(template, digest),
+            admission: ScriptedAdmission::new(template, digest, Arc::clone(&devices)),
+            devices,
             floor: ScriptedFloor::new(26 * 1024),
             signer: ScriptedSigner::new(machine),
             authority: ScriptedAuthority::new(),
@@ -1118,8 +1154,36 @@ impl ScriptedNode {
     }
 
     /// Opens the node's job service: its first start, or an engine restart.
+    /// A restart waits, up to 10 s, until every handle of the service before
+    /// it is gone (its staging workers' too) and the journal's writer lock
+    /// is free.
+    ///
+    /// # Panics
+    ///
+    /// The service did not open.
     #[must_use]
     pub fn open(&self) -> NodeJobs {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match self.try_open() {
+                Ok(jobs) => return jobs,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("the node's job service did not open: {error}"),
+            }
+        }
+    }
+
+    /// Opens the node's job service once, never waiting.
+    ///
+    /// # Errors
+    ///
+    /// As [`NodeJobs::open`].
+    pub fn try_open(&self) -> std::io::Result<NodeJobs> {
         NodeJobs::open(self.paths.clone(), self.parts())
     }
 }

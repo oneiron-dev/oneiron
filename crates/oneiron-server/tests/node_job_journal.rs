@@ -17,7 +17,7 @@ use oneiron_server::gpu_execution_node::jobs::{
 use oneiron_server::gpu_execution_node::wire::{
     DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState,
     JobStatusAnswer, JobSubmit, NetworkMode, OutputDecl, OutputsState, ResourceRequest, ScopeKind,
-    SignedJobSubmit, Starter, WorkloadPin,
+    SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
 use oneiron_server::test_doors::node_jobs::{
     ScriptedNode, ScriptedSigner, ScriptedStart, fail_journal_sync,
@@ -75,7 +75,7 @@ impl Fixture {
         JobReserve {
             key: key.to_owned(),
             pin: pin.clone(),
-            device_id: None,
+            slot: SlotSelector::default(),
             issuer: self.issuer,
             starter: Starter::Owner,
             issued_at_ms: NOW_MS,
@@ -89,7 +89,7 @@ impl Fixture {
             job: EntityId::now(),
             chunk: 0,
             pin: pin.clone(),
-            device_id: None,
+            slot: SlotSelector::default(),
             maximum_secs: pin.request.maximum_secs,
             issued_at_ms: NOW_MS,
             not_after_ms: NOW_MS + 300_000,
@@ -393,6 +393,7 @@ fn a_known_key_is_answered_before_a_drained_node_refuses() {
         enabled: true,
         paused: None,
         drained: Some("three machine failures".to_owned()),
+        stop_requested: false,
     });
     assert_eq!(
         receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin))).state,
@@ -465,8 +466,7 @@ fn a_disable_a_withhold_or_a_template_edit_before_the_start_refuses_the_launch()
             &|| {
                 fixture.node.admission.set_controls(NodeControls {
                     enabled: false,
-                    paused: None,
-                    drained: None,
+                    ..NodeControls::default()
                 });
             },
             "node_disabled",
@@ -510,8 +510,7 @@ fn a_disable_a_withhold_or_a_template_edit_before_the_start_refuses_the_launch()
         // Put the node back for the next case.
         fixture.node.admission.set_controls(NodeControls {
             enabled: true,
-            paused: None,
-            drained: None,
+            ..NodeControls::default()
         });
         fixture.node.devices.set_offered(DEVICE, true);
         fixture.node.admission.set_template_digest(TEMPLATE, DIGEST);
@@ -744,4 +743,49 @@ fn a_lost_journal_answers_history_lost_and_admits_nothing() {
     assert_eq!(jobs.find(fixture.issuer, key), JobStatusAnswer::HistoryLost);
     settle();
     assert_eq!(fixture.node.units.starts(key), 1);
+}
+
+#[test]
+fn a_second_job_service_on_one_state_dir_is_refused_until_the_first_is_gone() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let second = fixture.node.try_open();
+    assert!(
+        matches!(&second, Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "{second:?}"
+    );
+    drop(jobs);
+    assert!(fixture.node.try_open().is_ok());
+}
+
+#[test]
+fn a_damaged_record_length_is_a_lost_history_never_a_torn_tail() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-19/chunk-0";
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+    assert_eq!(known(jobs.stop(fixture.issuer, key)).state, JobState::Ended);
+    drop(jobs);
+
+    // The last record's length now points past the end of the file: its
+    // length check fails, so the stop is not cut off as a torn write.
+    let journal = fixture.node.paths.state_dir.join("journal");
+    let mut bytes = std::fs::read(&journal).expect("journal");
+    let header = 8 + 4 + 16;
+    let mut offset = header;
+    let mut last = header;
+    while offset < bytes.len() {
+        let length = u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("length"));
+        last = offset;
+        offset += 4 + 4 + usize::try_from(length).expect("length") + 16;
+    }
+    bytes[last + 1] ^= 0x40;
+    std::fs::write(&journal, &bytes).expect("damaged length");
+    let jobs = fixture.node.open();
+    assert!(matches!(jobs.gate(), NodeGate::HistoryLost { .. }));
+    assert_eq!(
+        jobs.submit(fixture.issuer, fixture.submit(key, &pin)),
+        JobAnswer::Refused(JobRefusal::HistoryLost)
+    );
 }

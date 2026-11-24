@@ -19,6 +19,8 @@
 //! configuration (row R1), the GPU slot table (OPUS-LE-FLEET), the memory
 //! floor, the job unit (row R3b), the stager (row R3c) and the machine-key
 //! signer. Its calls block; an async caller runs them on a blocking thread.
+//! One service per `state_dir`: it holds the journal's writer lock while any
+//! handle of it lives, a staging worker's too.
 
 pub mod job_unit;
 pub mod journal;
@@ -36,25 +38,23 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron_organ_host::FloorLease;
 
-pub use end::{OUTPUT_HASH_LIMIT_SECS, RETURNABLE_OUTPUT_MAX_BYTES};
 pub use job_unit::{
-    EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
-    SystemNodeClock,
+    BoundReport, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
+    LaunchFile, NodeClock, RenewRefusal, ScopeCapabilities, Strength, SystemNodeClock,
 };
 pub use journal::{EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey};
-pub use journal_file::{JournalDamage, JournalEpoch, JournalFile, JournalOpening};
+pub use journal_file::{
+    JournalDamage, JournalEpoch, JournalFile, JournalOpening, JournalWriterLock,
+};
 pub use node_parts::{
-    AuthorityPosition, NodeAdmission, NodeControls, NodeDevices, NodeJobParts, NodeJobPaths,
-    StageFailure, StageOrder, Stager, StagingNotBuilt,
+    AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeDevices, NodeJobParts,
+    NodeJobPaths, NodeJobSettings, StageFailure, StageOrder, Stager, StagingNotBuilt,
 };
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 
-/// How long a `Busy` answer asks the issuer to wait before it asks again.
+/// How long a `Busy` answer asks the issuer to wait before it asks again: a
+/// protocol hint, not a policy.
 pub const BUSY_RETRY_AFTER_MS: u64 = 2_000;
-
-/// How far before its `issued_at_ms` a reserve may arrive: the clocks of two
-/// machines differ.
-pub const ISSUED_AT_SLACK_MS: u64 = 120_000;
 
 /// Whether the node answers admitting requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +86,8 @@ struct NodeJobsShared {
     paths: NodeJobPaths,
     parts: NodeJobParts,
     book: Mutex<NodeBook>,
+    /// Held while any handle lives: no second service writes this journal.
+    _writer: JournalWriterLock,
 }
 
 /// The node's job service. Cloning it shares it.
@@ -162,6 +164,46 @@ impl NodeJobs {
             .journal
             .as_ref()
             .map(|journal| journal.table().iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// EN-4 A: the fold no longer authorises `issuer`'s work here (`None`:
+    /// no issuer's). Every key of that issuer that has not ended ends: one
+    /// that has not launched closes as withdrawn, a launched one is stopped
+    /// and ends as revoked. A key the gate keeps closed is ended at the
+    /// next authority tick.
+    pub fn revoke_live_keys(&self, issuer: Option<oneiron::EntityId>, why: &str) {
+        for key in self.live_keys(issuer) {
+            if let Err(error) = self.end_key(&key, EndingCause::Revoked) {
+                tracing::warn!(key, why, %error, "revoked job key not ended yet; the next authority tick ends it");
+            }
+        }
+    }
+
+    /// `disable --stop` at the box: every key that has not ended ends; a
+    /// launched one is stopped.
+    pub fn stop_live_keys(&self) {
+        for key in self.live_keys(None) {
+            if let Err(error) = self.end_key(&key, EndingCause::Stopped) {
+                tracing::warn!(key, %error, "job key not stopped yet; the next tick stops it");
+            }
+        }
+    }
+
+    /// The keys of `issuer` (`None`: of every issuer) that have not ended.
+    fn live_keys(&self, issuer: Option<oneiron::EntityId>) -> Vec<String> {
+        self.lock()
+            .journal
+            .as_ref()
+            .map(|journal| {
+                journal
+                    .table()
+                    .iter()
+                    .filter(|key| !key.is_ended())
+                    .filter(|key| issuer.is_none_or(|issuer| key.issuer == issuer))
+                    .map(|key| key.key.clone())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

@@ -3,9 +3,10 @@
 //! scripted parts (design pass 33, section 11: R3a runs against a scripted
 //! unit manager and needs no privilege):
 //! - [`NodeAdmission`]: the node's own configuration and controls, read
-//!   fresh at each use (row R1's `[execution_node]`, its template check and
-//!   its fold reads);
-//! - [`NodeDevices`]: the machine's GPU slot table (OPUS-LE-FLEET);
+//!   fresh at each use (row R1's [`ExecutionNode`]: `[execution_node]`, its
+//!   template check and its fold reads);
+//! - [`NodeDevices`]: the machine's GPU slot table (OPUS-LE-FLEET's
+//!   [`GpuSlotTable`]), whose drain is the node's drain;
 //! - [`oneiron_organ_host::MachineFloor`]: the machine's memory line, the
 //!   floor a launched job's memory is taken from;
 //! - [`AuthorityPosition`]: whether the node's own authority fold holds the
@@ -14,6 +15,11 @@
 //! - [`oneiron::machine_signature::MachineSignatures`]: the one machine-key
 //!   signing path, for the receipt and the submit check;
 //! - [`super::job_unit::JobUnit`] and [`super::job_unit::NodeClock`].
+//!
+//! The server's parts implement these traits here, each method a call of
+//! the same name: [`ExecutionNode`] is the [`NodeAdmission`] and the
+//! [`AuthorityPosition`], [`GpuSlotTable`] the [`NodeDevices`], and
+//! [`super::NodeJobs`] is R1's [`NodeKeys`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,38 +29,72 @@ use oneiron::machine_signature::MachineSignatures;
 use oneiron_organ_host::MachineFloor;
 
 pub use oneiron_organ_host::{
-    GpuDeviceLease, GpuDeviceProcesses, GpuJobEnd, GpuSlotRefusal, GpuSlotRequest,
+    GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotRefusal, GpuSlotRequest,
 };
 
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
-use crate::gpu_execution_node::wire::WorkloadPin;
+pub use crate::gpu_execution_node::node::NodeControls;
+use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
+use crate::gpu_execution_node::slots::GpuSlotTable;
+use crate::gpu_execution_node::wire::{
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, SignedJobSubmit, WorkloadPin,
+};
 
-/// The node's local controls, read at one moment under the admission lock.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct NodeControls {
-    /// `[execution_node] enabled`.
-    pub enabled: bool,
-    /// Why the node takes no new work while paused at the box.
-    pub paused: Option<String>,
-    /// Why the node takes no new work until a person clears its drain.
-    pub drained: Option<String>,
+/// The `jobs.*` settings this service reads (pass 34, section 6), each with
+/// the engine's default. Policy is a setting, never a constant in this code
+/// (lead 25 Nov 00:04). Until row P0 a node obeys its box file only (EM-17 =
+/// A): R1's `[execution_node]` file sets `staging_limit_secs`, and every
+/// other key takes its default. Read once per use, through
+/// [`NodeAdmission::job_settings`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeJobSettings {
+    /// `jobs.submit.skew_secs`: how far before its `issued_at_ms` a reserve
+    /// may arrive, as two machines' clocks differ. Default 120.
+    pub submit_skew_secs: u64,
+    /// `jobs.staging.limit_secs`: the longest staging may take before the
+    /// launch commit. Default 600.
+    pub staging_limit_secs: u64,
+    /// `jobs.outputs.hash_limit_secs`: the longest the hashing of one key's
+    /// outputs takes in all. Default 60.
+    pub output_hash_limit_secs: u64,
+    /// `jobs.outputs.returnable_max_bytes`: the most bytes an output may
+    /// hold and still travel to the issuer. Default, and ceiling, one
+    /// message piece ([`FETCH_MAX_BYTES`], 1,044,480): a wire bound.
+    pub returnable_max_bytes: u64,
+    /// `jobs.drain.fast_exit_secs`: an end this soon after the launch counts
+    /// against the machine's drain guard. Default 5.
+    pub fast_exit_secs: u64,
 }
 
-impl NodeControls {
-    /// The refusal reason when the node takes no new work now.
-    #[must_use]
-    pub fn refusal(&self) -> Option<String> {
-        if !self.enabled {
-            return Some("node_disabled".to_owned());
+impl Default for NodeJobSettings {
+    fn default() -> Self {
+        Self {
+            submit_skew_secs: 120,
+            staging_limit_secs: 600,
+            output_hash_limit_secs: 60,
+            returnable_max_bytes: FETCH_MAX_BYTES,
+            fast_exit_secs: 5,
         }
-        if let Some(why) = &self.paused {
-            return Some(format!("node_paused: {why}"));
-        }
-        if let Some(why) = &self.drained {
-            return Some(format!("node_drained: {why}"));
-        }
-        None
     }
+}
+
+impl NodeJobSettings {
+    /// The returnable bound in force: the setting, never above one message
+    /// piece.
+    #[must_use]
+    pub fn returnable_bound(&self) -> u64 {
+        self.returnable_max_bytes.min(FETCH_MAX_BYTES)
+    }
+}
+
+/// Why the node's own fold does not authorise an issuer's work now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuerNotLive {
+    /// What a reserve or a submit is answered with. Nothing is journaled
+    /// for it, as the gate journals nothing.
+    pub refusal: JobRefusal,
+    /// The reason a key that reached the launch commit ends with.
+    pub reason: String,
 }
 
 /// The node's own configuration and authority, as the job service reads
@@ -71,8 +111,8 @@ pub trait NodeAdmission: Send + Sync {
     ///
     /// # Errors
     ///
-    /// The refusal reason, for the key's end.
-    fn issuer_live(&self, issuer: EntityId) -> Result<(), String>;
+    /// [`IssuerNotLive`]: the refusal and the reason.
+    fn issuer_live(&self, issuer: EntityId) -> Result<(), IssuerNotLive>;
 
     /// Design 7.3 reserve step 5: the template exists and its digest equals
     /// the pin's; the entry, the scope, the network, the returnable outputs,
@@ -96,15 +136,8 @@ pub trait NodeAdmission: Send + Sync {
     /// The refusal reason, for the key's end.
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String>;
 
-    /// Drains the node: new reserves are refused until a person clears it
-    /// at the box (`oneiron execution-node resume`). Recovery calls it when
-    /// a job unit runs that no key of the journal started.
-    fn drain(&self, why: &str);
-
-    /// The longest staging may take before the launch, in seconds (600).
-    fn staging_limit_secs(&self) -> u64 {
-        600
-    }
+    /// The node's `jobs.*` settings now.
+    fn job_settings(&self) -> NodeJobSettings;
 }
 
 /// The machine's GPUs, as the job service leases them. The server's
@@ -148,7 +181,13 @@ pub trait NodeDevices: Send + Sync {
     fn end_check(&self, key: &str) -> Result<GpuDeviceProcesses, GpuSlotRefusal>;
 
     /// Gives the key's device back and records how its job ended.
-    fn finish(&self, key: &str, end: &GpuJobEnd);
+    fn finish(&self, key: &str, end: &GpuLeaseEnd);
+
+    /// Drains the machine: it takes no new GPU job until a person clears it
+    /// at the box (`oneiron execution-node resume`). One drain per machine:
+    /// the slot table's. Recovery calls it when a job unit runs that no key
+    /// of the journal started.
+    fn drain(&self, why: &str);
 }
 
 /// Whether the node's own authority fold holds the position an issuer
@@ -236,4 +275,135 @@ pub struct NodeJobPaths {
     pub state_dir: PathBuf,
     /// The payload directories.
     pub work_dir: PathBuf,
+}
+
+impl NodeAdmission for ExecutionNode {
+    fn controls(&self) -> NodeControls {
+        ExecutionNode::controls(self)
+    }
+
+    fn issuer_live(&self, issuer: EntityId) -> Result<(), IssuerNotLive> {
+        ExecutionNode::issuer_live(self, issuer).map_err(|reason| {
+            let refusal = match self.authority_for(issuer) {
+                Err(AuthorityEnded::OwnGrant) => JobRefusal::OwnGrantEnded,
+                Err(AuthorityEnded::IssuerStanding { .. }) => JobRefusal::IssuerStandingEnded,
+                Ok(()) => JobRefusal::NotIssuer,
+            };
+            IssuerNotLive { refusal, reason }
+        })
+    }
+
+    fn admit_pin(&self, pin: &WorkloadPin) -> Result<(), String> {
+        ExecutionNode::admit_pin(self, pin)
+    }
+
+    fn template_digest(&self, template: &str) -> Option<String> {
+        ExecutionNode::template_digest(self, template)
+    }
+
+    fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {
+        ExecutionNode::disk_room(self, booked_mib, request_mib)
+    }
+
+    fn job_settings(&self) -> NodeJobSettings {
+        NodeJobSettings {
+            staging_limit_secs: ExecutionNode::staging_limit_secs(self),
+            ..NodeJobSettings::default()
+        }
+    }
+}
+
+impl AuthorityPosition for ExecutionNode {
+    fn folded(&self, heads: &[String]) -> bool {
+        ExecutionNode::folded(self, heads)
+    }
+}
+
+impl NodeDevices for GpuSlotTable {
+    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String> {
+        use crate::gpu_execution_node::availability::GpuDeviceState;
+        let availability = self
+            .availability(oneiron_base::unix_millis_now())
+            .map_err(|error| format!("devices_unreadable: {error}"))?;
+        if let Some(why) = &availability.paused {
+            return Err(format!("node_paused: {why}"));
+        }
+        if let Some(why) = &availability.drained {
+            return Err(format!("node_drained: {why}"));
+        }
+        let open = availability.devices.iter().any(|device| {
+            request.admits(&device.device)
+                && !matches!(
+                    device.state,
+                    GpuDeviceState::NotOffered
+                        | GpuDeviceState::Withheld
+                        | GpuDeviceState::Quarantined { .. }
+                )
+        });
+        if open {
+            Ok(())
+        } else {
+            Err("no_device".to_owned())
+        }
+    }
+
+    fn lease_for_launch(
+        &self,
+        request: &GpuSlotRequest,
+    ) -> Result<Box<dyn GpuDeviceLease>, GpuSlotRefusal> {
+        let mut lease = self.lease(request, oneiron_base::unix_millis_now())?;
+        // A refused confirmation drops the lease: the GPU goes back.
+        lease.confirm_launch()?;
+        Ok(Box::new(lease))
+    }
+
+    fn reattach(&self, key: &str, device_id: &str) -> Result<(), GpuSlotRefusal> {
+        GpuSlotTable::reattach(self, key, device_id, oneiron_base::unix_millis_now()).map(drop)
+    }
+
+    fn end_check(&self, key: &str) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
+        GpuSlotTable::end_check(self, key)
+    }
+
+    fn finish(&self, key: &str, end: &GpuLeaseEnd) {
+        GpuSlotTable::finish(self, key, end);
+    }
+
+    fn drain(&self, why: &str) {
+        GpuSlotTable::drain(self, why.to_owned());
+    }
+}
+
+impl NodeKeys for super::NodeJobs {
+    fn reserve(&self, peer: EntityId, reserve: JobReserve) -> JobAnswer {
+        super::NodeJobs::reserve(self, peer, reserve)
+    }
+
+    fn release(&self, peer: EntityId, key: &str) -> JobAnswer {
+        super::NodeJobs::release(self, peer, key)
+    }
+
+    fn submit(&self, peer: EntityId, signed: SignedJobSubmit) -> JobAnswer {
+        super::NodeJobs::submit(self, peer, signed)
+    }
+
+    fn swept(&self) -> bool {
+        super::NodeJobs::swept(self)
+    }
+
+    fn epoch(&self) -> Option<String> {
+        super::NodeJobs::epoch(self).map(|epoch| epoch.to_hex())
+    }
+
+    fn booked_disk_mib(&self) -> u64 {
+        super::NodeJobs::booked_disk_mib(self)
+    }
+
+    fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str) {
+        super::NodeJobs::revoke_live_keys(self, issuer, why);
+    }
+
+    fn stop_live_keys(&self) {
+        super::NodeJobs::stop_live_keys(self);
+    }
 }
