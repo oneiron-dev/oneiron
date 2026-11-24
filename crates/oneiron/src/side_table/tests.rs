@@ -476,6 +476,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GENUI_VOICE_GRANT_OFFER",
         "GMAIL_MAILBOX_CURSOR",
         "GPU_ALLOCATION_NODE",
+        "GPU_LINE",
+        "GPU_LINE_PERIOD",
         "HOOKS_TASK_TICK_HOLD",
         "HOUSEKEEPING_SCHEDULE",
         "HOUSEKEEPING_WAKE",

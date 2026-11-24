@@ -1,12 +1,14 @@
 //! The arm reads, `vault.arms.get` and `vault.arms.list`, under the proof
 //! `verb_grant_caller`: the owner reads every arm; an agent whose live owner
-//! Grant lists the verb reads the arms of each line that Grant reaches, and
-//! no other ([`Memory::verb_grant_caller_admits_over_in_txn`]). An arm the
-//! caller may not read answers as one that does not exist.
+//! Grant lists the verb reads the arms of each line that Grant reaches
+//! ([`Memory::verb_grant_caller_admits_over_in_txn`]) and holds a role on
+//! (lead, reviewer or planner; design r2 section 5.1), and no other. An arm
+//! the caller may not read answers as one that does not exist.
 use std::collections::BTreeMap;
 
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
+use crate::gpu_line::{LineRole, doors_caller, line_in_txn};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
@@ -89,8 +91,9 @@ pub fn arm_list_as(
     Ok(ArmList { arms })
 }
 
-/// Whether the admitted caller may read the line of `project`: a refusal of
-/// the line cover hides the line; any other error stands.
+/// Whether the admitted caller may read the line of `project`: the line
+/// cover, then a role on the line. A refusal of either hides the line; any
+/// other error stands. Only the owner reads an arm whose line is gone.
 fn reads_line_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -98,9 +101,25 @@ fn reads_line_in_txn(
     verb: &str,
     project: EntityId,
 ) -> MemoryResult<bool> {
-    match memory.verb_grant_caller_admits_over_in_txn(txn, owner, verb, project) {
-        Ok(_) => Ok(true),
-        Err(error) if error.code == MEMORY_CODE_FORBIDDEN => Ok(false),
-        Err(error) => Err(error),
+    let hidden = |error: MemoryError| {
+        if error.code == MEMORY_CODE_FORBIDDEN {
+            Ok(false)
+        } else {
+            Err(error)
+        }
+    };
+    let caller = match doors_caller::admit_in_txn(memory, txn, owner, verb, project) {
+        Ok(caller) => caller,
+        Err(error) => return hidden(error),
+    };
+    let Some(line) = line_in_txn(memory.vault(), txn, &project)? else {
+        return Ok(caller.owner().is_some());
+    };
+    match caller.require_role(&line, &READ_ROLES, verb) {
+        Ok(()) => Ok(true),
+        Err(error) => hidden(error),
     }
 }
+
+/// The roles that read a line's arms: any of the three.
+const READ_ROLES: [LineRole; 3] = [LineRole::Lead, LineRole::Reviewer, LineRole::Planner];
