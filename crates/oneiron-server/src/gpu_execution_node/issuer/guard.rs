@@ -62,17 +62,16 @@ pub fn count_outcome(vault: &Vault, machine: EntityId, outcome: &MachineJobOutco
 }
 
 /// The refusal a start or a dispatch on `machine` gets while the issuer has drained it, before
-/// any reservation or network call: `machine_drained: <why>`. `None` while it is not drained.
-///
-/// # Errors
-///
-/// A store read failure, as its text.
-pub fn machine_job_guard_refusal(
-    vault: &Vault,
-    machine: EntityId,
-) -> Result<Option<String>, String> {
-    vault
-        .machine_job_drained(machine)
-        .map(|drained| drained.map(|drain| format!("machine_drained: {}", drain.why)))
-        .map_err(|error| error.to_string())
+/// any reservation or network call: `machine_drained: <why>`. A guard the store cannot read
+/// refuses too, as `machine_guard_unreadable`: the brake fails closed. `None` while the machine
+/// is not drained.
+#[must_use]
+pub fn machine_job_guard_refusal(vault: &Vault, machine: EntityId) -> Option<String> {
+    match vault.machine_job_drained(machine) {
+        Ok(drained) => drained.map(|drain| format!("machine_drained: {}", drain.why)),
+        Err(error) => {
+            tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the machine's job guard not read; the dispatch is refused");
+            Some("machine_guard_unreadable".to_owned())
+        }
+    }
 }

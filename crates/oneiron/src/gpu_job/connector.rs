@@ -217,4 +217,20 @@ pub trait GpuJobConnector: Send + Sync {
         let _ = (job, now_ms, step_ms);
         None
     }
+
+    /// Writes off `job`'s current chunk on this backend (pass 33 row R4, door 10): the backend
+    /// closes the chunk's dispatch for good, so nothing is sent for its key again, and answers
+    /// `Ok` once it is closed, also when it already was. A backend refuses a chunk whose end it
+    /// can still confirm. The default refuses: only a backend that runs on one of the vault's
+    /// own machines writes off.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuConnectorError::Refused`] with the reason; a store failure.
+    fn write_off(&self, job: &super::GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
+        let _ = (job, now_ms);
+        Err(GpuConnectorError::Refused {
+            reason: "write_off_not_offered".to_owned(),
+        })
+    }
 }

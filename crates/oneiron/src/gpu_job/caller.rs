@@ -26,17 +26,19 @@ pub enum GpuJobVerb {
     List,
     Cancel,
     Allow,
+    WriteOff,
 }
 
 impl GpuJobVerb {
     /// Every verb, in the order the verb table lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Quote,
         Self::Start,
         Self::Status,
         Self::List,
         Self::Cancel,
         Self::Allow,
+        Self::WriteOff,
     ];
 
     /// The verb's registered name.
@@ -49,6 +51,7 @@ impl GpuJobVerb {
             Self::List => "vault.gpu.jobs.list",
             Self::Cancel => "vault.gpu.jobs.cancel",
             Self::Allow => "vault.gpu.jobs.allow",
+            Self::WriteOff => "vault.gpu.jobs.write_off",
         }
     }
 
@@ -59,10 +62,19 @@ impl GpuJobVerb {
     }
 
     /// Whether only the owner's own proof admits it: setting the per-job
-    /// maximum an agent's Grant carries.
+    /// maximum an agent's Grant carries, and writing off a job's hold.
     #[must_use]
     pub const fn is_owner_act(self) -> bool {
-        matches!(self, Self::Allow)
+        matches!(self, Self::Allow | Self::WriteOff)
+    }
+
+    /// Why an owner act takes the owner's own proof.
+    const fn owner_act_reason(self) -> &'static str {
+        if matches!(self, Self::WriteOff) {
+            "writing off a GPU job's hold is the owner's own act"
+        } else {
+            "setting the GPU job maximum an agent's Grant carries is the owner's own act"
+        }
     }
 
     /// Whether it spends or ends the owner's money, so an agent's call is
@@ -168,10 +180,7 @@ impl Memory<'_> {
             return Ok(());
         }
         if verb.is_owner_act() {
-            return Err(refused(
-                verb,
-                "setting the GPU job maximum an agent's Grant carries is the owner's own act",
-            ));
+            return Err(refused(verb, verb.owner_act_reason()));
         }
         self.gpu_job_agent()
             .grant_in_txn(vault, &txn, verb)

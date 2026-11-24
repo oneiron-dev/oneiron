@@ -9,11 +9,15 @@
 //!   A): a restored issuer cannot spend the same seconds twice. The allocation's side of that
 //!   record is the ledger's ([`UnattributedLedger`]); the orphan row keeps the seconds either way.
 //!
+//! - A key the owner wrote off (door 10) that the node reports ended keeps that receipt on its
+//!   dispatch row, evidence only and never settled, and it counts against the machine's guard.
+//!
 //! Every receipt is checked first: signed by the node it came from, for this issuer and key.
 
 use std::sync::Arc;
 
-use oneiron::job_dispatch::machine_records::{JobOrphan, UnattributedSeconds};
+use oneiron::job_dispatch::machine_records::{JobOrphan, MachineJobOutcome, UnattributedSeconds};
+use oneiron::job_dispatch::{DispatchClose, JobDispatch};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron::{EntityId, Vault};
 
@@ -217,5 +221,44 @@ impl OrphanKeys for JobOrphanKeys {
         if !ran.is_empty() {
             self.ledger.record_node_answer(node, &ran);
         }
+    }
+
+    fn written_off_key(&self, node: EntityId, row: &JobDispatch, entry: &KeyEntry) {
+        if !matches!(
+            row.closed,
+            Some(DispatchClose::WrittenOff {
+                late_receipt: None,
+                ..
+            })
+        ) {
+            return;
+        }
+        let Some(signed) = entry
+            .ended
+            .as_ref()
+            .filter(|signed| self.checked(node, &entry.key, signed))
+        else {
+            return;
+        };
+        let Ok(bytes) = oneiron_organ_protocol::to_vec(signed) else {
+            return;
+        };
+        let kept = self.vault.update_job_dispatch(&row.key, |row| {
+            if let Some(DispatchClose::WrittenOff { late_receipt, .. }) = &mut row.closed {
+                late_receipt.get_or_insert(bytes);
+            }
+        });
+        if let Err(error) = kept {
+            tracing::warn!(node = %node.to_hex(), key = %entry.key, %error, "vault_machine: a receipt after a write-off not kept; kept at the next reconcile");
+            return;
+        }
+        super::guard::count_outcome(
+            &self.vault,
+            node,
+            &MachineJobOutcome::MachineFailure {
+                why: "receipt_after_write_off".to_owned(),
+            },
+            self.clock.now_ms(),
+        );
     }
 }
