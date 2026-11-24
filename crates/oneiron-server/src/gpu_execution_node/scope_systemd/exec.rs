@@ -21,8 +21,14 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::records::{BoundReport, ExecFile, ScopeReport, bound};
-use super::{EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_PIPE_NAME, exec_status, is_job_instance};
+use super::records::{
+    BoundReport, BoundRequirement, ExecFile, PROVED_INSIDE, ScopeBound, ScopeReport,
+    enforced_by_kernel, first_unmet, not_enforced,
+};
+use super::{
+    EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_PIPE_NAME, exec_status,
+    is_job_instance,
+};
 
 /// How long `job-exec` waits for the gate's read end, and then for its go.
 const GATE_WAIT: Duration = Duration::from_secs(45);
@@ -54,31 +60,34 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     let mut proofs = BTreeMap::new();
-    proofs.insert(bound::DEVICE_CLOSURE.to_owned(), prove_device_closure(&exec));
+    proofs.insert(ScopeBound::DeviceClosure, prove_device_closure(&exec));
     let wall = apply_file_wall(&exec);
     let wall_error = wall.as_ref().err().cloned();
     proofs.insert(
-        bound::FILE_WALL.to_owned(),
+        ScopeBound::FileWall,
         match &wall {
             Ok(()) => prove_file_wall(&exec, &exchange),
-            Err(why) => BoundReport::none(format!("Landlock not applied: {why}")),
+            Err(why) => not_enforced(format!("Landlock not applied: {why}")),
         },
     );
-    proofs.insert(bound::NETWORK_CLOSED.to_owned(), prove_network_closed());
-    proofs.insert(bound::PROCESSES_HIDDEN.to_owned(), prove_processes_hidden(&exec));
+    proofs.insert(ScopeBound::NetworkClosed, prove_network_closed());
+    proofs.insert(ScopeBound::ProcessesHidden, prove_processes_hidden(&exec));
     let (memory, write_rate) = prove_cgroup_limits();
-    proofs.insert(bound::MEMORY_CAP.to_owned(), memory);
-    proofs.insert(bound::WRITE_RATE_CAP.to_owned(), write_rate);
-    let refusal = exec
+    proofs.insert(ScopeBound::MemoryCap, memory);
+    proofs.insert(ScopeBound::WriteRateCap, write_rate);
+    let inside: Vec<BoundRequirement> = exec
         .require
         .iter()
-        .find(|name| !proofs.get(name.as_str()).is_some_and(BoundReport::enforced))
-        .map(|name| {
-            let evidence = proofs
-                .get(name.as_str())
-                .map_or("not proved from inside", |proof| proof.evidence.as_str());
-            format!("required_bound_not_proved: {name}: {evidence}")
-        });
+        .copied()
+        .filter(|requirement| PROVED_INSIDE.contains(&requirement.bound))
+        .collect();
+    let unmet = first_unmet(&inside, &proofs);
+    let refusal = unmet.map(|requirement| {
+        let evidence = proofs
+            .get(&requirement.bound)
+            .map_or("not proved from inside", |proof| proof.evidence.as_str());
+        format!("required_bound_not_proved: {requirement}: {evidence}")
+    });
     let report = ScopeReport {
         instance: instance.clone(),
         proofs,
@@ -93,7 +102,8 @@ pub fn run(args: &[String]) -> i32 {
     }
     if let Some(why) = refusal {
         eprintln!("job-exec: refused before the workload: {why}");
-        return if wall_error.is_some() && why.contains(bound::FILE_WALL) {
+        let wall_unmet = unmet.is_some_and(|requirement| requirement.bound == ScopeBound::FileWall);
+        return if wall_error.is_some() && wall_unmet {
             exec_status::FILE_WALL
         } else {
             exec_status::REQUIRED_BOUND
@@ -162,20 +172,26 @@ fn open_raw(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
 fn prove_device_closure(exec: &ExecFile) -> BoundReport {
     for path in &exec.devices_allowed {
         if let Err(error) = open_raw(path, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
-            return BoundReport::none(format!("the leased device {} does not open: {error}", path.display()));
+            return not_enforced(format!(
+                "the leased device {} does not open: {error}",
+                path.display()
+            ));
         }
     }
     let Some(other) = exec.devices_denied.first() else {
-        return BoundReport::kernel("DevicePolicy=closed; no other device exists here to try");
+        return enforced_by_kernel("DevicePolicy=closed; no other device exists here to try");
     };
     match open_raw(other, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
-        Ok(_) => BoundReport::none(format!("{} opened: the device policy did not apply", other.display())),
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) => BoundReport::kernel(format!(
+        Ok(_) => not_enforced(format!(
+            "{} opened: the device policy did not apply",
+            other.display()
+        )),
+        Err(error) if error.raw_os_error() == Some(libc::EPERM) => enforced_by_kernel(format!(
             "{} refused by the device policy (EPERM); {} leased device(s) open",
             other.display(),
             exec.devices_allowed.len()
         )),
-        Err(error) => BoundReport::none(format!(
+        Err(error) => not_enforced(format!(
             "{} failed with {error}, not the device policy's EPERM",
             other.display()
         )),
@@ -203,22 +219,24 @@ fn prove_file_wall(exec: &ExecFile, exchange: &Path) -> BoundReport {
         Ok(_) => {
             let _ = std::fs::remove_file(&out_probe);
         }
-        Err(error) => return BoundReport::none(format!("out/ is not writable: {error}")),
+        Err(error) => return not_enforced(format!("out/ is not writable: {error}")),
     }
     let outside = Path::new("/tmp/.oneiron-wall-probe");
     if std::fs::File::create(outside).is_ok() {
         let _ = std::fs::remove_file(outside);
-        return BoundReport::none("/tmp was writable: the wall did not apply".to_owned());
+        return not_enforced("/tmp was writable: the wall did not apply".to_owned());
     }
     if std::fs::read(exchange.join(EXEC_FILE_NAME)).is_ok() {
-        return BoundReport::none("the exchange directory was readable: the wall did not apply".to_owned());
+        return not_enforced(
+            "the exchange directory was readable: the wall did not apply".to_owned(),
+        );
     }
     for path in &exec.protected {
         if open_raw(path, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC).is_ok() {
-            return BoundReport::none(format!("{} opened", path.display()));
+            return not_enforced(format!("{} opened", path.display()));
         }
     }
-    BoundReport::kernel(format!(
+    enforced_by_kernel(format!(
         "Landlock ABI {}: /tmp and the exchange directory refused; {} protected path(s) refused",
         oneiron_container::landlock_abi(),
         exec.protected.len()
@@ -230,7 +248,7 @@ fn prove_file_wall(exec: &ExecFile, exchange: &Path) -> BoundReport {
 fn prove_network_closed() -> BoundReport {
     let text = match std::fs::read_to_string("/proc/net/dev") {
         Ok(text) => text,
-        Err(error) => return BoundReport::none(format!("/proc/net/dev unreadable: {error}")),
+        Err(error) => return not_enforced(format!("/proc/net/dev unreadable: {error}")),
     };
     let interfaces: Vec<&str> = text
         .lines()
@@ -239,9 +257,9 @@ fn prove_network_closed() -> BoundReport {
         .map(str::trim)
         .collect();
     if interfaces == ["lo"] {
-        BoundReport::kernel("a private network namespace: only lo")
+        enforced_by_kernel("a private network namespace: only lo")
     } else {
-        BoundReport::none(format!("interfaces {}", interfaces.join(" ")))
+        not_enforced(format!("interfaces {}", interfaces.join(" ")))
     }
 }
 
@@ -249,10 +267,10 @@ fn prove_network_closed() -> BoundReport {
 fn prove_processes_hidden(exec: &ExecFile) -> BoundReport {
     for pid in &exec.hidden_pids {
         if Path::new("/proc").join(pid.to_string()).exists() {
-            return BoundReport::none(format!("process {pid} is visible under /proc"));
+            return not_enforced(format!("process {pid} is visible under /proc"));
         }
     }
-    BoundReport::kernel(format!(
+    enforced_by_kernel(format!(
         "ProtectProc=invisible: {} process(es) of root and the engine are not visible",
         exec.hidden_pids.len()
     ))
@@ -262,23 +280,23 @@ fn prove_processes_hidden(exec: &ExecFile) -> BoundReport {
 /// `io.max`.
 fn prove_cgroup_limits() -> (BoundReport, BoundReport) {
     let Some(group) = own_cgroup() else {
-        let none = || BoundReport::none("this process's cgroup v2 group is unknown");
+        let none = || not_enforced("this process's cgroup v2 group is unknown");
         return (none(), none());
     };
     let read = |name: &str| std::fs::read_to_string(group.join(name)).ok();
     let memory = match read("memory.max").map(|text| text.trim().to_owned()) {
         Some(value) if value != "max" && value.parse::<u64>().is_ok() => {
-            BoundReport::kernel(format!("memory.max {value}"))
+            enforced_by_kernel(format!("memory.max {value}"))
         }
-        Some(value) => BoundReport::none(format!("memory.max {value}")),
-        None => BoundReport::none("memory.max unreadable"),
+        Some(value) => not_enforced(format!("memory.max {value}")),
+        None => not_enforced("memory.max unreadable"),
     };
     let write_rate = match read("io.max") {
         Some(text) if text.contains("wbps=") && !text.contains("wbps=max") => {
-            BoundReport::kernel(format!("io.max {}", text.trim()))
+            enforced_by_kernel(format!("io.max {}", text.trim()))
         }
-        Some(text) => BoundReport::none(format!("io.max has no write rate: {:?}", text.trim())),
-        None => BoundReport::none("io.max unreadable"),
+        Some(text) => not_enforced(format!("io.max has no write rate: {:?}", text.trim())),
+        None => not_enforced("io.max unreadable"),
     };
     (memory, write_rate)
 }

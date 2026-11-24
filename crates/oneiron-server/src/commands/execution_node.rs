@@ -220,11 +220,13 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
     // The job unit (row R3b): each bound's strength, proved in a probe unit
     // when run as root.
     #[cfg(target_os = "linux")]
-    refusals.extend(crate::gpu_execution_node::scope_systemd::probe_unit::check_scope(
-        &file, &settings,
-    ));
+    refusals.extend(
+        crate::gpu_execution_node::scope_systemd::probe_unit::check_scope(&file, &settings),
+    );
     #[cfg(not(target_os = "linux"))]
-    refusals.push("this platform has no job scope yet (pass 34: the systemd scope is Linux's)".to_owned());
+    refusals.push(
+        "this platform has no job scope yet (pass 34: the systemd scope is Linux's)".to_owned(),
+    );
     if refusals.is_empty() {
         println!(
             "would refuse a job: nothing here (the issuer's grants are checked at each request)"

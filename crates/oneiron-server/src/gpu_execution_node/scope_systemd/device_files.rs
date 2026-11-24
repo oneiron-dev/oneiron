@@ -62,9 +62,9 @@ pub fn files_denied(
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let is_card = name
-                .strip_prefix("nvidia")
-                .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()));
+            let is_card = name.strip_prefix("nvidia").is_some_and(|rest| {
+                !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit())
+            });
             let path = entry.path();
             if is_card && !allowed.contains(&path) {
                 denied.push(path);

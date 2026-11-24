@@ -140,7 +140,10 @@ impl StepContext {
     /// # Errors
     ///
     /// It exists and does not read or parse.
-    pub fn read_record<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<Option<T>, String> {
+    pub fn read_record<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+    ) -> Result<Option<T>, String> {
         // A record root wrote is root-owned; one the engine put in its place
         // is not root's and is refused.
         let Some(bytes) =

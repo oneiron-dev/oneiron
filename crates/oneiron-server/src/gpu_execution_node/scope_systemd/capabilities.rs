@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::jobs::ScopeCapabilities;
-use super::records::{BoundReport, bound};
+use super::records::{
+    BoundReport, ScopeBound, ScopeCapabilities, enforced_by_kernel, is_enforced, not_enforced,
+    scope_capabilities,
+};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::{CHECK_REPORT_SUFFIX, POLKIT_RULE_PATH, UNIT_TEMPLATE_PATH};
 
@@ -66,7 +68,7 @@ pub struct CheckReport {
     pub at_ms: u64,
     pub facts: KernelFacts,
     /// Each bound the probe unit proved or failed from inside.
-    pub proofs: BTreeMap<String, BoundReport>,
+    pub proofs: BTreeMap<ScopeBound, BoundReport>,
     /// Why the probe unit did not report, when it did not.
     pub probe_failure: Option<String>,
 }
@@ -81,7 +83,7 @@ pub fn check_report_path(node_file: &Path) -> PathBuf {
 
 /// The machine's capability report for jobs (pass 34, 2.2).
 #[must_use]
-pub fn report(node_file: &Path) -> BTreeMap<String, BoundReport> {
+pub fn report(node_file: &Path) -> ScopeCapabilities {
     let facts = kernel_facts();
     let boot = super::safe_fs::boot_id();
     let probed = std::fs::read(check_report_path(node_file))
@@ -93,50 +95,51 @@ pub fn report(node_file: &Path) -> BTreeMap<String, BoundReport> {
 
 /// The capability report from the facts and, when there is one from this
 /// boot, the probe's proofs: a proof from inside wins over what the
-/// configuration promises.
+/// configuration promises. The minimum contract (tree kill, the cutoff with
+/// the engine stopped, emptiness) holds only after a probe unit of this
+/// installation started, reported and stopped on this boot.
 #[must_use]
-pub fn capabilities_of(
-    facts: &KernelFacts,
-    probed: Option<&CheckReport>,
-) -> BTreeMap<String, BoundReport> {
+pub fn capabilities_of(facts: &KernelFacts, probed: Option<&CheckReport>) -> ScopeCapabilities {
     let manager = facts.systemd_is_init && facts.systemd_version.is_some();
     let unified = !facts.cgroup_controllers.is_empty();
     let installed = manager && unified && facts.unit_installed;
+    let probe_ran = probed.is_some_and(|report| report.probe_failure.is_none());
+    let contract = installed && probe_ran;
     let has = |controller: &str| facts.cgroup_controllers.contains(controller);
     let promise = |holds: bool, yes: &str, no: &str| {
         if holds {
-            BoundReport::kernel(yes)
+            enforced_by_kernel(yes)
         } else {
-            BoundReport::none(no)
+            not_enforced(no)
         }
     };
     let mut out = BTreeMap::new();
     out.insert(
-        bound::TREE_KILL.to_owned(),
+        ScopeBound::TreeKill,
         promise(
-            installed,
-            "the unit's cgroup, KillMode=control-group",
-            "needs systemd as process 1, cgroup v2 and `execution-node install`",
+            contract,
+            "the unit's cgroup, KillMode=control-group; this boot's probe unit stopped",
+            "needs systemd as process 1, cgroup v2, `execution-node install` and a passing `execution-node check` on this boot",
         ),
     );
     out.insert(
-        bound::CUTOFF_WITHOUT_ENGINE.to_owned(),
+        ScopeBound::CutoffWithoutEngine,
         promise(
-            installed,
+            contract,
             "a timer unit of the service manager that the engine's account cannot stop",
-            "needs systemd as process 1 and `execution-node install`",
+            "needs systemd as process 1, `execution-node install` and a passing `execution-node check` on this boot",
         ),
     );
     out.insert(
-        bound::EMPTINESS.to_owned(),
+        ScopeBound::Emptiness,
         promise(
-            installed,
+            contract,
             "cgroup v2 cgroup.events populated",
-            "needs cgroup v2 and `execution-node install`",
+            "needs cgroup v2, `execution-node install` and a passing `execution-node check` on this boot",
         ),
     );
     out.insert(
-        bound::MEMORY_CAP.to_owned(),
+        ScopeBound::MemoryCap,
         promise(
             installed && has("memory"),
             "MemoryMax= on the unit's cgroup, no swap",
@@ -144,11 +147,11 @@ pub fn capabilities_of(
         ),
     );
     out.insert(
-        bound::CPU_CAP.to_owned(),
-        BoundReport::none("this scope sets no CPU cap yet"),
+        ScopeBound::CpuCap,
+        not_enforced("this scope sets no CPU cap yet"),
     );
     out.insert(
-        bound::FILE_WALL.to_owned(),
+        ScopeBound::FileWall,
         promise(
             installed && facts.landlock_abi >= 3,
             "ProtectSystem=strict, InaccessiblePaths= and Landlock",
@@ -156,7 +159,7 @@ pub fn capabilities_of(
         ),
     );
     out.insert(
-        bound::NETWORK_CLOSED.to_owned(),
+        ScopeBound::NetworkClosed,
         promise(
             installed,
             "PrivateNetwork=yes",
@@ -164,7 +167,7 @@ pub fn capabilities_of(
         ),
     );
     out.insert(
-        bound::DEVICE_CLOSURE.to_owned(),
+        ScopeBound::DeviceClosure,
         promise(
             installed,
             "DevicePolicy=closed with DeviceAllow= per claim",
@@ -172,7 +175,7 @@ pub fn capabilities_of(
         ),
     );
     out.insert(
-        bound::PROCESSES_HIDDEN.to_owned(),
+        ScopeBound::ProcessesHidden,
         promise(
             installed,
             "ProtectProc=invisible under the job's own account",
@@ -180,7 +183,7 @@ pub fn capabilities_of(
         ),
     );
     out.insert(
-        bound::WRITE_RATE_CAP.to_owned(),
+        ScopeBound::WriteRateCap,
         promise(
             installed && has("io"),
             "IOWriteBandwidthMax= on the payload device",
@@ -188,47 +191,17 @@ pub fn capabilities_of(
         ),
     );
     if let Some(report) = probed {
-        for (name, proof) in &report.proofs {
-            if let Some(slot) = out.get_mut(name) {
-                if !proof.enforced() || slot.enforced() {
+        for (bound, proof) in &report.proofs {
+            if let Some(slot) = out.get_mut(bound) {
+                if !is_enforced(proof) || is_enforced(slot) {
                     *slot = proof.clone();
                 }
             }
         }
     }
-    out
-}
-
-/// R3a's [`ScopeCapabilities`] from the report by name; a bound the report
-/// lacks is `none`.
-#[must_use]
-pub fn scope_capabilities(report: &BTreeMap<String, BoundReport>) -> ScopeCapabilities {
-    let get = |name: &str| {
-        report
-            .get(name)
+    scope_capabilities(|bound| {
+        out.get(&bound)
             .cloned()
-            .unwrap_or_else(|| BoundReport::none("not reported"))
-    };
-    ScopeCapabilities {
-        tree_kill: get(bound::TREE_KILL),
-        cutoff_without_engine: get(bound::CUTOFF_WITHOUT_ENGINE),
-        emptiness: get(bound::EMPTINESS),
-        memory_cap: get(bound::MEMORY_CAP),
-        cpu_cap: get(bound::CPU_CAP),
-        file_wall: get(bound::FILE_WALL),
-        network_closed: get(bound::NETWORK_CLOSED),
-        device_closure: get(bound::DEVICE_CLOSURE),
-        processes_hidden: get(bound::PROCESSES_HIDDEN),
-        write_rate_cap: get(bound::WRITE_RATE_CAP),
-    }
-}
-
-/// Whether a machine meets the minimum contract (pass 34, I4 and I5): tree
-/// kill, a cutoff with the engine stopped, and emptiness. One that does not
-/// offers no jobs.
-#[must_use]
-pub fn meets_minimum_contract(capabilities: &BTreeMap<String, BoundReport>) -> bool {
-    bound::MINIMUM_CONTRACT
-        .iter()
-        .all(|name| capabilities.get(*name).is_some_and(BoundReport::enforced))
+            .unwrap_or_else(|| not_enforced("not reported"))
+    })
 }

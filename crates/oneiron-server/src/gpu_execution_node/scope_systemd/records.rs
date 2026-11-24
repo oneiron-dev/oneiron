@@ -9,66 +9,67 @@
 //!   and `cutoff.json` ([`CutoffMark`]): root's records in the key's control
 //!   directory, which the end step and the engine read.
 //!
-//! A bound is named as pass 34 names it (section 2.2, R3a's
-//! [`ScopeCapabilities`](super::super::jobs::ScopeCapabilities)), with R3a's
-//! [`BoundReport`] for its strength and evidence.
+//! A bound is G1's [`ScopeBound`] (pass 34, section 2.2), and each report is
+//! G1's [`BoundReport`]: its [`BoundStrength`] and one line of evidence.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub use super::super::jobs::{BoundReport, Strength};
 use super::super::wire::{ScopeClass, ScopeFacts};
+pub use oneiron::job_workload::{
+    BoundReport, BoundRequirement, BoundStrength, ScopeBound, ScopeCapabilities,
+};
 
-/// The bounds a scope reports, by pass 34's names (section 2.2).
-pub mod bound {
-    /// The whole process tree is killed (the minimum contract).
-    pub const TREE_KILL: &str = "tree_kill";
-    /// The cutoff holds with the engine stopped (the minimum contract).
-    pub const CUTOFF_WITHOUT_ENGINE: &str = "cutoff_without_engine";
-    /// The node knows when the tree is empty (the minimum contract).
-    pub const EMPTINESS: &str = "emptiness";
-    pub const MEMORY_CAP: &str = "memory_cap";
-    pub const CPU_CAP: &str = "cpu_cap";
-    pub const FILE_WALL: &str = "file_wall";
-    pub const NETWORK_CLOSED: &str = "network_closed";
-    pub const DEVICE_CLOSURE: &str = "device_closure";
-    pub const PROCESSES_HIDDEN: &str = "processes_hidden";
-    pub const WRITE_RATE_CAP: &str = "write_rate_cap";
+/// The bounds `job-exec` proves from inside the unit before the workload
+/// exists; the prepare step (root) judges every other bound from the unit's
+/// effective properties.
+pub const PROVED_INSIDE: [ScopeBound; 6] = [
+    ScopeBound::DeviceClosure,
+    ScopeBound::FileWall,
+    ScopeBound::NetworkClosed,
+    ScopeBound::ProcessesHidden,
+    ScopeBound::MemoryCap,
+    ScopeBound::WriteRateCap,
+];
 
-    /// The three bounds without which a machine offers no jobs (pass 34,
-    /// invariants I4 and I5).
-    pub const MINIMUM_CONTRACT: [&str; 3] = [TREE_KILL, CUTOFF_WITHOUT_ENGINE, EMPTINESS];
-
-    /// Every bound, in report order: the node file's list, which a
-    /// template's `require` is checked against.
-    pub use crate::gpu_execution_node::node_settings::SCOPE_BOUND_NAMES as ALL;
-
-    /// The bounds a template requires when it names none (pass 34, 2.2):
-    /// the two that keep a workload out of the vault and off the network.
-    pub use crate::gpu_execution_node::node_settings::REQUIRED_BOUNDS_DEFAULT as REQUIRED_DEFAULT;
+/// A bound the kernel enforces with no process of ours alive.
+#[must_use]
+pub fn enforced_by_kernel(evidence: impl Into<String>) -> BoundReport {
+    BoundReport {
+        strength: BoundStrength::Kernel,
+        evidence: evidence.into(),
+    }
 }
 
-/// R3a's bound report (pass 34, 2.2), made here with one line of evidence.
-impl BoundReport {
-    /// A bound the kernel enforces with no process of ours alive.
-    #[must_use]
-    pub fn kernel(evidence: impl Into<String>) -> Self {
-        Self {
-            strength: Strength::Kernel,
-            evidence: evidence.into(),
-        }
+/// A bound nothing enforces or proved.
+#[must_use]
+pub fn not_enforced(evidence: impl Into<String>) -> BoundReport {
+    BoundReport {
+        strength: BoundStrength::None,
+        evidence: evidence.into(),
     }
+}
 
-    /// A bound nothing enforces or proved.
-    #[must_use]
-    pub fn none(evidence: impl Into<String>) -> Self {
-        Self {
-            strength: Strength::None,
-            evidence: evidence.into(),
-        }
-    }
+/// Whether `report` gives its bound at all (kernel or supervised).
+#[must_use]
+pub fn is_enforced(report: &BoundReport) -> bool {
+    report.strength.is_enforced()
+}
+
+/// The first of `required` that `proofs` does not give at the strength it
+/// asks (a `:kernel` requirement needs the kernel's), in its written form.
+#[must_use]
+pub fn first_unmet(
+    required: &[BoundRequirement],
+    proofs: &BTreeMap<ScopeBound, BoundReport>,
+) -> Option<BoundRequirement> {
+    required.iter().copied().find(|requirement| {
+        !proofs
+            .get(&requirement.bound)
+            .is_some_and(|report| requirement.is_met_by(report.strength))
+    })
 }
 
 /// `job-exec`'s whole input, written by the prepare step (root) and readable
@@ -107,15 +108,15 @@ pub struct ExecFile {
     /// Processes the job must not see: process 1 and the engine's.
     pub hidden_pids: Vec<u32>,
     /// The bounds the template requires (pass 34, 2.2).
-    pub require: Vec<String>,
+    pub require: Vec<BoundRequirement>,
 }
 
 /// What `job-exec` proved from inside the unit, before the workload exists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeReport {
     pub instance: String,
-    /// Each bound `job-exec` can prove from inside, by name.
-    pub proofs: BTreeMap<String, BoundReport>,
+    /// Each bound `job-exec` can prove from inside.
+    pub proofs: BTreeMap<ScopeBound, BoundReport>,
     /// The first required bound that is not proved, or the wall that could
     /// not be applied; `None` when the workload may start.
     pub refusal: Option<String>,
@@ -141,7 +142,11 @@ pub struct PreparedRecord {
     /// The sleep inhibitor's unit, when the step started one.
     pub awake_unit: Option<String>,
     /// Each bound as the effective unit properties and this kernel give it.
-    pub configured: BTreeMap<String, BoundReport>,
+    pub configured: BTreeMap<ScopeBound, BoundReport>,
+    /// The bounds the template required (pass 34, 2.2).
+    pub required: Vec<BoundRequirement>,
+    /// The inner file wall: `read <path>` and `write <path>`, one per path.
+    pub fence: Vec<String>,
 }
 
 /// The cutoff timer the prepare step armed.
@@ -176,26 +181,19 @@ pub struct CutoffMark {
     pub fired_boot_ns: u64,
 }
 
-/// The receipt's scope facts for one key, from the root records: the bounds
-/// the template required as `job-exec` proved them inside the unit, the rest
-/// as the unit's effective properties gave them, each with its strength
-/// (`fence` lists `<bound>=<strength>` for every bound; a bound proved only
-/// by configuration says `configured`).
+/// The receipt's scope facts for one key, from the root records: each bound
+/// as `job-exec` proved it inside the unit before the workload existed, else
+/// as the unit's effective properties gave it, else at none (unproven).
 #[must_use]
 pub fn scope_facts(prepared: &PreparedRecord, scope: Option<&ScopeRecord>) -> ScopeFacts {
     let proved = scope.and_then(|record| record.report.as_ref());
-    let mut fence = Vec::new();
-    for name in bound::ALL {
-        let inside = proved.and_then(|report| report.proofs.get(name));
-        let line = match (inside, prepared.configured.get(name)) {
-            (Some(proof), _) => format!("{name}={}", strength_word(&proof.strength)),
-            (None, Some(proof)) if proof.enforced() => {
-                format!("{name}={} configured", strength_word(&proof.strength))
-            }
-            _ => format!("{name}=none"),
-        };
-        fence.push(line);
-    }
+    let report = |bound: ScopeBound| -> BoundReport {
+        proved
+            .and_then(|report| report.proofs.get(&bound))
+            .or_else(|| prepared.configured.get(&bound))
+            .cloned()
+            .unwrap_or_else(|| not_enforced("not reported"))
+    };
     let namespaces = ["mount", "network", "ipc"]
         .into_iter()
         .map(str::to_owned)
@@ -205,14 +203,25 @@ pub fn scope_facts(prepared: &PreparedRecord, scope: Option<&ScopeRecord>) -> Sc
         account: prepared.account.clone(),
         devices: prepared.devices.clone(),
         namespaces,
-        fence,
+        fence: prepared.fence.clone(),
+        required: prepared.required.clone(),
+        bounds: scope_capabilities(report),
     }
 }
 
-fn strength_word(strength: &Strength) -> &'static str {
-    match strength {
-        Strength::Kernel => "kernel",
-        Strength::Supervised { .. } => "supervised",
-        Strength::None => "none",
+/// G1's [`ScopeCapabilities`], one report per bound from `report`.
+#[must_use]
+pub fn scope_capabilities(report: impl Fn(ScopeBound) -> BoundReport) -> ScopeCapabilities {
+    ScopeCapabilities {
+        tree_kill: report(ScopeBound::TreeKill),
+        cutoff_without_engine: report(ScopeBound::CutoffWithoutEngine),
+        emptiness: report(ScopeBound::Emptiness),
+        memory_cap: report(ScopeBound::MemoryCap),
+        cpu_cap: report(ScopeBound::CpuCap),
+        file_wall: report(ScopeBound::FileWall),
+        network_closed: report(ScopeBound::NetworkClosed),
+        device_closure: report(ScopeBound::DeviceClosure),
+        processes_hidden: report(ScopeBound::ProcessesHidden),
+        write_rate_cap: report(ScopeBound::WriteRateCap),
     }
 }

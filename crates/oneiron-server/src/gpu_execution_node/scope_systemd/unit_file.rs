@@ -170,10 +170,9 @@ pub fn unit_path_word(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
         return Err(format!("{text}: the unit file needs an absolute path"));
     }
-    if text
-        .chars()
-        .any(|ch| ch.is_whitespace() || ch.is_control() || matches!(ch, '"' | '\'' | '\\' | '%' | ';'))
-    {
+    if text.chars().any(|ch| {
+        ch.is_whitespace() || ch.is_control() || matches!(ch, '"' | '\'' | '\\' | '%' | ';')
+    }) {
         return Err(format!(
             "{text}: the unit file cannot hold a path with a space, a quote, a backslash, '%' or ';'"
         ));
@@ -186,9 +185,9 @@ pub fn unit_path_word(path: &Path) -> Result<(), String> {
 pub fn plain_account(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 32
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_'))
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
         && !name.starts_with('-')
 }
 

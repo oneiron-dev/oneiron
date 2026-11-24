@@ -30,7 +30,8 @@ fn c_name(name: &OsStr) -> io::Result<CString> {
             "a name beneath a directory is one path segment",
         ));
     }
-    CString::new(name.as_bytes()).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+    CString::new(name.as_bytes())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
 
 fn owned(fd: libc::c_int) -> io::Result<OwnedFd> {
@@ -343,7 +344,11 @@ pub fn require_root_owned(path: &Path) -> Result<(), String> {
             return Err(format!("{}: a link; give the real path", step.display()));
         }
         if meta.uid() != 0 {
-            return Err(format!("{}: owned by uid {}, not root", step.display(), meta.uid()));
+            return Err(format!(
+                "{}: owned by uid {}, not root",
+                step.display(),
+                meta.uid()
+            ));
         }
         if meta.mode() & 0o022 != 0 && !(meta.is_dir() && meta.mode() & 0o1000 != 0) {
             return Err(format!(
@@ -363,7 +368,8 @@ pub fn require_root_owned(path: &Path) -> Result<(), String> {
 ///
 /// No such account, or the lookup failed.
 pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
-    let c = CString::new(name).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let c =
+        CString::new(name).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
     let mut buffer = vec![0_u8; 16 * 1024];
     let mut found: *mut libc::passwd = std::ptr::null_mut();

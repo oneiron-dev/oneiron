@@ -10,6 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::super::jobs::{EndRecord, JobKeyId, LaunchFile};
+use super::prepare::CUTOFF_MARGIN_MS;
 use super::records::{CutoffMark, PreparedRecord, ScopeRecord};
 use super::safe_fs::{self, boot_id, boot_ns, borrow, open_dir_path, read_beneath};
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
@@ -37,8 +38,13 @@ pub fn run(args: StepArgs) -> i32 {
         }
     };
     // One end record per key: a second run of the unit keeps the first.
-    if read_beneath(borrow(&context.control), END_RECORD, RECORD_MAX_BYTES, Some(0))
-        .is_ok_and(|found| found.is_some())
+    if read_beneath(
+        borrow(&context.control),
+        END_RECORD,
+        RECORD_MAX_BYTES,
+        Some(0),
+    )
+    .is_ok_and(|found| found.is_some())
     {
         eprintln!("job-ended: {} has its end record already", context.unit());
         disarm(&context);
@@ -62,12 +68,24 @@ pub fn run(args: StepArgs) -> i32 {
 }
 
 fn end_record(context: &StepContext) -> EndRecord {
+    // Root's records only count for this unit's own instance: a record moved
+    // in from another key's control directory is no record.
+    let instance = context.args.instance.as_str();
     let prepared = context
         .read_record::<PreparedRecord>(PREPARED_FILE_NAME)
         .ok()
-        .flatten();
-    let scope = context.read_record::<ScopeRecord>(SCOPE_FILE_NAME).ok().flatten();
-    let cutoff = context.read_record::<CutoffMark>(CUTOFF_FILE_NAME).ok().flatten();
+        .flatten()
+        .filter(|record| record.instance == instance);
+    let scope = context
+        .read_record::<ScopeRecord>(SCOPE_FILE_NAME)
+        .ok()
+        .flatten()
+        .filter(|record| record.instance == instance);
+    let cutoff = context
+        .read_record::<CutoffMark>(CUTOFF_FILE_NAME)
+        .ok()
+        .flatten()
+        .filter(|record| record.instance == instance);
     let key = prepared
         .as_ref()
         .map(|record| record.key.clone())
@@ -92,14 +110,26 @@ fn end_record(context: &StepContext) -> EndRecord {
             })
             .unwrap_or_else(|| format!("unit: {service_result}"))
     });
+    // The cutoff ended the run when its mark is there, or when the unit ended
+    // at or past the time the cutoff timer fires (the mark is written after
+    // the stop, so it may come later than this step). The service manager's
+    // `timeout` alone says nothing: it is also a stop grace that ran out.
+    let end_boot_ns = boot_ns();
+    let cutoff_time_reached = prepared
+        .as_ref()
+        .and_then(|record| record.cutoff.as_ref())
+        .is_some_and(|plan| {
+            end_boot_ns.saturating_add(CUTOFF_MARGIN_MS.saturating_mul(1_000_000))
+                >= plan.stop_at_boot_ns
+        });
     EndRecord {
         key,
         service_result,
         exit_code,
         exit_status,
         boot_id: boot_id(),
-        end_boot_ns: boot_ns(),
-        cutoff_fired: cutoff.is_some(),
+        end_boot_ns,
+        cutoff_fired: cutoff.is_some() || (workload_started && cutoff_time_reached),
         workload_started,
         cgroup_empty: cgroup_empty_but_self(&context.unit()),
         refusal,
@@ -108,8 +138,13 @@ fn end_record(context: &StepContext) -> EndRecord {
 
 /// The key `launch.json` names, when it hashes to this unit's instance.
 fn launch_key(context: &StepContext) -> Option<String> {
-    let bytes = read_beneath(borrow(&context.control), "launch.json", RECORD_MAX_BYTES, None)
-        .ok()??;
+    let bytes = read_beneath(
+        borrow(&context.control),
+        "launch.json",
+        RECORD_MAX_BYTES,
+        None,
+    )
+    .ok()??;
     let launch: LaunchFile = serde_json::from_slice(&bytes).ok()?;
     (JobKeyId::for_key(&launch.key).as_str() == context.args.instance).then_some(launch.key)
 }
@@ -164,7 +199,11 @@ fn others_in(dir: &Path, me: u32) -> Option<usize> {
 /// job's exchange directory.
 fn disarm(context: &StepContext) {
     let timer = format!("{CUTOFF_UNIT_PREFIX}{}.timer", context.args.instance);
-    let _ = run_tool("systemctl", &["stop", "--no-block", &timer], SYSTEMCTL_TIMEOUT);
+    let _ = run_tool(
+        "systemctl",
+        &["stop", "--no-block", &timer],
+        SYSTEMCTL_TIMEOUT,
+    );
     let exchange = Path::new(EXCHANGE_ROOT).join(&context.args.instance);
     if let Ok(dir) = open_dir_path(&exchange) {
         for name in [EXEC_FILE_NAME, REPORT_PIPE_NAME, GO_PIPE_NAME] {

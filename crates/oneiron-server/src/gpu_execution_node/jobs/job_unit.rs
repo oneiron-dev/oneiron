@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::gpu_execution_node::wire::ScopeFacts;
 use oneiron::job_workload::{BoundRequirement, DeviceLease, ScopeBound, ScopeCapabilities};
 
 /// The name every job unit instance starts with.
@@ -196,6 +197,14 @@ pub trait JobUnit: Send + Sync {
     fn renew(&self, unit: &JobKeyId, cutoff_boot_ns: u64) -> Result<(), RenewRefusal> {
         let _ = (unit, cutoff_boot_ns);
         Err(RenewRefusal::Unsupported)
+    }
+
+    /// What the key's scope proved for its run (pass 34, 2.2): the receipt's
+    /// `scope`. `None` when the unit never prepared, or the scope keeps no
+    /// record of it.
+    fn scope_facts(&self, unit: &JobKeyId) -> Option<ScopeFacts> {
+        let _ = unit;
+        None
     }
 
     /// Asks the service manager to start the key's unit. It returns once the

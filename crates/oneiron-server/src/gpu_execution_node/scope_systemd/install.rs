@@ -85,9 +85,14 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         stop_grace_secs: settings.stop_grace_secs,
         start_timeout_secs: settings.unit_start_timeout_secs,
     };
-    for path in [&inputs.binary, &inputs.node_file, &inputs.state_dir, &inputs.work_dir]
-        .into_iter()
-        .chain(inputs.protected.iter())
+    for path in [
+        &inputs.binary,
+        &inputs.node_file,
+        &inputs.state_dir,
+        &inputs.work_dir,
+    ]
+    .into_iter()
+    .chain(inputs.protected.iter())
     {
         unit_path_word(path)?;
     }
@@ -106,7 +111,12 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     }
     ensure_job_account(&settings.job_account)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
-    ensure_dir(&inputs.state_dir.join("control"), engine_uid, engine_gid, 0o700)?;
+    ensure_dir(
+        &inputs.state_dir.join("control"),
+        engine_uid,
+        engine_gid,
+        0o700,
+    )?;
     ensure_dir(&inputs.work_dir, engine_uid, engine_gid, 0o755)?;
     let unit_changed = write_if_changed(Path::new(UNIT_TEMPLATE_PATH), &unit)?;
     let rule_changed = write_if_changed(Path::new(POLKIT_RULE_PATH), &rule)?;
@@ -177,7 +187,8 @@ fn ensure_dir(path: &Path, uid: u32, gid: u32, mode: u32) -> Result<(), String> 
         }
         Ok(_) => Err(format!("{}: not a directory", path.display())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir_all(path).map_err(|error| format!("{}: {error}", path.display()))?;
+            std::fs::create_dir_all(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
             std::os::unix::fs::chown(path, Some(uid), Some(gid))
                 .map_err(|error| format!("{}: {error}", path.display()))?;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))

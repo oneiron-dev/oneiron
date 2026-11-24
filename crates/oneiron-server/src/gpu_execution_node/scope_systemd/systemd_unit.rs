@@ -9,11 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::super::jobs::{
-    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, ScopeCapabilities,
-};
+use super::super::jobs::{JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus};
+use super::super::wire::ScopeFacts;
 use super::capabilities;
-use super::records::BoundReport;
+use super::records::{PreparedRecord, ScopeCapabilities, ScopeRecord, scope_facts};
+use super::step::RECORD_MAX_BYTES;
+use super::{PREPARED_FILE_NAME, SCOPE_FILE_NAME};
 
 /// How long one `systemctl` call may take before it counts as no answer.
 pub const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -54,6 +55,10 @@ pub fn run_tool(name: &str, args: &[&str], timeout: Duration) -> Result<String, 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("{name}: {error}"))?;
+    // Both pipes are read while the tool runs, so a long answer never blocks
+    // it on a full pipe.
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -61,20 +66,19 @@ pub fn run_tool(name: &str, args: &[&str], timeout: Duration) -> Result<String, 
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("{name} {}: no answer in {timeout:?}", args.join(" ")));
+                return Err(format!(
+                    "{name} {}: no answer in {timeout:?}",
+                    args.join(" ")
+                ));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(error) => return Err(format!("{name}: {error}")),
         }
     };
-    let mut out = String::new();
-    let mut err = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut out);
-    }
-    if let Some(mut stderr) = child.stderr.take() {
-        let _ = stderr.read_to_string(&mut err);
-    }
+    // A process the tool left behind may hold a pipe open: its reader is
+    // given a moment, not the rest of the timeout.
+    let out = out.recv_timeout(PIPE_DRAIN_WAIT).unwrap_or_default();
+    let err = err.recv_timeout(PIPE_DRAIN_WAIT).unwrap_or_default();
     if status.success() {
         Ok(out)
     } else {
@@ -84,6 +88,28 @@ pub fn run_tool(name: &str, args: &[&str], timeout: Duration) -> Result<String, 
             err.trim()
         ))
     }
+}
+
+/// How long a tool's output is waited for once the tool has exited.
+const PIPE_DRAIN_WAIT: Duration = Duration::from_secs(1);
+
+/// Reads `pipe` to its end on a thread of its own; the text comes on the
+/// returned channel (empty when there is no pipe).
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::sync::mpsc::Receiver<String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    match pipe {
+        Some(mut pipe) => {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                let _ = pipe.read_to_string(&mut text);
+                let _ = sender.send(text);
+            });
+        }
+        None => {
+            let _ = sender.send(String::new());
+        }
+    }
+    receiver
 }
 
 /// Reads `systemctl show` output (`Name=value` lines) into a map.
@@ -102,7 +128,10 @@ pub fn parse_show(text: &str) -> BTreeMap<String, String> {
 /// `systemctl` did not answer.
 pub fn show(unit: &str, names: &[&str]) -> Result<BTreeMap<String, String>, String> {
     let mut args = vec!["show", unit];
-    let flags: Vec<String> = names.iter().map(|name| format!("--property={name}")).collect();
+    let flags: Vec<String> = names
+        .iter()
+        .map(|name| format!("--property={name}"))
+        .collect();
     args.extend(flags.iter().map(String::as_str));
     run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|text| parse_show(&text))
 }
@@ -133,9 +162,7 @@ pub fn cgroup_empty(cgroup: &str) -> Result<bool, String> {
         .join(cgroup.trim_start_matches('/'))
         .join("cgroup.events");
     match std::fs::read_to_string(&events) {
-        Ok(text) => Ok(text
-            .lines()
-            .any(|line| line.trim() == "populated 0")),
+        Ok(text) => Ok(text.lines().any(|line| line.trim() == "populated 0")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
         Err(error) => Err(format!("{}: {error}", events.display())),
     }
@@ -148,20 +175,38 @@ pub struct SystemdJobUnit {
     /// The node's `[execution_node]` file: `probe` reads the scope report
     /// `execution-node check` wrote beside it.
     node_file: PathBuf,
+    /// The node's state directory: each key's control directory, where the
+    /// unit's root steps keep their records.
+    state_dir: PathBuf,
 }
 
 impl SystemdJobUnit {
     #[must_use]
-    pub fn new(node_file: PathBuf) -> Self {
-        Self { node_file }
+    pub fn new(node_file: PathBuf, state_dir: PathBuf) -> Self {
+        Self {
+            node_file,
+            state_dir,
+        }
     }
 
-    /// What this machine can enforce now, by bound name, each with one line
-    /// of evidence; [`JobUnit::probe`] gives the same as R3a's
-    /// `ScopeCapabilities`.
-    #[must_use]
-    pub fn bound_reports(&self) -> BTreeMap<String, BoundReport> {
-        capabilities::report(&self.node_file)
+    /// A root step's record in the key's control directory: root-owned, and
+    /// naming this key's instance, else none.
+    fn root_record<T: serde::de::DeserializeOwned>(
+        &self,
+        unit: &JobKeyId,
+        name: &str,
+        instance_of: impl Fn(&T) -> &str,
+    ) -> Option<T> {
+        let control = super::safe_fs::open_dir_path(&unit.control_dir(&self.state_dir)).ok()?;
+        let bytes = super::safe_fs::read_beneath(
+            super::safe_fs::borrow(&control),
+            name,
+            RECORD_MAX_BYTES,
+            Some(0),
+        )
+        .ok()??;
+        let record: T = serde_json::from_slice(&bytes).ok()?;
+        (instance_of(&record) == unit.as_str()).then_some(record)
     }
 
     fn error(unit: &JobKeyId, reason: String) -> JobUnitError {
@@ -174,7 +219,19 @@ impl SystemdJobUnit {
 
 impl JobUnit for SystemdJobUnit {
     fn probe(&self) -> ScopeCapabilities {
-        capabilities::scope_capabilities(&self.bound_reports())
+        capabilities::report(&self.node_file)
+    }
+
+    fn scope_facts(&self, unit: &JobKeyId) -> Option<ScopeFacts> {
+        let prepared: PreparedRecord =
+            self.root_record(unit, PREPARED_FILE_NAME, |record: &PreparedRecord| {
+                record.instance.as_str()
+            })?;
+        let scope: Option<ScopeRecord> =
+            self.root_record(unit, SCOPE_FILE_NAME, |record: &ScopeRecord| {
+                record.instance.as_str()
+            });
+        Some(scope_facts(&prepared, scope.as_ref()))
     }
 
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {

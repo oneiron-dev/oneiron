@@ -14,11 +14,9 @@ use std::time::Duration;
 
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::ExecutionNodeSettings;
-use super::capabilities::{
-    CheckReport, capabilities_of, check_report_path, kernel_facts, meets_minimum_contract,
-};
+use super::capabilities::{CheckReport, capabilities_of, check_report_path, kernel_facts};
 use super::device_files;
-use super::records::{BoundReport, ExecFile, ScopeReport};
+use super::records::{ExecFile, ScopeBound, ScopeReport};
 use super::safe_fs::{self, account, boot_id, borrow, make_dir_beneath, open_dir_path};
 use super::systemd_unit::tool_path;
 use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, REPORT_PIPE_NAME, UNIT_TEMPLATE_PATH};
@@ -62,22 +60,26 @@ pub fn check_scope(node_file: &Path, settings: &ExecutionNodeSettings) -> Vec<St
             .filter(|report| report.boot_id == boot_id())
     };
     let capabilities = capabilities_of(&facts, probed.as_ref());
-    for (name, proof) in &capabilities {
-        println!("scope {name}: {:?}: {}", proof.strength, proof.evidence);
+    for bound in ScopeBound::ALL {
+        let proof = capabilities.report(bound);
+        println!(
+            "scope {}: {:?}: {}",
+            bound.name(),
+            proof.strength,
+            proof.evidence
+        );
     }
-    if !meets_minimum_contract(&capabilities) {
+    if !capabilities.meets_minimum_contract() {
         refusals.push(
             "the scope lacks the minimum contract (tree kill, a cutoff with the engine stopped, emptiness): this machine offers no jobs"
                 .to_owned(),
         );
     }
     for (template_name, template) in &settings.templates {
-        for required in &template.require {
-            if !capabilities.get(required).is_some_and(BoundReport::enforced) {
-                refusals.push(format!(
-                    "template {template_name} requires {required}, which this machine's scope lacks"
-                ));
-            }
+        for required in capabilities.missing(&template.require) {
+            refusals.push(format!(
+                "template {template_name} requires {required}, which this machine's scope lacks"
+            ));
         }
     }
     refusals
@@ -179,8 +181,14 @@ fn probe_in_unit(
     let dir = make_dir_beneath(borrow(&root), &exec.instance, 0o750, (0, job_gid))
         .map_err(|error| format!("probe exchange: {error}"))?;
     let bytes = serde_json::to_vec_pretty(exec).map_err(|error| error.to_string())?;
-    safe_fs::write_beneath(borrow(&dir), super::EXEC_FILE_NAME, &bytes, 0o640, Some((0, job_gid)))
-        .map_err(|error| error.to_string())?;
+    safe_fs::write_beneath(
+        borrow(&dir),
+        super::EXEC_FILE_NAME,
+        &bytes,
+        0o640,
+        Some((0, job_gid)),
+    )
+    .map_err(|error| error.to_string())?;
     safe_fs::make_fifo_beneath(borrow(&dir), REPORT_PIPE_NAME, 0o620, job_gid)
         .map_err(|error| error.to_string())?;
     safe_fs::make_fifo_beneath(borrow(&dir), super::GO_PIPE_NAME, 0o640, job_gid)
@@ -208,7 +216,9 @@ fn probe_in_unit(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
-    let mut child = command.spawn().map_err(|error| format!("systemd-run: {error}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("systemd-run: {error}"))?;
     let read = super::prepare::read_pipe(&dir, REPORT_PIPE_NAME, PROBE_TIMEOUT);
     let waited = child.wait();
     let _ = exchange;
@@ -240,5 +250,7 @@ fn template_properties(unit_text: &str, instance: &str) -> Vec<String> {
 fn wall_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
 }
