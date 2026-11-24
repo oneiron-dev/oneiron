@@ -8667,6 +8667,7 @@ dependencies = [
  "n0-future",
  "oneiron",
  "oneiron-hex",
+ "oneiron-organ-protocol",
  "rmp-serde",
  "serde",
  "tempfile",
