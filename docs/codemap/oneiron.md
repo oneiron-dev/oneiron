@@ -5097,27 +5097,27 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests/unrooted_owner_deleting_itself.rs` | test | s | — | — | — |
 | `src/memory/tests/witness_policy.rs` | test | L | — | — | System-authorship ceiling rows, envelope/order validation, and the session-ownership door |
 | `src/memory/tests/witness_turns.rs` | test | XL | — | — | Witness turn create/get/append/interleave, speaker atomicity, and meso enqueue on close |
-| `src/memory/tests_regressions/authority.rs` | src | m | — | — | Actor-authority and witness-pinning security regressions (review batch #471) |
-| `src/memory/tests_regressions/consolidation_outbound.rs` | src | m | — | — | BRIDGE-03 wiring regressions: Dreamer queue round-trip, seed-claim receipts, outbound schedule and dedupe |
-| `src/memory/tests_regressions/mod.rs` | src | s | — | — | Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor… |
-| `src/memory/tests_regressions/outbound_actor_scope.rs` | src | s | — | — | ONE-1876 actor-scoped outbound dedupe index regressions |
-| `src/memory/tests_regressions/recall/bounds_execution.rs` | src | s | — | — | — |
-| `src/memory/tests_regressions/recall/call_mode.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/clock_consistency.rs` | src | s | — | — | — |
-| `src/memory/tests_regressions/recall/control_kinds.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/device_local_order.rs` | src | s | — | — | — |
-| `src/memory/tests_regressions/recall/mod.rs` | src | s | — | — | BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits |
-| `src/memory/tests_regressions/recall/pack_scope.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/paid_rerank.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/paid_rerank_egress.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/read_grants.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/temporal.rs` | src | s | — | — | — |
-| `src/memory/tests_regressions/recall/turn_custody.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/turn_disclosure.rs` | src | s | — | — | — |
-| `src/memory/tests_regressions/recall/turn_fold.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall/turn_text_revision.rs` | src | m | — | — | — |
-| `src/memory/tests_regressions/recall_revision.rs` | src | s | — | — | Exact revision consistency across facade recall, hydration, and document chat |
-| `src/memory/tests_regressions/recall_security.rs` | src | s | — | — | Recall must not be a broader read side channel than point reads or BM25 |
+| `src/memory/tests_regressions/authority.rs` | test | m | — | — | Actor-authority and witness-pinning security regressions (review batch #471) |
+| `src/memory/tests_regressions/consolidation_outbound.rs` | test | m | — | — | BRIDGE-03 wiring regressions: Dreamer queue round-trip, seed-claim receipts, outbound schedule and dedupe |
+| `src/memory/tests_regressions/mod.rs` | test | s | — | — | Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor… |
+| `src/memory/tests_regressions/outbound_actor_scope.rs` | test | s | — | — | ONE-1876 actor-scoped outbound dedupe index regressions |
+| `src/memory/tests_regressions/recall/bounds_execution.rs` | test | s | — | — | — |
+| `src/memory/tests_regressions/recall/call_mode.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/clock_consistency.rs` | test | s | — | — | — |
+| `src/memory/tests_regressions/recall/control_kinds.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/device_local_order.rs` | test | s | — | — | — |
+| `src/memory/tests_regressions/recall/mod.rs` | test | s | — | — | BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits |
+| `src/memory/tests_regressions/recall/pack_scope.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/paid_rerank.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/paid_rerank_egress.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/read_grants.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/temporal.rs` | test | s | — | — | — |
+| `src/memory/tests_regressions/recall/turn_custody.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/turn_disclosure.rs` | test | s | — | — | — |
+| `src/memory/tests_regressions/recall/turn_fold.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall/turn_text_revision.rs` | test | m | — | — | — |
+| `src/memory/tests_regressions/recall_revision.rs` | test | s | — | — | Exact revision consistency across facade recall, hydration, and document chat |
+| `src/memory/tests_regressions/recall_security.rs` | test | s | — | — | Recall must not be a broader read side channel than point reads or BM25 |
 | `src/memory/transcript.rs` | src | m | 4 struct · 1 fn · 1 re-export · 4 crate-vis | TranscriptMessage, TranscriptPage, TranscriptSpeaker, TranscriptTurn | One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds… |
 | `src/memory/transcript/tests.rs` | test | m | — | — | A conversation's transcript is what its reader may read of it, in order: never an erased message, never one… |
 | `src/memory/usage_repair.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 re-export | UsageRepairCaller, UsageRepairVerb | The authority seam of a host's usage repair (FIX 6476) |
