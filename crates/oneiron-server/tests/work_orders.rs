@@ -17,7 +17,7 @@ use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnect
 use oneiron::work_order::Blocker;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::config::SyncServerConfig;
-use oneiron_server::config::gpu_jobs::GpuOfferSettings;
+use oneiron_server::config::gpu_jobs::{AtMaximum, GpuOfferSettings};
 use oneiron_server::gpu_execution_node::issuer::{VAULT_MACHINE_BACKEND, job_refusal_code};
 use oneiron_server::gpu_execution_node::wire::{JobAnswer, JobRefusal, JobState};
 use oneiron_server::server::SyncServer;
@@ -62,6 +62,7 @@ fn an_order_on_a_replica_that_is_not_the_issuer_is_refused() {
         GpuOfferSettings {
             backend: VAULT_MACHINE_BACKEND.to_owned(),
             offer: offer("home"),
+            at_maximum: Some(AtMaximum::Stop),
         },
     );
     config.gpu_jobs.offers.insert(
@@ -69,6 +70,7 @@ fn an_order_on_a_replica_that_is_not_the_issuer_is_refused() {
         GpuOfferSettings {
             backend: "skypilot".to_owned(),
             offer: offer("cloud"),
+            at_maximum: None,
         },
     );
     let server = SyncServer::new(vault, config).expect("boot a replica that is not the issuer");
