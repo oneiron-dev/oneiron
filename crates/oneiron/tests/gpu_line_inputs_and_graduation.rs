@@ -265,6 +265,24 @@ impl Fixture {
         lane
     }
 
+    /// The owner sets `lane`'s line again under `budget` and `roles` at
+    /// `at_ms`: the set door mints the current period first, from the line
+    /// as it stood.
+    fn set_again(&self, lane: EntityId, roles: &Roles, budget: BudgetPolicy, at_ms: u64) {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .set_gpu_line(
+                Some(&self.owner_proof),
+                &GpuLineSetRequest {
+                    intent_key: format!("set-again-{at_ms}"),
+                    project: lane,
+                    policy: policy(roles, budget),
+                },
+                at_ms,
+            )
+            .unwrap_or_else(|error| panic!("the owner sets lane {lane:?}'s line again: {error:?}"));
+    }
+
     /// A child project of `lane` the owner seats as a `track` family before
     /// period 0, so the first mint funds it.
     fn seat(&self, lane: EntityId, track: Track) -> EntityId {
@@ -678,6 +696,9 @@ fn gpu_time_is_cost_when_it_is_spent() {
     let winner = fixture.admit(lead, lane, other, 9, "winner");
     fixture.confirmed_promote(lead, &winner, 0x60);
 
+    // The owner's edit in period 1 mints its record first, while the last
+    // arm's rung is still open (a verdict mints nothing).
+    fixture.set_again(lane, &agents.roles, demand_budget(8), in_period(1));
     // The last arm closes invalid after the cutoff: at the mint of period 1
     // its time was still cost.
     fixture.verdict(
@@ -714,8 +735,8 @@ fn gpu_time_is_cost_when_it_is_spent() {
     );
     assert_eq!(tallies.len(), 2, "no row of another family: {tallies:?}");
 
-    // The mint of period 1 wrote what the join read when the late verdict
-    // minted it (that rung was still open), and stays as written.
+    // The mint of period 1 wrote what the join read when the owner's edit
+    // minted it (the last rung was still open), and stays as written.
     let record = {
         let txn = read_txn(&fixture.vault).expect("read snapshot");
         oneiron::gpu_line::stored_period_in_txn(&fixture.vault, &txn, &lane, 1)
