@@ -34,6 +34,21 @@ mod shutdown;
 #[cfg(feature = "mesh")]
 pub(crate) use home_pin::pin_home;
 
+/// Every protocol this engine's mesh listener serves: the one list a
+/// machine's enrolment pairing covers, so that the owner may grant any of
+/// them to it later, one protocol at a time (MESH-PAIRING-CEILING = A,
+/// Engine 25 Nov 01:1x). A new protocol joins `mesh_routes` and this list
+/// together; `mesh_routes` checks it in debug builds.
+#[cfg(feature = "mesh")]
+pub const SERVED_MESH_ALPNS: [&[u8]; 6] = [
+    oneiron_mesh_transport::SYNC_ALPN,
+    oneiron_organ_host::ORGAN_ALPN,
+    oneiron_llm::oneiron_rpc::LLM_ALPN,
+    oneiron_mesh_transport::files_search::FILES_SEARCH_ALPN,
+    oneiron::job_workload::JOB_ALPN,
+    oneiron::job_workload::JOB_STATUS_ALPN,
+];
+
 /// Where the mesh listener binds; unset leaves it off.
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
 /// Comma-separated private relay URLs; unset is direct paths only.
@@ -225,6 +240,14 @@ mod host {
             self
         }
 
+        /// Whether every protocol these routes serve is in
+        /// [`super::SERVED_MESH_ALPNS`], the list enrolment pairs for.
+        fn within_served(&self) -> bool {
+            self.routes
+                .iter()
+                .all(|(alpn, _)| super::SERVED_MESH_ALPNS.contains(&alpn.as_slice()))
+        }
+
         fn service(&self, alpn: &[u8]) -> Option<Arc<dyn MeshService>> {
             self.routes
                 .iter()
@@ -311,7 +334,7 @@ mod host {
         let router = Arc::new(organ_router(server));
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
-        MeshRoutes::default()
+        let routes = MeshRoutes::default()
             .route(SYNC_ALPN, Arc::new(sync_route(app, limits, server, stop)))
             .route(
                 ORGAN_ALPN,
@@ -348,7 +371,12 @@ mod host {
                 Arc::clone(vault),
                 work.organs.clone(),
             ))
-            .tick(server.pack_organ_tick(work.organs.clone()))
+            .tick(server.pack_organ_tick(work.organs.clone()));
+        debug_assert!(
+            routes.within_served(),
+            "a protocol mesh_routes serves is missing from SERVED_MESH_ALPNS"
+        );
+        routes
     }
 
     /// The router a call the host itself makes takes (OF-575): this
