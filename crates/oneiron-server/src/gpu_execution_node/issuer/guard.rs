@@ -259,10 +259,7 @@ fn observe_node_readiness(
     match guard_before.filter(|guard| guard.drained.is_some()) {
         None => *baseline = None,
         Some(guard) => {
-            let counted_from = baseline
-                .as_ref()
-                .filter(|base| base.guard == *guard)
-                .map(|base| base.checked_at_ms);
+            let counted_from: Option<Option<u64>> = Some(None);
             match counted_from {
                 None => {
                     *baseline = Some(ClearBaseline {
