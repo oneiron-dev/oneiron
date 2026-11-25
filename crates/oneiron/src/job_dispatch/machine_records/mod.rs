@@ -21,7 +21,7 @@ pub(crate) mod tables;
 use serde::{Deserialize, Serialize};
 
 pub use clear_drain_door::{
-    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, clear_drain_as,
+    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, NodeDrainClear, clear_drain_as,
     clear_drain_embedded,
 };
 pub use job_return::{JobReturn, ReturnRefusal};
