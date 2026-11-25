@@ -4177,15 +4177,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_line/claim/tables.rs` | src | s | — | — | The side table the unit claims keep: each row declares one, and the crate's build script places it in… |
 | `src/gpu_line/cohort.rs` | src | s | 2 fn · 1 const | — | The comparison's cohorts (design pass 32 r2, section 4.4) |
 | `src/gpu_line/defaults.rs` | src | s | 1 fn · 28 const | — | Every default and bound of a GPU line's settings, in one place (design pass 32 section 3.1; pass 34 section… |
-| `src/gpu_line/doors.rs` | src | m | 1 enum · 3 fn · 3 const | GpuLineError | The `vault.gpu.lines.*` doors' acts (design pass 32, sections 4.1 and 5) |
+| `src/gpu_line/doors.rs` | src | m | 1 enum · 5 fn · 3 const | GpuLineError | The `vault.gpu.lines.*` doors' acts (design pass 32, sections 4.1 and 5) |
 | `src/gpu_line/doors_caller.rs` | src | s | 5 crate-vis | — | The GPU line doors' one call into the lane economy's door kit (`verb_grant_caller`… |
 | `src/gpu_line/fold.rs` | src | L | 17 struct · 13 enum · 36 fn · 3 const | AllowanceHold, AllowanceRule, AllowanceTable, Bucket, BudgetDenied, BudgetPolicy, Draw, DrawAsk +22 | The lane economy's shared shapes and its pure fold (design pass 32, sections 3 and 4) |
 | `src/gpu_line/intent.rs` | src | s | 2 struct · 2 enum · 3 fn · 1 const · 2 crate-vis | IntentAsk, IntentRefused, IntentStand, LaneIntent | The intent key every lane-economy write door takes (design pass 32 section 5; the spawn-intent form of… |
 | `src/gpu_line/mint.rs` | src | L | 2 struct · 2 enum · 12 fn · 3 const | LineInvalid, MintError, Pools, SettledTally | The mint (design pass 32, sections 4.1 and 4.3): one period record from the line as it stood and the results… |
-| `src/gpu_line/mod.rs` | src | s | 1 mod · 8 re-export · 7 crate-vis | — | The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… |
+| `src/gpu_line/mod.rs` | src | s | 1 mod · 9 re-export · 7 crate-vis | — | The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… |
+| `src/gpu_line/preset.rs` | src | s | 2 struct · 3 fn | LinePresetDocument, LinePresetRef | Line presets (design pass 34, sections 3.2 and 3.3; row L1): a lane's line policy document, carried by a… |
 | `src/gpu_line/store.rs` | src | m | 1 struct · 10 fn · 6 crate-vis | MintedLine | The GPU line's stored rows (design pass 32, sections 3.1, 3.2 and 4.1): one `GPU_LINE` row per lane project… |
 | `src/gpu_line/tables.rs` | src | s | — | — | The side tables `gpu_line` keeps: each row declares one, and the crate's build script places it in… |
-| `src/gpu_line/wire.rs` | src | s | 5 struct | GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView | The `vault.gpu.lines.*` verbs' inputs and answers (design pass 32, section 5) |
+| `src/gpu_line/wire.rs` | src | s | 7 struct | GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest, GpuLineSetWire, GpuLineView | The `vault.gpu.lines.*` verbs' inputs and answers (design pass 32, section 5) |
 | `src/graph_fs/claim_grep.rs` | src | s | 2 crate-vis | — | Indexed claim grep with search and final-hydration narrowing receipts |
 | `src/graph_fs/claim_ids.rs` | src | s | 5 crate-vis | — | Claim listings in id order, `/claims/by-id` and an entity's `claims`: each page reads one bounded run of… |
 | `src/graph_fs/coreutils.rs` | src | m | 6 fn · 6 crate-vis | — | grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the… |
@@ -4418,8 +4419,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/job_dispatch/recheck.rs` | src | s | 1 struct · 1 enum · 4 fn | DispatchAsk, DispatchRefusal | What the issuer checks again before it sends a vault machine anything that could make work, and at every… |
 | `src/job_dispatch/record.rs` | src | s | 3 struct · 2 enum · 7 fn · 1 crate-vis | BootMark, DispatchClose, DispatchPhase, JobDispatch, JobObservation | The issuer's two rows per dispatched key (pass 33, 5.1): `JOB_DISPATCH`, what it sent and where the key… |
 | `src/job_dispatch/tables.rs` | src | s | — | — | The side tables `job_dispatch` keeps: each row declares one, and the crate's build script places it in… |
-| `src/job_history/mod.rs` | src | m | 11 struct · 4 fn · 3 const · 1 re-export | JobHistory, JobHistoryAttempt, JobHistoryFamilySum, JobHistoryLineCharge, JobHistoryLineSum, JobHistoryMachineSum, JobHistoryOfferCharge, JobHistoryPeriodSum +3 | `vault.jobs.history` (design pass 34 section 5 and row Q2; the scheduler comparison's gap 2, "one view of… |
-| `src/job_history/project.rs` | src | m | 3 struct · 1 enum · 2 fn | HistoryCursor, HistoryInputs, HistoryViewer, JobHistoryFilter | The pure projection behind `vault.jobs.history`: stored jobs, claims and periods in, the ended attempts and… |
+| `src/job_history/mod.rs` | src | m | 12 struct · 4 fn · 3 const · 1 re-export | JobHistory, JobHistoryAttempt, JobHistoryFamilySum, JobHistoryLineCharge, JobHistoryLineSum, JobHistoryMachineSum, JobHistoryOfferCharge, JobHistoryOrder +4 | `vault.jobs.history` (design pass 34 section 5 and row Q2; the scheduler comparison's gap 2, "one view of… |
+| `src/job_history/project.rs` | src | m | 3 struct · 1 enum · 2 fn | HistoryCursor, HistoryInputs, HistoryViewer, JobHistoryFilter | The pure projection behind `vault.jobs.history`: stored jobs, claims, periods and work orders in, the ended… |
 | `src/job_workload/check.rs` | src | m | 1 struct · 3 enum · 5 fn · 2 const | WorkloadNodeAnswer, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter | The workload-approval check (pass 33, door 7; Engine ruling LM-8 = A): the one function the start gate in… |
 | `src/job_workload/compute_bound.rs` | src | s | 1 const · 4 crate-vis | — | The `compute.pin` standing grant (pass 34, `34-compute-general/DESIGN.md` section 6.5; row R7 folded into… |
 | `src/job_workload/device.rs` | src | m | 5 struct · 7 enum · 5 fn · 1 const | DeviceClaim, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceLease, DeviceMemory, DevicePlacement +4 | Devices in a resource request (pass 34, `34-compute-general/DESIGN.md` section 2.1): what a run claims… |
@@ -6967,10 +6968,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/hub_install.rs` | src | s | 3 fn | — | Served hub install (OF-519, OF-213): the owner names a configured hub, a folder and a pin; fetch, the… |
 | `src/skill_hub/pack_catalog/import_notice.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | PackImportPreview | The owner's import check for a travelling AgentPack (FIX 5493, owner ruling 1-EXPORT = B plus an import… |
 | `src/skill_hub/pack_catalog/lenses.rs` | src | m | 4 struct · 9 fn · 2 const · 6 crate-vis | PackLens, PackLensComponent, PackLensEntry, PackLensProposeRequest | Pack lenses (OF-250): a pack ships its lens with its skills, the face half beside the engine half (ARCH-0010) |
+| `src/skill_hub/pack_catalog/line_preset_pack.rs` | src | s | 1 struct · 1 const · 2 crate-vis | PackLinePreset | Line presets as pack data (design pass 34, sections 3.2 and 3.3; row L1): a pack of kind `capability` may… |
 | `src/skill_hub/pack_catalog/local.rs` | src | s | 3 fn · 1 const · 7 crate-vis | — | The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1), and the vault's `local` pack |
 | `src/skill_hub/pack_catalog/manifest.rs` | src | m | 1 struct · 1 fn · 1 re-export · 5 crate-vis | PackManifest | Closed PACK.md manifest parser |
 | `src/skill_hub/pack_catalog/migrations.rs` | src | s | 1 struct · 2 crate-vis | PackMigration | Predicate migration maps a pack ships in PACK.md (ARCH-0059 §4, rung 1) |
-| `src/skill_hub/pack_catalog/mod.rs` | src | s | 1 mod · 25 re-export · 11 crate-vis | — | Exact, inert PACK.md source catalogs |
+| `src/skill_hub/pack_catalog/mod.rs` | src | s | 1 mod · 26 re-export · 11 crate-vis | — | Exact, inert PACK.md source catalogs |
 | `src/skill_hub/pack_catalog/model_pack.rs` | src | m | 1 struct · 1 const · 10 crate-vis | InstalledModelPack | Model packs at the hub door (FIX 5365, MODEL PACKS = A) |
 | `src/skill_hub/pack_catalog/organs.rs` | src | m | 5 struct · 8 fn · 4 crate-vis | PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree | Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an… |
 | `src/skill_hub/pack_catalog/owner_activation.rs` | src | s | 1 fn | — | The owner's activation of a held hub Candidate (OF-213, OF-575): a pack held for its OSV advisories, or a… |
@@ -6987,13 +6989,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/script_policy.rs` | src | m | 1 crate-vis | — | Closed Python install profile over a maintained grammar, not token spelling |
 | `src/skill_hub/pack_catalog/script_runtime.rs` | src | m | 3 struct · 2 fn · 3 crate-vis | PackScriptGrant, PackScriptOutcome, PackScriptRun | Foreign pack scripts run only through the existing propose-only code-mode VM |
 | `src/skill_hub/pack_catalog/script_runtime/tests.rs` | test | L | — | — | — |
-| `src/skill_hub/pack_catalog/setting_defaults_pack.rs` | src | s | 1 struct · 1 const · 3 crate-vis | PackSettingDefaults | A table of setting defaults as pack data (design pass 34, section 3.2; row L1): a pack of kind `capability`… |
+| `src/skill_hub/pack_catalog/setting_defaults_pack.rs` | src | s | 1 struct · 1 const · 4 crate-vis | PackSettingDefaults | A table of setting defaults as pack data (design pass 34, section 3.2; row L1): a pack of kind `capability`… |
 | `src/skill_hub/pack_catalog/setup.rs` | src | s | 1 struct · 3 fn · 1 re-export · 2 crate-vis | PackSetup | The typed `setup` key of PACK.md (OF-378): the accounts a pack needs, the connections it makes and how each… |
 | `src/skill_hub/pack_catalog/setup_actor.rs` | src | s | 1 enum · 4 crate-vis | PackSetupActor | Who works a pack's guided setup (OF-378): the owner on their own proof, or an authenticated agent acting for… |
 | `src/skill_hub/pack_catalog/setup_cards.rs` | src | m | 1 enum · 3 fn | PackSetupCardAction | The guided setup as GenUI cards (OF-378), composed from the existing closed atom kit: a checklist of… |
 | `src/skill_hub/pack_catalog/setup_session.rs` | src | m | 6 struct · 6 fn · 1 re-export · 15 crate-vis | PackSetupCheckRecord, PackSetupCustodyRef, PackSetupGrantRef, PackSetupKeyRef, PackSetupSession, PackSetupView | Source-bound guided pack setup (OF-378) |
 | `src/skill_hub/pack_catalog/slack_install.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | SlackInstallHold, SlackInstallRedeemed | Pending Slack OAuth installs (OF-519): the owner's proof snapshot waiting under one single-use state for… |
-| `src/skill_hub/pack_catalog/source.rs` | src | m | 2 struct · 13 fn · 3 crate-vis | PackSection, PackSource | Validated exact source trees |
+| `src/skill_hub/pack_catalog/source.rs` | src | m | 2 struct · 14 fn · 3 crate-vis | PackSection, PackSource | Validated exact source trees |
 | `src/skill_hub/pack_catalog/tests.rs` | test | m | 1 crate-vis | — | Source custody tests: exact bytes, inert imports, generic/replay parity and rollback |
 | `src/skill_hub/pack_catalog/tool_schema.rs` | src | m | 6 crate-vis | — | Closed Draft 2020-12 tool-schema profile: resource-aware nodes, not a JSON rewrite |
 | `src/skill_hub/pack_catalog/transport.rs` | src | s | 1 trait · 2 fn · 3 crate-vis | PackSourceAdapter | Generic Git/HTTP source fetch composes with the post-fit pack install door |
@@ -9196,7 +9198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/work_order/doors.rs` | src | m | 1 enum · 9 fn · 1 const · 3 crate-vis | CancelRefused | The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and… |
 | `src/work_order/fit.rs` | src | m | 7 struct · 1 enum · 10 fn | DeviceFact, DeviceNeed, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact | `fit` (pass 34, 1.3 and 4.2): whether an order can run on a machine now, from the facts the machine… |
 | `src/work_order/mod.rs` | src | s | 6 const · 10 mod · 11 re-export · 3 crate-vis | — | Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… |
-| `src/work_order/pass.rs` | src | m | 2 struct · 1 enum · 1 trait · 5 fn · 1 const · 4 crate-vis | AttemptOutcome, AttemptToMake, OrderHost, PassReport | The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job… |
+| `src/work_order/pass.rs` | src | L | 2 struct · 1 enum · 1 trait · 5 fn · 1 const · 5 crate-vis | AttemptOutcome, AttemptToMake, OrderHost, PassReport | The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job… |
 | `src/work_order/place.rs` | src | s | 2 fn · 2 const | — | The PLACE slot's default rule, `role_warm_waste_headroom@1` (pass 34, 4.3): among the machines that fit now… |
 | `src/work_order/rank.rs` | src | s | 2 fn · 2 const | — | The RANK slot's default rule, `class_then_fewest_running_then_oldest@1` (pass 34, 4.5): who is dispatched… |
 | `src/work_order/record.rs` | src | m | 8 struct · 10 enum · 13 fn · 1 const · 1 crate-vis | AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy, OrderAttempt, OrderCharge +10 | The stored work order (pass 34, section 1.1; Engine ruling EM-18 = A): one `WORK_ORDER` row per order, above… |
@@ -10018,6 +10020,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/gpu_line_draw_order.rs` | test | L | — | — | The lane economy's draw order and charging rule (design pass 32 r2, sections 3.8 and 4.2; LE-1 = B, LE-6)… |
 | `tests/gpu_line_hold_is_the_claim.rs` | test | m | — | — | Row M2-I2, "the hold is the claim" (design pass 32 r2, section 7.2 points 3 to 6; Engine EM-15) |
 | `tests/gpu_line_mint.rs` | test | L | — | — | The lane economy's mint (design pass 32 r2, sections 3.1, 3.2 and 4.1 to 4.3; LE-1 = B, LE-5 = A, LE-6): one… |
+| `tests/gpu_line_presets.rs` | test | m | — | — | Design pass 34, sections 3.2 and 3.3 (row L1): `vault.gpu.lines.set { preset }` |
 | `tests/graduated_scope_demotion_authors.rs` | test | m | — | — | Who may demote another actor's graduated ramp scope (census L7-33; FIX 22934; Engine RULING L7-33-WHO = A… |
 | `tests/grant_reader_bm25_hidden_worlds.rs` | test | m | — | — | [GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS]: a key with no proof, no Scope and no owner, such as an embedded… |
 | `tests/grant_restore_and_engine_controls_verbs.rs` | test | m | — | — | The owner's three grant verbs (Engine RULING ROW3-GRANT-VERBS = A; FIX FABLE-6917-1 and… |
@@ -10233,6 +10236,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/task_authority_convergence.rs` | test | m | — | — | TASK authority across two real vaults |
 | `tests/job_history.rs` | test | m | — | — | `vault.jobs.history` is a view over rows the vault already keeps, not a second ledger (design pass 34… |
 | `tests/job_history_offers.rs` | test | m | — | — | `vault.jobs.history` over plain offer jobs, from the rows the job's own lifecycle writes (review round 1 of… |
+| `tests/job_history_orders.rs` | test | m | — | — | `vault.jobs.history` joined to `WORK_ORDER` (pass 34, 1.1 and section 5; row Q2): an attempt the work-order… |
 | `tests/job_kind_rows.rs` | test | s | — | — | UC-09 K pins (PLAN-UC-09 "The K-proof"): the queue rows each Dreamer enqueue door stores, before and after a… |
 | `tests/job_resource_request.rs` | test | m | — | — | The general resource request (pass 34 row G1, `34-compute-general/DESIGN.md` sections 2.1, 2.2 and 10): a… |
 | `tests/jointie_relation_extraction.rs` | test | s | — | — | JointIE inside the Dreamer's child (L2-03; ARCH-0026 `#wake-model`: "Inside the child JointIE extracts claims |
