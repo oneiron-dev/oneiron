@@ -30,6 +30,21 @@ pub struct GpuComputeProcess {
     pub pid: Option<u32>,
 }
 
+/// One device's condition now, as the driver reports it: what a breadcrumb
+/// line carries while a key runs (pass 34, 7.3). A figure the driver does
+/// not give is `None`, never zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceSample {
+    /// The device (the driver's UUID).
+    pub device_id: String,
+    /// Its temperature, in degrees Celsius.
+    pub temperature_c: Option<i32>,
+    /// Its power draw, in milliwatts.
+    pub power_mw: Option<u64>,
+    /// The device memory in use, in MiB.
+    pub memory_used_mib: Option<u64>,
+}
+
 /// Why this machine could not say what its GPUs are, what runs on them,
 /// which of them another booker holds, whether it is drained, or what its
 /// jobs' disk holds.
@@ -67,6 +82,18 @@ pub trait GpuDeviceProbe: Send + Sync {
     /// [`GpuProbeError`] when the driver cannot be queried or answers a
     /// line it cannot read.
     fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError>;
+
+    /// Each device's temperature, power draw and memory in use now, where
+    /// the driver gives them. The default reads none: a probe that cannot
+    /// read them reports nothing, never zero.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver cannot be queried or answers a
+    /// line it cannot read.
+    fn samples(&self) -> Result<Vec<DeviceSample>, GpuProbeError> {
+        Ok(Vec::new())
+    }
 }
 
 /// The shipped probe: `nvidia-smi`, one query per ask. Each query runs in
@@ -90,6 +117,13 @@ impl GpuDeviceProbe for NvidiaSmiProbe {
     fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError> {
         parse_compute_process_lines(&query(&[
             "--query-compute-apps=gpu_uuid,pid",
+            "--format=csv,noheader,nounits",
+        ])?)
+    }
+
+    fn samples(&self) -> Result<Vec<DeviceSample>, GpuProbeError> {
+        parse_sample_lines(&query(&[
+            "--query-gpu=uuid,temperature.gpu,power.draw,memory.used",
             "--format=csv,noheader,nounits",
         ])?)
     }
@@ -156,6 +190,57 @@ pub fn parse_compute_process_lines(text: &str) -> Result<Vec<GpuComputeProcess>,
             })
         })
         .collect()
+}
+
+/// Reads `nvidia-smi --query-gpu=uuid,temperature.gpu,power.draw,memory.used
+/// --format=csv,noheader,nounits` lines. A figure the driver does not give
+/// (`[N/A]`, `[Not Supported]`) or writes in a form this reader does not
+/// know is `None`: the samples are evidence, not a gate.
+///
+/// # Errors
+///
+/// [`GpuProbeError::Unreadable`] for a line with no device UUID or with
+/// other than four fields.
+pub fn parse_sample_lines(text: &str) -> Result<Vec<DeviceSample>, GpuProbeError> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let unreadable = || GpuProbeError::Unreadable {
+                line: line.to_owned(),
+            };
+            let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+            let [device_id, temperature, power, memory] = fields.as_slice() else {
+                return Err(unreadable());
+            };
+            Ok(DeviceSample {
+                device_id: plain_device_id(device_id).ok_or_else(unreadable)?,
+                temperature_c: temperature.parse().ok(),
+                power_mw: milli_units(power),
+                memory_used_mib: memory.parse().ok(),
+            })
+        })
+        .collect()
+}
+
+/// A decimal figure such as `123.45` in thousandths (`123450`); `None` for
+/// anything that is not digits with at most one point.
+fn milli_units(text: &str) -> Option<u64> {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    if whole.is_empty() || !digits(whole) || !digits(fraction) {
+        return None;
+    }
+    let thousandths: String = fraction
+        .chars()
+        .chain(std::iter::repeat('0'))
+        .take(3)
+        .collect();
+    whole
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(1_000)?
+        .checked_add(thousandths.parse().ok()?)
 }
 
 /// A device id as the driver writes it: not empty, no whitespace or

@@ -53,7 +53,7 @@ pub use oneiron_organ_host::{
 use super::availability::{
     GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer, GpuDeviceState, GpuJobDisk,
 };
-use super::device::{GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
+use super::device::{DeviceSample, GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
 
 mod lease;
 
@@ -515,6 +515,17 @@ impl GpuSlotTable {
     pub fn drain(&self, why: String) {
         let mut state = self.shared.lock();
         self.shared.drain(&mut state, why);
+    }
+
+    /// Each device's temperature, power draw and memory in use now, where
+    /// the probe gives them: a reading for the breadcrumb lines (pass 34,
+    /// 7.3), not a hold.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver cannot be read.
+    pub fn samples(&self) -> Result<Vec<DeviceSample>, GpuProbeError> {
+        self.shared.probe.samples()
     }
 
     /// A person's clear of the drain: the machine takes GPU work again, and

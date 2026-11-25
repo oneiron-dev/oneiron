@@ -48,6 +48,10 @@ pub const RECEIPT_KEEP_DAYS_DEFAULT: u32 = 30;
 /// launch.
 pub const STAGING_LIMIT_SECS_DEFAULT: u64 = 600;
 
+/// Default of `readiness_every_secs` (`jobs.readiness.every_secs`, pass 34
+/// 6.3): how often a node with no attempt running checks itself.
+pub const READINESS_EVERY_SECS_DEFAULT: u64 = 900;
+
 /// Default of `job_account`.
 pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
 
@@ -118,9 +122,32 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
+    /// `jobs.readiness.every_secs`: how often the node checks itself while
+    /// no attempt runs (pass 34, 7.3).
+    #[serde(default = "readiness_every_secs_default")]
+    pub readiness_every_secs: u64,
+    /// `machines.drain.clear_by`: who clears the node's drain (pass 34,
+    /// 2.4). Until row P0 the box file is the only control the node obeys.
+    #[serde(default)]
+    pub drain_clear_by: DrainClearBy,
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
+}
+
+/// Who clears a node's drain (`machines.drain.clear_by`, pass 34 2.4). The
+/// box file accepts these two; `owner` and `grants` come with row P0's
+/// signed policy rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DrainClearBy {
+    /// The machine itself, once its readiness check passes (the default;
+    /// CG-2 row 9).
+    #[default]
+    AfterReadinessCheck,
+    /// A person at the box (`oneiron execution-node resume`), as pass 33
+    /// had it.
+    PersonAtBox,
 }
 
 /// One `[execution_node.templates.<name>]`: what a pin of it may run, and
@@ -202,6 +229,9 @@ fn receipt_keep_days_default() -> u32 {
 }
 fn staging_limit_secs_default() -> u64 {
     STAGING_LIMIT_SECS_DEFAULT
+}
+fn readiness_every_secs_default() -> u64 {
+    READINESS_EVERY_SECS_DEFAULT
 }
 fn job_account_default() -> String {
     JOB_ACCOUNT_DEFAULT.to_owned()

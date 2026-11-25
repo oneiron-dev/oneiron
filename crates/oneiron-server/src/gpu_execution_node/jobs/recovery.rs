@@ -27,10 +27,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use super::admission::{mib_bytes, withdrawn};
+use super::incidents::IncidentKind;
 use super::job_unit::{CONTROL_DIR_NAME, JobKeyId};
 use super::journal::{JobJournal, JournalEvent, NodeKey};
 use super::journal_file::{JournalFile, JournalOpening, JournalWriterLock};
 use super::node_parts::{NodeJobParts, NodeJobPaths};
+use super::readiness::NodeReadinessShared;
 use super::{NodeBook, NodeGate, NodeJobs, NodeJobsShared, ReceiptClock};
 use crate::gpu_execution_node::wire::{DeviceRelease, JobEnd, JobState};
 
@@ -46,6 +48,12 @@ impl NodeJobs {
     /// file could not be opened. Nothing was read.
     pub fn open(paths: NodeJobPaths, parts: NodeJobParts) -> std::io::Result<Self> {
         let writer = JournalWriterLock::take(&paths.state_dir)?;
+        let opened = ReceiptClock {
+            boot_id: parts.clock.boot_id(),
+            boot_ns: parts.clock.boot_ns(),
+            wall_ms: parts.clock.wall_ms(),
+        };
+        let (readiness, previous_boot) = NodeReadinessShared::open(&paths.state_dir, &opened);
         let jobs = Self {
             shared: Arc::new(NodeJobsShared {
                 paths,
@@ -56,9 +64,13 @@ impl NodeJobs {
                     floors: BTreeMap::new(),
                     staging: BTreeSet::new(),
                 }),
+                readiness,
                 _writer: writer,
             }),
         };
+        if let Some(previous_boot) = previous_boot {
+            jobs.record_incident(IncidentKind::HostReset { previous_boot });
+        }
         jobs.recover();
         Ok(jobs)
     }
@@ -171,6 +183,7 @@ impl NodeJobs {
     fn lose_history(&self, book: &mut NodeBook, why: String) {
         tracing::error!(%why, "job history lost; stopping every job unit and admitting nothing");
         self.stop_every_unit();
+        self.record_incident(IncidentKind::HistoryLost { why: why.clone() });
         book.journal = None;
         book.gate = NodeGate::HistoryLost { why };
     }
@@ -307,6 +320,7 @@ impl NodeJobs {
                 let end = JobEnd::Lost {
                     reason: "host_reset".to_owned(),
                     last_tick_boot_ns: self.last_tick_boot_ns(known),
+                    breadcrumbs: self.lost_breadcrumbs(known),
                 };
                 record(
                     book,
