@@ -615,26 +615,34 @@ impl<T: SettingValue> Setting<T> {
         })
     }
 
-    /// Who set the row that decides [`Self::read_in_txn`] at the vault with `item`: in which
-    /// capacity, and whether the row counts as the owner's ([`StoredRow::by_owner`]). `None` where
-    /// no stored row someone set decides: the default, a learned fit, a meet, a copy of a pack's
-    /// default, or a row that does not decode.
+    /// The value row this vault holds for `item` itself, with the capacity it was set in, when
+    /// that row decides [`Self::read_in_txn`] for `item`: its value is the value read, so no pin,
+    /// item-less row or carried row reads stricter. The value and the capacity come from the one
+    /// row. `None` with no such row, a copy of a pack's default, a row that does not decode, or
+    /// another row that reads stricter.
     ///
     /// # Errors
     ///
     /// As [`Self::read_in_txn`].
-    pub(crate) fn deciding_setter_in_txn(
+    pub(crate) fn item_row_deciding_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-        item: Option<&str>,
-    ) -> Result<Option<(Setter, bool)>> {
-        let slot = self.deciding_slot_in_txn(vault, txn, item)?;
+        item: &str,
+    ) -> Result<Option<(T, Setter)>> {
+        let read = self.read_in_txn(vault, txn, &[], Some(item))?.value;
+        let slot = RowKey {
+            name: self.spec.name.to_owned(),
+            item: Some(item.to_owned()),
+            mode: SettingMode::Value,
+            scope: SettingScope::Vault,
+        };
         Ok(table_of(self.spec)
             .get_bytes(&vault.store, txn, &slot.encode())?
             .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
             .filter(|row| !row.seeded)
-            .map(|row| (row.setter, row.by_owner())))
+            .and_then(|row| row.value.decode::<T>().map(|value| (value, row.setter)))
+            .filter(|(value, _)| *value == read))
     }
 
     /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`

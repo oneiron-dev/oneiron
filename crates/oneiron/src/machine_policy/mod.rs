@@ -465,39 +465,37 @@ impl DrainClearBy {
     }
 }
 
-/// Who wrote the row of `machines.drain.cleared_at` that decides it.
+/// Who wrote the machine's own row of `machines.drain.cleared_at`, in the terms door 12 judges
+/// its caller in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainClearer {
-    /// The owner: his own act, the engine applying his answer, or a request he approved.
+    /// The owner, by a proof that revalidated in the write.
     Owner,
-    /// An agent, through this Grant.
+    /// An agent, through this live Grant.
     Grant(EntityId),
-    /// Anyone else: a subject on its own row, or the pack door.
+    /// Anyone else: the engine on a path of its own or applying an answer, a request the holders
+    /// approved, a subject on its own row, or the pack door. None of them is door 12's owner
+    /// under their own proof.
     Other,
 }
 
 impl DrainClearer {
-    /// The writer of a row set in the capacity `setter`; `by_owner` when the row counts as the
-    /// owner's (`crate::setting::StoredRow::by_owner`).
-    fn of(setter: Setter, by_owner: bool) -> Self {
-        if by_owner {
-            return Self::Owner;
-        }
+    /// The writer of a row set in the capacity `setter`.
+    fn of(setter: Setter) -> Self {
         match setter {
+            Setter::Owner => Self::Owner,
             Setter::Holder { grant } | Setter::KeyGrant { grant } | Setter::Standing { grant } => {
                 Self::Grant(grant)
             }
-            Setter::Owner
-            | Setter::Subject
-            | Setter::Approved { .. }
-            | Setter::Engine { .. }
-            | Setter::Pack => Self::Other,
+            Setter::Subject | Setter::Approved { .. } | Setter::Engine { .. } | Setter::Pack => {
+                Self::Other
+            }
         }
     }
 }
 
-/// `machines.drain.cleared_at` where a row someone wrote decides it: the time of the last clear
-/// of the machine's drain from the panel, and who wrote it.
+/// `machines.drain.cleared_at` where the machine's own row decides it: the time of the last
+/// clear of the machine's drain from the panel, and who wrote that row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DrainCleared {
     /// The clear's time, in Unix milliseconds.
@@ -606,8 +604,9 @@ pub struct MachinePolicy {
     pub free_form: FreeForm,
     /// `machines.drain.clear_by`.
     pub drain_clear_by: DrainClearBy,
-    /// `machines.drain.cleared_at`, with its row's writer; `None` while it reads 0 or no row
-    /// someone wrote for this machine decides it (a row for every machine clears no drain).
+    /// `machines.drain.cleared_at`, with its row's writer; `None` while it reads 0 or the
+    /// machine's own row does not decide it (a row for every machine, a pin or a carried row that
+    /// reads earlier clears no drain).
     pub drain_cleared: Option<DrainCleared>,
     /// The five `placement.cache.*` keys.
     pub cache: CachePolicy,
@@ -658,18 +657,14 @@ pub fn machine_policy_in_txn(
         WINDOWS, WORK_ROLES,
     };
     let item = machine_item(machine);
+    let drain_cleared = DRAIN_CLEARED_AT
+        .item_row_deciding_in_txn(vault, txn, &item)?
+        .filter(|(at_ms, _)| *at_ms != 0)
+        .map(|(at_ms, setter)| DrainCleared {
+            at_ms,
+            by: DrainClearer::of(setter),
+        });
     let item = Some(item.as_str());
-    let cleared_at_ms = DRAIN_CLEARED_AT.read_in_txn(vault, txn, &[], item)?.value;
-    let drain_cleared = if cleared_at_ms == 0 {
-        None
-    } else {
-        DRAIN_CLEARED_AT
-            .deciding_setter_in_txn(vault, txn, item)?
-            .map(|(setter, by_owner)| DrainCleared {
-                at_ms: cleared_at_ms,
-                by: DrainClearer::of(setter, by_owner),
-            })
-    };
     let cache = CachePolicy {
         cap_gib: CACHE_CAP_GIB.read_in_txn(vault, txn, &[], item)?.value,
         idle_days: CACHE_IDLE_DAYS.read_in_txn(vault, txn, &[], item)?.value,

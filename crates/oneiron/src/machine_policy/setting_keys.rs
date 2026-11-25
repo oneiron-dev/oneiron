@@ -171,8 +171,8 @@ crate::setting::setting_keys! {
     /// `owner` or `grants`, the machine's execution node clears a drain that began before this
     /// time at its next readiness tick once its last check has not failed, when its box file does
     /// not keep the clear for the person at the box and this row's writer is one `clear_by`
-    /// names. An earlier time is tighter: an agent you gave this key may move it back at once, and
-    /// needs you to move it on.
+    /// names. Only the machine's own row clears its drain. An earlier time is tighter: an agent
+    /// you gave this key may move it back at once, and needs you to move it on.
     pub(crate) DRAIN_CLEARED_AT: u64 = "machines.drain.cleared_at" {
         kind: Kind::new(drain_never_cleared)
             .strictest(drain_never_cleared)

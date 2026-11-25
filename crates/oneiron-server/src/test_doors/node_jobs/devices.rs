@@ -12,9 +12,9 @@ use oneiron::job_workload::{
 use oneiron::machine_capacity::GpuDevice;
 use oneiron_organ_host::GpuSlotGrant;
 
-use super::locked;
+use super::{ScriptedNodeClock, locked};
 use crate::gpu_execution_node::device::DeviceSample;
-use crate::gpu_execution_node::jobs::NodeDevices;
+use crate::gpu_execution_node::jobs::{NodeClock, NodeDevices};
 use crate::gpu_execution_node::jobs::node_parts::{
     GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotRefusal, GpuSlotRequest,
 };
@@ -69,6 +69,11 @@ struct DevicesState {
     drains: Vec<String>,
     /// The drain that stands.
     drained: Option<String>,
+    /// When the drain that stands began, by `clock`; `None` with no
+    /// clock.
+    drain_began_ms: Option<u64>,
+    /// The node's clock, which dates each drain.
+    clock: Option<Arc<ScriptedNodeClock>>,
     /// How many times the drain was cleared.
     drain_clears: u32,
     /// Each device's sample, by id.
@@ -180,6 +185,11 @@ impl ScriptedDevices {
         locked(&self.state)
             .samples
             .insert(sample.device_id.clone(), sample);
+    }
+
+    /// Dates each drain by `clock`, as the slot table dates its drain file.
+    pub fn use_clock(&self, clock: Arc<ScriptedNodeClock>) {
+        locked(&self.state).clock = Some(clock);
     }
 
     /// How many times the drain was cleared.
@@ -407,13 +417,29 @@ impl NodeDevices for ScriptedDevices {
         let mut state = locked(&self.state);
         state.drains.push(why.to_owned());
         state.drained = Some(why.to_owned());
+        state.drain_began_ms = state.clock.as_ref().map(|clock| clock.wall_ms());
     }
 
     fn clear_drain(&self) -> Result<(), String> {
         let mut state = locked(&self.state);
         state.drained = None;
+        state.drain_began_ms = None;
         state.drain_clears = state.drain_clears.saturating_add(1);
         Ok(())
+    }
+
+    fn clear_drain_begun_before(&self, before_ms: u64) -> Result<bool, String> {
+        let mut state = locked(&self.state);
+        let began_before = state.drained.is_some()
+            && state
+                .drain_began_ms
+                .is_some_and(|began_ms| began_ms < before_ms);
+        if began_before {
+            state.drained = None;
+            state.drain_began_ms = None;
+            state.drain_clears = state.drain_clears.saturating_add(1);
+        }
+        Ok(began_before)
     }
 
     fn probe(&self) -> Result<(), String> {

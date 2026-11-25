@@ -857,7 +857,7 @@ fn the_node_checks_itself_at_the_shorter_of_the_box_and_owner_periods() -> TestR
 const DRAIN_WHY: &str = "3 jobs in a row failed";
 
 /// N's job service over the scripted parts, its controls and who clears its drain read by N's
-/// real node, drained at [`NOW_MS`] and ticked once, so the node has seen the drain then.
+/// real node, drained at [`NOW_MS`] by the scripted slot table's clock and ticked once.
 struct DrainedNode {
     _dir: tempfile::TempDir,
     scripted: ScriptedNode,
@@ -940,11 +940,12 @@ fn clear_by_grants(grant: EntityId) -> TestResult<Value> {
 }
 
 /// Row NODE-DRAIN-OWNER-CLEAR-HAS-NO-NODE-PATH (pass 34 2.4 and DESIGN 2070; Engine ANSWER
-/// NODE-DRAIN-OWNER-CLEAR-SHAPE = A): under the owner's `owner`, his clear from the panel,
-/// `machines.drain.cleared_at`, reaches N as his signed act and clears at the next tick a drain
-/// the node saw before it; a clear older than the drain keeps it.
+/// NODE-DRAIN-OWNER-CLEAR-SHAPE = A): under the owner's `owner`, the owner's clear from the
+/// panel, `machines.drain.cleared_at`, reaches N as a signed act and clears at the next tick a
+/// drain that began before it; a clear older than the drain keeps it, and so does a drain that
+/// began after the clear for the same reason.
 #[test]
-fn the_owners_clear_from_the_panel_clears_a_drain_the_node_saw_before_it() -> TestResult {
+fn the_owners_clear_from_the_panel_clears_a_drain_that_began_before_it() -> TestResult {
     let rig = Rig::new("")?;
     rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
     let node = rig.drained_node()?;
@@ -957,11 +958,27 @@ fn the_owners_clear_from_the_panel_clears_a_drain_the_node_saw_before_it() -> Te
         "a clear older than the drain keeps it"
     );
 
+    // Between two ticks the owner clears, then the drain is cleared at the box and set again for
+    // the same reason: the owner's clear is older than the new drain.
     node.scripted.clock.advance_ms(60_000);
     rig.owner_sets(DRAIN_CLEARED_AT, None, json!(NOW_MS + 30_000))?;
+    NodeDevices::clear_drain(node.scripted.devices.as_ref())?;
+    NodeDevices::drain(node.scripted.devices.as_ref(), DRAIN_WHY);
+    node.tick_after(1_000);
+    assert_eq!(
+        node.drained().as_deref(),
+        Some(DRAIN_WHY),
+        "a drain that began after the clear stands, though its reason is the same"
+    );
+
+    rig.owner_sets(DRAIN_CLEARED_AT, None, json!(NOW_MS + 61_500))?;
     node.tick_after(1_000);
     assert_eq!(node.drained(), None, "the owner's newer clear clears it");
-    assert_eq!(node.scripted.devices.drain_clears(), 1);
+    assert_eq!(
+        node.scripted.devices.drain_clears(),
+        2,
+        "the clear at the box and the owner's"
+    );
     assert!(node.owner_cleared(), "the incident names the owner's clear");
 
     // A drain after the clear is a new drain: the same clear does not clear it.
@@ -1019,6 +1036,23 @@ fn the_node_takes_the_clear_only_from_a_writer_clear_by_names() -> TestResult {
         Some(DRAIN_WHY),
         "under `owner`, an agent's clear keeps the drain"
     );
+    for (setter, writer) in [
+        (Setter::Engine { ask: None }, "the engine's own"),
+        (
+            Setter::Approved {
+                check_in: EntityId::now(),
+            },
+            "an approved request's",
+        ),
+    ] {
+        rig.row_on_node(newer, setter)?;
+        node.tick_after(1_000);
+        assert_eq!(
+            node.drained().as_deref(),
+            Some(DRAIN_WHY),
+            "under `owner`, {writer} clear is not the owner's under their own proof"
+        );
+    }
 
     rig.owner_sets(DRAIN_CLEAR_BY, None, clear_by_grants(listed)?)?;
     rig.row_on_node(newer, Setter::Standing { grant: unlisted })?;
@@ -1036,6 +1070,47 @@ fn the_node_takes_the_clear_only_from_a_writer_clear_by_names() -> TestResult {
         None,
         "under `grants`, the listed Grant's holder clears it"
     );
+    assert!(node.owner_cleared());
+    Ok(())
+}
+
+/// The same row: the clear's time and its writer come from N's own row. An agent's earlier row
+/// for every machine decides the time while it reads earlier than the owner's row for N, and it
+/// does not take the owner's name from that row; once it reads later, the owner's row decides.
+#[test]
+fn a_row_for_every_machine_does_not_take_the_owners_name_from_the_machines_row() -> TestResult {
+    let rig = Rig::new("")?;
+    rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
+    let node = rig.drained_node()?;
+    node.scripted.clock.advance_ms(60_000);
+    rig.owner_sets(DRAIN_CLEARED_AT, None, json!(NOW_MS + 30_000))?;
+    let every_machine = |at_ms: u64| {
+        plant_setting_row(
+            &rig.device.vault,
+            DRAIN_CLEARED_AT,
+            None,
+            json!(at_ms),
+            (
+                Setter::KeyGrant {
+                    grant: EntityId::now(),
+                },
+                Some(EntityId::now()),
+            ),
+        )
+        .map_err(at("an agent's row for every machine on N"))
+    };
+
+    every_machine(NOW_MS + 10_000)?;
+    node.tick_after(1_000);
+    assert_eq!(
+        node.drained().as_deref(),
+        Some(DRAIN_WHY),
+        "the agent's earlier row decides the time, and under `owner` it clears nothing"
+    );
+
+    every_machine(NOW_MS + 40_000)?;
+    node.tick_after(1_000);
+    assert_eq!(node.drained(), None, "the owner's row for N decides and clears it");
     assert!(node.owner_cleared());
     Ok(())
 }

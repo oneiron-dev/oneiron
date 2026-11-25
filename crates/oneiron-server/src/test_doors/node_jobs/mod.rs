@@ -114,6 +114,7 @@ impl ScriptedNode {
         };
         let clock = ScriptedNodeClock::new(wall_ms);
         let devices = ScriptedDevices::one("GPU-scripted-0", 24 * 1024);
+        devices.use_clock(Arc::clone(&clock));
         Self {
             units: ScriptedJobUnits::new(&paths.state_dir, Arc::clone(&clock)),
             paths,

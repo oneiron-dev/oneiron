@@ -20,9 +20,10 @@
 //! The readiness check (row Q4) runs at the shorter of the box's `readiness_every_secs` and the
 //! owner's `jobs.readiness.every_secs`, and a passed check clears the node's drain only when the
 //! box's `drain_clear_by` and the owner's `machines.drain.clear_by` both leave it to the check.
-//! Where the owner's row is `owner` or `grants`, his clear from the panel reaches the node as his
-//! `machines.drain.cleared_at` row, which the node acts on only when its writer is one `clear_by`
-//! names and the box's file does not keep the clear for the person at the box.
+//! Where the owner's row is `owner` or `grants`, the owner's clear from the panel reaches the node
+//! as the machine's own `machines.drain.cleared_at` row, which the node acts on only when its
+//! writer is one `clear_by` names and the box's file does not keep the clear for the person at the
+//! box.
 
 use std::path::Path;
 
@@ -241,10 +242,11 @@ pub fn drain_clear_by(
 }
 
 /// The time of the owner's clear of the node's drain that the node acts on, in Unix milliseconds:
-/// the owner's `machines.drain.cleared_at`, when his `machines.drain.clear_by` is `owner` or
-/// `grants`, the box's `drain_clear_by` does not keep the clear for the person at the box, and the
-/// deciding row's writer is one `clear_by` names, as door 12 judges its caller (the owner, or under
-/// `grants` an agent through a listed Grant). `None` otherwise.
+/// the owner's `machines.drain.cleared_at`, when the owner's `machines.drain.clear_by` is `owner`
+/// or `grants`, the box's `drain_clear_by` does not keep the clear for the person at the box, and
+/// the machine's own row decides the time and was written by one `clear_by` names, as door 12
+/// judges its caller (the owner under their own proof, or under `grants` an agent through a listed
+/// Grant). `None` otherwise.
 #[must_use]
 pub fn drain_cleared_at_ms(
     settings: &ExecutionNodeSettings,

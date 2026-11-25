@@ -2,6 +2,8 @@
 //! or at its node's word, the machine takes no new GPU work until a person
 //! clears it. With a `drain_file`, the drain outlasts a restart.
 
+use std::time::UNIX_EPOCH;
+
 use super::{GpuProbeError, GpuSlotTable, Shared, State};
 
 impl GpuSlotTable {
@@ -32,16 +34,28 @@ impl GpuSlotTable {
     /// The drain file's removal error; the drain then stands.
     pub fn clear_drain(&self) -> std::io::Result<()> {
         let mut state = self.shared.lock();
-        if let Some(file) = &self.shared.offer.drain_file {
-            match std::fs::remove_file(file) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+        self.shared.clear_drain(&mut state)
+    }
+
+    /// The clear from the owner's panel (pass 34, 2.4): clears the drain only
+    /// when it began before `before_ms`, in Unix milliseconds by this
+    /// machine's clock, and answers whether it did. A drain begins at the
+    /// drain file's last write, or when the drain kept in memory was set; with
+    /// both, at the later. The look and the removal hold the table's lock, so
+    /// a drain the table writes meanwhile stands.
+    ///
+    /// # Errors
+    ///
+    /// The drain file's metadata or removal error; the drain then stands.
+    pub fn clear_drain_begun_before(&self, before_ms: u64) -> std::io::Result<bool> {
+        let mut state = self.shared.lock();
+        match self.shared.drain_began_ms(&state)? {
+            Some(began_ms) if began_ms < before_ms => {
+                self.shared.clear_drain(&mut state)?;
+                Ok(true)
             }
+            Some(_) | None => Ok(false),
         }
-        state.failures_in_a_row = 0;
-        state.drain_in_memory = None;
-        Ok(())
     }
 }
 
@@ -92,5 +106,48 @@ impl Shared {
             }
         }
         state.drain_in_memory = Some(drain);
+        state.drain_in_memory_began_ms = oneiron_base::unix_millis_now();
+    }
+
+    /// When the standing drain began, in Unix milliseconds, or `None` with no
+    /// drain: the later of the drain file's last write and the time the drain
+    /// in memory was set. A file time before the epoch never counts as before
+    /// a clear.
+    fn drain_began_ms(&self, state: &State) -> std::io::Result<Option<u64>> {
+        let in_memory = state
+            .drain_in_memory
+            .as_ref()
+            .map(|_| state.drain_in_memory_began_ms);
+        let in_file = match &self.offer.drain_file {
+            None => None,
+            Some(path) => match std::fs::metadata(path) {
+                Ok(metadata) => Some(
+                    metadata
+                        .modified()?
+                        .duration_since(UNIX_EPOCH)
+                        .ok()
+                        .and_then(|since| u64::try_from(since.as_millis()).ok())
+                        .unwrap_or(u64::MAX),
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            },
+        };
+        Ok(in_memory.max(in_file))
+    }
+
+    /// Clears the drain: removes the drain file, forgets the drain in memory,
+    /// and starts the count of failed jobs over.
+    fn clear_drain(&self, state: &mut State) -> std::io::Result<()> {
+        if let Some(file) = &self.offer.drain_file {
+            match std::fs::remove_file(file) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        state.failures_in_a_row = 0;
+        state.drain_in_memory = None;
+        Ok(())
     }
 }

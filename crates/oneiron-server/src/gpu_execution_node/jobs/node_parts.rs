@@ -88,10 +88,10 @@ pub struct NodeJobSettings {
     /// machine, once its readiness check passes.
     pub drain_clear_by: DrainClearBy,
     /// `machines.drain.cleared_at`: the time, in Unix milliseconds, of the
-    /// owner's clear of the node's drain from the panel, where his
-    /// `clear_by` gives the clear to him or his Grants and the row's writer
-    /// is one it names. A readiness tick clears a drain the node first saw
-    /// before it. Default `None`: no such clear.
+    /// owner's clear of the node's drain from the panel, where the owner's
+    /// `clear_by` gives the clear to the owner or to listed Grants and the
+    /// row's writer is one it names. A readiness tick clears a drain that
+    /// began before it. Default `None`: no such clear.
     pub drain_cleared_at_ms: Option<u64>,
     /// `jobs.incidents.keep`: how many incident records the node keeps.
     /// Default 200.
@@ -286,6 +286,16 @@ pub trait NodeDevices: Send + Sync {
     ///
     /// Why the drain still stands.
     fn clear_drain(&self) -> Result<(), String>;
+
+    /// The clear from the owner's panel (pass 34, 2.4): clears the machine's
+    /// drain only when it began before `before_ms`, in Unix milliseconds by
+    /// the machine's clock, checked and cleared in one step, so a drain set
+    /// meanwhile stands. Whether it cleared one.
+    ///
+    /// # Errors
+    ///
+    /// Why the drain still stands.
+    fn clear_drain_begun_before(&self, before_ms: u64) -> Result<bool, String>;
 
     /// The readiness check's device probe: a fresh reading of every device
     /// answers, whether the machine is paused or drained (a look, not a
@@ -539,6 +549,11 @@ impl NodeDevices for GpuSlotTable {
 
     fn clear_drain(&self) -> Result<(), String> {
         GpuSlotTable::clear_drain(self).map_err(|error| format!("drain_not_cleared: {error}"))
+    }
+
+    fn clear_drain_begun_before(&self, before_ms: u64) -> Result<bool, String> {
+        GpuSlotTable::clear_drain_begun_before(self, before_ms)
+            .map_err(|error| format!("drain_not_cleared: {error}"))
     }
 
     fn probe(&self) -> Result<(), String> {
