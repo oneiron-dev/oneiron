@@ -501,14 +501,9 @@ impl Vault {
         // no earlier than the newest owner-signed time, as for its pairing: a
         // replica proves peers on the home's grants (REVIEW-10536 round 2).
         let now = self.instant_in_txn(txn)?.secs();
-        let signed = super::readonly_fold::newest_owner_signed_ts_in_txn(
-            &self.store,
-            self.privacy_posture(),
-            txn,
-            &fold,
-        )?;
         Ok(fold.slip_is_live(grant_id)
-            && now.max(signed.unwrap_or(0)) < grant.expires_at
+            && now >= grant.issued_at
+            && now < grant.expires_at
             && fold.vault_id == Some(grant.vault_id)
             && mint.signer == AuthorityKey::Ed25519(claims.host_key)
             && grant.parent_id.is_none()

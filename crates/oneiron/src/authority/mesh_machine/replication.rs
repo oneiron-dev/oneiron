@@ -213,7 +213,7 @@ impl Vault {
                 continue;
             };
             let Some((encoded, bare)) =
-                served_address(&address, authority.len(), lone.max(budget))?
+                served_address(&address, authority.len(), budget.min(lone))?
             else {
                 last = Some(machine);
                 continue;
@@ -316,7 +316,7 @@ impl Vault {
             machine,
             authority,
             address,
-            bare,
+            bare: _,
         } = row;
         let Ok(signed) = MESH_AUTHORITY.decode_value(&authority) else {
             return Ok(RowOutcome::Refused);
@@ -352,7 +352,7 @@ impl Vault {
             return Ok(RowOutcome::Refused);
         }
         let Some(address_held) =
-            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, bare, count)?
+            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, false, count)?
         else {
             return Ok(RowOutcome::Refused);
         };
