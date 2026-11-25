@@ -238,6 +238,7 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
+        let call_knobs = crate::team::spawn_need::SpawnCallKnobs::of(&request.need);
         let (request, owner_choices) = request.with_owner_choices(self.vault, project)?;
         let (evidence, root_lookup) = self.planner_evidence_sourced_for(
             project,
@@ -256,6 +257,7 @@ impl AgentDispatcher<'_> {
                     .load_leased_callable_skill_pack(&live, skill, request.executor, at)
             })?;
         receipt.owner_choices = owner_choices;
+        receipt.call_knobs = call_knobs;
         receipt.type_tree_root_lookup = root_lookup;
         Ok((receipt, quotes))
     }

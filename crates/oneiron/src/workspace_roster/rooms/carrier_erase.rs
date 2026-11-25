@@ -24,7 +24,7 @@ use super::offer_history::{
     ACTOR_ERASE_OFFER_BINDING, OFFER_ROWS, OfferHistory, OfferRow, links as offer_links,
     offer_history_erased_wins,
 };
-use super::offer_settle::RecordedOfferAnswer;
+use super::offer_settle::{AnsweredCheckIn, RecordedOfferAnswer};
 use super::offers::{OFFER_CURRENT, OfferState, StoredOffer, current_key};
 use super::participation::{FACTS, FactKey};
 use super::replica::{RoomSideRow, SideMerge, TurnMergeRefusal};
@@ -435,11 +435,42 @@ pub(super) fn offer_answer_erased_wins(
     match (ours, theirs) {
         (Some(ours), Some(theirs)) => {
             let by = carrier_actor_merged(ours.by, theirs.by, RosterActor::Erased)?;
-            let merged = RecordedOfferAnswer { by, ..ours.clone() };
+            let check_in = check_in_erased_wins(&ours.check_in, &theirs.check_in)?;
+            let merged = RecordedOfferAnswer {
+                by,
+                check_in: check_in.clone(),
+                ..ours.clone()
+            };
             let other = RecordedOfferAnswer {
                 by,
+                check_in,
                 ..theirs.clone()
             };
+            (merged == other).then_some(Some(merged))
+        }
+        (None, None) => Some(None),
+        _ => None,
+    }
+}
+
+/// Two copies of one answer's check-in decision as one: an asker either
+/// copy erased names no one; every other field, the join it was given on
+/// included, must match.
+fn check_in_erased_wins(
+    ours: &Option<AnsweredCheckIn>,
+    theirs: &Option<AnsweredCheckIn>,
+) -> Option<Option<AnsweredCheckIn>> {
+    match (ours, theirs) {
+        (Some(ours), Some(theirs)) => {
+            let requester = match (&ours.decision.requester, &theirs.decision.requester) {
+                (Some(a), Some(b)) if a != b => return None,
+                (Some(a), Some(_)) => Some(a.clone()),
+                _ => None,
+            };
+            let mut merged = ours.clone();
+            merged.decision.requester.clone_from(&requester);
+            let mut other = theirs.clone();
+            other.decision.requester = requester;
             (merged == other).then_some(Some(merged))
         }
         (None, None) => Some(None),

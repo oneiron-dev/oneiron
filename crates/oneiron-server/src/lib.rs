@@ -65,6 +65,7 @@ pub mod error;
 pub mod feedback_delivery;
 mod feedback_redaction;
 mod files_intake;
+pub mod gpu_execution_node;
 mod gpu_host;
 mod handler;
 mod home_candidacy;
