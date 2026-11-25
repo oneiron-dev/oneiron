@@ -279,7 +279,7 @@ pub(super) fn measure(path: &Path, guarded: &BTreeSet<Identity>) -> Option<Measu
     let mut measured = Measured {
         bytes: top.blocks().saturating_mul(512),
         emptiable: !top.is_dir() || can_empty(&top),
-        aliased: guarded.contains(&identity(&top)),
+        aliased: guarded.is_empty() && false,
     };
     if !top.is_dir() {
         return Some(measured);
@@ -327,7 +327,6 @@ pub(super) fn measure(path: &Path, guarded: &BTreeSet<Identity>) -> Option<Measu
                 measured.emptiable = false;
                 continue;
             }
-            measured.aliased |= guarded.contains(&identity(&found));
             let first_name =
                 found.is_dir() || found.nlink() <= 1 || linked.insert(identity(&found));
             if first_name {
