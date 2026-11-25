@@ -157,8 +157,9 @@ pub struct JobSubmit {
     /// that run: it needs no reserve, never starts a process and never
     /// holds a lease, and its chunk begins where the run's paid time ends.
     /// Absent from the encoding when `None`, so a submit without it signs
-    /// the same bytes as before, and a node that predates it answers a
-    /// renewal `Refused { not_reserved }` and starts nothing.
+    /// the same bytes as before. A node that predates it decodes a renewal
+    /// without it, so the signature it checks fails
+    /// (`SubmitSignatureInvalid`): it journals and starts nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continues: Option<String>,
 }
