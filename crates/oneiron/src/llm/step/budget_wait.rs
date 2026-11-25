@@ -8,7 +8,7 @@ use crate::dreamer_runner::{DreamerParkWait, PARKED, ParkResumer, TRAP_PARK_OWNE
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::budget::resident_share_frees;
-use crate::llm::run_admission::ResidentShare;
+use crate::llm::run_admission::{LeaseUnit, ResidentShare};
 
 use super::codec::invalid_trap;
 use super::trap::{TrapConsumePrecheck, trap_consume_precheck_in_txn, wake_trap_in_txn};
@@ -162,6 +162,7 @@ pub(crate) fn wake_resident_share_traps_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     resident: EntityId,
+    unit: &LeaseUnit,
     share: ResidentShare,
     now_ms: u64,
 ) -> Result<Vec<AttemptId>> {
@@ -174,12 +175,16 @@ pub(crate) fn wake_resident_share_traps_in_txn(
         };
         let DreamerParkWait::ResidentShare {
             resident: waiting,
+            unit: waiting_in,
             needed_units,
         } = &wait.wait
         else {
             continue;
         };
-        if *waiting != resident || !resident_share_frees(share, *needed_units) {
+        if *waiting != resident
+            || waiting_in != unit.as_str()
+            || !resident_share_frees(share, *needed_units)
+        {
             continue;
         }
         if !record.resumable_by(ParkResumer::ResidentShareRaise) {

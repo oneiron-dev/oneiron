@@ -160,6 +160,15 @@ impl VaultMachineConnector {
             return Err(unavailable("history_lost"));
         }
         if self.now_ms() >= row.not_after_ms {
+            // Row R4, 7.9: the machine's journal never took the reserve in its whole window.
+            super::super::guard::count_outcome(
+                self.vault(),
+                row.machine,
+                &oneiron::job_dispatch::machine_records::MachineJobOutcome::MachineFailure {
+                    why: "reserve_never_arrived".to_owned(),
+                },
+                self.now_ms(),
+            );
             let closed = self.close(&row.key, DispatchClose::StartWindowPassed)?;
             return self.stop_and_read(&closed);
         }

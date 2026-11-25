@@ -326,7 +326,7 @@ impl NodeReadiness {
         Some(ReadinessStreak {
             machine,
             failed_in_a_row: self.failed_in_a_row,
-            failing_since_ms: self.failing_since_ms?,
+            failing_since_ms: self.failing_since_ms.or(self.checked_at_ms)?,
             check: check.name().to_owned(),
             why: why.clone(),
             results: self.results.iter().map(ReadinessResult::line).collect(),

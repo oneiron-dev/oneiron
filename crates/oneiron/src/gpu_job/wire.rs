@@ -236,8 +236,8 @@ pub struct GpuJobStatus {
     pub job: String,
     /// `reserved`, `running`, `ending`, `stopped`, `ended` or `held`.
     pub state: String,
-    /// Why it ended or is ending: `exited`, `at_maximum`, `cancelled` or
-    /// `gone`.
+    /// Why it ended or is ending: `exited`, `at_maximum`, `cancelled`,
+    /// `gone`, or `unconfirmed` (written off by the owner).
     pub end_reason: Option<String>,
     /// Why the provider refused its chunk, for a held job.
     pub held_reason: Option<String>,
@@ -267,6 +267,11 @@ pub struct GpuJobStatus {
     pub stop: Option<GpuJobStopView>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+    /// For a job one of the vault's own machines runs (pass 33 row R4, door 8): its lifecycle,
+    /// the machine's newest receipt, when the issuer received it, and where the money stands.
+    /// `None` for every other backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<super::GpuJobNodeView>,
 }
 
 impl From<&GpuJob> for GpuJobStatus {
@@ -320,6 +325,7 @@ impl From<&GpuJob> for GpuJobStatus {
             }),
             created_at_ms: job.created_at_ms,
             updated_at_ms: job.updated_at_ms,
+            node: None,
         }
     }
 }
@@ -331,6 +337,7 @@ fn end_reason_name(reason: GpuEndReason) -> &'static str {
         GpuEndReason::AtMaximum => "at_maximum",
         GpuEndReason::Cancelled => "cancelled",
         GpuEndReason::Gone => "gone",
+        GpuEndReason::Unconfirmed => "unconfirmed",
     }
 }
 

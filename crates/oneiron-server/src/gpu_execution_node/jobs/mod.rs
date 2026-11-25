@@ -50,6 +50,7 @@ mod admission;
 mod end;
 mod launch;
 mod log_tail;
+mod outputs;
 mod recovery;
 mod status;
 
