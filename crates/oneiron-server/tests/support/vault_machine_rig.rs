@@ -385,6 +385,7 @@ impl ScriptedNode {
             seq: 0,
             boot_id: "node-boot".to_owned(),
             reported_at_ms: 0,
+            slice: None,
         }
     }
 
@@ -448,6 +449,7 @@ impl JobNodeClient for ScriptedNode {
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
                     require: Vec::new(),
+                    kind: Default::default(),
                 }],
                 scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,

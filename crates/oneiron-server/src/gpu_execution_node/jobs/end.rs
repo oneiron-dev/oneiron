@@ -190,10 +190,48 @@ impl NodeJobs {
                 KeyFollowUp::HashOutputs { pin } => self.hash_and_seal(&key, &pin),
             }
         }
+        self.rearm_renewed_cutoffs();
         self.keep_missing_terminal_receipts();
         self.clean_acknowledged_payloads();
         self.write_breadcrumbs();
         self.readiness_tick();
+    }
+
+    /// Asks the scope again for each live renewed session run whose cutoff
+    /// the journal moved and the scope has not taken (row W1): a renewal
+    /// whose ask failed, or any renewed run after a start. The scope's
+    /// renewal moves a cutoff only forward, so asking twice changes nothing.
+    /// The armed cutoff of a run that no longer runs is forgotten.
+    fn rearm_renewed_cutoffs(&self) {
+        let pending: Vec<(String, u64)> = {
+            let mut guard = self.lock();
+            let book = &mut *guard;
+            let Some(journal) = book.journal.as_ref() else {
+                return;
+            };
+            // A run that no longer runs needs no armed cutoff kept.
+            book.armed_cutoffs.retain(|key, _| {
+                journal.table().get(key).is_some_and(|known| {
+                    matches!(known.state, JobState::Launching | JobState::Running)
+                })
+            });
+            journal
+                .table()
+                .iter()
+                .filter(|known| {
+                    !known.renewals.is_empty()
+                        && matches!(known.state, JobState::Launching | JobState::Running)
+                })
+                .filter_map(|known| {
+                    let cutoff = known.launch.as_ref()?.cutoff_boot_ns;
+                    (book.armed_cutoffs.get(&known.key) != Some(&cutoff))
+                        .then(|| (known.key.clone(), cutoff))
+                })
+                .collect()
+        };
+        for (key, cutoff_boot_ns) in pending {
+            self.arm_renewed_cutoff(&key, cutoff_boot_ns);
+        }
     }
 
     /// Writes the signed terminal receipt again for each sealed key whose
@@ -227,7 +265,9 @@ impl NodeJobs {
     }
 
     /// Signs the sealed key's terminal receipt and keeps it in the key's
-    /// control directory, synced.
+    /// control directory, synced. For a renewed session (row W1) it is the
+    /// whole run's, under its first key; the issuer reads each chunk's slice
+    /// from the status answers.
     fn keep_terminal_receipt(
         &self,
         sealed: &NodeKey,
