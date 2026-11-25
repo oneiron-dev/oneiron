@@ -11,6 +11,7 @@
 //!   through its claim; a refused start returns the hold once; a plain start or resume on a
 //!   line-managed offer is refused; a released claim cannot start; a started unit's job is
 //!   cancelled through the unit door only.
+//! - The owner's write-off of a unit's live job ends its claim in the same write (pass 33, 8.4).
 //!
 //! The earlier tests change the claim through the start test door and start no GPU job. The
 //! start-gate tests call `Vault::start_claimed_gpu_job` with an in-memory connector that counts
@@ -1137,7 +1138,12 @@ use oneiron::llm::run_admission::{
 struct UnitJobConnector {
     create_refusal: Option<&'static str>,
     creates: AtomicUsize,
+    status_calls: AtomicUsize,
     terminations: AtomicUsize,
+    write_offs: AtomicUsize,
+    statuses: Mutex<VecDeque<GpuResourceStatus>>,
+    billed_secs: u64,
+    checkpoint_signal: Option<GpuJobSignal>,
 }
 
 impl GpuJobConnector for UnitJobConnector {
@@ -1156,7 +1162,13 @@ impl GpuJobConnector for UnitJobConnector {
     }
 
     fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
-        panic!("unexpected status for {resource:?}");
+        self.status_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(self
+            .statuses
+            .lock()
+            .expect("scripted status lock")
+            .pop_front()
+            .unwrap_or_else(|| panic!("unexpected status for {resource:?}")))
     }
 
     fn signal(
@@ -1164,12 +1176,24 @@ impl GpuJobConnector for UnitJobConnector {
         resource: &GpuResourceRef,
         signal: GpuJobSignal,
     ) -> Result<(), GpuConnectorError> {
-        panic!("unexpected {signal:?} for {resource:?}");
+        assert_eq!(
+            Some(signal),
+            self.checkpoint_signal,
+            "unexpected signal for {resource:?}"
+        );
+        Ok(())
     }
 
     fn terminate(&self, _resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
         self.terminations.fetch_add(1, Ordering::Relaxed);
-        Ok(GpuTermination::Confirmed { billed_secs: 0 })
+        Ok(GpuTermination::Confirmed {
+            billed_secs: self.billed_secs,
+        })
+    }
+
+    fn write_off(&self, _job: &GpuJob, _now_ms: u64) -> Result<(), GpuConnectorError> {
+        self.write_offs.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -1213,8 +1237,31 @@ impl UnitJobs {
         }
     }
 
+    fn with_statuses(mut self, statuses: impl IntoIterator<Item = GpuResourceStatus>) -> Self {
+        self.connector.statuses = Mutex::new(statuses.into_iter().collect());
+        self
+    }
+
+    fn with_billed_secs(mut self, billed_secs: u64) -> Self {
+        self.connector.billed_secs = billed_secs;
+        self
+    }
+
+    fn with_checkpoint_signal(mut self, percent: u8) -> Self {
+        self.connector.checkpoint_signal = Some(GpuJobSignal::CheckpointDue { percent });
+        self
+    }
+
     fn creates(&self) -> usize {
         self.connector.creates.load(Ordering::Relaxed)
+    }
+
+    fn calls(&self) -> (usize, usize, usize) {
+        (
+            self.creates(),
+            self.connector.status_calls.load(Ordering::Relaxed),
+            self.connector.terminations.load(Ordering::Relaxed),
+        )
     }
 
     fn quote(
@@ -1771,6 +1818,8 @@ fn a_started_units_cancel_ends_its_job_through_the_unit_door() {
     let view = fixture
         .reserve(Some(lead), &ask, NOW_MS)
         .expect("reserve unit");
+    let reserved_rows = fixture.claims(&arm, 1);
+    let room_before_reserve = fixture.allocation_room(only_claim(&reserved_rows)) + ask.secs;
     let jobs = UnitJobs::new(None);
     let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
     let live = jobs
@@ -1840,4 +1889,419 @@ fn a_started_units_cancel_ends_its_job_through_the_unit_door() {
     assert_eq!(only_claim(&rows).key(), key);
     assert_eq!(jobs.connector.terminations.load(Ordering::Relaxed), 1);
     assert_eq!(jobs.creates(), 1);
+    let claim = only_claim(&rows);
+    let terminal = unit_terminal(claim);
+    assert_eq!(terminal.end, UnitEnd::Settled);
+    assert_eq!(terminal.charged_secs, 0);
+    assert_eq!(terminal.node_end.as_deref(), Some("stopped"));
+    assert_eq!(fixture.allocation_room(claim), room_before_reserve);
+}
+
+use std::collections::VecDeque;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::sync::Mutex;
+
+use oneiron::experiment_arm::ArmEvidenceDigest;
+use oneiron::gpu_job::GpuJobOutput;
+use oneiron::gpu_line::UnitTerminal;
+use oneiron::job_dispatch::JobObservation;
+use oneiron::test_doors::gpu_job::gate_next_end_commit;
+
+fn unit_terminal(claim: &UnitClaim) -> &UnitTerminal {
+    let ClaimState::Ended(terminal) = &claim.state else {
+        panic!("expected ended claim: {claim:?}");
+    };
+    terminal
+}
+
+fn unit_job_admission(
+    quote: &GpuJobQuote,
+    limit_units: u64,
+) -> (RunAdmission, Arc<MemoryReceipts>) {
+    let receipts = Arc::new(MemoryReceipts::default());
+    let declaration = RunDeclaration::declared(BudgetLine {
+        limit_units,
+        reserve_units: limit_units,
+        unit: quote.unit.clone(),
+    })
+    .with_connector(OFFER.to_owned());
+    let admission = RunAdmission::new(
+        GpuJob::admission_ref_of(&quote.job),
+        declaration,
+        None,
+        receipts.clone(),
+    );
+    (admission, receipts)
+}
+
+/// T38: the claim and the job are both terminal even before the end step returns.
+#[test]
+fn a_crash_between_the_terminal_row_and_the_settle_settles_once_at_restart() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let room_before_reserve = RUNG_1_SECS + MARKET_SECS;
+    let ask = fixture.ask(&arm, "end-at-crash", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve unit");
+    let jobs = UnitJobs::new(None)
+        .with_statuses([GpuResourceStatus::Exited { used_secs: 20 }])
+        .with_billed_secs(20);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("start unit");
+    assert_eq!(job.state, GpuJobState::Running);
+    let job_id = job.id;
+    let (admission, _) = unit_job_admission(&quote, quote.units);
+    let gate = Arc::new(Barrier::new(2));
+    gate_next_end_commit(&jobs.permits, job_id, Arc::clone(&gate));
+    let ended = GpuJobState::Ended {
+        reason: GpuEndReason::Exited,
+    };
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            fixture.vault.gpu_job_step(
+                &job_id,
+                &jobs.offer,
+                &admission,
+                &jobs.permits,
+                &jobs.connector,
+                NOW_MS + 1_000,
+            )
+        });
+        gate.wait();
+        // Release the worker even when an assertion in the commit window fails.
+        let window = catch_unwind(AssertUnwindSafe(|| {
+            let stored = fixture
+                .vault
+                .gpu_job(&job_id)
+                .expect("read committed job")
+                .expect("committed job row");
+            assert_eq!(stored.state, ended);
+            let rows = fixture.claims(&arm, 1);
+            let claim = only_claim(&rows);
+            let terminal = unit_terminal(claim);
+            assert_eq!(terminal.end, UnitEnd::Settled);
+            assert_eq!(terminal.charged_secs, 20);
+            assert_eq!(terminal.node_end.as_deref(), Some("exited(0)"));
+            assert_eq!(fixture.allocation_room(claim), room_before_reserve - 20);
+
+            let restarted_permits = GpuJobPermits::new();
+            let (restarted_admission, _) = unit_job_admission(&quote, quote.units);
+            let calls = jobs.calls();
+            assert_eq!(calls, (1, 1, 1));
+            let replay = fixture
+                .vault
+                .gpu_job_step(
+                    &job_id,
+                    &jobs.offer,
+                    &restarted_admission,
+                    &restarted_permits,
+                    &jobs.connector,
+                    NOW_MS + 2_000,
+                )
+                .expect("step the ended job after restart");
+            assert_eq!(replay.state, ended);
+            assert_eq!(jobs.calls(), calls);
+            let replayed_rows = fixture.claims(&arm, 1);
+            assert_eq!(replayed_rows, rows);
+            assert_eq!(
+                fixture.allocation_room(only_claim(&replayed_rows)),
+                room_before_reserve - 20
+            );
+            rows
+        }));
+        gate.wait();
+        let step = worker.join().expect("step thread").expect("step exits");
+        let rows = window.unwrap_or_else(|panic| resume_unwind(panic));
+        assert_eq!(step.state, ended);
+        assert_eq!(fixture.claims(&arm, 1), rows);
+    });
+}
+
+/// T39: a new issuer uses the original hold, not its own (unfunded) admission.
+#[test]
+fn a_restarted_issuer_takes_up_the_original_hold_and_admits_nothing_new() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let room_before_reserve = RUNG_1_SECS + MARKET_SECS;
+    let ask = fixture.ask(&arm, "restart-running-unit", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve unit");
+    let jobs = UnitJobs::new(None)
+        .with_statuses([
+            GpuResourceStatus::Running {
+                used_secs: 10,
+                checkpoint: None,
+            },
+            GpuResourceStatus::Exited { used_secs: 25 },
+        ])
+        .with_billed_secs(25);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("start on the first host");
+    let permits = GpuJobPermits::new();
+    let (admission, receipts) = unit_job_admission(&quote, 0);
+    let running = fixture
+        .vault
+        .gpu_job_step(
+            &job.id,
+            &jobs.offer,
+            &admission,
+            &permits,
+            &jobs.connector,
+            NOW_MS + 1_000,
+        )
+        .expect("step on the restarted host");
+    assert_eq!(running.state, GpuJobState::Running);
+    assert_eq!(running.used_secs, 10);
+    let stored = fixture
+        .vault
+        .gpu_job(&job.id)
+        .expect("read running job")
+        .expect("running job row");
+    let chunk = stored.chunk().expect("running chunk");
+    assert_eq!(
+        chunk.idempotency_key,
+        job.chunk().expect("original chunk").idempotency_key
+    );
+    assert!(!chunk.admission_lost);
+    assert!(
+        !permits.holds(&job.id),
+        "the new host holds no chunk permit"
+    );
+    assert!(receipts.rows().is_empty(), "no paid admission on restart");
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    assert_eq!(claim.state, ClaimState::Started);
+    assert_eq!(fixture.allocation_room(claim), room_before_reserve - 60);
+
+    let ended = fixture
+        .vault
+        .gpu_job_step(
+            &job.id,
+            &jobs.offer,
+            &admission,
+            &permits,
+            &jobs.connector,
+            NOW_MS + 2_000,
+        )
+        .expect("finish on the restarted host");
+    assert_eq!(
+        ended.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Exited
+        }
+    );
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    let terminal = unit_terminal(claim);
+    assert_eq!(terminal.end, UnitEnd::Settled);
+    assert_eq!(terminal.charged_secs, 25);
+    assert_eq!(fixture.allocation_room(claim), room_before_reserve - 25);
+    assert!(
+        receipts.rows().is_empty(),
+        "the end needs no paid admission either"
+    );
+    assert_eq!(jobs.creates(), 1);
+}
+
+#[test]
+fn a_units_end_carries_its_machines_typed_terminal() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let ask = fixture.ask(&arm, "typed-terminal", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve unit");
+    let jobs = UnitJobs::new(None)
+        .with_statuses([GpuResourceStatus::Exited { used_secs: 61 }])
+        .with_billed_secs(60);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("start unit");
+    let (admission, _) = unit_job_admission(&quote, quote.units);
+    let sha256 = "ab".repeat(32);
+    fixture
+        .vault
+        .put_job_observation(&JobObservation {
+            key: job.chunk().expect("job chunk").idempotency_key.clone(),
+            machine: fixture.machine,
+            device_id: None,
+            receipt: Vec::new(),
+            epoch: "e1".to_owned(),
+            seq: 1,
+            last_measured_secs: None,
+            observed_at_ms: NOW_MS,
+            end_seen: None,
+            meter: None,
+            terminal: Some(GpuJobTerminal {
+                end: GpuJobEnd::TimeLimit,
+                measured_secs: Some(61),
+                billed_secs: 60,
+                meter: MeterVerdict::Bracketed { billed_secs: 60 },
+                machine: Some(fixture.machine),
+                device_id: Some("GPU-fixture-uuid".to_owned()),
+                outputs: vec![GpuJobOutput {
+                    name: "metrics.json".to_owned(),
+                    sha256: sha256.clone(),
+                    bytes: 512,
+                }],
+            }),
+            started: false,
+        })
+        .expect("store the machine's typed terminal");
+    fixture
+        .vault
+        .gpu_job_step(
+            &job.id,
+            &jobs.offer,
+            &admission,
+            &jobs.permits,
+            &jobs.connector,
+            NOW_MS + 1_000,
+        )
+        .expect("end the unit's job");
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    let terminal = unit_terminal(claim);
+    assert_eq!(terminal.end, UnitEnd::Settled);
+    assert_eq!(terminal.charged_secs, 60);
+    assert_eq!(terminal.measured_secs, 61);
+    assert_eq!(terminal.machine, Some(fixture.machine));
+    assert_eq!(terminal.device_id.as_deref(), Some("GPU-fixture-uuid"));
+    assert_eq!(terminal.node_end.as_deref(), Some("time_limit"));
+    assert_eq!(
+        terminal.outputs,
+        vec![ArmEvidenceDigest {
+            name: "metrics.json".to_owned(),
+            sha256,
+            bytes: 512,
+            rows: None,
+        }]
+    );
+    let room_before_lost_unit = fixture.allocation_room(claim);
+
+    let ask = fixture.ask(&arm, "lost-terminal", 60, Some(lead));
+    let at_ms = NOW_MS + 2_000;
+    let view = fixture
+        .reserve(Some(lead), &ask, at_ms)
+        .expect("reserve a distinct unit's first attempt");
+    let jobs = UnitJobs::new(None)
+        .with_statuses([
+            GpuResourceStatus::Running {
+                used_secs: 30,
+                checkpoint: None,
+            },
+            GpuResourceStatus::Gone,
+        ])
+        .with_checkpoint_signal(50)
+        .with_billed_secs(30);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, at_ms);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, at_ms)
+        .expect("start the second unit");
+    let (admission, _) = unit_job_admission(&quote, quote.units);
+    let running = fixture
+        .vault
+        .gpu_job_step(
+            &job.id,
+            &jobs.offer,
+            &admission,
+            &jobs.permits,
+            &jobs.connector,
+            at_ms + 1_000,
+        )
+        .expect("observe 30 seconds before the machine is lost");
+    assert_eq!(running.used_secs, 30);
+    let ended = fixture
+        .vault
+        .gpu_job_step(
+            &job.id,
+            &jobs.offer,
+            &admission,
+            &jobs.permits,
+            &jobs.connector,
+            at_ms + 2_000,
+        )
+        .expect("end the lost unit's job");
+    assert_eq!(
+        ended.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Gone
+        }
+    );
+    let rows = fixture.claims(&arm, 1);
+    let claim = rows
+        .iter()
+        .find(|claim| claim.key() == key)
+        .expect("lost unit claim");
+    let terminal = unit_terminal(claim);
+    assert_eq!(terminal.end, UnitEnd::BoxLost);
+    assert_eq!(terminal.charged_secs, 0);
+    assert_eq!(terminal.lost_secs, 30);
+    assert_eq!(fixture.allocation_room(claim), room_before_lost_unit);
+}
+
+#[test]
+fn a_written_off_units_job_ends_its_claim_in_the_same_write() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let ask = fixture.ask(&arm, "written-off-unit", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve unit");
+    let reserved_rows = fixture.claims(&arm, 1);
+    let room_before_reserve = fixture.allocation_room(only_claim(&reserved_rows)) + ask.secs;
+    let jobs = UnitJobs::new(None);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let live = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("start unit");
+    assert_eq!(live.state, GpuJobState::Running);
+    assert_eq!(
+        only_claim(&fixture.claims(&arm, 1)).state,
+        ClaimState::Started
+    );
+
+    let written = fixture
+        .vault
+        .write_off_gpu_job(
+            &fixture.owner_proof,
+            &view.job,
+            &jobs.permits,
+            &jobs.connector,
+            NOW_MS + 1_000,
+        )
+        .expect("the owner writes off the unit's job");
+    assert_eq!(
+        written.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Unconfirmed
+        }
+    );
+    assert_eq!(written.claim, Some(key));
+    assert_eq!(jobs.connector.write_offs.load(Ordering::Relaxed), 1);
+    assert_eq!(jobs.connector.terminations.load(Ordering::Relaxed), 0);
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    assert_eq!(claim.key(), key);
+    let terminal = unit_terminal(claim);
+    assert_eq!(
+        terminal.end,
+        UnitEnd::WrittenOff {
+            by: Some(fixture.owner)
+        }
+    );
+    assert_eq!(terminal.charged_secs, 0);
+    assert_eq!(terminal.ended_at_ms, NOW_MS + 1_000);
+    assert_eq!(fixture.allocation_room(claim), room_before_reserve);
 }
