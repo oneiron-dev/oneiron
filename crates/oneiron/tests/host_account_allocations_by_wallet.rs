@@ -12,7 +12,8 @@ use std::sync::Arc;
 use oneiron::agent_dispatch::GrantSpendBinding;
 use oneiron::federation::WalletRef;
 use oneiron::llm::run_admission::resident_doors::{
-    ResidentSharesRequest, resident_shares_as_owner, resident_shares_on_allocation_as_owner,
+    ResidentShareView, ResidentSharesRequest, ResidentSharesView, resident_shares_as_owner,
+    resident_shares_on_account_as_owner,
 };
 use oneiron::llm::run_admission::{
     Allocation, AllocationGrantError, AllocationRef, BudgetLine, CallOutcome, HostAccount,
@@ -142,6 +143,24 @@ fn held_on(permit: &RunPermit) -> (String, u64, Option<LeaseUnit>) {
         reference.generation,
         facts.allocation_unit.clone(),
     )
+}
+
+/// The resident's row in the view's block for `in_unit`.
+fn unit_row<'a>(
+    view: &'a ResidentSharesView,
+    in_unit: &str,
+    resident: EntityId,
+) -> &'a ResidentShareView {
+    view.allocations
+        .iter()
+        .find(|block| block.unit == in_unit)
+        .and_then(|block| {
+            block
+                .residents
+                .iter()
+                .find(|row| row.resident == resident.to_hex())
+        })
+        .unwrap_or_else(|| panic!("the resident's row in the {in_unit} block: {view:?}"))
 }
 
 fn kind(denied: &RunDenied) -> String {
@@ -301,6 +320,7 @@ fn the_owners_pinned_share_binds_the_walletless_allocation_and_never_the_gpu_lin
     vault
         .set_resident_share(
             resident,
+            &unit(MONEY),
             ResidentShare {
                 units: Some(5),
                 pinned: true,
@@ -400,6 +420,7 @@ fn the_share_view_shows_no_named_wallets_usage_beside_the_owners_pin() {
     vault
         .set_resident_share(
             resident,
+            &unit(MONEY),
             ResidentShare {
                 units: Some(5),
                 pinned: true,
@@ -428,19 +449,12 @@ fn the_share_view_shows_no_named_wallets_usage_beside_the_owners_pin() {
         )
         .expect("owner proof");
     let status = account.status();
-    assert!(status.resident_share_allocation().is_none());
-    let server = resident_shares_on_allocation_as_owner(
-        &vault,
-        &owner,
-        &ResidentSharesRequest {},
-        status.resident_share_allocation(),
-    )
-    .expect("server view");
-    let row = server
-        .residents
-        .iter()
-        .find(|row| row.resident == resident.to_hex())
-        .expect("the resident's row");
+    assert_eq!(status.walletless_allocations().count(), 0);
+    let server =
+        resident_shares_on_account_as_owner(&vault, &owner, &ResidentSharesRequest {}, &status)
+            .expect("server view");
+    assert_eq!(server.allocations.len(), 1, "one block, the money share's");
+    let row = unit_row(&server, MONEY, resident);
     assert_eq!((row.units, row.pinned), (Some(5), true));
     assert_eq!(
         (
@@ -454,15 +468,11 @@ fn the_share_view_shows_no_named_wallets_usage_beside_the_owners_pin() {
 
     let embedded =
         resident_shares_as_owner(&vault, &owner, &ResidentSharesRequest {}).expect("embedded view");
-    let row = embedded
-        .residents
-        .iter()
-        .find(|row| row.resident == resident.to_hex())
-        .expect("the resident's row");
+    let row = unit_row(&embedded, MONEY, resident);
     assert_eq!(
         (row.allocation.as_deref(), row.used_units),
-        (Some("gpu-line"), 10),
-        "the embedded view: the newest charged generation"
+        (None, 0),
+        "the embedded view: the newest charged generation in micro_usd, never the line's"
     );
 }
 
@@ -532,6 +542,7 @@ fn a_call_the_runs_line_refuses_releases_its_allocation_hold() {
     vault
         .set_resident_share(
             resident,
+            &unit(MONEY),
             ResidentShare {
                 units: Some(100),
                 pinned: true,
@@ -567,13 +578,14 @@ fn a_call_the_runs_line_refuses_releases_its_allocation_hold() {
 /// both enforce the owner's pin, and the server's view shows the one of the
 /// highest generation, with its depletion.
 #[test]
-fn the_share_view_with_two_walletless_units_shows_the_highest_generation() {
+fn the_share_view_shows_each_walletless_allocation_in_its_own_block() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("vault"));
     let resident = EntityId::now();
     vault
         .set_resident_share(
             resident,
+            &unit(MONEY),
             ResidentShare {
                 units: Some(50),
                 pinned: true,
@@ -605,31 +617,29 @@ fn the_share_view_with_two_walletless_units_shows_the_highest_generation() {
         )
         .expect("owner proof");
     let status = account.status();
-    assert_eq!(
-        status.resident_share_allocation(),
-        Some(&AllocationRef {
-            id: "money".to_owned(),
-            generation: 7
-        })
-    );
-    let view = resident_shares_on_allocation_as_owner(
-        &vault,
-        &owner,
-        &ResidentSharesRequest {},
-        status.resident_share_allocation(),
-    )
-    .expect("server view");
-    let row = view
-        .residents
-        .iter()
-        .find(|row| row.resident == resident.to_hex())
-        .expect("the resident's row");
+    let view =
+        resident_shares_on_account_as_owner(&vault, &owner, &ResidentSharesRequest {}, &status)
+            .expect("server view");
+    assert_eq!(view.allocations.len(), 2, "{view:?}");
+    let row = unit_row(&view, MONEY, resident);
     assert_eq!(
         (
+            row.units,
             row.allocation.as_deref(),
             row.allocation_generation,
             row.used_units
         ),
-        (Some("money"), Some(7), 10)
+        (Some(50), Some("money"), Some(7), 10)
+    );
+    let row = unit_row(&view, GPU, resident);
+    assert_eq!(
+        (
+            row.units,
+            row.pinned,
+            row.allocation.as_deref(),
+            row.used_units
+        ),
+        (None, false, None, 0),
+        "the money pin is no gpu seconds share"
     );
 }

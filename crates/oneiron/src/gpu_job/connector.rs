@@ -270,4 +270,9 @@ pub trait GpuJobConnector: Send + Sync {
             reason: "write_off_not_offered".to_owned(),
         })
     }
+
+    /// One housekeeping pass of this backend outside any job's step (pass 33 row R4): the
+    /// `vault_machine` backend asks its live orphan keys to stop and returns the results it
+    /// still owes. The host's worker calls it once a round; the default does nothing.
+    fn housekeeping(&self) {}
 }

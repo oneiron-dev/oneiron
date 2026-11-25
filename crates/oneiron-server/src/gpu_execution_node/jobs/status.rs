@@ -342,7 +342,7 @@ impl NodeJobs {
     }
 }
 
-/// Reads `<payload_dir>/out/<name>` as [`super::end::hash_outputs`] opened
+/// Reads `<payload_dir>/out/<name>` as [`super::outputs::hash_outputs`] opened
 /// it: beneath `out/`, without following a link, a regular file, at most
 /// `bound` bytes, and with the digest the receipt names.
 fn read_output(payload_dir: &Path, digest: &OutputDigest, bound: u64) -> Result<Vec<u8>, String> {

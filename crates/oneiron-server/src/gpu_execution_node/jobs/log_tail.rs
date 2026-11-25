@@ -18,7 +18,10 @@
 //! parse or does not fit its file is refused, never guessed. A rotation
 //! under the read is seen by reading the record and the file's length again
 //! after it: the read is tried again, and answered `Busy` if it keeps
-//! moving.
+//! moving. A record still `rotating` once the key ended names a rotation no
+//! writer is left to finish (a writer killed inside it: the key ends only
+//! when the unit's control group was empty), so that read is refused, never
+//! answered `Busy` for good.
 
 use std::fs::File;
 use std::io::Read as _;
@@ -82,7 +85,7 @@ impl NodeJobs {
         let max = request.max.min(TAIL_MAX_BYTES);
         for _ in 0..READ_ATTEMPTS {
             match read_page(&payload_dir, request.stream, request.offset, max) {
-                Ok(Some(page)) => {
+                Ok(Attempt::Page(page)) => {
                     return JobStatusAnswer::Tail(LogTail {
                         ended: ended && page.at_end,
                         next_offset: page.next_offset,
@@ -92,12 +95,29 @@ impl NodeJobs {
                         bytes: page.bytes,
                     });
                 }
-                Ok(None) => {}
+                // No writer is left to finish the rotation once the key ended.
+                Ok(Attempt::Rotating) if ended => {
+                    return not_readable(format!(
+                        "log_writer_ended_inside_rotation: log/{}.dropped still says rotating",
+                        request.stream.file_name()
+                    ));
+                }
+                Ok(Attempt::Rotating | Attempt::Moved) => {}
                 Err(why) => return not_readable(why),
             }
         }
         status_busy()
     }
+}
+
+/// What one read of a stream found.
+#[derive(Debug, PartialEq, Eq)]
+enum Attempt {
+    Page(Page),
+    /// The record or the file moved under the read.
+    Moved,
+    /// The drop record says the writer is inside a rotation.
+    Rotating,
 }
 
 /// One answered range of a stream.
@@ -198,14 +218,13 @@ impl LogMap {
     }
 }
 
-/// One read of the stream: `None` when the record or the file moved under
-/// it.
+/// One read of the stream.
 fn read_page(
     payload_dir: &Path,
     stream: LogStream,
     offset: u64,
     max: u32,
-) -> Result<Option<Page>, String> {
+) -> Result<Attempt, String> {
     let empty = Page {
         bytes: Vec::new(),
         next_offset: 0,
@@ -213,18 +232,18 @@ fn read_page(
         at_end: true,
     };
     let Some(log) = open_log_dir(payload_dir)? else {
-        return Ok(Some(empty));
+        return Ok(Attempt::Page(empty));
     };
     let record_name = format!("{}.dropped", stream.file_name());
     let before = read_drop_record(&log, &record_name)?;
     if before.is_some_and(|record| record.rotating) {
-        return Ok(None);
+        return Ok(Attempt::Rotating);
     }
     let Some(file) = open_regular(&log, stream.file_name())? else {
         if before.is_some() {
             return Err(format!("{record_name} without its log file"));
         }
-        return Ok(Some(empty));
+        return Ok(Attempt::Page(empty));
     };
     let len_before = file_len(&file)?;
     let map = LogMap::new(before, len_before)?;
@@ -233,14 +252,14 @@ fn read_page(
     let len_after = file_len(&file)?;
     let after = read_drop_record(&log, &record_name)?;
     if after != before || len_after < len_before {
-        return Ok(None);
+        return Ok(Attempt::Moved);
     }
     let read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     let next_offset = range
         .offset
         .saturating_add(range.skipped)
         .saturating_add(read);
-    Ok(Some(Page {
+    Ok(Attempt::Page(Page {
         at_end: next_offset >= map.end(),
         next_offset,
         skipped: range.skipped,

@@ -223,6 +223,10 @@ impl OrphanKeys for JobOrphanKeys {
         }
     }
 
+    fn follow_live(&self) {
+        self.follow_live_orphans(None);
+    }
+
     fn written_off_key(&self, node: EntityId, row: &JobDispatch, entry: &KeyEntry) {
         if !matches!(
             row.closed,

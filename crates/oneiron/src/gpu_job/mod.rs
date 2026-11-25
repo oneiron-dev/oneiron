@@ -31,6 +31,7 @@ mod node_view;
 mod offer;
 mod permits;
 mod renew;
+mod result_landing;
 pub(crate) mod setting_keys;
 mod start;
 mod step;
@@ -52,6 +53,7 @@ pub use node_view::{
 pub use offer::{AtMaximum, GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
 pub use renew::{GpuJobRenewal, SESSION_RENEW_LEAD_DEFAULT_SECS};
+pub use result_landing::{GpuJobResultBinding, GpuJobResultFile};
 pub use start::GpuJobStart;
 pub use wire::{
     GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest,

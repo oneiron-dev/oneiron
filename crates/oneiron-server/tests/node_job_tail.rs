@@ -2,7 +2,8 @@
 //! section 10): `Tail` on `oneiron/job-status/1` reads a key's stdout and
 //! stderr by logical offset while the key runs and after it ended, across a
 //! cap that dropped bytes between the head and the tail, and only for the
-//! key's issuer. The log files are written here as the unit's log writer
+//! key's issuer; a rotation a writer left unfinished is refused once the key
+//! ended. The log files are written here as the unit's log writer
 //! (row R3b) writes them. Against R3a's scripted unit manager, device table
 //! and clock: no privilege and no network; a second `NodeJobs` on the same
 //! directory is an engine restart.
@@ -337,6 +338,47 @@ fn a_log_tail_resumes_from_an_offset_after_a_dropped_connection() {
     assert_eq!(
         fixture.tail(&jobs, key, 21, 4),
         page(b"step", 25, false, None)
+    );
+}
+
+/// FIX EXEC-LOG-TAIL-ROTATING-AFTER-END: a writer killed inside a rotation
+/// (the unit's KILL after the stop grace) leaves its drop record `rotating`,
+/// and once the key ended no writer is left to finish it. While the key runs
+/// that record asks the reader to come back; after the end it is refused,
+/// not answered `Busy` for good. The other stream still reads.
+/// Red at main 9edd639c: the ended key's read answers `Busy`.
+#[test]
+fn a_rotation_an_ended_key_left_unfinished_is_refused_not_busy() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let key = "job-q3c/chunk-0";
+    fixture.run(&jobs, key);
+    let log = fixture.log_dir(key);
+    std::fs::write(log.join("stdout"), b"step 1\nstep 4\n").expect("stdout");
+    std::fs::write(
+        log.join("stdout.dropped"),
+        br#"{"at":7,"dropped":14,"rotating":true}"#,
+    )
+    .expect("rotating record");
+    std::fs::write(log.join("stderr"), b"warning: slow disk\n").expect("stderr");
+    assert!(matches!(
+        fixture.ask(&jobs, key, LogStream::Stdout, 0, 1024),
+        JobStatusAnswer::Busy { .. }
+    ));
+
+    fixture.end(&jobs, key);
+    let answer = fixture.ask(&jobs, key, LogStream::Stdout, 0, 1024);
+    assert!(
+        matches!(
+            &answer,
+            JobStatusAnswer::Refused(JobRefusal::LogNotReadable { why })
+                if why.starts_with("log_writer_ended_inside_rotation")
+        ),
+        "an ended key's unfinished rotation is refused: {answer:?}"
+    );
+    assert_eq!(
+        fixture.ask(&jobs, key, LogStream::Stderr, 0, 1024),
+        JobStatusAnswer::Tail(page(b"warning: slow disk\n", 19, true, None))
     );
 }
 

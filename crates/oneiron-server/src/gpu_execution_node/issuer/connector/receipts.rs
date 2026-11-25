@@ -160,9 +160,13 @@ impl VaultMachineConnector {
         if closes_now {
             self.count_machine_end(row.machine, ended, &meter);
         }
+        // A session's slice the run passed carries no outputs: only the run's last slice does.
         if ended.end == Some(JobEnd::Continued) {
             return Ok(GpuTermination::Continued { billed_secs });
         }
+        // Row R4, EM-12 = A: the outputs land when the quote binds a result, then the node is
+        // told it may clean them. What does not finish here is owed to the housekeeping pass.
+        self.result_returns().return_outputs(&row, ended);
         Ok(GpuTermination::Confirmed { billed_secs })
     }
 

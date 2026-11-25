@@ -815,18 +815,31 @@ impl Rig {
     }
 
     pub(crate) fn start_job_with(&self, workload: &str, connector: &dyn GpuJobConnector) -> JobRun {
-        self.start_job_on(&self.offer, workload, connector)
+        let inputs = json!({"machine": self.node.machine.to_hex()});
+        self.start_job_with_inputs(workload, inputs, connector)
+    }
+
+    /// [`Self::start_job_with`] on a quote whose inputs are `inputs`.
+    pub(crate) fn start_job_with_inputs(
+        &self,
+        workload: &str,
+        inputs: serde_json::Value,
+        connector: &dyn GpuJobConnector,
+    ) -> JobRun {
+        self.start_job_on(&self.offer, workload, inputs, connector)
     }
 
     /// A session (row W1): the rig's offer, renewing at the maximum.
     pub(crate) fn start_session(&self, workload: &str) -> JobRun {
-        self.start_job_on(&session_offer(), workload, &self.connector)
+        let inputs = json!({"machine": self.node.machine.to_hex()});
+        self.start_job_on(&session_offer(), workload, inputs, &self.connector)
     }
 
     fn start_job_on(
         &self,
         offer: &GpuOffer,
         workload: &str,
+        inputs: serde_json::Value,
         connector: &dyn GpuJobConnector,
     ) -> JobRun {
         let now = self.clock.now_ms();
@@ -836,7 +849,7 @@ impl Rig {
                     job_type: "pinned_workload".to_owned(),
                     image: workload.to_owned(),
                     maximum_secs: Some(MAXIMUM_SECS),
-                    inputs: json!({"machine": self.node.machine.to_hex()}),
+                    inputs,
                 },
                 None,
                 MAXIMUM_SECS,

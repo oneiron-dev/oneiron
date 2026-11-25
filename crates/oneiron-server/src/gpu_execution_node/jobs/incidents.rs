@@ -150,6 +150,22 @@ impl IncidentLog {
     }
 }
 
+impl super::NodeJobs {
+    /// A fresh quarantine of the key's devices: puts each out of every
+    /// reserve and launch, then records one incident for each. Recovery's
+    /// replay of a quarantine calls `quarantine_device` alone and writes
+    /// none.
+    pub(super) fn quarantine_with_incident(&self, known: &super::NodeKey, why: &str) {
+        self.quarantine_device(known, why);
+        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
+            self.record_incident(IncidentKind::DeviceQuarantined {
+                device: lease.device_id.clone(),
+                why: why.to_owned(),
+            });
+        }
+    }
+}
+
 fn encode(incident: &NodeIncident) -> std::io::Result<String> {
     serde_json::to_string(incident)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
