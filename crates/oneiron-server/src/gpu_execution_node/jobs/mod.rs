@@ -19,6 +19,8 @@
 //! configuration (row R1), the GPU slot table (OPUS-LE-FLEET), the memory
 //! floor, the job unit (row R3b), the stager (row R3c) and the machine-key
 //! signer. Its calls block; an async caller runs them on a blocking thread.
+//! On Linux the server opens it and steps it on the mesh listener's tick
+//! (`serving`).
 //! One service per `state_dir`: it holds the journal's writer lock while any
 //! handle of it lives, a staging worker's too.
 
@@ -27,6 +29,8 @@ pub mod journal;
 pub mod journal_file;
 pub mod node_parts;
 pub mod receipt;
+#[cfg(target_os = "linux")]
+pub mod serving;
 pub mod staging;
 
 mod admission;
@@ -53,6 +57,8 @@ pub use node_parts::{
     StagingNotBuilt,
 };
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
+#[cfg(target_os = "linux")]
+pub use serving::ServedNodeJobs;
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 
 /// How long a `Busy` answer asks the issuer to wait before it asks again: a
