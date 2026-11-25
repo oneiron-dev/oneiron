@@ -6,6 +6,13 @@
 //! gate's own record), and whether the unit's cgroup holds any process but
 //! this step once the stop grace is over. The workload cannot write any of
 //! it.
+//!
+//! Once the group is empty, and before the record is written, the step hands
+//! every entry of the payload that the job's uid owns to the engine's account
+//! ([`handover`]) and gives the uid back to the node's table ([`job_ids`]; FIX
+//! EXEC-UNIT-CROSS-JOB-SAME-UID). A group that did not empty, or a hand-over
+//! that did not complete, keeps the uid taken: the table takes it back only
+//! once no process holds it.
 
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::path::Path;
@@ -13,14 +20,18 @@ use std::time::{Duration, Instant};
 
 use super::super::jobs::{EndRecord, JobKeyId, LaunchFile};
 use super::exchange;
+use super::handover::{self, hand_over};
+use super::job_ids::{self, JobIdentity};
 use super::prepare::CUTOFF_MARGIN_MS;
-use super::records::{CutoffMark, PreparedRecord, ScopeRecord};
-use super::safe_fs::{self, boot_id, boot_ns, borrow, read_beneath};
+use super::records::{CutoffMark, ExecFile, PreparedRecord, ScopeRecord};
+use super::safe_fs::{
+    self, boot_id, boot_ns, borrow, open_dir_beneath, open_dir_path, read_beneath,
+};
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{run_tool, show, show_within};
 use super::{
-    CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, SCOPE_FILE_NAME, is_job_instance,
-    refusal_of_exit_status,
+    CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, EXEC_FILE_NAME, PREPARED_FILE_NAME, SCOPE_FILE_NAME,
+    is_job_instance, refusal_of_exit_status,
 };
 
 /// How long the step, run by hand, looks for the unit's group to empty.
@@ -30,12 +41,16 @@ const REAP_WAIT: Duration = Duration::from_secs(2);
 /// whole run fits in its own timeout, the stop grace (review r3 R3-06).
 const QUERY_WAIT: Duration = Duration::from_secs(1);
 
+/// The least wait for the id table's lock when the job's id goes back.
+const RELEASE_WAIT_MIN: Duration = Duration::from_millis(200);
+
 /// The end record's file, R3a's `END_RECORD_FILE_NAME`.
 const END_RECORD: &str = super::super::jobs::job_unit::END_RECORD_FILE_NAME;
 
 /// The step. Returns its exit status.
 #[must_use]
 pub fn run(args: StepArgs) -> i32 {
+    let began = Instant::now();
     if let Some(why) = &args.host_namespace_error {
         // The record goes on from inside the unit's view: the control
         // directory is not one of its binds.
@@ -64,10 +79,28 @@ pub fn run(args: StepArgs) -> i32 {
     .is_ok_and(|found| found.is_some())
     {
         journal_line!("job-ended: {} has its end record already", context.unit());
+        // A later run's id and files still go back.
+        if let Some(identity) = job_identity(&context).filter(|_| run_by_the_unit()) {
+            let (cgroup_empty, _) =
+                settle_cgroup(&context.unit(), context.settings.stop_grace_secs);
+            give_back(&context, identity, cgroup_empty, began);
+        }
         disarm(&context);
         return 0;
     }
+    // Read from root's exchange before `disarm` removes it.
+    let identity = job_identity(&context);
     let record = end_record(&context);
+    match identity {
+        Some(identity) if run_by_the_unit() => {
+            give_back(&context, identity, record.cgroup_empty, began);
+        }
+        Some(identity) => journal_line!(
+            "job-ended: run by hand: uid {} and the job's files stay; the unit's own end step, or a later take-back, gives them back",
+            identity.uid
+        ),
+        None => {}
+    }
     let written = serde_json::to_vec_pretty(&record)
         .map_err(|error| error.to_string())
         .and_then(|bytes| {
@@ -165,6 +198,98 @@ fn end_record(context: &StepContext) -> EndRecord {
         cgroup_empty,
         refusal,
     }
+}
+
+/// Whether the service manager runs this step as the unit's `ExecStopPost=`
+/// (it sets `SERVICE_RESULT` there). Only that run hands the job's files over
+/// and gives its id back: it comes after the unit's own processes, in order
+/// with its next start; a run by hand could give back an id a new start of
+/// the unit had just taken again (review r11 R11-10).
+fn run_by_the_unit() -> bool {
+    std::env::var_os("SERVICE_RESULT").is_some()
+}
+
+/// The ids the prepare step gave this unit's job: the id table's entry for
+/// the unit (the reservation of this run, review r9 R9-13), else root's
+/// `exec.json`. The table also answers when the prepare step refused before
+/// it wrote that file (review r8 R8-04): the job's directories are handed
+/// over even then.
+fn job_identity(context: &StepContext) -> Option<JobIdentity> {
+    job_ids::identity_of(&context.unit()).or_else(|| exchange_identity(context))
+}
+
+/// The ids root's `exec.json` names for this unit's instance.
+fn exchange_identity(context: &StepContext) -> Option<JobIdentity> {
+    let exchange = open_dir_path(&context.exchange_path()).ok()?;
+    let bytes =
+        read_beneath(borrow(&exchange), EXEC_FILE_NAME, RECORD_MAX_BYTES, Some(0)).ok()??;
+    let exec: ExecFile = serde_json::from_slice(&bytes).ok()?;
+    (exec.instance == context.args.instance).then_some(exec.identity)
+}
+
+/// Hands the job's files to the engine's account and gives its uid back,
+/// once no process of the unit is left. The settling of the group takes at
+/// most two thirds of the stop grace from the step's start; the hand-over
+/// ends by four fifths and the wait for the id table's lock by five sixths
+/// (review r8 R8-03), so the record is still written within the step's
+/// timeout. An id not given back in time stays taken until it is taken back.
+fn give_back(context: &StepContext, identity: JobIdentity, cgroup_empty: bool, began: Instant) {
+    let unit = context.unit();
+    if !cgroup_empty {
+        journal_line!(
+            "job-ended: uid {} kept: the unit's group did not empty",
+            identity.uid
+        );
+        return;
+    }
+    let grace = Duration::from_secs(context.settings.stop_grace_secs);
+    let wait = share_of(grace, 4, 5).saturating_sub(began.elapsed());
+    let payload = open_dir_path(&context.settings.work_dir).and_then(|work| {
+        open_dir_beneath(borrow(&work), std::ffi::OsStr::new(&context.args.instance))
+    });
+    let outcome = match payload {
+        Ok(payload) => hand_over(
+            borrow(&payload),
+            identity,
+            (context.engine_uid, context.engine_gid),
+            wait,
+        ),
+        // No payload: nothing of the job's is left to hand over.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => handover::HandOver {
+            changed: 0,
+            seen: 0,
+            incomplete: None,
+        },
+        Err(error) => handover::HandOver {
+            changed: 0,
+            seen: 0,
+            incomplete: Some(format!("payload: {error}")),
+        },
+    };
+    if let Some(why) = &outcome.incomplete {
+        journal_line!(
+            "job-ended: uid {} kept: the hand-over to the engine did not complete ({} of {} entries changed): {why}",
+            identity.uid,
+            outcome.changed,
+            outcome.seen
+        );
+        return;
+    }
+    let lock_wait = share_of(grace, 5, 6)
+        .saturating_sub(began.elapsed())
+        .max(RELEASE_WAIT_MIN);
+    match job_ids::release(identity, &unit, lock_wait) {
+        Ok(_) => {}
+        Err(why) => journal_line!("job-ended: uid {} not given back: {why}", identity.uid),
+    }
+}
+
+/// `parts` of `whole` shares of `grace`.
+fn share_of(grace: Duration, parts: u32, whole: u32) -> Duration {
+    grace
+        .saturating_mul(parts)
+        .checked_div(whole)
+        .unwrap_or_default()
 }
 
 /// The key `launch.json` names, when it hashes to this unit's instance.

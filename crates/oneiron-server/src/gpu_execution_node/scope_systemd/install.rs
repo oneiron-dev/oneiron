@@ -1,6 +1,9 @@
 //! `oneiron execution-node install` (root, once per machine and again after
 //! a template's maximum grows; pass 33, 7.6; EM-4 = A): the one privileged
-//! step. It makes the job account, writes the root-owned unit template and
+//! step. It checks the node's job range against the system's accounts,
+//! groups and subordinate ids (each job runs as its own uid from it: FIX
+//! EXEC-UNIT-CROSS-JOB-SAME-UID; no job account is made), writes the
+//! root-owned unit template and
 //! the job control socket through which the engine's account starts and
 //! stops its instances and nothing else ([`super::control`]; the engine's
 //! account gets no polkit grant), makes the state and payload directories
@@ -8,6 +11,7 @@
 //! idempotent: a second run with the same inputs changes nothing.
 
 use std::ffi::OsStr;
+use std::ops::Range;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
@@ -15,10 +19,10 @@ use super::super::node_settings::ExecutionNodeSettings;
 use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
 use super::safe_fs::{
-    account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
+    account, borrow, facts, group_id, make_dir_beneath, open_dir_beneath, open_dir_path,
     require_root_owned,
 };
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
     unit_path_word,
@@ -58,18 +62,21 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         })?;
         require_root_owned(&request.node_file)?;
     }
-    for name in [&request.engine_account, &settings.job_account] {
-        if !plain_account(name) {
-            return Err(format!(
-                "{name:?}: an account name here is 1 to 32 of a-z, 0-9, '-' and '_'"
-            ));
-        }
-    }
-    if request.engine_account == settings.job_account || settings.job_account == "root" {
-        return Err("the job account must be neither root nor the engine's account".to_owned());
+    let name = &request.engine_account;
+    if !plain_account(name) {
+        return Err(format!(
+            "{name:?}: an account name here is 1 to 32 of a-z, 0-9, '-' and '_'"
+        ));
     }
     let (engine_uid, engine_gid, engine_home) = account(&request.engine_account)
         .map_err(|error| format!("engine account {}: {error}", request.engine_account))?;
+    check_job_range(&settings.job_uids(), (engine_uid, engine_gid))?;
+    let device_gid = ensure_device_group(
+        &settings.job_device_group,
+        &settings.job_uids(),
+        (engine_uid, engine_gid),
+        request.dry_run,
+    )?;
     let mut protected = vec![engine_home];
     protected.extend(request.protect.iter().cloned());
     protected.sort();
@@ -85,7 +92,6 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         binary,
         node_file: request.node_file.clone(),
         engine_account: request.engine_account.clone(),
-        job_account: settings.job_account.clone(),
         state_dir: settings.state_dir.clone(),
         work_dir: settings.work_dir.clone(),
         protected,
@@ -111,10 +117,16 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         stdout_line!(
             "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}"
         );
+        match device_gid {
+            Some(gid) => stdout_line!("job device group {} gid {gid}", settings.job_device_group),
+            None => stdout_line!(
+                "job device group {}: not there yet; install makes it",
+                settings.job_device_group
+            ),
+        }
         print_templates(&settings);
         return Ok(());
     }
-    ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
     ensure_dir(
         &inputs.state_dir.join("control"),
@@ -144,11 +156,14 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
     stdout_line!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job uids {}..{}, job device group {} gid {}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),
         said(socket_changed),
         said(handler_changed),
-        settings.job_account
+        settings.job_uids().start,
+        settings.job_uids().end,
+        settings.job_device_group,
+        device_gid.unwrap_or_default()
     );
     print_templates(&settings);
     stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
@@ -163,75 +178,242 @@ fn print_templates(settings: &ExecutionNodeSettings) {
     }
 }
 
-/// The shells of an account no one logs in to.
-const NO_LOGIN_SHELLS: [&str; 5] = [
-    "/usr/sbin/nologin",
-    "/usr/bin/nologin",
-    "/sbin/nologin",
-    "/bin/false",
-    "/usr/bin/false",
-];
-
-/// Above this uid an account is a login account (`SYS_UID_MAX` of
-/// login.defs(5), shadow's default).
-const SYSTEM_UID_MAX: u32 = 999;
-
-/// Makes the job account as a system account with no login and no home,
-/// unless it exists. An account that exists must be such an account and not
-/// the engine's (review r1 of #10439): a name that collides with a login
-/// account would give every workload that account's uid.
-fn ensure_job_account(name: &str, engine_uid: u32) -> Result<(), String> {
-    match account_entry(name) {
-        Ok(found) => {
-            return existing_job_account_fits(&found.shell, found.uid, engine_uid)
-                .map_err(|why| format!("job account {name}: {why}"));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("job account {name}: {error}")),
-    }
-    let shell = NO_LOGIN_SHELLS[..3]
-        .iter()
-        .copied()
-        .find(|path| Path::new(path).is_file())
-        .unwrap_or("/bin/false");
-    if tool_path("useradd").is_none() {
-        return Err(format!("no account {name}, and no useradd to make it"));
-    }
-    run_tool(
-        "useradd",
-        &[
-            "--system",
-            "--user-group",
-            "--no-create-home",
-            "--home-dir",
-            "/nonexistent",
-            "--shell",
-            shell,
-            name,
-        ],
-        SYSTEMCTL_TIMEOUT,
-    )
-    .map(drop)
+/// What an id file lists, and so which of its fields are ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdFile {
+    /// `/etc/passwd`: a uid and a gid per line.
+    Accounts,
+    /// `/etc/group`: a gid per line.
+    Groups,
+    /// `/etc/subuid`, `/etc/subgid`: a range per line (`name:first:count`),
+    /// the ids a user's own namespaces map to.
+    Subordinate,
 }
 
-/// Why an existing account cannot be the job account: a login shell, a uid
-/// outside the system range (root included), or the engine's own uid.
-fn existing_job_account_fits(shell: &Path, uid: u32, engine_uid: u32) -> Result<(), String> {
-    if uid == engine_uid {
-        return Err("it is the engine's account".to_owned());
-    }
-    if uid == 0 || uid > SYSTEM_UID_MAX {
+/// The files whose ids the job range must not meet.
+const ID_FILES: [(&str, IdFile); 4] = [
+    ("/etc/passwd", IdFile::Accounts),
+    ("/etc/group", IdFile::Groups),
+    ("/etc/subuid", IdFile::Subordinate),
+    ("/etc/subgid", IdFile::Subordinate),
+];
+
+/// The node's job range meets no account, group or subordinate range the
+/// system files name, nor the engine's ids: a job's uid is no one else's. An
+/// account a name service holds (LDAP, for instance) is checked again for
+/// each id the prepare step gives ([`super::job_ids`]).
+fn check_job_range(range: &Range<u32>, engine: (u32, u32)) -> Result<(), String> {
+    if range.contains(&engine.0) || range.contains(&engine.1) {
         return Err(format!(
-            "uid {uid} is not a system account's (1 to {SYSTEM_UID_MAX})"
+            "the job range {}..{} holds the engine's uid {} or gid {}",
+            range.start, range.end, engine.0, engine.1
         ));
     }
-    if !NO_LOGIN_SHELLS
-        .iter()
-        .any(|allowed| shell == Path::new(allowed))
-    {
-        return Err(format!("its shell {} allows a login", shell.display()));
+    for (path, kind) in ID_FILES {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{path}: {error}")),
+        };
+        if let Some(line) = first_overlap(&text, kind, range) {
+            return Err(format!(
+                "{path}: '{line}' meets the job range {}..{}: set job_uid_first and job_uid_count in the node file to a free range",
+                range.start, range.end
+            ));
+        }
     }
     Ok(())
+}
+
+/// Makes the job device group as a system group unless it exists, and checks
+/// it: not root's, outside the job range, not the engine's group, a group of
+/// `/etc/group`, on a node whose name service reads accounts and groups only
+/// from local sources (whose every entry `getent` lists), and no account in
+/// it under any name of its gid (an account in it could open every card
+/// outside any unit; reviews r9 R9-03, r10 R10-05, r11 R11-02). Its gid, or
+/// `None` on a dry run before the group exists.
+fn ensure_device_group(
+    name: &str,
+    range: &Range<u32>,
+    engine: (u32, u32),
+    dry_run: bool,
+) -> Result<Option<u32>, String> {
+    let gid = match group_id(name) {
+        Ok(gid) => gid,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if dry_run {
+                return Ok(None);
+            }
+            run_tool("groupadd", &["--system", name], SYSTEMCTL_TIMEOUT)?;
+            group_id(name).map_err(|error| format!("job device group {name}: {error}"))?
+        }
+        Err(error) => return Err(format!("job device group {name}: {error}")),
+    };
+    if gid == 0 || gid == engine.1 || range.contains(&gid) {
+        return Err(format!(
+            "job device group {name}: gid {gid} is root's, the engine's or inside the job range"
+        ));
+    }
+    let read = |path: &str| {
+        std::fs::read_to_string(path)
+            .map_err(|error| format!("job device group {name}: {path}: {error}"))
+    };
+    let accounts = read("/etc/passwd")?;
+    let groups = read("/etc/group")?;
+    // Members from another name service (a directory's accounts) cannot be
+    // read whole, so the node's accounts and groups must be local (review r10
+    // R10-05).
+    let nsswitch = match std::fs::read_to_string("/etc/nsswitch.conf") {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "job device group {name}: /etc/nsswitch.conf: {error}"
+            ));
+        }
+    };
+    let foreign = foreign_name_sources(&nsswitch);
+    // glibc's compat reader skips leading blanks before a `+`/`-` line
+    // (review r11 R11-06).
+    let nis = [&accounts, &groups].iter().any(|text| {
+        text.lines().any(|line| {
+            line.trim_start()
+                .starts_with(|c: char| c == '+' || c == '-')
+        })
+    });
+    if !foreign.is_empty() || nis {
+        return Err(format!(
+            "job device group {name}: the name service reads accounts or groups from [{}{}] too, whose members install cannot check: the node's accounts and groups must be local (files, systemd)",
+            foreign.join(" "),
+            if nis { " nis (+/- lines)" } else { "" }
+        ));
+    }
+    if !is_local_group(&groups, name, gid) {
+        return Err(format!(
+            "job device group {name}: gid {gid} is not its gid in /etc/group: make it a local group (groupadd --system {name})"
+        ));
+    }
+    // Every account and group the name service lists, from each local
+    // source (systemd's static records included, review r11 R11-02).
+    let listed = |database: &str| {
+        run_tool("getent", &[database], SYSTEMCTL_TIMEOUT)
+            .map_err(|why| format!("job device group {name}: getent {database}: {why}"))
+    };
+    let (accounts, groups) = (listed("passwd")?, listed("group")?);
+    if let Some(member) = group_members(&accounts, &groups, gid).first() {
+        return Err(format!(
+            "job device group {name}: account {member} is in it, so it could open every card outside any unit"
+        ));
+    }
+    Ok(Some(gid))
+}
+
+/// The name service sources whose every account and group `getent` lists, so
+/// install reads every member of the device group from them: the local files
+/// (and their compat reading with no NIS lines) and systemd's records.
+const LOCAL_NAME_SOURCES: [&str; 4] = ["files", "systemd", "altfiles", "compat"];
+
+/// The sources `/etc/nsswitch.conf` (`text`) names for accounts, groups or
+/// group membership that are not [`LOCAL_NAME_SOURCES`], each once.
+fn foreign_name_sources(text: &str) -> Vec<String> {
+    let mut foreign: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or_default();
+        let Some((database, sources)) = line.split_once(':') else {
+            continue;
+        };
+        if !matches!(database.trim(), "passwd" | "group" | "initgroups") {
+            continue;
+        }
+        for word in source_names(sources) {
+            if !LOCAL_NAME_SOURCES.contains(&word) && !foreign.iter().any(|seen| seen == word) {
+                foreign.push(word.to_owned());
+            }
+        }
+    }
+    foreign
+}
+
+/// The source names of one nsswitch database line's sources, without its
+/// `[...]` action blocks, which may touch a name on either side (review r11
+/// R11-06). An action block with no `]` makes the line one source `[`, which
+/// is no local one.
+fn source_names(sources: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = sources;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return names;
+        }
+        if let Some(action) = rest.strip_prefix('[') {
+            let Some(end) = action.find(']') else {
+                names.push("[");
+                return names;
+            };
+            rest = &action[end + 1..];
+            continue;
+        }
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == '[')
+            .unwrap_or(rest.len());
+        names.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+}
+
+/// Whether `/etc/group` (`groups`) names the group `name` with gid `gid`.
+fn is_local_group(groups: &str, name: &str, gid: u32) -> bool {
+    groups.lines().any(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        fields.first() == Some(&name)
+            && fields.get(2).and_then(|id| id.parse::<u32>().ok()) == Some(gid)
+    })
+}
+
+/// The accounts in the group of gid `gid`: those whose primary group it is,
+/// and those `/etc/group` lists as members of any group of that gid.
+fn group_members(accounts: &str, groups: &str, gid: u32) -> Vec<String> {
+    let mut members: Vec<String> = accounts
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(':').collect();
+            (fields.get(3)?.parse::<u32>().ok()? == gid).then(|| fields[0].to_owned())
+        })
+        .collect();
+    for line in groups.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.get(2).and_then(|id| id.parse::<u32>().ok()) == Some(gid) {
+            members.extend(
+                fields
+                    .get(3)
+                    .into_iter()
+                    .flat_map(|list| list.split(','))
+                    .filter(|member| !member.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+    }
+    members
+}
+
+/// The first line of an id file whose ids meet `range`.
+fn first_overlap<'a>(text: &'a str, kind: IdFile, range: &Range<u32>) -> Option<&'a str> {
+    let field =
+        |fields: &[&str], at: usize| fields.get(at).and_then(|field| field.parse::<u64>().ok());
+    let (start, end) = (u64::from(range.start), u64::from(range.end));
+    text.lines().find(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        let ids_meet = |at: usize| field(&fields, at).is_some_and(|id| (start..end).contains(&id));
+        match kind {
+            IdFile::Accounts => ids_meet(2) || ids_meet(3),
+            IdFile::Groups => ids_meet(2),
+            IdFile::Subordinate => match (field(&fields, 1), field(&fields, 2)) {
+                (Some(first), Some(count)) => first < end && first.saturating_add(count) > start,
+                _ => false,
+            },
+        }
+    })
 }
 
 /// Makes `path` the account's directory. It walks from `/` one component at
@@ -318,16 +500,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_existing_job_account_must_be_a_system_account_with_no_login_and_not_the_engines() {
-        let nologin = Path::new("/usr/bin/nologin");
-        assert_eq!(existing_job_account_fits(nologin, 970, 971), Ok(()));
+    fn the_job_range_meets_no_account_group_or_subordinate_range() {
+        let range = 1_879_048_192..1_879_113_728;
+        let accounts =
+            "root:x:0:0::/root:/bin/bash\noneiron:x:970:971::/var/lib/oneiron:/bin/bash\n";
+        assert_eq!(first_overlap(accounts, IdFile::Accounts, &range), None);
+        let taken = "odd:x:1879048200:100::/:/bin/false\n";
         assert_eq!(
-            existing_job_account_fits(Path::new("/bin/false"), 970, 971),
-            Ok(())
+            first_overlap(taken, IdFile::Accounts, &range),
+            Some(taken.trim_end())
         );
-        assert!(existing_job_account_fits(Path::new("/bin/bash"), 970, 971).is_err());
-        assert!(existing_job_account_fits(nologin, 1000, 971).is_err());
-        assert!(existing_job_account_fits(nologin, 0, 971).is_err());
-        assert!(existing_job_account_fits(nologin, 971, 971).is_err());
+        let group_only = "odd:x:100:1879048200::/:/bin/false\n";
+        assert!(first_overlap(group_only, IdFile::Accounts, &range).is_some());
+        assert!(first_overlap("jobs:x:1879113727:\n", IdFile::Groups, &range).is_some());
+        assert_eq!(
+            first_overlap("jobs:x:1879113728:\n", IdFile::Groups, &range),
+            None
+        );
+        // useradd's subordinate ranges sit far below the default range.
+        assert_eq!(
+            first_overlap("owen:100000:65536\n", IdFile::Subordinate, &range),
+            None
+        );
+        assert!(first_overlap("big:1879000000:100000\n", IdFile::Subordinate, &range).is_some());
+        assert!(check_job_range(&range, (1_879_048_192, 971)).is_err());
+    }
+
+    #[test]
+    fn an_account_in_the_job_device_group_is_found() {
+        let accounts =
+            "root:x:0:0::/root:/bin/bash\noneiron:x:970:971::/var/lib/oneiron:/bin/bash\n";
+        let groups = "oneiron-job-devices:x:960:\nvideo:x:44:owen\n";
+        assert!(group_members(accounts, groups, 960).is_empty());
+        assert!(is_local_group(groups, "oneiron-job-devices", 960));
+        assert!(!is_local_group(groups, "oneiron-job-devices", 961));
+        assert!(!is_local_group(groups, "devices", 960));
+        let listed = "oneiron-job-devices:x:960:owen,\n";
+        assert_eq!(group_members(accounts, listed, 960), vec!["owen"]);
+        // Another name of the same gid counts too.
+        let alias = "oneiron-job-devices:x:960:\ncards:x:960:tool\n";
+        assert_eq!(group_members(accounts, alias, 960), vec!["tool"]);
+        assert_eq!(group_members(accounts, groups, 971), vec!["oneiron"]);
+    }
+
+    #[test]
+    fn only_local_name_sources_let_install_read_the_groups_members() {
+        let local = "# comment\npasswd: files systemd\ngroup: files [SUCCESS=merge] systemd\nshadow: files\nhosts: files dns\n";
+        assert!(foreign_name_sources(local).is_empty());
+        let directory = "passwd: files sss\ngroup: files sss # directory\ninitgroups: files [ NOTFOUND=return ] ldap\n";
+        assert_eq!(foreign_name_sources(directory), vec!["sss", "ldap"]);
+        // An action block that touches the next source hides nothing.
+        assert_eq!(
+            foreign_name_sources("group: files [SUCCESS=merge]ldap\n"),
+            vec!["ldap"]
+        );
+        assert_eq!(
+            foreign_name_sources("group: files[NOTFOUND=return]nis\n"),
+            vec!["nis"]
+        );
+        assert_eq!(
+            foreign_name_sources("passwd: files [NOTFOUND=return\n"),
+            vec!["["]
+        );
+        assert_eq!(
+            foreign_name_sources("passwd: files mymachines\n"),
+            vec!["mymachines"]
+        );
+        assert!(foreign_name_sources("").is_empty());
     }
 }

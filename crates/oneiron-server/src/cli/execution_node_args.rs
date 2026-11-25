@@ -37,8 +37,8 @@ pub enum ExecutionNodeCommand {
     /// from a copy: set the old journal and its epoch aside, so the engine's
     /// next start opens a new journal under a new epoch.
     ResetHistory(ExecutionNodeResetHistoryArgs),
-    /// As root, once: make the job account, write the root-owned job unit
-    /// template and the job control socket through which the engine's
+    /// As root, once: check the node's job uid range, write the root-owned
+    /// job unit template and the job control socket through which the engine's
     /// account starts and stops its instances and nothing else. Run it again
     /// after a template's maximum grows.
     Install(ExecutionNodeInstallArgs),

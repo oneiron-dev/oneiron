@@ -19,17 +19,16 @@ use super::records::ExecFile;
 use super::safe_fs::{
     self, borrow, make_dir_beneath, open_dir_beneath, open_dir_path, remove_beneath, write_beneath,
 };
-use super::step::StepContext;
 use super::{EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_SOCKET_NAME, PAYLOAD_ROOT};
 
-/// Makes the job's exchange directory fresh (root, mode 0750, the job
-/// account's group) with `exec.json` in it. The gate binds its socket there
+/// Makes the job's exchange directory fresh (root, mode 0750, the job's own
+/// group, `exec.identity.gid`) with `exec.json` in it. The gate binds its socket there
 /// once it runs ([`super::gate`]).
 ///
 /// # Errors
 ///
 /// A step that failed.
-pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), String> {
+pub fn write_exchange(exec: &ExecFile) -> Result<(), String> {
     let root = root_dir(EXCHANGE_ROOT, 0o755).map_err(|why| format!("exchange_root: {why}"))?;
     let name = exec.instance.as_str();
     if let Ok(stale) = open_dir_beneath(borrow(&root), OsStr::new(name)) {
@@ -46,7 +45,8 @@ pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), Stri
             ));
         }
     }
-    let exchange = make_dir_beneath(borrow(&root), name, 0o750, (0, context.job_gid))
+    let gid = exec.identity.gid;
+    let exchange = make_dir_beneath(borrow(&root), name, 0o750, (0, gid))
         .map_err(|error| format!("exchange_dir: {error}"))?;
     let bytes = serde_json::to_vec_pretty(exec).map_err(|error| error.to_string())?;
     write_beneath(
@@ -54,7 +54,7 @@ pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), Stri
         EXEC_FILE_NAME,
         &bytes,
         0o640,
-        Some((0, context.job_gid)),
+        Some((0, gid)),
     )
     .map_err(|error| format!("exec_file: {error}"))?;
     Ok(())

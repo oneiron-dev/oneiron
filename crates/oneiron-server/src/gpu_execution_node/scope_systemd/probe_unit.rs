@@ -19,9 +19,11 @@ use super::capabilities::{CheckReport, capabilities_of, check_report_path, kerne
 use super::control::{CONTROL_SOCKET_PATH, CONTROL_SOCKET_UNIT};
 use super::device_files;
 use super::gate::{GateSocket, MainProcess, MainProcessWatch, read_report};
+use super::job_ids::{self, JobIdentity};
 use super::records::{ExecFile, ScopeBound, ScopeReport};
-use super::safe_fs::{self, account, boot_id, borrow, make_dir_beneath, open_dir_path};
+use super::safe_fs::{self, boot_id, borrow, make_dir_beneath, open_dir_path};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show_within, tool_path};
+use super::unit_file::template_outdated;
 use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, UNIT_TEMPLATE_PATH};
 
 /// How long the probe unit may run.
@@ -111,12 +113,27 @@ pub fn check_scope(node_file: &Path, settings: &ExecutionNodeSettings) -> Vec<St
 fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<CheckReport, String> {
     let unit_text = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
         .map_err(|error| format!("{UNIT_TEMPLATE_PATH}: {error}"))?;
-    let (job_uid, job_gid, _) = account(&settings.job_account)
-        .map_err(|error| format!("job account {}: {error}", settings.job_account))?;
+    if let Some(why) = template_outdated(&unit_text) {
+        return Err(format!(
+            "{UNIT_TEMPLATE_PATH}: {why}: run `oneiron execution-node install` again"
+        ));
+    }
     let binary = std::env::current_exe().map_err(|error| error.to_string())?;
     let at_ms = wall_ms();
-    let id = JobKeyId::for_key(&format!("execution-node-check-probe-{}-{at_ms}", boot_id()));
+    // One instance per run of the check, even two in one millisecond (review
+    // r10 R10-01).
+    let id = JobKeyId::for_key(&format!(
+        "execution-node-check-probe-{}-{at_ms}-{}",
+        boot_id(),
+        std::process::id()
+    ));
     let instance = id.as_str().to_owned();
+    // The probe runs as a job does: as its own uid from the node's range.
+    let mut given = ProbeIdentity::allocate(settings, &instance)?;
+    let JobIdentity {
+        uid: job_uid,
+        gid: job_gid,
+    } = given.identity;
 
     let payload = settings.work_dir.join(&instance);
     let work = open_dir_path(&settings.work_dir).map_err(|error| error.to_string())?;
@@ -136,6 +153,8 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     let protected = super::prepare::installed_protected_paths(&unit_text, &settings.state_dir);
     let exec = ExecFile {
         key: format!("probe-{instance}"),
+        identity: given.identity,
+        device_gid: None,
         instance: instance.clone(),
         probe: true,
         argv: Vec::new(),
@@ -160,12 +179,24 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
         log_max_bytes: u64::from(super::super::node_settings::LOG_MAX_MIB_DEFAULT) << 20,
     };
     let exchange = Path::new(EXCHANGE_ROOT).join(&instance);
-    let outcome = probe_in_unit(
-        settings, &unit_text, &binary, &exec, &exchange, job_uid, job_gid,
-    );
+    let outcome = probe_in_unit(settings, &unit_text, &binary, &exec, &exchange);
+    // The id goes back only once the probe unit is known to have ended: one
+    // still running could take the id after its release (review r11 R11-01).
+    // Kept, it is taken back once the unit ended.
+    if !job_ids::unit_has_ended(&given.unit) {
+        journal_line!(
+            "execution-node check: probe uid {} kept: {} has not ended",
+            given.identity.uid,
+            given.unit
+        );
+        given.release = false;
+    }
     super::exchange::withdraw(&instance);
     let _ = std::fs::remove_dir_all(&payload);
     let _ = std::fs::remove_dir_all(&exchange);
+    // The id goes back once no probe can start with it: its exchange, where
+    // job-exec reads its ids, is gone (review r10 R10-02).
+    drop(given);
     let (proofs, probe_failure) = match outcome {
         Ok(report) => (report.proofs, None),
         Err(why) => (BTreeMap::new(), Some(why)),
@@ -203,9 +234,11 @@ fn probe_in_unit(
     binary: &Path,
     exec: &ExecFile,
     exchange: &Path,
-    job_uid: u32,
-    job_gid: u32,
 ) -> Result<ScopeReport, String> {
+    let JobIdentity {
+        uid: job_uid,
+        gid: job_gid,
+    } = exec.identity;
     let root = open_dir_path(Path::new(EXCHANGE_ROOT))
         .or_else(|_| {
             std::fs::create_dir_all(EXCHANGE_ROOT)?;
@@ -224,7 +257,7 @@ fn probe_in_unit(
     )
     .map_err(|error| error.to_string())?;
     let socket = GateSocket::bind(exchange, job_gid)?;
-    let unit = format!("{PROBE_UNIT_PREFIX}{}", exec.instance);
+    let unit = probe_unit_name(&exec.instance);
     let systemd_run = tool_path("systemd-run").ok_or("systemd-run: not found")?;
     let mut command = Command::new(systemd_run);
     command
@@ -283,6 +316,49 @@ fn probe_in_unit(
         ));
     }
     serde_json::from_slice(&bytes).map_err(|error| format!("probe report: {error}"))
+}
+
+/// The probe unit's name for the probe `instance`.
+fn probe_unit_name(instance: &str) -> String {
+    format!("{PROBE_UNIT_PREFIX}{instance}")
+}
+
+/// The probe's id from the node's range, given back when it is dropped,
+/// whatever the probe's outcome: an id some process still holds is never
+/// given again ([`job_ids::choose`]).
+struct ProbeIdentity {
+    identity: JobIdentity,
+    unit: String,
+    /// Whether the drop gives the id back.
+    release: bool,
+}
+
+impl ProbeIdentity {
+    fn allocate(settings: &ExecutionNodeSettings, instance: &str) -> Result<Self, String> {
+        let unit = probe_unit_name(instance);
+        // The check runs as root, whose uid is never in the range.
+        let identity = job_ids::allocate(settings.job_uids(), &unit, 0)
+            .map_err(|why| format!("probe uid: {why}"))?;
+        Ok(Self {
+            identity,
+            unit,
+            release: true,
+        })
+    }
+}
+
+impl Drop for ProbeIdentity {
+    fn drop(&mut self) {
+        if !self.release {
+            return;
+        }
+        if let Err(why) = job_ids::release(self.identity, &self.unit, job_ids::LOCK_WAIT) {
+            journal_line!(
+                "execution-node check: probe uid {} not given back: {why}",
+                self.identity.uid
+            );
+        }
+    }
 }
 
 /// The probe unit's start as the gate's socket waits on it: its main process

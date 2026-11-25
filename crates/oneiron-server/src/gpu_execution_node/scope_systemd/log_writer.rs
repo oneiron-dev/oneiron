@@ -26,7 +26,7 @@
 //!
 //! The writer is `job-exec`'s grandchild, not the workload's child, so a
 //! workload that waits for all of its children never waits for it. It runs
-//! as the job account inside the unit: under the file wall, the cgroup, the
+//! as the job's own uid inside the unit: under the file wall, the cgroup, the
 //! memory cap and the tree kill. It ignores TERM, so the unit's stop lets it
 //! copy what the workload wrote before it ended; it leaves when both pipes
 //! close, or with the unit's KILL after the stop grace. `job-exec` goes on
@@ -81,7 +81,7 @@ pub struct WorkloadStreams {
     pub stderr: OwnedFd,
 }
 
-/// Creates `log/stdout` and `log/stderr` beneath `log_dir` (job account,
+/// Creates `log/stdout` and `log/stderr` beneath `log_dir` (the job's uid,
 /// mode 0644, never through a link, never over an existing file), makes the
 /// two pipes and starts the writer with `cap` bytes per file. Returns once
 /// the writer said it is ready: it ignores TERM and holds nothing but its
