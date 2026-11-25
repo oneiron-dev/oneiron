@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 use crate::file::LocalFileKeystore;
+use crate::key_dir;
 use crate::{
     AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality,
     KeystoreSlot, Result, SealedBytesName, SealedBytesStore,
@@ -308,7 +309,7 @@ impl DeviceKeystore for LinuxTpmKeystore {
         let sealed = self.seal(&SLOT, &[], secret)?;
         // The platform tier's temporary file, under its hold, so one sweep
         // clears both tiers' files.
-        let (tmp, written) = self.files.write_temp(&slot.name(), &sealed);
+        let (tmp, written) = self.files.write_temp(&slot.name(), &sealed, None);
         let linked = written.and_then(|()| fs::hard_link(&tmp.path, &path));
         let _ = fs::remove_file(&tmp.path);
         match linked {
@@ -334,7 +335,9 @@ impl DeviceKeystore for LinuxTpmKeystore {
     /// renames it over the filled slot: one rename, so a reader opens the old
     /// file or the new one, never none. An empty slot is `Ok(false)` and
     /// nothing is sealed or written. A stale copy of the old sealed slot goes
-    /// first, and one that stays is an error before anything is sealed.
+    /// first, and one that stays is an error before anything is sealed. The
+    /// sweep's hold lasts until the new file is in place, so no writer's
+    /// copy appears between the two.
     fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
         let path = self.path(slot);
         match fs::symlink_metadata(&path) {
@@ -343,9 +346,10 @@ impl DeviceKeystore for LinuxTpmKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
-        self.files.sweep_temps(Some(slot)).map_err(io)?;
+        let swept = key_dir::sweep_and_hold(self.files.dir(), &slot.name()).map_err(io)?;
         let sealed = self.seal(&SLOT, &[], secret)?;
-        let (tmp, written) = self.files.write_temp(&slot.name(), &sealed);
+        // `tmp` keeps the sweep's hold until it is dropped, after the rename.
+        let (tmp, written) = self.files.write_temp(&slot.name(), &sealed, Some(swept));
         let renamed = written.and_then(|()| fs::rename(&tmp.path, &path));
         if renamed.is_err() {
             let _ = fs::remove_file(&tmp.path);

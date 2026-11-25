@@ -26,13 +26,14 @@ impl AuthBoundSecretStore for LinuxTpmKeystore {
     /// file, then renames it into place: one rename, so a reader opens the
     /// old file or the new one, and a crash leaves one of the two whole. A
     /// stale copy of an earlier object, which its own auth value opens, goes
-    /// first, and one that stays is an error before anything is sealed.
+    /// first, and one that stays is an error before anything is sealed. The
+    /// sweep's hold lasts until the new file is in place.
     fn put_auth_bound(&self, auth: &[u8], secret: &[u8; 32]) -> Result<()> {
         check_auth_value(auth)?;
         let stem = SealedBytesName::DevicePinKey.name();
-        key_dir::sweep_temps(self.files.dir(), Some(&stem)).map_err(io)?;
+        let swept = key_dir::sweep_and_hold(self.files.dir(), &stem).map_err(io)?;
         let sealed = self.seal(&DEVICE_PIN_KEY, auth, secret)?;
-        let (tmp, written) = self.files.write_temp(&stem, &sealed);
+        let (tmp, written) = self.files.write_temp(&stem, &sealed, Some(swept));
         let renamed = written.and_then(|()| fs::rename(&tmp.path, self.device_pin_key_path()));
         if renamed.is_err() {
             let _ = fs::remove_file(&tmp.path);

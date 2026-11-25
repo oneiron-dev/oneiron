@@ -22,7 +22,8 @@
 //! file, which DPAPI opens for this user; the sweeps at open, at each create,
 //! replace and put, and at each delete remove it once no writer holds the
 //! directory. A replace, a put or a delete reports a copy it could not
-//! remove.
+//! remove, and a replace or a put keeps its sweep's exclusive hold until its
+//! new file is in place, so no other writer's copy appears in between.
 
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read};
@@ -35,7 +36,7 @@ use windows_sys::Win32::Security::Cryptography::{
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::dpapi_names::{sealed_entropy, sealed_file_name, slot_entropy, slot_file_name};
-use crate::key_dir::{self, TempFile};
+use crate::key_dir::{self, SweepHold, TempFile};
 use crate::sealed_bytes::check_sealed_len;
 use crate::{
     DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, Result,
@@ -87,17 +88,19 @@ impl WindowsDpapiKeystore {
 
     /// Seals `bytes` with `entropy` and syncs one temporary file beside the
     /// file it will become, under the writer's hold on the key directory
-    /// ([`key_dir::write_temp`]), removing it if any step fails. `stem` is
-    /// that file's part of the temporary file's name. A sealed form longer
-    /// than `sealed_max`, which the reader of that file would refuse, is
-    /// refused here before any file is made. The caller keeps the answer
-    /// until it has removed the temporary file.
+    /// ([`key_dir::write_temp`]): its own shared one, or `swept`, the hold
+    /// of the sweep before a write over an old value. It removes the file if
+    /// any step fails. `stem` is that file's part of the temporary file's
+    /// name. A sealed form longer than `sealed_max`, which the reader of that
+    /// file would refuse, is refused here before any file is made. The
+    /// caller keeps the answer until it has removed the temporary file.
     fn write_temp(
         &self,
         stem: &str,
         bytes: &[u8],
         entropy: &[u8],
         sealed_max: usize,
+        swept: Option<SweepHold>,
     ) -> Result<TempFile> {
         let sealed = protect(bytes, entropy)?;
         if sealed.len() > sealed_max {
@@ -105,7 +108,7 @@ impl WindowsDpapiKeystore {
                 "DPAPI's sealed form is longer than its file may be",
             ));
         }
-        let (tmp, written) = key_dir::write_temp(&self.dir, stem, &sealed, |_| Ok(()));
+        let (tmp, written) = key_dir::write_temp(&self.dir, stem, &sealed, swept, |_| Ok(()));
         match written {
             Ok(()) => Ok(tmp),
             Err(error) => {
@@ -144,7 +147,13 @@ impl DeviceKeystore for WindowsDpapiKeystore {
         // has now; the slot's delete reports such a file.
         let _ = key_dir::sweep_temps(&self.dir, Some(&slot.name()));
         let path = self.path(slot);
-        let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;
+        let tmp = self.write_temp(
+            &slot.name(),
+            secret,
+            &slot_entropy(slot),
+            SLOT_FILE_MAX,
+            None,
+        )?;
         let linked = fs::hard_link(&tmp.path, &path);
         // A failed removal is swept by a later open, create or delete.
         let _ = fs::remove_file(&tmp.path);
@@ -170,7 +179,8 @@ impl DeviceKeystore for WindowsDpapiKeystore {
     /// Writes a sealed temporary file, then renames it over the filled slot:
     /// one rename, so a reader opens the old slot or the new one, never none.
     /// A stale copy of the old slot goes first, and one that stays is an
-    /// error before anything is written.
+    /// error before anything is written. The sweep's hold lasts until the
+    /// new file is in place, so no writer's copy appears between the two.
     fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
         let path = self.path(slot);
         match fs::symlink_metadata(&path) {
@@ -179,8 +189,15 @@ impl DeviceKeystore for WindowsDpapiKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
             Err(e) => return Err(io(e)),
         }
-        key_dir::sweep_temps(&self.dir, Some(&slot.name())).map_err(io)?;
-        let tmp = self.write_temp(&slot.name(), secret, &slot_entropy(slot), SLOT_FILE_MAX)?;
+        let swept = key_dir::sweep_and_hold(&self.dir, &slot.name()).map_err(io)?;
+        // `tmp` keeps the sweep's hold until it is dropped, after the rename.
+        let tmp = self.write_temp(
+            &slot.name(),
+            secret,
+            &slot_entropy(slot),
+            SLOT_FILE_MAX,
+            Some(swept),
+        )?;
         let renamed = fs::rename(&tmp.path, &path);
         if renamed.is_err() {
             let _ = fs::remove_file(&tmp.path);
@@ -231,13 +248,15 @@ impl SealedBytesStore for WindowsDpapiKeystore {
     fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<()> {
         check_sealed_len(sealed)?;
         // A stale copy of an earlier value under this name goes first, and
-        // one that stays is an error before anything is written.
-        key_dir::sweep_temps(&self.dir, Some(&sealed_file_name(name))).map_err(io)?;
+        // one that stays is an error before anything is written. `tmp`
+        // keeps the sweep's hold until the new file is in place.
+        let swept = key_dir::sweep_and_hold(&self.dir, &sealed_file_name(name)).map_err(io)?;
         let tmp = self.write_temp(
             &sealed_file_name(name),
             sealed,
             &sealed_entropy(name),
             SEALED_FILE_MAX,
+            Some(swept),
         )?;
         let renamed = fs::rename(&tmp.path, self.sealed_path(name));
         if renamed.is_err() {
