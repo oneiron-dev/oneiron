@@ -291,11 +291,14 @@ fn exchange(a: &LoroDoc, b: &LoroDoc) {
 /// retried until that pass ends.
 fn reload_window(machine: &Machine) {
     let key = WindowKey::new(WINDOW);
+    // testkit-lint: allow(wall-clock) the mirror thread's pass runs in real time, which no fake clock reaches
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match machine.manager.unload_window(&key) {
             Ok(_) => break,
+            // testkit-lint: allow(wall-clock) the same real-time bound on the busy unload
             Err(err) if err.kind() == ErrorKind::WindowBusy && Instant::now() < deadline => {
+                // testkit-lint: allow(sleep) waits out the mirror thread's pass, as handover_budget_custody.rs does
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(err) => panic!("the window does not unload: {err:?}"),
