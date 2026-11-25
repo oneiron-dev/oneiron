@@ -161,6 +161,7 @@ impl Vault {
             alpns: BTreeMap::new(),
             revoked: false,
             host_key: issuer.binding_key(),
+            revision: 0,
         };
         if !self.mesh_pairing_live(&fold, txn, &claims)? {
             return Err(invalid_authority());

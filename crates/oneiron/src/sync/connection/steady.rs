@@ -485,6 +485,7 @@ impl SyncConnection {
                         let predicted = std::sync::Arc::clone(&self.predicted_wake);
                         let follow = std::sync::Arc::clone(&self.follow_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
+                        let mesh_cursor = std::sync::Arc::clone(&self.mesh_cursor);
                         let jobs = upkeep.blocking_jobs();
                         upkeep.sealed = Some(tokio::spawn(async move {
                             let _batch = sealed_batch;
@@ -525,6 +526,24 @@ impl SyncConnection {
                                 let _ = events.send(SyncEvent::Error(format!(
                                     "Authority catch-up failed: {error}"
                                 )));
+                            }
+                            // The home's signed mesh bindings, whatever this
+                            // machine's residence: no window carries them, and
+                            // a node here proves its peers by them.
+                            match crate::sync::client::catch_up_mesh_authority(
+                                manager.vault(),
+                                &config,
+                                &mesh_cursor,
+                            )
+                            .await
+                            {
+                                Ok(0) => {}
+                                Ok(written) => {
+                                    tracing::info!(written, "mesh bindings from the home imported");
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, "mesh bindings not read from the home");
+                                }
                             }
                             // The owner's residence directives naming this
                             // machine run once its history is in (OF-534).

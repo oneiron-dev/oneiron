@@ -225,6 +225,47 @@ pub(super) fn authority_grants(
     Ok((json!({ "grants": grants }), Some(Vec::new())))
 }
 
+/// The host-signed mesh bindings this home holds, each with its MACHINE
+/// address, a page at a time past `after`, with the MACHINE the next page
+/// starts after (MESH-AUTHORITY-REPLICATION, R6 P0): no window carries them,
+/// and a joined machine holds no host issuer to sign its own. Only a machine of the owner's is served; any other looks
+/// missing. Nothing here is trusted there: the machine imports a binding
+/// only when a live owner host of its own fold signed it, and writes it as
+/// signed.
+pub(super) fn authority_mesh(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityMeshRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let after = input
+        .after
+        .as_deref()
+        .map(EntityId::from_hex)
+        .transpose()
+        .map_err(|_| AppError::invalid_params())?;
+    let page = mesh_authority_for(&server.vault, peer, after)
+        .map_err(|_| AppError::not_found("authority mesh", None))?;
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let rows: Vec<Value> = page
+        .rows
+        .iter()
+        .map(|row| {
+            json!({
+                "machine": row.machine.to_hex(),
+                "authority": encode(&row.authority),
+                "address": encode(&row.address),
+                "bare": row.bare,
+            })
+        })
+        .collect();
+    Ok((
+        json!({ "rows": rows, "next": page.next.as_ref().map(EntityId::to_hex) }),
+        Some(Vec::new()),
+    ))
+}
+
 /// Imports the signed authority entries the proved machine appends, through
 /// the signed-history door (OF-469), every one of them in work slices: an
 /// append is never refused for its length (FIX 8887). Only a machine of the
