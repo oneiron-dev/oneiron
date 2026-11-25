@@ -12,11 +12,13 @@
 //! Each test's replica takes the home's signed authority history only, as a joined machine's
 //! authority catch-up brings it, and no window.
 //!
-//! Red: the stub branch, where the replica refuses every binding the home serves: the first two
-//! tests fail, and the refusal and serving tests pass.
+//! Red: the stub branch, where the replica refuses every binding the home serves. The tests
+//! that need a binding to land fail (1, 2, 5, 6 and 7); the refusal and serving tests (3 and 4)
+//! pass.
 use super::machine_identity::{Host, host, pair_and_bind, request_for};
 use super::support::ed_key;
 use super::*;
+use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::{Vault, VaultConfig};
 
 /// The ALPN `pair_and_bind` grants.
@@ -36,16 +38,29 @@ fn replica(host: &Host) -> (tempfile::TempDir, Vault) {
 /// Every page of the home's bindings, as `residence.authority.mesh` serves them to a proven
 /// machine of the owner's.
 fn served(host: &Host) -> Vec<MeshAuthorityRow> {
-    let mut rows = Vec::new();
+    served_within(host, usize::MAX).concat()
+}
+
+/// The pages of the home's bindings within `budget` base64 bytes each.
+fn served_within(host: &Host, budget: usize) -> Vec<Vec<MeshAuthorityRow>> {
+    let mut pages = Vec::new();
     let mut after = None;
     loop {
-        let page = host.vault.mesh_authority_page(after).unwrap();
-        after = page.rows.last().map(|row| row.machine);
-        rows.extend(page.rows);
-        if !page.more {
-            return rows;
+        let page = host
+            .vault
+            .mesh_authority_page_within(after, budget)
+            .unwrap();
+        pages.push(page.rows);
+        match page.next {
+            Some(next) => after = Some(next),
+            None => return pages,
         }
     }
+}
+
+/// The base64 bytes a page reply spends on `row`.
+fn reply_bytes(row: &MeshAuthorityRow) -> usize {
+    row.authority.len().div_ceil(3) * 4 + row.address.len().div_ceil(3) * 4
 }
 
 /// A machine the owner paired, bound and granted on the home: its id, its proof as a node's
@@ -209,5 +224,134 @@ fn the_home_serves_no_peer_that_proves_nothing() {
         served(&host).len(),
         1,
         "control: the home holds the binding"
+    );
+}
+
+/// A row older than the one a replica holds never replaces it, so a replayed row from before a
+/// rebind cannot bring its pairing back (review round 1 of #10536). Every write of a binding by
+/// its host signs a higher revision.
+#[test]
+fn an_older_row_of_the_same_host_never_replaces_a_newer_one() {
+    let host = host();
+    let (machine, proven, endpoint_key) = bound_machine(&host, 81);
+    let (_dir, replica) = replica(&host);
+    let older = served(&host);
+    replica.import_mesh_authority_rows(older.clone()).unwrap();
+
+    host.vault
+        .set_mesh_alpn_grant(&host.issuer, machine, endpoint_key, b"mesh/other", true)
+        .unwrap();
+    let newer = served(&host);
+    assert_ne!(newer, older, "the home's write signed a new row");
+    let import = replica.import_mesh_authority_rows(newer.clone()).unwrap();
+    assert_eq!(import.written, BTreeSet::from([machine]), "{import:?}");
+
+    let replay = replica.import_mesh_authority_rows(older).unwrap();
+    assert_eq!(
+        replay.refused,
+        BTreeSet::from([machine]),
+        "an older revision is refused: {replay:?}"
+    );
+    let again = replica.import_mesh_authority_rows(newer).unwrap();
+    assert_eq!(
+        again.held,
+        BTreeSet::from([machine]),
+        "the replica kept the newer row: {again:?}"
+    );
+    assert_eq!(
+        replica.mesh_peer_machine(endpoint_key, GRANTED).unwrap(),
+        proven
+    );
+}
+
+/// An endpoint two MACHINE rows on the replica name refuses that binding alone; the rest of the
+/// page lands (review round 1 of #10536).
+#[test]
+fn an_endpoint_two_machine_rows_name_refuses_that_row_alone() {
+    let host = host();
+    let (machine, _, endpoint_key) = bound_machine(&host, 83);
+    let (other, other_proven, other_key) = bound_machine(&host, 85);
+    let (_dir, replica) = replica(&host);
+    let named = rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(MeshMachineAddress {
+        endpoint_key,
+        direct_addrs: vec![],
+        relay_url: None,
+    }))
+    .unwrap();
+    for _ in 0..2 {
+        replica
+            .put_entity(
+                &EntityId::now(),
+                ENTITY_TYPE_MACHINE,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &named,
+            )
+            .unwrap();
+    }
+
+    let import = replica.import_mesh_authority_rows(served(&host)).unwrap();
+    assert_eq!(import.refused, BTreeSet::from([machine]), "{import:?}");
+    assert_eq!(import.written, BTreeSet::from([other]), "{import:?}");
+    assert_eq!(
+        replica.mesh_peer_machine(other_key, GRANTED).unwrap(),
+        other_proven,
+        "the unrelated binding on the same page landed"
+    );
+}
+
+/// A row whose address alone passes the page's bytes is served without its direct addresses,
+/// which the binding's signature does not cover, and the scan goes on past it (review round 1 of
+/// #10536). The replica proves the machine on that row.
+#[test]
+fn a_row_past_the_page_bytes_is_served_bare_and_the_scan_goes_on() {
+    let host = host();
+    let (machine, proven, endpoint_key) = bound_machine(&host, 87);
+    bound_machine(&host, 89);
+    let bare = served(&host);
+    let budget = bare.iter().map(reply_bytes).max().unwrap() + 1;
+    let crowded = MeshMachineAddress {
+        endpoint_key,
+        direct_addrs: (0..200u16)
+            .map(|port| std::net::SocketAddr::from(([10, 0, 0, 1], 4000 + port)))
+            .collect(),
+        relay_url: None,
+    };
+    host.vault
+        .put_entity(
+            &machine,
+            ENTITY_TYPE_MACHINE,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(crowded)).unwrap(),
+        )
+        .unwrap();
+    assert!(
+        served(&host)
+            .iter()
+            .any(|row| row.machine == machine && reply_bytes(row) > budget),
+        "control: the crowded address alone passes the budget"
+    );
+
+    let pages = served_within(&host, budget);
+    assert_eq!(
+        pages.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![1, 1],
+        "each row in a page of its own, none left behind"
+    );
+    let row = pages
+        .concat()
+        .into_iter()
+        .find(|row| row.machine == machine)
+        .unwrap();
+    assert!(reply_bytes(&row) <= budget, "served within the budget");
+
+    let (_dir, replica) = replica(&host);
+    let import = replica.import_mesh_authority_rows(pages.concat()).unwrap();
+    assert_eq!(import.written.len(), 2, "{import:?}");
+    assert_eq!(
+        replica.mesh_peer_machine(endpoint_key, GRANTED).unwrap(),
+        proven,
+        "the bare address proves the machine"
     );
 }

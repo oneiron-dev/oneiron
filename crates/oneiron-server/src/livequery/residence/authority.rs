@@ -226,9 +226,9 @@ pub(super) fn authority_grants(
 }
 
 /// The host-signed mesh bindings this home holds, each with its MACHINE
-/// address, a page at a time past `after` (MESH-AUTHORITY-REPLICATION, R6
-/// P0): no window carries them, and a joined machine holds no host issuer to
-/// sign its own. Only a machine of the owner's is served; any other looks
+/// address, a page at a time past `after`, with the MACHINE the next page
+/// starts after (MESH-AUTHORITY-REPLICATION, R6 P0): no window carries them,
+/// and a joined machine holds no host issuer to sign its own. Only a machine of the owner's is served; any other looks
 /// missing. Nothing here is trusted there: the machine imports a binding
 /// only when a live owner host of its own fold signed it, and writes it as
 /// signed.
@@ -259,7 +259,10 @@ pub(super) fn authority_mesh(
             })
         })
         .collect();
-    Ok((json!({ "rows": rows, "more": page.more }), Some(Vec::new())))
+    Ok((
+        json!({ "rows": rows, "next": page.next.as_ref().map(EntityId::to_hex) }),
+        Some(Vec::new()),
+    ))
 }
 
 /// Imports the signed authority entries the proved machine appends, through

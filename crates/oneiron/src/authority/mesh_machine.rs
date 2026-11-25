@@ -28,6 +28,7 @@ mod replication;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
 pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
+use replication::verified_mesh_authority;
 pub use replication::{
     MESH_AUTHORITY_PAGE_MAX, MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityRow,
 };
@@ -72,6 +73,17 @@ struct MeshAuthorityClaims {
     alpns: BTreeMap<Vec<u8>, [u8; 32]>,
     revoked: bool,
     host_key: [u8; 32],
+    /// One more than the row this host held for the MACHINE before, counted
+    /// at each write, so a replica takes a row only over an older one
+    /// (MESH-AUTHORITY-REPLICATION, REVIEW-10536 P1). A row written before
+    /// the count holds none: the signed bytes leave it out while it is zero,
+    /// so such a row still verifies.
+    #[serde(default, skip_serializing_if = "revision_unset")]
+    revision: u64,
+}
+/// Whether a binding's `revision` is unset (a row written before the count).
+fn revision_unset(revision: &u64) -> bool {
+    *revision == 0
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,37 +115,6 @@ fn mesh_verb(alpn: &[u8]) -> String {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     )
-}
-/// The claims of `signed`, the binding row of `machine`, when a live owner
-/// host of `fold` signed it: well formed, the vault root not conflicted, its
-/// host a live owner in the roster, and the signature that host's. A row
-/// that does not check refuses; a host that is not a live owner answers
-/// `None`. A stored row and one a home serves are judged alike
-/// (MESH-AUTHORITY-REPLICATION).
-fn verified_mesh_authority(
-    fold: &AuthorityFold,
-    machine: EntityId,
-    signed: &SignedMeshAuthority,
-) -> Result<Option<MeshAuthorityClaims>> {
-    // Every ALPN grant the host signed is read, however many (FIX 7921);
-    // each must still be a valid ALPN.
-    let claims = &signed.claims;
-    if claims.version != 1
-        || claims.machine != machine
-        || claims.alpns.keys().any(|alpn| !valid_alpn(alpn))
-    {
-        return Err(invalid_authority());
-    }
-    if fold.vault_root_is_conflicted()
-        || !roster_has_live_owner(&fold.roster, &AuthorityKey::Ed25519(claims.host_key))
-    {
-        return Ok(None);
-    }
-    let host = super::strong_ed25519_key(&claims.host_key)?;
-    let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
-    host.verify_strict(&transcript(claims)?, &sig)
-        .map_err(|_| invalid_authority())?;
-    Ok(Some(claims.clone()))
 }
 /// The claims of the pairing slip a binding stands on, when it stands for
 /// that binding at any time: minted and not revoked in `fold`, a root slip of
@@ -537,8 +518,16 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
-        claims: MeshAuthorityClaims,
+        mut claims: MeshAuthorityClaims,
     ) -> Result<()> {
+        // One up from the row held, so every replica orders this host's
+        // writes of the MACHINE; a row that does not decode counts as none.
+        let held = match MESH_AUTHORITY.get(&self.store, txn, &HexId(claims.machine)) {
+            Ok(held) => held.map_or(0, |held| held.claims.revision),
+            Err(error) if error.kind() == crate::error::ErrorKind::SideTableRow => 0,
+            Err(error) => return Err(error),
+        };
+        claims.revision = held.saturating_add(1);
         let signature = issuer.sign_mesh(&transcript(&claims)?);
         MESH_AUTHORITY.put(
             &self.store,
