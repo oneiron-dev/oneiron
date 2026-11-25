@@ -604,14 +604,14 @@ impl Vault {
                 }
             }
         }
-        let asks: Vec<(EntityId, WarmWanted)> = wanted
+        let wanting: Vec<(EntityId, WarmWanted)> = wanted
             .into_iter()
             .map(|(machine, keys)| (machine, WarmWanted::of(&keys)))
             .collect();
-        let mut machines = if asks.is_empty() {
+        let mut machines = if wanting.is_empty() {
             Vec::new()
         } else {
-            host.machine_facts_wanting(&asks)
+            host.machine_facts_wanting(&wanting)
         };
         let mut running: BTreeMap<String, u32> = BTreeMap::new();
         for order in &orders {
