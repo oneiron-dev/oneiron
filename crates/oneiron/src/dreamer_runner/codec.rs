@@ -18,7 +18,7 @@ use super::constants::{
     KEY_PARK_OWNER, KEY_PARKED_AT, KEY_REASON, KEY_SCHEMA_VERSION, KEY_WAIT, KEY_WAIT_ASKED_UNITS,
     KEY_WAIT_GENERATION, KEY_WAIT_ID, KEY_WAIT_LEASE_GENERATION, KEY_WAIT_NEEDED_UNITS,
     KEY_WAIT_RESET_AT_S, KEY_WAIT_RESIDENT, KEY_WAIT_RUN, KEY_WAIT_SCOPE, KEY_WAIT_SEAT,
-    KEY_WAIT_SEAT_GENERATION,
+    KEY_WAIT_SEAT_GENERATION, KEY_WAIT_UNIT,
 };
 use super::types::{
     DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerParkCause, DreamerParkWait,
@@ -282,6 +282,7 @@ fn encode_parked_wait(wait: Option<&DreamerParkedWait>) -> Value {
             }
             DreamerParkWait::ResidentShare {
                 resident,
+                unit,
                 needed_units,
             } => vec![
                 (Value::from(KEY_CLASS), class),
@@ -294,6 +295,7 @@ fn encode_parked_wait(wait: Option<&DreamerParkedWait>) -> Value {
                     Value::from(KEY_WAIT_NEEDED_UNITS),
                     Value::from(*needed_units),
                 ),
+                (Value::from(KEY_WAIT_UNIT), Value::from(unit.as_str())),
             ],
         };
         Value::Map(entries)
@@ -356,6 +358,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
     let mut reset_at_s = None;
     let mut resident = None;
     let mut needed_units = None;
+    let mut wait_unit = None;
     let mut seen = [false; DREAMER_PARKED_WAIT_KEYS.len()];
 
     for (key, value) in entries {
@@ -445,6 +448,12 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                     "dreamer parked wait needed_units must be an integer",
                 )?);
             }
+            KEY_WAIT_UNIT => {
+                wait_unit = Some(expect_string(
+                    value,
+                    "dreamer parked wait unit must be a string",
+                )?);
+            }
             _ => unreachable!("index resolved from DREAMER_PARKED_WAIT_KEYS"),
         }
     }
@@ -463,6 +472,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 || reset_at_s.is_some()
                 || resident.is_some()
                 || needed_units.is_some()
+                || wait_unit.is_some()
             {
                 return Err(invalid_dreamer_runner(
                     "dreamer parked wait key does not belong to its class",
@@ -486,6 +496,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 || reset_at_s.is_some()
                 || resident.is_some()
                 || needed_units.is_some()
+                || wait_unit.is_some()
             {
                 return Err(invalid_dreamer_runner(
                     "dreamer parked wait key does not belong to its class",
@@ -506,6 +517,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 || wait_generation.is_some()
                 || resident.is_some()
                 || needed_units.is_some()
+                || wait_unit.is_some()
             {
                 return Err(invalid_dreamer_runner(
                     "dreamer parked wait key does not belong to its class",
@@ -537,6 +549,9 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 resident: resident.ok_or(invalid_dreamer_runner(
                     "missing dreamer parked wait resident",
                 ))?,
+                unit: wait_unit.unwrap_or_else(|| {
+                    crate::store::resident_budget_rows::UNITLESS_SHARE_UNIT.to_owned()
+                }),
                 needed_units: needed_units.ok_or(invalid_dreamer_runner(
                     "missing dreamer parked wait needed_units",
                 ))?,
@@ -550,6 +565,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 || reset_at_s.is_some()
                 || resident.is_some()
                 || needed_units.is_some()
+                || wait_unit.is_some()
             {
                 return Err(invalid_dreamer_runner(
                     "dreamer parked wait key does not belong to its class",
@@ -894,6 +910,7 @@ mod tests {
         let resident_share = DreamerParkedWait {
             wait: DreamerParkWait::ResidentShare {
                 resident: EntityId::from_bytes([6; 16]).expect("test resident id reads"),
+                unit: "gpu_seconds".to_owned(),
                 needed_units: 1_000,
             },
             lease_generation: 3,
@@ -1048,6 +1065,33 @@ mod tests {
         assert!(
             decode_parked_record(&whole).is_ok(),
             "a resident share wait with its own keys decodes"
+        );
+    }
+
+    /// Engine RESIDENT-SHARE-UNIT = A: a resident share wait stored before
+    /// waits named a unit waits in micro_usd, and no other class carries one.
+    #[test]
+    fn a_resident_share_wait_stored_with_no_unit_waits_in_micro_usd() {
+        let stored = row_bytes(
+            DREAMER_PARKED_SCHEMA_VERSION,
+            Some(resident_share_wait_value(None, None)),
+        );
+        let wait = decode_parked_record(&stored)
+            .expect("decodes")
+            .wait
+            .map(|wait| wait.wait);
+        assert!(
+            matches!(&wait, Some(DreamerParkWait::ResidentShare { unit, .. }) if unit == "micro_usd"),
+            "{wait:?}"
+        );
+        let Value::Map(mut entries) = seat_wait_value(None) else {
+            panic!("a seat wait is a map");
+        };
+        entries.push((Value::from(KEY_WAIT_UNIT), Value::from("micro_usd")));
+        let foreign = row_bytes(DREAMER_PARKED_SCHEMA_VERSION, Some(Value::Map(entries)));
+        assert!(
+            decode_parked_record(&foreign).is_err(),
+            "a seat wait carrying a unit fails decode"
         );
     }
 

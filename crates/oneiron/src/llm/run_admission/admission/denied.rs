@@ -44,9 +44,11 @@ pub enum RunDenied {
     /// not fit the call (FIX 7767). An unpinned share never refuses.
     /// `needed_units` is the share, in the allocation's unit, the call
     /// needed: what the resident had used and held, plus its reservation.
+    /// `unit` is the allocation's: the owner's share in that unit refused.
     #[error("the owner's pinned share for this resident is spent")]
     ResidentShareSpent {
         resident: crate::EntityId,
+        unit: LeaseUnit,
         needed_units: u64,
     },
     #[error("dispatch refused: {refused}")]
@@ -97,9 +99,11 @@ impl From<RunDenied> for LlmError {
             // the call needed: the owner's share write that fits it frees it.
             RunDenied::ResidentShareSpent {
                 resident,
+                unit,
                 needed_units,
             } => Self::BudgetDenied(BudgetDenied::ResidentShareSpent {
                 resident,
+                unit: unit.as_str().to_owned(),
                 needed_units,
             }),
             // The account owner's question holds the work: never a spent
