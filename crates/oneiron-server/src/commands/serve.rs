@@ -91,7 +91,6 @@ pub(super) async fn serve_anchored(
 
     let OpenedServedVault { vault, owner_host } =
         open_served_vault_anchored(&mut host, &config, anchor)?;
-    withhold_secret_until_first_sync(&mut config, &vault);
 
     let server_config = config.sync_server_config();
     if let Err(error) = sign_root_project(
@@ -408,7 +407,7 @@ pub(crate) async fn build_server(
     };
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
-    let sync_server = SyncServer::new(vault, server_config)
+    let sync_server = construct_sync_server(vault, config, server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
@@ -620,10 +619,11 @@ fn refuse_unauthenticated_public_bind(
 /// Whether `vault` is a store this install enrolled with its home that has
 /// not synced yet. Its authority log is still empty, and this install holds
 /// a device enrolment record for it under `keystore`'s key directory. Such a
-/// store takes its root from its home by sync. A start that signs with a
-/// secret would mint a Genesis of its own instead, through the root
-/// project's signature or the server's host issuer (R6 1.5, 26 Nov 01:22).
-/// A record that cannot be located counts as none.
+/// store takes its root from its home by sync. A start would otherwise mint
+/// a Genesis of its own, through the root project's signature
+/// ([`sign_root_project`]) or the server's host issuer bootstrap
+/// ([`construct_sync_server`]) (R6 1.5, 26 Nov 01:22). A record that cannot
+/// be located counts as none.
 pub(crate) fn joined_store_awaits_home(
     keystore: &crate::config::KeystoreConfig,
     vault: &oneiron::Vault,
@@ -635,19 +635,21 @@ pub(crate) fn joined_store_awaits_home(
             .is_ok_and(|files| files.record.exists())
 }
 
-/// A start on a store that awaits its home's authority
-/// ([`joined_store_awaits_home`]) serves without its `auth_secret`. So neither
-/// the root project's signature nor the server's host issuer bootstrap roots
-/// it, and its device link adopts the home's pinned checkpoint first. The
-/// next start takes the secret. It answers no request this start, and logs
-/// so.
-pub(crate) fn withhold_secret_until_first_sync(config: &mut ServeConfig, vault: &oneiron::Vault) {
-    if joined_store_awaits_home(&config.keystore, vault) && config.auth_secret.take().is_some() {
-        tracing::warn!(
-            "this store joined its home and has not synced yet, so this start serves without its \
-             auth_secret and roots nothing; restart it once its journal shows 'pinned authority \
-             checkpoint adopted'"
-        );
+/// The server a serve start builds over `vault` ([`build_server`]). A store
+/// that awaits its home's authority ([`joined_store_awaits_home`]) boots
+/// with no host issuer bootstrap, in any posture
+/// ([`SyncServer::new_joined_before_first_sync`]), so it roots nothing. Its
+/// secret and authentication stay as `server_config` has them
+/// (REVIEW-10532 round 2). Any other store boots as [`SyncServer::new`].
+pub(crate) fn construct_sync_server(
+    vault: Arc<oneiron::Vault>,
+    config: &ServeConfig,
+    server_config: crate::config::SyncServerConfig,
+) -> Result<SyncServer, oneiron::Error> {
+    if joined_store_awaits_home(&config.keystore, &vault) {
+        SyncServer::new_joined_before_first_sync(vault, server_config)
+    } else {
+        SyncServer::new(vault, server_config)
     }
 }
 

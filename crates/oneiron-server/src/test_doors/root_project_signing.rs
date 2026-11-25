@@ -1,6 +1,7 @@
-//! A serve start's root-project signing (`commands::sign_root_project`) on a
-//! store no root has reached, for `tests/joined_store_roots_nothing.rs`
-//! (R6 1.5: mel's first start rooted its joined store, 26 Nov 01:22).
+//! A serve start's root-project signing (`commands::sign_root_project`) and
+//! server construction (`commands::construct_sync_server`) on a store no
+//! root has reached, for `tests/joined_store_roots_nothing.rs` (R6 1.5:
+//! mel's first start rooted its joined store, 26 Nov 01:22).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,8 +19,27 @@ use crate::device_sync::enrolment::DeviceEnrolment;
 ///
 /// The vault does not open.
 pub fn fresh_store(dir: &Path) -> anyhow::Result<(Arc<Vault>, ServeConfig)> {
+    store_at(dir, oneiron::VaultConfig::device())
+}
+
+/// [`fresh_store`] in the Hosted posture, whose server boot bootstraps a host
+/// issuer with no secret.
+///
+/// # Errors
+///
+/// The vault does not open.
+pub fn fresh_hosted_store(dir: &Path) -> anyhow::Result<(Arc<Vault>, ServeConfig)> {
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.privacy.posture = oneiron::HostingPrivacyPosture::Hosted;
+    store_at(dir, vault_config)
+}
+
+fn store_at(
+    dir: &Path,
+    vault_config: oneiron::VaultConfig,
+) -> anyhow::Result<(Arc<Vault>, ServeConfig)> {
     let vault_path = dir.join("vault");
-    let vault = Vault::open(&vault_path, oneiron::VaultConfig::device())?;
+    let vault = Vault::open(&vault_path, vault_config)?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let mut config = ServeConfig {
         vault_path,
@@ -65,10 +85,25 @@ pub fn sign_root_project(
     crate::commands::sign_root_project(vault, secret, &config.keystore)
 }
 
-/// Whether a start on `vault` under `config` withholds its `auth_secret` until the store's
-/// first sync ([`crate::commands::joined_store_awaits_home`]), as both serve paths ask before
-/// the root project's signature and the server's construction.
-#[must_use]
-pub fn start_withholds_secret(config: &ServeConfig, vault: &Vault) -> bool {
-    crate::commands::joined_store_awaits_home(&config.keystore, vault)
+/// The server a serve start builds over `vault` under `config`
+/// ([`crate::commands::construct_sync_server`]), with `secret` as its `auth_secret`. Answers
+/// the `auth_secret` the built server holds.
+///
+/// # Errors
+///
+/// The server's boot.
+pub fn construct_sync_server(
+    vault: Arc<Vault>,
+    config: &ServeConfig,
+    secret: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let server = crate::commands::construct_sync_server(
+        vault,
+        config,
+        crate::config::SyncServerConfig {
+            auth_secret: secret.map(str::to_owned),
+            ..crate::config::SyncServerConfig::default()
+        },
+    )?;
+    Ok(server.config.auth_secret.clone())
 }

@@ -4,12 +4,14 @@
 //! root-project signing (`commands::sign_root_project`) minted a Genesis of mel's own. kel then
 //! could not verify mel's machine proofs, and sync, renewal and the checkpoint all failed.
 //!
-//! A store this install holds a device enrolment for is never rooted at a start. Both serve
-//! paths withhold the start's `auth_secret` until the store's first sync, so neither the root
-//! project's signature nor the server's host issuer bootstrap (`SyncServer::new`) roots it. A
-//! store no enrolment names is rooted as before.
+//! A store this install holds a device enrolment for is never rooted at a start. The root
+//! project's signing skips it, and the server boots it with no host issuer bootstrap, in any
+//! posture (`commands::construct_sync_server`). Its secret and authentication stay as
+//! configured: review round 2 of #10532 showed that taking the secret away could admit
+//! unauthenticated owner requests. A store no enrolment names is rooted as before.
 //!
-//! Red: the guard taken out of `sign_root_project` (scratch branch); the first test fails.
+//! Red: both guards taken out, in `sign_root_project` and in `construct_sync_server` (scratch
+//! branch). The first, third and fourth tests fail; the second passes.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --all-features --test joined_store_roots_nothing`.
@@ -17,7 +19,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron_server::test_doors::root_project_signing::{
-    fresh_store, sign_root_project, start_withholds_secret, write_join_record,
+    construct_sync_server, fresh_hosted_store, fresh_store, sign_root_project, write_join_record,
 };
 
 const SECRET: &str = "joined-store-roots-nothing-secret";
@@ -51,31 +53,44 @@ fn a_store_no_enrolment_names_is_rooted_at_a_start_with_a_secret() {
     );
 }
 
-/// A start on a joined store before its first sync withholds its secret, which keeps
-/// `SyncServer::new` from bootstrapping a host issuer and a Genesis too (review round 1 of
-/// #10532). A store no enrolment names keeps the secret, and so does a joined store whose log
-/// holds authority.
+/// The server a start builds over a joined store before its first sync roots nothing, and keeps
+/// the start's secret (review round 2 of #10532). The same build over a store no enrolment names
+/// roots it, as an install's own first start does.
 #[test]
-fn a_start_on_a_joined_store_withholds_its_secret_until_the_first_sync() {
+fn the_server_over_a_joined_store_roots_nothing_and_keeps_its_secret() {
     let dir = tempfile::tempdir().unwrap();
     let (vault, config) = fresh_store(dir.path()).unwrap();
-    assert!(
-        !start_withholds_secret(&config, &vault),
-        "no enrolment: the start keeps its secret"
-    );
     write_join_record(&config, &vault).unwrap();
+    let secret = construct_sync_server(vault.clone(), &config, Some(SECRET)).unwrap();
     assert!(
-        start_withholds_secret(&config, &vault),
-        "a joined store before its first sync: the start withholds its secret"
+        vault.authority_fold().unwrap().vault_id.is_none(),
+        "the server's boot mints no Genesis of the device's own"
+    );
+    assert_eq!(
+        secret.as_deref(),
+        Some(SECRET),
+        "the start's secret and authentication stand"
     );
 
-    let rooted_dir = tempfile::tempdir().unwrap();
-    let (rooted, rooted_config) = fresh_store(rooted_dir.path()).unwrap();
-    let _ = sign_root_project(&rooted, &rooted_config, Some(SECRET));
-    assert!(rooted.authority_fold().unwrap().vault_id.is_some());
-    write_join_record(&rooted_config, &rooted).unwrap();
+    let own_dir = tempfile::tempdir().unwrap();
+    let (own, own_config) = fresh_store(own_dir.path()).unwrap();
+    construct_sync_server(own.clone(), &own_config, Some(SECRET)).unwrap();
     assert!(
-        !start_withholds_secret(&rooted_config, &rooted),
-        "a store whose log holds authority keeps its secret"
+        own.authority_fold().unwrap().vault_id.is_some(),
+        "control: the server roots a store no enrolment names"
+    );
+}
+
+/// A Hosted start bootstraps its host issuer with no secret at all; over a joined store before
+/// its first sync it bootstraps none, so it roots nothing either (review round 2 of #10532).
+#[test]
+fn a_hosted_server_over_a_joined_store_roots_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (vault, config) = fresh_hosted_store(dir.path()).unwrap();
+    write_join_record(&config, &vault).unwrap();
+    let _ = construct_sync_server(vault.clone(), &config, None);
+    assert!(
+        vault.authority_fold().unwrap().vault_id.is_none(),
+        "the hosted boot mints no Genesis of the device's own"
     );
 }
