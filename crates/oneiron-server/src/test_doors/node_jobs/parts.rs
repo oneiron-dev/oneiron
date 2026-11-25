@@ -30,6 +30,9 @@ struct AdmissionState {
     disk_reserve_mib: u64,
     issuer_refusal: Option<String>,
     staging_limit_secs: u64,
+    /// Each template's checkpoint signal, when it names one.
+    signals: BTreeMap<String, String>,
+    receipt_keep_days: u64,
 }
 
 /// The node's configuration and fold, scripted: enabled, one template, room
@@ -70,6 +73,8 @@ impl ScriptedAdmission {
                 disk_reserve_mib: 0,
                 issuer_refusal: None,
                 staging_limit_secs: 600,
+                signals: BTreeMap::new(),
+                receipt_keep_days: 30,
             }),
         })
     }
@@ -118,6 +123,25 @@ impl ScriptedAdmission {
     /// The staging limit, in seconds.
     pub fn set_staging_limit_secs(&self, secs: u64) {
         locked(&self.state).staging_limit_secs = secs;
+    }
+
+    /// The template names `signal` as its checkpoint notice (`None`: no
+    /// signal, the notice is a no-op).
+    pub fn set_template_signal(&self, template: &str, signal: Option<&str>) {
+        let mut state = locked(&self.state);
+        match signal {
+            Some(signal) => {
+                state.signals.insert(template.to_owned(), signal.to_owned());
+            }
+            None => {
+                state.signals.remove(template);
+            }
+        }
+    }
+
+    /// Sets `jobs.receipts.keep_days`.
+    pub fn set_receipt_keep_days(&self, days: u64) {
+        locked(&self.state).receipt_keep_days = days;
     }
 }
 
@@ -188,10 +212,16 @@ impl NodeAdmission for ScriptedAdmission {
     }
 
     fn job_settings(&self) -> NodeJobSettings {
+        let state = locked(&self.state);
         NodeJobSettings {
-            staging_limit_secs: locked(&self.state).staging_limit_secs,
+            staging_limit_secs: state.staging_limit_secs,
+            receipt_keep_days: state.receipt_keep_days,
             ..NodeJobSettings::default()
         }
+    }
+
+    fn template_signal(&self, template: &str) -> Option<String> {
+        locked(&self.state).signals.get(template).cloned()
     }
 }
 

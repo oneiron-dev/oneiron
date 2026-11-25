@@ -43,7 +43,8 @@ pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, ScopeReport, SignedJobSubmit, WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, ScopeReport,
+    SignedJobSubmit, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -70,6 +71,10 @@ pub struct NodeJobSettings {
     /// `jobs.drain.fast_exit_secs`: an end this soon after the launch counts
     /// against the machine's drain guard. Default 5.
     pub fast_exit_secs: u64,
+    /// `jobs.receipts.keep_days`: how long an acknowledged key's payload
+    /// stays on the node before the cleaning removes it (design 7.6 step 5).
+    /// Default 30, longer than an allocation period.
+    pub receipt_keep_days: u64,
 }
 
 impl Default for NodeJobSettings {
@@ -80,6 +85,7 @@ impl Default for NodeJobSettings {
             output_hash_limit_secs: 60,
             returnable_max_bytes: FETCH_MAX_BYTES,
             fast_exit_secs: 5,
+            receipt_keep_days: 30,
         }
     }
 }
@@ -158,6 +164,14 @@ pub trait NodeAdmission: Send + Sync {
 
     /// The node's `jobs.*` settings now.
     fn job_settings(&self) -> NodeJobSettings;
+
+    /// The operating-system signal the template delivers as a checkpoint
+    /// notice (design 7.1 `Signal`); `None`, the default: the notice is a
+    /// no-op for this template.
+    fn template_signal(&self, template: &str) -> Option<String> {
+        let _ = template;
+        None
+    }
 }
 
 /// The machine's devices, as the job service places and leases them. The
@@ -355,8 +369,13 @@ impl NodeAdmission for ExecutionNode {
     fn job_settings(&self) -> NodeJobSettings {
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
+            receipt_keep_days: ExecutionNode::receipt_keep_days(self),
             ..NodeJobSettings::default()
         }
+    }
+
+    fn template_signal(&self, template: &str) -> Option<String> {
+        ExecutionNode::template_signal(self, template)
     }
 }
 
@@ -490,6 +509,10 @@ fn not_enabled() -> JobAnswer {
     JobAnswer::Refused(JobRefusal::NotEnabled)
 }
 
+fn status_not_enabled() -> JobStatusAnswer {
+    JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+}
+
 impl NodeKeys for NodeJobsAttachment {
     fn reserve(&self, peer: EntityId, reserve: JobReserve) -> JobAnswer {
         self.service()
@@ -540,6 +563,36 @@ impl NodeKeys for NodeJobsAttachment {
 
     fn scopes(&self) -> Vec<ScopeReport> {
         self.service().map(|jobs| jobs.scopes()).unwrap_or_default()
+    }
+
+    fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.find(peer, key))
+    }
+
+    fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.stop(peer, key))
+    }
+
+    fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.keys_page(peer, after))
+    }
+
+    fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.signal(peer, key, signal))
+    }
+
+    fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.fetch(peer, key, name))
+    }
+
+    fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
     }
 }
 

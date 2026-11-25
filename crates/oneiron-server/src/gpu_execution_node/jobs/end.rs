@@ -193,6 +193,7 @@ impl NodeJobs {
             }
         }
         self.keep_missing_terminal_receipts();
+        self.clean_acknowledged_payloads();
     }
 
     /// Writes the signed terminal receipt again for each sealed key whose
