@@ -19,6 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, UNIX_EPOCH};
 
 use oneiron::authority::MachineRole;
 use oneiron::job_workload::{
@@ -841,6 +842,57 @@ fn a_machine_whose_jobs_fail_several_times_in_a_row_takes_no_new_work_until_a_pe
     assert!(in_memory.drained()?.is_some());
     in_memory.clear_drain()?;
     assert_eq!(in_memory.drained()?, None);
+    Ok(())
+}
+
+/// The owner's clear from the panel (pass 34, 2.4) removes a drain only when
+/// the drain began before the clear. The table dates a drain file by its last
+/// write; a time on a whole second may come from a filesystem that keeps whole
+/// seconds only, so it counts as the end of that second, and a clear given
+/// within that second leaves the drain standing.
+#[test]
+fn a_panel_clear_removes_only_a_drain_file_written_before_it() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let drain_file = dir.path().join("gpu-drained");
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(
+        &probe,
+        GpuDeviceOffer {
+            drain_file: Some(drain_file.clone()),
+            ..offering(&["GPU-aaaa"])
+        },
+    );
+    let write_time = |at_ms: u64| -> TestResult {
+        std::fs::File::options()
+            .write(true)
+            .open(&drain_file)?
+            .set_modified(UNIX_EPOCH + Duration::from_millis(at_ms))?;
+        Ok(())
+    };
+
+    // A drain written at T0 + 700 ms, on a filesystem that keeps whole
+    // seconds, reads as written at T0: a clear at T0 + 200 ms came before it.
+    slots.drain("the node's word".to_owned());
+    write_time(T0)?;
+    assert!(!slots.clear_drain_begun_before(T0 + 200)?);
+    assert!(!slots.clear_drain_begun_before(T0 + 999)?);
+    assert!(slots.drained()?.is_some());
+    assert!(drain_file.exists());
+
+    // A time with a part of a second is the write's own: a clear at that
+    // millisecond keeps the drain, one after it removes it.
+    write_time(T0 + 1_500)?;
+    assert!(!slots.clear_drain_begun_before(T0 + 1_500)?);
+    assert!(slots.clear_drain_begun_before(T0 + 1_501)?);
+    assert_eq!(slots.drained()?, None);
+    assert!(!drain_file.exists());
+    assert!(!slots.clear_drain_begun_before(u64::MAX)?);
+
+    // A clear given after the whole second removes the drain.
+    slots.drain("the node's word again".to_owned());
+    write_time(T0 + 2_000)?;
+    assert!(slots.clear_drain_begun_before(T0 + 3_000)?);
+    assert_eq!(slots.drained()?, None);
     Ok(())
 }
 

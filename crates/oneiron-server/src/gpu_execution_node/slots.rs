@@ -101,6 +101,8 @@ struct State {
     failures_in_a_row: u32,
     /// A drain with no file to hold it (none named, or its write failed).
     drain_in_memory: Option<String>,
+    /// When the drain in memory began, in Unix milliseconds.
+    drain_in_memory_began_ms: u64,
 }
 
 impl State {

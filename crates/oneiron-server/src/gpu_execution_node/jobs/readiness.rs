@@ -20,8 +20,11 @@
 //! `Node` shows it. A passed check clears the drain, whatever set it, when
 //! `machines.drain.clear_by` is `after_readiness_check` (the default, CG-2
 //! row 9): the machine recovers without a person. With `person_at_box` the
-//! drain waits for `resume` at the box. No decider answers the slot before
-//! row P1.
+//! drain waits for `resume` at the box. With `owner` or `grants` it waits
+//! for the clear from the owner's panel, `machines.drain.cleared_at`
+//! ([`OWNER_CLEAR_RULE`]): each tick clears a drain that began before that
+//! clear's time, unless the last check failed. No decider answers the slot
+//! before row P1.
 //!
 //! The result, the streak of failed checks and the clocks of the last check
 //! are kept in `readiness.json` beside the journal, so a restart keeps the
@@ -50,6 +53,10 @@ pub const READINESS_FILE_NAME: &str = "readiness.json";
 /// The DRAIN slot's default rule (pass 34, 1.2): the drain guard's counts,
 /// read from settings, and the readiness check.
 pub const DRAIN_RULE_DEFAULT: &str = "drain_guard_counts@1";
+
+/// The rule a clear from the owner's panel names in its incident (pass 34,
+/// 2.4): `machines.drain.cleared_at`, newer than the drain.
+pub const OWNER_CLEAR_RULE: &str = "owner_clear@1";
 
 /// The DRAIN slot's options after a readiness check (pass 34, 1.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,7 +250,8 @@ impl NodeJobs {
 
     /// The readiness step of the tick: records a drain or a clear that
     /// another path made, then, while no attempt runs and a check is due,
-    /// runs the check and the DRAIN rule on its result.
+    /// runs the check and the DRAIN rule on its result, then applies a clear
+    /// from the owner's panel.
     pub(super) fn readiness_tick(&self) {
         let _checking = match self.shared.readiness.checking.try_lock() {
             Ok(guard) => guard,
@@ -251,23 +259,75 @@ impl NodeJobs {
             Err(TryLockError::WouldBlock) => return,
         };
         self.observe_drain();
-        let settings = self.parts().admission.job_settings();
+        let settings = self.check_when_due(self.parts().admission.job_settings());
+        self.owner_clear(&settings);
+    }
+
+    /// The check, while no attempt runs and one is due, and the DRAIN rule
+    /// on its result. Answers the settings the rest of the tick reads: read
+    /// again after a check ran, since the check can take a while and a box
+    /// that took the clear back meanwhile keeps its drain.
+    fn check_when_due(&self, settings: NodeJobSettings) -> NodeJobSettings {
         let now = self.now();
         let mark = {
             let book = self.shared.readiness.book();
             if !book.due(now.wall_ms, settings.readiness_every_secs) {
-                return;
+                return settings;
             }
             book.record.mark.clone()
         };
         if self.attempt_runs() {
-            return;
+            return settings;
         }
         let found = match self.check_readiness(mark.as_ref(), &now, &settings) {
             Ok(()) => ReadinessState::Ready,
             Err((check, why)) => ReadinessState::NotReady { check, why },
         };
+        let settings = self.parts().admission.job_settings();
         self.settle_check(&found, &now, &settings);
+        settings
+    }
+
+    /// A clear from the owner's panel (pass 34, 2.4; [`OWNER_CLEAR_RULE`]):
+    /// clears a drain that began before `settings.drain_cleared_at_ms`,
+    /// unless the last check failed, which keeps the drain until a check
+    /// passes. The slot table compares the drain's start and removes it in
+    /// one step, so a drain set after the clear stands, whatever its reason.
+    /// The node has that time only where the owner's `clear_by`, the box's
+    /// file and the row's writer all give the clear to the panel. A time
+    /// later than the node's clock waits until the clock reaches it: until
+    /// then it would clear each drain as it began, and a mistyped year
+    /// would do so for a year.
+    fn owner_clear(&self, settings: &NodeJobSettings) {
+        let Some(cleared_at_ms) = settings.drain_cleared_at_ms else {
+            return;
+        };
+        if cleared_at_ms > self.now().wall_ms {
+            return;
+        }
+        let failed = matches!(
+            self.shared.readiness.book().record.readiness.state,
+            ReadinessState::NotReady { .. }
+        );
+        if failed {
+            return;
+        }
+        match self.parts().devices.clear_drain_begun_before(cleared_at_ms) {
+            Ok(false) => {}
+            Ok(true) => {
+                tracing::info!("the owner cleared the machine's drain from the panel");
+                self.note_drain_cleared();
+                self.record_incident(IncidentKind::DrainCleared {
+                    rule: Some(OWNER_CLEAR_RULE.to_owned()),
+                });
+            }
+            Err(why) => {
+                tracing::warn!(
+                    %why,
+                    "the owner's clear of the drain did not apply; the next tick tries again"
+                );
+            }
+        }
     }
 
     /// Whether any key is launching, running or ending.
@@ -398,7 +458,7 @@ impl NodeJobs {
             DrainPick::Clear => match self.parts().devices.clear_drain() {
                 Ok(()) => {
                     tracing::info!("readiness check passed; the machine's drain is cleared");
-                    self.note_drain();
+                    self.note_drain_cleared();
                     self.record_incident(IncidentKind::DrainCleared {
                         rule: Some(DRAIN_RULE_DEFAULT.to_owned()),
                     });
@@ -435,6 +495,15 @@ impl NodeJobs {
         let drained = self.parts().admission.controls().drained;
         let mut book = self.shared.readiness.book();
         book.record.seen_drain = drained;
+        self.shared.readiness.persist(&book.record);
+    }
+
+    /// Notes no drain as seen, after a clear removed the drain: a drain set
+    /// again between the removal and this note is then still recorded by
+    /// [`Self::observe_drain`].
+    fn note_drain_cleared(&self) {
+        let mut book = self.shared.readiness.book();
+        book.record.seen_drain = None;
         self.shared.readiness.persist(&book.record);
     }
 }

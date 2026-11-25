@@ -87,6 +87,12 @@ pub struct NodeJobSettings {
     /// 2.4), the stricter of the box's and the owner's. Default: the
     /// machine, once its readiness check passes.
     pub drain_clear_by: DrainClearBy,
+    /// `machines.drain.cleared_at`: the time, in Unix milliseconds, of the
+    /// owner's clear of the node's drain from the panel, where the owner's
+    /// `clear_by` gives the clear to the owner or to listed Grants and the
+    /// row's writer is one it names. A readiness tick clears a drain that
+    /// began before it. Default `None`: no such clear.
+    pub drain_cleared_at_ms: Option<u64>,
     /// `jobs.incidents.keep`: how many incident records the node keeps.
     /// Default 200.
     pub incidents_keep: u64,
@@ -107,6 +113,7 @@ impl Default for NodeJobSettings {
             readiness_every_secs: READINESS_EVERY_SECS_DEFAULT,
             readiness_results_kept: 5,
             drain_clear_by: DrainClearBy::AfterReadinessCheck,
+            drain_cleared_at_ms: None,
             incidents_keep: 200,
             breadcrumbs_keep: 20,
         }
@@ -280,6 +287,17 @@ pub trait NodeDevices: Send + Sync {
     /// Why the drain still stands.
     fn clear_drain(&self) -> Result<(), String>;
 
+    /// The clear from the owner's panel (pass 34, 2.4): clears the machine's
+    /// drain only when it began before `before_ms`, the owner's clear time in
+    /// Unix milliseconds as the vault stamped it, against the drain's start by
+    /// the machine's clock; checked and cleared in one step, so a drain set
+    /// meanwhile stands. Whether it cleared one.
+    ///
+    /// # Errors
+    ///
+    /// Why the drain still stands.
+    fn clear_drain_begun_before(&self, before_ms: u64) -> Result<bool, String>;
+
     /// The readiness check's device probe: a fresh reading of every device
     /// answers, whether the machine is paused or drained (a look, not a
     /// hold).
@@ -441,22 +459,26 @@ impl NodeAdmission for ExecutionNode {
 
     fn job_settings(&self) -> NodeJobSettings {
         // One read of the box file for every key; with none, or one that
-        // does not parse, each key keeps its default.
-        let file = ExecutionNode::settings(self).ok().flatten();
+        // does not parse, each key keeps its default, except who clears the
+        // drain: the box may have kept that for the person at the box, so a
+        // file that does not read now (an edit half written, or moved away)
+        // keeps the drain from a passing check and from the owner's panel.
         let defaults = NodeJobSettings::default();
-        let (readiness_every_secs, drain_clear_by) = file.as_ref().map_or(
-            (defaults.readiness_every_secs, defaults.drain_clear_by),
-            |file| ExecutionNode::readiness_settings(self, file),
-        );
+        let Some(file) = ExecutionNode::settings(self).ok().flatten() else {
+            return NodeJobSettings {
+                drain_clear_by: DrainClearBy::PersonAtBox,
+                drain_cleared_at_ms: None,
+                ..defaults
+            };
+        };
+        let (readiness_every_secs, drain_clear_by, drain_cleared_at_ms) =
+            ExecutionNode::readiness_settings(self, &file);
         NodeJobSettings {
-            staging_limit_secs: file
-                .as_ref()
-                .map_or(defaults.staging_limit_secs, |file| file.staging_limit_secs),
-            receipt_keep_days: file.as_ref().map_or(defaults.receipt_keep_days, |file| {
-                u64::from(file.receipt_keep_days)
-            }),
+            staging_limit_secs: file.staging_limit_secs,
+            receipt_keep_days: u64::from(file.receipt_keep_days),
             readiness_every_secs,
             drain_clear_by,
+            drain_cleared_at_ms,
             ..defaults
         }
     }
@@ -533,6 +555,11 @@ impl NodeDevices for GpuSlotTable {
 
     fn clear_drain(&self) -> Result<(), String> {
         GpuSlotTable::clear_drain(self).map_err(|error| format!("drain_not_cleared: {error}"))
+    }
+
+    fn clear_drain_begun_before(&self, before_ms: u64) -> Result<bool, String> {
+        GpuSlotTable::clear_drain_begun_before(self, before_ms)
+            .map_err(|error| format!("drain_not_cleared: {error}"))
     }
 
     fn probe(&self) -> Result<(), String> {
