@@ -41,6 +41,13 @@ pub fn unregister_gpu_backend(server: &SyncServer, name: &str) {
     server.gpu_jobs.remove_backend(name);
 }
 
+/// One pass of `server`'s GPU job worker, the pass `serve` runs every
+/// `step_secs` and at each wake of the work-order loop
+/// (`gpu_host::worker_pass`).
+pub fn run_gpu_job_worker_pass(server: &Arc<SyncServer>) {
+    crate::gpu_host::worker_pass(server);
+}
+
 /// Grants `server`'s host account a fresh allocation of `units` `unit`, the
 /// vault's paid credits a host-paid GPU job reserves on.
 ///
