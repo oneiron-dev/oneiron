@@ -8,7 +8,9 @@
 //! a quarantined GPU and a paused machine take no new work; a machine whose
 //! jobs fail several times in a row takes no new GPU work until a person
 //! clears it; the home's selection reads only admitted machines that answer
-//! now, and takes no device.
+//! now, and takes no device. A request claims a device by kind, features and
+//! memory (pass 34, 2.1, row G1), and the table's reading feeds the general
+//! placement as `HeldDevice`s.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features
@@ -19,6 +21,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use oneiron::authority::MachineRole;
+use oneiron::job_workload::{
+    DeviceClaim, DeviceKind, DeviceLease, DeviceMemory, DevicePlacementError, DeviceState,
+    ResourceRequest, Sharing,
+};
 use oneiron::machine_capacity::{
     GpuDevice, MachineCapacity, MachineCapacityWrite, MachineMeasurement, MachinePower,
 };
@@ -166,12 +172,22 @@ fn table(probe: &Arc<FakeProbe>, offer: GpuDeviceOffer) -> Arc<GpuSlotTable> {
     ))
 }
 
+/// A claim for one GPU of any memory.
+fn gpu_claim() -> DeviceClaim {
+    DeviceClaim {
+        kind: DeviceKind::Gpu,
+        count: 1,
+        memory_mib: 0,
+        features: Vec::new(),
+        sharing: Sharing::Exclusive,
+    }
+}
+
 fn request(key: &str) -> GpuSlotRequest {
     GpuSlotRequest {
         key: key.to_owned(),
         device_id: None,
-        model: None,
-        min_memory_mib: 0,
+        claim: gpu_claim(),
         disk_bytes: 0,
     }
 }
@@ -987,7 +1003,10 @@ fn selection_reads_the_best_fit_free_gpu_and_takes_nothing() -> TestResult {
             &candidates,
             &peers,
             &GpuSlotRequest {
-                min_memory_mib: 80_000,
+                claim: DeviceClaim {
+                    memory_mib: 80_000,
+                    ..gpu_claim()
+                },
                 ..request("none")
             }
         ),
@@ -995,16 +1014,19 @@ fn selection_reads_the_best_fit_free_gpu_and_takes_nothing() -> TestResult {
     );
 
     peers.asked.lock().unwrap().clear();
-    let a4000 = GpuSlotRequest {
-        model: Some(A4000.to_owned()),
-        ..request("a4000")
+    let roomy_only = GpuSlotRequest {
+        claim: DeviceClaim {
+            memory_mib: 20_000,
+            ..gpu_claim()
+        },
+        ..request("roomy-only")
     };
     let placement =
-        select_gpu_slot(&candidates, &peers, &a4000).map_err(|refusal| refusal.to_string())?;
-    assert_eq!(placement.machine, small);
+        select_gpu_slot(&candidates, &peers, &roomy_only).map_err(|refusal| refusal.to_string())?;
+    assert_eq!(placement.machine, roomy);
     assert_eq!(
         peers.asked(),
-        vec![small],
+        vec![roomy],
         "a machine whose record lists no matching GPU is never asked"
     );
     Ok(())
@@ -1627,5 +1649,201 @@ fn every_launch_attempt_is_checked_afresh() -> TestResult {
     );
     probe.end_processes();
     lease.confirm_launch()?;
+    Ok(())
+}
+
+/// Pass 34, 2.1 (row G1): a GPU lease matches its claim's kind, features and
+/// least memory against the driver's facts (a GPU the NVIDIA driver lists
+/// offers `cuda`), never a vendor or a model name.
+#[test]
+fn a_claim_is_met_by_kind_features_and_memory_never_by_a_model_name() -> TestResult {
+    let probe = FakeProbe::with(vec![gpu("GPU-aaaa", A4000, A4000_MIB), rtx4090("GPU-bbbb")]);
+    let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb"]));
+    let claiming = |key: &str, claim: DeviceClaim| GpuSlotRequest {
+        claim,
+        ..request(key)
+    };
+
+    let facts = slots.availability(T0)?.devices[0].facts();
+    assert_eq!(facts.id, "GPU-aaaa");
+    assert_eq!(facts.kind, DeviceKind::Gpu);
+    assert_eq!(facts.vendor, "nvidia");
+    assert_eq!(facts.model, A4000, "shown to people, never matched");
+    assert_eq!(facts.features, vec!["cuda".to_owned()]);
+    assert_eq!(facts.memory, DeviceMemory::Dedicated { mib: A4000_MIB });
+    assert_eq!(facts.state, DeviceState::Offered);
+    assert_eq!(facts.max_claimants, 1);
+
+    for (claim, why) in [
+        (
+            DeviceClaim {
+                features: vec!["rocm".to_owned()],
+                ..gpu_claim()
+            },
+            "a feature no GPU offers",
+        ),
+        (
+            DeviceClaim {
+                kind: DeviceKind::Npu,
+                ..gpu_claim()
+            },
+            "another kind of device",
+        ),
+        (
+            DeviceClaim {
+                memory_mib: 80_000,
+                ..gpu_claim()
+            },
+            "more memory than any GPU has",
+        ),
+    ] {
+        assert_eq!(
+            slots.lease(&claiming("none", claim), T0).map(|_| ()),
+            Err(GpuSlotRefusal::NoMatch),
+            "{why}"
+        );
+    }
+    let cuda = slots.lease(
+        &claiming(
+            "cuda",
+            DeviceClaim {
+                features: vec!["cuda".to_owned()],
+                ..gpu_claim()
+            },
+        ),
+        T0,
+    )?;
+    assert_eq!(
+        cuda.grant().device.device_id,
+        "GPU-aaaa",
+        "the smallest GPU with the feature"
+    );
+    let roomy = slots.lease(
+        &claiming(
+            "roomy",
+            DeviceClaim {
+                memory_mib: 20_000,
+                ..gpu_claim()
+            },
+        ),
+        T0,
+    )?;
+    assert_eq!(
+        roomy.grant().device.device_id,
+        "GPU-bbbb",
+        "only the RTX 4090 has 20 000 MiB"
+    );
+    Ok(())
+}
+
+/// Pass 34, 2.1 (row G1): a key leases one device here, so a claim for 0 or
+/// 2 devices is refused, and nothing is taken.
+#[test]
+fn a_claim_for_other_than_one_device_is_refused_and_takes_nothing() -> TestResult {
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
+    let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb"]));
+    for count in [0, 2] {
+        let asked = GpuSlotRequest {
+            claim: DeviceClaim {
+                count,
+                ..gpu_claim()
+            },
+            ..request("many")
+        };
+        assert_eq!(
+            slots.lease(&asked, T0).map(|_| ()),
+            Err(GpuSlotRefusal::ClaimCount { count })
+        );
+    }
+    let answer = slots.availability(T0)?;
+    assert_eq!(state_of(&answer, "GPU-aaaa"), GpuDeviceState::Free);
+    assert_eq!(state_of(&answer, "GPU-bbbb"), GpuDeviceState::Free);
+    Ok(())
+}
+
+/// Pass 34, 2.1 (row G1): the table's fresh reading, as `HeldDevice`s, feeds
+/// `ResourceRequest::place_devices`. A GPU a key leased has that key as its
+/// one exclusive holder, a GPU another's compute process runs on is
+/// withheld, and placement picks the one free GPU, which the launch commit
+/// then leases by its id. A paused machine places nothing.
+#[test]
+fn held_devices_place_a_request_on_the_gpu_no_key_holds() -> TestResult {
+    let probe = FakeProbe::with(vec![
+        rtx4090("GPU-aaaa"),
+        rtx4090("GPU-bbbb"),
+        rtx4090("GPU-cccc"),
+    ]);
+    let slots = table(&probe, offering(&["GPU-aaaa", "GPU-bbbb", "GPU-cccc"]));
+    let first = slots.lease(&pinned("first", "GPU-aaaa"), T0)?;
+    probe.run_on("GPU-cccc", 4242);
+
+    let held = slots.held_devices(T0)?;
+    let by_id = |id: &str| {
+        held.iter()
+            .find(|device| device.facts.id == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} is listed"))
+    };
+    assert_eq!(
+        by_id("GPU-aaaa").facts.state,
+        DeviceState::Leased {
+            keys: vec!["first".to_owned()]
+        }
+    );
+    assert_eq!(by_id("GPU-aaaa").holders, vec![Sharing::Exclusive]);
+    assert_eq!(by_id("GPU-bbbb").facts.state, DeviceState::Offered);
+    assert!(by_id("GPU-bbbb").holders.is_empty());
+    assert_eq!(
+        by_id("GPU-cccc").facts.state,
+        DeviceState::Withheld,
+        "another's compute process runs there"
+    );
+
+    let resources = ResourceRequest {
+        cpu_threads: 0,
+        memory_mib: 1_024,
+        disk_mib: 0,
+        devices: vec![gpu_claim()],
+        maximum_secs: 60,
+    };
+    let placement = resources
+        .place_devices(&held)
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        placement.devices,
+        vec![DeviceLease {
+            claim: 0,
+            device_id: "GPU-bbbb".to_owned(),
+            sharing: Sharing::Exclusive,
+        }]
+    );
+    assert_eq!(
+        placement.host_memory_mib, 1_024,
+        "a GPU with its own memory adds none"
+    );
+    let second = slots.lease(&pinned("second", &placement.devices[0].device_id), T0)?;
+    assert_eq!(second.grant().device.device_id, "GPU-bbbb");
+
+    let two = ResourceRequest {
+        devices: vec![DeviceClaim {
+            count: 2,
+            ..gpu_claim()
+        }],
+        ..resources
+    };
+    assert_eq!(
+        two.place_devices(&slots.held_devices(T0)?),
+        Err(DevicePlacementError::DeviceBusy { claim: 0 }),
+        "each GPU is held or busy now, so a wait may clear it"
+    );
+
+    slots.set_paused(Some("maintenance".to_owned()));
+    assert_eq!(
+        slots.held_devices(T0),
+        Err(GpuSlotRefusal::Paused {
+            reason: "maintenance".to_owned()
+        })
+    );
+    drop((first, second));
     Ok(())
 }

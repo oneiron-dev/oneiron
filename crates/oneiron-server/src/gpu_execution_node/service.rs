@@ -177,6 +177,7 @@ fn answer_status(
         JobStatusRequest::Signal { key, signal } => keys.signal(peer, key, signal),
         JobStatusRequest::Fetch { key, name } => keys.fetch(peer, key, name),
         JobStatusRequest::Ack { key } => keys.acknowledge(peer, key),
+        JobStatusRequest::Tail(request) => keys.tail(peer, request),
     }
 }
 

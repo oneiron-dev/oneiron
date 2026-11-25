@@ -31,6 +31,30 @@ struct ScriptedDevice {
     taken_by: Option<String>,
 }
 
+impl ScriptedDevice {
+    /// What the device is, in `state`, as placement and a lease's claim
+    /// read it.
+    fn facts(&self, state: DeviceState) -> DeviceFacts {
+        let mib = self.device.memory_total_mib;
+        DeviceFacts {
+            id: self.device.device_id.clone(),
+            id_source: DeviceIdSource::VendorUuid,
+            kind: DeviceKind::Gpu,
+            vendor: "scripted".to_owned(),
+            model: self.device.model.clone(),
+            memory: if self.unified {
+                DeviceMemory::Unified { mib }
+            } else {
+                DeviceMemory::Dedicated { mib }
+            },
+            features: self.features.clone(),
+            closure: DeviceClosure::Closed,
+            state,
+            max_claimants: 1,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct DevicesState {
     devices: Vec<ScriptedDevice>,
@@ -270,7 +294,6 @@ impl NodeDevices for ScriptedDevices {
             .iter()
             .map(|device| {
                 let id = &device.device.device_id;
-                let mib = device.device.memory_total_mib;
                 let condition = match (&device.taken_by, state.quarantined.get(id)) {
                     _ if !device.offered => DeviceState::Withheld,
                     (_, Some(why)) => DeviceState::Quarantined { why: why.clone() },
@@ -280,22 +303,7 @@ impl NodeDevices for ScriptedDevices {
                     (None, None) => DeviceState::Offered,
                 };
                 HeldDevice {
-                    facts: DeviceFacts {
-                        id: id.clone(),
-                        id_source: DeviceIdSource::VendorUuid,
-                        kind: DeviceKind::Gpu,
-                        vendor: "scripted".to_owned(),
-                        model: device.device.model.clone(),
-                        memory: if device.unified {
-                            DeviceMemory::Unified { mib }
-                        } else {
-                            DeviceMemory::Dedicated { mib }
-                        },
-                        features: device.features.clone(),
-                        closure: DeviceClosure::Closed,
-                        state: condition,
-                        max_claimants: 1,
-                    },
+                    facts: device.facts(condition),
                     holders: device.taken_by.iter().map(|_| Sharing::Exclusive).collect(),
                 }
             })
@@ -311,7 +319,7 @@ impl NodeDevices for ScriptedDevices {
         let Some(device) = state
             .devices
             .iter_mut()
-            .find(|device| request.admits(&device.device))
+            .find(|device| request.admits(&device.facts(DeviceState::Offered)))
         else {
             return Err(GpuSlotRefusal::NoMatch);
         };

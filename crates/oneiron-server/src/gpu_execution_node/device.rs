@@ -7,12 +7,21 @@ use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use oneiron::job_workload::{
+    DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory, DeviceState,
+};
 use serde::{Deserialize, Serialize};
 
 pub use oneiron::machine_capacity::GpuDevice;
 
 /// The driver's command-line query tool.
 const NVIDIA_SMI: &str = "nvidia-smi";
+
+/// The vendor of every GPU [`NVIDIA_SMI`] lists.
+const NVIDIA: &str = "nvidia";
+
+/// The compute feature every GPU [`NVIDIA_SMI`] lists offers.
+const CUDA: &str = "cuda";
 
 /// The longest one driver query may take before it counts as failed, so a
 /// hung driver never holds the slot table.
@@ -126,6 +135,29 @@ impl GpuDeviceProbe for NvidiaSmiProbe {
             "--query-gpu=uuid,temperature.gpu,power.draw,memory.used",
             "--format=csv,noheader,nounits",
         ])?)
+    }
+}
+
+/// What placement reads about `device`, a GPU the driver listed, in `state`
+/// (pass 34, 2.1): found by its vendor UUID, with its own memory and CUDA,
+/// for one claimant. Its closure is closed: the driver lists every compute
+/// process on it, and the slot table refuses a launch beside one it did not
+/// start.
+#[must_use]
+pub fn gpu_device_facts(device: &GpuDevice, state: DeviceState) -> DeviceFacts {
+    DeviceFacts {
+        id: device.device_id.clone(),
+        id_source: DeviceIdSource::VendorUuid,
+        kind: DeviceKind::Gpu,
+        vendor: NVIDIA.to_owned(),
+        model: device.model.clone(),
+        memory: DeviceMemory::Dedicated {
+            mib: device.memory_total_mib,
+        },
+        features: vec![CUDA.to_owned()],
+        closure: DeviceClosure::Closed,
+        state,
+        max_claimants: 1,
     }
 }
 

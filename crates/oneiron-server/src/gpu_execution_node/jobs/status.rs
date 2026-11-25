@@ -42,7 +42,7 @@ fn not_fetchable(why: impl Into<String>) -> JobStatusAnswer {
 
 /// The key `key` of `peer` in `journal`'s table: `Absent` with the epoch, or
 /// `NotTheKeysIssuer` for another issuer's key.
-fn own_key(
+pub(super) fn own_key(
     known: Option<&NodeKey>,
     peer: EntityId,
     epoch_hex: String,
