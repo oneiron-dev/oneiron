@@ -19,8 +19,8 @@
 //! [HANDOFF-CONTEXT]): this host's default agent keeps no retained log, so a
 //! turn the caller sends no earlier line with is a first (cold) turn, and one
 //! with lines names how many rode and how many were past the history bound.
-//! A self agent's turn names the summaries and raw turns of its retained log;
-//! a Retry the turn-action worker answers names its action; a row that names
+//! A self agent's turn names the summaries and raw turns of its retained log,
+//! a reply cut at the token limit among them; a Retry the turn-action worker answers names its action; a row that names
 //! no form reads unknown.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
@@ -972,6 +972,85 @@ fn a_self_agents_turn_names_its_summaries_and_raw_turns() {
                 .iter()
                 .all(|turn| thread_turns.contains(turn) && !folded.contains(turn)),
             "each raw turn is a turn of the thread no listed summary folds"
+        );
+        assert!(
+            !raw_turns.contains(&next.turn),
+            "a turn's history holds no line of its own reply"
+        );
+        host.ai.shutdown().await;
+    });
+}
+
+/// What a self agent's reply had said when the model stopped at its token
+/// limit: the saved, incomplete text the next turn's request carries.
+const CUT_ANSWER: &str = "Got it. The gate code is four four one seven, and the tomato beds";
+
+/// An OpenAI-compatible reply stream that says `text` as `model` and ends at
+/// the token limit (`finish_reason` "length").
+fn cut_stream(text: &str, model: &str) -> String {
+    let events = [
+        json!({"id": "chatcmpl-cut", "object": "chat.completion.chunk", "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": null}]}),
+        json!({"id": "chatcmpl-cut", "object": "chat.completion.chunk", "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]}),
+        json!({"id": "chatcmpl-cut", "object": "chat.completion.chunk", "model": model,
+            "choices": [], "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}}),
+    ];
+    let mut body: String = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+    body.push_str("data: [DONE]\n\n");
+    body
+}
+
+/// FIX [HANDOFF-CONTEXT], review round 1 of #9382 (26 Nov): a self agent's
+/// reply cut at the token limit is saved incomplete with the text it had
+/// said, and the next turn's request carries that text, so the next turn's
+/// retained log names the cut TURN among its raw turns, although no
+/// projection pins an incomplete turn. Red on #9382's head bd941757d2: the
+/// form lists only the turns a projection pinned.
+#[test]
+fn a_self_agents_turn_names_a_raw_turn_cut_at_the_token_limit() {
+    run_on_engine_stack("a-self-turn-names-a-cut-raw-turn", || async {
+        let fake = FakeLlm::start(
+            vec![ModelReply::Raw(cut_stream(CUT_ANSWER, MODEL))],
+            Some(ModelReply::Computed(Arc::new(self_reply))),
+        )
+        .await;
+        let host = Host::start_with(&self_models(&fake.base_url)).await;
+        let conversation = EntityId::now();
+
+        let cut = host.chat(conversation, TRANSCRIPT).await;
+        let next = host.chat(conversation, TRANSCRIPT).await;
+        // Only a request made after the cut reply can hold its words.
+        assert!(
+            fake.seen()
+                .iter()
+                .any(|seen| seen.body.to_string().contains(CUT_ANSWER)),
+            "the next turn's request carries the cut reply's saved text"
+        );
+
+        let listed = host.turn_models(&[&next]).await;
+        let history = listed_context(&listed, &next);
+        assert_eq!(
+            history["kind"].as_str(),
+            Some("retained_log"),
+            "a self agent's turn names its retained log: {history}"
+        );
+        let raw_turns: Vec<EntityId> = history["raw_turn_refs"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the form lists raw_turn_refs: {history}"))
+            .iter()
+            .map(|id| {
+                id.as_str()
+                    .and_then(|hex| EntityId::from_hex(hex).ok())
+                    .unwrap_or_else(|| panic!("raw_turn_refs holds ids: {history}"))
+            })
+            .collect();
+        assert!(
+            raw_turns.contains(&cut.turn),
+            "the cut reply's TURN is a raw turn of the next turn's log: {history}"
         );
         assert!(
             !raw_turns.contains(&next.turn),
