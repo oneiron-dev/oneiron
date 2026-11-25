@@ -41,10 +41,11 @@ pub use oneiron_organ_host::{
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
+use crate::gpu_execution_node::node_settings::ExecutionNodeSettings;
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, ScopeReport,
-    SignedJobSubmit, WorkloadPin,
+    SignedJobSubmit, WarmKeyFact, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -251,6 +252,8 @@ pub struct StageOrder {
     pub pin: WorkloadPin,
     /// The key's payload directory under `work_dir`.
     pub payload_dir: PathBuf,
+    /// The warm keys the signed submit lists (pass 34, row P2).
+    pub warm: Vec<String>,
 }
 
 /// Why staging did not complete.
@@ -602,6 +605,24 @@ impl NodeKeys for NodeJobsAttachment {
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         self.service()
             .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
+    }
+
+    fn warm_wanted(&self, peer: EntityId, keys: &[String]) {
+        if let Some(jobs) = self.service() {
+            jobs.warm_wanted(peer, keys);
+        }
+    }
+
+    fn warm_facts(&self, settings: &ExecutionNodeSettings) -> Vec<WarmKeyFact> {
+        self.service()
+            .map(|jobs| jobs.warm_facts(settings))
+            .unwrap_or_default()
+    }
+
+    fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings) {
+        if let Some(jobs) = self.service() {
+            jobs.cache_pass_if_due(settings);
+        }
     }
 }
 

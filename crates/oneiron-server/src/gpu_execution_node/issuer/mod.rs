@@ -42,13 +42,15 @@ pub const VAULT_MACHINE_BACKEND: &str = "vault_machine";
 /// `vault.machines.execution.get`.
 pub const NOT_AVAILABLE_TO_THIS_CALLER: &str = "not_available_to_this_caller";
 
-/// A `vault_machine` quote's inputs: the machine that runs the job (required) and the GPU it
-/// may take. Other fields (a lane's arm binding) pass through untouched.
+/// A `vault_machine` quote's inputs: the machine that runs the job (required), the GPU it
+/// may take, and the warm keys the work reads (pass 34, row P2). Other fields (a lane's arm
+/// binding) pass through untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultMachineInputs {
     pub machine: EntityId,
     pub device_id: Option<String>,
     pub model: Option<String>,
+    pub warm: Vec<String>,
 }
 
 impl VaultMachineInputs {
@@ -67,7 +69,9 @@ impl VaultMachineInputs {
 /// # Errors
 ///
 /// `machine_missing` when `inputs.machine` is absent or not a MACHINE id in hex;
-/// `device_id_invalid` or `model_invalid` when one is present and not a string.
+/// `device_id_invalid` or `model_invalid` when one is present and not a string;
+/// `warm_invalid` when `inputs.warm` is present and not a list of at most
+/// [`oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX`] distinct warm keys.
 pub fn vault_machine_inputs(
     inputs: &serde_json::Value,
 ) -> Result<VaultMachineInputs, &'static str> {
@@ -81,10 +85,21 @@ pub fn vault_machine_inputs(
         Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
         Some(_) => Err(refusal),
     };
+    let warm = match inputs.get("warm") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(value) => serde_json::from_value::<Vec<String>>(value.clone())
+            .ok()
+            .filter(|keys| {
+                oneiron::warm_key::check_warm_keys(keys, oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX)
+                    .is_ok()
+            })
+            .ok_or("warm_invalid")?,
+    };
     Ok(VaultMachineInputs {
         machine,
         device_id: text("device_id", "device_id_invalid")?,
         model: text("model", "model_invalid")?,
+        warm,
     })
 }
 

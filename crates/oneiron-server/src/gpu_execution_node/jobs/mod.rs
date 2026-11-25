@@ -21,6 +21,7 @@
 //! configuration (row R1), the GPU slot table (OPUS-LE-FLEET), the memory
 //! floor, the job unit (row R3b), the stager (row R3c) and the machine-key
 //! signer. Its calls block; an async caller runs them on a blocking thread.
+//! The warm keys and the cache budget are [`warm`]'s (pass 34, row P2).
 //! One service per `state_dir`: it holds the journal's writer lock while any
 //! handle of it lives, a staging worker's too.
 
@@ -30,6 +31,7 @@ pub mod journal_file;
 pub mod node_parts;
 pub mod receipt;
 pub mod staging;
+pub mod warm;
 
 mod admission;
 mod end;
@@ -93,6 +95,8 @@ struct NodeJobsShared {
     paths: NodeJobPaths,
     parts: NodeJobParts,
     book: Mutex<NodeBook>,
+    /// The warm keys (row P2): taken only after `book`, never before it.
+    warm: Mutex<warm::WarmState>,
     /// Held while any handle lives: no second service writes this journal.
     _writer: JournalWriterLock,
 }

@@ -54,6 +54,12 @@
 //!   template names them by path (read-only for the job: row R3b), and the
 //!   workload's contract names what it expects of them by hash and checks
 //!   that itself. Nothing from the vault is staged (a later row, R10).
+//! - **Warm inputs** (pass 34, row P2): each warm key the signed submit
+//!   lists that the template maps to a path that is not a cache must exist
+//!   once the contract passed, or the key ends as
+//!   `LaunchRefused { warm_key_missing:<key> }`. Nothing is fetched; an
+//!   absent cache is a cold start. The template's warm keys come from the
+//!   same reading of the node's file whose digest is the pin's.
 //!
 //! Staging runs outside the admission lock, as the engine's account, and
 //! asks `closed` before each step and between the contract's read chunks.
@@ -78,10 +84,13 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use super::node_parts::{StageFailure, StageOrder, Stager};
+use super::warm::{TemplateWarm, WARM_KEY_MISSING};
 use crate::gpu_execution_node::node::ExecutionNode;
 
 mod git_process;
 mod payload_dir;
+
+pub(in crate::gpu_execution_node::jobs) use payload_dir::trusted_work_dir;
 
 use git_process::{GitChild, GitView};
 use payload_dir::payload_dir_owned;
@@ -200,10 +209,32 @@ pub trait TemplateMirrors: Send + Sync {
     /// another (or does not compute); [`StagingRefusal::NodeFileUnreadable`]
     /// when the node's file does not read.
     fn mirror(&self, template: &str, template_digest: &str) -> Result<PathBuf, StagingRefusal>;
+
+    /// The warm keys of `template` (pass 34, row P2), from one reading of
+    /// the node's configuration in which its digest is `template_digest`.
+    /// The default maps none.
+    ///
+    /// # Errors
+    ///
+    /// As [`TemplateMirrors::mirror`].
+    fn template_warm(
+        &self,
+        template: &str,
+        template_digest: &str,
+    ) -> Result<TemplateWarm, StagingRefusal> {
+        let _ = (template, template_digest);
+        Ok(TemplateWarm::default())
+    }
 }
 
-impl TemplateMirrors for ExecutionNode {
-    fn mirror(&self, template: &str, template_digest: &str) -> Result<PathBuf, StagingRefusal> {
+impl ExecutionNode {
+    /// The node's template `template`, from one reading of its file in
+    /// which that template's digest is `template_digest`.
+    fn pinned_template(
+        &self,
+        template: &str,
+        template_digest: &str,
+    ) -> Result<crate::gpu_execution_node::node_settings::NodeTemplate, StagingRefusal> {
         let settings = match self.settings() {
             Ok(Some(settings)) => settings,
             Ok(None) => return Err(StagingRefusal::TemplateUnknown),
@@ -217,13 +248,29 @@ impl TemplateMirrors for ExecutionNode {
             .get(template)
             .ok_or(StagingRefusal::TemplateUnknown)?;
         match found.digest() {
-            Ok(digest) if digest == template_digest => Ok(found.repo.clone()),
+            Ok(digest) if digest == template_digest => Ok(found.clone()),
             Ok(_) => Err(StagingRefusal::TemplateChanged),
             Err(why) => {
                 tracing::warn!(template, %why, "job staging: the template's digest does not compute");
                 Err(StagingRefusal::TemplateChanged)
             }
         }
+    }
+}
+
+impl TemplateMirrors for ExecutionNode {
+    fn mirror(&self, template: &str, template_digest: &str) -> Result<PathBuf, StagingRefusal> {
+        self.pinned_template(template, template_digest)
+            .map(|found| found.repo)
+    }
+
+    fn template_warm(
+        &self,
+        template: &str,
+        template_digest: &str,
+    ) -> Result<TemplateWarm, StagingRefusal> {
+        self.pinned_template(template, template_digest)
+            .map(|found| TemplateWarm::of(&found))
     }
 }
 
@@ -297,7 +344,15 @@ impl MirrorStager {
         self.export(&view, &pin.commit, &checkout, budget, closed)?;
         open_unless_closed(closed)?;
         contract_matches(&checkout, &pin.contract_path, &pin.contract_sha256, closed)?;
-        open_unless_closed(closed)
+        open_unless_closed(closed)?;
+        let warm = self
+            .mirrors
+            .template_warm(&pin.template, &pin.template_digest)?;
+        if let Some(key) = warm.missing_input(&order.warm) {
+            tracing::info!(key = %order.key, warm_key = key, "job staging: a warm input the attempt lists is not on this node");
+            return Err(StageFailure::Refused(format!("{WARM_KEY_MISSING}:{key}")));
+        }
+        Ok(())
     }
 
     /// Runs git on `view` with `args` to its end: `input` written to it, its

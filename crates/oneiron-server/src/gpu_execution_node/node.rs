@@ -45,7 +45,7 @@ use super::node_settings::{
 use super::slots::GpuSlotTable;
 use super::wire::{
     JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, ScopeReport,
-    SignedJobSubmit, TemplateOffer, WorkloadPin,
+    SignedJobSubmit, TemplateOffer, WarmKeyFact, WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -258,6 +258,23 @@ pub trait NodeKeys: Send + Sync {
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         let _ = (peer, key);
         JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `NodeWanting` from `peer` (pass 34, row P2): the warm keys of its
+    /// open orders that may run here.
+    fn warm_wanted(&self, peer: EntityId, keys: &[String]) {
+        let _ = (peer, keys);
+    }
+
+    /// The warm keys `Node` reports (row P2).
+    fn warm_facts(&self, settings: &ExecutionNodeSettings) -> Vec<WarmKeyFact> {
+        let _ = settings;
+        Vec::new()
+    }
+
+    /// Starts a cache pass when one is due (row P2); it never waits for it.
+    fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings) {
+        let _ = settings;
     }
 
     /// The launch scopes the keys' job unit starts runs in, each with what
@@ -644,7 +661,7 @@ impl ExecutionNode {
     pub fn node_answer_from(&self, snapshot: &NodeSnapshot) -> NodeAnswer {
         let keys = self.keys();
         let scopes = keys.map(|keys| keys.scopes());
-        let (templates, disk_free_bytes, disk_reserve_bytes) = match snapshot.settings() {
+        let (templates, disk_free_bytes, disk_reserve_bytes, warm) = match snapshot.settings() {
             Some(settings) => (
                 settings.template_offers().unwrap_or_else(|why| {
                     tracing::warn!(%why, "a template of the execution node does not encode");
@@ -652,8 +669,10 @@ impl ExecutionNode {
                 }),
                 disk_free_bytes(&settings.work_dir).unwrap_or(0),
                 settings.disk_reserve_bytes(),
+                keys.map(|keys| keys.warm_facts(settings))
+                    .unwrap_or_default(),
             ),
-            None => (Vec::new(), 0, 0),
+            None => (Vec::new(), 0, 0, Vec::new()),
         };
         NodeAnswer {
             enabled: snapshot.controls.enabled,
@@ -671,6 +690,7 @@ impl ExecutionNode {
             swept: keys.is_some_and(|keys| keys.swept()),
             boot_id: boot_id(),
             engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+            warm,
         }
     }
 
@@ -768,6 +788,9 @@ impl ExecutionNode {
         }
         if snapshot.controls.stop_requested {
             keys.stop_live_keys();
+        }
+        if let Some(settings) = snapshot.settings() {
+            keys.cache_pass_if_due(settings);
         }
     }
 

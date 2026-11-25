@@ -236,6 +236,7 @@ pub mod outbound_grant;
 pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod warm_key;
 pub mod web_connector;
 pub mod work_order;
 pub use oneiron_web_fetch::web_fetch;

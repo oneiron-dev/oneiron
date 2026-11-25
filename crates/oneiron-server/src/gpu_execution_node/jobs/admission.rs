@@ -449,6 +449,12 @@ impl NodeJobs {
         if submit.maximum_secs == 0 || submit.maximum_secs > reserve.pin.request.maximum_secs {
             return Some("maximum_above_pin".to_owned());
         }
+        if let Err(invalid) = oneiron::warm_key::check_warm_keys(
+            &submit.warm,
+            oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX,
+        ) {
+            return Some(invalid.code().to_owned());
+        }
         let admission = &self.parts().admission;
         if let Some(reason) = admission.controls().refusal() {
             return Some(reason);

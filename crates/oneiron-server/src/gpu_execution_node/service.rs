@@ -80,7 +80,7 @@ impl JobService {
 /// The node's answer to `request` on [`JOB_ALPN`].
 fn answer_job(node: &ExecutionNode, endpoint_key: [u8; 32], request: JobRequest) -> JobAnswer {
     let ask = match &request {
-        JobRequest::Node => GateAsk::Offer,
+        JobRequest::Node | JobRequest::NodeWanting(_) => GateAsk::Offer,
         JobRequest::Availability | JobRequest::Release { .. } => GateAsk::Read,
         JobRequest::Reserve(_) | JobRequest::Submit(_) => GateAsk::Admit,
     };
@@ -91,6 +91,12 @@ fn answer_job(node: &ExecutionNode, endpoint_key: [u8; 32], request: JobRequest)
     let keys = node.keys();
     match request {
         JobRequest::Node => JobAnswer::Node(node.node_answer_from(&snapshot)),
+        JobRequest::NodeWanting(wanted) => {
+            if let Some(keys) = &keys {
+                keys.warm_wanted(peer, &wanted.keys);
+            }
+            JobAnswer::Node(node.node_answer_from(&snapshot))
+        }
         JobRequest::Availability => match node.availability_from(&snapshot, now_ms()) {
             Ok(availability) => JobAnswer::Availability(availability),
             Err(why) => JobAnswer::Refused(JobRefusal::DevicesUnreadable { why }),

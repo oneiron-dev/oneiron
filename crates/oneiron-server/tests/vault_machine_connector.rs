@@ -396,7 +396,7 @@ impl ScriptedNode {
 impl JobNodeClient for ScriptedNode {
     fn job(&self, machine: EntityId, request: &JobRequest) -> Result<JobAnswer, NodeCallError> {
         let (kind, key) = match request {
-            JobRequest::Node => ("node", None),
+            JobRequest::Node | JobRequest::NodeWanting(_) => ("node", None),
             JobRequest::Availability => ("availability", None),
             JobRequest::Reserve(req) => ("reserve", Some(req.key.as_str())),
             JobRequest::Release { key } => ("release", Some(key.as_str())),
@@ -404,7 +404,7 @@ impl JobNodeClient for ScriptedNode {
         };
         let (mut node, lose_answer) = self.enter_call(machine, kind, key, request)?;
         let answer = (|| match request {
-            JobRequest::Node => JobAnswer::Node(NodeAnswer {
+            JobRequest::Node | JobRequest::NodeWanting(_) => JobAnswer::Node(NodeAnswer {
                 enabled: true,
                 paused: None,
                 drained: None,
@@ -424,6 +424,7 @@ impl JobNodeClient for ScriptedNode {
                 swept: true,
                 boot_id: "node-boot".to_owned(),
                 engine_version: "scripted".to_owned(),
+                warm: Vec::new(),
             }),
             // The connector never asks for a GPU reading; the script has none.
             JobRequest::Availability => JobAnswer::Refused(JobRefusal::DevicesUnreadable {
