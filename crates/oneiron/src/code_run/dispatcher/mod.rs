@@ -20,6 +20,7 @@ mod human_speech;
 mod inference_defaults;
 mod leader;
 mod memory_verbs;
+mod orders_wait;
 mod program_step;
 mod read_worlds;
 mod reader_spawn;

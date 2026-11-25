@@ -103,6 +103,12 @@ impl Vault {
                 Ok(job) => job,
                 Err(refused) => return Ok(Err(refused)),
             };
+            if let GpuJobActor::Order(attempt) = actor
+                && let Err(refused) =
+                    self.record_order_attempt_in_txn(txn, attempt, &job.id, now_ms)?
+            {
+                return Ok(Err(GpuJobError::Order(refused)));
+            }
             if job.started_by.is_none() && job.chunks.len() == 1 {
                 job.started_by = Some(starter);
             }
@@ -152,6 +158,9 @@ impl Vault {
                 let owner = owner.revalidate_in_txn(self, txn)?;
                 return Ok(Ok((owner, MaximumShown { at_ms: now_ms })));
             }
+            GpuJobActor::Order(attempt) => {
+                return self.order_job_starter_in_txn(txn, attempt, quote, resume, now_ms);
+            }
             GpuJobActor::Agent(agent) => agent,
         };
         let verb = GpuJobVerb::Start;
@@ -197,6 +206,54 @@ impl Vault {
         )))
     }
 
+    /// Who starts an attempt the work-order loop makes, and when its maximum
+    /// was shown (pass 34, 1.1): the order's requester as the order's own
+    /// check finds it in `txn`. The owner's order is his showing; an agent's
+    /// attempt fits the per-job maximum the owner set beside the Grant that
+    /// named `vault.jobs.order`. An order never resumes a stopped job: a
+    /// retry is a new attempt under a new job id.
+    fn order_job_starter_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &crate::work_order::OrderAttemptRef,
+        quote: &GpuJobQuote,
+        resume: Option<&ResumeOffer>,
+        now_ms: u64,
+    ) -> crate::Result<Result<(EntityId, MaximumShown), GpuJobError>> {
+        use crate::work_order::{AttemptRefused, Blocker, OrderStarter};
+        if resume.is_some() {
+            return Ok(Err(GpuJobError::Order(AttemptRefused::OrderChanged)));
+        }
+        match self.order_starter_in_txn(txn, attempt, &quote.job, now_ms)? {
+            Err(refused) => Ok(Err(GpuJobError::Order(refused))),
+            Ok(OrderStarter::Owner {
+                owner,
+                ordered_at_ms,
+            }) => Ok(Ok((
+                owner,
+                MaximumShown {
+                    at_ms: ordered_at_ms,
+                },
+            ))),
+            Ok(OrderStarter::Agent { actor, grant }) => {
+                let allowance = self.gpu_job_allowance_in_txn(txn, &grant)?;
+                match allowance {
+                    Some(allowance) if quote.maximum_secs <= allowance.maximum_secs => Ok(Ok((
+                        actor,
+                        MaximumShown {
+                            at_ms: allowance.set_at_ms,
+                        },
+                    ))),
+                    allowance => Ok(Err(GpuJobError::Order(AttemptRefused::Blocked(
+                        Blocker::AllowanceExceeded {
+                            maximum_secs: allowance.map_or(0, |allowance| allowance.maximum_secs),
+                        },
+                    )))),
+                }
+            }
+        }
+    }
+
     /// `actor` cancels a job: a live chunk is terminated and settles its
     /// billed time; a stopped job gives up its resume. The customer's own
     /// end needs none of the conditions of a stop at the maximum. An agent
@@ -224,6 +281,13 @@ impl Vault {
             match actor {
                 GpuJobActor::Owner(owner) => {
                     owner.revalidate_in_txn(self, txn)?;
+                }
+                GpuJobActor::Order(attempt) => {
+                    if !self.order_stop_reaches_in_txn(txn, attempt, id)? {
+                        return Ok(Err(GpuJobError::Order(
+                            crate::work_order::AttemptRefused::OrderChanged,
+                        )));
+                    }
                 }
                 GpuJobActor::Agent(agent) => {
                     let verb = GpuJobVerb::Cancel;

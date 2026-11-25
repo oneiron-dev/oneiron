@@ -138,6 +138,12 @@ pub struct JobObservation {
     /// The typed terminal the issuer built from the terminal receipt at the confirmed end.
     #[serde(default)]
     pub terminal: Option<GpuJobTerminal>,
+    /// Whether a receipt of the key showed its workload process running, or ended after it
+    /// ran: the node's own word that the attempt started (pass 34, 14.2: `orders.wait` with
+    /// `until: "started"`). Once true it stays true. A row written before the field reads
+    /// false.
+    #[serde(default)]
+    pub started: bool,
 }
 
 impl Vault {
@@ -197,7 +203,16 @@ impl Vault {
     /// A store read failure.
     pub fn job_observation(&self, key: &str) -> crate::Result<Option<JobObservation>> {
         let txn = self.store.env.read_txn()?;
-        JOB_OBSERVATIONS.get(&self.store, &txn, &key.to_owned())
+        self.job_observation_in_txn(&txn, key)
+    }
+
+    /// [`Vault::job_observation`] in the caller's transaction.
+    pub(crate) fn job_observation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &str,
+    ) -> crate::Result<Option<JobObservation>> {
+        JOB_OBSERVATIONS.get(&self.store, txn, &key.to_owned())
     }
 
     /// Writes the observation of `row.key` in one durable write, replacing the one it held.
