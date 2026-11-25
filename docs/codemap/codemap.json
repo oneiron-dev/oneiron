@@ -145042,7 +145042,7 @@
      "purpose": "GPU leases, beside the memory floor's ([`crate::FloorLease`])",
      "surface": {
       "enum": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 3,
       "trait": 2
      }
@@ -177286,8 +177286,9 @@
      "purpose": "What this machine offers the vault's GPU jobs, and what it answers when asked: the offer…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 6,
       "struct": 4,
       "trait": 1
      }
@@ -177306,7 +177307,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2,
       "trait": 1
@@ -177413,6 +177414,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/log_tail.rs",
+     "purpose": "The node's half of `Tail` (pass 34 row Q3, section 7.2): the bytes of a key's stdout or stderr from a…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -177489,7 +177500,7 @@
      "purpose": "The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -177576,7 +177587,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GpuSlotTable"
@@ -177584,9 +177595,20 @@
      "path": "src/gpu_execution_node/slots.rs",
      "purpose": "This machine's GPU slots: one job per offered GPU, beside the machine's memory floor",
      "surface": {
-      "fn": 15,
+      "fn": 13,
       "re-export": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/slots/drain.rs",
+     "purpose": "The drain guard: once `drain_after_failures` jobs in a row finish failed, or at its node's word, the machine…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -177600,6 +177622,16 @@
      "surface": {
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/slots/ownership.rs",
+     "purpose": "Which Oneiron server of this machine owns each offered GPU: a lock file per GPU in `owner_lock_dir`, held…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -177620,6 +177652,10 @@
       "JobSubmit",
       "KeyEntry",
       "KeyPage",
+      "LogStream",
+      "LogTail",
+      "LogTailRequest",
+      "LogTruncation",
       "NodeAnswer",
       "Occupied",
       "OutputDigest",
@@ -177636,11 +177672,11 @@
      "path": "src/gpu_execution_node/wire.rs",
      "purpose": "The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1)",
      "surface": {
-      "const": 4,
-      "enum": 11,
-      "fn": 5,
+      "const": 5,
+      "enum": 12,
+      "fn": 6,
       "re-export": 1,
-      "struct": 15
+      "struct": 18
      }
     },
     {
@@ -189053,6 +189089,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_job_tail.rs",
+     "purpose": "Pass 34 row Q3, the node's half (`34-compute-general/DESIGN.md` 7.2 and section 10): `Tail` on…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -190980,7 +191024,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 21,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191517,10 +191561,10 @@
      ]
     }
    },
-   "over_bar": 70,
+   "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2145,
-   "test_files": 592
+   "source_files": 2148,
+   "test_files": 593
   },
   "oneiron-setting-contract": {
    "files": [
