@@ -1415,7 +1415,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | CROSS-ARCH-0013 | `crates/oneiron-store/src/batch/phonetic_codes/ipa/mandarin.rs` | s |
 | CROSS-ARCH-0013 | `crates/oneiron-store/src/batch/phonetic_codes/npd.rs` | s |
 | CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_handover.rs` | m |
-| CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_placement.rs` | s |
+| CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_placement.rs` | m |
 | CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_task.rs` | XL |
 | CROSS-ARCH-0019 | `crates/oneiron/src/secret_custody/payment_credential.rs` | s |
 | CROSS-ARCH-0019 | `crates/oneiron/src/sync/mesh_path.rs` | s |
