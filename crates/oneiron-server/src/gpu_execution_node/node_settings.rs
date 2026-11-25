@@ -457,12 +457,7 @@ impl ExecutionNodeSettings {
         if !template.scopes.contains(&scope) || !self.scopes.contains(&scope) {
             return Err("scope_not_permitted".to_owned());
         }
-        template.admit_pin(pin)?;
-        // Last, so each refusal the template judges keeps its own reason; a
-        // claim of no device adds nothing to the template's devices ceiling,
-        // and only the shape bounds the claims a pin carries.
-        pin.check_shape()
-            .map_err(|why| format!("pin_shape_invalid: {why}"))
+        template.admit_pin(pin)
     }
 
     /// The launch commit's fit of `pin`'s placement (pass 34, section 2.1,
