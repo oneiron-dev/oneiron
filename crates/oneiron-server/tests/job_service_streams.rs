@@ -288,7 +288,7 @@ async fn an_answer_the_peer_never_takes_is_reset_at_the_write_deadline() {
         })
         .expect("queue the stream whose answer is never taken");
 
-    let service = JobService;
+    let (_dir, service) = job_service();
     let write_deadline = oneiron_server::gpu_execution_node::service::REPLY_WRITE_DEADLINE;
     let waited = tokio::select! {
         served = service.serve(Box::new(connection)) => {
