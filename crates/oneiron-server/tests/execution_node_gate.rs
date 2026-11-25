@@ -239,10 +239,14 @@ async fn revoked_job_grant_refuses_the_next_stream() -> TestResult {
     )
     .await
     .map_err(|_| "A's first Node hung")?;
-    match first {
-        Ok(JobAnswer::Node(node)) => assert!(node.enabled, "B is an enabled node: {node:?}"),
+    let epoch = match first {
+        Ok(JobAnswer::Node(node)) => {
+            assert!(node.enabled, "B is an enabled node: {node:?}");
+            node.epoch
+                .ok_or("B's Node must name the epoch of the journal it keeps")?
+        }
         other => panic!("B must answer its issuer's Node on oneiron/job/1: {other:?}"),
-    }
+    };
 
     // The owner withdraws A's job grant on B: the next stream of the same
     // connection gets no answer but a refusal, and a new connection is
@@ -269,7 +273,7 @@ async fn revoked_job_grant_refuses_the_next_stream() -> TestResult {
     );
 
     // The status route stands: A still holds B's status grant, and its ask
-    // passes B's gate (the status answers are row R4's).
+    // passes B's gate to the journal B keeps, which holds no key-1.
     assert_eq!(
         ask::<_, JobStatusAnswer>(
             a,
@@ -281,7 +285,7 @@ async fn revoked_job_grant_refuses_the_next_stream() -> TestResult {
         )
         .await?
         .map_err(|error| format!("A's Find on oneiron/job-status/1: {error:?}"))?,
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled),
+        JobStatusAnswer::Absent { epoch },
         "B must still answer its issuer on oneiron/job-status/1"
     );
     mesh.stop().await;
