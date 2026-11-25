@@ -522,6 +522,14 @@ pub struct TokenBootstrapArgs {
     #[arg(long)]
     pub lifetime_secs: Option<u64>,
 
+    /// Redeem the link here, at once, with a fresh connection key, and print
+    /// the owner's own credential (`token`, `binding_key`, `slip_id`) as
+    /// `token read` prints one, instead of the link. For an owner at the box
+    /// with no client to redeem it; keep the output in a file only you can
+    /// read, and revoke the slip with `token revoke --jti <slip_id>`.
+    #[arg(long)]
+    pub redeem: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
