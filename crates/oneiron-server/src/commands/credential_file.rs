@@ -101,7 +101,6 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 /// written under a fresh name beside it, synced, then renamed over it, so a
 /// reader finds the old file or the new one, never a part. On failure `path`
 /// stays as it was.
-#[cfg_attr(not(feature = "mesh"), allow(dead_code))]
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let name = path
         .file_name()

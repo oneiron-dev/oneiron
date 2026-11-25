@@ -407,9 +407,13 @@ pub fn work_order_cancel_as(
 /// `vault.machines.place`: where an order of `input` by `memory`'s caller would run now, over
 /// the facts `machines`, with each other machine's reasons. It starts nothing.
 ///
+/// The order it reads is made under the Grant `vault.jobs.order` would record for the caller,
+/// never the Grant that admits the read: an agent may hold the two verbs in two Grants.
+///
 /// # Errors
 ///
-/// `forbidden` for a caller the verb does not admit; `bad_request` for a malformed digest.
+/// `forbidden` for a caller the verb does not admit, or that `vault.jobs.order` would not
+/// admit; `bad_request` for a malformed digest.
 pub fn machines_place_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
@@ -425,7 +429,8 @@ pub fn machines_place_as(
     let vault: &Vault = memory.vault();
     let caller = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        memory.verb_grant_caller_admits_in_txn(&txn, owner, MACHINES_PLACE_VERB)?
+        memory.verb_grant_caller_admits_in_txn(&txn, owner, MACHINES_PLACE_VERB)?;
+        memory.verb_grant_caller_admits_in_txn(&txn, owner, ORDER_VERB)?
     };
     let Some(row) = vault.job_workload(&input.workload)? else {
         return Err(order_refusal(
