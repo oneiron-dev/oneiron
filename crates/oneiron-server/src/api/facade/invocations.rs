@@ -315,7 +315,7 @@ pub(crate) enum DoorClaim {
 /// without asking the machine again (review round 1 of #10466). A same-id
 /// retry finds its admission intent settled (`admission_doors::call_verb`)
 /// and is refused with none of those bytes; a new read asks the machine.
-const UNKEPT_REPLY_VERBS: [&str; 14] = [
+const UNKEPT_REPLY_VERBS: [&str; 13] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -329,7 +329,6 @@ const UNKEPT_REPLY_VERBS: [&str; 14] = [
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
-    oneiron::work_order::LOGS_TAIL_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
