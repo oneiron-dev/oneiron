@@ -44,8 +44,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer, NodeReadiness,
-    ScopeReport, SignedJobSubmit, TemplateOffer, WorkloadPin,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer,
+    NodeReadiness, ScopeReport, SignedJobSubmit, TemplateOffer, WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
