@@ -238,6 +238,7 @@ fn register_manual_connector(vault: &Vault, owner: &AuthenticatedOwner) {
         read_only: false,
         idempotent: true,
         price: None,
+        http: None,
     }];
     let draft = serde_json::to_string(&draft_connector_slate(&manifest))
         .expect("FIXTURE: connector slate draft");

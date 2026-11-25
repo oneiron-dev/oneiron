@@ -27,6 +27,7 @@ use super::support::Listed;
 use super::verb_grant::verb_grant_door;
 use crate::auth::CoreAuth;
 use crate::config::gpu_jobs::GpuOfferSettings;
+use crate::gpu_execution_node::issuer::not_the_issuer;
 use crate::gpu_host::{NoProvider, now_ms, offer_with_backend};
 use crate::server::SyncServer;
 
@@ -95,6 +96,23 @@ pub(crate) async fn vault_arms_units_reserve(
         auth,
         ARMS_UNITS_RESERVE_VERB,
         move |server, memory, owner| {
+            // R5's one-issuer check, the start gate's first call (pass 33, 8.7): a replica
+            // that is not the vault's issuer refuses a vault machine offer before reserving.
+            if let Some(settings) = server.config.gpu_jobs.offer(&input.offer)
+                && let Err(refused) = not_the_issuer(server, &settings.backend)
+            {
+                let issuer = refused
+                    .issuer
+                    .map_or_else(|| "none".to_owned(), |issuer| issuer.to_hex());
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    format!(
+                        "{ARMS_UNITS_RESERVE_VERB}: {}: {refused} (issuer: {issuer})",
+                        refused.code()
+                    ),
+                    &["Reserve on the vault's issuer of vault machine jobs."],
+                ));
+            }
             let (offer, connector) = offer_with_backend(server, &input.offer).map_err(|error| {
                 MemoryError::new(
                     MEMORY_CODE_INVALID_STATE,

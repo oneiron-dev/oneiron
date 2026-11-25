@@ -47,7 +47,7 @@ use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActSurface, MachineOwnership, MachineRole, MeshEnrolment, PairingPrincipal,
+    ActSurface, MachineOwnership, MachineRole, MeshEnrolment, MeshEnrolmentAsk, PairingPrincipal,
     pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -228,7 +228,14 @@ impl Home {
                 &holder.sign(&transcript).to_bytes(),
                 &request,
                 Some(&possession),
-                (&identity, ORGAN_ALPN),
+                // The binding's pairing covers the organ protocol it is
+                // granted (MESH-PAIRING-CEILING = A); this crate does not
+                // see the server's list of every protocol it serves.
+                MeshEnrolmentAsk {
+                    identity: &identity,
+                    granted: ORGAN_ALPN,
+                    ceiling: &[ORGAN_ALPN],
+                },
             )
             .expect("the home redeems the device's enrolment");
         assert!(

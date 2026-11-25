@@ -286,7 +286,8 @@ impl Vault {
     }
 
     /// The caller as the starter of `claim`: the owner, of a claim the owner reserved; an
-    /// agent, of a claim it reserved under a Grant.
+    /// agent, of a claim it reserved under a Grant. A work order's attempt starts no claim
+    /// here: a line unit's attempt is the line's reserve (hunk H3), which is not built yet.
     fn claim_starter_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -301,6 +302,7 @@ impl Vault {
             GpuJobActor::Agent(agent) => (claim.grant.is_some()
                 && claim.reserved_by == Some(agent.actor()))
             .then(|| agent.actor()),
+            GpuJobActor::Order(_) => None,
         };
         Ok(starter.ok_or_else(|| {
             line_managed(LineStartRefused::ClaimMismatch(

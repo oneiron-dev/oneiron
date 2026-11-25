@@ -387,7 +387,11 @@ pub(super) async fn redeem(
                 &signature,
                 machine,
                 possession.as_ref(),
-                (identity, *alpn),
+                oneiron::authority::MeshEnrolmentAsk {
+                    identity,
+                    granted: *alpn,
+                    ceiling: crate::device_sync::home_bind::enrolment_ceiling(),
+                },
             )
         }
         _ => server.vault().redeem_pairing_link_with_possession(

@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.orders.get",
+  "description": "Reads one work order: its state with the typed reasons it waits, and every attempt with its placement decision and end. The owner reads any order; an agent whose Grant names it reads the orders it made.",
+  "input": "crate::work_order::WorkOrderRef",
+  "output": "crate::work_order::WorkOrderView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.orders.get\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

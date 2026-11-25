@@ -239,6 +239,7 @@ fn stage_scoped_pending(vault: &Vault, authority: &OutboundBindingAuthority, now
         read_only: false,
         idempotent: true,
         price: None,
+        http: None,
     }];
     let draft = serde_json::to_string(&draft_connector_slate(&manifest)).unwrap();
     let slate_id = vault.store_connector_slate(&manifest, &draft).unwrap();

@@ -70,6 +70,8 @@ mod auth_bound;
 mod dpapi_names;
 #[cfg(unix)]
 mod file;
+#[cfg(any(unix, windows))]
+mod key_dir;
 #[cfg(target_os = "linux")]
 mod linux_tpm;
 #[cfg(target_os = "macos")]

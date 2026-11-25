@@ -15,6 +15,7 @@ fn signing_evidence() -> EsignSigningEvidence {
         disclosure_version: None,
         consent: true,
         intent: EsignSigningIntent::Direct,
+        check_in: None,
     }
 }
 fn document(artifact: EntityId) -> EsignDocument {
@@ -581,7 +582,8 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
             first,
             &SigningAction::Complete {
                 consent: false,
-                next: None
+                next: None,
+                check_in_ref: None
             },
             None,
             None
@@ -593,7 +595,8 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
             first,
             &SigningAction::Complete {
                 consent: true,
-                next: None
+                next: None,
+                check_in_ref: None
             },
             None,
             None
@@ -613,7 +616,8 @@ fn capability_ceremony_gates_turn_date_consent_and_default_closed_automation() -
             first,
             &SigningAction::Complete {
                 consent: true,
-                next: Some(doc.recipients[1].id.clone())
+                next: Some(doc.recipients[1].id.clone()),
+                check_in_ref: None
             },
             None,
             None
@@ -1280,6 +1284,7 @@ fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<(
             SigningAction::Complete {
                 consent: true,
                 next: None,
+                check_in_ref: None,
             },
             SigningAction::Reject {
                 reason: "declined".into(),
@@ -1462,7 +1467,8 @@ fn actionable_recipient_is_required_for_send_and_seal_but_not_draft_editing() ->
             &tokens[0].1,
             &SigningAction::Complete {
                 consent: false,
-                next: None
+                next: None,
+                check_in_ref: None
             },
             None,
             None
@@ -1475,7 +1481,8 @@ fn actionable_recipient_is_required_for_send_and_seal_but_not_draft_editing() ->
             &tokens[0].1,
             &SigningAction::Complete {
                 consent: true,
-                next: None
+                next: None,
+                check_in_ref: None
             },
             None,
             None
@@ -1695,6 +1702,7 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
     let complete = SigningAction::Complete {
         consent: true,
         next: None,
+        check_in_ref: None,
     };
     assert!(
         vault
