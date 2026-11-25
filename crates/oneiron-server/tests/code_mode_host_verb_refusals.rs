@@ -4,7 +4,7 @@
 //! that order, before any guest acts.
 //!
 //! A credential that binds an unrelated name answers `mcp_verb_not_bound` on
-//! every row; a bound read-only credential answers `mcp_auth_required` on the
+//! every row; a bound read-only credential answers `mcp_grant_missing` on the
 //! Write rows, and its Read rows reach the pack gate; a bound write-scoped
 //! credential with no guest answers `browser_pack_not_installed` on a fresh
 //! vault, and with the pack seed marker removed answers `browser_unbound` on
