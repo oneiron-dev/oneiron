@@ -35,8 +35,15 @@ With neither, a machine dials no one.
    vault, so a copy of the vault never carries the credential:
    `<state>/oneiron/device-sync/<vault id>.json` (the home, its URL, node id and pin) and
    `<vault id>.cred` (the credential, mode 600). `<state>` is `$XDG_STATE_HOME`, else
-   `$HOME/.local/state`, or the parent of `keystore.dir` when that is set. Remove both to enrol
-   again with a new link.
+   `$HOME/.local/state`, or the parent of `keystore.dir` when that is set.
+
+   To enrol an enrolled machine again with a new link (for example so that the owner can grant
+   it a protocol its first enrolment's pairing did not cover), run the same command with
+   `--replace`. The two files are replaced only once the home has answered and the new ones are
+   written, so a re-enrolment that fails leaves the old enrolment as it was. When the home moves
+   the machine's mesh binding to a new pairing, its answer names the new slip in
+   `mesh_bind.pairing_slip_id`; on each other machine that bound this one, the owner binds it
+   again on that slip (`vault.mesh.bind_machine`), which keeps the grants it holds there.
 
 3. Start `oneiron serve`. It dials the enrolled home with no `[device_sync]` section. The
    connection's first authority catch-up adopts the pinned checkpoint, and it brings this
@@ -152,8 +159,8 @@ carries the slip, a holder proof with its key, and this machine's own proof.
   the renewal is tried again after 30 seconds, doubling up to 15 minutes. The old slip works
   until it runs out.
 - A refusal (an expired or revoked slip, or a machine the home no longer counts as the owner's)
-  stands until serve starts again. Pair the machine again: with the vault stopped, remove both
-  device-sync files and run `oneiron device enrol` with a new link.
+  stands until serve starts again. Pair the machine again: with the vault stopped, run
+  `oneiron device enrol --replace` with a new link.
 
 ## Publication diagnostics
 
