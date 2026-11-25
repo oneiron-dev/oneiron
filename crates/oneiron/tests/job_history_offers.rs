@@ -441,7 +441,10 @@ fn a_written_off_chunk_settles_zero_and_leaves_the_occupancy_unknown() {
     assert_eq!(attempt.settled_units, Some(0));
     assert_eq!(attempt.charged_secs, Some(0), "this host held the permit");
     assert_eq!(attempt.returned_secs, Some(quote.quantity));
-    assert_eq!(attempt.occupied_secs, None, "the last reported run time is a sample");
+    assert_eq!(
+        attempt.occupied_secs, None,
+        "the last reported run time is a sample"
+    );
     assert_eq!(attempt.lost_secs, 0);
     assert_eq!(history.totals.all.charged_secs, 0);
     assert_eq!(history.totals.all.occupied_unknown, 1);
