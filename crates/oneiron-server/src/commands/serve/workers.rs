@@ -323,6 +323,10 @@ pub(crate) async fn start_desktop_workers(
         admitted(),
     ));
     timings.mark("mail_sources");
+    // `[gpu_jobs.vault_machine]`'s backend registers first, when enabled on
+    // its issuer; a refusal is logged there and the server serves on (pass
+    // 33, 8.1 and 8.7).
+    let _ = crate::gpu_execution_node::issuer::register_vault_machine_at_start(&sync_server);
     // Customer GPU jobs step on their offers' backends (row L10-31), when
     // `[gpu_jobs]` posts an offer.
     workers.extend(crate::gpu_host::spawn_gpu_job_steps(
