@@ -303,6 +303,8 @@ impl Device {
         let open = Arc::try_unwrap(vault)
             .map_err(|_| "FIXTURE: another handle holds the device's vault open")?;
         drop(open);
+        // The vault stays closed for `closed` of real time: its authority clock stops meanwhile.
+        // testkit-lint: allow(sleep) the closed time is the condition the caller's test sets up
         std::thread::sleep(closed);
         let vault = Vault::open(dir.path(), VaultConfig::device())
             .map_err(at("open the device's vault again"))?;
