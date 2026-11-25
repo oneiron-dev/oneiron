@@ -22,7 +22,7 @@ use oneiron::job_workload::{
 };
 
 use super::end::end_of;
-use super::job_unit::{RENEW_BEFORE_STOP_NS, read_end_record};
+use super::job_unit::{RENEW_BEFORE_STOP_NS, RenewRefusal, read_end_record};
 use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, NodeKey};
 use super::node_parts::{GpuSlotRequest, NodeDevices};
 use super::receipt::{ReceiptClock, chunk_receipt_of, receipt_of, sign_receipt};
@@ -603,27 +603,22 @@ impl NodeJobs {
             {
                 return busy();
             }
-            // Only a run that can still take a renewal waits for the scope:
-            // the tick asks again only for a live run, so an ended or ending
-            // run falls through to its `Refused` end below.
+            // Only the issuer's own run that can still take a renewal waits
+            // for the scope: the tick asks again only for a live run, so an
+            // ended or ending run falls through to its `Refused` end below,
+            // and another issuer's key tells nothing by a `Busy`.
             let pending = book.journal.as_ref().and_then(|journal| {
-                let holder = journal.table().get(first)?;
+                let holder = journal
+                    .table()
+                    .get(first)
+                    .filter(|holder| holder.issuer == peer && holder.renewable())?;
                 let cutoff = holder.launch.as_ref()?.cutoff_boot_ns;
-                (holder.renewable()
-                    && !holder.renewals.is_empty()
-                    && book.armed_cutoffs.get(first) != Some(&cutoff))
-                .then_some(())
+                (!holder.renewals.is_empty() && book.armed_cutoffs.get(first) != Some(&cutoff))
+                    .then_some(())
             });
             if pending.is_some() {
                 // The scope has not taken the last renewal yet: until it
                 // does, the run's armed cutoff is earlier than the journal's.
-                return busy();
-            }
-            if !self
-                .parts()
-                .authority
-                .folded(&signed.submit.authority_heads)
-            {
                 return busy();
             }
             let journal = match admitting(&mut book) {
@@ -636,6 +631,18 @@ impl NodeJobs {
                 .filter(|holder| holder.issuer == peer)
                 .cloned();
             match self.renewal(&signed, holder.as_ref(), &now) {
+                // A renewal that would pass waits for the node's fold to
+                // hold the issuer's authority heads, and writes nothing; one
+                // whose run ends or comes too near its stop meanwhile is
+                // refused by the arm below.
+                Ok(_)
+                    if !self
+                        .parts()
+                        .authority
+                        .folded(&signed.submit.authority_heads) =>
+                {
+                    return busy();
+                }
                 Err(reason) => {
                     let event = JournalEvent::Ended {
                         end: JobEnd::Refused { reason },
@@ -751,10 +758,19 @@ impl NodeJobs {
     pub(super) fn arm_renewed_cutoff(&self, first: &str, cutoff_boot_ns: u64) {
         let id = super::JobKeyId::for_key(first);
         match self.parts().units.renew(&id, cutoff_boot_ns) {
+            // An older ask that finishes after a newer one keeps the newer
+            // value: the scope moves a cutoff only forward.
             Ok(()) => {
                 self.lock()
                     .armed_cutoffs
-                    .insert(first.to_owned(), cutoff_boot_ns);
+                    .entry(first.to_owned())
+                    .and_modify(|held| *held = (*held).max(cutoff_boot_ns))
+                    .or_insert(cutoff_boot_ns);
+            }
+            // A scope that cannot move a cutoff answers so at every tick:
+            // the run ends at its old cutoff, and the line is no news.
+            Err(error @ RenewRefusal::Unsupported) => {
+                tracing::debug!(key = first, %error, "session cutoff not moved; the scope does not renew");
             }
             Err(error) => {
                 tracing::warn!(key = first, %error, "session cutoff not moved; the next tick asks again");
