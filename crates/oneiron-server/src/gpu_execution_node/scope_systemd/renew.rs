@@ -30,7 +30,7 @@ use std::path::Path;
 
 use super::super::jobs::JobKeyId;
 use super::super::jobs::job_unit::RENEW_BEFORE_STOP_NS;
-use super::prepare::{CUTOFF_MARGIN_MS, arm_cutoff};
+use super::prepare::{CUTOFF_MARGIN_MS, arm_cutoff, cutoff_timer_armed};
 use super::records::{CutoffMark, CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
@@ -65,18 +65,6 @@ fn cutoff_fired(context: &StepContext) -> bool {
         context.read_record::<CutoffMark>(CUTOFF_FILE_NAME),
         Ok(None)
     )
-}
-
-/// `Ok` while the cutoff timer `timer` (a `.timer` unit) is armed: the
-/// service manager runs it and it has not elapsed.
-fn timer_armed(timer: &str) -> Result<(), String> {
-    let found = show(timer, &["ActiveState"])?;
-    let state = found.get("ActiveState").map_or("", String::as_str);
-    if state == "active" {
-        Ok(())
-    } else {
-        Err(format!("cutoff_not_armed: the timer {timer} is {state:?}"))
-    }
 }
 
 /// The cutoff plan a renewal to `cutoff_boot_ns` makes of `prepared`'s, at
@@ -176,7 +164,7 @@ pub fn renew_cutoff(
         // Asked again for the cutoff the record holds: taken while its timer
         // is armed and the cutoff has not fired.
         if let Some(recorded) = prepared.cutoff.as_ref() {
-            timer_armed(&recorded.unit)?;
+            cutoff_timer_armed(&recorded.unit)?;
         }
         return if cutoff_fired(&context) {
             Err("cutoff_passed: the cutoff stopped the run".to_owned())
@@ -200,10 +188,11 @@ pub fn renew_cutoff(
     let base = prepared.cutoff.clone();
     let previous = prepared.cutoff.replace(plan.clone());
     // A timer of this plan that an earlier ask armed (its record write
-    // failed) is taken as it is: its name holds the instance and the stop.
-    if timer_armed(&plan.unit).is_err() {
-        let timer = plan.unit.trim_end_matches(".timer");
-        arm_cutoff(&context, timer, plan.stop_at_boot_ns, true)?;
+    // failed) holds the unit name, so the arm fails: that timer is taken as
+    // it is while it waits, since its name holds the instance and the stop.
+    let timer = plan.unit.trim_end_matches(".timer");
+    if let Err(why) = arm_cutoff(&context, timer, plan.stop_at_boot_ns, true) {
+        cutoff_timer_armed(&plan.unit).map_err(|_| why)?;
     }
     // Record the new plan only while the unit still runs and no other
     // renewal moved the record meanwhile: else the new timer goes, and the

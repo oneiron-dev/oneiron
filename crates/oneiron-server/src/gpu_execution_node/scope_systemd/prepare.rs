@@ -579,8 +579,8 @@ fn set_properties(unit: &str, properties: &[String]) -> Result<(), String> {
 /// (`renewable`) names its stop time, so once a renewal armed a later one it
 /// stops nothing (row W1); a job's names none, and its cutoff stops the unit
 /// before it reads anything. A session's timer is armed only once the
-/// service manager runs it (`systemd-run` waits for its start), since a
-/// renewal stops the timer it replaces.
+/// service manager runs it and it waits (`systemd-run` waits for its start,
+/// then [`cutoff_timer_armed`]), since a renewal stops the timer it replaces.
 ///
 /// # Errors
 ///
@@ -625,8 +625,35 @@ pub(super) fn arm_cutoff(
     }
     args.push(context.args.instance.as_str());
     run_tool("systemd-run", &args, SYSTEMCTL_TIMEOUT)
-        .map(drop)
-        .map_err(|why| format!("cutoff_not_armed: {why}"))
+        .map_err(|why| format!("cutoff_not_armed: {why}"))?;
+    // A start job that finished does not prove the timer waits (a condition
+    // can leave it inactive): a session's timer is checked before anything
+    // relies on it.
+    if renewable {
+        cutoff_timer_armed(&format!("{cutoff_unit}.timer"))?;
+    }
+    Ok(())
+}
+
+/// `Ok` while the cutoff timer `timer` (a `.timer` unit) is armed: the
+/// service manager runs it and it waits for its elapse.
+///
+/// # Errors
+///
+/// `cutoff_not_armed`, with the timer's state, or the service manager's
+/// error.
+pub(super) fn cutoff_timer_armed(timer: &str) -> Result<(), String> {
+    let found = show(timer, &["ActiveState", "SubState"])
+        .map_err(|why| format!("cutoff_not_armed: {timer}: {why}"))?;
+    let active = found.get("ActiveState").map_or("", String::as_str);
+    let sub_state = found.get("SubState").map_or("", String::as_str);
+    if active == "active" && sub_state == "waiting" {
+        Ok(())
+    } else {
+        Err(format!(
+            "cutoff_not_armed: the timer {timer} is {active:?} ({sub_state:?})"
+        ))
+    }
 }
 
 /// The sleep inhibitor, held by a root unit bound to the job unit: it holds
