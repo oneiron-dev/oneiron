@@ -102,7 +102,7 @@ fn reason(
         let wanted = crate::warm_key::attempt_warm_keys(&order.wishes.warm);
         let held: Vec<&str> = wanted
             .iter()
-            .filter(|key| picked.warm.contains(key))
+            .filter(|key| !key.is_empty() || picked.warm.contains(key))
             .map(String::as_str)
             .collect();
         format!("already holds {}", held.join(", "))
