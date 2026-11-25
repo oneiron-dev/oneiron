@@ -1,4 +1,4 @@
-//! The engine's 21 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
+//! The engine's 22 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
 //!
 //! Each engine sweep is one [`JobSpec`] whose trigger is its cadence key
 //! ([`super::setting_keys`]): the engine arms it at a handle's first pass and in the write that
@@ -144,6 +144,8 @@ sweep_jobs! {
     CLAIM_VAD_DEBT_JOB = "housekeeping.claim_vad_debt", SWEEP_CLAIM_VAD_DEBT, at_open: true;
     /// Found-key notices left due.
     FOUND_KEY_NOTICES_JOB = "housekeeping.found_key_notices", SWEEP_FOUND_KEY_NOTICES, at_open: false;
+    /// Export audits a copy left owing; also at each start.
+    EXPORT_AUDIT_OWED_JOB = "housekeeping.export_audit_owed", SWEEP_EXPORT_AUDIT_OWED, at_open: true;
     /// Whole-body line indexes reads found missing.
     BODY_LINE_INDEX_REBUILD_JOB = "housekeeping.body_line_index_rebuild", SWEEP_BODY_LINE_INDEX_REBUILD, at_open: false;
     /// Anchored comments following their live body; also at each start.

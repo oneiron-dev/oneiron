@@ -1,4 +1,4 @@
-//! The cadences of the engine's 21 sweeps (DESIGN 15-setting-primitive, stage 5a): one catalogue
+//! The cadences of the engine's 22 sweeps (DESIGN 15-setting-primitive, stage 5a): one catalogue
 //! key each, `housekeeping.<sweep>.every`, whose value in force arms the sweep's job
 //! ([`super::jobs`]). The owner sets them, and so does a live holder of the
 //! `maintenance_cadence` class of `engine.controls` unless the owner has set the key. The write
@@ -140,6 +140,13 @@ crate::setting::setting_keys! {
     };
     /// How often the found-key notices left due are raised: every fifteen minutes.
     pub(crate) SWEEP_FOUND_KEY_NOTICES: Trigger = "housekeeping.found_key_notices.every" {
+        kind: Kind::new(every_fifteen_minutes).custom(more_often_is_tighter),
+        set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
+        on_change: Some(crate::schedule::rearm_on_change),
+    };
+    /// How often the export audits a copy left owing are written: every fifteen minutes, and at
+    /// each start, for a copy a stopped process left owing (DEC-0005).
+    pub(crate) SWEEP_EXPORT_AUDIT_OWED: Trigger = "housekeeping.export_audit_owed.every" {
         kind: Kind::new(every_fifteen_minutes).custom(more_often_is_tighter),
         set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
         on_change: Some(crate::schedule::rearm_on_change),
