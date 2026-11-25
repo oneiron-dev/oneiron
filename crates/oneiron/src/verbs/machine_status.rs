@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
+use crate::job_workload::{BoundRequirement, NetworkMode, ScopeCapabilities};
 use crate::machine_capacity::{MachineCapacity, MachinePower};
 use crate::memory::{Memory, MemoryResult};
 
@@ -190,8 +191,11 @@ pub struct MachineNodeAnswer {
     pub paused: Option<String>,
     /// Why it takes no new work until a person clears its drain.
     pub drained: Option<String>,
-    /// The names of the templates it holds.
-    pub templates: Vec<String>,
+    /// The templates it holds, each with its digest.
+    pub templates: Vec<MachineTemplateOffer>,
+    /// The launch scopes it starts runs in, each with what it can enforce
+    /// now.
+    pub scopes: Vec<MachineScopeReport>,
     pub disk_free_bytes: u64,
     /// The disk its held keys have booked.
     pub disk_reserved_bytes: u64,
@@ -203,6 +207,35 @@ pub struct MachineNodeAnswer {
     pub swept: bool,
     pub boot_id: String,
     pub engine_version: String,
+}
+
+/// One template a node holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineTemplateOffer {
+    pub name: String,
+    /// The template's content hash, lower hex, as a pin names it.
+    pub digest: String,
+    pub scopes: Vec<MachineScopeClass>,
+    pub network: Vec<NetworkMode>,
+    /// The outputs that may travel back to the issuer.
+    pub returnable: Vec<String>,
+    /// The bounds a run of it needs from its scope.
+    pub require: Vec<BoundRequirement>,
+}
+
+/// One launch scope a node starts runs in, and what it can enforce now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineScopeReport {
+    pub class: MachineScopeClass,
+    pub capabilities: ScopeCapabilities,
+}
+
+/// The kind of a launch scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineScopeClass {
+    Host,
+    Container,
 }
 
 /// The vault's half of `vault.machines.status` under the owner's proof: every machine with its
