@@ -11,6 +11,13 @@ time and no live inbound session was opened with one. At phase `after` (the
 keys removed) no authorized_keys file may list a rack key either. A file that
 cannot be read, a missing freeze time, a missing rack list or a live session
 with no accept record is no proof: the readback fails.
+
+The sshd journal must cover the whole time since the freeze: a read that
+starts after it (`keys.journal_since_unix`) fails, and so does a system
+journal with no record from before the freeze (rotated, volatile, or not
+readable by the running user). In a privileged run `~` is root's home, so
+every authorized_keys file must be named by its absolute path, one for each
+account the rack logs in as.
 """
 
 from __future__ import annotations
@@ -58,6 +65,10 @@ class KeyReading:
     accepts: list[Accept] = field(default_factory=list)
     live_sessions: list[tuple[str, int]] = field(default_factory=list)
     unread: list[str] = field(default_factory=list)
+    # The configured files a run of this privilege cannot use as named.
+    path_problems: list[str] = field(default_factory=list)
+    # The system journal holds a record from at or before the freeze.
+    journal_before_freeze: bool = False
 
 
 def fingerprint(blob_b64: str) -> str | None:
@@ -147,6 +158,13 @@ def load_rack_keys(directory: Path, owner_devices: list[str]) -> dict[str, str]:
     return keys
 
 
+def _unix_time(word: str) -> float | None:
+    try:
+        return float(word)
+    except ValueError:
+        return None
+
+
 def parse_accepts(text: str) -> list[Accept]:
     """Accept records from `journalctl -o short-unix` lines."""
     accepts = []
@@ -170,10 +188,36 @@ def parse_accepts(text: str) -> list[Accept]:
     return accepts
 
 
-def read_keys(section: dict, timeout: int) -> KeyReading:
-    reading = KeyReading()
-    for name in section["authorized_keys_files"]:
+def authorized_keys_paths(files: list[str], privileged: bool) -> tuple[list[Path], list[str]]:
+    """(paths to read, problems) for the configured authorized_keys files.
+
+    Every path must be absolute once `~` is expanded. In a privileged run `~`
+    is root's home, so a `~` entry would read root's file in place of the rack
+    login account's: there every entry must be absolute as written.
+    """
+    paths: list[Path] = []
+    problems: list[str] = []
+    for name in files:
+        if privileged and name.startswith("~"):
+            problems.append(
+                "a privileged run reads ~ as root's home: name each login account's authorized_keys file "
+                "by its absolute path (keys.authorized_keys_files)"
+            )
+            continue
         path = expand(name)
+        if not path.is_absolute():
+            problems.append("keys.authorized_keys_files names a relative path")
+            continue
+        if path not in paths:
+            paths.append(path)
+    return paths, sorted(set(problems))
+
+
+def read_keys(section: dict, timeout: int, privileged: bool | None = None) -> KeyReading:
+    reading = KeyReading()
+    privileged = os.geteuid() == 0 if privileged is None else privileged
+    paths, reading.path_problems = authorized_keys_paths(section["authorized_keys_files"], privileged)
+    for path in paths:
         try:
             reading.authorized[str(path)] = parse_authorized_keys(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -199,6 +243,16 @@ def read_keys(section: dict, timeout: int) -> KeyReading:
     except CommandError:
         reading.unread.append("sshd journal")
 
+    freeze = section["freeze_unix"]
+    if freeze:
+        # The newest system record at or before the freeze: none means the journal does not reach back to it.
+        probe = ["journalctl", "--no-pager", "-q", "-o", "short-unix", "--system", "-r", "-n", "1", "--until", f"@{freeze}"]
+        try:
+            first = read_output(probe, timeout).split(None, 1)
+            reading.journal_before_freeze = bool(first) and _unix_time(first[0]) is not None
+        except CommandError:
+            reading.unread.append("journal coverage")
+
     try:
         out = read_output(["ss", "-tnH", "state", "established", "( sport = :22 )"], timeout)
         for line in out.splitlines():
@@ -217,14 +271,21 @@ def read_keys(section: dict, timeout: int) -> KeyReading:
 def judge(reading: KeyReading, section: dict, phase: str) -> tuple[bool, str, dict]:
     """(passed, reason, facts) for one box."""
     freeze = section["freeze_unix"]
+    since = section["journal_since_unix"]
     facts: dict = {}
-    problems = []
+    problems = list(reading.path_problems)
     if reading.unread_files:
         problems.append(f"{len(reading.unread_files)} authorized_keys files not read (root's needs the Orchestrator's run)")
     if reading.unread:
         problems.append("not read: " + ", ".join(reading.unread))
     if not freeze:
         problems.append("no freeze time (keys.freeze_unix)")
+    elif since > freeze:
+        problems.append("keys.journal_since_unix is later than the freeze: logins in between are not read")
+    elif "journal coverage" not in reading.unread and not reading.journal_before_freeze:
+        problems.append(
+            "the system journal holds no record from before the freeze (rotated, volatile, or not readable by this user)"
+        )
     if not reading.rack_keys:
         problems.append("no rack client key list (keys.rack_client_keys_dir)")
     if problems:

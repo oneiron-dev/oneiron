@@ -5,10 +5,13 @@ in the contract of the rack audit's approved workflow checks, so the audit's TES
 `reviewed-workflow-checks` executable.
 
 ```
-python3 -I scripts/rack/workflow_check.py [--config FILE] HOST PHASE CHECK
-python3 -I scripts/rack/workflow_check.py --list
-python3 -I scripts/rack/workflow_check.py [--config FILE] --export-client-keys HOST
+scripts/rack/workflow_check.py [--config FILE] HOST PHASE CHECK
+scripts/rack/workflow_check.py --list
+scripts/rack/workflow_check.py [--config FILE] --export-client-keys HOST
 ```
+
+The entry is executable (the audit's TEST.sh calls it by its absolute path) and its first line,
+`#!/usr/bin/env -S python3 -I`, runs it isolated: no PYTHON* variable or user site directory loads code into it.
 
 | Exit | stdout | stderr | Meaning |
 |---|---|---|---|
@@ -23,22 +26,35 @@ python3 -I scripts/rack/workflow_check.py [--config FILE] --export-client-keys H
   shared filesystem is refused). Without evidence there is no PASS. `ONEIRON_RACK_RUN_ID` names the run.
 - No printed line carries a key, fingerprint, token or address.
 - Nothing here changes a machine. Canaries call Oneiron only through `oneiron api ... call <verb> --data -`. The
-  credential stays in the environment variables the issuer's entry names, and no other variable reaches the child.
+  credential stays in the environment variables the issuer's entry names, and no other variable reaches the child
+  but a private `TMPDIR`. The call runs in its own process group: past its deadline the group (oneiron and its curl)
+  is killed and the TMPDIR, which holds the staged request body, is removed. An issuer URL whose host connects to
+  this box is refused unless `issuer.loopback_allowed` says the box serves the issuer.
 
 ## Checks
 
 `--list` prints each check, whether it is built or waiting, and the rows it needs.
 
-Readbacks at the box (read-only, no sudo; the journal needs a group that reads it, such as wheel on Arch):
+Readbacks at the box (read-only; the journal needs a group that reads it, such as wheel on Arch; another user's ssh
+process and root's authorized_keys need the Orchestrator's privileged run):
 
 - `old-channels-drained` (gate B, the drain readback). Passes when none of these is left: a process of the tool, an
   sshfs mount, a unit or timer of the tool, an established ssh transport to a rack address, an ssh control socket,
   an ssh forward, or a transfer program. A source it could not read is no proof of absence, so the check fails.
+  An ssh forward is a forward flag or option on the command line, a forward directive in the ssh configuration the
+  process reads (its `-F` file, else the owner's `~/.ssh/config` and `drain.ssh_system_config`, with Includes; any
+  Host block counts unless the command line has `-o ClearAllForwardings=yes`), or a listening socket it holds (a
+  forward, or a control master that can take one). The units are read with `systemctl --user`, which reaches the
+  user's manager through `XDG_RUNTIME_DIR` or `DBUS_SESSION_BUS_ADDRESS` (an ssh login sets them); only those two
+  variables are passed on, and without them the units are not read and the check fails.
 - `other-rsync`: the transfer part of the same readback.
 - `identity-scope`, `pivot-audit` (gate C, the key readback). Passes when no rack key logged in since the freeze
   and no live inbound session runs on one. A rack key is another rack machine's client key that is not one of the
   owner's devices; `--export-client-keys` writes each box's list. A live session with no accept record, an
-  unreadable authorized_keys file (root's needs root), a missing freeze time or a missing rack list fails.
+  unreadable authorized_keys file (root's needs root), a missing freeze time or a missing rack list fails. The sshd
+  journal must reach back to the freeze: `keys.journal_since_unix` later than `keys.freeze_unix` fails, and so does a
+  system journal with no record from before the freeze. A privileged run needs every `keys.authorized_keys_files`
+  entry as an absolute path (`~` would be root's home), one for each account the rack logs in as.
 
 Canaries through Oneiron alone, each answering for the box it runs on:
 
@@ -51,8 +67,10 @@ Canaries through Oneiron alone, each answering for the box it runs on:
   `vault.jobs.orders.wait` until terminal, polled (over HTTP it answers at once). It passes on a done order whose last
   attempt started on that machine and exited 0, with its signed receipt. A pin that waits for the owner's check-in
   fails with the check-in's id; `canary.probe.check_in_ref` names it once he has answered.
-- `forward-policy`: no ssh forward is live, and the model gateway answers its model list on its own route. It makes
-  no model call and spends nothing. A loopback URL is refused.
+- `forward-policy`: no ssh forward is live (as the drain readback finds one, and every source of that was read),
+  and the model gateway answers its model list on its own route. It makes no model call and spends nothing. A URL
+  whose host connects to this box (loopback or unspecified in any spelling, such as `127.1`, or one of its own
+  addresses) is refused.
 - `inbox-append` waits: at main 14c82900 no verb lets a Grant bound a write to one destination with a list read
   beside it, and the inbox moves only when the lanes run as Oneiron agents (gate C names that trigger).
 

@@ -7,12 +7,14 @@ Every run is the entry as a subprocess against a stand-in box
 from __future__ import annotations
 
 import json
+import os
 import re
 import stat
+import subprocess
 
 import pytest
 
-from rack_fixture import HOST, Box
+from rack_fixture import ENTRY, HOST, Box
 
 SECRET_SHAPES = re.compile(
     r"SHA256:[A-Za-z0-9+/]{20,}|AAAA[A-Za-z0-9+/]{20,}|\b(?:\d{1,3}\.){3}\d{1,3}\b|AbCdEf0123456789"
@@ -127,6 +129,10 @@ def test_one_box_never_answers_for_another(box):
         (["ssh", "-oUserKnownHostsFile=/dev/null", "-i", "/k/Wkey", "sel", "ls", "-L"], False),
         (["ssh", "-x", "-a", "-oClearAllForwardings=yes", "-2", "sel", "-s", "sftp"], False),
         (["sshfs", "-o", "reconnect", "sel:/srv", "/mnt"], False),
+        # ssh reads options after the destination too, up to the remote command or `--`.
+        (["ssh", "sel", "-L", "8080:127.0.0.1:80"], True),
+        (["ssh", "sel", "--", "-L", "8080:127.0.0.1:80"], False),
+        (["ssh", "--", "sel", "-L", "8080:127.0.0.1:80"], False),
     ],
 )
 def test_an_ssh_forward_is_read_as_ssh_reads_its_options(argv, forward):
@@ -190,11 +196,24 @@ def test_list_names_every_check_with_its_state(box):
         assert rows[name] == "built"
 
 
-def test_forward_policy_refuses_a_loopback_gateway_and_a_live_forward(box):
-    box.config["canary"] = {"model_list_url": "http://127.0.0.1:8317/v1/models"}
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8317/v1/models",
+        "http://127.1:8317/v1/models",
+        "http://0.0.0.0:8317/v1/models",
+        "http://[::ffff:127.0.0.1]:8317/v1/models",
+        "http://gateway.localhost:8317/v1/models",
+    ],
+)
+def test_forward_policy_refuses_a_gateway_url_that_connects_to_this_box(box, url):
+    box.config["canary"] = {"model_list_url": url}
     done = box.run(HOST, "after", "forward-policy")
     assert done.returncode == 1
-    assert "loopback" in done.stderr
+    assert "loopback or local address" in done.stderr
+
+
+def test_forward_policy_refuses_a_live_forward(box):
     box.config["canary"] = {"model_list_url": "http://198.51.100.1:8317/v1/models"}
     box.process(4270, ["ssh", "-fNR", "9000:localhost:22", "sel"])
     done = box.run(HOST, "after", "forward-policy")
@@ -208,3 +227,124 @@ def test_no_printed_line_carries_a_key_fingerprint_token_or_address(box):
     for check in ("old-channels-drained", "other-rsync", "identity-scope", "forward-policy", "sol-lock"):
         done = box.run(HOST, "before", check)
         assert not SECRET_SHAPES.search(done.stdout + done.stderr), (check, done.stderr)
+
+
+def test_the_entry_is_an_executable_that_runs_isolated():
+    assert os.access(ENTRY, os.X_OK)
+    assert ENTRY.read_text().splitlines()[0] == "#!/usr/bin/env -S python3 -I"
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "PYTHONPATH": "/nonexistent-injected"}
+    done = subprocess.run([str(ENTRY), "--list"], capture_output=True, text=True, env=env, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert "old-channels-drained\tbuilt" in done.stdout
+
+
+def gateway_box(box, config: str) -> Box:
+    """An ssh process with no forward on its command line, and a user ssh configuration."""
+    (box.home / ".ssh/config").write_text(config)
+    box.config["canary"] = {"model_list_url": "http://198.51.100.1:8317/v1/models"}
+    return box
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "Host gateway\n  LocalForward 8317 127.0.0.1:8317\n",
+        "Host *\n    RemoteForward=9000 localhost:22\n",
+        "Include ~/.ssh/conf.d/*.conf\n",
+    ],
+)
+def test_a_forward_in_the_ssh_configuration_fails_the_drain_and_forward_policy(box, config):
+    gateway_box(box, config)
+    (box.home / ".ssh/conf.d").mkdir()
+    (box.home / ".ssh/conf.d/gateway.conf").write_text("Host gateway\n  DynamicForward 1080\n")
+    box.process(4300, ["ssh", "-N", "gateway"])
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert done.stderr.startswith(f"FAIL {HOST} after old-channels-drained: live: 1 ssh forwards")
+    done = box.run(HOST, "after", "forward-policy")
+    assert done.returncode == 1
+    assert "1 ssh forwards" in done.stderr
+
+
+def test_a_forward_in_a_file_the_system_configuration_includes_counts(box):
+    box.ssh_system_config.parent.mkdir()
+    (box.ssh_system_config.parent / "ssh_config.d").mkdir()
+    box.ssh_system_config.write_text("Include ssh_config.d/*.conf\n")
+    (box.ssh_system_config.parent / "ssh_config.d/20-gateway.conf").write_text("LocalForward 8317 127.0.0.1:8317\n")
+    box.process(4301, ["ssh", "-N", "gateway"])
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 ssh forwards" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # sshfs's own ssh clears every forwarding on its command line.
+        ["ssh", "-x", "-a", "-oClearAllForwardings=yes", "-2", "gateway", "-s", "sftp"],
+        # A -F file replaces both the user and the system configuration.
+        ["ssh", "-F", "@CLEAN@", "-N", "gateway"],
+        ["ssh", "-F", "none", "-N", "gateway"],
+    ],
+)
+def test_a_configured_forward_the_process_does_not_read_does_not_count(box, argv):
+    gateway_box(box, "Host gateway\n  LocalForward 8317 127.0.0.1:8317\n")
+    clean = box.tmp / "clean_config"
+    clean.write_text("Host gateway\n  User owen\n")
+    box.process(4302, [str(clean) if word == "@CLEAN@" else word for word in argv])
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.parametrize(
+    "sockets",
+    [{"listen_tcp": (7001,)}, {"listen_unix": (7002,)}],
+    ids=["a local or dynamic forward", "a control master"],
+)
+def test_an_ssh_process_holding_a_listening_socket_is_a_forward(box, sockets):
+    box.process(4310, ["ssh", "-N", "gateway"], connected=(7003,), **sockets)
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 ssh forwards" in done.stderr
+
+
+def test_an_ssh_process_with_only_a_connected_socket_is_no_forward(box):
+    box.process(4311, ["ssh", "gateway", "uptime"], connected=(7004,))
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 0, done.stderr
+
+
+def test_an_ssh_process_whose_sockets_cannot_be_read_is_no_proof(box):
+    box.config["canary"] = {"model_list_url": "http://198.51.100.1:8317/v1/models"}
+    box.process(4312, ["ssh", "-N", "gateway"], fds_readable=False)
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 sources not read" in done.stderr
+    done = box.run(HOST, "after", "forward-policy")
+    assert done.returncode == 1
+    assert "not read: ssh process sockets" in done.stderr
+
+
+def test_an_ssh_configuration_that_cannot_be_read_is_no_proof(box):
+    (box.home / ".ssh/config").mkdir()
+    box.process(4313, ["ssh", "-N", "gateway"])
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 sources not read" in done.stderr
+
+
+def test_the_units_are_read_with_the_user_bus_and_only_it(box):
+    bus = {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus", "SSH_AUTH_SOCK": "/tmp/agent.sock"}
+    done = box.run(HOST, "after", "old-channels-drained", env=bus)
+    assert done.returncode == 0, done.stderr
+    seen = box.env_of("systemctl", "units")
+    assert {"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} <= seen
+    assert "SSH_AUTH_SOCK" not in seen
+    assert not {"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK"} & box.env_of("ss", "dport")
+
+
+def test_without_the_user_bus_the_units_are_not_read_and_the_drain_fails(box):
+    box.session_env = {}
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 sources not read" in done.stderr

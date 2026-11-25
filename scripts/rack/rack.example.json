@@ -72,11 +72,12 @@
       "scp",
       "sftp"
     ],
-    "proc_root": "/proc"
+    "proc_root": "/proc",
+    "ssh_system_config": "/etc/ssh/ssh_config"
   },
   "keys": {
     "authorized_keys_files": [
-      "~/.ssh/authorized_keys",
+      "/home/<rack login account>/.ssh/authorized_keys",
       "/root/.ssh/authorized_keys"
     ],
     "client_key_globs": [

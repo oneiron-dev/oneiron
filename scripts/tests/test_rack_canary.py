@@ -9,10 +9,14 @@ reads the exact request bodies and the environment the client passed on.
 from __future__ import annotations
 
 import json
+import time
+from pathlib import Path
 
 import pytest
 
 from rack_fixture import HOST, Box
+
+from rack.oneiron_api import local_target
 
 M1 = "a1" * 16
 M2 = "b2" * 16
@@ -88,7 +92,7 @@ def waited(order_view, reached):
 @pytest.fixture
 def box(tmp_path):
     box = Box(tmp_path)
-    box.config["issuer"] = {"base_url": "https://issuer.test"}
+    box.config["issuer"] = {"base_url": "https://198.51.100.7"}
     box.config["canary"] = {
         "target_machines": [M1, M2],
         "exec_machine": M1,
@@ -118,11 +122,11 @@ def test_mesh_probe_passes_when_every_target_machine_answered(box):
     (call,) = box.calls()
     assert call["verb"] == "vault.machines.execution.get"
     assert call["body"] == {}
-    assert call["argv"][:3] == ["api", "--base-url", "https://issuer.test"]
+    assert call["argv"][:3] == ["api", "--base-url", "https://198.51.100.7"]
     assert call["argv"][-4:] == ["call", "vault.machines.execution.get", "--data", "-"]
     assert all(SECRET not in word for word in call["argv"])
-    assert set(call["env"]) <= {"PATH", "HOME", "LC_ALL", "ONEIRON_SECRET", "ONEIRON_BINDING_KEY"}
-    assert "ONEIRON_SECRET" in call["env"]
+    assert set(call["env"]) <= {"PATH", "HOME", "LC_ALL", "ONEIRON_SECRET", "ONEIRON_BINDING_KEY", "TMPDIR"}
+    assert "ONEIRON_SECRET" in call["env"] and "TMPDIR" in call["env"]
 
 
 @pytest.mark.parametrize(
@@ -150,13 +154,53 @@ def test_a_refused_call_fails_with_the_facades_code(box):
     assert "exit 22 FORBIDDEN: no grant lists this verb" in done.stderr
 
 
-def test_a_loopback_issuer_is_refused_before_any_call(box):
-    box.config["issuer"] = {"base_url": "http://127.0.0.1:9090"}
+@pytest.mark.parametrize("url", ["http://127.0.0.1:9090", "http://127.1:9090", "http://0x7f.1:9090", "http://[::1]:9090"])
+def test_a_loopback_issuer_is_refused_before_any_call(box, url):
+    box.config["issuer"] = {"base_url": url}
     box.oneiron({"vault.machines.execution.get": [execution(machine(M1), machine(M2))]})
     done = run(box, "mesh-probe")
     assert done.returncode == 1
-    assert "loopback" in done.stderr
+    assert "loopback or local address" in done.stderr
     assert box.calls() == []
+
+
+@pytest.mark.parametrize(
+    ("url", "local"),
+    [
+        ("http://127.1:9090", True),
+        ("http://2130706433:9090", True),
+        ("http://0.0.0.0:9090", True),
+        ("http://[::]:9090", True),
+        ("http://[::ffff:127.0.0.1]:9090", True),
+        ("http://localhost:9090", True),
+        ("https://issuer.localhost", True),
+        ("https://198.51.100.7", False),
+    ],
+)
+def test_a_url_is_local_by_the_address_it_connects_to_not_its_spelling(url, local):
+    assert local_target(url) is local
+
+
+def gone(pid: int) -> bool:
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except FileNotFoundError:
+        return True
+    return fields[0] in ("Z", "X")
+
+
+def test_an_issuer_that_never_answers_ends_with_its_curl_and_its_staged_body(box):
+    box.config["command_timeout_secs"] = 2
+    box.oneiron({"vault.machines.execution.get": [{"hang": True, "body": {}}]})
+    done = run(box, "mesh-probe")
+    assert done.returncode == 1
+    assert "no answer in 2 s" in done.stderr
+    hang = json.loads((box.out / "oneiron.hang.json").read_text())
+    assert not Path(hang["tmpdir"]).exists()
+    deadline = time.monotonic() + 5
+    while not gone(hang["helper"]) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert gone(hang["helper"])
 
 
 def test_the_kind_3_and_kind_5_reads_record_the_switch_and_the_drain(box):

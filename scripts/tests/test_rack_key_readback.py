@@ -13,7 +13,7 @@ import pytest
 
 from rack_fixture import HOST, Box, key_blob
 
-from rack.readback.keys import fingerprint, parse_authorized_keys
+from rack.readback.keys import authorized_keys_paths, fingerprint, parse_authorized_keys
 
 # A throwaway key made for this test with ssh-keygen (private half deleted);
 # `ssh-keygen -lf` printed the fingerprint below.
@@ -169,3 +169,36 @@ def test_the_export_writes_this_boxs_fingerprints_privately_and_prints_nothing_o
     exported = rack.box.evidence / "client-keys" / f"{HOST}.keys"
     assert exported.read_text() == f"{KNOWN_FINGERPRINT} {HOST}\n"
     assert stat.S_IMODE(exported.stat().st_mode) == 0o600
+
+
+def test_a_journal_read_that_starts_after_the_freeze_is_no_proof(rack):
+    # A rack-key login at 1500 lies between the freeze (1000) and the read's start (2000): never read.
+    rack.box.config["keys"]["journal_since_unix"] = 2000
+    done = rack.run()
+    assert done.returncode == 1
+    assert "journal_since_unix is later than the freeze" in done.stderr
+
+
+def test_a_journal_with_no_record_from_before_the_freeze_is_no_proof(rack):
+    rack.box.output("journalctl", "coverage", "")
+    done = rack.run()
+    assert done.returncode == 1
+    assert "no record from before the freeze" in done.stderr
+    rack.box.output("journalctl", "coverage", "", rc=1)
+    done = rack.run()
+    assert done.returncode == 1
+    assert "journal coverage" in done.stderr
+
+
+def test_a_privileged_run_reads_only_absolute_authorized_keys_paths():
+    default = ["~/.ssh/authorized_keys", "/root/.ssh/authorized_keys"]
+    paths, problems = authorized_keys_paths(default, privileged=True)
+    assert [str(p) for p in paths] == ["/root/.ssh/authorized_keys"]
+    assert len(problems) == 1 and "absolute path" in problems[0]
+    named = ["/home/owen/.ssh/authorized_keys", "/root/.ssh/authorized_keys"]
+    paths, problems = authorized_keys_paths(named, privileged=True)
+    assert [str(p) for p in paths] == named and problems == []
+    paths, problems = authorized_keys_paths(default, privileged=False)
+    assert len(paths) == 2 and problems == []
+    paths, problems = authorized_keys_paths(["owen/authorized_keys"], privileged=False)
+    assert paths == [] and "relative path" in problems[0]

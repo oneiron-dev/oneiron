@@ -1,9 +1,10 @@
 """Running the box's own read-only programs: fixed argument lists, no shell, a time bound.
 
 Every program is found on PATH, so a test puts its stand-ins first on PATH.
-The environment passed on is the minimum: PATH, HOME and LC_ALL=C. A program
-that is missing, times out or fails is an error the calling check turns into
-a FAIL; a readback never passes on output it could not read.
+The environment passed on is the minimum: PATH, HOME and LC_ALL=C, plus only
+the variables one reader names (`systemctl --user` needs the user's bus). A
+program that is missing, times out or fails is an error the calling check
+turns into a FAIL; a readback never passes on output it could not read.
 """
 
 from __future__ import annotations
@@ -35,15 +36,20 @@ def minimal_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def read_output(argv: list[str], timeout: int, ok_codes: tuple[int, ...] = (0,)) -> str:
-    """The stdout of `argv`, or CommandError."""
+def read_output(
+    argv: list[str],
+    timeout: int,
+    ok_codes: tuple[int, ...] = (0,),
+    extra_env: dict[str, str] | None = None,
+) -> str:
+    """The stdout of `argv`, or CommandError. `extra_env` adds to the minimal environment."""
     try:
         done = subprocess.run(
             argv,
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=minimal_env(),
+            env=minimal_env(extra_env),
             stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:

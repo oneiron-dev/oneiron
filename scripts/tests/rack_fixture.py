@@ -3,9 +3,12 @@
 Each read-only program the harness calls (findmnt, ss, systemctl, journalctl,
 oneiron) is a small shell stub first on PATH. It prints the file
 `out/<program>.<key>` and exits with `out/<program>.<key>.rc` when that file
-exists, where the key is picked from its arguments. The harness passes only
-PATH, HOME and LC_ALL to a child, so the stubs carry their fixture paths
-inside them.
+exists, where the key is picked from its arguments; it writes the names of
+its environment to `out/<program>.<key>.env`. The harness passes only PATH,
+HOME and LC_ALL to a child (and to `systemctl --user` the user's bus
+variables, without which the stub fails as systemctl does), so the stubs
+carry their fixture paths inside them. Each run has the login session's
+XDG_RUNTIME_DIR (`Box.session_env`).
 """
 
 from __future__ import annotations
@@ -34,9 +37,16 @@ esac""",
   *dport*) key=dport ;;
   *) key=sport ;;
 esac""",
-    "systemctl": "key=units",
-    "journalctl": "key=journal",
+    "systemctl": """key=units
+[ -n "${XDG_RUNTIME_DIR:-}${DBUS_SESSION_BUS_ADDRESS:-}" ] || { echo "Failed to connect to bus" >&2; exit 1; }""",
+    "journalctl": """case " $* " in
+  *" --until "*) key=coverage ;;
+  *) key=journal ;;
+esac""",
 }
+
+TCP_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
+UNIX_HEADER = "Num       RefCount Protocol Flags    Type St Inode Path"
 
 
 _ONEIRON_STUB = """import json, os, pathlib, sys
@@ -55,6 +65,14 @@ counter = out / ("oneiron." + verb + ".n")
 n = int(counter.read_text()) if counter.exists() else 0
 counter.write_text(str(n + 1))
 answer = answers[min(n, len(answers) - 1)]
+if answer.get("hang"):
+    # An issuer that takes the request and never answers: a body staged in TMPDIR and a
+    # curl stand-in in this process group, both left for the caller's deadline to end.
+    import subprocess, time
+    (pathlib.Path(os.environ["TMPDIR"]) / "oneiron-api-test.body").write_text(json.dumps(body))
+    helper = subprocess.Popen(["sleep", "60"])
+    (out / "oneiron.hang.json").write_text(json.dumps({"tmpdir": os.environ["TMPDIR"], "helper": helper.pid}))
+    time.sleep(60)
 sys.stdout.write(json.dumps(answer["body"]))
 sys.exit(answer.get("rc", 0))
 """
@@ -86,6 +104,11 @@ class Box:
         for program, pick in _STUBS.items():
             self.stub(program, pick)
         self.output("findmnt", "fstype", "ext4\n")
+        # The system journal reaches back before the fixtures' freeze (1000).
+        self.output("journalctl", "coverage", "500.000000 box kernel: started\n")
+        self.ssh_system_config = tmp / "etc-ssh" / "ssh_config"
+        # The login session's variables every run gets (an ssh login sets XDG_RUNTIME_DIR).
+        self.session_env: dict[str, str] = {"XDG_RUNTIME_DIR": str(tmp / "run")}
         self.config: dict = {
             "hosts": {HOST: {"box_names": [this_box()]}},
             "evidence_dir": str(self.evidence),
@@ -95,6 +118,7 @@ class Box:
                 "tool_unit_patterns": ["fleet-*"],
                 "control_socket_globs": [f"{self.sockets}/cm-*"],
                 "rack_addresses": ["192.0.2.0/24"],
+                "ssh_system_config": str(self.ssh_system_config),
             },
             "keys": {
                 "authorized_keys_files": [str(self.home / ".ssh/authorized_keys")],
@@ -112,6 +136,7 @@ class Box:
             f"{pick}\n"
             f'out="{self.out}/{program}.$key"\n'
             '[ -f "$out" ] && cat "$out"\n'
+            'env | sed "s/=.*//" > "$out.env"\n'
             'rc=0; [ -f "$out.rc" ] && rc=$(cat "$out.rc")\n'
             "exit $rc\n"
         )
@@ -142,11 +167,47 @@ class Box:
         if rc:
             (self.out / f"{program}.{key}.rc").write_text(str(rc))
 
-    def process(self, pid: int, argv: list[str], ppid: int = 1) -> None:
+    def process(
+        self,
+        pid: int,
+        argv: list[str],
+        ppid: int = 1,
+        listen_tcp: tuple[int, ...] = (),
+        listen_unix: tuple[int, ...] = (),
+        connected: tuple[int, ...] = (),
+        fds_readable: bool = True,
+    ) -> None:
+        """A process in the fake /proc: its argv, parent, open sockets (by inode) and its network tables.
+
+        `listen_tcp` and `listen_unix` are listening sockets it holds, `connected` other sockets.
+        With `fds_readable` false its fd directory cannot be listed, as another user's is to a non-root run.
+        """
         entry = self.proc / str(pid)
         entry.mkdir()
         (entry / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
         (entry / "status").write_text(f"Name:\t{Path(argv[0]).name}\nPPid:\t{ppid}\n")
+        net = entry / "net"
+        net.mkdir()
+        tcp = [TCP_HEADER]
+        tcp += [
+            f"   {n}: 0100007F:206D 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 {inode} 1 0 100 0 0 10 0"
+            for n, inode in enumerate(listen_tcp)
+        ]
+        tcp += [
+            f"   {n + 50}: 0100007F:C350 0100007F:0016 01 00000000:00000000 00:00000000 00000000  1000        0 {inode} 1 0 20 4 30 10 -1"
+            for n, inode in enumerate(connected)
+        ]
+        (net / "tcp").write_text("\n".join(tcp) + "\n")
+        (net / "tcp6").write_text(TCP_HEADER + "\n")
+        unix = [UNIX_HEADER] + [f"0000000000000000: 00000002 00000000 00010000 0001 01 {inode} {self.sockets}/cm-{inode}" for inode in listen_unix]
+        (net / "unix").write_text("\n".join(unix) + "\n")
+        if not fds_readable:
+            (entry / "fd").write_text("not a directory: listing it fails\n")
+            return
+        (entry / "fd").mkdir()
+        for n, inode in enumerate((*listen_tcp, *listen_unix, *connected)):
+            os.symlink(f"socket:[{inode}]", entry / "fd" / str(n + 3))
+        os.symlink("/dev/null", entry / "fd" / "0")
 
     def socket(self, name: str) -> None:
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -160,6 +221,7 @@ class Box:
             "PATH": f"{self.bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             "HOME": str(self.home),
             "LC_ALL": "C",
+            **self.session_env,
         }
         if env:
             full_env.update(env)
@@ -173,3 +235,7 @@ class Box:
 
     def evidence_files(self) -> list[Path]:
         return sorted(self.evidence.glob("*/*.json"))
+
+    def env_of(self, program: str, key: str) -> set[str]:
+        """The environment names the stub `program` was last started with under `key`."""
+        return set((self.out / f"{program}.{key}.env").read_text().split())

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """The rack harness's one entry (pass 34 row K1), in the rack audit's check contract.
 
     workflow_check.py [--config FILE] HOST PHASE CHECK
@@ -24,7 +24,9 @@ proves. --export-client-keys writes this box's client key fingerprints for
 the key readback's rack list (see readback/keys.py).
 
 The configuration is --config, else $ONEIRON_RACK_CONFIG, else
-~/.config/oneiron-rack/rack.json. Run it as `python3 -I`.
+~/.config/oneiron-rack/rack.json. The file is executable, as the audit calls
+it by its absolute path; its first line runs it as `python3 -I`, so no
+PYTHON* variable or user site directory loads code into it.
 """
 
 from __future__ import annotations

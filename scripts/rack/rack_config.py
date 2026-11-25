@@ -70,8 +70,11 @@ DEFAULTS: dict[str, Any] = {
         "control_socket_globs": ["~/.ssh/cm-*", "~/.ssh/sockets/*"],
         "transfer_programs": ["rsync", "scp", "sftp"],
         "proc_root": "/proc",
+        # The system ssh client configuration (an ssh process without -F reads it after ~/.ssh/config).
+        "ssh_system_config": "/etc/ssh/ssh_config",
     },
     "keys": {
+        # A privileged run takes absolute paths only, one for each account the rack logs in as.
         "authorized_keys_files": ["~/.ssh/authorized_keys", "/root/.ssh/authorized_keys"],
         "client_key_globs": ["~/.ssh/*.pub"],
         "rack_client_keys_dir": "",

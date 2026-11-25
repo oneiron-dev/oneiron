@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from rack.evidence import Evidence
-from rack.oneiron_api import loopback
+from rack.oneiron_api import AddressError, local_target
 from rack.rack_config import RackConfig
 
 
@@ -79,22 +79,28 @@ def forward_policy(ctx: Context) -> Outcome:
     """forward-policy: no ssh forward is live, and the model gateway answers on its own route.
 
     It asks the gateway's model list and spends nothing: any HTTP answer,
-    401 included, shows the route works without a forward. A loopback URL is
-    refused, because on a lane box it would be a forward.
+    401 included, shows the route works without a forward. A URL that
+    connects to this box (loopback, unspecified or its own address, in any
+    spelling) is refused, because on a lane box it would be a forward. A
+    forward source that could not be read is no proof of absence.
     """
-    from rack.readback.drain import read_drain
+    from rack.readback.drain import FORWARD_SOURCES, read_drain
 
     url = ctx.config.section("canary")["model_list_url"]
     if not url:
         return Outcome(False, "no canary.model_list_url")
-    if loopback(url):
-        return Outcome(False, "canary.model_list_url is a loopback address")
+    try:
+        if local_target(url):
+            return Outcome(False, "canary.model_list_url is a loopback or local address")
+    except AddressError as error:
+        return Outcome(False, f"canary.model_list_url: {error}")
     reading = read_drain(ctx.config.section("drain"), ctx.config.command_timeout_secs)
     ctx.evidence.add("forwards", reading.forwards)
     if reading.forwards:
         return Outcome(False, f"live: {len(reading.forwards)} ssh forwards")
-    if "processes" in reading.unread:
-        return Outcome(False, "not read: processes")
+    missing = [source for source in reading.unread if source in FORWARD_SOURCES]
+    if missing:
+        return Outcome(False, "not read: " + ", ".join(missing))
     request = urllib.request.Request(url, method="GET")
     # No proxy from the environment: the answer must come over the gateway's own route.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
