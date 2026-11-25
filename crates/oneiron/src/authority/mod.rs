@@ -402,7 +402,8 @@ pub use history_fetch::{
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
-    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
+    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_by_machine_in_txn,
+    home_candidacies_in_txn,
 };
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,

@@ -251,6 +251,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner… | `crates/oneiron/src/inquiry/mod.rs` | m | ARCH-0082 |
 | Interlocutor resolution substrate (OF-365 ILD-1) | `crates/oneiron/src/interlocutor.rs` | L | OF-365 |
 | The issuer's side of a job that one of the vault's machines runs (pass 33 section 8, the `vault_machine`… | `crates/oneiron/src/job_dispatch/mod.rs` | m | — |
+| `vault.jobs.history` (design pass 34 section 5 and row Q2; the scheduler comparison's gap 2, "one view of… | `crates/oneiron/src/job_history/mod.rs` | m | — |
 | Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron/src/job_workload/mod.rs` | m | — |
 | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… | `crates/oneiron/src/learning/mod.rs` | m | ARCH-0003, ARCH-0079 |
 | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… | `crates/oneiron/src/learning_setting.rs` | m | ARCH-0003 |
@@ -380,7 +381,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) | `crates/oneiron/src/wave_orchestration.rs` | m | ARCH-0068 |
 | The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and… | `crates/oneiron/src/web_connector/mod.rs` | s | — |
 | Monthly CRDT window keys and their timestamp conversion | `crates/oneiron/src/window_key.rs` | s | — |
-| Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… | `crates/oneiron/src/work_order/mod.rs` | m | — |
+| Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… | `crates/oneiron/src/work_order/mod.rs` | L | — |
 | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) | `crates/oneiron/src/workspace_roster/mod.rs` | L | ONEIRON-ARCH-0065 |
 | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… | `crates/oneiron/src/world_keys/mod.rs` | L | — |
 | The code sandbox backends, beside core's sandbox contract (re-exported whole, so the moved code's… | `crates/oneiron-agent-runtime/src/code_sandbox/mod.rs` | L | — |
@@ -919,7 +920,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… | `crates/oneiron-server/src/feedback_redaction.rs` | s | OF-420 |
 | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… | `crates/oneiron-server/src/files_intake/mod.rs` | m | OF-554 |
 | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | L | — |
-| The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | s | CROSS-ARCH-0023 |
+| The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | m | CROSS-ARCH-0023 |
 | WebSocket upgrade handler and connection lifecycle | `crates/oneiron-server/src/handler/mod.rs` | L | ARCH-0023 |
 | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… | `crates/oneiron-server/src/home_candidacy.rs` | s | ARCH-0026 |
 | The hook `ai.verdict` decisions one thread collects while it runs its row's hooks (FIX 8042): a browser… | `crates/oneiron-server/src/hook_decisions.rs` | s | — |

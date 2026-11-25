@@ -459,7 +459,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 13 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | m | 221 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 223 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | m | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/arms.rs` | src | s | 4 crate-vis | — | The experiment arm doors of the lane economy (design pass 32 section 5): `vault.arms.admit`… |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
@@ -467,8 +467,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/host_doors/diary.rs` | src | s | 4 crate-vis | — | The caller's own diary query doors (`self.memory.diary.query` and `self.memory.diary.pinned`), and the… |
 | `src/api/facade/host_doors/gpu_jobs.rs` | src | m | 8 crate-vis | — | The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2): `vault.gpu.jobs.quote`, `.start`… |
 | `src/api/facade/host_doors/gpu_lines.rs` | src | s | 3 crate-vis | — | The GPU line doors (design pass 32, section 5): `vault.gpu.lines.set`, `.get` and `.families.admit` |
+| `src/api/facade/host_doors/job_history.rs` | src | s | 1 crate-vis | — | `vault.jobs.history` (design pass 34 section 5, row Q2): the ended attempts and their totals by machine… |
 | `src/api/facade/host_doors/job_workloads.rs` | src | m | 6 crate-vis | — | The pinned workload doors (pass 33, section 6 rows 2-5): `vault.jobs.workloads.pin`, `.approve`, `.revoke`… |
-| `src/api/facade/host_doors/machine_execution.rs` | src | s | 1 crate-vis | — | `vault.machines.execution.clear_drain` (pass 33 row R4, door 12): clears the issuer's drain of one machine |
+| `src/api/facade/host_doors/machine_execution.rs` | src | s | 2 crate-vis | — | The machines' execution doors (pass 33) |
+| `src/api/facade/host_doors/machine_status.rs` | src | s | 1 crate-vis | — | `vault.machines.status` (design pass 34 section 5, row Q2): every machine of the owner's with what the vault… |
 | `src/api/facade/host_doors/media.rs` | src | m | 32 crate-vis | — | The `ai.*` media doors past text: options, image, speech, transcription, embedding and video |
 | `src/api/facade/host_doors/packs.rs` | src | m | 26 crate-vis | — | The owner's pack, connector subscription, lens and pack setup doors |
 | `src/api/facade/host_doors/planner_card.rs` | src | s | 1 crate-vis | — | `vault.planner.card` (design pass 32 section 5, row 12): the planner card of one project and task type, with… |
@@ -479,7 +481,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/host_doors/verb_grant.rs` | src | s | 2 crate-vis | — | The host doors whose verb row names the proof `verb_grant_caller` (design pass 32 section 5, the lane… |
 | `src/api/facade/host_doors/verdict_hooks.rs` | src | s | 7 crate-vis | — | `ai.verdict` through the host's decision ladder, and the owner's `vault.hooks.replay` |
 | `src/api/facade/host_doors/vision.rs` | src | s | 2 crate-vis | — | `ai.ask_image`: one question about an image's pixels to the host's Local-vision seat (FIX 679) |
-| `src/api/facade/host_doors/work_orders.rs` | src | s | 6 crate-vis | — | The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and… |
+| `src/api/facade/host_doors/work_orders.rs` | src | m | 7 crate-vis | — | The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hosted_import_doors.rs` | src | s | 11 crate-vis | — | The host doors of the hosted import's verbs (ARCH-0027 #hosted-import; substrate behind grants)… |
 | `src/api/facade/hub_doors.rs` | src | m | 22 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
@@ -1224,7 +1226,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/embedding.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | EmbeddingConfig, EmbeddingSlotsConfig | `[embedding]`: the embedding spaces and kind slots a vault starts with (OF-370; ARCH-0019 `#default-bindings`) |
 | `src/config/failure_signals.rs` | src | m | 1 struct · 1 enum · 2 fn · 1 const · 5 crate-vis | FailureSignalsConfig, PublisherCandidateConfig | The `[failure_signals]` section: the publisher this deployment's failure signals go to (OF-380, DEC-0005… |
 | `src/config/feedback.rs` | src | m | 3 struct · 2 fn · 1 const · 9 crate-vis | FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig | The `[feedback]` section: where the owner's feedback goes (OF-420) |
-| `src/config/gpu_jobs.rs` | src | m | 3 struct · 1 enum · 2 fn · 5 const · 3 crate-vis | AtMaximum, GpuJobsSettings, GpuOfferSettings, VaultMachineSettings | `[gpu_jobs]`: the GPU offers this host posts for customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2, C3) |
+| `src/config/gpu_jobs.rs` | src | m | 4 struct · 1 enum · 2 fn · 6 const · 3 crate-vis | AtMaximum, GpuJobsSettings, GpuOfferSettings, HostAllocationSettings, VaultMachineSettings | `[gpu_jobs]`: the GPU offers this host posts for customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2, C3) |
 | `src/config/import.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ImportConfig, ImportConfigOverride | The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import… |
 | `src/config/keystore.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 re-export · 4 crate-vis | KeystoreBackend, KeystoreConfig, KeystoreInstall | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c) |
 | `src/config/limits.rs` | src | L | 1 struct · 7 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
@@ -1442,19 +1444,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/issuer/connector/receipts.rs` | src | s | 4 crate-vis | — | The receipts of a key on the issuer: each one is checked, then judged against the stored rows and written in… |
 | `src/gpu_execution_node/issuer/connector/sends.rs` | src | s | 6 crate-vis | — | What the connector sends a node for a key, and how `status` steps it: the reserve and the submit, the gate… |
 | `src/gpu_execution_node/issuer/guard.rs` | src | s | 3 fn | — | The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the… |
-| `src/gpu_execution_node/issuer/mod.rs` | src | s | 1 struct · 6 fn · 2 const · 10 mod · 8 re-export | VaultMachineInputs | The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a job's chunk on… |
+| `src/gpu_execution_node/issuer/machine_execution.rs` | src | s | 1 fn · 1 const | — | The issuer's half of `vault.machines.execution.get` (pass 33 door 11): the issuer asks each machine the… |
+| `src/gpu_execution_node/issuer/mod.rs` | src | s | 1 struct · 6 fn · 2 const · 12 mod · 9 re-export | VaultMachineInputs | The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a job's chunk on… |
 | `src/gpu_execution_node/issuer/node_client.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 fn · 1 re-export | JobNodeClient, MeshJobNodeClient, NodeCallError | How the issuer asks a node (pass 33 section 7.1): one request and one answer per call, on [`JOB_ALPN`] for… |
+| `src/gpu_execution_node/issuer/node_status.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | NodeAsker | The node half of `vault.machines.status` (design pass 34 section 5, row Q2): the issuer asks each machine… |
 | `src/gpu_execution_node/issuer/orphans.rs` | src | s | 2 struct · 1 trait · 1 fn | JobOrphanKeys, LoggedUnattributedLedger, UnattributedLedger | What the issuer does with a key a node holds that it has no dispatch row for (pass 33 row R4, 8.5)… |
 | `src/gpu_execution_node/issuer/reconcile.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 1 const | LoggedOrphanKeys, OrphanKeys, ReconcileError, Reconciled | The reconcile before dispatch (pass 33 section 8.5) |
 | `src/gpu_execution_node/issuer/register.rs` | src | s | 1 struct · 1 enum · 6 fn | NotTheIssuer, VaultMachineNotRegistered | Where the `vault_machine` backend may exist (pass 33, 8.1 and 8.7) |
 | `src/gpu_execution_node/issuer/returns.rs` | src | s | 1 struct · 3 fn | ResultReturns | The returned result (pass 33 row R4; EM-12 = A): what the issuer does with an ended key's outputs |
 | `src/gpu_execution_node/issuer/view.rs` | src | s | 1 fn | — | The four status fields of door 8 for a job the `vault_machine` backend runs (pass 33 row R4): built from the… |
-| `src/gpu_execution_node/jobs/admission.rs` | src | m | 6 fn · 13 crate-vis | — | Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`… |
+| `src/gpu_execution_node/jobs/admission.rs` | src | L | 6 fn · 15 crate-vis | — | Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`… |
 | `src/gpu_execution_node/jobs/breadcrumb.rs` | src | s | 1 const · 4 crate-vis | — | Breadcrumb lines (pass 34, `34-compute-general/DESIGN.md` section 7.3, row Q4): while a key runs, every tick… |
 | `src/gpu_execution_node/jobs/end.rs` | src | m | 1 fn · 7 crate-vis | — | The node's tick and the end of a launched key (design pass 33, 7.6 "The engine's end handling") |
 | `src/gpu_execution_node/jobs/incidents.rs` | src | s | 1 struct · 1 enum · 1 const · 5 crate-vis | IncidentKind, NodeIncident | The node's incidents (pass 34, `34-compute-general/DESIGN.md` sections 5 and 7.3, row Q4): typed records of… |
-| `src/gpu_execution_node/jobs/job_unit.rs` | src | m | 6 struct · 2 enum · 2 trait · 10 fn · 8 const | EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock +2 | The job unit as the engine sees it (design pass 33, 7.6): one instance of the service manager's job unit… |
-| `src/gpu_execution_node/jobs/journal.rs` | src | m | 6 struct · 3 enum · 21 fn | EndingCause, JobJournal, JournalEvent, JournalMoveError, JournalRecord, JournalWriteError, KeyLaunch, KeyTable +1 | The job journal's records and the table of keys they build (design pass 33, 5.2 and 7.2) |
+| `src/gpu_execution_node/jobs/job_unit.rs` | src | m | 6 struct · 2 enum · 2 trait · 10 fn · 9 const | EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock +2 | The job unit as the engine sees it (design pass 33, 7.6): one instance of the service manager's job unit… |
+| `src/gpu_execution_node/jobs/journal.rs` | src | m | 7 struct · 3 enum · 25 fn | EndingCause, JobJournal, JournalEvent, JournalMoveError, JournalRecord, JournalWriteError, KeyLaunch, KeyTable +2 | The job journal's records and the table of keys they build (design pass 33, 5.2 and 7.2) |
 | `src/gpu_execution_node/jobs/journal_file.rs` | src | m | 3 struct · 3 enum · 10 fn · 1 type · 6 const | JournalAppendError, JournalDamage, JournalEpoch, JournalFile, JournalOpening, JournalWriterLock | The job journal's file: an append-only sequence of framed records in `<state_dir>/journal`, beside the… |
 | `src/gpu_execution_node/jobs/launch.rs` | src | m | 2 crate-vis | — | Staging and the launch commit (design pass 33, 7.4 and 7.5) |
 | `src/gpu_execution_node/jobs/log_tail.rs` | src | m | 1 fn | — | The node's half of `Tail` (pass 34 row Q3, section 7.2): the bytes of a key's stdout or stderr from a… |
@@ -1462,7 +1466,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/jobs/node_parts.rs` | src | m | 7 struct · 1 enum · 4 trait · 3 fn · 2 re-export | AuthorityPosition, IssuerNotLive, NodeAdmission, NodeDevices, NodeJobParts, NodeJobPaths, NodeJobSettings, NodeJobsAttachment +4 | What the node's job service takes from the rest of the server, each behind one trait so the journal and the… |
 | `src/gpu_execution_node/jobs/outputs.rs` | src | s | 1 crate-vis | — | The hash of a launched key's declared outputs: step 3 of its end ([`super::end`]), run after the release… |
 | `src/gpu_execution_node/jobs/readiness.rs` | src | m | 1 enum · 3 fn · 2 const · 4 crate-vis | DrainPick | The node's idle readiness check and the DRAIN slot's default rule (pass 34, `34-compute-general/DESIGN.md`… |
-| `src/gpu_execution_node/jobs/receipt.rs` | src | s | 1 struct · 3 fn | ReceiptClock | The receipt: what this node observed about one key, from the journal alone, signed with the machine key… |
+| `src/gpu_execution_node/jobs/receipt.rs` | src | s | 1 struct · 4 fn | ReceiptClock | The receipt: what this node observed about one key, from the journal alone, signed with the machine key… |
 | `src/gpu_execution_node/jobs/recovery.rs` | src | m | 1 fn · 1 crate-vis | — | Recovery on the node (design pass 33, 7.7) |
 | `src/gpu_execution_node/jobs/serving.rs` | src | s | 1 struct · 3 fn | ServedNodeJobs | The node's job service as the server runs it (row R3a, FIX R3A-NODE-JOBS-ATTACH) |
 | `src/gpu_execution_node/jobs/staging.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 3 const | MirrorStager, StagingRefusal, TemplateMirrors | Staging (design pass 33, `33-exec-node/DESIGN.md` section 7.4; row R3c): the code of a key's pin, exported… |
@@ -1474,34 +1478,35 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/node.rs` | src | m | 3 struct · 2 enum · 29 fn · 3 const · 1 re-export | AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeSnapshot | The execution node (pass 33, `33-exec-node/DESIGN.md` sections 5.2, 7.1, 7.3 and 7.9): this machine's own… |
 | `src/gpu_execution_node/node/keys.rs` | src | s | 1 trait | NodeKeys | The node's keys ([`NodeKeys`]): what the job service and the authority tick hand row R3a's journal once the… |
 | `src/gpu_execution_node/node/owner_policy.rs` | src | s | 2 fn · 4 crate-vis | — | The node's reads of the owner's machine policy rows (row P0; pass 34 DESIGN 2.4), and the admissions that… |
-| `src/gpu_execution_node/node_settings.rs` | src | m | 2 struct · 1 enum · 10 fn · 20 const | DrainClearBy, ExecutionNodeSettings, NodeTemplate | The node's own configuration (pass 33, `33-exec-node/DESIGN.md` section 5.2): the `[execution_node]` file… |
+| `src/gpu_execution_node/node_settings.rs` | src | L | 2 struct · 1 enum · 11 fn · 22 const · 1 re-export | DrainClearBy, ExecutionNodeSettings, NodeTemplate | The node's own configuration (pass 33, `33-exec-node/DESIGN.md` section 5.2): the `[execution_node]` file… |
 | `src/gpu_execution_node/path_measure.rs` | src | m | 9 struct · 3 enum · 14 fn · 1 const | ListenOutcome, MeasureAnswer, MeasureError, MeasurePlan, MeasureReport, MeasureRequest, MeasurerKey, PathReceiptLog +4 | The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, "R6 in five… |
 | `src/gpu_execution_node/scope_systemd/capabilities.rs` | src | s | 2 struct · 4 fn | CheckReport, KernelFacts | What this machine's systemd scope can enforce, bound by bound (pass 34, 2.2, `ScopeCapabilities`): from the… |
 | `src/gpu_execution_node/scope_systemd/control.rs` | src | m | 1 enum · 6 fn · 6 const | ControlVerb | The job control socket: the engine's account starts and stops job units through a root handler, and holds no… |
-| `src/gpu_execution_node/scope_systemd/cutoff.rs` | src | s | 1 fn | — | `oneiron job-cutoff <id>` (root): the command of the cutoff timer the prepare step armed (pass 33, 7.6, "the… |
+| `src/gpu_execution_node/scope_systemd/cutoff.rs` | src | s | 2 fn · 1 const | — | `oneiron job-cutoff <id>` (root): the command of the cutoff timer the prepare step armed (pass 33, 7.6, "the… |
 | `src/gpu_execution_node/scope_systemd/device_files.rs` | src | s | 2 fn | — | Which device files a leased device is (pass 33, 7.8 "GPU"; pass 34, 2.2: `DeviceAllow` is built from the… |
 | `src/gpu_execution_node/scope_systemd/ended.rs` | src | m | 1 fn | — | `oneiron job-ended <id>` (root, the unit's `ExecStopPost=+`): runs after every process of the unit is gone… |
 | `src/gpu_execution_node/scope_systemd/exchange.rs` | src | s | 4 fn | — | The per-job directories root makes on the machine's own tree before the job's view is built, and takes away… |
 | `src/gpu_execution_node/scope_systemd/exec.rs` | src | m | 1 fn | — | `oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it applies `exec.json` and nothing else… |
 | `src/gpu_execution_node/scope_systemd/gate.rs` | src | L | 1 fn · 7 crate-vis | — | The gate, `oneiron job-prepare --after-exec <id>` (root, the unit's `ExecStartPost=+`) |
-| `src/gpu_execution_node/scope_systemd/install.rs` | src | m | 1 struct · 1 fn | InstallRequest | `oneiron execution-node install` (root, once per machine and again after a template's maximum grows; pass… |
+| `src/gpu_execution_node/scope_systemd/install.rs` | src | m | 1 struct · 2 fn | InstallRequest | `oneiron execution-node install` (root, once per machine and again after a template's maximum grows; pass… |
 | `src/gpu_execution_node/scope_systemd/log_writer.rs` | src | m | 1 struct · 1 fn · 3 const | WorkloadStreams | The unit's log writer (pass 34, 7.2; R4's Q3-LOG-CONTRACT, 25 Nov 02:07, with its 12:02 additions) |
-| `src/gpu_execution_node/scope_systemd/mod.rs` | src | s | 3 fn · 23 const · 18 mod · 1 re-export | — | The first launch scope (pass 33, `33-exec-node/DESIGN.md` sections 7.6 and 7.8; pass 34… |
-| `src/gpu_execution_node/scope_systemd/prepare.rs` | src | m | 1 fn · 3 crate-vis | — | `oneiron job-prepare <id>` (root, the unit's `ExecStartPre=+`) and its gate, `oneiron job-prepare… |
+| `src/gpu_execution_node/scope_systemd/mod.rs` | src | s | 3 fn · 23 const · 19 mod · 1 re-export | — | The first launch scope (pass 33, `33-exec-node/DESIGN.md` sections 7.6 and 7.8; pass 34… |
+| `src/gpu_execution_node/scope_systemd/prepare.rs` | src | L | 1 fn · 5 crate-vis | — | `oneiron job-prepare <id>` (root, the unit's `ExecStartPre=+`) and its gate, `oneiron job-prepare… |
 | `src/gpu_execution_node/scope_systemd/probe_unit.rs` | src | m | 1 fn | — | The scope half of `oneiron execution-node check` (pass 33, 7.6: "`execution-node check` runs the same checks… |
 | `src/gpu_execution_node/scope_systemd/records.rs` | src | s | 6 struct · 6 fn · 1 const · 1 re-export | CutoffMark, CutoffPlan, ExecFile, PreparedRecord, ScopeRecord, ScopeReport | The files the unit's steps hand each other, besides R3a's `launch.json` and `ended.json`… |
+| `src/gpu_execution_node/scope_systemd/renew.rs` | src | s | 2 fn | — | A session's renewal on the systemd scope (pass 34, 2.5; row W1), as root, through the job control socket's… |
 | `src/gpu_execution_node/scope_systemd/safe_fs.rs` | src | m | 2 struct · 15 fn | AccountEntry, FileFacts | File operations for the unit's root steps in directories another account owns (the engine's state and… |
 | `src/gpu_execution_node/scope_systemd/step.rs` | src | s | 2 struct · 7 fn · 1 const | StepArgs, StepContext | What every root step of the unit starts from: its instance, the root-owned node file, the two accounts, and… |
 | `src/gpu_execution_node/scope_systemd/systemd_unit.rs` | src | m | 1 struct · 9 fn · 1 const | SystemdJobUnit | R3a's [`JobUnit`] over the system's service manager: the engine's account starts and stops instances of… |
-| `src/gpu_execution_node/scope_systemd/unit_file.rs` | src | s | 1 struct · 7 fn | UnitInputs | The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account… |
+| `src/gpu_execution_node/scope_systemd/unit_file.rs` | src | m | 1 struct · 8 fn · 1 const | UnitInputs | The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account… |
 | `src/gpu_execution_node/selection.rs` | src | s | 3 struct · 2 enum · 1 trait · 3 fn | GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement, LocalGpuSlotPeer | A read that picks a machine's GPU for a GPU job, before its quote |
 | `src/gpu_execution_node/service.rs` | src | s | 2 struct · 4 fn · 2 const | JobService, JobStatusService | The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on… |
 | `src/gpu_execution_node/slots.rs` | src | m | 1 struct · 14 fn · 2 re-export | GpuSlotTable | This machine's GPU slots: one job per offered GPU, beside the machine's memory floor |
 | `src/gpu_execution_node/slots/drain.rs` | src | s | 3 fn · 2 crate-vis | — | The drain guard: once `drain_after_failures` jobs in a row finish failed, or at its node's word, the machine… |
 | `src/gpu_execution_node/slots/lease.rs` | src | s | 1 struct · 5 fn | GpuSlotLease | The node takes a device lease inside its launch commit and immediately confirms launch |
 | `src/gpu_execution_node/slots/ownership.rs` | src | s | 5 crate-vis | — | Which Oneiron server of this machine owns each offered GPU: a lock file per GPU in `owner_lock_dir`, held… |
-| `src/gpu_execution_node/wire.rs` | src | m | 21 struct · 14 enum · 8 fn · 5 const · 1 re-export | Breadcrumb, DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobRequest +27 | The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1) |
-| `src/gpu_host.rs` | src | s | 13 crate-vis | — | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) |
+| `src/gpu_execution_node/wire.rs` | src | L | 22 struct · 15 enum · 9 fn · 5 const · 1 re-export | Breadcrumb, DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobRequest +29 | The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1) |
+| `src/gpu_host.rs` | src | m | 17 crate-vis | — | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) |
 | `src/handler/admitted_windows.rs` | src | s | 8 crate-vis | — | A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
@@ -2253,7 +2258,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/embedded_peer_path.rs` | src | m | 3 struct · 23 fn | MeshListener, RootNotices, ServedDeviceLink | Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the… |
 | `src/test_doors/embedding_line.rs` | src | s | 2 fn | — | Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint… |
 | `src/test_doors/fingerprint_keep_lens_callback.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_lens_callback.rs` (PLAN-UC-04 stage 5): the dedupe key of a lens card… |
-| `src/test_doors/gpu_backend.rs` | src | s | 7 fn | — | Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row… |
+| `src/test_doors/gpu_backend.rs` | src | s | 11 fn | — | Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row… |
 | `src/test_doors/hex_input_policy.rs` | src | s | 2 fn | — | Doors for `tests/hex_input_policy_server.rs` (UC-07 PR 6, HEX-CASE-POLICY = A): whether two hex spellings… |
 | `src/test_doors/hex_sign_digit.rs` | src | s | 3 fn | — | Doors for `tests/hex_sign_digit_server.rs` (UC-07 PR 7 sign digit): thin calls to the three crate-private… |
 | `src/test_doors/history_import.rs` | src | s | 1 fn | — | Doors for `tests/history_import_review_id_same_second.rs` ([HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]): the… |
@@ -2278,13 +2283,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/memory_owner_commit.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX… |
 | `src/test_doors/memory_timeline_projection.rs` | src | s | 1 fn | — | Door for `tests/timeline_shell_projection_recheck.rs` (FIX TIMELINE-SHELL-TWO-SNAPSHOT-CAP): the projection… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 90 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 91 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/node_jobs/devices.rs` | src | m | 1 struct · 17 fn | ScriptedDevices | The scripted GPU slot table: its devices, their leases, quarantines and drains, a device probe a test can… |
 | `src/test_doors/node_jobs/mod.rs` | src | s | 2 struct · 9 fn · 3 re-export | ScriptedNode, ScriptedNodeClock | Scripted parts for the node's job service (pass 33, `33-exec-node/DESIGN.md` section 11: the journal's tests… |
-| `src/test_doors/node_jobs/parts.rs` | src | m | 5 struct · 27 fn | ScriptedAdmission, ScriptedAuthority, ScriptedFloor, ScriptedSigner, ScriptedStager | The scripted admission, memory floor, signer, authority and stager |
-| `src/test_doors/node_jobs/units.rs` | src | m | 1 struct · 1 enum · 16 fn | ScriptedJobUnits, ScriptedStart | The scripted service manager: the job units it starts and ends as a test tells it, and the end step that… |
+| `src/test_doors/node_jobs/parts.rs` | src | m | 5 struct · 28 fn | ScriptedAdmission, ScriptedAuthority, ScriptedFloor, ScriptedSigner, ScriptedStager | The scripted admission, memory floor, signer, authority and stager |
+| `src/test_doors/node_jobs/units.rs` | src | m | 1 struct · 1 enum · 18 fn | ScriptedJobUnits, ScriptedStart | The scripted service manager: the job units it starts and ends as a test tells it, and the end step that… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
 | `src/test_doors/one_click_wire_counter.rs` | src | s | 1 fn | — | Door for `tests/campaign_one_click_unsubscribe.rs`: runs a closure while the wire window's counter lock is… |
 | `src/test_doors/openapi_document.rs` | src | s | 2 fn | — | Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this… |
@@ -2322,6 +2327,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/web_search_count.rs` | src | s | 1 fn | — | Door for `tests/web_search_owner_max.rs` (restriction wave 19, C73 = B): the result count one web search… |
 | `src/test_doors/wire_health_sweep.rs` | src | s | 8 fn | — | Door for the health-check tests (`tests/own_rate_health_ask.rs`, `tests/wire_health_actor_erase.rs`): one… |
 | `src/test_doors/wire_thresholds.rs` | src | s | 1 fn | — | Door for `tests/esign_qr_refusals.rs` and the signing wire test in `tests/it_esign_public.rs`: the… |
+| `src/test_doors/work_order_host.rs` | src | s | 1 fn | — | Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call through the node… |
 | `src/test_doors/workflow_park.rs` | src | s | 1 re-export | — | Doors for `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a workflow step's leaf… |
 | `src/test_engine_stack.rs` | src | s | 2 crate-vis | — | Drives facade-touching lib tests on the engine's stack |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
@@ -2387,7 +2393,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire_telemetry/kept.rs` | src | s | 4 crate-vis | — | The kept questions as the health check reads them (OF-520): the call-volume questions past its cursor, a… |
 | `src/wire_telemetry/rows.rs` | src | s | 1 enum · 1 fn · 1 const | LimitRow | The `[limits]` rows this server's questions name (moved out of `wire_telemetry.rs` whole, so the telemetry… |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
-| `src/work_order_host.rs` | src | m | 2 fn · 10 crate-vis | — | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… |
+| `src/work_order_host.rs` | src | m | 2 fn · 13 crate-vis | — | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… |
 | `src/xlsx_recalc.rs` | src | m | 1 crate-vis | — | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… |
 | `tests/action_table_unkept_replies.rs` | test | s | — | — | The app's action table offers no verb-table row whose answer an invocation never keeps (FIX… |
 | `tests/admitted_skill_call_large_view_spill.rs` | test | m | — | — | [ADMITTED-SKILL-CALL-LARGE-POST-VIEW-SPILL] (FIX-LIST 29927): an admitted `self.skills.call` whose post-hook… |
@@ -2494,6 +2500,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/eval_authoring_execute_unrecorded_end.rs` | test | s | — | — | `vault.evals.authoring.execute` when the writes that end the execution record fail (FIX… |
 | `tests/execution_node_gate.rs` | test | m | — | — | The execution node's opt-in and its gate (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T3, T4, T5… |
 | `tests/execution_node_path_measure.rs` | test | s | — | — | The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, "R6 in five… |
+| `tests/execution_node_session_cutoff.rs` | test | s | — | — | Pass 34 row W1 (`34-compute-general/DESIGN.md` 2.5), the systemd scope's half of a session's renewal: the… |
 | `tests/execution_node_templates.rs` | test | m | — | — | An execution node's template check (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T6, T7, T8; section… |
 | `tests/facade_live_run_status.rs` | test | s | — | — | Live-run guard refusals keep their status through the real facade router |
 | `tests/facade_repo_refusal_status.rs` | test | s | — | — | A repo door's typed refusal keeps its own status through the real facade router (NO-DOOR… |
@@ -2507,6 +2514,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/gate_pin_landing_facet.rs` | test | s | — | — | OPUS-T0-F gate pins, PR 4 (Engine task 12 Nov 19:38): green pins for the write gate G103 of… |
 | `tests/git_lfs_install_wait_out.rs` | test | s | — | — | L3-30 (canon ARCH-0044:471): an LFS upload whose body was received and spooled, but whose install waited… |
 | `tests/git_lfs_prehandler_refusal_envelope.rs` | test | s | — | — | A slip the owner revoked is refused at the binding door, before any route runs |
+| `tests/gpu_host_allocation.rs` | test | m | — | — | `[gpu_jobs.host_allocation]` (R6-VAULT-MACHINE-FUNDING = A; Engine TASK 25 Nov 23:35, R6-B6): a self-hosted… |
+| `tests/gpu_job_worker_housekeeping.rs` | test | s | — | — | Row GPU-WORKER-BACKEND-HOUSEKEEPING-UNCALLED (pass 33 row R4, 8.5): the GPU job worker's pass gives every… |
 | `tests/gpu_pod_hours.rs` | test | m | — | — | A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset or in its IANA zone… |
 | `tests/gpu_slots.rs` | test | XL | — | — | GPU inventory, live slots and selection (machines map, section 9 row 2; Engine 24 Nov 21:24: a device lease… |
 | `tests/graduation_demote_holder_door.rs` | test | m | — | — | A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING… |
@@ -2587,9 +2596,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/live_lease_pending_spend.rs` | test | s | — | — | [RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]: a host's live lease stages each settled call's spend on its scope… |
 | `tests/live_run_payer_erased.rs` | test | s | — | — | [LIVE-RUN-PAYER-REQUIRED] (the Engine's ruling of 12 Nov 22:44, OF-531): a live run's model doors read its… |
 | `tests/machine_capacity.rs` | test | s | — | — | UNBUILT-14 PR 3a (CROSS-ARCH-0024 #my-network 01 and 05): this install measures its machine (cores, memory… |
+| `tests/machine_execution_get.rs` | test | L | — | — | `vault.machines.execution.get` (pass 33 door 11, `33-exec-node/DESIGN.md` section 6): who may read it, which… |
 | `tests/machine_history_page_controls.rs` | test | L | — | — | A machine-history page judges every history control (L5-02 PR 5, RULING SECREAD-HOME-MACHINE-HISTORY = A)… |
 | `tests/machine_name_doors.rs` | test | m | — | — | The owner's machine list and his name for each machine at their served doors (FIX [DEVICE-DISPLAY-NAME])… |
 | `tests/machine_reported_name_settings.rs` | test | s | — | — | The settings file's machine-reported name and model reach the vault config |
+| `tests/machine_status.rs` | test | s | — | — | `vault.machines.status`'s node half (design pass 34 section 5 and row Q2): the issuer asks each of the… |
 | `tests/mail_reply_approve_mailbox_person_door.rs` | test | m | — | — | `vault.mail.reply.approve` at the served door (FIX 18868): a mailbox's own person approves a drafted reply… |
 | `tests/managed_mode.rs` | test | XL | — | — | — |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
@@ -2622,6 +2633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/native_budget_binding.rs` | test | s | — | — | L9-19 (ARCH-0036 #system-one-codec): the System One binding's `native_budget` row is the codec row that says… |
 | `tests/node_job_gpu_slots.rs` | test | m | — | — | FIX row [GPU-SLOTS-NODE-LEASE-INTEGRATION-TEST], the node's half: the node's job journal (pass 33 row R3a)… |
 | `tests/node_job_journal.rs` | test | L | — | — | Pass 33 row R3a (`33-exec-node/DESIGN.md` sections 7.2-7.7, tests T13-T16c): the node's job journal, the… |
+| `tests/node_job_sessions.rs` | test | m | — | — | Pass 34 row W1 (`34-compute-general/DESIGN.md` 2.5 and section 10): a session's run continues through paid… |
 | `tests/node_job_staging.rs` | test | L | — | — | Pass 33 row R3c (`33-exec-node/DESIGN.md` section 7.4, tests T24 and T25): staging |
 | `tests/node_job_status.rs` | test | L | — | — | Pass 33 row R4, the node's half (`33-exec-node/DESIGN.md` 7.1, 7.6 step 5, 7.9; tests T27-T33d): the node… |
 | `tests/node_job_tail.rs` | test | m | — | — | Pass 34 row Q3, the node's half (`34-compute-general/DESIGN.md` 7.2 and section 10): `Tail` on… |
@@ -2733,7 +2745,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/support/eval_authoring_fixture.rs` | test | m | 22 crate-vis | — | Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real… |
 | `tests/support/execution_nodes.rs` | test | s | 9 crate-vis | — | The `[execution_node]` files of the owner's machines in a test (pass 33 row R1): each machine's server reads… |
 | `tests/support/fake_llm.rs` | test | m | 12 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
-| `tests/support/mesh_machines.rs` | test | m | 36 crate-vis | — | The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of… |
+| `tests/support/mesh_machines.rs` | test | m | 39 crate-vis | — | The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of… |
 | `tests/support/owner_only_file.rs` | test | s | 1 crate-vis | — | A test's config file, or a file its config names, written with the mode the server admits whatever the… |
 | `tests/support/owner_skip_hook.rs` | test | s | 1 crate-vis | — | The owner's pre hook that skips every call of the verbs it names, for the served tests that show a door… |
 | `tests/support/question_head_fixture.rs` | test | m | 11 crate-vis | — | The fixture of `tests/question_head_host.rs` (FIX 23586, 23587): a vault holding a scored question run whose… |
@@ -2747,6 +2759,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/timeline_shell_projection_recheck.rs` | test | m | — | — | [TIMELINE-SHELL-TWO-SNAPSHOT-CAP]: the core memory timeline route (`GET /v1/core/memory/{id}/timeline`)… |
 | `tests/token_agent_file_keystore.rs` | test | m | — | — | `[keystore] backend = "file"` (MACOS-UNSIGNED-FILE-KEYSTORE): the owner's explicit file tier lets a build… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
+| `tests/token_bootstrap_redeem.rs` | test | s | — | — | `oneiron token bootstrap --redeem` (R6 B7; Engine ANSWER R6-OWNER-CREDENTIAL = A, 25 Nov 23:35) |
 | `tests/turn_program_resume_doors.rs` | test | m | — | — | Public facade doors for resuming paused turn programs on a copy beside its source |
 | `tests/unauthenticated_embedder_peer.rs` | test | s | — | — | An app made by `build_app` keeps the unauthenticated development hatch on this device, however its embedder… |
 | `tests/usage_events_body_scope.rs` | test | s | — | — | USAGE-EVENTS-BODY-SCOPE-UNCHECKED: `POST /v1/usage/events` on a server whose meter is bound to one vault… |
@@ -2769,6 +2782,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_hooks_doors.rs` | test | m | — | — | Vault hook doors over HTTP: replay is a dry run, an undeclared outcome is refused, cancel keeps the body |
 | `tests/vault_identity_doors.rs` | test | L | — | — | The `vault.identity` doors (ARCH-0055's identity topology… |
 | `tests/vault_key_generation_route.rs` | test | m | — | — | The owner's surfaces for a new data-key generation: the preview names every wrap the act would remove, the… |
+| `tests/vault_logs_tail.rs` | test | m | — | — | `vault.jobs.logs.tail` on the issuer (pass 34, 7.2 and 14.2; row Q3; Q3-2-WAIT = C): an attempt's log is… |
 | `tests/vault_machine_connector.rs` | test | L | — | — | DESIGN 33 tests T34–T36f for the vault machine connector (except T36c) |
 | `tests/vault_machine_registration.rs` | test | s | — | — | R6 runbook B2: server start registers the `vault_machine` backend only where pass 33 (8.1 and 8.7) lets it… |
 | `tests/vault_machine_status.rs` | test | L | — | — | DESIGN 33 tests T26-T33c, the issuer's halves (row R4): the four status fields of a job on one of the… |

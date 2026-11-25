@@ -311,6 +311,7 @@ impl VaultMachineConnector {
             starter: wire_starter(starter),
             hold: hold_of(key),
             authority_heads: self.vault().authority_main_log_heads().map_err(store)?,
+            continues: None,
         };
         let signed = SignedJobSubmit::sign(submit, self.parts.signer.as_ref())
             .map_err(|error| refused(format!("issuer_cannot_sign: {error}")))?;

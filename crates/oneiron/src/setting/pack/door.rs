@@ -116,11 +116,20 @@ fn weigh_in_txn(
             }
             _ => {}
         }
-        // A move on the layer: judged against what its readers read before and after it.
-        let others: Vec<(String, EncodedValue)> = layer_rows_in_txn(&vault.store, txn, spec)?
+        // A move on the layer: judged against what its readers read before and after it. A
+        // default the door writes itself names no actor, so it is no yes's row; one it proposes
+        // lands by the owner's yes, whose row is then the newest (RULING L1-PACK-LAYER-READ = A).
+        let rows = layer_rows_in_txn(&vault.store, txn, spec)?;
+        let before_yes = newest_yes_pack(&rows);
+        let other_rows: Vec<LayerRow> = rows.into_iter().filter(|(at, _, _)| at != pack).collect();
+        let after_yes = if in_layer {
+            newest_yes_pack(&other_rows)
+        } else {
+            Some(pack.to_owned())
+        };
+        let others: Vec<(String, EncodedValue)> = other_rows
             .into_iter()
-            .filter(|(at, _)| at != pack)
-            .filter_map(|(at, value)| value.map(|value| (at, value)))
+            .filter_map(|(at, value, _)| value.map(|value| (at, value)))
             .collect();
         let mut before_rows = others.clone();
         if let Some(row) = &prior {
@@ -128,11 +137,12 @@ fn weigh_in_txn(
         }
         let mut after_rows = others;
         after_rows.push((pack.to_owned(), value.clone()));
-        let before = match fold_layer(spec, &before_rows) {
+        let before = match fold_layer(spec, &before_rows, before_yes.as_deref()) {
             Some(before) => before,
             None => spec.kind.default_value()?,
         };
-        let after = fold_layer(spec, &after_rows).unwrap_or_else(|| value.clone());
+        let after =
+            fold_layer(spec, &after_rows, after_yes.as_deref()).unwrap_or_else(|| value.clone());
         let direction = layer_direction(spec, &after, &before);
         if !in_layer
             || !matches!(
@@ -479,7 +489,7 @@ fn append_yes_in_txn(
         return Ok(None);
     }
     // The bytes are read before the append, while the yeses it replaces are live.
-    let table = match shipped_table(pack, &digest)? {
+    let table = match shipped_table(vault, txn, pack, &digest)? {
         Some(table) => Some(table),
         None => {
             let acts = table_acts_in_txn(vault, txn, (pack, &digest), None)?;

@@ -73,6 +73,7 @@ pub mod log_writer;
 pub mod prepare;
 pub mod probe_unit;
 pub mod records;
+pub mod renew;
 pub mod safe_fs;
 pub mod step;
 pub mod systemd_unit;

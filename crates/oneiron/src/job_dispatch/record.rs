@@ -157,6 +157,15 @@ impl Vault {
         JOB_DISPATCHES.get(&self.store, &txn, &key.to_owned())
     }
 
+    /// [`Vault::job_dispatch`] in the caller's transaction.
+    pub(crate) fn job_dispatch_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &str,
+    ) -> crate::Result<Option<JobDispatch>> {
+        JOB_DISPATCHES.get(&self.store, txn, &key.to_owned())
+    }
+
     /// Writes `row` unless a dispatch row of its key exists, durably, and answers the row that
     /// stands: the first write of a key wins, so a second create under the key re-sends the
     /// bytes first signed.
