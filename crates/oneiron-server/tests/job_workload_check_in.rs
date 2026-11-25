@@ -192,8 +192,9 @@ impl Rack {
         self.agent_in(agent_id, ScopeAxis::All)
     }
 
-    /// An enabled agent the owner defines and gives one Grant naming the pin
-    /// verb, bounded to `worlds`.
+    /// An enabled agent the owner defines and gives one Grant naming `read`
+    /// and the pin verb, bounded to `worlds`: a Grant without `read` confers
+    /// nothing, so its agent has no standing to pin.
     fn agent_in(&self, agent_id: &str, worlds: ScopeAxis<ScopeId>) -> Agent {
         let actor = EntityId::now();
         create_agent_definition_as(
@@ -215,7 +216,7 @@ impl Rack {
         let mut authority_scope = Scope::top();
         authority_scope.worlds = worlds;
         authority_scope.verbs =
-            ScopeAxis::Some([PIN].iter().map(|verb| (*verb).to_owned()).collect());
+            ScopeAxis::Some(["read", PIN].into_iter().map(str::to_owned).collect());
         let minted = mint_agent_grant_as(
             self.vault(),
             &self.owner,
@@ -232,6 +233,7 @@ impl Rack {
             },
         )
         .expect("the owner mints the agent's Grant");
+        assert!(minted.grant.confers, "the agent's Grant confers");
         Agent {
             actor,
             grant: minted.grant.grant_ref,

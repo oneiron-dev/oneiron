@@ -13,6 +13,7 @@
 //! journal. [`GpuDeviceLease::finish`] records how the job ended; repeated
 //! failures can drain the machine until a person clears it.
 
+use oneiron::job_workload::{DeviceClaim, DeviceFacts};
 use oneiron::machine_capacity::GpuDevice;
 use serde::{Deserialize, Serialize};
 
@@ -25,12 +26,12 @@ pub struct GpuSlotRequest {
     /// This GPU only, by the driver's device id.
     #[serde(default)]
     pub device_id: Option<String>,
-    /// A GPU of this model only, as the driver names it.
-    #[serde(default)]
-    pub model: Option<String>,
-    /// The least GPU memory it needs, in MiB.
-    #[serde(default)]
-    pub min_memory_mib: u64,
+    /// The device the job claims (pass 34, 2.1): its kind, the features it
+    /// needs and its least memory, never a vendor or a model name. A key
+    /// leases one device here, so a count other than 1 is refused
+    /// ([`GpuSlotRefusal::ClaimCount`]). Each GPU takes one claimant, so a
+    /// shared claim takes its GPU alone, as an exclusive one does.
+    pub claim: DeviceClaim,
     /// The bytes the job will write on the machine's disk (its staged
     /// inputs and its outputs); the booking claims them past the disk's
     /// reserve.
@@ -39,17 +40,24 @@ pub struct GpuSlotRequest {
 }
 
 impl GpuSlotRequest {
-    /// Whether `device` is a GPU this request may take.
+    /// Whether `device` is one this request may take: its pinned device, if
+    /// it names one, and a device that meets its claim. The device's state
+    /// is not read.
     #[must_use]
-    pub fn admits(&self, device: &GpuDevice) -> bool {
-        self.device_id
-            .as_ref()
-            .is_none_or(|id| *id == device.device_id)
-            && self
-                .model
-                .as_ref()
-                .is_none_or(|model| *model == device.model)
-            && device.memory_total_mib >= self.min_memory_mib
+    pub fn admits(&self, device: &DeviceFacts) -> bool {
+        self.device_id.as_ref().is_none_or(|id| *id == device.id) && self.claim.is_met_by(device)
+    }
+
+    /// Refuses a claim a key cannot lease: one device per key.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuSlotRefusal::ClaimCount`] for a count other than 1.
+    pub fn check_count(&self) -> Result<(), GpuSlotRefusal> {
+        match self.claim.count {
+            1 => Ok(()),
+            count => Err(GpuSlotRefusal::ClaimCount { count }),
+        }
     }
 }
 
@@ -97,6 +105,8 @@ pub enum GpuSlotRefusal {
     NoMatch,
     #[error("gpu_slots.none_free: no GPU of this machine that meets the request is free")]
     NoneFree,
+    #[error("gpu_slots.claim_count: a key leases one device here, and the claim asks for {count}")]
+    ClaimCount { count: u32 },
     #[error("gpu_slots.not_held: no GPU is taken under this key")]
     NotHeld,
     #[error(
