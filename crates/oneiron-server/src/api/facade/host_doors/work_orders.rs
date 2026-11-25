@@ -14,10 +14,11 @@ use std::sync::Arc;
 use oneiron::memory::{MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE, MemoryResult};
 use oneiron::work_order::{
     Blocker, Clearing, GiveUpWhy, MACHINES_PLACE_VERB, MachinesPlaceRequest, MachinesPlaceView,
-    ORDER_VERB, ORDERS_CANCEL_VERB, ORDERS_GET_VERB, ORDERS_LIST_VERB, OrderCharge, OrderState,
-    WorkOrderList, WorkOrderListRequest, WorkOrderRef, WorkOrderRequest, WorkOrderView,
-    allowed_machines, machines_place_as, order_refusal, order_work_as, work_order_cancel_as,
-    work_order_get_as, work_order_list_as,
+    ORDER_VERB, ORDERS_CANCEL_VERB, ORDERS_GET_VERB, ORDERS_LIST_VERB, ORDERS_WAIT_VERB,
+    OrderCharge, OrderState, WorkOrderList, WorkOrderListRequest, WorkOrderRef, WorkOrderRequest,
+    WorkOrderView, WorkOrderWaitAnswer, WorkOrderWaitRequest, allowed_machines, machines_place_as,
+    order_refusal, order_work_as, ordered_view_as, work_order_cancel_as, work_order_get_as,
+    work_order_list_as, work_order_wait_as,
 };
 
 use super::support::Listed;
@@ -73,19 +74,15 @@ pub(crate) async fn vault_jobs_order(
             return Ok(view);
         }
         locked_order_pass(&shared, now)?;
-        let order = server
-            .vault
-            .work_order(&view.order.id)?
-            .unwrap_or(view.order);
-        if let OrderState::GivenUp { why } = &order.state
+        // Read again as the caller reads it: the pass's RANK decision may name other callers'
+        // orders, which an agent does not see.
+        let view = ordered_view_as(memory, owner, &view.order.id)?.unwrap_or(view);
+        if let OrderState::GivenUp { why } = &view.order.state
             && let Some(refusal) = refusal_of_end(why)
         {
             return Err(refusal);
         }
-        Ok(WorkOrderView {
-            order,
-            replayed: false,
-        })
+        Ok(view)
     })
     .await
 }
@@ -98,6 +95,20 @@ pub(crate) async fn vault_jobs_orders_get(
 ) -> Listed<WorkOrderView> {
     verb_grant_door(server, auth, ORDERS_GET_VERB, move |_, memory, owner| {
         work_order_get_as(memory, owner, &input)
+    })
+    .await
+}
+
+/// `vault.jobs.orders.wait`, answered at once: a caller outside code mode cannot be parked, so
+/// `reached` says whether the order has reached `until`, and the caller asks again. A code-mode
+/// run parks on the order's wait instead (`oneiron::code_run`, the run form of the same row).
+pub(crate) async fn vault_jobs_orders_wait(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkOrderWaitRequest,
+) -> Listed<WorkOrderWaitAnswer> {
+    verb_grant_door(server, auth, ORDERS_WAIT_VERB, move |_, memory, owner| {
+        work_order_wait_as(memory, owner, &input)
     })
     .await
 }

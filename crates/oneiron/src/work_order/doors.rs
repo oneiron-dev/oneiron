@@ -83,18 +83,33 @@ fn ordered_by(memory: &Memory<'_>, caller: VerbGrantCaller) -> OrderedBy {
 /// `order` as `caller` reads it. An attempt's RANK decision lists the orders that were
 /// runnable in its pass, which may be other callers' orders: an agent sees only its own order's
 /// id among the options, and the owner sees the whole decision.
-fn order_seen_by(caller: VerbGrantCaller, mut order: WorkOrder) -> WorkOrder {
-    if matches!(caller, VerbGrantCaller::Agent { .. }) {
-        let own = order.id.to_hex();
-        for attempt in &mut order.attempts {
-            attempt.ranked.options.retain(|option| *option == own);
-        }
+pub(super) fn order_seen_by(caller: VerbGrantCaller, order: WorkOrder) -> WorkOrder {
+    match caller {
+        VerbGrantCaller::Owner => order,
+        VerbGrantCaller::Agent { .. } => only_own_rank_option(order),
+    }
+}
+
+/// `order` as its requester reads it: what a settled `vault.jobs.orders.wait` freezes for the
+/// runs parked on it (the owner reads the same answer).
+pub(super) fn seen_by_requester(order: WorkOrder) -> WorkOrder {
+    match order.ordered_by {
+        OrderedBy::Owner { .. } => order,
+        OrderedBy::Agent { .. } => only_own_rank_option(order),
+    }
+}
+
+/// `order` with only its own id among each attempt's RANK options.
+fn only_own_rank_option(mut order: WorkOrder) -> WorkOrder {
+    let own = order.id.to_hex();
+    for attempt in &mut order.attempts {
+        attempt.ranked.options.retain(|option| *option == own);
     }
     order
 }
 
 /// Whether `caller` may read or cancel `order`: the owner any, an agent one it made.
-fn reaches(caller: VerbGrantCaller, order: &WorkOrder) -> bool {
+pub(super) fn reaches(caller: VerbGrantCaller, order: &WorkOrder) -> bool {
     match caller {
         VerbGrantCaller::Owner => true,
         VerbGrantCaller::Agent { actor, .. } => order.ordered_by.actor() == Some(actor),
@@ -177,10 +192,9 @@ pub fn order_work_as(
                     });
                 if let Some(order) = earlier {
                     if same_request(&order, input, &by) {
-                        return Ok(Ok(WorkOrderView {
-                            order: order_seen_by(caller, order),
-                            replayed: true,
-                        }));
+                        let view =
+                            vault.order_view_in_txn(txn, order_seen_by(caller, order), true)?;
+                        return Ok(Ok(view));
                     }
                     return Ok(Err(MemoryError::new(
                         MEMORY_CODE_INVALID_STATE,
@@ -242,9 +256,36 @@ pub fn order_work_as(
             Ok(Ok(WorkOrderView {
                 order,
                 replayed: false,
+                receipt: None,
             }))
         })
         .map_err(MemoryError::from)?
+}
+
+/// The answer of `vault.jobs.order` once the server's pass ran over the new order: `order`
+/// read again and seen as `memory`'s caller, who made it, reads it. An agent sees only its own
+/// order's id in the RANK decision of the attempt the pass made, as every read answers it.
+/// `None` when the order is gone.
+///
+/// # Errors
+///
+/// `forbidden` for a caller the verb does not admit.
+pub fn ordered_view_as(
+    memory: &Memory<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    order: &EntityId,
+) -> MemoryResult<Option<WorkOrderView>> {
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let caller = memory.verb_grant_caller_admits_in_txn(&txn, owner, ORDER_VERB)?;
+    match WORK_ORDERS.get(&vault.store, &txn, order)? {
+        Some(order) if reaches(caller, &order) => Ok(Some(vault.order_view_in_txn(
+            &txn,
+            order_seen_by(caller, order),
+            false,
+        )?)),
+        _ => Ok(None),
+    }
 }
 
 /// `vault.jobs.orders.get`: one order, as `memory`'s caller may read it.
@@ -262,10 +303,9 @@ pub fn work_order_get_as(
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let caller = memory.verb_grant_caller_admits_in_txn(&txn, owner, ORDERS_GET_VERB)?;
     match WORK_ORDERS.get(&vault.store, &txn, &input.order)? {
-        Some(order) if reaches(caller, &order) => Ok(WorkOrderView {
-            order: order_seen_by(caller, order),
-            replayed: false,
-        }),
+        Some(order) if reaches(caller, &order) => {
+            Ok(vault.order_view_in_txn(&txn, order_seen_by(caller, order), false)?)
+        }
         _ => Err(MemoryError::new(
             MEMORY_CODE_NOT_FOUND,
             "no such work order",
@@ -355,10 +395,11 @@ pub fn work_order_cancel_as(
                     )));
                 }
             };
-            Ok(Ok(WorkOrderView {
-                order: order_seen_by(caller, order),
-                replayed: false,
-            }))
+            Ok(Ok(vault.order_view_in_txn(
+                txn,
+                order_seen_by(caller, order),
+                false,
+            )?))
         })
         .map_err(MemoryError::from)?
 }

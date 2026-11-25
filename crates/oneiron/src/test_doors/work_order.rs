@@ -66,3 +66,24 @@ pub fn put_order(vault: &Vault, order: &WorkOrder) {
         .with_write_txn_grouped(|txn| WORK_ORDERS.put(&vault.store, txn, &order.id, order))
         .expect("the order writes");
 }
+
+/// The settled reply of the wait on `order` until `until`: what the order's writer delivered to
+/// every run parked on it, and what a run that parks later is answered at once. `None` while
+/// the order has not reached `until`.
+///
+/// # Panics
+///
+/// When the store read fails, the wait id is reserved, or the settled reply is erased or is
+/// not JSON: a broken fixture.
+#[must_use]
+pub fn settled_order_wait(
+    vault: &Vault,
+    order: &EntityId,
+    until: crate::work_order::WaitUntil,
+) -> Option<serde_json::Value> {
+    let wait = crate::work_order::order_wait_id(order, until).expect("order wait id");
+    let txn = vault.store.env.read_txn().expect("read txn");
+    crate::code_run::settled_wait_reply_in_txn(vault, &txn, wait)
+        .expect("settled wait read")
+        .map(|reply| serde_json::from_str(&reply).expect("settled reply is JSON"))
+}

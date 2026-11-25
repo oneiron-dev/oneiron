@@ -208,8 +208,10 @@ impl Vault {
         WORK_ORDERS.get(&self.store, &self.store.env.read_txn()?, id)
     }
 
-    /// Writes `order` if its stored row is still at `order.revision`, bumping it. Returns
-    /// false, writing nothing, when another write came first.
+    /// Writes `order` if its stored row is still at `order.revision`, bumping it, and settles
+    /// in the same write each `vault.jobs.orders.wait` the write reaches. Every change of an
+    /// order's state and attempts comes through here. Returns false, writing nothing, when
+    /// another write came first.
     pub(super) fn put_work_order_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -223,6 +225,7 @@ impl Vault {
         order.revision += 1;
         order.updated_at_ms = now_ms;
         WORK_ORDERS.put(&self.store, txn, &order.id, order)?;
+        self.settle_order_waits_in_txn(txn, stored.as_ref(), order, now_ms)?;
         Ok(true)
     }
 
@@ -239,14 +242,17 @@ impl Vault {
         self.with_write_txn_grouped(|txn| self.put_work_order_in_txn(txn, &mut next, now_ms))
     }
 
-    /// How the job of `attempt` stands.
+    /// How the job of `attempt` stands, and whether the machine's word says its workload
+    /// started: a node's receipt for a node's job; for an offer's job, which has no dispatch
+    /// row, its provider's clock (run time reported, or an end by exit or at the maximum). A
+    /// resource the provider holds `Pending` has not started.
     fn attempt_standing(
         &self,
         order: &WorkOrder,
         attempt: &OrderAttempt,
-    ) -> crate::Result<AttemptStanding> {
+    ) -> crate::Result<(AttemptStanding, bool)> {
         let Some(job) = self.gpu_job(&attempt.job)? else {
-            return Ok(AttemptStanding::Unconfirmed);
+            return Ok((AttemptStanding::Unconfirmed, false));
         };
         let key = job.chunk().map(|chunk| chunk.idempotency_key.clone());
         let dispatch = match &key {
@@ -257,10 +263,25 @@ impl Vault {
             .as_ref()
             .is_some_and(|row| matches!(row.closed, Some(DispatchClose::StartWindowPassed)));
         let cancelled = order.cancel.is_some();
-        let terminal = match &key {
-            Some(key) => self.job_observation(key)?.and_then(|row| row.terminal),
+        let observation = match &key {
+            Some(key) => self.job_observation(key)?,
             None => None,
         };
+        let started = match &dispatch {
+            Some(_) => observation.as_ref().is_some_and(|row| row.started),
+            None => {
+                job.chunk()
+                    .is_some_and(|chunk| chunk.used_secs > 0 || chunk.base_used_secs > 0)
+                    || matches!(
+                        job.state,
+                        GpuJobState::Stopped
+                            | GpuJobState::Ended {
+                                reason: GpuEndReason::Exited | GpuEndReason::AtMaximum
+                            }
+                    )
+            }
+        };
+        let terminal = observation.and_then(|row| row.terminal);
         let standing = match job.state {
             GpuJobState::Held { .. } => AttemptStanding::Ended(EndKind::NeverStarted),
             GpuJobState::Ended { reason } => AttemptStanding::Ended(match &terminal {
@@ -283,14 +304,17 @@ impl Vault {
                 }
             }
         };
-        Ok(standing)
+        Ok((standing, started))
     }
 
-    /// Settles the end `end` of `order`'s last attempt through the AFTER rule.
+    /// Settles the end `end` of `order`'s last attempt through the AFTER rule; `started` is
+    /// the machine's word that the attempt's workload ran, for an attempt that ended before a
+    /// pass saw it run.
     fn settle_attempt_end(
         &self,
         order: &WorkOrder,
         end: EndKind,
+        started: bool,
         now_ms: u64,
     ) -> crate::Result<bool> {
         let policy = {
@@ -300,6 +324,9 @@ impl Vault {
         let (pick, decision) = after_rule(order, end, &policy, now_ms);
         self.update_work_order(order, now_ms, |order| {
             if let Some(last) = order.attempts.last_mut() {
+                if started {
+                    last.started_at_ms.get_or_insert(now_ms);
+                }
                 last.end = Some(AttemptEnd {
                     kind: end,
                     at_ms: now_ms,
@@ -487,8 +514,22 @@ impl Vault {
             let Some(attempt) = order.last_attempt().filter(|last| last.end.is_none()) else {
                 continue;
             };
-            match self.attempt_standing(&order, attempt)? {
+            let (standing, started) = self.attempt_standing(&order, attempt)?;
+            match standing {
                 AttemptStanding::Live => {
+                    // The first pass that sees the machine's word records the start, which
+                    // settles a started wait in the same write. A lost write is read again at
+                    // the next pass.
+                    if started
+                        && attempt.started_at_ms.is_none()
+                        && !self.update_work_order(&order, now_ms, |order| {
+                            if let Some(last) = order.attempts.last_mut() {
+                                last.started_at_ms.get_or_insert(now_ms);
+                            }
+                        })?
+                    {
+                        continue;
+                    }
                     if order.cancel.is_some()
                         && let Err(error) = host.stop_attempt(&order, &attempt.job)
                     {
@@ -517,7 +558,7 @@ impl Vault {
                     }
                 }
                 AttemptStanding::Ended(end) => {
-                    if self.settle_attempt_end(&order, end, now_ms)? {
+                    if self.settle_attempt_end(&order, end, started, now_ms)? {
                         report.ended.push((order.id, end));
                     }
                 }

@@ -68,6 +68,59 @@ pub struct WorkOrderView {
     /// The request repeated an earlier one under the same intent key.
     #[serde(default)]
     pub replayed: bool,
+    /// The newest signed receipt of the last attempt, once a node sent one (14.2: "the last
+    /// one carries its signed receipt"). `None` with no attempt, before the node's first
+    /// receipt, and for an offer's job, whose provider signs none.
+    #[serde(default)]
+    pub receipt: Option<AttemptReceipt>,
+}
+
+/// A node's signed receipt of one attempt, as the issuer holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttemptReceipt {
+    /// The attempt it is of (1-based).
+    pub attempt: u16,
+    /// The attempt's dispatch key.
+    pub key: String,
+    /// The node.
+    pub machine: EntityId,
+    /// The signed receipt in the job protocol's codec, base64 (standard alphabet, padded).
+    pub signed: String,
+    /// The issuer's wall clock when it arrived.
+    pub observed_at_ms: u64,
+}
+
+/// What `vault.jobs.orders.wait` waits for.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitUntil {
+    /// The first attempt whose workload the machine started, or a terminal state with no
+    /// start; the view's state tells which.
+    Started,
+    /// The terminal state.
+    #[default]
+    Terminal,
+}
+
+/// `vault.jobs.orders.wait`: wait on one order until `until`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkOrderWaitRequest {
+    pub order: EntityId,
+    #[serde(default)]
+    pub until: WaitUntil,
+}
+
+/// The answer of `vault.jobs.orders.wait`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkOrderWaitAnswer {
+    pub view: WorkOrderView,
+    /// Whether the order has reached `until`. A code-mode run parks until it has, so it always
+    /// reads true there. A caller that cannot park (MCP, HTTP) is answered at once and reads
+    /// false while the order has not, and asks again.
+    pub reached: bool,
 }
 
 /// The orders a caller may read, newest first.

@@ -25,12 +25,12 @@ use oneiron::llm::run_admission::{
     BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferRoute, PaidConnector, Payer,
     RunAdmission, RunDeclaration,
 };
-use oneiron::test_doors::work_order::{put_approved_workload, put_order};
+use oneiron::test_doors::work_order::{put_approved_workload, put_order, settled_order_wait};
 use oneiron::work_order::{
     AfterPick, AttemptOutcome, AttemptRefused, AttemptToMake, Blocker, CancelWhy, DeviceFact,
     EndKind, GiveUpWhy, MachineFacts, MachineReach, OrderCharge, OrderClass, OrderHost,
     OrderLimits, OrderState, OrderWishes, OrderedBy, RetryPolicy, Room, TemplateFact, WaitRule,
-    WindowFact, WorkOrder, after_rule, attempt_job_id, fit, place,
+    WaitUntil, WindowFact, WorkOrder, WorkOrderWaitAnswer, after_rule, attempt_job_id, fit, place,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -1084,4 +1084,121 @@ fn a_cancel_of_an_order_whose_attempt_is_unconfirmed_waits_for_that_attempts_end
         ended.attempts[0].end.as_ref().map(|end| end.kind),
         Some(EndKind::WrittenOff)
     );
+}
+
+/// The answer the order's writer settled the wait on `order` until `until` with: what every
+/// run parked on it is delivered, and what a run that parks later is answered at once.
+fn settled(rig: &Rig, order: &WorkOrder, until: WaitUntil) -> Option<WorkOrderWaitAnswer> {
+    settled_order_wait(&rig.vault, &order.id, until)
+        .map(|reply| serde_json::from_value(reply).expect("a wait answer"))
+}
+
+#[test]
+fn a_started_wait_answers_at_the_first_started_attempt_or_at_an_end_with_no_start() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    let job = rig.stored(&order).attempts[0].job;
+    // The attempt is made and its resource exists, but the provider holds it pending: its
+    // clock has not started, so neither has the attempt.
+    rig.vault.work_order_pass(&host, NOW + 1_000).expect("pass");
+    assert_eq!(rig.stored(&order).attempts[0].started_at_ms, None);
+    assert!(settled(&rig, &order, WaitUntil::Started).is_none());
+    rig.gpu.state().status = Some(GpuResourceStatus::Running {
+        used_secs: 3,
+        checkpoint: None,
+    });
+    host.step(&job, NOW + 2_000);
+    rig.vault.work_order_pass(&host, NOW + 3_000).expect("pass");
+    let started = settled(&rig, &order, WaitUntil::Started).expect("the started wait settled");
+    assert!(started.reached);
+    assert_eq!(
+        started.view.order.attempts[0].started_at_ms,
+        Some(NOW + 3_000)
+    );
+    assert!(matches!(
+        started.view.order.state,
+        OrderState::Running { attempt: 1 }
+    ));
+    assert!(settled(&rig, &order, WaitUntil::Terminal).is_none());
+    // An order cancelled while open, before any attempt, reaches both at its end: the view's
+    // state says it ended, with no attempt.
+    let never = rig.order(&digest, 0, WaitRule::Open);
+    rig.vault
+        .cancel_work_order(&never.id, Some(rig.owner_actor), NOW + 4_000)
+        .expect("cancel write")
+        .expect("cancel");
+    let ended =
+        settled(&rig, &never, WaitUntil::Started).expect("the started wait settled at the end");
+    assert!(ended.view.order.attempts.is_empty());
+    assert!(matches!(
+        ended.view.order.state,
+        OrderState::Cancelled { .. }
+    ));
+    assert_eq!(settled(&rig, &never, WaitUntil::Terminal), Some(ended));
+}
+
+#[test]
+fn a_terminal_wait_settles_in_the_write_that_ends_the_order_with_its_view() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    let job = rig.stored(&order).attempts[0].job;
+    assert!(settled(&rig, &order, WaitUntil::Terminal).is_none());
+    // The job ends before any pass saw it run: its end is the provider's word that it ran.
+    rig.gpu.state().status = Some(GpuResourceStatus::Exited { used_secs: 7 });
+    host.step(&job, NOW + 1_000);
+    rig.vault.work_order_pass(&host, NOW + 2_000).expect("pass");
+    let done = rig.stored(&order);
+    assert_eq!(done.state, OrderState::Done);
+    let answer = settled(&rig, &order, WaitUntil::Terminal).expect("the terminal wait settled");
+    assert!(answer.reached);
+    assert_eq!(answer.view.order, done);
+    assert_eq!(
+        answer.view.order.attempts[0].started_at_ms,
+        Some(NOW + 2_000)
+    );
+    // An offer's provider signs no receipt.
+    assert_eq!(answer.view.receipt, None);
+    // The started wait settled in the same write, with the same answer.
+    assert_eq!(settled(&rig, &order, WaitUntil::Started), Some(answer));
+}
+
+#[test]
+fn a_pending_cancel_does_not_end_the_wait_until_the_attempt_ends() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    let job = rig.stored(&order).attempts[0].job;
+    rig.vault
+        .cancel_work_order(&order.id, Some(rig.owner_actor), NOW + 1_000)
+        .expect("cancel write")
+        .expect("cancel");
+    let cancelling = rig.stored(&order);
+    assert!(cancelling.cancel.is_some());
+    assert!(!cancelling.state.is_terminal());
+    assert!(settled(&rig, &order, WaitUntil::Terminal).is_none());
+    // The owner writes the attempt off: the order ends cancelled, and the wait settles then.
+    let wrote = rig
+        .vault
+        .with_write_txn_grouped(|txn| {
+            rig.vault
+                .order_attempt_written_off_in_txn(txn, &job, NOW + 2_000)
+        })
+        .expect("write-off");
+    assert!(wrote);
+    let answer = settled(&rig, &order, WaitUntil::Terminal).expect("settled at the end");
+    assert!(matches!(
+        answer.view.order.state,
+        OrderState::Cancelled { .. }
+    ));
 }
