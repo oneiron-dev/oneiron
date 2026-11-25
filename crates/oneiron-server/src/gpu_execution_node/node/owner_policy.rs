@@ -23,9 +23,10 @@ impl ExecutionNode {
         &self,
         settings: &ExecutionNodeSettings,
     ) -> Result<Option<MachinePolicy>, String> {
-        let devices: Vec<String> = self.shared.slots.offer().offered.iter().cloned().collect();
-        machine_policy::owner_policy(&self.shared.vault, self.own_machine(), settings, &devices)
-            .map_err(|why| format!("owner_policy_unreadable: {why}"))
+        // RED PIN (row P0 proof): the node reads no owner row and obeys its box file alone, as
+        // before P0.
+        let _ = settings;
+        Ok(None)
     }
 
     /// The owner's policy beside the file `settings` as a snapshot reads it, and why it takes no
