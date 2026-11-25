@@ -675,9 +675,7 @@ fn a_rung_holds_one_forecast() {
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "contract_changed");
     let mut above = forecast_ask("above", &other, 1_001);
     above.contract_sha256 = other.contract.sha256.clone();
-    let refused = fixture
-        .forecast(None, &above)
-        .expect_err("above certain");
+    let refused = fixture.forecast(None, &above).expect_err("above certain");
     assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
     let mut unopened = forecast_ask("rung-2", &other, 400);
     unopened.rung = 2;
