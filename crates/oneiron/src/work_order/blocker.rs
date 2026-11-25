@@ -24,6 +24,10 @@ pub enum Blocker {
     GrantNotLive,
     WorkloadUnknown,
     WorkloadNotApproved,
+    /// The workload's check-in waits for the owner's answer.
+    WorkloadWaiting,
+    /// No live `compute.pin` Grant covers the workload on this machine.
+    ComputeGrantEnded,
     WorkloadRevoked,
     WorkloadExpired,
     StarterNotNamed,
@@ -55,6 +59,10 @@ pub enum Blocker {
         why: String,
     },
     Drained {
+        why: String,
+    },
+    /// The machine could not read its GPUs now, with why.
+    DevicesUnreadable {
         why: String,
     },
     OutsideWindow {
@@ -170,6 +178,8 @@ impl Blocker {
             Self::GrantNotLive => "grant_not_live",
             Self::WorkloadUnknown => "workload_unknown",
             Self::WorkloadNotApproved => "workload_not_approved",
+            Self::WorkloadWaiting => "workload_waiting",
+            Self::ComputeGrantEnded => "compute_grant_ended",
             Self::WorkloadRevoked => "workload_revoked",
             Self::WorkloadExpired => "workload_expired",
             Self::StarterNotNamed => "starter_not_named",
@@ -183,6 +193,7 @@ impl Blocker {
             Self::NotEnabled => "not_enabled",
             Self::Paused { .. } => "paused",
             Self::Drained { .. } => "drained",
+            Self::DevicesUnreadable { .. } => "devices_unreadable",
             Self::OutsideWindow { .. } => "outside_window",
             Self::ResumableOnly => "resumable_only",
             Self::PeerNotProven => "peer_not_proven",
@@ -224,6 +235,8 @@ impl Blocker {
             Self::GrantNotLive
             | Self::WorkloadUnknown
             | Self::WorkloadNotApproved
+            | Self::WorkloadWaiting
+            | Self::ComputeGrantEnded
             | Self::WorkloadRevoked
             | Self::WorkloadExpired
             | Self::StarterNotNamed
@@ -237,6 +250,7 @@ impl Blocker {
             | Self::NotEnabled
             | Self::Paused { .. }
             | Self::Drained { .. }
+            | Self::DevicesUnreadable { .. }
             | Self::OutsideWindow { .. }
             | Self::ResumableOnly
             | Self::PeerNotProven
@@ -304,6 +318,7 @@ impl Blocker {
             "not_enabled" => Self::NotEnabled,
             "paused" => Self::Paused { why },
             "drained" => Self::Drained { why },
+            "devices_unreadable" => Self::DevicesUnreadable { why },
             "peer_not_proven" => Self::PeerNotProven,
             "not_issuer" => Self::NotIssuer,
             "own_grant_ended" => Self::OwnGrantEnded,
@@ -335,6 +350,8 @@ impl From<&WorkloadStartRefusal> for Blocker {
             WorkloadStartRefusal::MachineMissing => Self::MachineMissing,
             WorkloadStartRefusal::WorkloadUnknown => Self::WorkloadUnknown,
             WorkloadStartRefusal::WorkloadNotApproved => Self::WorkloadNotApproved,
+            WorkloadStartRefusal::WorkloadWaiting => Self::WorkloadWaiting,
+            WorkloadStartRefusal::ComputeGrantEnded => Self::ComputeGrantEnded,
             WorkloadStartRefusal::WorkloadRevoked => Self::WorkloadRevoked,
             WorkloadStartRefusal::WorkloadExpired => Self::WorkloadExpired,
             WorkloadStartRefusal::StarterNotNamed => Self::StarterNotNamed,

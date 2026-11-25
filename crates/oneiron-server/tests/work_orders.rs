@@ -110,6 +110,9 @@ fn the_node_the_gate_and_the_order_name_a_refusal_with_one_code() {
         JobRefusal::KeyConflict,
         JobRefusal::NotTheKeysIssuer,
         JobRefusal::SubmitSignatureInvalid,
+        JobRefusal::DevicesUnreadable {
+            why: "nvml".to_owned(),
+        },
     ];
     for refusal in &node_refusals {
         assert_eq!(
@@ -124,6 +127,8 @@ fn the_node_the_gate_and_the_order_name_a_refusal_with_one_code() {
         WorkloadStartRefusal::MachineMissing,
         WorkloadStartRefusal::WorkloadUnknown,
         WorkloadStartRefusal::WorkloadNotApproved,
+        WorkloadStartRefusal::WorkloadWaiting,
+        WorkloadStartRefusal::ComputeGrantEnded,
         WorkloadStartRefusal::WorkloadRevoked,
         WorkloadStartRefusal::WorkloadExpired,
         WorkloadStartRefusal::StarterNotNamed,
