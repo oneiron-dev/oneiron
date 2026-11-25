@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::super::wire::{ScopeClass, ScopeFacts};
+use super::job_ids::JobIdentity;
 pub use oneiron::job_workload::{
     BoundReport, BoundRequirement, BoundStrength, ScopeBound, ScopeCapabilities,
 };
@@ -73,7 +74,7 @@ pub fn first_unmet(
 }
 
 /// `job-exec`'s whole input, written by the prepare step (root) and readable
-/// by the job account only. It names the workload's program exactly: the
+/// by root and the job's own group only. It names the workload's program exactly: the
 /// template's interpreter, the entry inside the checkout, the pin's
 /// arguments, and nothing from the engine's environment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +82,13 @@ pub fn first_unmet(
 pub struct ExecFile {
     /// The job key.
     pub key: String,
+    /// The uid and gid the job runs as, from the node's range ([`super::job_ids`]):
+    /// `job-exec` takes them before anything the job controls runs.
+    pub identity: JobIdentity,
+    /// The job's one supplementary group: the node's job device group when
+    /// the launch leases a device, else none.
+    #[serde(default)]
+    pub device_gid: Option<u32>,
     /// The unit's instance: the key's 32 hex digits.
     pub instance: String,
     /// `execution-node check`'s probe: report every bound, then exit, and
@@ -143,7 +151,8 @@ pub struct PreparedRecord {
     pub refusal: Option<String>,
     pub boot_id: String,
     pub at_boot_ns: u64,
-    /// The job account the unit runs as.
+    /// The ids the unit runs as, `uid <n> gid <n>`; empty when the step
+    /// refused before it gave the job an id.
     pub account: String,
     /// The unit properties this step set on the unit, as `Name=value`.
     pub properties: Vec<String>,

@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use super::control::CONTROL_SOCKET_PATH;
 use super::{EXCHANGE_ROOT, PAYLOAD_ROOT};
 
-/// What a unit template is made from: the paths and accounts `install`
-/// resolved, and the node's settings that are unit properties.
+/// What a unit template is made from: the paths and the engine's account
+/// `install` resolved, and the node's settings that are unit properties.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitInputs {
     /// The `oneiron` binary the unit's steps run: absolute, root-owned.
@@ -22,8 +22,6 @@ pub struct UnitInputs {
     pub node_file: PathBuf,
     /// The account `oneiron serve` runs as.
     pub engine_account: String,
-    /// The account the job runs as.
-    pub job_account: String,
     pub state_dir: PathBuf,
     pub work_dir: PathBuf,
     /// Paths no job may open, besides `state_dir`: the vault's trees, the
@@ -45,8 +43,11 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     let mut properties: Vec<(String, String)> = Vec::new();
     let mut set = |name: &str, value: String| properties.push((name.to_owned(), value));
     set("Type", "exec".to_owned());
-    set("User", inputs.job_account.clone());
-    set("Group", inputs.job_account.clone());
+    // No User= and no Group=: `job-exec` starts as root holding only the two
+    // capabilities it needs to take the job's own uid and gid from
+    // `exec.json`, and the kernel clears both when it does (FIX
+    // EXEC-UNIT-CROSS-JOB-SAME-UID; `super::job_ids` says why the service
+    // manager cannot give each instance a uid).
     set("Restart", "no".to_owned());
     set("KillMode", "control-group".to_owned());
     set("OOMPolicy", "stop".to_owned());
@@ -70,7 +71,7 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("RestrictSUIDSGID", "yes".to_owned());
     set("RestrictRealtime", "yes".to_owned());
     set("LockPersonality", "yes".to_owned());
-    set("CapabilityBoundingSet", String::new());
+    set("CapabilityBoundingSet", "CAP_SETUID CAP_SETGID".to_owned());
     set("AmbientCapabilities", String::new());
     set("UMask", "0022".to_owned());
     set("KeyringMode", "private".to_owned());
@@ -81,7 +82,9 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("InaccessiblePaths", inaccessible.join(" "));
     // Each job sees its own payload and exchange directories and no other
     // job's: an empty read-only tmpfs over each root, with this instance's
-    // directory bound back in (systemd.exec(5), TemporaryFileSystem=). The
+    // directory bound back in (systemd.exec(5), TemporaryFileSystem=). Its
+    // /dev/shm is its own too, so no shared-memory file of one job reaches
+    // another. The
     // payload comes from its root-owned bind source, never from the engine's
     // path (review r2 R2-12). Each source is optional (`-`): the service
     // manager gives the `+` root steps these mounts too, and the prepare step
@@ -90,7 +93,10 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     // no payload, and refuses before any workload exists.
     set(
         "TemporaryFileSystem",
-        format!("{}:ro {EXCHANGE_ROOT}:ro", quote_path(&inputs.work_dir)),
+        format!(
+            "{}:ro {EXCHANGE_ROOT}:ro /dev/shm:mode=1777,nosuid",
+            quote_path(&inputs.work_dir)
+        ),
     );
     let payload = inputs.work_dir.join(instance);
     set(
@@ -187,6 +193,25 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
     )
 }
 
+/// Why an installed template cannot run a job as its own ids, if it cannot:
+/// a template written before the uid per job names one job account
+/// (`User=`, `Group=`) or leaves `job-exec` no capability to take the job's
+/// ids (review r8 R8-09). `install` writes it again.
+#[must_use]
+pub fn template_outdated(unit_text: &str) -> Option<&'static str> {
+    let mut lines = unit_text.lines().map(str::trim);
+    if lines
+        .clone()
+        .any(|line| line.starts_with("User=") || line.starts_with("Group="))
+    {
+        return Some("the installed template names one job account (User=, Group=)");
+    }
+    if !lines.any(|line| line == "CapabilityBoundingSet=CAP_SETUID CAP_SETGID") {
+        return Some("the installed template's bounding set is not CAP_SETUID CAP_SETGID");
+    }
+    None
+}
+
 /// The value of `RuntimeMaxSec=` in an installed template, if it has one.
 #[must_use]
 pub fn installed_runtime_max_secs(unit_text: &str) -> Option<u64> {
@@ -243,7 +268,6 @@ mod tests {
             binary: "/usr/bin/oneiron".into(),
             node_file: "/etc/oneiron/execution-node.toml".into(),
             engine_account: "oneiron".to_owned(),
-            job_account: "oneiron-job".to_owned(),
             state_dir: "/var/lib/oneiron/jobs".into(),
             work_dir: "/data/oneiron-jobs".into(),
             protected: vec!["/var/lib/oneiron".into()],
@@ -254,16 +278,36 @@ mod tests {
     }
 
     #[test]
-    fn the_template_runs_the_three_root_steps_and_the_job_as_its_own_account() {
+    fn the_template_runs_the_three_root_steps_and_starts_the_job_with_only_the_id_capabilities() {
         let text = render_job_unit(&inputs());
         assert!(text.contains("ExecStartPre=+/usr/bin/oneiron job-prepare --node-file /etc/oneiron/execution-node.toml --engine-account oneiron %i\n"));
         assert!(text.contains("ExecStart=/usr/bin/oneiron job-exec %i\n"));
         assert!(text.contains("ExecStopPost=+/usr/bin/oneiron job-ended "));
-        assert!(text.contains("User=oneiron-job\n"));
+        assert!(!text.contains("User="));
+        assert!(!text.contains("Group="));
+        assert!(text.contains("CapabilityBoundingSet=CAP_SETUID CAP_SETGID\n"));
+        assert!(text.contains("AmbientCapabilities=\n"));
+        assert!(text.contains("TemporaryFileSystem=/data/oneiron-jobs:ro /run/oneiron-jobs:ro /dev/shm:mode=1777,nosuid\n"));
         assert!(text.contains("PrivateNetwork=yes\n"));
         assert!(text.contains("BindPaths=-/run/oneiron-payloads/%i:/data/oneiron-jobs/%i\n"));
         assert!(text.contains("BindReadOnlyPaths=-/run/oneiron-jobs/%i\n"));
         assert_eq!(installed_runtime_max_secs(&text), Some(172_800));
+        assert_eq!(template_outdated(&text), None);
+    }
+
+    #[test]
+    fn a_template_from_before_the_uid_per_job_is_outdated() {
+        let text = render_job_unit(&inputs());
+        let one_account = text.replace(
+            "[Service]\n",
+            "[Service]\nUser=oneiron-job\nGroup=oneiron-job\n",
+        );
+        assert!(template_outdated(&one_account).is_some_and(|why| why.contains("User=")));
+        let no_capabilities = text.replace(
+            "CapabilityBoundingSet=CAP_SETUID CAP_SETGID\n",
+            "CapabilityBoundingSet=\n",
+        );
+        assert!(template_outdated(&no_capabilities).is_some_and(|why| why.contains("bounding")));
     }
 
     #[test]

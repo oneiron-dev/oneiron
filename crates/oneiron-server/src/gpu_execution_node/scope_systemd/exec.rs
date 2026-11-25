@@ -1,5 +1,6 @@
-//! `oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it
-//! applies `exec.json` and nothing else (pass 33, 7.6). It proves each bound
+//! `oneiron job-exec <id>` (the unit's `ExecStart=`, started as root with only
+//! `CAP_SETUID` and `CAP_SETGID`): it takes the job's own uid and applies
+//! `exec.json` and nothing else (pass 33, 7.6). It proves each bound
 //! it can from inside the unit, reports them to the root gate, and becomes
 //! the workload only after the gate's go. The service manager applies some
 //! settings only where the kernel allows and is silent when it cannot, so a
@@ -7,8 +8,9 @@
 //! before any workload process exists (pass 34, 2.2: any other bound is
 //! recorded unproven).
 //!
-//! Order: make this process not dumpable; catch the checkpoint signals;
-//! connect to the gate's socket (the gate takes this process's connection
+//! Order: make this process not dumpable; catch the checkpoint signals; read
+//! `exec.json`; take the job's ids from it, after which no capability is left
+//! (FIX EXEC-UNIT-CROSS-JOB-SAME-UID); connect to the gate's socket (the gate takes this process's connection
 //! alone: FIX EXEC-UNIT-ONE-JOB-ACCOUNT); prove the device policy (before the
 //! file wall, so a refusal is the device policy's and not the wall's); apply
 //! the inner file wall (Landlock); prove the wall, the protected paths, the
@@ -24,14 +26,11 @@
 //! step stays connected after its report until root closes the connection, so
 //! root's check of the peer finds it alive, and then ends.
 //!
-//! Not dumpable: every job runs as the one job account, so where Yama's
-//! `ptrace_scope` is 0 and another job runs without Landlock, that job could
-//! attach to this process and speak for it on the gate's connection. A
-//! process that is not dumpable cannot be attached to or have its memory
-//! opened by a process of the same account. The window left is the few
-//! system calls between this binary's exec and its first statement; the
-//! workload's own exec makes it dumpable again, and the wider exposure of
-//! one job to another under one account is FIX EXEC-UNIT-CROSS-JOB-SAME-UID
+//! Each job runs as its own uid from the node's range ([`super::job_ids`]), so
+//! no other job's process may signal, trace or read this one: the kernel
+//! refuses it across uids. This process is not dumpable from its first
+//! statement and again after it took the job's ids (a change of ids resets
+//! the flag), so no process may attach to it before the workload's own exec
 //! (review r7 R7-01).
 //!
 //! The checkpoint signals (design 7.1 `Signal`; the template's
@@ -52,6 +51,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::super::node_settings::CHECKPOINT_SIGNALS;
+use super::job_ids::JobIdentity;
 use super::log_writer::{self, WorkloadStreams};
 use super::records::{
     BoundReport, BoundRequirement, ExecFile, PROVED_INSIDE, ScopeBound, ScopeReport,
@@ -95,6 +95,10 @@ pub fn run(args: &[String]) -> i32 {
             return exec_status::EXEC_FILE;
         }
     };
+    if let Err(why) = take_job_identity(exec.identity, exec.device_gid) {
+        journal_line!("job-exec: the job's ids were not taken: {why}");
+        return exec_status::JOB_IDENTITY;
+    }
     let gate = match connect_to_gate(&exchange) {
         Ok(gate) => gate,
         Err(why) => {
@@ -219,9 +223,97 @@ fn read_exec_file(exchange: &Path, instance: &str) -> Result<ExecFile, String> {
     Ok(exec)
 }
 
+/// Takes the job's own ids: no supplementary group but the job device group
+/// when the launch leases a device (`device_gid`), then every group id and
+/// every user id the job's. The unit starts this step as root, and the
+/// kernel clears every capability once no user id is 0 any more. The step
+/// then checks that the kernel shows exactly that ([`identity_held`]) and
+/// makes itself undumpable again.
+fn take_job_identity(identity: JobIdentity, device_gid: Option<u32>) -> Result<(), String> {
+    if identity.uid == 0 || identity.gid == 0 || device_gid == Some(0) {
+        return Err(format!(
+            "uid {} gid {} device group {device_gid:?} is root's",
+            identity.uid, identity.gid
+        ));
+    }
+    let groups: Vec<libc::gid_t> = device_gid.into_iter().collect();
+    // SAFETY: groups holds groups.len() ids for the whole call.
+    if unsafe { libc::setgroups(groups.len(), groups.as_ptr()) } != 0 {
+        return Err(format!("setgroups: {}", io::Error::last_os_error()));
+    }
+    // SAFETY: plain id arguments.
+    if unsafe { libc::setresgid(identity.gid, identity.gid, identity.gid) } != 0 {
+        return Err(format!("setresgid: {}", io::Error::last_os_error()));
+    }
+    // SAFETY: plain id arguments.
+    if unsafe { libc::setresuid(identity.uid, identity.uid, identity.uid) } != 0 {
+        return Err(format!("setresuid: {}", io::Error::last_os_error()));
+    }
+    let off: libc::c_ulong = 0;
+    // SAFETY: PR_SET_DUMPABLE with 0 takes no pointer.
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, off, off, off, off) } != 0 {
+        return Err(format!(
+            "not made undumpable: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let status = std::fs::read_to_string("/proc/self/status")
+        .map_err(|error| format!("/proc/self/status: {error}"))?;
+    identity_held(&status, identity, device_gid)
+}
+
+/// Why `/proc/self/status` shows more than `identity` alone: a user or group
+/// id that is not the job's, a supplementary group other than `device_gid`,
+/// or a capability in the inheritable, permitted, effective or ambient set.
+/// `Ok` when it shows exactly the job's ids, the device group when given,
+/// and no capability.
+pub(super) fn identity_held(
+    status: &str,
+    identity: JobIdentity,
+    device_gid: Option<u32>,
+) -> Result<(), String> {
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .map(str::trim)
+    };
+    for (name, want) in [("Uid:", identity.uid), ("Gid:", identity.gid)] {
+        let ids = field(name).ok_or_else(|| format!("no {name} line"))?;
+        let all_the_jobs = ids.split_whitespace().count() == 4
+            && ids
+                .split_whitespace()
+                .all(|id| id.parse::<u32>() == Ok(want));
+        if !all_the_jobs {
+            return Err(format!("{name} {ids}, not {want} four times"));
+        }
+    }
+    let groups: Vec<&str> = field("Groups:")
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    let want: Vec<String> = device_gid.iter().map(u32::to_string).collect();
+    if groups != want.iter().map(String::as_str).collect::<Vec<_>>() {
+        return Err(format!("supplementary groups {groups:?}, not {want:?}"));
+    }
+    for name in ["CapInh:", "CapPrm:", "CapEff:", "CapAmb:"] {
+        let Some(caps) = field(name) else {
+            // A kernel without ambient capabilities has no such set.
+            if name == "CapAmb:" {
+                continue;
+            }
+            return Err(format!("no {name} line"));
+        };
+        if u64::from_str_radix(caps, 16) != Ok(0) {
+            return Err(format!("capabilities left: {name} {caps}"));
+        }
+    }
+    Ok(())
+}
+
 /// The connection to the gate's socket (close-on-exec, blocking once made).
 /// The gate starts after this step's own exec (`ExecStartPost=`), so the
-/// socket is missing, refuses, or is not yet the job account's for a moment:
+/// socket is missing, refuses, or is not yet the job's group's for a moment:
 /// each of those is waited out. Each try connects without blocking, so a
 /// full listen queue (`EAGAIN`) is waited out under the same deadline too
 /// (review r7 R7-07).
@@ -276,36 +368,47 @@ fn open_raw(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
 }
 
 /// The device policy (`DevicePolicy=closed`, `DeviceAllow=` per claim):
-/// each allowed device opens, and a device outside the allow-list fails
-/// with the device policy's EPERM. Run before the file wall, which would
-/// refuse it first with its own error.
+/// each allowed device opens, and every device outside the allow-list fails
+/// with the device policy's EPERM: each one, so a filter above the unit's
+/// that refuses only some is no proof (review r11 R11-05). Run before the
+/// file wall, which would refuse them first with its own error.
 fn prove_device_closure(exec: &ExecFile) -> BoundReport {
+    let flags = libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC;
     for path in &exec.devices_allowed {
-        if let Err(error) = open_raw(path, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
+        if let Err(error) = open_raw(path, flags) {
             return not_enforced(format!(
                 "the leased device {} does not open: {error}",
                 path.display()
             ));
         }
     }
-    let Some(other) = exec.devices_denied.first() else {
-        return enforced_by_kernel("DevicePolicy=closed; no other device exists here to try");
-    };
-    match open_raw(other, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
-        Ok(_) => not_enforced(format!(
-            "{} opened: the device policy did not apply",
-            other.display()
-        )),
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) => enforced_by_kernel(format!(
-            "{} refused by the device policy (EPERM); {} leased device(s) open",
-            other.display(),
-            exec.devices_allowed.len()
-        )),
-        Err(error) => not_enforced(format!(
-            "{} failed with {error}, not the device policy's EPERM",
-            other.display()
-        )),
+    if exec.devices_denied.is_empty() {
+        return enforced_by_kernel(
+            "DevicePolicy=closed; no other device file exists here, so the job device group opens only leased ones",
+        );
     }
+    for other in &exec.devices_denied {
+        match open_raw(other, flags) {
+            Ok(_) => {
+                return not_enforced(format!(
+                    "{} opened: the device policy did not apply",
+                    other.display()
+                ));
+            }
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) => {}
+            Err(error) => {
+                return not_enforced(format!(
+                    "{} failed with {error}, not the device policy's EPERM",
+                    other.display()
+                ));
+            }
+        }
+    }
+    enforced_by_kernel(format!(
+        "each of {} other device file(s) refused by the device policy (EPERM); {} leased device(s) open",
+        exec.devices_denied.len(),
+        exec.devices_allowed.len()
+    ))
 }
 
 fn apply_file_wall(exec: &ExecFile) -> Result<(), String> {
@@ -604,7 +707,7 @@ fn exec_failed(report: &mut dyn Write, journal: Option<&mut std::fs::File>, why:
 
 #[cfg(test)]
 mod tests {
-    use super::{CHECKPOINT_SIGNALS, checkpoint_signal_number};
+    use super::{CHECKPOINT_SIGNALS, JobIdentity, checkpoint_signal_number, identity_held};
 
     #[test]
     fn every_checkpoint_signal_a_template_may_name_is_caught_before_the_exec() {
@@ -612,5 +715,72 @@ mod tests {
             assert!(checkpoint_signal_number(name).is_some(), "{name}");
         }
         assert_eq!(checkpoint_signal_number("TERM"), None);
+    }
+
+    const JOB: JobIdentity = JobIdentity::of(1_879_048_192);
+
+    fn status(uid: &str, gid: &str, groups: &str, eff: &str, amb: Option<&str>) -> String {
+        let mut text = format!(
+            "Name:\toneiron\nUid:\t{uid}\nGid:\t{gid}\nGroups:\t{groups}\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t{eff}\nCapBnd:\t00000000000000c0\n"
+        );
+        if let Some(amb) = amb {
+            text.push_str(&format!("CapAmb:\t{amb}\n"));
+        }
+        text
+    }
+
+    #[test]
+    fn the_job_holds_its_ids_alone_with_no_group_and_no_capability_left() {
+        let ids = "1879048192\t1879048192\t1879048192\t1879048192";
+        let ok = status(ids, ids, "", "0000000000000000", Some("0000000000000000"));
+        assert_eq!(identity_held(&ok, JOB, None), Ok(()));
+        // The bounding set keeps CAP_SETUID and CAP_SETGID; no other set may.
+        let no_ambient = status(ids, ids, "", "0000000000000000", None);
+        assert_eq!(identity_held(&no_ambient, JOB, None), Ok(()));
+        let saved_root = status(
+            "1879048192\t1879048192\t0\t1879048192",
+            ids,
+            "",
+            "0000000000000000",
+            None,
+        );
+        assert!(identity_held(&saved_root, JOB, None).is_err());
+        assert!(
+            identity_held(&status(ids, ids, "0", "0000000000000000", None), JOB, None).is_err()
+        );
+        assert!(identity_held(&status(ids, ids, "", "00000000000000c0", None), JOB, None).is_err());
+        assert!(
+            identity_held(
+                &status(ids, ids, "", "0000000000000000", Some("0000000000000080")),
+                JOB,
+                None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_job_that_leases_a_device_holds_the_device_group_alone() {
+        let ids = "1879048192\t1879048192\t1879048192\t1879048192";
+        let with_group = status(ids, ids, "970", "0000000000000000", None);
+        assert_eq!(identity_held(&with_group, JOB, Some(970)), Ok(()));
+        // A job that leases no device keeps no group; one that does keeps that one alone.
+        assert!(identity_held(&with_group, JOB, None).is_err());
+        assert!(
+            identity_held(
+                &status(ids, ids, "", "0000000000000000", None),
+                JOB,
+                Some(970)
+            )
+            .is_err()
+        );
+        assert!(
+            identity_held(
+                &status(ids, ids, "970 971", "0000000000000000", None),
+                JOB,
+                Some(970)
+            )
+            .is_err()
+        );
     }
 }

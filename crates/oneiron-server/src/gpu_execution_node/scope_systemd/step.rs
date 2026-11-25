@@ -1,5 +1,5 @@
 //! What every root step of the unit starts from: its instance, the
-//! root-owned node file, the two accounts, and the key's control directory
+//! root-owned node file, the engine's account, and the key's control directory
 //! opened beneath the engine's state directory, never through a link.
 
 use std::ffi::OsStr;
@@ -98,16 +98,15 @@ pub struct StepContext {
     pub engine_uid: u32,
     pub engine_gid: u32,
     pub engine_home: PathBuf,
-    pub job_uid: u32,
-    pub job_gid: u32,
     /// The key's control directory, `<state_dir>/control/<instance>`.
     pub control: OwnedFd,
 }
 
 impl StepContext {
     /// Opens the step: the instance is a job id, the node file and its
-    /// directories are root's alone, both accounts exist, and the control
-    /// directory is the engine's and no link.
+    /// directories are root's alone, the engine's account exists and its uid
+    /// is outside the job range, and the control directory is the engine's
+    /// and no link.
     ///
     /// # Errors
     ///
@@ -121,10 +120,12 @@ impl StepContext {
             .ok_or_else(|| format!("{}: no node file", args.node_file.display()))?;
         let (engine_uid, engine_gid, engine_home) = account(&args.engine_account)
             .map_err(|error| format!("engine account {}: {error}", args.engine_account))?;
-        let (job_uid, job_gid, _) = account(&settings.job_account)
-            .map_err(|error| format!("job account {}: {error}", settings.job_account))?;
-        if job_uid == 0 || job_uid == engine_uid {
-            return Err("the job account must be neither root nor the engine's".to_owned());
+        if settings.job_uids().contains(&engine_uid) || settings.job_uids().contains(&engine_gid) {
+            return Err(format!(
+                "the engine's uid {engine_uid} or gid {engine_gid} is in the job range {}..{}",
+                settings.job_uid_first,
+                settings.job_uids().end
+            ));
         }
         let state = open_dir_path(&settings.state_dir).map_err(|error| error.to_string())?;
         owned_by(borrow(&state), engine_uid, &settings.state_dir)?;
@@ -143,8 +144,6 @@ impl StepContext {
             engine_uid,
             engine_gid,
             engine_home,
-            job_uid,
-            job_gid,
             control,
         })
     }

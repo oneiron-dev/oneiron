@@ -5,33 +5,40 @@
 //! the key must hash to the unit's instance, the pin must pass the node
 //! file's own admission check again, and every limit must fit the root-owned
 //! ceilings. It then publishes the payload it checked as the unit's bind
-//! source, sets this job's limits on the unit, arms the cutoff, and writes
-//! `exec.json` where only the job account can read it. Any no fails the unit
-//! before a workload process exists. The gate is [`super::gate`].
+//! source, sets this job's limits on the unit, arms the cutoff, gives the job
+//! its own uid from the node's range ([`super::job_ids`]; FIX
+//! EXEC-UNIT-CROSS-JOB-SAME-UID) and writes `exec.json` where only root and
+//! that job can read it. Any no fails the unit before a workload process
+//! exists; an id given before it stays taken until the end step has handed
+//! the job's directories to the engine. The gate is [`super::gate`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
+mod unit_checks;
+
 use super::super::jobs::{JobKeyId, LaunchFile};
 use super::super::wire::NetworkMode;
-use super::capabilities::kernel_facts;
 use super::device_files;
 use super::exchange::{publish_payload, write_exchange};
+use super::job_ids::{self, JobIdentity};
 use super::records::{
-    BoundReport, BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, ScopeBound,
-    enforced_by_kernel, first_unmet, not_enforced,
+    BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, first_unmet,
 };
 use super::safe_fs::{
     self, boot_id, boot_ns, borrow, make_dir_beneath, open_dir_beneath, open_dir_path, read_beneath,
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::unit_file::installed_runtime_max_secs;
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
+use super::unit_file::{installed_runtime_max_secs, template_outdated};
 use super::{
     AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
     UNIT_TEMPLATE_PATH,
+};
+use unit_checks::{
+    cgroup_file, configured_bounds, effective_unit_matches, required_bounds, unit_cgroup,
 };
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
@@ -95,7 +102,7 @@ pub fn run(args: StepArgs) -> i32 {
         refusal: None,
         boot_id: boot_id(),
         at_boot_ns: boot_ns(),
-        account: context.settings.job_account.clone(),
+        account: String::new(),
         properties: Vec::new(),
         devices: Vec::new(),
         cutoff: None,
@@ -104,6 +111,9 @@ pub fn run(args: StepArgs) -> i32 {
         required: Vec::new(),
         fence: Vec::new(),
     };
+    // An id given before a refusal stays taken: the end step hands the
+    // directories made for it to the engine and then gives it back (review
+    // r8 R8-04).
     let outcome = prepare(&context, &mut record);
     if let Err(why) = &outcome {
         record.refusal = Some(why.clone());
@@ -171,8 +181,13 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
             "unit_runtime_max_below_maximum: run `oneiron execution-node install` again".to_owned(),
         );
     }
+    if let Some(why) = template_outdated(&unit_text) {
+        return Err(format!(
+            "unit_template_old: {why}: run `oneiron execution-node install` again"
+        ));
+    }
     let unit = context.unit();
-    effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
+    effective_unit_matches(&unit, settings.stop_grace_secs)?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
 
     let mut allowed = Vec::new();
@@ -208,8 +223,18 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         return Err("cutoff_passed: the launch is older than its maximum".to_owned());
     }
 
+    let identity = job_ids::allocate(settings.job_uids(), &unit, context.engine_uid)
+        .map_err(|why| format!("job_uid_not_given: {why}"))?;
+    let device_gid = job_device_gid(settings, &allowed, context.engine_gid)?;
+    record.account = match device_gid {
+        Some(group) => format!(
+            "uid {} gid {} device group {group}",
+            identity.uid, identity.gid
+        ),
+        None => format!("uid {} gid {}", identity.uid, identity.gid),
+    };
     let payload_path = settings.work_dir.join(instance);
-    let payload = prepare_payload(context, &payload_path)?;
+    let payload = prepare_payload(context, &payload_path, identity)?;
     publish_payload(instance, &payload)?;
     drop(payload);
     let exec = exec_file(
@@ -217,12 +242,12 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         &launch,
         template,
         &payload_path,
-        &allowed,
-        &denied,
+        (&allowed, &denied),
         protected,
+        (identity, device_gid),
     )?;
-    write_exchange(context, &exec)?;
-    record.required.clone_from(&template.require);
+    write_exchange(&exec)?;
+    record.required.clone_from(&exec.require);
     record.fence = exec
         .read
         .iter()
@@ -238,10 +263,14 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     let memory_bytes = memory_mib
         .max(UNIT_MEMORY_FLOOR_MIB)
         .saturating_mul(1 << 20);
+    // The empty `DeviceAllow=` first empties the unit's list: one this
+    // unit's name kept from an earlier run is no lease of this one's (review
+    // r9 R9-06).
     let mut properties = vec![
         format!("MemoryMax={memory_bytes}"),
         format!("TasksMax={}", template.tasks_max),
         format!("CPUQuota={}%", u64::from(cpu_threads).saturating_mul(100)),
+        "DeviceAllow=".to_owned(),
     ];
     properties.extend(
         allowed
@@ -344,64 +373,6 @@ fn leased_device_ids(launch: &LaunchFile) -> Result<Vec<String>, String> {
     Ok(ids.into_iter().collect())
 }
 
-/// The unit's effective stop timeout (its file and every drop-in) is the
-/// node file's stop grace, so the cutoff's TERM comes a whole grace before
-/// the maximum and the KILL by it.
-fn effective_stop_grace_matches(unit: &str, stop_grace_secs: u64) -> Result<(), String> {
-    let found =
-        show(unit, &["TimeoutStopUSec"]).map_err(|why| format!("stop_grace_unknown: {why}"))?;
-    let text = found.get("TimeoutStopUSec").map_or("", String::as_str);
-    match timespan_usec(text) {
-        Some(usec) if usec == stop_grace_secs.saturating_mul(1_000_000) => Ok(()),
-        _ => Err(format!(
-            "stop_grace_not_unit_timeout: the unit's TimeoutStopSec is {text:?} and the node file's stop grace {stop_grace_secs} s: run `oneiron execution-node install` again"
-        )),
-    }
-}
-
-/// A systemd time span as `systemctl show` prints it (`10s`, `1min 30s`,
-/// `500ms`), in microseconds; `None` for `infinity` or a word it does not
-/// know.
-#[must_use]
-pub(super) fn timespan_usec(text: &str) -> Option<u64> {
-    let mut total: u64 = 0;
-    let mut any = false;
-    for word in text.split_whitespace() {
-        let digits = word.find(|c: char| !c.is_ascii_digit())?;
-        let (number, unit) = word.split_at(digits);
-        let number: u64 = number.parse().ok()?;
-        let scale: u64 = match unit {
-            "us" => 1,
-            "ms" => 1_000,
-            "s" => 1_000_000,
-            "min" => 60_000_000,
-            "h" => 3_600_000_000,
-            "d" => 86_400_000_000,
-            _ => return None,
-        };
-        total = total.checked_add(number.checked_mul(scale)?)?;
-        any = true;
-    }
-    any.then_some(total)
-}
-
-/// The unit's cgroup directory under `/sys/fs/cgroup`, from the service
-/// manager.
-fn unit_cgroup(unit: &str) -> Option<PathBuf> {
-    let found = show(unit, &["ControlGroup"]).ok()?;
-    let group = found
-        .get("ControlGroup")
-        .filter(|group| !group.is_empty())?;
-    Some(Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/')))
-}
-
-/// One file of the unit's cgroup, trimmed: what the kernel holds now, not
-/// only what the service manager accepted.
-fn cgroup_file(group: Option<&Path>, name: &str) -> Option<String> {
-    let text = std::fs::read_to_string(group?.join(name)).ok()?;
-    Some(text.trim().to_owned())
-}
-
 /// The protected paths the installed unit makes inaccessible (its
 /// `InaccessiblePaths=`), so the proof checks exactly those.
 pub(super) fn installed_protected_paths(unit_text: &str, state_dir: &Path) -> Vec<PathBuf> {
@@ -419,9 +390,13 @@ pub(super) fn installed_protected_paths(unit_text: &str, state_dir: &Path) -> Ve
 
 /// The payload directory is the engine's, not a link, and traversable by
 /// others; its checkout is there; `out`, `tmp` and `log` are made fresh for
-/// the job account. Returns the payload directory, open: the unit's bind
+/// the job's ids. Returns the payload directory, open: the unit's bind
 /// source is made from this descriptor, never from the path again.
-fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd, String> {
+fn prepare_payload(
+    context: &StepContext,
+    payload_path: &Path,
+    identity: JobIdentity,
+) -> Result<OwnedFd, String> {
     let work = open_dir_path(&context.settings.work_dir)
         .map_err(|error| format!("work_dir_unreadable: {error}"))?;
     let payload = open_dir_beneath(borrow(&work), OsStr::new(&context.args.instance))
@@ -431,7 +406,7 @@ fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd
         return Err("payload_not_engines".to_owned());
     }
     if found.mode & 0o001 == 0 {
-        return Err("payload_not_traversable: the job account needs o+x on it".to_owned());
+        return Err("payload_not_traversable: the job's uid needs o+x on it".to_owned());
     }
     let checkout = open_dir_beneath(borrow(&payload), OsStr::new("checkout"))
         .map_err(|error| format!("checkout_missing: {error}"))?;
@@ -439,16 +414,11 @@ fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd
         .map_err(|error| error.to_string())?
         .mode;
     if checkout_mode & 0o005 != 0o005 {
-        return Err("checkout_not_readable: the job account needs o+rx on it".to_owned());
+        return Err("checkout_not_readable: the job's uid needs o+rx on it".to_owned());
     }
     for name in ["out", "tmp", "log"] {
-        make_dir_beneath(
-            borrow(&payload),
-            name,
-            0o755,
-            (context.job_uid, context.job_gid),
-        )
-        .map_err(|error| format!("payload_not_fresh: {name}: {error}"))?;
+        make_dir_beneath(borrow(&payload), name, 0o755, (identity.uid, identity.gid))
+            .map_err(|error| format!("payload_not_fresh: {name}: {error}"))?;
     }
     Ok(payload)
 }
@@ -458,9 +428,9 @@ fn exec_file(
     launch: &LaunchFile,
     template: &super::super::node_settings::NodeTemplate,
     payload: &Path,
-    allowed: &[PathBuf],
-    denied: &[PathBuf],
+    (allowed, denied): (&[PathBuf], &[PathBuf]),
     protected: Vec<PathBuf>,
+    (identity, device_gid): (JobIdentity, Option<u32>),
 ) -> Result<ExecFile, String> {
     let checkout = payload.join("checkout");
     let mut argv = template.interpreter.clone();
@@ -518,6 +488,8 @@ fn exec_file(
     protected.dedup();
     Ok(ExecFile {
         key: launch.key.clone(),
+        identity,
+        device_gid,
         instance: context.args.instance.clone(),
         probe: false,
         argv,
@@ -530,9 +502,31 @@ fn exec_file(
         devices_denied: denied.to_vec(),
         hidden_pids,
         host_network_namespace: safe_fs::host_network_namespace(),
-        require: template.require.clone(),
+        require: required_bounds(&template.require, device_gid.is_some()),
         log_max_bytes: template.log_max_bytes(),
     })
+}
+
+/// The job's supplementary group: the node's job device group when the
+/// launch leases a device (`allowed`, the leased devices' files), else none.
+/// Never root's, the engine's (`engine_gid`) or one of the job range.
+fn job_device_gid(
+    settings: &super::super::node_settings::ExecutionNodeSettings,
+    allowed: &[PathBuf],
+    engine_gid: u32,
+) -> Result<Option<u32>, String> {
+    if allowed.is_empty() {
+        return Ok(None);
+    }
+    let name = &settings.job_device_group;
+    let gid = safe_fs::group_id(name)
+        .map_err(|error| format!("job_device_group_unknown: {name}: {error}"))?;
+    if gid == 0 || gid == engine_gid || settings.job_uids().contains(&gid) {
+        return Err(format!(
+            "job_device_group_not_fit: {name} has gid {gid}, root's, the engine's or inside the job range"
+        ));
+    }
+    Ok(Some(gid))
 }
 
 /// Process ids owned by `uid`, at most [`HIDDEN_PIDS_MAX`].
@@ -624,139 +618,4 @@ fn hold_awake(unit: &str, instance: &str) -> Option<String> {
     )
     .ok()
     .map(|_| format!("{awake}.service"))
-}
-
-/// Each bound as the unit's effective properties and this kernel give it.
-fn configured_bounds(
-    unit: &str,
-    group: Option<&Path>,
-    write_rate_failure: Option<String>,
-    has_denied_device: bool,
-) -> BTreeMap<ScopeBound, BoundReport> {
-    let facts = kernel_facts();
-    let found = show(
-        unit,
-        &[
-            "KillMode",
-            "PrivateNetwork",
-            "ProtectProc",
-            "ProtectSystem",
-            "DevicePolicy",
-        ],
-    )
-    .unwrap_or_default();
-    let is = |name: &str, value: &str| found.get(name).is_some_and(|got| got == value);
-    let cgroup_file = |name: &str| cgroup_file(group, name);
-    let memory_max = cgroup_file("memory.max");
-    let io_max = cgroup_file("io.max");
-    let on = |holds: bool, evidence: String| {
-        if holds {
-            enforced_by_kernel(evidence)
-        } else {
-            not_enforced(evidence)
-        }
-    };
-    let unified = !facts.cgroup_controllers.is_empty();
-    let mut out = BTreeMap::new();
-    out.insert(
-        ScopeBound::TreeKill,
-        on(
-            unified && is("KillMode", "control-group"),
-            format!(
-                "KillMode={}",
-                found.get("KillMode").map_or("?", String::as_str)
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::CutoffWithoutEngine,
-        enforced_by_kernel("the service manager's cutoff timer, armed before the workload"),
-    );
-    out.insert(
-        ScopeBound::Emptiness,
-        on(unified, "cgroup v2 cgroup.events".to_owned()),
-    );
-    out.insert(
-        ScopeBound::MemoryCap,
-        on(
-            memory_max
-                .as_deref()
-                .is_some_and(|value| value.parse::<u64>().is_ok()),
-            format!(
-                "memory.max {}",
-                memory_max.as_deref().unwrap_or("unreadable")
-            ),
-        ),
-    );
-    let cpu_max = cgroup_file("cpu.max");
-    out.insert(
-        ScopeBound::CpuCap,
-        on(
-            cpu_max
-                .as_deref()
-                .and_then(|text| text.split_whitespace().next())
-                .is_some_and(|quota| quota.parse::<u64>().is_ok()),
-            format!("cpu.max {}", cpu_max.as_deref().unwrap_or("unreadable")),
-        ),
-    );
-    out.insert(
-        ScopeBound::FileWall,
-        on(
-            is("ProtectSystem", "strict") && facts.landlock_abi >= 3,
-            format!(
-                "ProtectSystem={}, Landlock ABI {}",
-                found.get("ProtectSystem").map_or("?", String::as_str),
-                facts.landlock_abi
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::NetworkClosed,
-        on(
-            is("PrivateNetwork", "yes"),
-            format!(
-                "PrivateNetwork={}",
-                found.get("PrivateNetwork").map_or("?", String::as_str)
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::DeviceClosure,
-        on(
-            is("DevicePolicy", "closed"),
-            format!(
-                "DevicePolicy={}{}",
-                found.get("DevicePolicy").map_or("?", String::as_str),
-                if has_denied_device {
-                    ""
-                } else {
-                    "; no other device to try"
-                }
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::ProcessesHidden,
-        on(
-            is("ProtectProc", "invisible"),
-            format!(
-                "ProtectProc={}",
-                found.get("ProtectProc").map_or("?", String::as_str)
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::WriteRateCap,
-        match (write_rate_failure, io_max.as_deref()) {
-            (None, Some(text)) if text.contains("wbps=") && !text.contains("wbps=max") => {
-                enforced_by_kernel(format!("io.max {text}"))
-            }
-            (None, text) => not_enforced(format!(
-                "IOWriteBandwidthMax= accepted, but io.max holds no write rate ({}): no block device under the payload directory?",
-                text.unwrap_or("unreadable")
-            )),
-            (Some(why), _) => not_enforced(format!("IOWriteBandwidthMax= not applied: {why}")),
-        },
-    );
-    out
 }

@@ -24,6 +24,14 @@ use serde::{Deserialize, Serialize};
 
 use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 
+mod job_ids;
+
+pub use job_ids::{
+    JOB_DEVICE_GROUP_DEFAULT, JOB_UID_COUNT_DEFAULT, JOB_UID_END_MAX, JOB_UID_FIRST_DEFAULT,
+    JOB_UID_FIRST_MIN,
+};
+use job_ids::{job_device_group_default, job_uid_count_default, job_uid_first_default};
+
 /// Where the node's file is when neither the server's configuration nor
 /// [`EXECUTION_NODE_FILE_ENV`] names one.
 pub const EXECUTION_NODE_FILE_DEFAULT: &str = "/etc/oneiron/execution-node.toml";
@@ -52,9 +60,6 @@ pub const STAGING_LIMIT_SECS_DEFAULT: u64 = 600;
 /// 6.3): how often a node with no attempt running checks itself. The owner's
 /// key has the same default.
 pub const READINESS_EVERY_SECS_DEFAULT: u64 = oneiron::machine_policy::READINESS_EVERY_SECS_DEFAULT;
-
-/// Default of `job_account`.
-pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
 
 /// Default of a template's `write_mib_per_sec`: the kernel's cap on the
 /// unit's write rate to the payload device.
@@ -151,9 +156,24 @@ pub struct ExecutionNodeSettings {
     /// The scope kinds this machine permits.
     #[serde(default = "host_scope")]
     pub scopes: Vec<ScopeClass>,
-    /// The OS account the job unit runs as.
-    #[serde(default = "job_account_default")]
-    pub job_account: String,
+    /// The first of the ids the node gives its jobs: each job unit runs as
+    /// its own uid from `job_uid_first` to `job_uid_first + job_uid_count -
+    /// 1`, with a group id of the same number, so the kernel refuses one
+    /// job's signals, `/proc` reads and tracing of another's processes (FIX
+    /// EXEC-UNIT-CROSS-JOB-SAME-UID, ruling A). No account names these ids.
+    #[serde(default = "job_uid_first_default")]
+    pub job_uid_first: u32,
+    /// How many ids the range holds.
+    #[serde(default = "job_uid_count_default")]
+    pub job_uid_count: u32,
+    /// The system group that owns every device file a job may lease (each
+    /// card's own files and the shared control files, mode 0660, no account
+    /// in it). A job that leases a device keeps this group as its one
+    /// supplementary group; one that leases none keeps none. The unit's
+    /// device policy admits only the leased devices' files, so the group
+    /// opens no other card for the job. `install` makes the group.
+    #[serde(default = "job_device_group_default")]
+    pub job_device_group: String,
     /// `jobs.readiness.every_secs`: how often the node checks itself while
     /// no attempt runs (pass 34, 7.3). The owner's row may shorten it (row
     /// P0).
@@ -301,9 +321,6 @@ fn staging_limit_secs_default() -> u64 {
 fn readiness_every_secs_default() -> u64 {
     READINESS_EVERY_SECS_DEFAULT
 }
-fn job_account_default() -> String {
-    JOB_ACCOUNT_DEFAULT.to_owned()
-}
 fn write_mib_per_sec_default() -> u64 {
     WRITE_MIB_PER_SEC_DEFAULT
 }
@@ -339,6 +356,14 @@ fn no_network() -> Vec<NetworkMode> {
 }
 
 impl ExecutionNodeSettings {
+    /// The ids the node gives its jobs, one uid (and the group id of the
+    /// same number) per running job unit. `validate` keeps the range inside
+    /// `JOB_UID_FIRST_MIN..JOB_UID_END_MAX`.
+    #[must_use]
+    pub fn job_uids(&self) -> std::ops::Range<u32> {
+        self.job_uid_first..self.job_uid_first.saturating_add(self.job_uid_count)
+    }
+
     /// Reads and validates the node's file at `path`: `Ok(None)` when there
     /// is none.
     ///
@@ -392,9 +417,11 @@ impl ExecutionNodeSettings {
         if self.job_threads == Some(0) {
             return Err("execution_node.job_threads must be at least 1 when set".to_owned());
         }
-        if self.job_account.trim().is_empty() {
-            return Err("execution_node.job_account must name an OS account".to_owned());
-        }
+        job_ids::check(
+            self.job_uid_first,
+            self.job_uid_count,
+            &self.job_device_group,
+        )?;
         for (name, template) in &self.templates {
             template
                 .validate()
