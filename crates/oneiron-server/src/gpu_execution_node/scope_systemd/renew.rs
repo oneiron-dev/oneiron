@@ -26,9 +26,21 @@ use super::records::{CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::{CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME};
+use super::unit_file::installed_runtime_max_secs;
+use super::{CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_TEMPLATE_PATH};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
+
+/// `Ok` while the job unit is active: its cutoff may move.
+fn running(id: &JobKeyId) -> Result<(), String> {
+    let found = show(&id.unit_name(), &["ActiveState"])?;
+    let state = found.get("ActiveState").map_or("", String::as_str);
+    if state == "active" {
+        Ok(())
+    } else {
+        Err(format!("unit_not_running: the unit is {state:?}"))
+    }
+}
 
 /// How long before the current stop time a renewal must be taken: a timer
 /// this close may already be firing.
@@ -107,17 +119,48 @@ pub fn renew_cutoff(
         .read_record::<PreparedRecord>(PREPARED_FILE_NAME)?
         .filter(|record| record.instance == id.as_str())
         .ok_or("not_prepared: no prepared record of this instance")?;
-    let found = show(&id.unit_name(), &["ActiveState"])?;
-    let state = found.get("ActiveState").map_or("", String::as_str);
-    if state != "active" {
-        return Err(format!("unit_not_running: the unit is {state:?}"));
-    }
+    running(id)?;
     let Some(plan) = renewed_cutoff_plan(&prepared, cutoff_boot_ns, boot_ns())? else {
         return Ok(());
     };
+    // The unit's backstop, as the prepare step checks it: a node file whose
+    // session ceiling grew without `oneiron execution-node install` again
+    // would let the backstop stop a paid chunk.
+    let unit_text = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
+        .map_err(|error| format!("unit_template_unreadable: {error}"))?;
+    let run_ns = cutoff_boot_ns.saturating_sub(prepared.at_boot_ns);
+    if installed_runtime_max_secs(&unit_text)
+        .is_none_or(|ceiling| run_ns > ceiling.saturating_mul(NANOS_PER_SEC))
+    {
+        return Err(
+            "unit_runtime_max_below_maximum: run `oneiron execution-node install` again".to_owned(),
+        );
+    }
+    let base = prepared.cutoff.clone();
     let previous = prepared.cutoff.replace(plan.clone());
     let timer = plan.unit.trim_end_matches(".timer");
     arm_cutoff(&context, timer, plan.stop_at_boot_ns)?;
+    // Record the new plan only while the unit still runs and no other
+    // renewal moved the record meanwhile: else the new timer goes, and the
+    // engine asks again.
+    let current = context
+        .read_record::<PreparedRecord>(PREPARED_FILE_NAME)
+        .ok()
+        .flatten()
+        .and_then(|record| record.cutoff);
+    let unchanged = current == base;
+    if let Err(why) = running(id).and_then(|()| {
+        unchanged
+            .then_some(())
+            .ok_or_else(|| "renew_raced: another renewal moved the cutoff".to_owned())
+    }) {
+        let _ = run_tool(
+            "systemctl",
+            &["stop", "--no-block", &plan.unit],
+            SYSTEMCTL_TIMEOUT,
+        );
+        return Err(why);
+    }
     context.write_record(PREPARED_FILE_NAME, &prepared)?;
     if let Some(previous) = previous {
         let _ = run_tool(

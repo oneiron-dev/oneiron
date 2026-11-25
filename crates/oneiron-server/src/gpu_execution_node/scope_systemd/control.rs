@@ -395,8 +395,13 @@ mod tests {
             assert_eq!(parse_request(line.as_bytes()), Ok((verb, id.clone())));
             let signal = format!("--signal=SIG{name}");
             assert_eq!(
-                verb.systemctl_args("u"),
+                verb.systemctl_args("u").expect("a systemctl request"),
                 ["kill", "--kill-whom=main", signal.as_str(), "u"]
+            );
+            // A renewal is root's own handoff, never a systemctl request.
+            assert_eq!(
+                ControlVerb::Renew { cutoff_boot_ns: 5 }.systemctl_args("u"),
+                None
             );
         }
         for (bad, why) in [
