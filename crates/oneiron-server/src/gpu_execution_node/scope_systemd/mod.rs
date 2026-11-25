@@ -83,8 +83,8 @@ pub use systemd_unit::SystemdJobUnit;
 use super::jobs::JobUnit;
 
 /// The root-owned directory of the per-job exchange directories: each holds
-/// `exec.json` and the two gate pipes, readable by the job account alone
-/// (mode 0750, group the job account's).
+/// `exec.json` and, while the gate waits, the gate's socket, readable by the
+/// job account alone (mode 0750, group the job account's).
 pub const EXCHANGE_ROOT: &str = "/run/oneiron-jobs";
 
 /// The root-owned directory (mode 0700) of the payload bind sources: the
@@ -93,30 +93,33 @@ pub const EXCHANGE_ROOT: &str = "/run/oneiron-jobs";
 /// path, at `<work_dir>/<instance>` (review r2 R2-12).
 pub const PAYLOAD_ROOT: &str = "/run/oneiron-payloads";
 
-/// The byte that ends `job-exec`'s report on the report pipe: the report is
-/// one JSON line, and the pipe stays open after it until the workload's
-/// `execve` closes it (review r2 R2-02).
+/// The byte that ends `job-exec`'s report on the gate connection: the report
+/// is one JSON line, and the connection stays open after it until the
+/// workload's `execve` closes it (review r2 R2-02).
 pub const REPORT_FRAME_END: u8 = b'\n';
 
 /// `job-exec`'s parameters, written by the prepare step (root) into the
 /// job's exchange directory.
 pub const EXEC_FILE_NAME: &str = "exec.json";
 
-/// The pipe `job-exec` writes its scope report into, for the gate.
-pub const REPORT_PIPE_NAME: &str = "report";
-
-/// The pipe the gate writes [`GATE_GO`] into once it recorded the report.
-pub const GO_PIPE_NAME: &str = "go";
+/// The gate's Unix stream socket in the job's exchange directory (root's,
+/// group the job account's, mode 0660). `job-exec` connects to it, and the
+/// report, the go, the exec mark and the close at the exec all travel on
+/// that one connection. The gate takes the connection of the unit's main
+/// process alone, by its peer credentials, so another process of the job
+/// account (another job's workload) cannot answer for it (FIX
+/// EXEC-UNIT-ONE-JOB-ACCOUNT).
+pub const GATE_SOCKET_NAME: &str = "gate.sock";
 
 /// The one line the gate writes to let the workload start.
 pub const GATE_GO: &[u8] = b"go\n";
 
-/// The line `job-exec` writes on the report pipe after the go, just before
-/// its `execve` (FIX EXEC-UNIT-GATE-EXEC-RACE). The pipe is close-on-exec,
-/// so the gate reads: a close with no mark is `job-exec`'s exit before the
-/// exec; the mark and then a close is the exec; the mark and more words is
-/// a failed exec. No process state is read after the close, so a workload
-/// that ends at once is still recorded as started.
+/// The line `job-exec` writes on the gate connection after the go, just
+/// before its `execve` (FIX EXEC-UNIT-GATE-EXEC-RACE). The connection is
+/// close-on-exec, so the gate reads: a close with no mark is `job-exec`'s
+/// exit before the exec; the mark and then a close is the exec; the mark and
+/// more words is a failed exec. No process state is read after the close,
+/// so a workload that ends at once is still recorded as started.
 pub const EXEC_MARK: &[u8] = b"exec\n";
 
 /// The smallest memory cap of a job unit, in MiB (FIX
@@ -165,8 +168,8 @@ pub const CHECK_REPORT_SUFFIX: &str = ".scope.json";
 pub mod exec_status {
     /// `exec.json` was missing, unreadable or not this job's.
     pub const EXEC_FILE: i32 = 150;
-    /// The gate pipes could not be opened.
-    pub const GATE_PIPES: i32 = 151;
+    /// The gate's socket could not be reached.
+    pub const GATE_SOCKET: i32 = 151;
     /// The inner file wall could not be applied.
     pub const FILE_WALL: i32 = 152;
     /// A bound the template requires is not proved.
@@ -186,7 +189,7 @@ pub mod exec_status {
 pub fn refusal_of_exit_status(status: i32) -> Option<&'static str> {
     Some(match status {
         exec_status::EXEC_FILE => "unit: exec_file",
-        exec_status::GATE_PIPES => "unit: gate_pipes",
+        exec_status::GATE_SOCKET => "unit: gate_socket",
         exec_status::FILE_WALL => "unit: file_wall_not_applied",
         exec_status::REQUIRED_BOUND => "unit: required_bound_not_proved",
         exec_status::GATE_REFUSED => "unit: gate_refused",
