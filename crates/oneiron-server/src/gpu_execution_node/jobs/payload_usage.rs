@@ -10,11 +10,12 @@
 //! it was given.
 //!
 //! A payload the walk cannot finish within its bounds ([`PayloadWalkBounds`]:
-//! so many directory levels, so many entries) is
-//! [`PayloadUsage::Unmeasurable`] and passes every request: the node cannot
-//! show that it is within. A walk that runs out of time is an error
-//! instead, and the next check measures again: a slow disk is not the job's
-//! doing.
+//! so many directory levels, so many entries; the node file's
+//! `payload_depth_max` and `payload_entries_max`, policy with today's
+//! defaults) is [`PayloadUsage::Unmeasurable`] and passes every request:
+//! the node cannot show that it is within. A walk that runs out of time is
+//! an error instead, and the next check measures again: a slow disk is not
+//! the job's doing.
 
 use std::collections::HashSet;
 use std::io;
@@ -24,13 +25,18 @@ use std::time::{Duration, Instant};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 
-/// The deepest directory the walk enters, counted from the payload
-/// directory (its own entries are at level 1). The walk holds one open
-/// directory per level.
-pub const PAYLOAD_WALK_DEPTH_MAX: usize = 64;
+/// Default of `payload_depth_max`: the deepest directory the walk enters,
+/// counted from the payload directory (its own entries are at level 1).
+pub const PAYLOAD_DEPTH_MAX_DEFAULT: u32 = 64;
 
-/// The most entries the walk counts, the payload directory included.
-pub const PAYLOAD_WALK_ENTRIES_MAX: u64 = 1_000_000;
+/// The most `payload_depth_max` may say, and the most any walk enters: the
+/// walk holds one open directory per level, inside the job control
+/// handler's descriptor limit.
+pub const PAYLOAD_DEPTH_MAX_CEILING: u32 = 256;
+
+/// Default of `payload_entries_max`: the most entries the walk counts, the
+/// payload directory included.
+pub const PAYLOAD_ENTRIES_MAX_DEFAULT: u64 = 1_000_000;
 
 /// The longest one walk takes: within the job control handler's own limit
 /// and the engine's wait for its answer.
@@ -48,10 +54,11 @@ fn directory_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
 }
 
-/// The bounds of one walk.
+/// The bounds of one walk. A `depth_max` above
+/// [`PAYLOAD_DEPTH_MAX_CEILING`] walks to the ceiling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayloadWalkBounds {
-    pub depth_max: usize,
+    pub depth_max: u32,
     pub entries_max: u64,
     pub time_max: Duration,
 }
@@ -59,8 +66,8 @@ pub struct PayloadWalkBounds {
 impl Default for PayloadWalkBounds {
     fn default() -> Self {
         Self {
-            depth_max: PAYLOAD_WALK_DEPTH_MAX,
-            entries_max: PAYLOAD_WALK_ENTRIES_MAX,
+            depth_max: PAYLOAD_DEPTH_MAX_DEFAULT,
+            entries_max: PAYLOAD_ENTRIES_MAX_DEFAULT,
             time_max: PAYLOAD_WALK_TIME_MAX,
         }
     }
@@ -168,6 +175,8 @@ pub fn measure_payload_fd(
     bounds: &PayloadWalkBounds,
 ) -> io::Result<PayloadUsage> {
     let started = Instant::now();
+    let depth_max = bounds.depth_max.min(PAYLOAD_DEPTH_MAX_CEILING);
+    let deepest = usize::try_from(depth_max).unwrap_or(usize::MAX);
     let mut bytes: u64 = 0;
     let mut entries: u64 = 0;
     // The files with more than one name counted so far.
@@ -238,9 +247,9 @@ pub fn measure_payload_fd(
         }
         // The entry is at level `level`: the payload's own entries are at
         // level 1.
-        if level > bounds.depth_max {
+        if level > deepest {
             return Ok(PayloadUsage::Unmeasurable {
-                why: format!("deeper than {} directories", bounds.depth_max),
+                why: format!("deeper than {depth_max} directories"),
             });
         }
         let child = match rustix::fs::openat(parent, name, directory_flags(), Mode::empty()) {

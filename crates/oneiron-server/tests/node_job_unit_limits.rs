@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use oneiron::EntityId;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron_server::gpu_execution_node::jobs::payload_usage::{
-    PAYLOAD_WALK_DEPTH_MAX, measure_payload, measure_payload_within,
+    PAYLOAD_DEPTH_MAX_DEFAULT, measure_payload, measure_payload_within,
 };
 use oneiron_server::gpu_execution_node::jobs::{
     EndingCause, JobKeyId, NodeGate, NodeJobs, NodeKey, PayloadUsage, PayloadWalkBounds,
@@ -329,22 +329,24 @@ fn a_payload_is_counted_on_disk_once_and_never_through_a_link() {
 
 /// A payload deeper than the walk enters, or with more entries than it
 /// counts, cannot be measured, and passes every request: the node cannot
-/// show it is within. The disk check ends a running key whose payload is
-/// so deep as `DiskLimit`, whatever its bytes.
+/// show it is within. The disk check walks within the node file's bounds
+/// (`payload_entries_max`, `payload_depth_max`), and ends a running key
+/// whose payload is past them as `DiskLimit`, whatever its bytes.
 #[test]
 fn a_payload_too_deep_or_too_wide_to_measure_counts_as_over_its_request() {
+    let depth = usize::try_from(PAYLOAD_DEPTH_MAX_DEFAULT).expect("a depth");
     let dir = tempfile::tempdir().expect("temp dir");
     let deep_enough = dir.path().join("deep-enough");
-    nest(&deep_enough, PAYLOAD_WALK_DEPTH_MAX);
+    nest(&deep_enough, depth);
     assert!(
         matches!(
             measure_payload(&deep_enough, u64::MAX).expect("measured"),
             PayloadUsage::Measured { .. }
         ),
-        "{PAYLOAD_WALK_DEPTH_MAX} levels are measured"
+        "{depth} levels are measured"
     );
     let too_deep = dir.path().join("too-deep");
-    nest(&too_deep, PAYLOAD_WALK_DEPTH_MAX + 1);
+    nest(&too_deep, depth + 1);
     let usage = measure_payload(&too_deep, u64::MAX).expect("measured");
     assert!(
         matches!(usage, PayloadUsage::Unmeasurable { .. }),
@@ -376,14 +378,41 @@ fn a_payload_too_deep_or_too_wide_to_measure_counts_as_over_its_request() {
         PayloadUsage::Measured { .. }
     ));
 
+    // The node's bounds: twenty empty files are within the default ones,
+    // and past ten entries the key ends.
     let fixture = fixture();
     let jobs = fixture.node.open();
-    let key = "job-disk-deep/chunk-0";
-    fixture.run(&jobs, key);
-    nest(&fixture.out_dir(key), PAYLOAD_WALK_DEPTH_MAX);
-    assert_eq!(jobs.check_payload_disk(), vec![key.to_owned()]);
+    let wide_key = "job-disk-wide/chunk-0";
+    fixture.run(&jobs, wide_key);
+    let out = fixture.out_dir(wide_key);
+    for name in 0..20 {
+        std::fs::File::create(out.join(format!("empty-{name}"))).expect("empty file");
+    }
+    assert_eq!(jobs.check_payload_disk(), Vec::<String>::new());
+    fixture.node.admission.set_payload_walk(PayloadWalkBounds {
+        entries_max: 10,
+        ..PayloadWalkBounds::default()
+    });
+    assert_eq!(jobs.check_payload_disk(), vec![wide_key.to_owned()]);
     jobs.tick();
-    let ended = wait_for(&jobs, key, NodeKey::is_ended);
+    let ended = wait_for(&jobs, wide_key, NodeKey::is_ended);
+    assert_eq!(ended.end, Some(JobEnd::DiskLimit));
+    fixture
+        .node
+        .admission
+        .set_payload_walk(PayloadWalkBounds::default());
+    jobs.tick();
+    wait_for(&jobs, wide_key, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+
+    // A payload deeper than the default bound ends the next key.
+    let deep_key = "job-disk-deep/chunk-0";
+    fixture.run(&jobs, deep_key);
+    nest(&fixture.out_dir(deep_key), depth);
+    assert_eq!(jobs.check_payload_disk(), vec![deep_key.to_owned()]);
+    jobs.tick();
+    let ended = wait_for(&jobs, deep_key, NodeKey::is_ended);
     assert_eq!(ended.end, Some(JobEnd::DiskLimit));
 }
 

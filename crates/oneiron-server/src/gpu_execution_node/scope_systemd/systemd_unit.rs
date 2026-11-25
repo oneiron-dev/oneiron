@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::super::jobs::{
-    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, PayloadUsage,
+    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, PayloadUsage, PayloadWalkBounds,
 };
 use super::super::wire::ScopeFacts;
 use super::capabilities;
@@ -306,8 +306,9 @@ impl JobUnit for SystemdJobUnit {
         unit: &JobKeyId,
         _payload_dir: &Path,
         stop_past: u64,
+        bounds: &PayloadWalkBounds,
     ) -> Result<PayloadUsage, JobUnitError> {
-        control::request_usage(unit, stop_past).map_err(|reason| Self::error(unit, reason))
+        control::request_usage(unit, stop_past, bounds).map_err(|reason| Self::error(unit, reason))
     }
 
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {

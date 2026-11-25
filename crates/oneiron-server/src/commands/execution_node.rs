@@ -339,7 +339,17 @@ fn unit_name(key: &str) -> anyhow::Result<()> {
 /// job control socket.
 #[cfg(target_os = "linux")]
 fn unit_control(verb: &str, key: &str, argument: Option<&str>) -> anyhow::Result<()> {
+    use crate::gpu_execution_node::jobs::PayloadWalkBounds;
     use crate::gpu_execution_node::scope_systemd::control::{self, ControlVerb};
+    // `usage` at the box walks within the default bounds.
+    let defaults = PayloadWalkBounds::default();
+    let usage_argument =
+        argument.map(|bytes| format!("{bytes} {} {}", defaults.entries_max, defaults.depth_max));
+    let argument = if verb == "usage" {
+        usage_argument.as_deref()
+    } else {
+        argument
+    };
     let verb = ControlVerb::from_words(verb, argument).map_err(|why| {
         anyhow::anyhow!(
             "unit-control: start <key>, stop <key>, signal <key> <name> or usage <key> <bytes>: {why}"
@@ -347,8 +357,8 @@ fn unit_control(verb: &str, key: &str, argument: Option<&str>) -> anyhow::Result
     })?;
     let id = crate::gpu_execution_node::jobs::JobKeyId::for_key(key);
     let fail = |why: String| anyhow::anyhow!("unit-control {} {id}: {why}", verb.word());
-    if let ControlVerb::Usage(stop_past) = verb {
-        let usage = control::request_usage(&id, stop_past).map_err(fail)?;
+    if let ControlVerb::Usage { stop_past, .. } = verb {
+        let usage = control::request_usage(&id, stop_past, &defaults).map_err(fail)?;
         writeln!(std::io::stdout().lock(), "{}", usage.render())?;
         return Ok(());
     }

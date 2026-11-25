@@ -25,12 +25,14 @@ use serde::{Deserialize, Serialize};
 use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 
 mod job_ids;
+mod payload_walk;
 
 pub use job_ids::{
     JOB_DEVICE_GROUP_DEFAULT, JOB_UID_COUNT_DEFAULT, JOB_UID_END_MAX, JOB_UID_FIRST_DEFAULT,
     JOB_UID_FIRST_MIN,
 };
 use job_ids::{job_device_group_default, job_uid_count_default, job_uid_first_default};
+use payload_walk::{payload_depth_max_default, payload_entries_max_default};
 
 /// Where the node's file is when neither the server's configuration nor
 /// [`EXECUTION_NODE_FILE_ENV`] names one.
@@ -190,6 +192,12 @@ pub struct ExecutionNodeSettings {
     pub unit_start_timeout_secs: u64,
     #[serde(default = "disk_check_secs_default")]
     pub disk_check_secs: u64,
+    /// The disk check's walk bounds (7.9): a payload with more entries, or
+    /// with directories deeper, is not measured and ends as `DiskLimit`.
+    #[serde(default = "payload_entries_max_default")]
+    pub payload_entries_max: u64,
+    #[serde(default = "payload_depth_max_default")]
+    pub payload_depth_max: u32,
     /// The files of each device a job may lease, by the device's id: the
     /// job unit's device policy opens these and no others. A card the NVIDIA
     /// driver lists needs no entry (its node and the driver's control nodes
@@ -420,6 +428,7 @@ impl ExecutionNodeSettings {
             self.job_uid_count,
             &self.job_device_group,
         )?;
+        payload_walk::check(self.payload_entries_max, self.payload_depth_max)?;
         for (name, template) in &self.templates {
             template
                 .validate()

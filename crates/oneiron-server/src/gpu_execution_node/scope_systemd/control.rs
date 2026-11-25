@@ -24,13 +24,17 @@
 //! checkpoint signal could end (review r6 R6-06). Before that the notice is
 //! refused and lost, as a notice may be.
 //!
-//! The fourth verb, `usage <id> <bytes>`, is the disk check's measure
-//! (design 7.9; FIX EXEC-NODE-DISK-CHECK-UNBUILT): a job runs as its own uid
-//! and may make a directory the engine's account cannot list, so root walks
-//! the payload. It walks the unit's own bind source,
+//! The fourth verb, `usage <id> <bytes> <entries> <depth>`, is the disk
+//! check's measure (design 7.9; FIX EXEC-NODE-DISK-CHECK-UNBUILT): a job
+//! runs as its own uid and may make a directory the engine's account cannot
+//! list, so root walks the payload. It walks the unit's own bind source,
 //! `<PAYLOAD_ROOT>/<id>`, under a root-only directory, never the engine's
-//! path, and stops once it has counted more than `<bytes>`. The answer is
-//! `ok ` and [`PayloadUsage::render`]'s line.
+//! path; it stops once it has counted more than `<bytes>`, and a payload
+//! with more than `<entries>` entries or directories deeper than `<depth>`
+//! (the node file's walk bounds, which the engine reads) is unmeasurable.
+//! The walk's depth never passes [`PAYLOAD_DEPTH_MAX_CEILING`] and its time
+//! never passes the engine's bound. The answer is `ok ` and
+//! [`PayloadUsage::render`]'s line.
 
 use std::ffi::OsStr;
 use std::io::{Read as _, Write as _};
@@ -39,7 +43,9 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::super::jobs::payload_usage::{PayloadWalkBounds, measure_payload_fd};
+use super::super::jobs::payload_usage::{
+    PAYLOAD_DEPTH_MAX_CEILING, PayloadWalkBounds, measure_payload_fd,
+};
 use super::super::jobs::{JobKeyId, PayloadUsage};
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::PAYLOAD_ROOT;
@@ -68,12 +74,13 @@ const SIGNAL_ACTIVE_STATE: &str = "active";
 
 /// The longest request line: `signal `, 32 hex digits, a space, the
 /// longest checkpoint signal's name and the newline fit with room, and so
-/// do `usage `, 32 hex digits, a space, the 20 digits of the largest bound
-/// and the newline (60 bytes).
-const REQUEST_MAX_BYTES: usize = 64;
+/// does the longest `usage` line: `usage `, 32 hex digits, two numbers of
+/// up to 20 digits and one of up to 10, each after a space, and the newline
+/// (92 bytes).
+const REQUEST_MAX_BYTES: usize = 128;
 
-/// The most digits a `usage` bound has: `u64::MAX`'s.
-const USAGE_BOUND_MAX_DIGITS: usize = 20;
+/// The most digits a `usage` number has: `u64::MAX`'s.
+const USAGE_NUMBER_MAX_DIGITS: usize = 20;
 
 /// The longest reply line the engine reads.
 const REPLY_MAX_BYTES: usize = 1024;
@@ -93,9 +100,14 @@ pub enum ControlVerb {
     Stop,
     /// A checkpoint notice: one of [`CHECKPOINT_SIGNALS`], by name.
     Signal(&'static str),
-    /// The disk check's measure of the job's payload, stopping once it has
-    /// counted more than this many bytes.
-    Usage(u64),
+    /// The disk check's measure of the job's payload: it stops once it has
+    /// counted more than `stop_past` bytes; a payload past `entries_max`
+    /// entries or `depth_max` directory levels is unmeasurable.
+    Usage {
+        stop_past: u64,
+        entries_max: u64,
+        depth_max: u32,
+    },
 }
 
 impl ControlVerb {
@@ -106,12 +118,13 @@ impl ControlVerb {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Signal(_) => "signal",
-            Self::Usage(_) => "usage",
+            Self::Usage { .. } => "usage",
         }
     }
 
     /// The verb a request word names, with its argument: the signal's name
-    /// for `signal`, the bound in bytes (decimal digits) for `usage`.
+    /// for `signal`; for `usage` the byte bound, the entry bound and the
+    /// depth bound, in decimal digits, each after one space.
     ///
     /// # Errors
     ///
@@ -129,9 +142,9 @@ impl ControlVerb {
                 .map(Self::Signal)
                 .ok_or_else(|| "signal_not_a_checkpoint_signal".to_owned()),
             ("signal", None) => Err("signal_name_missing".to_owned()),
-            ("usage", Some(bound)) => usage_bound(bound)
-                .map(Self::Usage)
-                .ok_or_else(|| "usage_bound_malformed".to_owned()),
+            ("usage", Some(bounds)) => {
+                usage_bounds(bounds).ok_or_else(|| "usage_bound_malformed".to_owned())
+            }
             ("usage", None) => Err("usage_bound_missing".to_owned()),
             ("start" | "stop", Some(_)) => Err("request_malformed".to_owned()),
             _ => Err("verb_unknown".to_owned()),
@@ -154,35 +167,55 @@ impl ControlVerb {
                 format!("--signal=SIG{name}"),
                 unit.to_owned(),
             ],
-            Self::Usage(_) => return None,
+            Self::Usage { .. } => return None,
         })
     }
 }
 
-/// A `usage` bound: 1 to 20 decimal digits that fit a `u64`.
-fn usage_bound(text: &str) -> Option<u64> {
-    (!text.is_empty()
-        && text.len() <= USAGE_BOUND_MAX_DIGITS
-        && text.bytes().all(|byte| byte.is_ascii_digit()))
-    .then(|| text.parse().ok())
-    .flatten()
+/// A `usage` verb's three numbers, `<bytes> <entries> <depth>`: each 1 to
+/// 20 decimal digits, one space between them, the depth within a `u32`.
+fn usage_bounds(text: &str) -> Option<ControlVerb> {
+    let number = |word: &str| -> Option<u64> {
+        (!word.is_empty()
+            && word.len() <= USAGE_NUMBER_MAX_DIGITS
+            && word.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| word.parse().ok())
+        .flatten()
+    };
+    let mut words = text.split(' ');
+    let stop_past = number(words.next()?)?;
+    let entries_max = number(words.next()?)?;
+    let depth_max = u32::try_from(number(words.next()?)?).ok()?;
+    if words.next().is_some() {
+        return None;
+    }
+    Some(ControlVerb::Usage {
+        stop_past,
+        entries_max,
+        depth_max,
+    })
 }
 
 /// The request line for `verb` on the job unit `id`: `<verb> <32 hex>\n`,
-/// `signal <32 hex> <name>\n` or `usage <32 hex> <bytes>\n`.
+/// `signal <32 hex> <name>\n` or `usage <32 hex> <bytes> <entries>
+/// <depth>\n`.
 #[must_use]
 pub fn render_request(verb: ControlVerb, id: &JobKeyId) -> String {
     match verb {
         ControlVerb::Signal(name) => format!("signal {id} {name}\n"),
-        ControlVerb::Usage(bound) => format!("usage {id} {bound}\n"),
+        ControlVerb::Usage {
+            stop_past,
+            entries_max,
+            depth_max,
+        } => format!("usage {id} {stop_past} {entries_max} {depth_max}\n"),
         ControlVerb::Start | ControlVerb::Stop => format!("{} {id}\n", verb.word()),
     }
 }
 
 /// One request line, as the handler reads it: exactly a known verb, one
 /// space, a job instance id (32 lower-hex digits), for `signal` one space
-/// and a checkpoint signal's name, for `usage` one space and the bound in
-/// decimal digits, and a newline.
+/// and a checkpoint signal's name, for `usage` its three numbers, each
+/// after one space, and a newline.
 ///
 /// # Errors
 ///
@@ -202,7 +235,7 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
             .ok_or_else(|| "signal_name_missing".to_owned())?,
         "usage" => rest
             .split_once(' ')
-            .map(|(id, bound)| (id, Some(bound)))
+            .map(|(id, bounds)| (id, Some(bounds)))
             .ok_or_else(|| "usage_bound_missing".to_owned())?,
         _ => (rest, None),
     };
@@ -222,14 +255,24 @@ pub fn request(verb: ControlVerb, id: &JobKeyId) -> Result<(), String> {
     exchange(verb, id).map(drop)
 }
 
-/// The disk check's measure of the job `id`'s payload, as root walked it,
+/// The disk check's measure of the job `id`'s payload, as root walked it
+/// within `bounds` (their depth and entries; the time bound is root's own),
 /// stopping once it has counted more than `stop_past` bytes.
 ///
 /// # Errors
 ///
 /// As [`request`], and an answer that is not a measure.
-pub fn request_usage(id: &JobKeyId, stop_past: u64) -> Result<PayloadUsage, String> {
-    let answer = exchange(ControlVerb::Usage(stop_past), id)?;
+pub fn request_usage(
+    id: &JobKeyId,
+    stop_past: u64,
+    bounds: &PayloadWalkBounds,
+) -> Result<PayloadUsage, String> {
+    let verb = ControlVerb::Usage {
+        stop_past,
+        entries_max: bounds.entries_max,
+        depth_max: bounds.depth_max,
+    };
+    let answer = exchange(verb, id)?;
     PayloadUsage::parse(&answer).ok_or_else(|| format!("job-control answered usage {answer:?}"))
 }
 
@@ -303,8 +346,18 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<String, String> {
     let line = read_line(stream, REQUEST_MAX_BYTES, REQUEST_WAIT)
         .map_err(|error| format!("request: {error}"))?;
     let (verb, id) = parse_request(&line)?;
-    if let ControlVerb::Usage(stop_past) = verb {
-        return payload_usage(&id, stop_past).map(|usage| usage.render());
+    if let ControlVerb::Usage {
+        stop_past,
+        entries_max,
+        depth_max,
+    } = verb
+    {
+        let bounds = PayloadWalkBounds {
+            depth_max: depth_max.min(PAYLOAD_DEPTH_MAX_CEILING),
+            entries_max,
+            ..PayloadWalkBounds::default()
+        };
+        return payload_usage(&id, stop_past, &bounds).map(|usage| usage.render());
     }
     let unit = id.unit_name();
     if matches!(verb, ControlVerb::Signal(_)) {
@@ -326,7 +379,11 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<String, String> {
 /// never through a link, so the walk counts the directory the unit binds
 /// and no path the engine's account could replace. The bind carries no
 /// submount.
-fn payload_usage(id: &JobKeyId, stop_past: u64) -> Result<PayloadUsage, String> {
+fn payload_usage(
+    id: &JobKeyId,
+    stop_past: u64,
+    bounds: &PayloadWalkBounds,
+) -> Result<PayloadUsage, String> {
     let root = open_dir_path(Path::new(PAYLOAD_ROOT))
         .map_err(|error| format!("payload_not_published: {error}"))?;
     let root_facts = facts(borrow(&root)).map_err(|error| format!("payload_root: {error}"))?;
@@ -338,7 +395,7 @@ fn payload_usage(id: &JobKeyId, stop_past: u64) -> Result<PayloadUsage, String> 
     }
     let payload = open_dir_beneath(borrow(&root), OsStr::new(id.as_str()))
         .map_err(|error| format!("payload_not_published: {error}"))?;
-    measure_payload_fd(payload, stop_past, &PayloadWalkBounds::default())
+    measure_payload_fd(payload, stop_past, bounds)
         .map_err(|error| format!("payload_not_measured: {error}"))
 }
 
@@ -434,10 +491,21 @@ mod tests {
                 ])
             );
         }
-        for bound in [0, 1_048_576, u64::MAX] {
-            let verb = ControlVerb::Usage(bound);
+        for (stop_past, entries_max, depth_max) in [
+            (0, 1, 1),
+            (1_048_576, 1_000_000, 64),
+            (u64::MAX, u64::MAX, u32::MAX),
+        ] {
+            let verb = ControlVerb::Usage {
+                stop_past,
+                entries_max,
+                depth_max,
+            };
             let line = render_request(verb, &id);
-            assert_eq!(line, format!("usage {id} {bound}\n"));
+            assert_eq!(
+                line,
+                format!("usage {id} {stop_past} {entries_max} {depth_max}\n")
+            );
             assert!(line.len() <= REQUEST_MAX_BYTES);
             assert_eq!(parse_request(line.as_bytes()), Ok((verb, id.clone())));
             assert_eq!(verb.systemctl_args("u"), None);
@@ -481,14 +549,21 @@ mod tests {
             (format!("stop {id} USR1\n"), "instance_not_a_job"),
             (format!("usage {id}\n"), "usage_bound_missing"),
             (format!("usage {id} \n"), "usage_bound_malformed"),
-            (format!("usage {id} -1\n"), "usage_bound_malformed"),
-            (format!("usage {id} +5\n"), "usage_bound_malformed"),
+            (format!("usage {id} 5\n"), "usage_bound_malformed"),
+            (format!("usage {id} 5 6\n"), "usage_bound_malformed"),
+            (format!("usage {id} -1 6 7\n"), "usage_bound_malformed"),
+            (format!("usage {id} +5 6 7\n"), "usage_bound_malformed"),
+            (format!("usage {id} 5  6 7\n"), "usage_bound_malformed"),
+            (format!("usage {id} 5 6 7 8\n"), "usage_bound_malformed"),
             (
-                format!("usage {id} 18446744073709551616\n"),
+                format!("usage {id} 18446744073709551616 6 7\n"),
                 "usage_bound_malformed",
             ),
-            (format!("usage {id} 1 2\n"), "usage_bound_malformed"),
-            (format!("usage {id}.service 5\n"), "instance_not_a_job"),
+            (
+                format!("usage {id} 5 6 4294967296\n"),
+                "usage_bound_malformed",
+            ),
+            (format!("usage {id}.service 5 6 7\n"), "instance_not_a_job"),
         ] {
             assert_eq!(
                 parse_request(bad.as_bytes()),

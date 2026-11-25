@@ -36,10 +36,13 @@ pub use oneiron_organ_host::{
 };
 
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
+use super::payload_usage::PayloadWalkBounds;
 use crate::gpu_execution_node::device::DeviceSample;
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
-use crate::gpu_execution_node::node_settings::{DrainClearBy, READINESS_EVERY_SECS_DEFAULT};
+use crate::gpu_execution_node::node_settings::{
+    DrainClearBy, ExecutionNodeSettings, READINESS_EVERY_SECS_DEFAULT,
+};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
@@ -93,6 +96,10 @@ pub struct NodeJobSettings {
     /// `jobs.breadcrumbs.keep`: how many breadcrumb lines a running key
     /// keeps, which a `Lost` receipt carries. Default 20.
     pub breadcrumbs_keep: u64,
+    /// The disk check's walk bounds (design 7.9): the node file's
+    /// `payload_depth_max` and `payload_entries_max`. A payload past them
+    /// ends as `DiskLimit`. Default 64 levels and 1,000,000 entries.
+    pub payload_walk: PayloadWalkBounds,
 }
 
 impl Default for NodeJobSettings {
@@ -109,6 +116,7 @@ impl Default for NodeJobSettings {
             drain_clear_by: DrainClearBy::AfterReadinessCheck,
             incidents_keep: 200,
             breadcrumbs_keep: 20,
+            payload_walk: PayloadWalkBounds::default(),
         }
     }
 }
@@ -446,11 +454,16 @@ impl NodeAdmission for ExecutionNode {
             (defaults.readiness_every_secs, defaults.drain_clear_by),
             |file| ExecutionNode::readiness_settings(self, file),
         );
+        let payload_walk = file.as_ref().map_or_else(
+            PayloadWalkBounds::default,
+            ExecutionNodeSettings::payload_walk_bounds,
+        );
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
             receipt_keep_days: ExecutionNode::receipt_keep_days(self),
             readiness_every_secs,
             drain_clear_by,
+            payload_walk,
             ..defaults
         }
     }

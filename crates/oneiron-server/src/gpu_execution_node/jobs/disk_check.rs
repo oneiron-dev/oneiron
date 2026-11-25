@@ -25,7 +25,8 @@ struct MeasuredKey {
 impl NodeJobs {
     /// One pass of the disk check. Each key that is `Launching` or
     /// `Running` is measured against its request's `disk_mib`; one whose
-    /// payload passes it (or cannot be measured within the walk's bounds)
+    /// payload passes it (or cannot be measured within the node's walk
+    /// bounds, `payload_depth_max` and `payload_entries_max`)
     /// moves to `Ending { DiskLimit }` and its unit is stopped. A payload
     /// that was not measured this time is measured at the next pass. It
     /// blocks.
@@ -35,13 +36,19 @@ impl NodeJobs {
         if self.service_closed() {
             return Vec::new();
         }
+        let launched = self.launched_keys();
+        if launched.is_empty() {
+            return Vec::new();
+        }
+        let bounds = self.parts().admission.job_settings().payload_walk;
         let mut ended = Vec::new();
-        for measured in self.launched_keys() {
+        for measured in launched {
             let payload_dir = measured.id.payload_dir(&self.paths().work_dir);
             let usage = match self.parts().units.payload_usage(
                 &measured.id,
                 &payload_dir,
                 measured.limit_bytes,
+                &bounds,
             ) {
                 Ok(usage) => usage,
                 Err(error) => {
