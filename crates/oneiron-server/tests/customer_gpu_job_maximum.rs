@@ -174,6 +174,13 @@ impl GpuJobConnector for FakeGpu {
         state.calls.push(format!("terminate {}", resource.0));
         Ok(state.termination.unwrap_or(GpuTermination::Pending))
     }
+
+    fn write_off(&self, job: &GpuJob, _now_ms: u64) -> Result<(), GpuConnectorError> {
+        self.state()
+            .calls
+            .push(format!("write_off {}", job.id.to_hex()));
+        Ok(())
+    }
 }
 
 /// One paired agent credential.
@@ -1158,6 +1165,38 @@ fn the_worker_starts_while_a_job_is_live_with_no_offer_posted() {
         assert!(
             !gpu_job_worker_starts(&settled),
             "the ended job no longer needs the worker"
+        );
+    });
+}
+
+#[test]
+fn a_write_off_reaches_a_live_job_whose_offer_is_withdrawn() {
+    run_on_engine_stack("gpu-job-withdrawn-write-off", || async {
+        let fixture = setup(SECTION);
+        let job = start_owner_gpu_job(&fixture).await;
+        let job_hex = job.to_hex();
+        step_at(&fixture, &job_hex, 10, None).await;
+        let (_restarted, app) = restart_without_offers(&fixture);
+        let write_offs_before = fixture.gpu.called("write_off");
+
+        let (status, body) = as_owner_on(
+            &fixture,
+            &app,
+            "vault.gpu.jobs.write_off",
+            json!({"job": job_hex}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner write-off after withdrawal: {body}"
+        );
+        assert_eq!(fixture.gpu.called("write_off"), write_offs_before + 1);
+        assert_eq!(
+            gpu_job_row(&fixture, &job).state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Unconfirmed
+            }
         );
     });
 }

@@ -243,11 +243,11 @@ fn status_of(server: &SyncServer, connector: &dyn GpuJobConnector, job: &GpuJob)
     status
 }
 
-/// `job`'s status on this host's backend for its offer. A job whose offer or backend this host
-/// no longer has shows no node fields.
+/// `job`'s status on the backend that runs it, the one its row names (a job keeps its backend,
+/// design pass 33, 8.1). A job whose backend this host no longer has shows no node fields.
 fn status_on_host(server: &SyncServer, job: &GpuJob) -> GpuJobStatus {
-    match offer_with_backend(server, &job.offer.name) {
-        Ok((_, connector)) => status_of(server, connector.as_ref(), job),
+    match job_backend(server, job) {
+        Ok(connector) => status_of(server, connector.as_ref(), job),
         Err(_) => GpuJobStatus::from(job),
     }
 }
@@ -307,7 +307,8 @@ pub(crate) async fn vault_gpu_jobs_cancel(
 /// `vault.gpu.jobs.write_off` (pass 33 row R4, door 10): the owner closes the hold of a job
 /// whose end its backend cannot confirm. The backend closes the job's dispatch for good, then
 /// the job ends `unconfirmed` and settles zero; it is final. The backend refuses a job whose
-/// end it can still confirm, and one inside its wait.
+/// end it can still confirm, and one inside its wait. The backend is the one the job's row
+/// names, so a job whose offer was withdrawn can still be written off (pass 33, 8.1).
 pub(crate) async fn vault_gpu_jobs_write_off(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -317,7 +318,7 @@ pub(crate) async fn vault_gpu_jobs_write_off(
         let owner = owner_act(caller, GpuJobVerb::WriteOff)?;
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
-        let connector = offer_with_backend(server, &job.offer.name)?.1;
+        let connector = job_backend(server, &job)?;
         let job = server.vault.write_off_gpu_job(
             owner,
             &id,
