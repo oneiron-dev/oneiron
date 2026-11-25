@@ -336,7 +336,7 @@ impl NodeJobs {
             return;
         }
         for lease in leases {
-            let _kept = lease.keep();
+            drop(lease);
         }
         book.floors.insert(key.to_owned(), floor);
         if let Err(error) = self.parts().units.start(&JobKeyId::for_key(key)) {
