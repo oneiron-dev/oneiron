@@ -196,6 +196,13 @@ fn intent_row_key(asker: &EntityId, verb: &str, intent_key: &str) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// The asker a stored `LANE_ECONOMY_INTENT` value names, whose erase drops the row
+/// ([`erase_intent_asker_in_txn`]): the record the whole-vault export reads it to be about.
+/// `None` for bytes that do not read as an intent.
+pub(crate) fn intent_row_asker(value: &[u8]) -> Option<EntityId> {
+    INTENTS.decode_value(value).ok().map(|row| row.asker)
+}
+
 /// Drops every intent the erased actor asked (the side table's actor
 /// scrub). Its keys hash the asker, so no other caller could replay them.
 pub(crate) fn erase_intent_asker_in_txn(
