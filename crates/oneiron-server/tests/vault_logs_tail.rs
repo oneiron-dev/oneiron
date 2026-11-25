@@ -1,7 +1,9 @@
 //! `vault.jobs.logs.tail` on the issuer (pass 34, 7.2 and 14.2; row Q3; Q3-2-WAIT = C): an
 //! attempt's log is read on its machine by byte offset, by the attempt's requester or the owner
 //! only, and a call with `wait_ms` answers when bytes arrive, when the stream ends, or when the
-//! wait passes. Its reply is never kept for a same-id retry, which asks the machine again.
+//! wait passes. Its reply is never kept: a same-id retry finds the call's admission intent
+//! settled and is refused with none of the first ask's bytes, and a new read asks the machine
+//! again.
 //!
 //! The machine is a scripted node client behind the `gpu_backend` test door; the attempt is an
 //! agent's GPU job on the fake offer with the dispatch row a vault machine's issuer writes. The
@@ -9,8 +11,9 @@
 //!
 //! Red: at the base (#10462's head a859a9ec) plus this file alone, the target does not build (no
 //! `oneiron::work_order::LogsTail`, no `use_job_nodes` door) and the facade has no
-//! `vault.jobs.logs.tail` row. The same-id retry test is red at 8faff7a9 (review round 1 of
-//! #10466): the retry replayed the first ask's kept reply and asked the machine nothing.
+//! `vault.jobs.logs.tail` row. The same-id retry test is red with `LOGS_TAIL_VERB` taken out of
+//! `invocations::UNKEPT_REPLY_VERBS` (review round 1 of #10466): the retry is answered the first
+//! ask's kept bytes.
 //!
 //! Run on the fleet, not on a workstation:
 //! ```sh
@@ -603,7 +606,7 @@ fn a_waiting_tail_answers_when_bytes_arrive_or_the_stream_ends_and_an_unwaited_o
 }
 
 #[test]
-fn a_same_id_retry_asks_the_machine_again_and_reads_the_bytes_written_since() {
+fn a_same_id_retry_gets_no_kept_bytes_and_a_new_read_asks_the_machine_again() {
     run_on_engine_stack("logs-tail-retry", || async {
         let fixture = setup();
         let requester = fixture.pair_agent("log-retrier", 0x75);
@@ -612,6 +615,7 @@ fn a_same_id_retry_asks_the_machine_again_and_reads_the_bytes_written_since() {
             .await;
         let key = fixture.attempt_on(&requester, grant, EntityId::now()).await;
         let invocation = EntityId::now().to_hex();
+        fixture.machine.script().stdout = b"epoch 1\n".to_vec();
 
         let first = tail(
             fixture
@@ -623,27 +627,51 @@ fn a_same_id_retry_asks_the_machine_again_and_reads_the_bytes_written_since() {
                 )
                 .await,
         );
-        assert_eq!(first.bytes, "");
+        assert_eq!(first.bytes, "epoch 1\n");
         assert_eq!(fixture.machine.tails(), 1);
 
-        fixture.machine.script().stdout = b"epoch 2\n".to_vec();
-        let retried = tail(
+        fixture
+            .machine
+            .script()
+            .stdout
+            .extend_from_slice(b"epoch 2\n");
+        let (status, retried) = fixture
+            .as_agent_under(
+                &requester,
+                LOGS_TAIL_VERB,
+                stdout_from(&key, 0),
+                Some(&invocation),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "the retry finds its admission intent settled, and no kept reply answers it: {retried}"
+        );
+        assert_eq!(retried["error"]["code"], "INVALID_STATE", "{retried}");
+        assert!(
+            !retried.to_string().contains("epoch 1"),
+            "no byte of the first ask is answered again: {retried}"
+        );
+        assert_eq!(
+            fixture.machine.tails(),
+            1,
+            "a refused retry asks the machine nothing"
+        );
+
+        let next = tail(
             fixture
                 .as_agent_under(
                     &requester,
                     LOGS_TAIL_VERB,
-                    stdout_from(&key, 0),
-                    Some(&invocation),
+                    stdout_from(&key, 8),
+                    Some(&EntityId::now().to_hex()),
                 )
                 .await,
         );
-        assert_eq!(
-            fixture.machine.tails(),
-            2,
-            "the retry asks the machine: no reply of the first ask was kept"
-        );
-        assert_eq!(retried.bytes, "epoch 2\n");
-        assert_eq!(retried.next_offset, 8);
+        assert_eq!(fixture.machine.tails(), 2, "a new read asks the machine");
+        assert_eq!(next.bytes, "epoch 2\n");
+        assert_eq!(next.next_offset, 16);
     });
 }
 

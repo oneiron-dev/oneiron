@@ -196,8 +196,8 @@ fn place_now(
 /// machine again every second while it answers nothing new, until bytes arrive, the stream
 /// ends or the wait passes (at most [`LOGS_TAIL_WAIT_MAX_MS`]); without it, one ask. Each ask
 /// admits the caller again in the engine's read, so a revoke ends a wait at its next ask. Its
-/// reply is never kept (`invocations::UNKEPT_REPLY_VERBS`): a same-id retry asks the machine
-/// again.
+/// reply is never kept (`invocations::UNKEPT_REPLY_VERBS`): a same-id retry finds its admission
+/// intent settled and is refused, and a new read asks the machine again.
 pub(crate) async fn vault_jobs_logs_tail(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

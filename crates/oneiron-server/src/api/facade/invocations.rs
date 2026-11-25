@@ -313,7 +313,8 @@ pub(crate) enum DoorClaim {
 /// a page of the log to this vault's invocation state, and would answer a
 /// same-id retry with its first ask's bytes after the stream moved on,
 /// without asking the machine again (review round 1 of #10466). A same-id
-/// retry asks the machine again and writes nothing.
+/// retry finds its admission intent settled (`admission_doors::call_verb`)
+/// and is refused with none of those bytes; a new read asks the machine.
 const UNKEPT_REPLY_VERBS: [&str; 14] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
