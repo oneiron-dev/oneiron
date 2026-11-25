@@ -1149,3 +1149,75 @@ fn a_result_that_does_not_arrive_is_returned_by_the_next_housekeeping_pass() {
         );
     });
 }
+
+/// [JOB-RETURN-OWED-FOREVER-UNSTARTED-KEY]: a key whose workload never started (refused at
+/// admission, or inside the launch commit) has no outputs to wait for, because the node hashes
+/// outputs only after a run's release. With a quote that binds a result, its return is decided
+/// at the confirm: nothing is fetched, the node is told it may clean, no return stays owed, and
+/// the next housekeeping pass asks the node nothing.
+#[test]
+fn a_bound_key_that_never_started_owes_no_return_and_housekeeping_asks_nothing() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        let workload = rig.approve("result-never-started", FAR_EXPIRY_MS);
+        for end in [
+            JobEnd::Refused {
+                reason: "no_device_free".to_owned(),
+            },
+            JobEnd::LaunchRefused {
+                reason: "device_fence".to_owned(),
+            },
+        ] {
+            let run =
+                rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+            rig.clock.advance_secs(30);
+            rig.node.revise(run.key(), |receipt| {
+                receipt.state = JobState::Ended;
+                receipt.started = false;
+                receipt.end = Some(end.clone());
+                receipt.measured_secs = None;
+                receipt.device_id = None;
+                receipt.release = DeviceRelease::NotHeld;
+                receipt.outputs = OutputsState::Pending;
+            });
+            rig.settle(&run);
+            let returned = vault
+                .job_return(run.key())
+                .expect("read JOB_RETURN")
+                .expect("the key's return");
+            assert!(
+                returned.landed.is_empty() && returned.refused.is_empty(),
+                "{end:?}: no output to land or refuse"
+            );
+            assert!(
+                returned.acknowledged_at_ms.is_some(),
+                "{end:?}: nothing to wait for, so the node is told it may clean"
+            );
+            let kinds = kinds_for(&rig.node.calls(), run.key());
+            assert!(!kinds.contains(&"fetch"), "{end:?}: no fetch: {kinds:?}");
+            assert!(kinds.contains(&"ack"), "{end:?}: an Ack: {kinds:?}");
+        }
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .is_empty(),
+            "no return is owed"
+        );
+        let before = rig.node.calls().len();
+        rig.connector.housekeeping();
+        assert_eq!(
+            rig.node.calls().len(),
+            before,
+            "a housekeeping pass asks the node nothing"
+        );
+        assert!(
+            vault
+                .pending_proposals(&binding.artifact)
+                .expect("list the artifact's proposals")
+                .is_empty(),
+            "nothing landed on the artifact"
+        );
+    });
+}

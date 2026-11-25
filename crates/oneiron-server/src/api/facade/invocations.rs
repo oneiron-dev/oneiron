@@ -318,7 +318,12 @@ pub(crate) enum DoorClaim {
 /// would write those answers to this vault's invocation state and replay
 /// them after the node went offline or changed its offer. A same-id retry
 /// asks the machines again.
-const UNKEPT_REPLY_VERBS: [&str; 17] = [
+/// The jobs' history (`vault.jobs.history`, review round 1 of #10419) names
+/// who started or reserved each attempt, and an actor's erase takes that
+/// name off the rows: a kept reply would hand an erased requester's id to a
+/// same-id retry after the erase, and an agent's reply would outlive its
+/// Grant. A same-id retry reads again and writes nothing.
+const UNKEPT_REPLY_VERBS: [&str; 18] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -336,6 +341,7 @@ const UNKEPT_REPLY_VERBS: [&str; 17] = [
     "vault.jobs.workloads.list",
     oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
     oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
+    oneiron::job_history::JOB_HISTORY_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
