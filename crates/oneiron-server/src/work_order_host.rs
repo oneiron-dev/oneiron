@@ -332,9 +332,18 @@ impl OrderLoop {
         self.wake.notified().await;
     }
 
-    /// The node client passes call through, made at first use.
+    /// The node client passes call through. Only a client that calls machines is kept, made at
+    /// the first call with a runtime at hand; a call with none answers through [`NoNodes`] and
+    /// leaves the next call to make it, so an early call off the runtime never cuts the loop
+    /// off from every machine.
     pub(crate) fn nodes(&self, server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
-        Arc::clone(self.nodes.get_or_init(|| node_client(server)))
+        if let Some(client) = self.nodes.get() {
+            return Arc::clone(client);
+        }
+        match node_client(server) {
+            Some(client) => Arc::clone(self.nodes.get_or_init(|| client)),
+            None => Arc::new(NoNodes),
+        }
     }
 
     /// Answers node calls through `nodes` from now on, as a test's scripted machines do.
@@ -366,21 +375,24 @@ impl JobNodeClient for NoNodes {
     }
 }
 
+/// A client of `server`'s mesh listener whose calls run on the runtime at hand, or `None` where
+/// no runtime is at hand.
 #[cfg(feature = "mesh")]
-fn node_client(server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
-    match tokio::runtime::Handle::try_current() {
-        Ok(runtime) => Arc::new(crate::gpu_execution_node::issuer::MeshJobNodeClient::new(
+fn node_client(server: &Arc<SyncServer>) -> Option<Arc<dyn JobNodeClient>> {
+    let runtime = tokio::runtime::Handle::try_current().ok()?;
+    Some(Arc::new(
+        crate::gpu_execution_node::issuer::MeshJobNodeClient::new(
             Arc::downgrade(server),
             runtime,
             std::time::Duration::from_secs(server.config.gpu_jobs.vault_machine.call_timeout_secs),
-        )),
-        Err(_) => Arc::new(NoNodes),
-    }
+        ),
+    ))
 }
 
+/// A server built without the mesh calls no machines.
 #[cfg(not(feature = "mesh"))]
-fn node_client(_server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
-    Arc::new(NoNodes)
+fn node_client(_server: &Arc<SyncServer>) -> Option<Arc<dyn JobNodeClient>> {
+    None
 }
 
 /// One pass of the loop at `now_ms` under the loop's lock, so a door's pass and the worker's
