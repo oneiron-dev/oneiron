@@ -478,6 +478,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GPU_ALLOCATION_NODE",
         "GPU_LINE",
         "GPU_LINE_PERIOD",
+        "GPU_LINE_REFUSAL",
         "HOOKS_TASK_TICK_HOLD",
         "HOUSEKEEPING_SCHEDULE",
         "HOUSEKEEPING_WAKE",

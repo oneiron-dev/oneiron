@@ -30,6 +30,8 @@ pub const NEW_IDEA_PERIODS: u32 = 2;
 pub const REVIEW_CHECK_SECS: u64 = 0;
 /// 72 hours.
 pub const HOLD_TTL_SECS: u64 = 259_200;
+/// Ten minutes from reservation to start (the lead, 25 Nov 00:04).
+pub const CLAIM_CUSTODY_SECS: u64 = 600;
 /// No running cap per family.
 pub const MAX_RUNNING_PER_FAMILY: u32 = 0;
 pub const FORECAST_REQUIRED: bool = false;
