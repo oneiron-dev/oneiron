@@ -26,8 +26,10 @@ use sha2::{Digest as _, Sha256};
 use super::NodeJobs;
 use super::admission::{answering, log_write_error, status_busy};
 use super::journal::{JournalEvent, KeyTable, NodeKey};
+use super::receipt::chunk_receipt_of;
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobState, JobStatusAnswer, KeyEntry, KeyPage, OutputDigest, OutputsState,
+    JobAnswer, JobEnd, JobRefusal, JobState, JobStatusAnswer, KeyEntry, KeyPage, OutputDigest,
+    OutputsState,
 };
 
 /// The most bytes the entries of one `Keys` page take in the codec, so the
@@ -242,6 +244,28 @@ impl NodeJobs {
             Ok(known) => known,
             Err(answer) => return answer,
         };
+        // A renewed run's payload is acknowledged through the key whose slice
+        // holds the run's end, never through a slice the run went past or
+        // never reached (row W1): those carry no outputs.
+        if !known.renewals.is_empty() {
+            let renewal = journal.table().chunk(key).map_or(0, |(_, renewal)| renewal);
+            let slice = chunk_receipt_of(
+                &known,
+                renewal,
+                self.last_tick_boot_ns(&known),
+                self.parts().machine,
+                journal.epoch(),
+                &now,
+            );
+            let holds_end = slice.as_ref().is_some_and(|slice| {
+                slice.state == JobState::Ended
+                    && !matches!(slice.end, Some(JobEnd::Continued | JobEnd::Withdrawn))
+            });
+            if !holds_end {
+                let state = slice.map_or(known.state, |slice| slice.state);
+                return JobStatusAnswer::Refused(JobRefusal::NotAcknowledgeable { state });
+            }
+        }
         if known.acknowledged_at_ms.is_some() {
             return JobStatusAnswer::Acknowledged;
         }

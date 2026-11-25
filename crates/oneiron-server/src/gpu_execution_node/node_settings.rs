@@ -243,7 +243,8 @@ pub struct NodeTemplate {
     /// declared, even empty, every argument must be one of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<BTreeMap<String, String>>,
-    /// The longest run, in seconds.
+    /// The longest run of a job, and the longest chunk of a session, in
+    /// seconds.
     pub max_secs: u64,
     /// The job's memory ceiling.
     pub memory_gib: u64,
@@ -286,35 +287,23 @@ pub struct NodeTemplate {
     pub kind: TemplateKind,
     /// A session's longest run across its renewals, in seconds, from its
     /// launch: no renewal moves the cutoff past it, and the job unit's
-    /// backstop covers it. Read only for a `session`; None:
+    /// backstop covers it. Applies only to a `session`; None:
     /// [`SESSION_MAX_SECS_DEFAULT`]. Absent from the digest when unset, so
     /// a template without it keeps its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_max_secs: Option<u64>,
 }
 
-/// What a run of a template is (pass 34, 2.5).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TemplateKind {
-    /// A finite workload: its run ends at the submit's maximum.
-    #[default]
-    Job,
-    /// A long-running harness or service: its run goes on while its issuer
-    /// pays each next chunk before the current one ends.
-    Session,
-}
-
-impl TemplateKind {
-    /// Whether this is the default kind, a job.
-    #[must_use]
-    pub fn is_job(&self) -> bool {
-        *self == Self::Job
-    }
-}
+/// What a run of a template is: the wire's [`TemplateKind`], which a
+/// template states and its offer carries.
+pub use super::wire::TemplateKind;
 
 /// Default of a session template's `session_max_secs`: seven days.
 pub const SESSION_MAX_SECS_DEFAULT: u64 = 7 * 24 * 60 * 60;
+
+/// The longest `session_max_secs`: the job unit's `RuntimeMaxSec` backstop
+/// takes it, and systemd holds that in microseconds.
+pub const SESSION_MAX_SECS_CEILING: u64 = u64::MAX / 1_000_000;
 
 /// The signals a template may name as its checkpoint notice: each one a
 /// workload can catch and none that stops it.
@@ -619,10 +608,15 @@ impl NodeTemplate {
         }
         match (self.kind, self.session_max_secs) {
             (TemplateKind::Job, Some(_)) => {
-                return Err("session_max_secs is read only for kind = \"session\"".to_owned());
+                return Err("session_max_secs applies only to kind = \"session\"".to_owned());
             }
             (TemplateKind::Session, _) => {
                 let longest = self.session_max_secs.unwrap_or(SESSION_MAX_SECS_DEFAULT);
+                if longest > SESSION_MAX_SECS_CEILING {
+                    return Err(format!(
+                        "session_max_secs {longest} must be at most {SESSION_MAX_SECS_CEILING}"
+                    ));
+                }
                 if longest < self.max_secs {
                     return Err(format!(
                         "session_max_secs {longest} must be at least max_secs {}",

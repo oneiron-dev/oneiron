@@ -13,7 +13,10 @@
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::gpu_job::MeterVerdict;
+use oneiron::job_dispatch::machine_records::MachineJobOutcome;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
+use oneiron_server::gpu_execution_node::issuer::guard::machine_job_outcome;
 use oneiron_server::gpu_execution_node::jobs::{JobKeyId, NodeClock, NodeJobs, NodeKey};
 use oneiron_server::gpu_execution_node::wire::{
     HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState, JobStatusAnswer,
@@ -225,7 +228,7 @@ fn a_continuing_key_never_starts_a_process() {
     assert_eq!(chunk.state, JobState::Accepted, "{chunk:?}");
     assert!(!chunk.started);
     let slice = chunk.slice.expect("a chunk's receipt names its slice");
-    assert_eq!((slice.first_key.as_str(), slice.chunk), ("session-0", 1));
+    assert_eq!((slice.first_key.as_str(), slice.renewal), ("session-0", 1));
     assert_eq!(slice.from_boot_ns, launched + CHUNK_SECS * NANOS_PER_SEC);
     assert_eq!(slice.to_boot_ns, launched + 2 * CHUNK_SECS * NANOS_PER_SEC);
 
@@ -522,9 +525,42 @@ fn a_restarted_node_adopts_a_session_by_its_first_key_and_asks_its_cutoff_again(
     assert_eq!(cutoff(&jobs, "session-0"), renewed);
     assert_eq!(f.node.units.total_starts(), 1, "adopted, not started again");
     let after = known(jobs.find(f.issuer, "session-1"));
-    assert_eq!(after.slice.map(|slice| slice.chunk), Some(1));
+    assert_eq!(after.slice.map(|slice| slice.renewal), Some(1));
     assert_eq!(
         entry(&jobs, "session-0").map(|entry| entry.state),
         Some(JobState::Running)
+    );
+}
+
+/// The issuer's drain guard judges a renewed session by its run, not by its
+/// last slice (EM-22, R4's review of #10501): a run that went past a paid
+/// boundary and ends 2 s into the next chunk is past the fast-exit window,
+/// and only the slice that holds the run's end may acknowledge its payload.
+#[test]
+fn a_renewed_sessions_last_slice_never_counts_as_a_fast_exit() {
+    let f = fixture();
+    let jobs = f.node.open();
+    f.launch(&jobs, "session-0");
+    f.advance_secs(300);
+    receipt(jobs.submit(f.issuer, f.renewal("session-1", 1, "session-0")));
+    f.advance_secs(CHUNK_SECS - 300 + 2);
+    f.node.units.exit("session-0", 0);
+    jobs.tick();
+    wait_for(&jobs, "session-0", |entry| entry.state == JobState::Ended);
+    let last = known(jobs.find(f.issuer, "session-1"));
+    assert_eq!(last.end, Some(JobEnd::Exited { code: 0 }));
+    assert_eq!(last.measured_secs, Some(2), "2 s of its own slice");
+    assert_eq!(
+        machine_job_outcome(&last, &MeterVerdict::Agreed, 5),
+        MachineJobOutcome::RanPastFastExit
+    );
+    let passed = known(jobs.find(f.issuer, "session-0"));
+    assert_eq!(passed.end, Some(JobEnd::Continued));
+    assert_eq!(
+        jobs.acknowledge(f.issuer, "session-0"),
+        JobStatusAnswer::Refused(JobRefusal::NotAcknowledgeable {
+            state: JobState::Ended
+        }),
+        "a slice the run went past holds none of its outputs"
     );
 }

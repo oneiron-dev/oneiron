@@ -203,7 +203,7 @@ pub fn chunk_receipt_of(
     receipt.seq = first.seq.saturating_mul(4).saturating_add(progress);
     receipt.slice = Some(ReceiptSlice {
         first_key: first.key.clone(),
-        chunk,
+        renewal: chunk,
         from_boot_ns,
         to_boot_ns,
     });
