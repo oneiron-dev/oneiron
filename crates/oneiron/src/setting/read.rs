@@ -616,10 +616,11 @@ impl<T: SettingValue> Setting<T> {
     }
 
     /// The value row this vault holds for `item` itself, with the capacity it was set in, when
-    /// that row decides [`Self::read_in_txn`] for `item`: its value is the value read, so no pin,
-    /// item-less row or carried row reads stricter. The value and the capacity come from the one
-    /// row. `None` with no such row, a copy of a pack's default, a row that does not decode, or
-    /// another row that reads stricter.
+    /// its value is the value [`Self::read_in_txn`] reads for `item`: no pin, item-less row or
+    /// carried row reads stricter. A pin or row that reads the same value leaves this row's
+    /// capacity the one answered. The value and the capacity come from the one row. `None` with
+    /// no such row, a copy of a pack's default, a row that does not decode, or another row that
+    /// reads stricter.
     ///
     /// # Errors
     ///

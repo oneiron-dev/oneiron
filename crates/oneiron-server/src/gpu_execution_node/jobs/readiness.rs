@@ -259,37 +259,33 @@ impl NodeJobs {
             Err(TryLockError::WouldBlock) => return,
         };
         self.observe_drain();
-        let settings = self.parts().admission.job_settings();
-        if self.check_when_due(&settings) {
-            // The check can take a while: who may clear the drain is read
-            // again after it, so a box that took the clear back meanwhile
-            // keeps its drain.
-            self.owner_clear(&self.parts().admission.job_settings());
-        } else {
-            self.owner_clear(&settings);
-        }
+        let settings = self.check_when_due(self.parts().admission.job_settings());
+        self.owner_clear(&settings);
     }
 
     /// The check, while no attempt runs and one is due, and the DRAIN rule
-    /// on its result. Whether it ran.
-    fn check_when_due(&self, settings: &NodeJobSettings) -> bool {
+    /// on its result. Answers the settings the rest of the tick reads: read
+    /// again after a check ran, since the check can take a while and a box
+    /// that took the clear back meanwhile keeps its drain.
+    fn check_when_due(&self, settings: NodeJobSettings) -> NodeJobSettings {
         let now = self.now();
         let mark = {
             let book = self.shared.readiness.book();
             if !book.due(now.wall_ms, settings.readiness_every_secs) {
-                return false;
+                return settings;
             }
             book.record.mark.clone()
         };
         if self.attempt_runs() {
-            return false;
+            return settings;
         }
-        let found = match self.check_readiness(mark.as_ref(), &now, settings) {
+        let found = match self.check_readiness(mark.as_ref(), &now, &settings) {
             Ok(()) => ReadinessState::Ready,
             Err((check, why)) => ReadinessState::NotReady { check, why },
         };
-        self.settle_check(&found, &now, settings);
-        true
+        let settings = self.parts().admission.job_settings();
+        self.settle_check(&found, &now, &settings);
+        settings
     }
 
     /// A clear from the owner's panel (pass 34, 2.4; [`OWNER_CLEAR_RULE`]):
@@ -314,7 +310,7 @@ impl NodeJobs {
             Ok(false) => {}
             Ok(true) => {
                 tracing::info!("the owner cleared the machine's drain from the panel");
-                self.note_drain();
+                self.note_drain_cleared();
                 self.record_incident(IncidentKind::DrainCleared {
                     rule: Some(OWNER_CLEAR_RULE.to_owned()),
                 });
@@ -456,7 +452,7 @@ impl NodeJobs {
             DrainPick::Clear => match self.parts().devices.clear_drain() {
                 Ok(()) => {
                     tracing::info!("readiness check passed; the machine's drain is cleared");
-                    self.note_drain();
+                    self.note_drain_cleared();
                     self.record_incident(IncidentKind::DrainCleared {
                         rule: Some(DRAIN_RULE_DEFAULT.to_owned()),
                     });
@@ -493,6 +489,15 @@ impl NodeJobs {
         let drained = self.parts().admission.controls().drained;
         let mut book = self.shared.readiness.book();
         book.record.seen_drain = drained;
+        self.shared.readiness.persist(&book.record);
+    }
+
+    /// Notes no drain as seen, after a clear removed the drain: a drain set
+    /// again between the removal and this note is then still recorded by
+    /// [`Self::observe_drain`].
+    fn note_drain_cleared(&self) {
+        let mut book = self.shared.readiness.book();
+        book.record.seen_drain = None;
         self.shared.readiness.persist(&book.record);
     }
 }

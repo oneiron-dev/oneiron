@@ -471,7 +471,8 @@ impl DrainClearBy {
 pub enum DrainClearer {
     /// The owner, by a proof that revalidated in the write.
     Owner,
-    /// An agent, through this live Grant.
+    /// An agent, through this Grant, as the row records it: the settings door judged the Grant
+    /// live when the row was written.
     Grant(EntityId),
     /// Anyone else: the engine on a path of its own or applying an answer, a request the holders
     /// approved, a subject on its own row, or the pack door. None of them is door 12's owner
@@ -494,8 +495,8 @@ impl DrainClearer {
     }
 }
 
-/// `machines.drain.cleared_at` where the machine's own row decides it: the time of the last
-/// clear of the machine's drain from the panel, and who wrote that row.
+/// `machines.drain.cleared_at` where the machine's own row holds the value read: the time of the
+/// last clear of the machine's drain from the panel, and who wrote that row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelDrainClear {
     /// The clear's time, in Unix milliseconds.

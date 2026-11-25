@@ -2,7 +2,7 @@
 //! or at its node's word, the machine takes no new GPU work until a person
 //! clears it. With a `drain_file`, the drain outlasts a restart.
 
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{GpuProbeError, GpuSlotTable, Shared, State};
 
@@ -40,9 +40,10 @@ impl GpuSlotTable {
     /// The clear from the owner's panel (pass 34, 2.4): clears the drain only
     /// when it began before `before_ms`, in Unix milliseconds by this
     /// machine's clock, and answers whether it did. A drain begins at the
-    /// drain file's last write, or when the drain kept in memory was set; with
-    /// both, at the later. The look and the removal hold the table's lock, so
-    /// a drain the table writes meanwhile stands.
+    /// drain file's last write (a time on a whole second counts as the end of
+    /// that second), or when the drain kept in memory was set; with both, at
+    /// the later. The look and the removal hold the table's lock, so a drain
+    /// the table writes meanwhile stands.
     ///
     /// # Errors
     ///
@@ -111,8 +112,7 @@ impl Shared {
 
     /// When the standing drain began, in Unix milliseconds, or `None` with no
     /// drain: the later of the drain file's last write and the time the drain
-    /// in memory was set. A file time before the epoch never counts as before
-    /// a clear.
+    /// in memory was set.
     fn drain_began_ms(&self, state: &State) -> std::io::Result<Option<u64>> {
         let in_memory = state
             .drain_in_memory
@@ -121,14 +121,7 @@ impl Shared {
         let in_file = match &self.offer.drain_file {
             None => None,
             Some(path) => match std::fs::metadata(path) {
-                Ok(metadata) => Some(
-                    metadata
-                        .modified()?
-                        .duration_since(UNIX_EPOCH)
-                        .ok()
-                        .and_then(|since| u64::try_from(since.as_millis()).ok())
-                        .unwrap_or(u64::MAX),
-                ),
+                Ok(metadata) => Some(file_began_ms(metadata.modified()?)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error),
             },
@@ -149,5 +142,22 @@ impl Shared {
         state.failures_in_a_row = 0;
         state.drain_in_memory = None;
         Ok(())
+    }
+}
+
+/// When a drain file's drain began, in Unix milliseconds, from the file's last
+/// write. A time on a whole second may come from a filesystem that keeps whole
+/// seconds only, so it counts as the last millisecond of that second: a clear
+/// given within that second leaves the drain standing. A time before the epoch
+/// never counts as before a clear.
+fn file_began_ms(modified: SystemTime) -> u64 {
+    let Ok(since) = modified.duration_since(UNIX_EPOCH) else {
+        return u64::MAX;
+    };
+    let began_ms = u64::try_from(since.as_millis()).unwrap_or(u64::MAX);
+    if since.subsec_nanos() == 0 {
+        began_ms.saturating_add(999)
+    } else {
+        began_ms
     }
 }
