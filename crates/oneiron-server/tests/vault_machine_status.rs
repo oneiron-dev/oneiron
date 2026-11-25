@@ -1194,7 +1194,8 @@ fn a_bound_key_that_never_started_owes_no_return_and_housekeeping_asks_nothing()
                 returned.acknowledged_at_ms.is_some(),
                 "{end:?}: nothing to wait for, so the node is told it may clean"
             );
-            let kinds = kinds_for(&rig.node.calls(), run.key());
+            let calls = rig.node.calls();
+            let kinds = kinds_for(&calls, run.key());
             assert!(!kinds.contains(&"fetch"), "{end:?}: no fetch: {kinds:?}");
             assert!(kinds.contains(&"ack"), "{end:?}: an Ack: {kinds:?}");
         }
