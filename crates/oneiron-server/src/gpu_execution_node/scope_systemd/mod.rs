@@ -1,12 +1,13 @@
 //! The first launch scope (pass 33, `33-exec-node/DESIGN.md` sections 7.6
 //! and 7.8; pass 34, `34-compute-general/DESIGN.md` section 2.2): a job runs
-//! as one instance of a root-owned systemd unit template, under its own OS
-//! account, and the service manager, not the engine, kills it, ends it at its
+//! as one instance of a root-owned systemd unit template, under its own uid
+//! from the node's range ([`job_ids`]; FIX EXEC-UNIT-CROSS-JOB-SAME-UID), and
+//! the service manager, not the engine, kills it, ends it at its
 //! maximum and records how it ended.
 //!
 //! The parts, by who runs them:
-//! - `oneiron execution-node install` ([`install`], root, once): the job
-//!   account, the unit template ([`unit_file`]) and the job control socket
+//! - `oneiron execution-node install` ([`install`], root, once): the check
+//!   of the job range, the unit template ([`unit_file`]) and the job control socket
 //!   ([`control`]), through which the engine's account starts and stops
 //!   instances of that template and nothing else.
 //! - `oneiron job-control` ([`control`], root, one per connection to the
@@ -17,10 +18,10 @@
 //! - the unit's own steps, fixed in the template:
 //!   - `oneiron job-prepare <id>` ([`prepare`], root, `ExecStartPre=+`):
 //!     checks `launch.json` against the root-owned node file, sets this job's
-//!     limits on the unit and arms the cutoff, before any workload process
-//!     exists;
-//!   - `oneiron job-exec <id>` ([`exec`], the job account, `ExecStart=`):
-//!     the inner file wall, then the proof of each bound from the inside,
+//!     limits on the unit, arms the cutoff and gives the job its uid, before
+//!     any workload process exists;
+//!   - `oneiron job-exec <id>` ([`exec`], `ExecStart=`, root until it takes
+//!     the job's uid): the inner file wall, then the proof of each bound from the inside,
 //!     reported to the root gate;
 //!   - `oneiron job-prepare --after-exec <id>` ([`gate`], root,
 //!     `ExecStartPost=+`): the gate. It records `job-exec`'s report and only
@@ -28,8 +29,10 @@
 //!     a root record the workload cannot write;
 //!   - `oneiron job-cutoff <id>` ([`cutoff`], root, the cutoff timer's
 //!     command): marks the cutoff and stops the unit;
-//!   - `oneiron job-ended <id>` ([`ended`], root, `ExecStopPost=+`): writes
-//!     the end record after every process of the unit is gone.
+//!   - `oneiron job-ended <id>` ([`ended`], root, `ExecStopPost=+`): hands
+//!     the job's files to the engine's account ([`handover`]), gives the uid
+//!     back and writes the end record after every process of the unit is
+//!     gone.
 //!
 //! Every file a root step reads or writes in a directory the engine's
 //! account owns is opened beneath a directory descriptor and never through a
@@ -68,7 +71,9 @@ pub mod ended;
 pub mod exchange;
 pub mod exec;
 pub mod gate;
+pub mod handover;
 pub mod install;
+pub mod job_ids;
 pub mod log_writer;
 pub mod prepare;
 pub mod probe_unit;
@@ -83,8 +88,8 @@ pub use systemd_unit::SystemdJobUnit;
 use super::jobs::JobUnit;
 
 /// The root-owned directory of the per-job exchange directories: each holds
-/// `exec.json` and, while the gate waits, the gate's socket, readable by the
-/// job account alone (mode 0750, group the job account's).
+/// `exec.json` and, while the gate waits, the gate's socket, readable by root
+/// and that job alone (mode 0750, group the job's own gid).
 pub const EXCHANGE_ROOT: &str = "/run/oneiron-jobs";
 
 /// The root-owned directory (mode 0700) of the payload bind sources: the
@@ -103,12 +108,11 @@ pub const REPORT_FRAME_END: u8 = b'\n';
 pub const EXEC_FILE_NAME: &str = "exec.json";
 
 /// The gate's Unix stream socket in the job's exchange directory (root's,
-/// group the job account's, mode 0660). `job-exec` connects to it, and the
+/// group the job's own gid, mode 0660). `job-exec` connects to it, and the
 /// report, the go, the exec mark and the close at the exec all travel on
 /// that one connection. The gate takes the connection of the unit's main
-/// process alone, by its peer credentials, so another process of the job
-/// account (another job's workload) cannot answer for it (FIX
-/// EXEC-UNIT-ONE-JOB-ACCOUNT).
+/// process alone, by its peer credentials, so another process with the job's
+/// ids cannot answer for it (FIX EXEC-UNIT-ONE-JOB-ACCOUNT).
 pub const GATE_SOCKET_NAME: &str = "gate.sock";
 
 /// The one line the gate writes to let the workload start.
@@ -179,6 +183,9 @@ pub mod exec_status {
     pub const GATE_REFUSED: i32 = 154;
     /// The workload's program could not be started.
     pub const EXEC_FAILED: i32 = 155;
+    /// `job-exec` could not take the job's own ids, or the kernel showed it
+    /// more than them after it did (FIX EXEC-UNIT-CROSS-JOB-SAME-UID).
+    pub const JOB_IDENTITY: i32 = 156;
     /// The probe of `execution-node check` ended.
     pub const PROBE_DONE: i32 = 0;
 }
@@ -195,6 +202,7 @@ pub fn refusal_of_exit_status(status: i32) -> Option<&'static str> {
         exec_status::REQUIRED_BOUND => "unit: required_bound_not_proved",
         exec_status::GATE_REFUSED => "unit: gate_refused",
         exec_status::EXEC_FAILED => "unit: workload_exec_failed",
+        exec_status::JOB_IDENTITY => "unit: job_identity_not_taken",
         200 => "unit: chdir",
         201 => "unit: nice",
         202 => "unit: fds",

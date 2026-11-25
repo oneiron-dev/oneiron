@@ -1,6 +1,9 @@
 //! `oneiron execution-node install` (root, once per machine and again after
 //! a template's maximum grows; pass 33, 7.6; EM-4 = A): the one privileged
-//! step. It makes the job account, writes the root-owned unit template and
+//! step. It checks the node's job range against the system's accounts,
+//! groups and subordinate ids (each job runs as its own uid from it: FIX
+//! EXEC-UNIT-CROSS-JOB-SAME-UID; no job account is made), writes the
+//! root-owned unit template and
 //! the job control socket through which the engine's account starts and
 //! stops its instances and nothing else ([`super::control`]; the engine's
 //! account gets no polkit grant), makes the state and payload directories
@@ -8,6 +11,7 @@
 //! idempotent: a second run with the same inputs changes nothing.
 
 use std::ffi::OsStr;
+use std::ops::Range;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
@@ -15,10 +19,9 @@ use super::super::node_settings::ExecutionNodeSettings;
 use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
 use super::safe_fs::{
-    account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
-    require_root_owned,
+    account, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path, require_root_owned,
 };
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
     unit_path_word,
@@ -58,18 +61,15 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         })?;
         require_root_owned(&request.node_file)?;
     }
-    for name in [&request.engine_account, &settings.job_account] {
-        if !plain_account(name) {
-            return Err(format!(
-                "{name:?}: an account name here is 1 to 32 of a-z, 0-9, '-' and '_'"
-            ));
-        }
-    }
-    if request.engine_account == settings.job_account || settings.job_account == "root" {
-        return Err("the job account must be neither root nor the engine's account".to_owned());
+    let name = &request.engine_account;
+    if !plain_account(name) {
+        return Err(format!(
+            "{name:?}: an account name here is 1 to 32 of a-z, 0-9, '-' and '_'"
+        ));
     }
     let (engine_uid, engine_gid, engine_home) = account(&request.engine_account)
         .map_err(|error| format!("engine account {}: {error}", request.engine_account))?;
+    check_job_range(&settings.job_uids(), (engine_uid, engine_gid))?;
     let mut protected = vec![engine_home];
     protected.extend(request.protect.iter().cloned());
     protected.sort();
@@ -85,7 +85,6 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         binary,
         node_file: request.node_file.clone(),
         engine_account: request.engine_account.clone(),
-        job_account: settings.job_account.clone(),
         state_dir: settings.state_dir.clone(),
         work_dir: settings.work_dir.clone(),
         protected,
@@ -114,7 +113,6 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         print_templates(&settings);
         return Ok(());
     }
-    ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
     ensure_dir(
         &inputs.state_dir.join("control"),
@@ -144,11 +142,12 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
     stdout_line!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job uids {}..{}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),
         said(socket_changed),
         said(handler_changed),
-        settings.job_account
+        settings.job_uids().start,
+        settings.job_uids().end
     );
     print_templates(&settings);
     stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
@@ -163,75 +162,70 @@ fn print_templates(settings: &ExecutionNodeSettings) {
     }
 }
 
-/// The shells of an account no one logs in to.
-const NO_LOGIN_SHELLS: [&str; 5] = [
-    "/usr/sbin/nologin",
-    "/usr/bin/nologin",
-    "/sbin/nologin",
-    "/bin/false",
-    "/usr/bin/false",
-];
-
-/// Above this uid an account is a login account (`SYS_UID_MAX` of
-/// login.defs(5), shadow's default).
-const SYSTEM_UID_MAX: u32 = 999;
-
-/// Makes the job account as a system account with no login and no home,
-/// unless it exists. An account that exists must be such an account and not
-/// the engine's (review r1 of #10439): a name that collides with a login
-/// account would give every workload that account's uid.
-fn ensure_job_account(name: &str, engine_uid: u32) -> Result<(), String> {
-    match account_entry(name) {
-        Ok(found) => {
-            return existing_job_account_fits(&found.shell, found.uid, engine_uid)
-                .map_err(|why| format!("job account {name}: {why}"));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("job account {name}: {error}")),
-    }
-    let shell = NO_LOGIN_SHELLS[..3]
-        .iter()
-        .copied()
-        .find(|path| Path::new(path).is_file())
-        .unwrap_or("/bin/false");
-    if tool_path("useradd").is_none() {
-        return Err(format!("no account {name}, and no useradd to make it"));
-    }
-    run_tool(
-        "useradd",
-        &[
-            "--system",
-            "--user-group",
-            "--no-create-home",
-            "--home-dir",
-            "/nonexistent",
-            "--shell",
-            shell,
-            name,
-        ],
-        SYSTEMCTL_TIMEOUT,
-    )
-    .map(drop)
+/// What an id file lists, and so which of its fields are ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdFile {
+    /// `/etc/passwd`: a uid and a gid per line.
+    Accounts,
+    /// `/etc/group`: a gid per line.
+    Groups,
+    /// `/etc/subuid`, `/etc/subgid`: a range per line (`name:first:count`),
+    /// the ids a user's own namespaces map to.
+    Subordinate,
 }
 
-/// Why an existing account cannot be the job account: a login shell, a uid
-/// outside the system range (root included), or the engine's own uid.
-fn existing_job_account_fits(shell: &Path, uid: u32, engine_uid: u32) -> Result<(), String> {
-    if uid == engine_uid {
-        return Err("it is the engine's account".to_owned());
-    }
-    if uid == 0 || uid > SYSTEM_UID_MAX {
+/// The files whose ids the job range must not meet.
+const ID_FILES: [(&str, IdFile); 4] = [
+    ("/etc/passwd", IdFile::Accounts),
+    ("/etc/group", IdFile::Groups),
+    ("/etc/subuid", IdFile::Subordinate),
+    ("/etc/subgid", IdFile::Subordinate),
+];
+
+/// The node's job range meets no account, group or subordinate range the
+/// system files name, nor the engine's ids: a job's uid is no one else's. An
+/// account a name service holds (LDAP, for instance) is checked again for
+/// each id the prepare step gives ([`super::job_ids`]).
+fn check_job_range(range: &Range<u32>, engine: (u32, u32)) -> Result<(), String> {
+    if range.contains(&engine.0) || range.contains(&engine.1) {
         return Err(format!(
-            "uid {uid} is not a system account's (1 to {SYSTEM_UID_MAX})"
+            "the job range {}..{} holds the engine's uid {} or gid {}",
+            range.start, range.end, engine.0, engine.1
         ));
     }
-    if !NO_LOGIN_SHELLS
-        .iter()
-        .any(|allowed| shell == Path::new(allowed))
-    {
-        return Err(format!("its shell {} allows a login", shell.display()));
+    for (path, kind) in ID_FILES {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{path}: {error}")),
+        };
+        if let Some(line) = first_overlap(&text, kind, range) {
+            return Err(format!(
+                "{path}: '{line}' meets the job range {}..{}: set job_uid_first and job_uid_count in the node file to a free range",
+                range.start, range.end
+            ));
+        }
     }
     Ok(())
+}
+
+/// The first line of an id file whose ids meet `range`.
+fn first_overlap<'a>(text: &'a str, kind: IdFile, range: &Range<u32>) -> Option<&'a str> {
+    let field =
+        |fields: &[&str], at: usize| fields.get(at).and_then(|field| field.parse::<u64>().ok());
+    let (start, end) = (u64::from(range.start), u64::from(range.end));
+    text.lines().find(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        let ids_meet = |at: usize| field(&fields, at).is_some_and(|id| (start..end).contains(&id));
+        match kind {
+            IdFile::Accounts => ids_meet(2) || ids_meet(3),
+            IdFile::Groups => ids_meet(2),
+            IdFile::Subordinate => match (field(&fields, 1), field(&fields, 2)) {
+                (Some(first), Some(count)) => first < end && first.saturating_add(count) > start,
+                _ => false,
+            },
+        }
+    })
 }
 
 /// Makes `path` the account's directory. It walks from `/` one component at
@@ -318,16 +312,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_existing_job_account_must_be_a_system_account_with_no_login_and_not_the_engines() {
-        let nologin = Path::new("/usr/bin/nologin");
-        assert_eq!(existing_job_account_fits(nologin, 970, 971), Ok(()));
+    fn the_job_range_meets_no_account_group_or_subordinate_range() {
+        let range = 1_879_048_192..1_879_113_728;
+        let accounts =
+            "root:x:0:0::/root:/bin/bash\noneiron:x:970:971::/var/lib/oneiron:/bin/bash\n";
+        assert_eq!(first_overlap(accounts, IdFile::Accounts, &range), None);
+        let taken = "odd:x:1879048200:100::/:/bin/false\n";
         assert_eq!(
-            existing_job_account_fits(Path::new("/bin/false"), 970, 971),
-            Ok(())
+            first_overlap(taken, IdFile::Accounts, &range),
+            Some(taken.trim_end())
         );
-        assert!(existing_job_account_fits(Path::new("/bin/bash"), 970, 971).is_err());
-        assert!(existing_job_account_fits(nologin, 1000, 971).is_err());
-        assert!(existing_job_account_fits(nologin, 0, 971).is_err());
-        assert!(existing_job_account_fits(nologin, 971, 971).is_err());
+        let group_only = "odd:x:100:1879048200::/:/bin/false\n";
+        assert!(first_overlap(group_only, IdFile::Accounts, &range).is_some());
+        assert!(first_overlap("jobs:x:1879113727:\n", IdFile::Groups, &range).is_some());
+        assert_eq!(
+            first_overlap("jobs:x:1879113728:\n", IdFile::Groups, &range),
+            None
+        );
+        // useradd's subordinate ranges sit far below the default range.
+        assert_eq!(
+            first_overlap("lexi:100000:65536\n", IdFile::Subordinate, &range),
+            None
+        );
+        assert!(first_overlap("big:1879000000:100000\n", IdFile::Subordinate, &range).is_some());
+        assert!(check_job_range(&range, (1_879_048_192, 971)).is_err());
     }
 }

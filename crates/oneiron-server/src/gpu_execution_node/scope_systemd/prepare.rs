@@ -5,9 +5,11 @@
 //! the key must hash to the unit's instance, the pin must pass the node
 //! file's own admission check again, and every limit must fit the root-owned
 //! ceilings. It then publishes the payload it checked as the unit's bind
-//! source, sets this job's limits on the unit, arms the cutoff, and writes
-//! `exec.json` where only the job account can read it. Any no fails the unit
-//! before a workload process exists. The gate is [`super::gate`].
+//! source, sets this job's limits on the unit, arms the cutoff, gives the job
+//! its own uid from the node's range ([`super::job_ids`]; FIX
+//! EXEC-UNIT-CROSS-JOB-SAME-UID) and writes `exec.json` where only root and
+//! that job can read it. Any no fails the unit before a workload process
+//! exists, and gives a given id back. The gate is [`super::gate`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -19,6 +21,7 @@ use super::super::wire::NetworkMode;
 use super::capabilities::kernel_facts;
 use super::device_files;
 use super::exchange::{publish_payload, write_exchange};
+use super::job_ids::{self, JobIdentity};
 use super::records::{
     BoundReport, BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, ScopeBound,
     enforced_by_kernel, first_unmet, not_enforced,
@@ -95,7 +98,7 @@ pub fn run(args: StepArgs) -> i32 {
         refusal: None,
         boot_id: boot_id(),
         at_boot_ns: boot_ns(),
-        account: context.settings.job_account.clone(),
+        account: String::new(),
         properties: Vec::new(),
         devices: Vec::new(),
         cutoff: None,
@@ -104,10 +107,17 @@ pub fn run(args: StepArgs) -> i32 {
         required: Vec::new(),
         fence: Vec::new(),
     };
-    let outcome = prepare(&context, &mut record);
+    let mut given = None;
+    let outcome = prepare(&context, &mut record, &mut given);
     if let Err(why) = &outcome {
         record.refusal = Some(why.clone());
         journal_line!("job-prepare: refused {}: {why}", context.unit());
+        // No job-exec runs after a refusal: the id goes back at once.
+        if let Some(identity) = given
+            && let Err(why) = job_ids::release(identity, &context.unit())
+        {
+            journal_line!("job-prepare: uid {} not given back: {why}", identity.uid);
+        }
     }
     if let Err(why) = context.write_record(PREPARED_FILE_NAME, &record) {
         journal_line!("job-prepare: {why}");
@@ -116,7 +126,11 @@ pub fn run(args: StepArgs) -> i32 {
     i32::from(outcome.is_err())
 }
 
-fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), String> {
+fn prepare(
+    context: &StepContext,
+    record: &mut PreparedRecord,
+    given: &mut Option<JobIdentity>,
+) -> Result<(), String> {
     if let Some(why) = &context.args.host_namespace_error {
         return Err(format!("host_mount_namespace_not_entered: {why}"));
     }
@@ -208,8 +222,12 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         return Err("cutoff_passed: the launch is older than its maximum".to_owned());
     }
 
+    let identity = job_ids::allocate(settings.job_uids(), &unit, context.engine_uid)
+        .map_err(|why| format!("job_uid_not_given: {why}"))?;
+    *given = Some(identity);
+    record.account = format!("uid {} gid {}", identity.uid, identity.gid);
     let payload_path = settings.work_dir.join(instance);
-    let payload = prepare_payload(context, &payload_path)?;
+    let payload = prepare_payload(context, &payload_path, identity)?;
     publish_payload(instance, &payload)?;
     drop(payload);
     let exec = exec_file(
@@ -217,11 +235,11 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         &launch,
         template,
         &payload_path,
-        &allowed,
-        &denied,
+        (&allowed, &denied),
         protected,
+        identity,
     )?;
-    write_exchange(context, &exec)?;
+    write_exchange(&exec)?;
     record.required.clone_from(&template.require);
     record.fence = exec
         .read
@@ -419,9 +437,13 @@ pub(super) fn installed_protected_paths(unit_text: &str, state_dir: &Path) -> Ve
 
 /// The payload directory is the engine's, not a link, and traversable by
 /// others; its checkout is there; `out`, `tmp` and `log` are made fresh for
-/// the job account. Returns the payload directory, open: the unit's bind
+/// the job's ids. Returns the payload directory, open: the unit's bind
 /// source is made from this descriptor, never from the path again.
-fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd, String> {
+fn prepare_payload(
+    context: &StepContext,
+    payload_path: &Path,
+    identity: JobIdentity,
+) -> Result<OwnedFd, String> {
     let work = open_dir_path(&context.settings.work_dir)
         .map_err(|error| format!("work_dir_unreadable: {error}"))?;
     let payload = open_dir_beneath(borrow(&work), OsStr::new(&context.args.instance))
@@ -431,7 +453,7 @@ fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd
         return Err("payload_not_engines".to_owned());
     }
     if found.mode & 0o001 == 0 {
-        return Err("payload_not_traversable: the job account needs o+x on it".to_owned());
+        return Err("payload_not_traversable: the job's uid needs o+x on it".to_owned());
     }
     let checkout = open_dir_beneath(borrow(&payload), OsStr::new("checkout"))
         .map_err(|error| format!("checkout_missing: {error}"))?;
@@ -439,16 +461,11 @@ fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd
         .map_err(|error| error.to_string())?
         .mode;
     if checkout_mode & 0o005 != 0o005 {
-        return Err("checkout_not_readable: the job account needs o+rx on it".to_owned());
+        return Err("checkout_not_readable: the job's uid needs o+rx on it".to_owned());
     }
     for name in ["out", "tmp", "log"] {
-        make_dir_beneath(
-            borrow(&payload),
-            name,
-            0o755,
-            (context.job_uid, context.job_gid),
-        )
-        .map_err(|error| format!("payload_not_fresh: {name}: {error}"))?;
+        make_dir_beneath(borrow(&payload), name, 0o755, (identity.uid, identity.gid))
+            .map_err(|error| format!("payload_not_fresh: {name}: {error}"))?;
     }
     Ok(payload)
 }
@@ -458,9 +475,9 @@ fn exec_file(
     launch: &LaunchFile,
     template: &super::super::node_settings::NodeTemplate,
     payload: &Path,
-    allowed: &[PathBuf],
-    denied: &[PathBuf],
+    (allowed, denied): (&[PathBuf], &[PathBuf]),
     protected: Vec<PathBuf>,
+    identity: JobIdentity,
 ) -> Result<ExecFile, String> {
     let checkout = payload.join("checkout");
     let mut argv = template.interpreter.clone();
@@ -518,6 +535,7 @@ fn exec_file(
     protected.dedup();
     Ok(ExecFile {
         key: launch.key.clone(),
+        identity,
         instance: context.args.instance.clone(),
         probe: false,
         argv,

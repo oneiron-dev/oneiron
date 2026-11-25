@@ -6,6 +6,13 @@
 //! gate's own record), and whether the unit's cgroup holds any process but
 //! this step once the stop grace is over. The workload cannot write any of
 //! it.
+//!
+//! Once the group is empty, and before the record is written, the step hands
+//! every entry of the payload that the job's uid owns to the engine's account
+//! ([`handover`]) and gives the uid back to the node's table ([`job_ids`]; FIX
+//! EXEC-UNIT-CROSS-JOB-SAME-UID). A group that did not empty, or a hand-over
+//! that did not complete, keeps the uid taken: the table takes it back only
+//! once no process holds it.
 
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::path::Path;
@@ -13,14 +20,18 @@ use std::time::{Duration, Instant};
 
 use super::super::jobs::{EndRecord, JobKeyId, LaunchFile};
 use super::exchange;
+use super::handover::{self, hand_over};
+use super::job_ids::{self, JobIdentity};
 use super::prepare::CUTOFF_MARGIN_MS;
-use super::records::{CutoffMark, PreparedRecord, ScopeRecord};
-use super::safe_fs::{self, boot_id, boot_ns, borrow, read_beneath};
+use super::records::{CutoffMark, ExecFile, PreparedRecord, ScopeRecord};
+use super::safe_fs::{
+    self, boot_id, boot_ns, borrow, open_dir_beneath, open_dir_path, read_beneath,
+};
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{run_tool, show, show_within};
 use super::{
-    CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, SCOPE_FILE_NAME, is_job_instance,
-    refusal_of_exit_status,
+    CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, EXEC_FILE_NAME, PREPARED_FILE_NAME, SCOPE_FILE_NAME,
+    is_job_instance, refusal_of_exit_status,
 };
 
 /// How long the step, run by hand, looks for the unit's group to empty.
@@ -36,6 +47,7 @@ const END_RECORD: &str = super::super::jobs::job_unit::END_RECORD_FILE_NAME;
 /// The step. Returns its exit status.
 #[must_use]
 pub fn run(args: StepArgs) -> i32 {
+    let began = Instant::now();
     if let Some(why) = &args.host_namespace_error {
         // The record goes on from inside the unit's view: the control
         // directory is not one of its binds.
@@ -67,7 +79,12 @@ pub fn run(args: StepArgs) -> i32 {
         disarm(&context);
         return 0;
     }
+    // Read from root's exchange before `disarm` removes it.
+    let identity = job_identity(&context);
     let record = end_record(&context);
+    if let Some(identity) = identity {
+        give_back(&context, identity, record.cgroup_empty, began);
+    }
     let written = serde_json::to_vec_pretty(&record)
         .map_err(|error| error.to_string())
         .and_then(|bytes| {
@@ -164,6 +181,70 @@ fn end_record(context: &StepContext) -> EndRecord {
         workload_started,
         cgroup_empty,
         refusal,
+    }
+}
+
+/// The ids the prepare step gave this unit's job, from root's `exec.json`.
+fn job_identity(context: &StepContext) -> Option<JobIdentity> {
+    let exchange = open_dir_path(&context.exchange_path()).ok()?;
+    let bytes =
+        read_beneath(borrow(&exchange), EXEC_FILE_NAME, RECORD_MAX_BYTES, Some(0)).ok()??;
+    let exec: ExecFile = serde_json::from_slice(&bytes).ok()?;
+    (exec.instance == context.args.instance).then_some(exec.identity)
+}
+
+/// Hands the job's files to the engine's account and gives its uid back,
+/// once no process of the unit is left; within five sixths of the stop
+/// grace from the step's start (the settling of the group takes at most two
+/// thirds), so the record is still written within the step's timeout.
+fn give_back(context: &StepContext, identity: JobIdentity, cgroup_empty: bool, began: Instant) {
+    let unit = context.unit();
+    if !cgroup_empty {
+        journal_line!(
+            "job-ended: uid {} kept: the unit's group did not empty",
+            identity.uid
+        );
+        return;
+    }
+    let wait = Duration::from_secs(context.settings.stop_grace_secs)
+        .saturating_mul(5)
+        .checked_div(6)
+        .unwrap_or_default()
+        .saturating_sub(began.elapsed());
+    let payload = open_dir_path(&context.settings.work_dir).and_then(|work| {
+        open_dir_beneath(borrow(&work), std::ffi::OsStr::new(&context.args.instance))
+    });
+    let outcome = match payload {
+        Ok(payload) => hand_over(
+            borrow(&payload),
+            identity,
+            (context.engine_uid, context.engine_gid),
+            wait,
+        ),
+        // No payload: nothing of the job's is left to hand over.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => handover::HandOver {
+            changed: 0,
+            seen: 0,
+            incomplete: None,
+        },
+        Err(error) => handover::HandOver {
+            changed: 0,
+            seen: 0,
+            incomplete: Some(format!("payload: {error}")),
+        },
+    };
+    if let Some(why) = &outcome.incomplete {
+        journal_line!(
+            "job-ended: uid {} kept: the hand-over to the engine did not complete ({} of {} entries changed): {why}",
+            identity.uid,
+            outcome.changed,
+            outcome.seen
+        );
+        return;
+    }
+    match job_ids::release(identity, &unit) {
+        Ok(_) => {}
+        Err(why) => journal_line!("job-ended: uid {} not given back: {why}", identity.uid),
     }
 }
 
