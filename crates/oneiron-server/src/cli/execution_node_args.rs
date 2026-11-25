@@ -13,6 +13,10 @@ use crate::config::ServeArgs;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum ExecutionNodeCommand {
+    /// Measure the path between the issuer and this node before the first
+    /// job: the control round trip and a result fetch, as samples and byte
+    /// counts (`key` and `dial` on the issuer, `listen` on the node).
+    MeasurePath(super::measure_path_args::ExecutionNodeMeasurePathArgs),
     /// Print what would refuse a job here now; exit 1 when anything would.
     Check(Box<ExecutionNodeServeArgs>),
     /// Take new work again after a `disable`.
