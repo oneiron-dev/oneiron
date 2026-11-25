@@ -29,7 +29,9 @@ use oneiron::memory::{
 use super::super::FacadeApiError;
 use super::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
-use crate::gpu_host::{GpuHostError, NoProvider, job_admission, now_ms, offer_with_backend};
+use crate::gpu_host::{
+    GpuHostError, NoProvider, job_admission, job_backend, now_ms, offer_with_backend,
+};
 use crate::server::SyncServer;
 
 impl From<GpuHostError> for MemoryError {
@@ -261,7 +263,7 @@ pub(crate) async fn vault_gpu_jobs_cancel(
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
         let connector: Arc<dyn GpuJobConnector> = if job.state.is_live() {
-            offer_with_backend(server, &job.offer.name)?.1
+            job_backend(server, &job)?
         } else {
             Arc::new(NoProvider)
         };

@@ -28,7 +28,7 @@ use super::verb_grant::verb_grant_door;
 use crate::auth::CoreAuth;
 use crate::config::gpu_jobs::GpuOfferSettings;
 use crate::gpu_execution_node::issuer::not_the_issuer;
-use crate::gpu_host::{NoProvider, now_ms, offer_with_backend};
+use crate::gpu_host::{NoProvider, job_backend, now_ms, offer_with_backend};
 use crate::server::SyncServer;
 
 /// `vault.arms.admit`: admits one arm into a seated family of a GPU line,
@@ -199,7 +199,7 @@ pub(crate) async fn vault_arms_units_cancel(
                     .gpu_job(&started.job())?
                     .ok_or(GpuJobError::NotFound)?;
                 let connector: Arc<dyn GpuJobConnector> = if job.state.is_live() {
-                    offer_with_backend(server, &job.offer.name)?.1
+                    job_backend(server, &job)?
                 } else {
                     Arc::new(NoProvider)
                 };

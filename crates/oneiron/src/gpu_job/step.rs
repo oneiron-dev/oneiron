@@ -21,9 +21,14 @@ impl Vault {
     /// permit for, after a restart, is admitted again at its quote's price
     /// and pays its own end; if that no longer fits, it runs on unpaid and
     /// says so (`admission_lost`), since a running chunk is never cut for
-    /// money (`#gpu-chunks`). `offer` is the offer the job was quoted on, and
-    /// `admission` the job's own run. A resource a lost write left on the job
-    /// is asked to terminate first, live chunk or not.
+    /// money (`#gpu-chunks`). `offer` is the offer the job was quoted on, as
+    /// the host posts it now, and `admission` the job's own run. A job keeps
+    /// its backend when its offer is withdrawn (design pass 33, 8.1), so
+    /// `offer` may be `None`: the stop at the maximum then offers no resume
+    /// quote, and a chunk with no permit runs on unpaid (`admission_lost`),
+    /// since nothing binds a new one. A unit's job needs no offer: its claim
+    /// is its hold. A resource a lost write left on the job is asked to
+    /// terminate first, live chunk or not.
     ///
     /// # Errors
     ///
@@ -32,12 +37,13 @@ impl Vault {
     pub fn gpu_job_step(
         &self,
         id: &EntityId,
-        offer: &GpuOffer,
+        offer: impl Into<Option<&GpuOffer>>,
         admission: &RunAdmission,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
         now_ms: u64,
     ) -> Result<GpuJobStepReport, GpuJobError> {
+        let offer = offer.into();
         let mut job = self.load_gpu_job(id)?;
         if !job.orphaned_resources.is_empty() {
             job = self.terminate_orphaned_resources(job, connector, now_ms)?;
@@ -89,7 +95,7 @@ impl Vault {
     fn observe_gpu_chunk(
         &self,
         mut job: GpuJob,
-        offer: &GpuOffer,
+        offer: Option<&GpuOffer>,
         taken_up: bool,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
@@ -156,17 +162,19 @@ impl Vault {
                         Ok(stop) => {
                             job.stop = Some(stop);
                             // The notice's one tap (C2 05): one more chunk of
-                            // the job's first maximum, priced now.
-                            let resume_quote = job.chunks.first().and_then(|first| {
-                                offer
-                                    .quote_for(
-                                        job.id,
-                                        &first.quote.request(),
-                                        first.quote.maximum_secs,
-                                        now_ms,
-                                    )
-                                    .ok()
-                            });
+                            // the job's first maximum, priced now. A withdrawn
+                            // offer quotes nothing.
+                            let resume_quote =
+                                job.chunks.first().zip(offer).and_then(|(first, offer)| {
+                                    offer
+                                        .quote_for(
+                                            job.id,
+                                            &first.quote.request(),
+                                            first.quote.maximum_secs,
+                                            now_ms,
+                                        )
+                                        .ok()
+                                });
                             job.resume_quote = resume_quote;
                             job.state = GpuJobState::Ending {
                                 reason: GpuEndReason::AtMaximum,
@@ -445,10 +453,12 @@ fn generic_terminal(reason: GpuEndReason, billed_secs: u64, used_secs: u64) -> G
 /// restart: at its quote's price and unit, which froze at the quote, for its
 /// whole quote, as the kept permit before it held. Returns whether the record
 /// changed. A unit's job is never admitted on the host account: its claim is
-/// its hold (design pass 32 r2, 7.2 point 3), and no permit is lost.
+/// its hold (design pass 32 r2, 7.2 point 3), and no permit is lost. With its
+/// offer withdrawn (`None`), nothing binds a new permit: the chunk runs on
+/// unpaid, as when the admission no longer fits.
 fn take_up_gpu_chunk(
     job: &mut GpuJob,
-    offer: &GpuOffer,
+    offer: Option<&GpuOffer>,
     admission: &RunAdmission,
     permits: &GpuJobPermits,
 ) -> crate::Result<bool> {
@@ -461,6 +471,10 @@ fn take_up_gpu_chunk(
     if chunk.admission_lost || permits.holds_chunk(&id, &key) {
         return Ok(false);
     }
+    let Some(offer) = offer else {
+        chunk.admission_lost = true;
+        return Ok(true);
+    };
     let binding = PaidConnector {
         unit_cost: chunk.quote.unit_cost,
         cost_unit: chunk.quote.unit.clone(),

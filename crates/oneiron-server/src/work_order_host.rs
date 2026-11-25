@@ -21,7 +21,7 @@ use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_is
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
 };
-use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
+use crate::gpu_host::{GpuHostError, job_admission, job_backend, offer_with_backend};
 use crate::server::SyncServer;
 
 /// Bytes in a MiB.
@@ -258,8 +258,7 @@ impl OrderHost for ServerOrderHost<'_> {
             .gpu_job(job)
             .map_err(|error| error.to_string())?
             .ok_or("the attempt's job is not on this issuer")?;
-        let (_, connector) = offer_with_backend(self.server, &job_row.offer.name)
-            .map_err(|error| error.to_string())?;
+        let connector = job_backend(self.server, &job_row).map_err(|error| error.to_string())?;
         self.server
             .vault
             .cancel_gpu_job(

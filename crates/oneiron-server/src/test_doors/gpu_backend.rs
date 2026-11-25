@@ -74,6 +74,21 @@ pub fn grant_allocation(
         .map_err(|error| anyhow::anyhow!("{error:?}"))
 }
 
+/// Whether `server`'s GPU job worker starts, as `serve` starts it with every
+/// pass admitted. A worker that starts is stopped at once. Call it inside a
+/// Tokio runtime.
+pub fn gpu_job_worker_starts(server: &Arc<SyncServer>) -> bool {
+    let admit: crate::server::HousekeepingAdmission =
+        Arc::new(|| Some(Box::new(()) as Box<dyn Send>));
+    match crate::gpu_host::spawn_gpu_job_steps(Arc::clone(server), admit) {
+        Some(worker) => {
+            worker.abort();
+            true
+        }
+        None => false,
+    }
+}
+
 /// One pass of the GPU job worker: one step of every live job, each with its
 /// outcome as text when it refused.
 pub fn step_gpu_jobs(server: &SyncServer) -> Vec<(EntityId, Result<GpuJobStepReport, String>)> {
