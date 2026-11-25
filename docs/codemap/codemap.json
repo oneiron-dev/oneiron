@@ -177313,18 +177313,199 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/admission.rs",
+     "purpose": "Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`…",
+     "surface": {
+      "crate-vis": 13,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/end.rs",
+     "purpose": "The node's tick and the end of a launched key (design pass 33, 7.6 \"The engine's end handling\")",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EndRecord",
+      "JobKeyId",
+      "JobUnit",
+      "JobUnitError",
+      "JobUnitPhase",
+      "JobUnitStatus",
+      "LaunchFile",
+      "NodeClock",
+      "RenewRefusal",
+      "SystemNodeClock"
+     ],
+     "path": "src/gpu_execution_node/jobs/job_unit.rs",
+     "purpose": "The job unit as the engine sees it (design pass 33, 7.6): one instance of the service manager's job unit…",
+     "surface": {
+      "const": 8,
+      "enum": 2,
+      "fn": 10,
+      "struct": 6,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EndingCause",
+      "JobJournal",
+      "JournalEvent",
+      "JournalMoveError",
+      "JournalRecord",
+      "JournalWriteError",
+      "KeyLaunch",
+      "KeyTable",
+      "NodeKey"
+     ],
+     "path": "src/gpu_execution_node/jobs/journal.rs",
+     "purpose": "The job journal's records and the table of keys they build (design pass 33, 5.2 and 7.2)",
+     "surface": {
+      "enum": 3,
+      "fn": 20,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JournalAppendError",
+      "JournalDamage",
+      "JournalEpoch",
+      "JournalFile",
+      "JournalOpening",
+      "JournalWriterLock"
+     ],
+     "path": "src/gpu_execution_node/jobs/journal_file.rs",
+     "purpose": "The job journal's file: an append-only sequence of framed records in `<state_dir>/journal`, beside the…",
+     "surface": {
+      "const": 6,
+      "enum": 3,
+      "fn": 10,
+      "struct": 3,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/launch.rs",
+     "purpose": "Staging and the launch commit (design pass 33, 7.4 and 7.5)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NodeGate",
+      "NodeJobs"
+     ],
+     "path": "src/gpu_execution_node/jobs/mod.rs",
+     "purpose": "The node's job service: the journal, the states of a key, admission (`Reserve`, `Release`, `Submit`, and the…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 9,
+      "mod": 5,
+      "re-export": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuthorityPosition",
+      "IssuerNotLive",
+      "NodeAdmission",
+      "NodeDevices",
+      "NodeJobParts",
+      "NodeJobPaths",
+      "NodeJobSettings",
+      "NodeJobsAttachment",
+      "StageFailure",
+      "StageOrder",
+      "Stager",
+      "StagingNotBuilt"
+     ],
+     "path": "src/gpu_execution_node/jobs/node_parts.rs",
+     "purpose": "What the node's job service takes from the rest of the server, each behind one trait so the journal and the…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "re-export": 2,
+      "struct": 7,
+      "trait": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReceiptClock"
+     ],
+     "path": "src/gpu_execution_node/jobs/receipt.rs",
+     "purpose": "The receipt: what this node observed about one key, from the journal alone, signed with the machine key…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/recovery.rs",
+     "purpose": "Recovery on the node (design pass 33, 7.7)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/status.rs",
+     "purpose": "The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 8,
+      "mod": 9,
       "re-export": 7
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityEnded",
@@ -177339,7 +177520,7 @@
      "surface": {
       "const": 3,
       "enum": 2,
-      "fn": 29,
+      "fn": 31,
       "struct": 3,
       "trait": 1
      }
@@ -177354,7 +177535,7 @@
      "path": "src/gpu_execution_node/node_settings.rs",
      "purpose": "The node's own configuration (pass 33, `33-exec-node/DESIGN.md` section 5.2): the `[execution_node]` file…",
      "surface": {
-      "const": 11,
+      "const": 12,
       "fn": 9,
       "struct": 2
      }
@@ -185769,7 +185950,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 89
+      "mod": 90
      }
     },
     {
@@ -185790,6 +185971,66 @@
      "purpose": "Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ScriptedDevices"
+     ],
+     "path": "src/test_doors/node_jobs/devices.rs",
+     "purpose": "The scripted GPU slot table: its devices, their leases, quarantines and drains, and a device probe a test…",
+     "surface": {
+      "fn": 14,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScriptedNode",
+      "ScriptedNodeClock"
+     ],
+     "path": "src/test_doors/node_jobs/mod.rs",
+     "purpose": "Scripted parts for the node's job service (pass 33, `33-exec-node/DESIGN.md` section 11: the journal's tests…",
+     "surface": {
+      "fn": 8,
+      "re-export": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ScriptedAdmission",
+      "ScriptedAuthority",
+      "ScriptedFloor",
+      "ScriptedSigner",
+      "ScriptedStager"
+     ],
+     "path": "src/test_doors/node_jobs/parts.rs",
+     "purpose": "The scripted admission, memory floor, signer, authority and stager",
+     "surface": {
+      "fn": 24,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ScriptedJobUnits",
+      "ScriptedStart"
+     ],
+     "path": "src/test_doors/node_jobs/units.rs",
+     "purpose": "The scripted service manager: the job units it starts and ends as a test tells it, and the end step that…",
+     "surface": {
+      "enum": 1,
+      "fn": 16,
+      "struct": 1
      }
     },
     {
@@ -188796,6 +189037,22 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_job_journal.rs",
+     "purpose": "Pass 33 row R3a (`33-exec-node/DESIGN.md` sections 7.2-7.7, tests T13-T16c): the node's job journal, the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_job_status.rs",
+     "purpose": "Pass 33 row R4, the node's half (`33-exec-node/DESIGN.md` 7.1, 7.6 step 5, 7.9; tests T27-T33d): the node…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -189662,7 +189919,7 @@
      "path": "tests/support/mesh_machines.rs",
      "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -190723,7 +190980,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 10,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191161,7 +191418,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron-server/src/test_doors/mod.rs",
-     "files": 92,
+     "files": 96,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -191260,10 +191517,10 @@
      ]
     }
    },
-   "over_bar": 68,
+   "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2130,
-   "test_files": 590
+   "source_files": 2145,
+   "test_files": 592
   },
   "oneiron-setting-contract": {
    "files": [

@@ -144,6 +144,9 @@ pub fn job_refusal_code(refusal: &JobRefusal) -> &'static str {
         JobRefusal::NotTheKeysIssuer => "not_the_keys_issuer",
         JobRefusal::SubmitSignatureInvalid => "submit_signature_invalid",
         JobRefusal::DevicesUnreadable { .. } => "devices_unreadable",
+        JobRefusal::OutputNotFetchable { .. } => "output_not_fetchable",
+        JobRefusal::NotAcknowledgeable { .. } => "not_acknowledgeable",
+        JobRefusal::LogNotReadable { .. } => "log_not_readable",
     }
 }
 
@@ -171,5 +174,6 @@ pub fn status_answer_kind(answer: &JobStatusAnswer) -> &'static str {
         JobStatusAnswer::Output { .. } => "output",
         JobStatusAnswer::Acknowledged => "acknowledged",
         JobStatusAnswer::Refused(_) => "refused",
+        JobStatusAnswer::Tail(_) => "tail",
     }
 }
