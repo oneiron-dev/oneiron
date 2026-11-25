@@ -281,15 +281,6 @@ fn reserve_in_txn(
             "period_not_begun: the line's first period has not begun; reserve once it starts",
         )
     })?;
-    let arm = vault
-        .experiment_arm_in_txn(wtxn, &request.arm)?
-        .filter(|arm| arm.line == request.line)
-        .ok_or_else(|| not_found("no experiment arm of this line has this id"))?;
-    let seat = line.seat(&arm.family).ok_or_else(|| {
-        invalid_state(
-            "seat_lapsed: the arm's family holds no seat in force on this line; seat it with vault.gpu.lines.families.admit",
-        )
-    })?;
     let asker = memory.actor();
     let intent = IntentAsk::new(
         asker,
@@ -305,6 +296,16 @@ fn reserve_in_txn(
         .ok_or_else(|| not_found("the claim this intent key reserved is gone"))?;
         return Ok(Ok(answer_again(vault, wtxn, claim, now_ms)?));
     }
+
+    let arm = vault
+        .experiment_arm_in_txn(wtxn, &request.arm)?
+        .filter(|arm| arm.line == request.line)
+        .ok_or_else(|| not_found("no experiment arm of this line has this id"))?;
+    let seat = line.seat(&arm.family).ok_or_else(|| {
+        invalid_state(
+            "seat_lapsed: the arm's family holds no seat in force on this line; seat it with vault.gpu.lines.families.admit",
+        )
+    })?;
 
     // 2. The logical attempt.
     let key = ClaimKey::of(arm.id, request.rung, &request.unit_key, request.attempt);
