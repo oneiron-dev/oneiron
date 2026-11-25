@@ -1,12 +1,13 @@
-//! The machine policy keys (pass 34 DESIGN 2.4, and the cache budget of 6.3, `placement.cache.*`):
+//! The machine policy keys (pass 34 DESIGN 2.4, and of 6.3 the cache budget, `placement.cache.*`,
+//! and the readiness period, `jobs.readiness.every_secs`):
 //! one row per machine (the item is its MACHINE id), or per machine and device, or per machine and
 //! template (`<machine>/<name>`). An item-less row holds for every machine that has no row of its
 //! own. Each is the owner's, travels with the vault as his signed act, and states what tighter is.
 
 use super::{
     CachePolicy, DeviceOffer, DrainClearBy, ExecutionState, FreeForm, KeepHeadroom, MachineAccepts,
-    MachineExecution, MachineWindows, TemplateNetwork, WorkRoles, admits_machine,
-    admits_machine_part, drain_clear_by_no_wider, free_form_no_wider,
+    MachineExecution, MachineWindows, READINESS_EVERY_SECS_DEFAULT, TemplateNetwork, WorkRoles,
+    admits_machine, admits_machine_part, drain_clear_by_no_wider, free_form_no_wider,
 };
 use crate::setting::{ItemDomain, Kind};
 
@@ -81,6 +82,10 @@ fn cache_wanted_hold_secs() -> u64 {
 
 fn cache_keys_max() -> u32 {
     CachePolicy::DEFAULT.keys_max
+}
+
+fn readiness_every_secs() -> u64 {
+    READINESS_EVERY_SECS_DEFAULT
 }
 
 crate::setting::setting_keys! {
@@ -186,6 +191,16 @@ crate::setting::setting_keys! {
     /// forgotten first. Default 256. Fewer keys are tighter.
     pub(crate) CACHE_KEYS_MAX: u32 = "placement.cache.keys_max" {
         kind: Kind::new(cache_keys_max).lower(),
+        item: Some(MACHINES),
+    };
+    /// How often, in seconds, the machine's execution node checks itself while no work runs on
+    /// it: its probes, its free disk, its template mirrors and its clock. A failed check drains
+    /// the machine, and a passed one may clear the drain (`machines.drain.clear_by`). Default 900;
+    /// 0 checks at every step of the node. Shorter is tighter: an agent you gave this key may
+    /// shorten it at once, and needs you to lengthen it. The node checks at the shorter of this
+    /// and its box file's `readiness_every_secs`.
+    pub(crate) READINESS_EVERY_SECS: u64 = "jobs.readiness.every_secs" {
+        kind: Kind::new(readiness_every_secs).lower(),
         item: Some(MACHINES),
     };
 }
