@@ -175,11 +175,21 @@ pub struct NodeTemplate {
     /// The devices one pin may claim, the counts of all its claims together.
     #[serde(default = "max_devices_default")]
     pub max_devices: u32,
+    /// The operating-system signal a checkpoint notice delivers to the
+    /// workload (design 7.1 `Signal`), one of [`CHECKPOINT_SIGNALS`]. None:
+    /// the notice is a no-op. Absent from the digest when unset, so a
+    /// template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_signal: Option<String>,
     /// The threads a run may use at once: a request's 0 takes this many, and
     /// no request asks more.
     #[serde(default = "cpu_threads_default")]
     pub cpu_threads: u32,
 }
+
+/// The signals a template may name as its checkpoint notice: each one a
+/// workload can catch and none that stops it.
+pub const CHECKPOINT_SIGNALS: &[&str] = &["HUP", "INT", "USR1", "USR2", "WINCH"];
 
 fn disk_reserve_gib_default() -> u64 {
     DISK_RESERVE_GIB_DEFAULT
@@ -426,6 +436,13 @@ impl NodeTemplate {
             if !plain_name(name, 255) {
                 return Err(format!("returnable {name:?} must be a plain file name"));
             }
+        }
+        if let Some(signal) = &self.checkpoint_signal
+            && !CHECKPOINT_SIGNALS.contains(&signal.as_str())
+        {
+            return Err(format!(
+                "checkpoint_signal {signal:?} must be one of {CHECKPOINT_SIGNALS:?}"
+            ));
         }
         for (name, pattern) in self.params.iter().flatten() {
             if name.is_empty() || name.contains('=') {
