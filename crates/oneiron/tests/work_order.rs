@@ -1213,7 +1213,7 @@ fn a_pending_cancel_does_not_end_the_wait_until_the_attempt_ends() {
 mod after_and_caps {
     use super::*;
 
-    use oneiron::authority::{ActSurface, MachineRole};
+    use oneiron::authority::{ActSurface, MachineOwnership, MachineRole};
     use oneiron::consent::AuthenticatedOwner;
     use oneiron::federation::{Scope, ScopeAxis};
     use oneiron::memory::{
@@ -1237,12 +1237,14 @@ mod after_and_caps {
     }
 
     /// The owner proves himself on a vault that signs his acts, through the install it serves
-    /// from: a setting that syncs is his signed act, carried by a live serving machine.
+    /// from: a setting that syncs is his signed act, carried by a live serving machine. The
+    /// install is his own machine: on a rooted vault an act carried by a machine that is not
+    /// his waits for an owner key's proof (`OwnerKeyRequired`), as setting_pack_head.rs shows.
     fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(vault);
         vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
             .expect("enroll the install");
         embedded_owner(vault).expect("the owner's proof").1
     }
