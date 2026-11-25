@@ -23,7 +23,7 @@
 //! service holds the node.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use oneiron::EntityId;
@@ -275,6 +275,15 @@ pub trait Stager: Send + Sync {
     ///
     /// [`StageFailure`]: the key does not launch.
     fn stage(&self, order: &StageOrder, closed: &dyn Fn() -> bool) -> Result<(), StageFailure>;
+
+    /// Removes what [`Stager::stage`] left in `payload_dir` for `key` when
+    /// the key does not launch after it (a stop, the staging limit, a stale
+    /// authority, a launch refusal, or a restart that ended the key), and at
+    /// the release check of a key that launched. The recovery at each start
+    /// calls it again for every key that ended before its launch, so it
+    /// makes nothing and may find nothing to remove. The default has nothing
+    /// to remove.
+    fn unstage(&self, _key: &str, _payload_dir: &Path) {}
 }
 
 /// The stager until row R3c lands: it stages nothing and refuses every
