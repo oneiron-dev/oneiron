@@ -52569,7 +52569,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 229,
+      "mod": 230,
       "re-export": 106
      }
     },
@@ -55638,6 +55638,41 @@
      "notable": [],
      "path": "src/machine_names/tables.rs",
      "purpose": "The side table `machine_names` keeps: each row declares one, and the crate's build script places it in…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CachePolicy",
+      "DeviceOffer",
+      "DrainClearBy",
+      "ExecutionState",
+      "FreeForm",
+      "KeepHeadroom",
+      "MachineAccepts",
+      "MachineExecution",
+      "MachinePolicy",
+      "MachineWindows",
+      "TemplateNetwork",
+      "WorkRoles"
+     ],
+     "path": "src/machine_policy/mod.rs",
+     "purpose": "The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 5,
+      "enum": 4,
+      "fn": 8,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/machine_policy/setting_keys.rs",
+     "purpose": "The machine policy keys (pass 34 DESIGN 2.4, and the cache budget of 6.3, `placement.cache.*`): one row per…",
      "surface": {}
     },
     {
@@ -122661,6 +122696,15 @@
      "purpose": "The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16…",
      "spec_ids": []
     },
+    "machine_policy": {
+     "entry": "crates/oneiron/src/machine_policy/mod.rs",
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =…",
+     "spec_ids": []
+    },
     "machine_signature": {
      "entry": "crates/oneiron/src/machine_signature.rs",
      "files": 1,
@@ -123813,7 +123857,7 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8538,
+   "source_files": 8540,
    "test_files": 2299
   },
   "oneiron-agent-runtime": {
@@ -173076,7 +173120,7 @@
      "surface": {
       "enum": 11,
       "fn": 4,
-      "re-export": 25,
+      "re-export": 26,
       "struct": 22
      }
     },
@@ -173237,6 +173281,23 @@
      "surface": {
       "enum": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExecutionNodeMeasurePathArgs",
+      "MeasurePathCommand",
+      "MeasurePathDialArgs",
+      "MeasurePathKeyArgs",
+      "MeasurePathListenArgs"
+     ],
+     "path": "src/cli/measure_path_args.rs",
+     "purpose": "`oneiron execution-node measure-path`: the path measurement of the first job's step 2 (pass 33…",
+     "surface": {
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -173754,6 +173815,16 @@
      "purpose": "`oneiron execution-node`: this machine's execution node, at the box (pass 33, `33-exec-node/DESIGN.md`…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/execution_node/measure_path.rs",
+     "purpose": "`oneiron execution-node measure-path` (pass 33 section 12, R6 step 2): the control round trip and a result…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -177378,7 +177449,7 @@
      "purpose": "The job journal's records and the table of keys they build (design pass 33, 5.2 and 7.2)",
      "surface": {
       "enum": 3,
-      "fn": 20,
+      "fn": 21,
       "struct": 6
      }
     },
@@ -177546,10 +177617,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gpu_execution_node/machine_policy.rs",
+     "purpose": "The two layers of a node's controls (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 = A, row…",
+     "surface": {
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 9,
+      "mod": 11,
       "re-export": 7
      }
     },
@@ -177569,9 +177650,20 @@
      "surface": {
       "const": 3,
       "enum": 2,
-      "fn": 31,
+      "fn": 29,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/node/owner_policy.rs",
+     "purpose": "The node's reads of the owner's machine policy rows (row P0; pass 34 DESIGN 2.4), and the admissions that…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -177587,6 +177679,32 @@
       "const": 12,
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ListenOutcome",
+      "MeasureAnswer",
+      "MeasureError",
+      "MeasurePlan",
+      "MeasureReport",
+      "MeasureRequest",
+      "MeasurerKey",
+      "PathReceiptLog",
+      "Sample",
+      "SampleKind",
+      "SampleSummary",
+      "ServeTally"
+     ],
+     "path": "src/gpu_execution_node/path_measure.rs",
+     "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 14,
+      "struct": 9
      }
     },
     {
@@ -188105,6 +188223,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/execution_node_path_measure.rs",
+     "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -189151,6 +189277,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_machine_policy.rs",
+     "purpose": "Row P0 (pass 34, `34-compute-general/DESIGN.md` sections 2.4 and 10; EM-17 = A): the owner's machine policy…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -190017,7 +190151,7 @@
      "path": "tests/support/mesh_machines.rs",
      "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 36
      }
     },
     {
@@ -190813,7 +190947,7 @@
     },
     "cli": {
      "entry": "crates/oneiron-server/src/cli.rs",
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -190840,7 +190974,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -191078,7 +191212,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 27,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191617,8 +191751,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2151,
-   "test_files": 595
+   "source_files": 2156,
+   "test_files": 597
   },
   "oneiron-setting-contract": {
    "files": [

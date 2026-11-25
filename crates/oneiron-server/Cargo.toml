@@ -741,6 +741,14 @@ name = "execution_node_gate"
 path = "tests/execution_node_gate.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# Pass 34 row P0: the owner's machine policy rows, signed on his home and folded by the node's own
+# vault, and the stricter of them and the box's file (tests/support/mesh_machines.rs). Each
+# device's install keys sit in a `MemoryKeystore`; the fixture needs the `mesh` feature.
+[[test]]
+name = "node_machine_policy"
+path = "tests/node_machine_policy.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # MESH-PAIRING-CEILING = A: an enrolled machine's binding may be granted every protocol the
 # engine serves (SERVED_MESH_ALPNS), and no other; the listeners need the `mesh` feature.
 [[test]]
