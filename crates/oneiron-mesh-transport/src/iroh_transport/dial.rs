@@ -231,7 +231,7 @@ impl MeshTransport for IrohTransport {
     fn dial(&self, machine: MachineId, alpn: &[u8]) -> MeshFuture<'_, Box<dyn MeshConnection>> {
         let alpn = alpn.to_vec();
         Box::pin(async move {
-            if !self.alpns.contains(&alpn) {
+            if !self.dials(&alpn) {
                 return Err(MeshError::Refused);
             }
             let row = match self.policy.outbound(machine, &alpn) {
