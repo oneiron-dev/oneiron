@@ -9,8 +9,9 @@
 //!   the arm; `changed { to: invalid }` closes it with no outcome.
 //! - `unresolved` is not a decision: the rung keeps waiting.
 //!
-//! The reviewer's Grant is one of the line's `reviewers`. The reviewing
-//! actor is not the arm's admitter, not the verdict's author, not the
+//! An agent reviews under a Grant in the line's `reviewers`; the owner's
+//! own proof passes too (section 5.1 point 4), and the review records it as
+//! the owner's. The reviewing actor, the owner included, is not the arm's admitter, not the verdict's author, not the
 //! reserver of any claim at the rung, not the declared runner actor, and
 //! holds no lead role on the line under any of its Grants: the check is on
 //! the actor, so a second credential does not help. The declared model is a
@@ -123,8 +124,9 @@ impl ArmReviewRequest {
         check_ledger_row(self.ledger_row.as_ref())
     }
 
-    /// The review this ask writes, by `by` under `grant` at `at_ms`.
-    fn review(&self, by: EntityId, grant: EntityId, at_ms: u64) -> ArmReview {
+    /// The review this ask writes, by `by` under `grant` (`None`: the
+    /// owner's own proof) at `at_ms`.
+    fn review(&self, by: EntityId, grant: Option<EntityId>, at_ms: u64) -> ArmReview {
         ArmReview {
             verdict: self.verdict.clone(),
             of_arm_revision: self.of_arm_revision,
@@ -153,15 +155,16 @@ impl ArmReviewRequest {
 
 /// `vault.arms.review` as `memory`'s caller: the independent review of the
 /// promote on the arm's rung, in one write at `now_ms` on the host's clock.
-/// A review is a reviewer Grant's act: the owner's own proof does not stand
-/// in for it, since the stored review names the Grant. The caller is judged
-/// again in the write: the line cover, the reviewer role, and the
-/// independence of section 4.6.
+/// An agent reviews under a Grant in the line's reviewers; the owner's own
+/// proof passes as well, and the stored review then names no Grant (Engine
+/// ANSWER 11:18 to NOTE PLAN-M2-E2). The caller is judged again in the
+/// write: the line cover, an agent's reviewer role, and the independence of
+/// section 4.6, which holds for the owner too.
 ///
 /// # Errors
 ///
 /// `bad_request` for a malformed ask or a blank intent key; `forbidden` for
-/// the owner's proof, a caller whose Grant does not reach the arm's line or
+/// a caller whose Grant does not reach the arm's line or
 /// holds no reviewer role on it (`not_this_line`), or a reviewer who is not
 /// independent of the arm (`reviewer_not_independent`); `not_found` for an
 /// unknown arm, a rung the arm has not opened, or a line that is gone;
@@ -199,10 +202,10 @@ fn review_in_txn(
     let caller = doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_REVIEW_VERB, arm.line)?;
     let line = line_in_txn(vault, wtxn, &arm.line)?
         .ok_or_else(|| not_found("the arm's GPU line is gone"))?;
-    let doors_caller::LineCaller::Agent { grant } = caller else {
-        return Err(forbidden(
-            "a review is the act of a Grant in the line's reviewers; the owner's proof does not stand in for it",
-        ));
+    // `None`: the owner's own proof, which passes every door.
+    let grant = match caller {
+        doors_caller::LineCaller::Owner(_) => None,
+        doors_caller::LineCaller::Agent { grant } => Some(grant),
     };
     caller.require_role(&line, &[LineRole::Reviewer], ARMS_REVIEW_VERB)?;
     let reviewer = memory.actor();

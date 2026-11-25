@@ -14,6 +14,9 @@
 //!   promote's author, a reserver at the rung, the declared runner, a lead
 //!   of the line under another Grant, a review declaring the runner's
 //!   model; a Grant outside the line's reviewers; the owner's proof.
+//! - The owner's own proof reviews an arm with no reviewer Grant on the
+//!   line, and the review stands as the owner's (Engine ANSWER 11:18 to
+//!   NOTE PLAN-M2-E2); the independence holds for the owner too.
 //! - T22: two reviewers race and the rung keeps its first outcome; the
 //!   generic outcome setter is refused on the arm's receipt.
 //! - T23: a second hold is refused, and the first adds no room.
@@ -313,6 +316,16 @@ impl Fixture {
         arm_review_as(
             &self.vault.memory(agent, EdgeActorClass::Agent),
             None,
+            ask,
+            LATER_MS,
+        )
+    }
+
+    /// `vault.arms.review` at `LATER_MS` under the owner's own proof.
+    fn review_as_owner(&self, ask: &ArmReviewRequest) -> MemoryResult<ArmView> {
+        arm_review_as(
+            &self.vault.memory(self.owner, EdgeActorClass::Human),
+            Some(&self.owner_proof),
             ask,
             LATER_MS,
         )
@@ -672,7 +685,7 @@ fn a_promote_moves_the_payoff_row_only_when_reviewed() {
     assert!(outcome.success);
     assert_eq!(outcome.anchor, Anchor::Audit { rate: 1.0 });
     let review = rung.review.clone().expect("the review");
-    assert_eq!(review.grant, reviewer_grant);
+    assert_eq!(review.grant, Some(reviewer_grant));
     assert_eq!(review.by, Some(reviewer));
     assert_eq!(confirmed.arm.state, ArmState::Open);
     assert_eq!(confirmed.arm.rungs.len(), 2, "rung 2 opens");
@@ -881,14 +894,15 @@ fn a_reviewer_who_ran_the_arm_is_refused() {
         )
         .expect_err("a Grant outside the line's reviewers");
     refused_as(&refused, MEMORY_CODE_FORBIDDEN, "not_this_line");
-    let refused = arm_review_as(
-        &fixture.vault.memory(fixture.owner, EdgeActorClass::Human),
-        Some(&fixture.owner_proof),
-        &review_ask("owner", &promoted.arm, ArmReviewVerdict::Confirmed, &result),
-        LATER_MS,
-    )
-    .expect_err("the owner's proof is no reviewer Grant");
-    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    let refused = fixture
+        .review_as_owner(&review_ask(
+            "owner",
+            &promoted.arm,
+            ArmReviewVerdict::Confirmed,
+            &result,
+        ))
+        .expect_err("the owner admitted this arm");
+    refused_as(&refused, MEMORY_CODE_FORBIDDEN, "admitted the arm");
     assert_eq!(
         last_committed_write(&fixture.vault),
         before,
@@ -934,6 +948,60 @@ fn a_reviewer_who_ran_the_arm_is_refused() {
             )
             .unwrap_or_else(|error| panic!("{}: {error:?}", read.title));
     }
+}
+
+/// The owner's proof passes the review door (section 5.1 point 4): with no
+/// reviewer Grant on the line, the owner confirms a lead's promote and the
+/// review stands as the owner's.
+#[test]
+fn an_owner_review_stands_without_a_reviewer_grant() {
+    let fixture = fixture();
+    let (lead, lead_grant) = fixture.agent("arm-lead", &[ARMS_ADMIT_VERB, ARMS_VERDICT_VERB]);
+    let roles = Roles {
+        leads: vec![lead_grant],
+        reviewers: Vec::new(),
+    };
+    let (lane, family) = fixture.lane(&roles, 1, 2);
+    let arm = fixture.admit_as(Some(lead), &admission(lane, family, 1, "the lead's arm"));
+    let result = digest("result.json", 0x0a);
+    let unit = fixture.settle(&arm, 1, "check/shard-0", None, vec![result.clone()]);
+    let promoted = fixture
+        .verdict(
+            Some(lead),
+            &verdict_ask("promote", &arm, ArmDecision::Promote, &[unit.id], Some(&result)),
+        )
+        .expect("the lead promotes");
+
+    let confirmed = fixture
+        .review_as_owner(&review_ask(
+            "owner-confirm",
+            &promoted.arm,
+            ArmReviewVerdict::Confirmed,
+            &result,
+        ))
+        .expect("the owner's review stands");
+    let rung = &confirmed.arm.rungs[0];
+    assert_eq!(
+        rung.state,
+        RungState::Closed {
+            end: RungEnd::Promoted
+        }
+    );
+    let review = rung.review.clone().expect("the review");
+    assert_eq!(review.grant, None, "the owner's proof, no Grant");
+    assert_eq!(review.by, Some(fixture.owner));
+    assert_eq!(
+        rung.outcome.as_ref().map(|outcome| outcome.anchor),
+        Some(Anchor::Audit { rate: 1.0 })
+    );
+    assert_eq!(
+        confirmed.arm.rungs[1]
+            .promotion
+            .as_ref()
+            .and_then(|promotion| promotion.reviewer),
+        Some(fixture.owner)
+    );
+    assert_eq!(fixture.payoff_of(family), Some((1, 0)));
 }
 
 /// T22.

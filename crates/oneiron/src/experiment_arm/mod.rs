@@ -338,8 +338,9 @@ pub struct ArmReview {
     pub model: String,
     /// The reviewer; `None` after their erase.
     pub by: Option<EntityId>,
-    /// The Grant the reviewer held the reviewer role under.
-    pub grant: EntityId,
+    /// The Grant the reviewer held the reviewer role under; `None` when the
+    /// vault owner reviewed under their own proof.
+    pub grant: Option<EntityId>,
     pub at_ms: u64,
 }
 
