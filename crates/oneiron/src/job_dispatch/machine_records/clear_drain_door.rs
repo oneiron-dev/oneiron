@@ -10,16 +10,18 @@
 //! - `person_at_box`: nobody through a verb.
 //!
 //! It clears the issuer's half. The owner's call under `owner` or `grants` also writes the
-//! owner's setting `machines.drain.cleared_at` for the machine: a signed act that reaches the
-//! machine with the vault's history, whose execution node then clears its own drain at its next
-//! readiness tick ([`NodeDrainClear::OwnerClearSent`]). An agent's call clears the issuer's half
-//! only. No request on the wire clears the node's drain.
+//! owner's setting `machines.drain.cleared_at` for the machine, in the same write: a signed act
+//! that reaches the machine with the vault's history, whose execution node then clears its own
+//! drain at its next readiness tick ([`NodeDrainClear::OwnerClearSent`]). An agent's call clears
+//! the issuer's half only. No request on the wire clears the node's drain. Each call clears the
+//! issuer's drain it read, never one set again since.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::machine_policy::setting_keys::DRAIN_CLEARED_AT;
+use super::{ClearDrainRefusal, MachineDrain};
+use crate::machine_policy::setting_keys::{DRAIN_CLEAR_BY, DRAIN_CLEARED_AT};
 use crate::machine_policy::{DrainClearBy, machine_item};
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{
@@ -97,56 +99,99 @@ fn admits(clear_by: &DrainClearBy, caller: &VerbGrantCaller) -> Result<(), &'sta
     }
 }
 
-fn not_drained(refusal: impl std::fmt::Display) -> MemoryError {
+fn not_drained(refusal: ClearDrainRefusal) -> MemoryError {
+    let hints: &[&str] = match refusal {
+        ClearDrainRefusal::NotDrained => &[
+            "Only a machine the issuer drained has a drain to clear.",
+            "A drain the machine keeps by itself clears through the owner's setting machines.drain.cleared_at for the machine.",
+        ],
+        ClearDrainRefusal::DrainedAgain => &[
+            "The issuer drained the machine again after this call read its drain: call again to clear the drain as it stands now.",
+        ],
+    };
     MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{CLEAR_DRAIN_VERB}: {refusal}"),
-        &["Only a machine the issuer drained has a drain to clear."],
+        hints,
     )
 }
 
-/// The owner's clear of the machine's own drain: the owner's `machines.drain.cleared_at` for
-/// `machine` at `now_ms`, written under the owner's proof as every owner change of a setting is,
-/// so it is signed and travels to the machine.
+/// The issuer's half alone: clears `was`, the drain the door read.
 ///
 /// # Errors
 ///
-/// As [`Vault::set_setting`]; `invalid_state` for a change that did not apply.
-fn write_owner_clear(
+/// `invalid_state` for a drain cleared or set again since the door read it; a store failure.
+fn clear_issuer_drain(
+    vault: &Vault,
+    machine: EntityId,
+    was: &MachineDrain,
+    now_ms: u64,
+) -> MemoryResult<()> {
+    vault
+        .clear_machine_job_drain(machine, was, now_ms)?
+        .map(drop)
+        .map_err(not_drained)
+}
+
+/// The owner's clear of both halves in one write, so neither applies without the other: the
+/// owner's `machines.drain.cleared_at` for `machine` at `now_ms`, written under the owner's proof
+/// as every owner change of a setting is (signed, so it travels to the machine), and the
+/// issuer's clear of `was`. The owner's presence is asked before the write opens. Inside it the
+/// door reads again what the ask may have outlived: the machine's `machines.drain.clear_by`, and
+/// the issuer's drain, which must still be `was`.
+///
+/// # Errors
+///
+/// As [`Vault::set_setting`]; `forbidden` for a `clear_by` that became `person_at_box`;
+/// `invalid_state` for a drain cleared or set again meanwhile, or an owner's change that did not
+/// apply. Each leaves both halves as they were.
+fn clear_both_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     machine: EntityId,
+    was: &MachineDrain,
     now_ms: u64,
 ) -> MemoryResult<()> {
-    let outcome = vault.set_setting(
+    let item = machine_item(machine);
+    let request = SetSetting {
+        item: Some(item.clone()),
+        why: Some(format!("{CLEAR_DRAIN_VERB}: the owner cleared the drain")),
+        ..SetSetting::vault_value(DRAIN_CLEARED_AT.spec.name, serde_json::json!(now_ms))
+    };
+    vault.set_setting_with(
         SettingCaller::Owner(owner),
-        SetSetting {
-            item: Some(machine_item(machine)),
-            why: Some(format!("{CLEAR_DRAIN_VERB}: the owner cleared the drain")),
-            ..SetSetting::vault_value(DRAIN_CLEARED_AT.spec.name, serde_json::json!(now_ms))
+        request,
+        || {},
+        |txn, outcome| {
+            if let SetSettingOutcome::Pending { check_in } = outcome {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    format!("{CLEAR_DRAIN_VERB}: the owner's clear waits on check-in {check_in}"),
+                    &[],
+                ));
+            }
+            let clear_by = DRAIN_CLEAR_BY.read_in_txn(vault, txn, &[], Some(&item))?.value;
+            admits(&clear_by, &VerbGrantCaller::Owner).map_err(forbidden)?;
+            vault
+                .clear_machine_job_drain_in_txn(txn, machine, was, now_ms)?
+                .map_err(not_drained)
         },
     )?;
-    match outcome {
-        SetSettingOutcome::Applied { .. } => Ok(()),
-        SetSettingOutcome::Pending { check_in } => Err(MemoryError::new(
-            MEMORY_CODE_INVALID_STATE,
-            format!("{CLEAR_DRAIN_VERB}: the owner's clear waits on check-in {check_in}"),
-            &[],
-        )),
-    }
+    Ok(())
 }
 
 /// Door 12 for this handle's caller: the owner under `owner`, or an agent under its own Grant,
 /// as `machines.drain.clear_by` allows for the machine. The owner's call under `owner` or
-/// `grants` writes the owner's clear for the machine's own drain before it clears the issuer's,
-/// so a refused write clears neither.
+/// `grants` writes the owner's clear for the machine's own drain and clears the issuer's in one
+/// write, so a refused call clears neither.
 ///
 /// # Errors
 ///
 /// `forbidden` for a caller the verb or the setting does not admit; `bad_request` for a
 /// machine id that is not lower hex; `invalid_state` for a machine the issuer has not drained,
-/// or an owner's clear that did not apply; the owner's setting write's refusal (a proof that no
-/// longer holds, or presence the owner did not give); a store failure.
+/// a drain cleared or set again since the call read it, or an owner's clear that did not apply;
+/// the owner's setting write's refusal (a proof that no longer holds, or presence the owner did
+/// not give); a store failure.
 pub fn clear_drain_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
@@ -167,26 +212,29 @@ pub fn clear_drain_as(
     let settings = vault.machine_job_settings(machine)?;
     admits(&settings.clear_by, &caller).map_err(forbidden)?;
     let Some(was) = vault.machine_job_drained(machine)? else {
-        return Err(not_drained(super::ClearDrainRefusal::NotDrained));
+        return Err(not_drained(ClearDrainRefusal::NotDrained));
     };
     let now_ms = crate::unix_millis_now();
     let node_drain = match (&settings.clear_by, caller, owner) {
-        (DrainClearBy::AfterReadinessCheck, ..) => NodeDrainClear::AfterReadinessCheck,
+        (DrainClearBy::AfterReadinessCheck, ..) => {
+            clear_issuer_drain(vault, machine, &was, now_ms)?;
+            NodeDrainClear::AfterReadinessCheck
+        }
         (_, VerbGrantCaller::Owner, Some(owner)) => {
-            write_owner_clear(vault, owner, machine, now_ms)?;
+            clear_both_as_owner(vault, owner, machine, &was, now_ms)?;
             NodeDrainClear::OwnerClearSent
         }
-        _ => NodeDrainClear::OwnerOrBox,
+        _ => {
+            clear_issuer_drain(vault, machine, &was, now_ms)?;
+            NodeDrainClear::OwnerOrBox
+        }
     };
-    match vault.clear_machine_job_drain(machine, now_ms)? {
-        Ok(_) => Ok(MachineDrainCleared {
-            machine: input.machine.clone(),
-            was_drained_because: was.why,
-            cleared_at_ms: now_ms,
-            node_drain,
-        }),
-        Err(refusal) => Err(not_drained(refusal)),
-    }
+    Ok(MachineDrainCleared {
+        machine: input.machine.clone(),
+        was_drained_because: was.why,
+        cleared_at_ms: now_ms,
+        node_drain,
+    })
 }
 
 /// Door 12 on a bound handle: the embedded owner under its own proof, any other caller under

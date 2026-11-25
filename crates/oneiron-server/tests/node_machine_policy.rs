@@ -22,8 +22,8 @@ use mesh_machines::{Device, Home, TestResult, at, home};
 use oneiron::authority::ActSurface;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::job_dispatch::machine_records::{
-    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, MachineJobOutcome,
-    NodeDrainClear, clear_drain_as,
+    CLEAR_DRAIN_VERB, ClearDrainRefusal, MachineDrainClearRequest, MachineDrainCleared,
+    MachineJobOutcome, NodeDrainClear, clear_drain_as,
 };
 use oneiron::job_workload::BoundRequirement;
 use oneiron::job_workload::{DeviceKind, DeviceLease, DevicePlacement, Sharing};
@@ -917,6 +917,11 @@ impl Rig {
 impl Rig {
     /// H, N's issuer, counts three of N's own failures in a row and drains N on its side.
     fn issuer_drains(&self) -> TestResult {
+        self.issuer_drains_at(NOW_MS)
+    }
+
+    /// [`Self::issuer_drains`], the failures counted at `at_ms`.
+    fn issuer_drains_at(&self, at_ms: u64) -> TestResult {
         let vault = self.home.vault();
         for _ in 0..3 {
             vault
@@ -925,7 +930,7 @@ impl Rig {
                     &MachineJobOutcome::MachineFailure {
                         why: "lost: node_reset".to_owned(),
                     },
-                    NOW_MS,
+                    at_ms,
                 )
                 .map_err(at("H counts N's failure"))?;
         }
@@ -1256,13 +1261,16 @@ fn a_row_for_every_machine_does_not_take_the_owners_name_from_the_machines_row()
 /// path): under `owner`, door 12 (`vault.machines.execution.clear_drain`) called on H by the
 /// owner clears H's drain of N and writes the owner's `machines.drain.cleared_at` for N. Once N
 /// takes H's history, N's next tick clears its own drain. Under `grants`, the listed Grant's
-/// holder clears H's drain only: N keeps its own, and the answer says so.
+/// holder clears H's drain only: N keeps its own, no clear of N's is written, and the answer
+/// says so.
 #[test]
 fn the_owners_clear_through_door_12_reaches_the_nodes_drain_and_a_grant_holders_does_not()
 -> TestResult {
+    // Door 12 dates its clear by the real clock: N's drain began a minute before the call, and
+    // each tick moves N's clock two minutes on, past the clear's time.
+    const PAST_THE_CLEAR_MS: u64 = 120_000;
     let rig = Rig::new("")?;
     rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
-    // Door 12 dates its clear by the real clock: N's drain began a minute before.
     let node = rig.drained_node_at(oneiron_base::unix_millis_now() - 60_000)?;
     rig.issuer_drains()?;
 
@@ -1273,14 +1281,14 @@ fn the_owners_clear_through_door_12_reaches_the_nodes_drain_and_a_grant_holders_
         None,
         "the owner's call clears H's drain"
     );
-    node.tick_after(1_000);
+    node.tick_after(PAST_THE_CLEAR_MS);
     assert_eq!(
         node.drained().as_deref(),
         Some(DRAIN_WHY),
         "N keeps its drain until it has H's history"
     );
     rig.home.share_history(&[&rig.device])?;
-    node.tick_after(1_000);
+    node.tick_after(PAST_THE_CLEAR_MS);
     assert_eq!(
         node.drained(),
         None,
@@ -1288,12 +1296,18 @@ fn the_owners_clear_through_door_12_reaches_the_nodes_drain_and_a_grant_holders_
     );
     assert!(node.owner_cleared(), "the incident names the owner's clear");
 
+    // The Grant holder's half on a machine the owner's clear never reached.
+    let rig = Rig::new("")?;
     let (agent, grant) = rig.agent_listing(&[CLEAR_DRAIN_VERB])?;
     rig.owner_sets(DRAIN_CLEAR_BY, None, clear_by_grants(grant)?)?;
-    // A drain that began after the owner's clear, so that clear does not reach it.
-    let node = rig.drained_node_at(cleared.cleared_at_ms + 1_000)?;
+    let drain_began_ms = oneiron_base::unix_millis_now() - 60_000;
+    let node = rig.drained_node_at(drain_began_ms)?;
     rig.issuer_drains()?;
     let by_agent = rig.door_12(Some(agent))?;
+    assert!(
+        by_agent.cleared_at_ms > drain_began_ms,
+        "FIXTURE: N's drain began before the Grant holder's call"
+    );
     assert_eq!(by_agent.node_drain, NodeDrainClear::OwnerOrBox);
     assert_eq!(
         rig.home.vault().machine_job_drained(rig.device.machine)?,
@@ -1301,11 +1315,71 @@ fn the_owners_clear_through_door_12_reaches_the_nodes_drain_and_a_grant_holders_
         "the listed Grant's holder clears H's drain"
     );
     rig.home.share_history(&[&rig.device])?;
-    node.tick_after(1_000);
+    node.tick_after(PAST_THE_CLEAR_MS);
     assert_eq!(
         node.drained().as_deref(),
         Some(DRAIN_WHY),
         "the Grant holder's clear does not reach N's own drain"
+    );
+    for (vault, on) in [(rig.home.vault(), "H"), (&*rig.device.vault, "N")] {
+        assert!(
+            vault
+                .machine_policy(rig.device.machine, &[], &[])?
+                .panel_drain_clear
+                .is_none(),
+            "the Grant holder's call writes no clear of N's own drain on {on}"
+        );
+    }
+    Ok(())
+}
+
+/// The same row (Sol review 3 of PR 2, finding 2): door 12 clears the issuer's drain it read,
+/// never one the issuer set again since, so a call that waited (on the owner's presence) does not
+/// clear a drain its caller has not seen.
+#[test]
+fn the_issuers_clear_takes_only_the_drain_the_door_read() -> TestResult {
+    let rig = Rig::new("")?;
+    let vault = rig.home.vault();
+    let machine = rig.device.machine;
+    rig.issuer_drains_at(NOW_MS)?;
+    let first = vault
+        .machine_job_drained(machine)?
+        .ok_or("FIXTURE: H drained N")?;
+    assert!(
+        vault
+            .clear_machine_job_drain(machine, &first, NOW_MS + 1)?
+            .is_ok(),
+        "the drain read clears"
+    );
+
+    rig.issuer_drains_at(NOW_MS + 2)?;
+    let second = vault
+        .machine_job_drained(machine)?
+        .ok_or("FIXTURE: H drained N again")?;
+    assert!(
+        matches!(
+            vault.clear_machine_job_drain(machine, &first, NOW_MS + 3)?,
+            Err(ClearDrainRefusal::DrainedAgain)
+        ),
+        "a clear of the first drain refuses the drain set again since"
+    );
+    assert_eq!(
+        vault.machine_job_drained(machine)?,
+        Some(second.clone()),
+        "and leaves it standing"
+    );
+    assert!(
+        vault
+            .clear_machine_job_drain(machine, &second, NOW_MS + 4)?
+            .is_ok(),
+        "a clear of the drain read now clears it"
+    );
+    assert!(
+        matches!(
+            vault.clear_machine_job_drain(machine, &second, NOW_MS + 5)?,
+            Err(ClearDrainRefusal::NotDrained)
+        ),
+        "a machine no longer drained has nothing to clear"
     );
     Ok(())
 }
