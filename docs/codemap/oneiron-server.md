@@ -1433,10 +1433,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/jobs/journal_file.rs` | src | m | 3 struct · 3 enum · 10 fn · 1 type · 6 const | JournalAppendError, JournalDamage, JournalEpoch, JournalFile, JournalOpening, JournalWriterLock | The job journal's file: an append-only sequence of framed records in `<state_dir>/journal`, beside the… |
 | `src/gpu_execution_node/jobs/launch.rs` | src | m | 2 crate-vis | — | Staging and the launch commit (design pass 33, 7.4 and 7.5) |
 | `src/gpu_execution_node/jobs/log_tail.rs` | src | m | 1 fn | — | The node's half of `Tail` (pass 34 row Q3, section 7.2): the bytes of a key's stdout or stderr from a… |
-| `src/gpu_execution_node/jobs/mod.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 const · 5 mod · 6 re-export | NodeGate, NodeJobs | The node's job service: the journal, the states of a key, admission (`Reserve`, `Release`, `Submit`, and the… |
+| `src/gpu_execution_node/jobs/mod.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 const · 6 mod · 7 re-export | NodeGate, NodeJobs | The node's job service: the journal, the states of a key, admission (`Reserve`, `Release`, `Submit`, and the… |
 | `src/gpu_execution_node/jobs/node_parts.rs` | src | m | 7 struct · 1 enum · 4 trait · 3 fn · 2 re-export | AuthorityPosition, IssuerNotLive, NodeAdmission, NodeDevices, NodeJobParts, NodeJobPaths, NodeJobSettings, NodeJobsAttachment +4 | What the node's job service takes from the rest of the server, each behind one trait so the journal and the… |
 | `src/gpu_execution_node/jobs/receipt.rs` | src | s | 1 struct · 3 fn | ReceiptClock | The receipt: what this node observed about one key, from the journal alone, signed with the machine key… |
 | `src/gpu_execution_node/jobs/recovery.rs` | src | m | 1 fn · 1 crate-vis | — | Recovery on the node (design pass 33, 7.7) |
+| `src/gpu_execution_node/jobs/staging.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 3 const | MirrorStager, StagingRefusal, TemplateMirrors | Staging (design pass 33, `33-exec-node/DESIGN.md` section 7.4; row R3c): the code of a key's pin, exported… |
+| `src/gpu_execution_node/jobs/staging/git_process.rs` | src | s | 6 crate-vis | — | The git a staging runs (row R3c): the git directory the stager writes for one staging, the fenced command on… |
+| `src/gpu_execution_node/jobs/staging/payload_dir.rs` | src | s | 1 crate-vis | — | The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory… |
 | `src/gpu_execution_node/jobs/status.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one… |
 | `src/gpu_execution_node/mod.rs` | src | s | 9 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
 | `src/gpu_execution_node/node.rs` | src | L | 3 struct · 2 enum · 1 trait · 31 fn · 3 const | AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, NodeSnapshot | The execution node (pass 33, `33-exec-node/DESIGN.md` sections 5.2, 7.1, 7.3 and 7.9): this machine's own… |
@@ -2199,7 +2202,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/embedded_peer_path.rs` | src | m | 3 struct · 23 fn | MeshListener, RootNotices, ServedDeviceLink | Doors for the Mac app's peer path test (L7-47): starting `EmbeddedDeviceSync` on a mesh bind without the… |
 | `src/test_doors/embedding_line.rs` | src | s | 2 fn | — | Doors for `tests/embedder_host_line_notice.rs` (0053-EMB, on census L1-27): a server holding an endpoint… |
 | `src/test_doors/fingerprint_keep_lens_callback.rs` | src | s | 1 fn | — | Door for `tests/fingerprint_keep_lens_callback.rs` (PLAN-UC-04 stage 5): the dedupe key of a lens card… |
-| `src/test_doors/gpu_backend.rs` | src | s | 5 fn | — | Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the `[gpu_jobs]` section as `serve` resolves it… |
+| `src/test_doors/gpu_backend.rs` | src | s | 6 fn | — | Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row… |
 | `src/test_doors/hex_input_policy.rs` | src | s | 2 fn | — | Doors for `tests/hex_input_policy_server.rs` (UC-07 PR 6, HEX-CASE-POLICY = A): whether two hex spellings… |
 | `src/test_doors/hex_sign_digit.rs` | src | s | 3 fn | — | Doors for `tests/hex_sign_digit_server.rs` (UC-07 PR 7 sign digit): thin calls to the three crate-private… |
 | `src/test_doors/history_import.rs` | src | s | 1 fn | — | Doors for `tests/history_import_review_id_same_second.rs` ([HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]): the… |
@@ -2407,6 +2410,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/core_memory_delete_check_in_ref.rs` | test | m | — | — | A waiting delete is finished on the route that asked it (FIX-LIST… |
 | `tests/core_memory_retract_verb_hook.rs` | test | L | — | — | [CORE-MEMORY-VERB-SKIPS-FACADE-HOOKS] (FIX-LIST 25699): a token that is not owner-grade retracts through the… |
 | `tests/credential_file_network_fs.rs` | test | m | — | — | A credential file on a Linux network file system is judged by the server's own list (FIX… |
+| `tests/customer_cpu_job_seconds.rs` | test | m | — | — | CPU-only units (pass 32 row M3-D; pass 34 9.2, "the first proof that nothing in the rig needs a GPU"): a… |
 | `tests/customer_gpu_job_maximum.rs` | test | L | — | — | Customer GPU jobs on the host (row L10-31; CROSS-ARCH-0023 lifecycle, C2): the `[gpu_jobs]` section, the… |
 | `tests/decision_bands_restart_doors.rs` | test | s | — | — | The `vault.decisions.bands.*` rows across a server restart, at the public door: arch-0076:275… |
 | `tests/decision_precision_config.rs` | test | s | — | — | `[models.decisions.precision]` seats the precision band on the host's decision ladder… |
@@ -2562,6 +2566,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/model_step_health_rest.rs` | test | m | — | — | A durable model step whose provider is down waits out its offer's health rest without spending a declared… |
 | `tests/native_budget_binding.rs` | test | s | — | — | L9-19 (ARCH-0036 #system-one-codec): the System One binding's `native_budget` row is the codec row that says… |
 | `tests/node_job_journal.rs` | test | L | — | — | Pass 33 row R3a (`33-exec-node/DESIGN.md` sections 7.2-7.7, tests T13-T16c): the node's job journal, the… |
+| `tests/node_job_staging.rs` | test | L | — | — | Pass 33 row R3c (`33-exec-node/DESIGN.md` section 7.4, tests T24 and T25): staging |
 | `tests/node_job_status.rs` | test | L | — | — | Pass 33 row R4, the node's half (`33-exec-node/DESIGN.md` 7.1, 7.6 step 5, 7.9; tests T27-T33d): the node… |
 | `tests/node_job_tail.rs` | test | m | — | — | Pass 34 row Q3, the node's half (`34-compute-general/DESIGN.md` 7.2 and section 10): `Tail` on… |
 | `tests/note_session_bind_reply.rs` | test | s | — | — | A sync client that carries a NOTE session accepts the home's `auth.bind` reply (FIX-LIST… |
