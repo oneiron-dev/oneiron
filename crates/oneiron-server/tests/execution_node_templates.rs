@@ -15,7 +15,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::job_workload::{
-    BoundRequirement, DeviceKind, DeviceLease, DevicePlacement, ScopeBound, Sharing,
+    BoundRequirement, DeviceKind, DeviceLease, DevicePlacement, REQUEST_DEVICE_CLAIMS_MAX,
+    ScopeBound, Sharing,
 };
 use oneiron::{Vault, VaultConfig};
 use oneiron_server::gpu_execution_node::wire::{
@@ -349,4 +350,42 @@ fn a_node_file_that_names_no_single_issuer_does_not_validate() {
             .is_err_and(|why| why.contains("exactly one MACHINE id")),
         "an enabled node with no issuer must not validate: {refused:?}"
     );
+}
+
+/// FIX G1-WIRE-DEVICE-CLAIMS-MAX: the node checks again the shape the
+/// issuer's pin door checks, after the template's fit, so a pin that fits a
+/// template is still refused when the door would have refused it.
+#[test]
+fn a_pin_that_fits_its_template_but_not_a_pins_shape_is_refused() -> TestResult {
+    // A template that lets one pin claim 16 devices, so its own devices
+    // ceiling leaves the claims to the shape check.
+    let node = settings(&node_text(1_800, "max_devices = 16"))?;
+    let digest = node.template_digest("probe").ok_or("probe")?;
+    let claim = pin(&digest).request.devices[0].clone();
+    let mut at_most = pin(&digest);
+    at_most.request.devices = vec![claim.clone(); REQUEST_DEVICE_CLAIMS_MAX];
+    assert_eq!(
+        node.admit_pin(&at_most),
+        Ok(()),
+        "a pin of the most claims a pin carries fits"
+    );
+    let mut above = pin(&digest);
+    above.request.devices = vec![claim.clone(); REQUEST_DEVICE_CLAIMS_MAX + 1];
+    assert_eq!(
+        node.admit_pin(&above),
+        Err(format!(
+            "pin_shape_invalid: request.devices carries at most {REQUEST_DEVICE_CLAIMS_MAX} claims"
+        ))
+    );
+    // A claim of no device adds nothing to the devices the template counts,
+    // so only the shape refuses it.
+    let mut empty = pin(&digest);
+    let mut no_device = claim;
+    no_device.count = 0;
+    empty.request.devices.push(no_device);
+    assert_eq!(
+        node.admit_pin(&empty),
+        Err("pin_shape_invalid: a device claim's count is at least 1".to_owned())
+    );
+    Ok(())
 }

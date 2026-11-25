@@ -7,18 +7,32 @@
 //! before any workload process exists (pass 34, 2.2: any other bound is
 //! recorded unproven).
 //!
-//! Order: catch the checkpoint signals; open the two gate pipes; prove the
-//! device policy (before the file wall, so a refusal is the device policy's
-//! and not the wall's); apply the inner file wall (Landlock); prove the
-//! wall, the protected paths, the network, the hidden processes and the
-//! cgroup limits; report (one line, the pipe kept open); wait for the go;
-//! start the log writer ([`super::log_writer`]: descriptors 1 and 2 become
-//! its pipes); close every descriptor above 2 at the exec; write the exec
-//! mark; `execve`. The report pipe closes with a successful exec; a failed
-//! one writes why on it after the mark, so the gate records that the
-//! workload never started (review r2 R2-02; the mark: FIX
-//! EXEC-UNIT-GATE-EXEC-RACE). A log writer that does not start is said on
-//! the pipe without the mark: the workload never started either.
+//! Order: make this process not dumpable; catch the checkpoint signals;
+//! connect to the gate's socket (the gate takes this process's connection
+//! alone: FIX EXEC-UNIT-ONE-JOB-ACCOUNT); prove the device policy (before the
+//! file wall, so a refusal is the device policy's and not the wall's); apply
+//! the inner file wall (Landlock); prove the wall, the protected paths, the
+//! network, the hidden processes and the cgroup limits; report (one line, the
+//! connection kept open); wait for the go; start the log writer
+//! ([`super::log_writer`]: descriptors 1 and 2 become its pipes); close every
+//! descriptor above 2 at the exec; write the exec mark; `execve`. The
+//! connection closes with a successful exec; a failed one writes why on it
+//! after the mark, so the gate records that the workload never started
+//! (review r2 R2-02; the mark: FIX EXEC-UNIT-GATE-EXEC-RACE). A log writer
+//! that does not start is said on the connection without the mark: the
+//! workload never started either. In probe mode (`execution-node check`) the
+//! step stays connected after its report until root closes the connection, so
+//! root's check of the peer finds it alive, and then ends.
+//!
+//! Not dumpable: every job runs as the one job account, so where Yama's
+//! `ptrace_scope` is 0 and another job runs without Landlock, that job could
+//! attach to this process and speak for it on the gate's connection. A
+//! process that is not dumpable cannot be attached to or have its memory
+//! opened by a process of the same account. The window left is the few
+//! system calls between this binary's exec and its first statement; the
+//! workload's own exec makes it dumpable again, and the wider exposure of
+//! one job to another under one account is FIX EXEC-UNIT-CROSS-JOB-SAME-UID
+//! (review r7 R7-01).
 //!
 //! The checkpoint signals (design 7.1 `Signal`; the template's
 //! `checkpoint_signal`) reach the unit's main process. The control handler
@@ -30,9 +44,10 @@
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
-use std::io::{self, Write as _};
+use std::io::{self, Write};
 use std::os::fd::{AsFd as _, AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -43,16 +58,26 @@ use super::records::{
     enforced_by_kernel, first_unmet, not_enforced,
 };
 use super::{
-    EXCHANGE_ROOT, EXEC_FILE_NAME, EXEC_MARK, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END,
-    REPORT_PIPE_NAME, exec_status, is_job_instance,
+    EXCHANGE_ROOT, EXEC_FILE_NAME, EXEC_MARK, GATE_GO, GATE_SOCKET_NAME, REPORT_FRAME_END,
+    exec_status, is_job_instance,
 };
 
-/// How long `job-exec` waits for the gate's read end, and then for its go.
+/// How long `job-exec` waits for the gate's socket, and then for its go.
 const GATE_WAIT: Duration = Duration::from_secs(45);
 
 /// The step. Returns its exit status when it does not become the workload.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
+    let off: libc::c_ulong = 0;
+    // SAFETY: PR_SET_DUMPABLE with 0 takes no pointer and only clears this
+    // process's dumpable flag.
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, off, off, off, off) } != 0 {
+        journal_line!(
+            "job-exec: not made undumpable: {}",
+            io::Error::last_os_error()
+        );
+        return exec_status::GATE_SOCKET;
+    }
     catch_checkpoint_signals();
     let [instance] = args else {
         journal_line!("job-exec: usage: job-exec <instance>");
@@ -70,11 +95,11 @@ pub fn run(args: &[String]) -> i32 {
             return exec_status::EXEC_FILE;
         }
     };
-    let (report_pipe, go_pipe) = match open_gate_pipes(&exchange) {
-        Ok(pipes) => pipes,
+    let gate = match connect_to_gate(&exchange) {
+        Ok(gate) => gate,
         Err(why) => {
             journal_line!("job-exec: {why}");
-            return exec_status::GATE_PIPES;
+            return exec_status::GATE_SOCKET;
         }
     };
     let mut proofs = BTreeMap::new();
@@ -111,11 +136,14 @@ pub fn run(args: &[String]) -> i32 {
         proofs,
         refusal: refusal.clone(),
     };
-    if let Err(error) = send_report(&report_pipe, &report) {
+    if let Err(error) = send_report(&gate, &report) {
         journal_line!("job-exec: the report did not reach the gate: {error}");
-        return exec_status::GATE_PIPES;
+        return exec_status::GATE_SOCKET;
     }
     if exec.probe {
+        // Root sends no go to a probe: it closes the connection once it read
+        // the report.
+        let _ = wait_for_go(&gate);
         return exec_status::PROBE_DONE;
     }
     if let Some(why) = refusal {
@@ -127,19 +155,18 @@ pub fn run(args: &[String]) -> i32 {
             exec_status::REQUIRED_BOUND
         };
     }
-    if let Err(why) = wait_for_go(&go_pipe) {
+    if let Err(why) = wait_for_go(&gate) {
         journal_line!("job-exec: no go from the gate: {why}");
         return exec_status::GATE_REFUSED;
     }
-    drop(go_pipe);
+    let mut gate = gate;
     let streams = match log_writer::start(&exec.cwd.join("log"), exec.log_max_bytes) {
         Ok(streams) => streams,
         Err(why) => {
-            let mut report = std::fs::File::from(report_pipe);
-            return exec_failed(&mut report, None, &format!("log_writer_not_started: {why}"));
+            return exec_failed(&mut gate, None, &format!("log_writer_not_started: {why}"));
         }
     };
-    become_workload(&exec, report_pipe, streams)
+    become_workload(&exec, gate, streams)
 }
 
 /// The signal number of a checkpoint signal's name.
@@ -192,30 +219,49 @@ fn read_exec_file(exchange: &Path, instance: &str) -> Result<ExecFile, String> {
     Ok(exec)
 }
 
-/// The report pipe's write end (it opens once the gate holds the read end)
-/// and the go pipe's read end.
-fn open_gate_pipes(exchange: &Path) -> Result<(OwnedFd, OwnedFd), String> {
-    let go = open_raw(
-        &exchange.join(GO_PIPE_NAME),
-        libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC,
-    )
-    .map_err(|error| format!("go pipe: {error}"))?;
+/// The connection to the gate's socket (close-on-exec, blocking once made).
+/// The gate starts after this step's own exec (`ExecStartPost=`), so the
+/// socket is missing, refuses, or is not yet the job account's for a moment:
+/// each of those is waited out. Each try connects without blocking, so a
+/// full listen queue (`EAGAIN`) is waited out under the same deadline too
+/// (review r7 R7-07).
+fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
+    let path = exchange.join(GATE_SOCKET_NAME);
+    let address = rustix::net::SocketAddrUnix::new(path.as_path())
+        .map_err(|error| format!("gate socket {}: {error}", path.display()))?;
     let started = Instant::now();
     loop {
-        match open_raw(
-            &exchange.join(REPORT_PIPE_NAME),
-            libc::O_WRONLY | libc::O_NONBLOCK | libc::O_CLOEXEC,
-        ) {
-            Ok(report) => return Ok((report, go)),
-            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+        match connect_once(&address) {
+            Ok(gate) => return Ok(gate),
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::ENOENT | libc::ECONNREFUSED | libc::EACCES | libc::EAGAIN)
+                ) =>
+            {
                 if started.elapsed() >= GATE_WAIT {
-                    return Err("the gate never opened the report pipe".to_owned());
+                    return Err(format!("the gate never took a connection: {error}"));
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            Err(error) => return Err(format!("report pipe: {error}")),
+            Err(error) => return Err(format!("gate socket: {error}")),
         }
     }
+}
+
+/// One connection try that does not block, then the connection made
+/// blocking.
+fn connect_once(address: &rustix::net::SocketAddrUnix) -> io::Result<UnixStream> {
+    use rustix::net::{AddressFamily, SocketFlags, SocketType};
+    let socket = rustix::net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
+        None,
+    )?;
+    rustix::net::connect(&socket, address)?;
+    rustix::io::ioctl_fionbio(&socket, false)?;
+    Ok(UnixStream::from(socket))
 }
 
 fn open_raw(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
@@ -383,27 +429,18 @@ fn own_cgroup() -> Option<PathBuf> {
     Some(Path::new("/sys/fs/cgroup").join(path.trim().trim_start_matches('/')))
 }
 
-/// Writes the report as one line. The pipe stays open: it closes with the
-/// workload's exec, or carries the exec's failure.
-fn send_report(pipe: &OwnedFd, report: &ScopeReport) -> io::Result<()> {
-    // SAFETY: the pipe stays open for this call; clearing O_NONBLOCK makes
-    // the write wait for the reader instead of failing on a full pipe.
-    unsafe {
-        let flags = libc::fcntl(pipe.as_raw_fd(), libc::F_GETFL);
-        if flags >= 0 {
-            libc::fcntl(pipe.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK);
-        }
-    }
+/// Writes the report as one line. The connection stays open: it closes with
+/// the workload's exec, or carries the exec's failure.
+fn send_report(mut gate: &UnixStream, report: &ScopeReport) -> io::Result<()> {
     let mut bytes = serde_json::to_vec(report).map_err(io::Error::other)?;
     bytes.push(REPORT_FRAME_END);
-    // The copy is close-on-exec like the original, and closing it leaves the
-    // original open.
-    let mut file = std::fs::File::from(pipe.try_clone()?);
-    file.write_all(&bytes)?;
-    file.flush()
+    gate.write_all(&bytes)?;
+    gate.flush()
 }
 
-fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
+/// Waits for the gate's go on the connection. Its close, or a read that
+/// fails, is no go.
+fn wait_for_go(gate: &UnixStream) -> Result<(), String> {
     let started = Instant::now();
     let mut got = Vec::new();
     let mut buffer = [0_u8; 16];
@@ -413,7 +450,7 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
             return Err("no go in time".to_owned());
         }
         let mut poll = libc::pollfd {
-            fd: go.as_raw_fd(),
+            fd: gate.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         };
@@ -423,8 +460,10 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
         if ready <= 0 {
             continue;
         }
-        // SAFETY: buffer is writable for its length.
-        let read = unsafe { libc::read(go.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+        // SAFETY: buffer is writable for its length; poll said the
+        // connection is readable, so the read does not wait.
+        let read =
+            unsafe { libc::read(gate.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
         if read > 0 {
             got.extend_from_slice(&buffer[..usize::try_from(read).unwrap_or(0)]);
             if got.as_slice() == GATE_GO {
@@ -433,20 +472,26 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
             if got.len() >= GATE_GO.len() {
                 return Err("the gate wrote something other than its go".to_owned());
             }
-        } else if read == 0 || poll.revents & libc::POLLHUP != 0 {
-            return Err("the gate closed the go pipe without its go".to_owned());
+        } else if read == 0 {
+            return Err("the gate closed the connection without its go".to_owned());
+        } else {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(format!("the gate connection: {error}"));
+            }
         }
     }
 }
 
 /// Puts the log pipes on descriptors 1 and 2, marks every descriptor above
 /// 2 close-on-exec, enters the payload directory and becomes the workload's
-/// program. Just before the exec it writes [`EXEC_MARK`] on the report pipe,
-/// and the pipe closes with the exec; when the exec fails, why goes on the
-/// pipe after the mark ([`exec_failed`]). Returns only when the exec failed.
-fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStreams) -> i32 {
+/// program. Just before the exec it writes [`EXEC_MARK`] on the gate
+/// connection, and the connection closes with the exec; when the exec fails,
+/// why goes on it after the mark ([`exec_failed`]). Returns only when the
+/// exec failed.
+fn become_workload(exec: &ExecFile, gate: UnixStream, streams: WorkloadStreams) -> i32 {
     use std::os::unix::process::CommandExt as _;
-    let mut report = std::fs::File::from(report_pipe);
+    let mut report = gate;
     // Descriptor 2 becomes the workload's log pipe below, so a failure says
     // why on this close-on-exec copy of the journal (review r6 R6-04).
     // SAFETY: descriptor 2 is open; F_DUPFD_CLOEXEC returns a new one.
@@ -530,15 +575,15 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStrea
     )
 }
 
-/// Tells the gate on the report pipe why the workload's exec failed, as one
+/// Tells the gate on its connection why the workload's exec failed, as one
 /// line, then says it in the journal, and returns the status for it. The
 /// gate is told first and the journal line goes to `journal`, the copy of
 /// descriptor 2 from before it became the log pipe (None: descriptor 2 is
 /// still the journal). PIPE is ignored again first: the standard library
 /// resets it to its default for the exec and leaves it so when the exec
-/// fails, and a write to a pipe with no reader would end `job-exec` before
-/// the gate is told (review r6 R6-04).
-fn exec_failed(report: &mut std::fs::File, journal: Option<&mut std::fs::File>, why: &str) -> i32 {
+/// fails, and a write to a connection the gate closed would end `job-exec`
+/// before the gate is told (review r6 R6-04).
+fn exec_failed(report: &mut dyn Write, journal: Option<&mut std::fs::File>, why: &str) -> i32 {
     // SAFETY: SIG_IGN is a valid disposition for PIPE.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);

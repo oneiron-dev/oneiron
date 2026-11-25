@@ -1,14 +1,16 @@
 //! The reconcile before dispatch (pass 33 section 8.5). Before its first reserve or submit to a
 //! node since this issuer started, the issuer reads every key the node holds for it, ended keys
-//! too, page by page. A key that has a dispatch row is left to `status`. A key without one is an
-//! orphan: it goes to one hook, which row R4 fills with `JOB_ORPHAN` and its stop; until then
-//! the hook logs the key. A reconcile that got no answer, or ended before its last page, leaves
-//! the node unmarked, and no reserve or submit goes to it. A node that names a cursor it named
-//! before, or more than [`RECONCILE_MAX_PAGES`] pages, is not reconciled either: each call has
-//! its timeout, and these bound the whole reconcile.
+//! too, page by page. A key that has a dispatch row is left to `status`, except one the owner
+//! wrote off, which goes to the hook as evidence. A key without one is an orphan: it goes to one
+//! hook, which row R4 fills with `JOB_ORPHAN` and its stop (`super::orphans`), and the hook
+//! hears when the node's whole listing was read. A reconcile that got no answer, or ended
+//! before its last page, leaves the node unmarked, and no reserve or submit goes to it. A node
+//! that names a cursor it named before, or more than [`RECONCILE_MAX_PAGES`] pages, is not
+//! reconciled either: each call has its timeout, and these bound the whole reconcile.
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Mutex;
 
+use oneiron::job_dispatch::{DispatchClose, JobDispatch};
 use oneiron::{EntityId, Vault};
 
 use super::node_client::{JobNodeClient, NodeCallError};
@@ -22,6 +24,17 @@ pub const RECONCILE_MAX_PAGES: usize = 4096;
 pub trait OrphanKeys: Send + Sync {
     /// `node` holds `entry`, which this issuer never dispatched or no longer knows.
     fn unknown_key(&self, node: EntityId, entry: &KeyEntry);
+
+    /// `node`'s whole listing was read: every page, the last with no `next`.
+    fn listing_complete(&self, node: EntityId) {
+        let _ = node;
+    }
+
+    /// `node` holds `entry`, a key the owner wrote off (`row`, door 10). What it reports now is
+    /// evidence only, never settled.
+    fn written_off_key(&self, node: EntityId, row: &JobDispatch, entry: &KeyEntry) {
+        let _ = (node, row, entry);
+    }
 }
 
 /// The hook until row R4's `JOB_ORPHAN` lands: it logs the key.
@@ -106,8 +119,13 @@ impl Reconciled {
                 let dispatched = vault
                     .job_dispatch(&entry.key)
                     .map_err(|error| ReconcileError::Store(error.to_string()))?;
-                if dispatched.is_none_or(|row| row.machine != node) {
-                    orphans.unknown_key(node, entry);
+                match dispatched {
+                    Some(row) if row.machine == node => {
+                        if matches!(row.closed, Some(DispatchClose::WrittenOff { .. })) {
+                            orphans.written_off_key(node, &row, entry);
+                        }
+                    }
+                    _ => orphans.unknown_key(node, entry),
                 }
             }
             match page.next {
@@ -116,6 +134,7 @@ impl Reconciled {
                 }
                 Some(next) => after = Some(next),
                 None => {
+                    orphans.listing_complete(node);
                     self.nodes
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)

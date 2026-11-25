@@ -13,7 +13,7 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 
-use super::{ArmList, ArmListRequest, ArmRef, ArmView};
+use super::{ArmList, ArmListRequest, ArmRef, ArmView, forecast_scores as forecast_scores_of};
 
 /// The verb that reads one arm.
 pub const ARMS_GET_VERB: &str = "vault.arms.get";
@@ -51,7 +51,8 @@ pub fn arm_get_as(
 }
 
 /// `vault.arms.list` as `memory`'s caller: the arms it may read under
-/// `input`'s filters, newest first.
+/// `input`'s filters, newest first, and the forecast scores of each line it
+/// reads over the arms the line and family filters select.
 ///
 /// # Errors
 ///
@@ -67,11 +68,10 @@ pub fn arm_list_as(
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     memory.verb_grant_caller_admits_in_txn(&txn, owner, ARMS_LIST_VERB)?;
     let mut readable: BTreeMap<EntityId, bool> = BTreeMap::new();
-    let mut arms = Vec::new();
+    let mut selected = Vec::new();
     for arm in vault.experiment_arms_in_txn(&txn)? {
         if line.is_some_and(|line| line != arm.line)
             || family.is_some_and(|family| family != arm.family)
-            || (input.open_only && !arm.is_open())
         {
             continue;
         }
@@ -84,11 +84,32 @@ pub fn arm_list_as(
             }
         };
         if reads {
-            arms.push(ArmView::of(arm, false));
+            selected.push(arm);
         }
     }
+    let mut forecast_scores = Vec::new();
+    for (line, reads) in readable {
+        if !reads {
+            continue;
+        }
+        // pass 34: the threshold is the line's own setting; an arm whose line
+        // is gone (only the owner reads it) scores at the engine's default.
+        let score_after = line_in_txn(vault, &txn, &line)?.map_or(
+            crate::gpu_line::defaults::FORECAST_SCORE_AFTER,
+            |gpu_line| gpu_line.budget.forecast_score_after,
+        );
+        forecast_scores.extend(forecast_scores_of(line, &selected, score_after));
+    }
+    let mut arms: Vec<ArmView> = selected
+        .into_iter()
+        .filter(|arm| !input.open_only || arm.is_open())
+        .map(|arm| ArmView::of(arm, false))
+        .collect();
     arms.sort_by(|a, b| (b.arm.admitted_at_ms, b.arm.id).cmp(&(a.arm.admitted_at_ms, a.arm.id)));
-    Ok(ArmList { arms })
+    Ok(ArmList {
+        arms,
+        forecast_scores,
+    })
 }
 
 /// Whether the admitted caller may read the line of `project`: the line

@@ -39,6 +39,10 @@ pub const FORECAST_REQUIRED: bool = false;
 pub const FORECAST_SCORE_AFTER: u32 = 20;
 pub const RULES: [RuleRef; 1] = [RuleRef::PAYOFF_SHARE_1];
 pub const WINDOW_PERIODS: u32 = 1;
+/// posterior_sampling@1 divides its pool into at most this many slots.
+pub const POSTERIOR_MAX_SLOTS: u32 = 4_096;
+/// posterior_sampling@1 scales a family's wins and losses down together when they sum past this.
+pub const POSTERIOR_MAX_EVIDENCE: u32 = 1_023;
 
 /// The draw order of pass 32 section 4.2: what the three tracks mean, not a
 /// lane's number. Demand: the hold, the floor, the market. Interest: the
@@ -79,3 +83,5 @@ pub const NEW_IDEA_PERIODS_BOUNDS: RangeInclusive<u32> = 1..=26;
 /// The starter and one rival for the comparison.
 pub const RULE_COUNT_BOUNDS: RangeInclusive<usize> = 1..=2;
 pub const WINDOW_PERIODS_BOUNDS: RangeInclusive<u32> = 1..=26;
+pub const POSTERIOR_MAX_SLOTS_BOUNDS: RangeInclusive<u32> = 1..=4_096;
+pub const POSTERIOR_MAX_EVIDENCE_BOUNDS: RangeInclusive<u32> = 1..=1_023;

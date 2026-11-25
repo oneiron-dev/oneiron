@@ -40,6 +40,12 @@ impl NodeFiles {
         self.write(index, &node_text(self.dir.path(), index, true, &[issuer]))
     }
 
+    /// The `state_dir` machine `index`'s file names: its job journal's
+    /// directory.
+    pub(crate) fn state_dir(&self, index: usize) -> PathBuf {
+        node_state_dir(self.dir.path(), index)
+    }
+
     /// Writes machine `index`'s file with `enabled = false`.
     pub(crate) fn disabled(&self, index: usize) -> SyncServerConfig {
         self.write(index, &node_text(self.dir.path(), index, false, &[]))
@@ -69,7 +75,7 @@ pub(crate) fn node_text(dir: &Path, index: usize, enabled: bool, issuers: &[Enti
         .map(|issuer| format!("{:?}", issuer.to_hex()))
         .collect::<Vec<_>>()
         .join(", ");
-    let state = dir.join(format!("state-{index}"));
+    let state = node_state_dir(dir, index);
     let work = dir.join(format!("work-{index}"));
     format!(
         r#"[execution_node]
@@ -88,4 +94,9 @@ memory_gib = 8
 disk_gib = 4
 "#
     )
+}
+
+/// The `state_dir` of machine `index`'s file under `dir`.
+fn node_state_dir(dir: &Path, index: usize) -> PathBuf {
+    dir.join(format!("state-{index}"))
 }
