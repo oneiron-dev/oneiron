@@ -646,7 +646,8 @@ pub(crate) fn construct_sync_server(
     config: &ServeConfig,
     server_config: crate::config::SyncServerConfig,
 ) -> Result<SyncServer, oneiron::Error> {
-    if joined_store_awaits_home(&config.keystore, &vault) {
+    // RED STUB: the guard taken out.
+    if joined_store_awaits_home(&config.keystore, &vault) && false {
         SyncServer::new_joined_before_first_sync(vault, server_config)
     } else {
         SyncServer::new(vault, server_config)
@@ -678,7 +679,8 @@ pub(crate) fn sign_root_project(
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return Ok(());
     }
-    if joined_store_awaits_home(keystore, vault) {
+    // RED STUB: the guard taken out.
+    if joined_store_awaits_home(keystore, vault) && false {
         tracing::info!(
             "this store joined its home and has not synced yet; its home's authority arrives by \
              sync, so nothing is rooted here"
