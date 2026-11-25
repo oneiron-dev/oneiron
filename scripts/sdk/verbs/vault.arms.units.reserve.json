@@ -1,8 +1,8 @@
 {
   "name": "vault.arms.units.reserve",
-  "description": "Reserves one unit of an experiment arm's current rung on a GPU line, drawing its seconds from the line's pools, then starts its job under that claim. The owner calls it, or an agent whose Grant names it, reaches the line and is a lead there.",
+  "description": "Reserves one unit of an arm's current rung on a GPU line from the line's pools and starts its job; with a wait, orders it to reserve when it can run. The owner calls it, or an agent whose Grant names it, reaches the line and leads there.",
   "input": "crate::experiment_arm::UnitReserveRequest",
-  "output": "crate::experiment_arm::UnitView",
+  "output": "crate::experiment_arm::UnitReserveAnswer",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.arms.units.reserve\", &input)?",
   "host_door": true,
   "host_door_lists": true,

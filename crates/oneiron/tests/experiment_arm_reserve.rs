@@ -56,6 +56,7 @@ use oneiron::test_doors::gpu_line_hold_is_the_claim::{read_txn, start_claim};
 use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::store_writes::last_committed_write;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::work_order::WaitRule;
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
@@ -449,6 +450,7 @@ impl Fixture {
             code_sha: COMMIT.to_owned(),
             contract_sha256: arm.contract.sha256.clone(),
             secs,
+            wait: WaitRule::No,
         }
     }
 

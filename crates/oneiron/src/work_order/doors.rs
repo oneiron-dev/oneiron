@@ -108,6 +108,51 @@ fn only_own_rank_option(mut order: WorkOrder) -> WorkOrder {
     order
 }
 
+impl Vault {
+    /// The work order `id`, read in `txn`.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn work_order_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> crate::Result<Option<WorkOrder>> {
+        WORK_ORDERS.get(&self.store, txn, id)
+    }
+
+    /// Writes `order`, a new line unit's work order, `Open` at revision 0 and holding nothing
+    /// (the reserve's door, row H3).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn put_new_work_order_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        order: &WorkOrder,
+    ) -> crate::Result<()> {
+        WORK_ORDERS.put(&self.store, txn, &order.id, order)
+    }
+
+    /// `order` as `caller` reads it, with its last attempt's receipt: the reserve's door's
+    /// answer for a waiting unit (row H3).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn work_order_view_as_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: VerbGrantCaller,
+        order: WorkOrder,
+        replayed: bool,
+    ) -> crate::Result<WorkOrderView> {
+        self.order_view_in_txn(txn, order_seen_by(caller, order), replayed)
+    }
+}
+
 /// Whether `caller` may read or cancel `order`: the owner any, an agent one it made.
 pub(super) fn reaches(caller: VerbGrantCaller, order: &WorkOrder) -> bool {
     match caller {
@@ -155,7 +200,7 @@ pub fn order_work_as(
         OrderCharge::Offer { .. } => {}
         OrderCharge::Line { .. } => {
             return Err(bad_request(
-                "a line unit is ordered with vault.arms.units.reserve, which writes its claim",
+                "a line unit is ordered with vault.arms.units.reserve and a wait, which judges the line",
             ));
         }
     }

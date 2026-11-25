@@ -30,7 +30,7 @@ use crate::work_order_host::{dispatches_offer, locked_order_pass, machine_facts_
 
 /// The refusal an order that ended at once answers: a spent budget when money is what stands
 /// in its way, else an invalid state, with every blocker as a reason code (14.4).
-fn refusal_of_end(why: &GiveUpWhy) -> Option<oneiron::memory::MemoryError> {
+pub(super) fn refusal_of_end(why: &GiveUpWhy) -> Option<oneiron::memory::MemoryError> {
     let blocked = match why {
         GiveUpWhy::NeverFits { blocked } | GiveUpWhy::WaitEnded { blocked } => blocked,
         GiveUpWhy::Ended { .. } | GiveUpWhy::WrittenOff => return None,
