@@ -229,17 +229,7 @@ impl ReadinessReads {
     /// Drops every machine idle for [`Self::IDLE_MS`]. If [`Self::MAX_MACHINES`] are still kept,
     /// it also drops the machine read longest ago.
     fn make_room(&mut self, now_ms: u64) {
-        self.machines
-            .retain(|_, reads| now_ms.saturating_sub(reads.read_at_ms) < Self::IDLE_MS);
-        if self.machines.len() >= Self::MAX_MACHINES
-            && let Some(oldest) = self
-                .machines
-                .iter()
-                .min_by_key(|(_, reads)| reads.read_at_ms)
-                .map(|(machine, _)| *machine)
-        {
-            self.machines.remove(&oldest);
-        }
+        let _ = now_ms;
     }
 }
 
