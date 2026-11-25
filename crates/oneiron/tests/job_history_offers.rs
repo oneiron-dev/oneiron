@@ -398,8 +398,7 @@ fn a_resumed_chunk_is_never_an_agents_own() {
     // The resumed chunk exits after 40 seconds, the run time its exit reports.
     rig.gpu
         .terminates(GpuTermination::Confirmed { billed_secs: 40 });
-    rig.gpu
-        .reports(GpuResourceStatus::Exited { used_secs: 40 });
+    rig.gpu.reports(GpuResourceStatus::Exited { used_secs: 40 });
     rig.step(&stopped.id, &admission);
     let mut job = rig.job(&stopped.id);
     assert_eq!(
@@ -432,7 +431,10 @@ fn a_resumed_chunk_is_never_an_agents_own() {
     let attempt = only(&own);
     assert_eq!(attempt.chunk, 0);
     assert_eq!(attempt.requester, Some(agent.to_hex()));
-    assert_eq!(own.totals.all.attempts, 1, "the resumed chunk is not the agent's");
+    assert_eq!(
+        own.totals.all.attempts, 1,
+        "the resumed chunk is not the agent's"
+    );
 
     let owner = project(&inputs, &filter, HistoryViewer::Owner);
     assert_eq!(owner.attempts.len(), 2);
