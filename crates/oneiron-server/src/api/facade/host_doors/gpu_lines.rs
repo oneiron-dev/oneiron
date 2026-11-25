@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use oneiron::gpu_line::{
-    GpuLineFamilyAdmitRequest, GpuLineFamilyGraduateRequest, GpuLinePolicy, GpuLineRef,
-    GpuLineSetRequest, GpuLineView, VAULT_GPU_LINES_FAMILIES_ADMIT,
+    GpuLineError, GpuLineFamilyAdmitRequest, GpuLineFamilyGraduateRequest, GpuLinePolicy,
+    GpuLineRef, GpuLineSetWire, GpuLineView, VAULT_GPU_LINES_FAMILIES_ADMIT,
     VAULT_GPU_LINES_FAMILIES_GRADUATE, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
@@ -55,7 +55,7 @@ fn check_managed_offers(server: &SyncServer, policy: &GpuLinePolicy) -> MemoryRe
 pub(crate) async fn vault_gpu_lines_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: GpuLineSetRequest,
+    input: GpuLineSetWire,
 ) -> Listed<GpuLineView> {
     verb_grant_door(
         server,
@@ -63,9 +63,21 @@ pub(crate) async fn vault_gpu_lines_set(
         VAULT_GPU_LINES_SET,
         move |server, memory, owner| {
             if owner.is_some() {
-                check_managed_offers(server, &input.policy)?;
+                // The offers and unit in force: the stated fields over the
+                // preset's document where one is named (pass 34, 3.2). On a
+                // preset refusal the engine act answers: it replays an
+                // applied ask before it reads the preset, and refuses a new
+                // one the same way.
+                match memory.resolved_gpu_line_policy(&input) {
+                    Ok(policy) => check_managed_offers(server, &policy)?,
+                    Err(
+                        GpuLineError::PresetNotInstalled
+                        | GpuLineError::PresetDigestMismatch { .. },
+                    ) => {}
+                    Err(refusal) => return Err(refusal.into()),
+                }
             }
-            Ok(memory.set_gpu_line(owner, &input, now_ms())?)
+            Ok(memory.set_gpu_line_from_wire(owner, &input, now_ms())?)
         },
     )
     .await

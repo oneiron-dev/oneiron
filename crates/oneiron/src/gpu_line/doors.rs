@@ -22,11 +22,14 @@ use super::fold::{
 };
 use super::intent::{IntentAsk, IntentRefused, IntentStand};
 use super::mint::{LineInvalid, MintError};
+use super::preset::resolve_policy;
 use super::store::{
     MintedLine, line_in_txn, mint_first_in_txn, newest_minted_in_txn, other_line_in_txn,
     period_view_in_txn, put_line_in_txn, seated_elsewhere_in_txn,
 };
-use super::wire::{GpuLineFamilyAdmitRequest, GpuLineSetRequest, GpuLineView};
+use super::wire::{
+    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineSetRequest, GpuLineSetWire, GpuLineView,
+};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{
@@ -74,6 +77,17 @@ pub enum GpuLineError {
     NewIdeaSlotsFull { slots: u32 },
     #[error("schedule_fixed: the period length and anchor are fixed once a period is minted")]
     ScheduleFixed,
+    /// No Active install of the named pack carries the named line preset
+    /// (pass 34, 3.2).
+    #[error("preset_not_installed: no Active install of this pack carries this line preset")]
+    PresetNotInstalled,
+    /// The named digest is not the installed preset document's.
+    #[error("preset_digest_mismatch: the installed preset's document is {installed}")]
+    PresetDigestMismatch { installed: String },
+    /// The stated fields, laid over the preset where one is named, are not a
+    /// policy.
+    #[error("policy_fields: {0}")]
+    PolicyFields(String),
 }
 
 impl From<GpuLineError> for MemoryError {
@@ -85,14 +99,19 @@ impl From<GpuLineError> for MemoryError {
             refusal => refusal,
         };
         let code = match &refusal {
-            GpuLineError::Invalid(_) | GpuLineError::NotChild => MEMORY_CODE_BAD_REQUEST,
+            GpuLineError::Invalid(_) | GpuLineError::NotChild | GpuLineError::PolicyFields(_) => {
+                MEMORY_CODE_BAD_REQUEST
+            }
+            GpuLineError::PresetDigestMismatch { .. } => MEMORY_CODE_INVALID_STATE,
             GpuLineError::Mint(_)
             | GpuLineError::SeatTaken
             | GpuLineError::OneLinePerAccount
             | GpuLineError::SeatFloorUnfunded { .. }
             | GpuLineError::NewIdeaSlotsFull { .. }
             | GpuLineError::ScheduleFixed => MEMORY_CODE_INVALID_STATE,
-            GpuLineError::NoLine | GpuLineError::NoProject => MEMORY_CODE_NOT_FOUND,
+            GpuLineError::NoLine | GpuLineError::NoProject | GpuLineError::PresetNotInstalled => {
+                MEMORY_CODE_NOT_FOUND
+            }
             GpuLineError::Vault(_) | GpuLineError::Caller(_) | GpuLineError::Intent(_) => {
                 MEMORY_CODE_FORBIDDEN
             }
@@ -199,31 +218,108 @@ pub(super) fn live_seats(line: &GpuLine, track: Track) -> usize {
         .count()
 }
 
+/// The policy `request` sets, read in `txn`: the fields it states, laid over
+/// its preset's document where it names one (pass 34, 3.2).
+///
+/// # Errors
+///
+/// [`GpuLineError`]: no Active install that carries the preset, a digest that
+/// is not the installed document's, fields that are not a policy; storage
+/// errors.
+fn resolve_request_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &GpuLineSetWire,
+) -> Result<GpuLinePolicy, GpuLineError> {
+    let stated = &request.policy.0;
+    let Some(preset) = &request.preset else {
+        return resolve_policy(None, stated).map_err(GpuLineError::PolicyFields);
+    };
+    let Some(installed) = vault.installed_line_preset_in_txn(txn, &preset.pack, &preset.name)?
+    else {
+        return Err(GpuLineError::PresetNotInstalled);
+    };
+    if installed.digest != preset.digest {
+        return Err(GpuLineError::PresetDigestMismatch {
+            installed: installed.digest,
+        });
+    }
+    resolve_policy(Some(&installed.document), stated).map_err(GpuLineError::PolicyFields)
+}
+
 impl Memory<'_> {
-    /// `vault.gpu.lines.set`: the owner sets the policy of `request.project`'s
-    /// line. The seats stay as `families.admit` wrote them.
+    /// The policy `vault.gpu.lines.set` would set for `request`: its stated
+    /// fields over its preset's document where it names one. Writes nothing;
+    /// the door reads it again in its own write.
     ///
     /// # Errors
     ///
-    /// [`GpuLineError`]: a caller who is not the owner under their own proof
-    /// (an agent's Grant naming the verb is refused here), a reused intent
-    /// key, an unknown project, a line for another project already in the
-    /// vault, a policy that breaks a bound of [`GpuLine::validate`] or that
-    /// the seated families cannot fund, a schedule change once a period is
-    /// minted. The current period is minted first and stays minted.
+    /// As [`Memory::set_gpu_line_from_wire`]'s preset and policy refusals.
+    pub fn resolved_gpu_line_policy(
+        &self,
+        request: &GpuLineSetWire,
+    ) -> Result<GpuLinePolicy, GpuLineError> {
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        resolve_request_in_txn(vault, &txn, request)
+    }
+
+    /// `vault.gpu.lines.set` with the policy stated whole: as
+    /// [`Memory::set_gpu_line_from_wire`] with no preset.
+    ///
+    /// # Errors
+    ///
+    /// As [`Memory::set_gpu_line_from_wire`].
     pub fn set_gpu_line(
         &self,
         owner: Option<&AuthenticatedOwner>,
         request: &GpuLineSetRequest,
         now_ms: u64,
     ) -> Result<GpuLineView, GpuLineError> {
+        self.set_gpu_line_from_wire(owner, &GpuLineSetWire::from(request), now_ms)
+    }
+
+    /// `vault.gpu.lines.set`: the owner sets the policy of `request.project`'s
+    /// line, stated whole or laid over a lane preset (pass 34, 3.2). The seats
+    /// stay as `families.admit` wrote them.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuLineError`]: a caller who is not the owner under their own proof
+    /// (an agent's Grant naming the verb is refused here), a reused intent
+    /// key, an unknown project, a line for another project already in the
+    /// vault, a preset with no Active install or named by another digest,
+    /// fields that are not a policy, a policy that breaks a bound of
+    /// [`GpuLine::validate`] or that the seated families cannot fund, a
+    /// schedule change once a period is minted. The current period is minted
+    /// first and stays minted.
+    pub fn set_gpu_line_from_wire(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        request: &GpuLineSetWire,
+        now_ms: u64,
+    ) -> Result<GpuLineView, GpuLineError> {
         let vault = self.vault();
-        let ask = IntentAsk::new(
-            self.actor(),
-            VAULT_GPU_LINES_SET,
-            &request.intent_key,
-            &(request.project, &request.policy),
-        )
+        // The ask is what the owner said: with no preset his whole policy,
+        // named as before; with one, the preset and the fields he states.
+        let ask = match &request.preset {
+            None => {
+                let policy =
+                    resolve_policy(None, &request.policy.0).map_err(GpuLineError::PolicyFields)?;
+                IntentAsk::new(
+                    self.actor(),
+                    VAULT_GPU_LINES_SET,
+                    &request.intent_key,
+                    &(request.project, &policy),
+                )
+            }
+            Some(preset) => IntentAsk::new(
+                self.actor(),
+                VAULT_GPU_LINES_SET,
+                &request.intent_key,
+                &(request.project, preset, &request.policy),
+            ),
+        }
         .map_err(GpuLineError::Intent)?;
         vault.with_write_txn_grouped(|txn| -> crate::Result<Result<GpuLineView, GpuLineError>> {
             let caller = match admit_in_txn(self, txn, owner, VAULT_GPU_LINES_SET, request.project)
@@ -253,6 +349,13 @@ impl Memory<'_> {
             if other_line_in_txn(vault, txn, &request.project)? {
                 return Ok(Err(GpuLineError::OneLinePerAccount));
             }
+            // The preset is read before anything is written: a refused one
+            // mints nothing.
+            let policy = match resolve_request_in_txn(vault, txn, request) {
+                Ok(policy) => policy,
+                Err(GpuLineError::Vault(error)) => return Err(error),
+                Err(refusal) => return Ok(Err(refusal)),
+            };
             // The current period is minted first, from the line as it stood.
             let current = match mint_first_in_txn(vault, txn, &request.project, now_ms)? {
                 Ok(minted) => minted,
@@ -264,7 +367,7 @@ impl Memory<'_> {
                 Err(refusal) => return Ok(Err(refusal)),
             };
             let current = current.map(|minted| minted.line);
-            let policy = &request.policy;
+            let policy = &policy;
             let line = GpuLine {
                 project: request.project,
                 unit: policy.unit.clone(),
@@ -284,6 +387,7 @@ impl Memory<'_> {
                 set_by: Some(set_by),
                 set_at_ms: now_ms,
                 revision: current.as_ref().map_or(1, |line| line.revision + 1),
+                preset: request.preset.clone(),
             };
             if let Err(invalid) = line.validate(next_period) {
                 return Ok(Err(GpuLineError::Invalid(invalid)));
