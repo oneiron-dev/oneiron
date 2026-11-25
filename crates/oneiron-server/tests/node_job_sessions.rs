@@ -17,7 +17,9 @@ use oneiron::gpu_job::MeterVerdict;
 use oneiron::job_dispatch::machine_records::MachineJobOutcome;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron_server::gpu_execution_node::issuer::guard::machine_job_outcome;
-use oneiron_server::gpu_execution_node::jobs::{JobKeyId, NodeClock, NodeJobs, NodeKey};
+use oneiron_server::gpu_execution_node::jobs::{
+    JobKeyId, NodeClock, NodeControls, NodeJobs, NodeKey,
+};
 use oneiron_server::gpu_execution_node::wire::{
     HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState, JobStatusAnswer,
     JobSubmit, NetworkMode, OutputDecl, OutputsState, ResourceRequest, ScopeKind, SignedJobSubmit,
@@ -554,6 +556,33 @@ fn a_renewal_waits_for_the_fold_only_while_it_would_pass() {
     let late = receipt(jobs.submit(f.issuer, f.renewal("session-1", 1, "session-0")));
     assert_eq!(late.end, refused("continues_ended"));
     assert!(!late.started);
+
+    // A refusal that a wait can undo waits too (Sol review r4, finding 2):
+    // a node paused while its fold lags answers Busy, and once it resumes
+    // and the fold holds the heads, the same renewal is taken.
+    let g = fixture();
+    let jobs = g.node.open();
+    g.launch(&jobs, "other-0");
+    g.advance_secs(60);
+    g.node.authority.set_stale(true);
+    let controls = |paused: Option<&str>| NodeControls {
+        enabled: true,
+        paused: paused.map(str::to_owned),
+        drained: None,
+        stop_requested: false,
+    };
+    g.node.admission.set_controls(controls(Some("owner pause")));
+    let renewal = g.renewal("other-1", 1, "other-0");
+    assert!(matches!(
+        jobs.submit(g.issuer, renewal.clone()),
+        JobAnswer::Busy { .. }
+    ));
+    g.node.admission.set_controls(controls(None));
+    g.node.authority.set_stale(false);
+    assert_eq!(
+        receipt(jobs.submit(g.issuer, renewal)).state,
+        JobState::Accepted
+    );
 }
 
 /// The node journals no renewal that the scope's handoff could not take
