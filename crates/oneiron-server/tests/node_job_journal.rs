@@ -14,7 +14,6 @@ use oneiron::EntityId;
 use oneiron::job_workload::{
     BoundReport, BoundRequirement, BoundStrength, DeviceClaim, DeviceKind, ScopeBound, Sharing,
 };
-use oneiron_server::gpu_execution_node::NodeKeys;
 use oneiron_server::gpu_execution_node::jobs::job_unit::RECEIPT_FILE_NAME;
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey,
