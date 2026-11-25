@@ -3,7 +3,8 @@
 //! the node's own configuration and templates ([`node_settings`]), the
 //! node's gate, controls and authority tick ([`node`]), its two mesh
 //! services ([`service`]), and the node's keys with their journal
-//! ([`jobs`]). Its GPUs: what they are and what runs on them now
+//! ([`jobs`]), with the systemd job unit those keys run in on Linux
+//! (`scope_systemd`). Its GPUs: what they are and what runs on them now
 //! ([`device`]), what it offers and answers when asked ([`availability`]),
 //! the slots it leases on them, beside its memory floor ([`slots`]), and a
 //! read that picks a machine's GPU before a quote ([`selection`]).
@@ -14,6 +15,8 @@ pub mod device;
 pub mod jobs;
 pub mod node;
 pub mod node_settings;
+#[cfg(target_os = "linux")]
+pub mod scope_systemd;
 pub mod selection;
 #[cfg(feature = "mesh")]
 pub mod service;
