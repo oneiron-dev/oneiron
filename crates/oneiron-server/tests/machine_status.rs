@@ -85,6 +85,7 @@ fn node_answer() -> NodeAnswer {
         paused: Some("owner at the box".to_owned()),
         drained: None,
         templates: Vec::new(),
+        scopes: Vec::new(),
         disk_free_bytes: 200 << 30,
         disk_reserved_bytes: 0,
         disk_reserve_bytes: 50 << 30,
