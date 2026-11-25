@@ -13,6 +13,10 @@
 //! after the machine's own records age out. What each end charges is the table of section 7.3:
 //! a run that ended pays `min(billed, reserved)`; a confirmed refusal before anything ran, a
 //! lost machine and an owner's write-off pay nothing.
+//!
+//! The claim is also the hold on its period's allocation (row M2-I2): the allocation's
+//! standing is a fold over its claims ([`allocation_standing_in_txn`]), so the claim's terminal
+//! is the allocation's settle.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +28,15 @@ use crate::llm::run_admission::AllocationRef;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Vault};
 
+mod allocation;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use allocation::start_claim_in_txn;
+pub use allocation::{
+    AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob,
+    allocation_standing_in_txn, claim_hold_in_txn, open_claim_in_txn, record_node_answer_in_txn,
+};
 
 /// Domain of a unit key's digest in a claim's row key.
 const UNIT_KEY_CONTEXT: &str = "oneiron lane economy unit key v1";
@@ -250,13 +262,10 @@ impl std::error::Error for UnitSettleRefused {}
 /// Where the allocation's hold stands after a settle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocationSettle {
-    /// The hold settled in the settle's own transaction.
+    /// The hold settled in the settle's own transaction: the claim is the hold (row M2-I2),
+    /// so its terminal is the allocation's settle (section 7.2 point 6). No row carries a
+    /// pending settlement.
     Settled,
-    /// The hold could not settle in that transaction: the job row carries
-    /// `settlement_pending`, and the reconciler finishes it before the allocation shows the
-    /// room (section 7.2 point 6). Row M2-I2 settles the hold inside the settle; until then
-    /// every settle answers this.
-    Pending,
 }
 
 /// What a settle wrote.
@@ -419,8 +428,10 @@ impl UnitClaim {
 
 /// Settles the unit whose claim is `key` and whose job is `job`, in the caller's write
 /// transaction: the one the job's terminal row is written in (section 7.2 point 6). It writes
-/// the claim's terminal once; the pools' release follows from it, since the fold reads claims.
-/// A repeat with the same end writes nothing and answers `replayed`.
+/// the claim's terminal once; the pools' release and the allocation's settle follow from it,
+/// since both folds read claims ([`allocation_standing_in_txn`]), so an aborted transaction
+/// leaves the claim open and its full reservation held. A repeat with the same end writes
+/// nothing and answers `replayed`.
 ///
 /// # Errors
 ///
@@ -446,14 +457,14 @@ pub fn settle_unit_in_txn(
         Ok(None) => UnitSettlement {
             claim,
             replayed: true,
-            allocation: AllocationSettle::Pending,
+            allocation: AllocationSettle::Settled,
         },
         Ok(Some(ended)) => {
             CLAIMS.put(&vault.store, txn, key, &ended)?;
             UnitSettlement {
                 claim: ended,
                 replayed: false,
-                allocation: AllocationSettle::Pending,
+                allocation: AllocationSettle::Settled,
             }
         }
     };

@@ -11,9 +11,10 @@
 //! mint divides by payoff. Every number of it is a setting of the line
 //! ([`defaults`]).
 pub(crate) mod claim;
+mod cohort;
 pub mod defaults;
 mod doors;
-mod doors_caller;
+pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
@@ -22,10 +23,13 @@ pub(crate) mod tables;
 mod wire;
 
 pub use claim::{
-    AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
-    UnitSettleRefused, UnitSettlement, UnitTerminal, claim_in_txn, claims_at_rung_in_txn,
-    claims_in_txn, settle_unit_in_txn,
+    AllocationSettle, AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused,
+    ClaimKey, ClaimState, UnattributedJob, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
+    UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn, claim_hold_in_txn,
+    claim_in_txn, claims_at_rung_in_txn, claims_in_txn, open_claim_in_txn,
+    record_node_answer_in_txn, settle_unit_in_txn,
 };
+pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
@@ -33,7 +37,8 @@ pub(crate) use intent::erase_intent_asker_in_txn;
 pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 pub use mint::{
     BUILT_RULES, GPU_SECONDS, LineInvalid, MintError, PAYOFF_WEIGHT_SHIFT, Pools, SettledTally,
-    economic_digest, line_allocation_id, mint_period, payoff_share, period_balances, pools,
+    economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
+    pools, posterior_sampling,
 };
 pub(crate) use store::erase_line_actor_in_txn;
 pub use store::{

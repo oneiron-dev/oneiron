@@ -72,6 +72,12 @@ pub enum GpuProbeError {
     DrainUnreadable { reason: String },
     #[error("gpu_probe.disk_unreadable: the GPU jobs' disk could not be read: {reason}")]
     DiskUnreadable { reason: String },
+    /// A lease and its launch recheck find their GPU by id, so a reading
+    /// that lists one id on two lines cannot say which line is that GPU.
+    #[error(
+        "gpu_probe.repeated_device: the GPU driver listed device {device_id} on more than one line"
+    )]
+    RepeatedDevice { device_id: String },
 }
 
 /// What the slot table asks of this machine's GPU driver, at each ask.

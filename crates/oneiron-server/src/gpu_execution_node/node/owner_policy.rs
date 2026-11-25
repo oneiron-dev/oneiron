@@ -7,7 +7,7 @@ use oneiron::job_workload::DevicePlacement;
 use oneiron::machine_policy::MachinePolicy;
 
 use super::super::machine_policy;
-use super::super::node_settings::ExecutionNodeSettings;
+use super::super::node_settings::{DrainClearBy, ExecutionNodeSettings};
 use super::super::wire::WorkloadPin;
 use super::ExecutionNode;
 
@@ -68,6 +68,22 @@ impl ExecutionNode {
             settings,
             policy.as_ref(),
         ))
+    }
+
+    /// The readiness check's period and who clears the node's drain, from the box's file
+    /// `settings` and the owner's rows in one read: the shorter period, and the stricter clear.
+    /// Rows that do not read keep the box's period and leave the drain to the person at the box.
+    pub(crate) fn readiness_settings(
+        &self,
+        settings: &ExecutionNodeSettings,
+    ) -> (u64, DrainClearBy) {
+        match self.owner_policy(settings) {
+            Ok(policy) => (
+                machine_policy::readiness_every_secs(settings, policy.as_ref()),
+                machine_policy::drain_clear_by(settings, policy.as_ref()),
+            ),
+            Err(_) => (settings.readiness_every_secs, DrainClearBy::PersonAtBox),
+        }
     }
 
     /// Design 7.3 reserve step 5: the pin fits a template this node holds
