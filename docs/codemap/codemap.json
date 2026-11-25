@@ -55489,6 +55489,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "GpuDevice",
       "MachineCapacity",
       "MachineCapacityWrite",
       "MachineMeasurement",
@@ -55498,10 +55499,10 @@
      "purpose": "What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: \"Capacity is measured",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -144728,7 +144729,7 @@
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 3,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -144884,6 +144885,27 @@
      "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GpuDeviceLease",
+      "GpuDeviceProcesses",
+      "GpuLeaseEnd",
+      "GpuSlotGrant",
+      "GpuSlotRefusal",
+      "GpuSlotRequest",
+      "MachineGpus"
+     ],
+     "path": "src/resource_gpu.rs",
+     "purpose": "GPU leases, beside the memory floor's ([`crate::FloorLease`])",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 3,
+      "trait": 2
      }
     },
     {
@@ -145452,6 +145474,15 @@
      "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…",
      "spec_ids": []
     },
+    "resource_gpu": {
+     "entry": "crates/oneiron-organ-host/src/resource_gpu.rs",
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "GPU leases, beside the memory floor's ([`crate::FloorLease`])",
+     "spec_ids": []
+    },
     "resource_memory": {
      "entry": "crates/oneiron-organ-host/src/resource_memory.rs",
      "files": 1,
@@ -145527,7 +145558,7 @@
    },
    "over_bar": 3,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 55,
+   "source_files": 56,
    "test_files": 10
   },
   "oneiron-organ-protocol": {
@@ -174703,7 +174734,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GpuJobsSettings",
@@ -174713,8 +174744,8 @@
      "purpose": "`[gpu_jobs]`: the GPU offers this host posts for customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2, C3)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
-      "fn": 1,
+      "crate-vis": 3,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -177076,12 +177107,73 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "GpuAvailability",
+      "GpuDeviceAvailability",
+      "GpuDeviceOffer",
+      "GpuDeviceState",
+      "GpuDiskReading",
+      "GpuJobDisk"
+     ],
+     "path": "src/gpu_execution_node/availability.rs",
+     "purpose": "What this machine offers the vault's GPU jobs, and what it answers when asked: the offer…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GpuComputeProcess",
+      "GpuDeviceProbe",
+      "GpuProbeError",
+      "NvidiaSmiProbe"
+     ],
+     "path": "src/gpu_execution_node/device.rs",
+     "purpose": "The GPUs this machine has and what runs on them now, read live from the NVIDIA driver at each ask",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 2,
-      "re-export": 1
+      "mod": 6,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GpuNodeCandidate",
+      "GpuSelectionRefusal",
+      "GpuSlotPeer",
+      "GpuSlotPeerError",
+      "GpuSlotPlacement",
+      "LocalGpuSlotPeer"
+     ],
+     "path": "src/gpu_execution_node/selection.rs",
+     "purpose": "A read that picks a machine's GPU for a GPU job, before its quote",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -177097,6 +177189,33 @@
       "const": 1,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "GpuSlotTable"
+     ],
+     "path": "src/gpu_execution_node/slots.rs",
+     "purpose": "This machine's GPU slots: one job per offered GPU, beside the machine's memory floor",
+     "surface": {
+      "fn": 15,
+      "re-export": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GpuSlotLease"
+     ],
+     "path": "src/gpu_execution_node/slots/lease.rs",
+     "purpose": "The node takes a device lease inside its launch commit and immediately confirms launch",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -178517,7 +178636,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -187539,6 +187658,14 @@
      "surface": {}
     },
     {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gpu_slots.rs",
+     "purpose": "GPU inventory, live slots and selection (machines map, section 9 row 2; Engine 24 Nov 21:24: a device lease…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -190332,9 +190459,9 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 3,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "spec_ids": []
@@ -190869,10 +190996,10 @@
      ]
     }
    },
-   "over_bar": 66,
+   "over_bar": 67,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2120,
-   "test_files": 583
+   "source_files": 2125,
+   "test_files": 584
   },
   "oneiron-setting-contract": {
    "files": [

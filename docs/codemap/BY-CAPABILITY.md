@@ -688,6 +688,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | One live organ process: spawn, handshake, a reader thread, calls | `crates/oneiron-organ-host/src/process.rs` | L | — |
 | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… | `crates/oneiron-organ-host/src/receipt.rs` | s | — |
 | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… | `crates/oneiron-organ-host/src/regions.rs` | s | — |
+| GPU leases, beside the memory floor's ([`crate::FloorLease`]) | `crates/oneiron-organ-host/src/resource_gpu.rs` | s | — |
 | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… | `crates/oneiron-organ-host/src/resource_memory.rs` | s | — |
 | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… | `crates/oneiron-organ-host/src/route.rs` | m | OF-575 |
 | What the host does to an organ process between fork and exec | `crates/oneiron-organ-host/src/sandbox.rs` | m | ARCH-0075 |
@@ -910,7 +911,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Deployment-selected feedback transport | `crates/oneiron-server/src/feedback_delivery.rs` | m | — |
 | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… | `crates/oneiron-server/src/feedback_redaction.rs` | s | OF-420 |
 | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… | `crates/oneiron-server/src/files_intake/mod.rs` | m | OF-554 |
-| A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | m | — |
+| A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | L | — |
 | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | s | CROSS-ARCH-0023 |
 | WebSocket upgrade handler and connection lifecycle | `crates/oneiron-server/src/handler/mod.rs` | L | ARCH-0023 |
 | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… | `crates/oneiron-server/src/home_candidacy.rs` | s | ARCH-0026 |

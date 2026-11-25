@@ -1216,7 +1216,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/embedding.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | EmbeddingConfig, EmbeddingSlotsConfig | `[embedding]`: the embedding spaces and kind slots a vault starts with (OF-370; ARCH-0019 `#default-bindings`) |
 | `src/config/failure_signals.rs` | src | m | 1 struct · 1 enum · 2 fn · 1 const · 5 crate-vis | FailureSignalsConfig, PublisherCandidateConfig | The `[failure_signals]` section: the publisher this deployment's failure signals go to (OF-380, DEC-0005… |
 | `src/config/feedback.rs` | src | m | 3 struct · 2 fn · 1 const · 9 crate-vis | FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig | The `[feedback]` section: where the owner's feedback goes (OF-420) |
-| `src/config/gpu_jobs.rs` | src | s | 2 struct · 1 fn · 2 const · 2 crate-vis | GpuJobsSettings, GpuOfferSettings | `[gpu_jobs]`: the GPU offers this host posts for customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2, C3) |
+| `src/config/gpu_jobs.rs` | src | m | 2 struct · 2 fn · 2 const · 3 crate-vis | GpuJobsSettings, GpuOfferSettings | `[gpu_jobs]`: the GPU offers this host posts for customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2, C3) |
 | `src/config/import.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ImportConfig, ImportConfigOverride | The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import… |
 | `src/config/keystore.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 re-export · 4 crate-vis | KeystoreBackend, KeystoreConfig, KeystoreInstall | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c) |
 | `src/config/limits.rs` | src | L | 1 struct · 7 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
@@ -1422,8 +1422,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/reader.rs` | src | m | 23 crate-vis | — | The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a… |
 | `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
-| `src/gpu_execution_node/mod.rs` | src | s | 2 mod · 1 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
+| `src/gpu_execution_node/availability.rs` | src | s | 4 struct · 1 enum · 1 trait · 3 fn · 1 const | GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer, GpuDeviceState, GpuDiskReading, GpuJobDisk | What this machine offers the vault's GPU jobs, and what it answers when asked: the offer… |
+| `src/gpu_execution_node/device.rs` | src | m | 2 struct · 1 enum · 1 trait · 3 fn · 1 const · 1 re-export | GpuComputeProcess, GpuDeviceProbe, GpuProbeError, NvidiaSmiProbe | The GPUs this machine has and what runs on them now, read live from the NVIDIA driver at each ask |
+| `src/gpu_execution_node/mod.rs` | src | s | 6 mod · 5 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
+| `src/gpu_execution_node/selection.rs` | src | s | 3 struct · 2 enum · 1 trait · 3 fn | GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement, LocalGpuSlotPeer | A read that picks a machine's GPU for a GPU job, before its quote |
 | `src/gpu_execution_node/service.rs` | src | s | 2 struct · 2 fn · 1 const | JobService, JobStatusService | The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on… |
+| `src/gpu_execution_node/slots.rs` | src | L | 1 struct · 15 fn · 2 re-export | GpuSlotTable | This machine's GPU slots: one job per offered GPU, beside the machine's memory floor |
+| `src/gpu_execution_node/slots/lease.rs` | src | s | 1 struct · 5 fn | GpuSlotLease | The node takes a device lease inside its launch commit and immediately confirms launch |
 | `src/gpu_execution_node/wire.rs` | src | m | 15 struct · 11 enum · 5 fn · 4 const · 1 re-export | DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobRequest, JobReserve +18 | The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1) |
 | `src/gpu_host.rs` | src | s | 12 crate-vis | — | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) |
 | `src/handler/admitted_windows.rs` | src | s | 8 crate-vis | — | A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with… |
@@ -1564,7 +1569,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mac_worker_bootstrap/mod.rs` | src | s | 4 crate-vis | — | Private real-CLI entry before Tokio is constructed |
 | `src/mac_worker_bootstrap/sys.rs` | src | s | 13 crate-vis | — | Descriptor and kernel-event operations before the child has a runtime |
 | `src/mac_worker_bootstrap/wire.rs` | src | s | 9 crate-vis | — | The original launch bytes on the private bootstrap socket |
-| `src/machine.rs` | src | m | 19 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
+| `src/machine.rs` | src | m | 21 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
 | `src/machine/organ.rs` | src | s | 1 crate-vis | — | Organ-host machine-floor leases |
 | `src/machine_capacity.rs` | src | s | 2 fn · 1 crate-vis | — | The host's capacity probe (CROSS-ARCH-0024 #my-network 05): serving measures this machine as it starts and… |
 | `src/mail_host.rs` | src | s | 1 crate-vis | — | The host's Mail & Calendar source sync (FIX 12559): every pass, as the vault's local owner, one bounded… |
@@ -2418,6 +2423,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/git_lfs_install_wait_out.rs` | test | s | — | — | L3-30 (canon ARCH-0044:471): an LFS upload whose body was received and spooled, but whose install waited… |
 | `tests/git_lfs_prehandler_refusal_envelope.rs` | test | s | — | — | A slip the owner revoked is refused at the binding door, before any route runs |
 | `tests/gpu_pod_hours.rs` | test | m | — | — | A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset or in its IANA zone… |
+| `tests/gpu_slots.rs` | test | XL | — | — | GPU inventory, live slots and selection (machines map, section 9 row 2; Engine 24 Nov 21:24: a device lease… |
 | `tests/graduation_demote_holder_door.rs` | test | m | — | — | A policy holder demotes a graduated ramp scope over the host door (census L7-33; Engine RULING… |
 | `tests/handed_on_session_run.rs` | test | s | — | — | `self.off_record.execute` binds its session run to the write actor of the request's own credential… |
 | `tests/hex_input_policy_server.rs` | test | s | — | — | UC-07 PR 6, HEX-CASE-POLICY = A: stored and wire forms read lowercase-only; typed or foreign input reads… |
