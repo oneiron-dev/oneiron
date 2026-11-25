@@ -21,6 +21,9 @@ pub struct PackSource {
     /// The per-API verb-class table the source carries in
     /// [`super::VERB_CLASS_TABLE_FILE`], checked when the source is read.
     pub(super) verb_classes: Option<crate::credential_door::ApiVerbClassTable>,
+    /// The table of setting defaults the source carries in
+    /// [`super::SETTING_DEFAULTS_FILE`], checked when the source is read (pass 34, 3.2).
+    pub(super) setting_defaults: Option<super::PackSettingDefaults>,
 }
 impl PackSource {
     /// Every file of any size and count is read whole (FIX 8202): no byte,
@@ -107,6 +110,8 @@ impl PackSource {
             super::model_pack::read_source_model_pack(&manifest, &files)?;
         }
         let verb_classes = super::verb_class_pack::read_source_verb_class_table(&manifest, &files)?;
+        let setting_defaults =
+            super::setting_defaults_pack::read_source_setting_defaults(&manifest, &files)?;
         let mut sections = Vec::new();
         for file in &files {
             if file.path.starts_with("knowledge/sections/") && file.path.ends_with(".json") {
@@ -197,6 +202,7 @@ impl PackSource {
             organs,
             lenses,
             verb_classes,
+            setting_defaults,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -227,6 +233,11 @@ impl PackSource {
     }
     /// The lens this source carries in its folder `name`.
     #[must_use]
+    /// The source's table of setting defaults, when it carries one (pass 34, 3.2).
+    #[must_use]
+    pub fn setting_defaults(&self) -> Option<&super::PackSettingDefaults> {
+        self.setting_defaults.as_ref()
+    }
     pub fn lens(&self, name: &str) -> Option<&super::PackLens> {
         self.lenses.iter().find(|lens| lens.name == name)
     }

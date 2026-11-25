@@ -6,7 +6,7 @@
 //!   proposed as the artifact's next version through the starter's lane, pending Keep
 //!   ([`Vault::propose_gpu_job_result`]). An output the vault refuses, the node will not serve,
 //!   or whose bytes do not match is recorded as refused and never asked again.
-//! - Without one, nothing is fetched.
+//! - Without one, or for a key whose workload never started, nothing is fetched.
 //!
 //! Either way the node is then told it may clean the payload (`Ack`), once no output is owed.
 //! A fetch or an acknowledgement that did not arrive is asked again at the next housekeeping
@@ -139,6 +139,9 @@ impl ResultReturns {
         let outputs = match &ended.outputs {
             OutputsState::Hashed(outputs) => outputs.clone(),
             OutputsState::Failed { .. } => return Outputs::Decided,
+            // A key whose workload never started has no outputs the node will ever hash (it
+            // hashes them only after a run's release), and the node takes its Ack at once.
+            OutputsState::Pending if !ended.started => return Outputs::Decided,
             OutputsState::Pending => match self.newest_outputs(row) {
                 Some(outputs) => outputs,
                 None => return Outputs::Owed,
