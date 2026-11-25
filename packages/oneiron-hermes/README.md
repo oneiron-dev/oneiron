@@ -57,8 +57,16 @@ Mint the agent's credential with the vault's server stopped
 (`docs/ops/connect-an-agent.md`):
 
 ```sh
-oneiron token agent --name hermes --out /Users/you/.config/oneiron/hermes.cred
+oneiron token agent --name hermes --verbs vault.witness,vault.claims.upsert \
+  --out /Users/you/.config/oneiron/hermes.cred
 ```
+
+The provider writes with two verbs, `vault.witness` (each turn) and
+`vault.claims.upsert` (each memory write it mirrors); recall and
+`self.actor` are read verbs, which every credential may call. To let it
+call another verb later, name the verb in a Grant for the agent
+(`vault.agents.grants.mint`), or mint it again with the verb added to
+`--verbs`.
 
 Then select the provider and set it up:
 

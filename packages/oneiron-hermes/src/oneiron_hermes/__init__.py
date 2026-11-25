@@ -194,7 +194,8 @@ class OneironMemoryProvider(MemoryProvider):
             return False
         if not os.environ.get("ONEIRON_KEY") and not str(self._config.get("credential_file") or ""):
             self._unavailable = (
-                "no agent credential: run `oneiron token agent --name hermes --out <file>` "
+                "no agent credential: run `oneiron token agent --name hermes "
+                "--verbs vault.witness,vault.claims.upsert --out <file>` "
                 "and set credential_file (or ONEIRON_KEY)"
             )
             return False
@@ -549,7 +550,8 @@ class OneironMemoryProvider(MemoryProvider):
                                           "else a local server `oneiron hook` starts.",
              "required": False, "default": DEFAULTS["url"], "type": "text"},
             {"key": "credential_file", "description": "The agent credential "
-                                                      "`oneiron token agent --name hermes --out <file>` wrote.",
+                                                      "`oneiron token agent --name hermes --verbs "
+                                                      "vault.witness,vault.claims.upsert --out <file>` wrote.",
              "required": False, "default": DEFAULTS["credential_file"], "type": "text"},
             {"key": "key", "description": "The agent credential itself, instead of a file.",
              "secret": True, "required": False, "env_var": "ONEIRON_KEY"},

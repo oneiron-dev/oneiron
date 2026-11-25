@@ -193,7 +193,7 @@ impl PairedCredentialFile {
         let mut file = File::open(path).map_err(|error| {
             anyhow::anyhow!(
                 "open {}: {error}; pass a file holding a paired credential, such as the one \
-                 `oneiron token agent --name <name> --out <new-file> --config <vault-config>` \
+                 `oneiron token agent --name <name> --verbs <verbs> --out <new-file> --config <vault-config>` \
                  writes (with the vault stopped)",
                 path.display()
             )

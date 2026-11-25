@@ -677,7 +677,7 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
 
       // SIGKILL plus restart at the wait boundary doubles as the wrong-actor setup: mint the agent while stopped.
       await engine.kill();
-      const agentKey = await engine.cli.run(["token", "agent", "--name", "code-runtime-03-outsider", "--tier", "full-access",
+      const agentKey = await engine.cli.run(["token", "agent", "--name", "code-runtime-03-outsider", "--tier", "full-access", "--verbs", "all",
         "--config", resolve(engine.root, "oneiron.toml"), "--out", resolve(engine.root, "code-runtime-03-outsider.credential")],
         undefined, undefined, true);
       expect(agentKey.exitCode).toBe(0);

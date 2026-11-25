@@ -339,6 +339,20 @@ fn the_skill_names_only_verbs_the_engine_has_and_its_setup_parses() {
             let tier = flag_value(&argv, "--tier");
             if out == HOOKS_CREDENTIAL {
                 assert_eq!(tier, Some("read-only"), "the hooks only read");
+            } else {
+                // The tools credential names the write the skill makes;
+                // the read verbs need no name (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+                let listed = flag_value(&argv, "--verbs").expect("the tools mint names its verbs");
+                assert!(
+                    listed.split(',').any(|verb| verb == "vault.remember"),
+                    "{line:?}"
+                );
+                for verb in listed.split(',') {
+                    assert!(
+                        verbs_dir.join(format!("{verb}.json")).is_file(),
+                        "the mint names {verb}, which scripts/sdk/verbs/ does not hold"
+                    );
+                }
             }
             minted.insert(out.to_owned());
         }

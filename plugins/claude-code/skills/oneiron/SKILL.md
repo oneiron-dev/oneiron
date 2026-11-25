@@ -54,12 +54,17 @@ answered, walk the person through these steps.
    the hooks:
 
    ```bash
-   oneiron token agent --name claude-code --out ~/.config/oneiron/claude-code.cred
+   oneiron token agent --name claude-code --verbs vault.remember --out ~/.config/oneiron/claude-code.cred
    oneiron token agent --name claude-code-hooks --tier read-only --out ~/.config/oneiron/claude-code-hooks.cred
    ```
 
    Pass the same `--config` as `serve` uses when it reads a config other than
    the default. Keep each `slip_id` the commands print: it is what you revoke.
+   The tools credential may call every read verb and `vault.remember`, the
+   one write this skill makes; the hooks credential only reads.
+   To let it call another verb later, name the verb in a Grant for the
+   agent (`vault.agents.grants.mint`), or mint it again with the verb
+   added to `--verbs`.
 3. Turn on the import queue so the hooks' hand-over lands: `queue = true` under
    `[import]` in the config `serve` reads. Then start `oneiron serve` again.
 4. Start a new session. Its context opens with the line naming the vault.

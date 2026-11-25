@@ -140,8 +140,9 @@ async function registerAgents(
   await engine.kill();
   const principals: string[] = [];
   for (const spec of specs) {
+    // `--verbs all`: no verb list, so the tier alone bounds what it may call (AGENT-CREDENTIAL-VERB-ALLOWLIST).
     const result = await engine.cli.run([
-      "token", "agent", "--name", spec.name, "--tier", spec.tier,
+      "token", "agent", "--name", spec.name, "--tier", spec.tier, "--verbs", "all",
       "--config", resolve(engine.root, "oneiron.toml"),
       "--out", resolve(engine.root, `${spec.name}.credential`),
     ], undefined, undefined, true);

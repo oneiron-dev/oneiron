@@ -132,7 +132,7 @@ pub(super) fn root_move_steps(
     let mut steps = Vec::new();
     if !moved.retired_slips.is_empty() {
         steps.push(format!(
-            "Every credential {retired_by} minted has stopped working, as listed. Mint each agent again with `oneiron token agent --name <name>`, and pair your devices again with `oneiron token bootstrap`."
+            "Every credential {retired_by} minted has stopped working, as listed. Mint each agent again with `oneiron token agent --name <name> --verbs <verbs>`, and pair your devices again with `oneiron token bootstrap`."
         ));
     }
     if moved.histories_left > 0 {

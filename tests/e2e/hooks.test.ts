@@ -157,7 +157,7 @@ suite.test(test, "HOOKS-01", "Fact hook commit and restart catchup should work",
   await engine.client.call("vault.receipts", { limit: 1 });
   await engine.kill();
   const minted = await engine.cli.run([
-    "token", "agent", "--name", "hooks-fact-nonmatch", "--tier", "full-access",
+    "token", "agent", "--name", "hooks-fact-nonmatch", "--tier", "full-access", "--verbs", "all",
     "--config", resolve(engine.root, "oneiron.toml"),
     "--out", resolve(engine.root, "hooks-fact-nonmatch.credential"),
   ], undefined, undefined, true);
@@ -462,7 +462,7 @@ suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", 
   await engine.client.call("vault.receipts", { limit: 1 });
   await engine.kill();
   const minted = await engine.cli.run([
-    "token", "agent", "--name", "hooks-rewrite-agent", "--tier", "full-access",
+    "token", "agent", "--name", "hooks-rewrite-agent", "--tier", "full-access", "--verbs", "all",
     "--config", resolve(engine.root, "oneiron.toml"),
     "--out", resolve(engine.root, "hooks-rewrite-agent.credential"),
   ], undefined, undefined, true);

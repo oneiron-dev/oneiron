@@ -260,10 +260,15 @@ below. Start `oneiron serve --config /absolute/private/oneiron.toml` again
 before making the SDK calls.
 
 ```sh
-oneiron token agent --name sdk-example --tier full-access \
+oneiron token agent --name sdk-example --tier full-access --verbs ai.embed \
   --out /absolute/private/agent.cred --config /absolute/private/oneiron.toml
 ```
 
+`--verbs` names the verbs the credential may call beyond the read verbs
+(here `ai.embed`, which the example calls); without it the credential calls
+the read verbs alone. A Grant that names another verb for the agent
+(`vault.agents.grants.mint`, as below) lets it call that verb too, until the
+Grant is revoked.
 `--tier` sets the credential's read/propose/write ceiling. A person's pairing
 `--scope core:read,core:write` chooses its HTTP capabilities. Neither is an
 owner grant: an owner-only act stays owner-only, and an agent using `ai.embed`

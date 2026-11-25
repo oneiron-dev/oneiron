@@ -549,8 +549,20 @@ fn the_skill_is_host_neutral_and_its_setup_mints_the_file_the_entry_reads() {
         }
         if argv[1..3] == words(&["token", "agent"]) {
             let out = flag_value(&argv, "--out").expect("a mint writes a credential file");
-            // The agent saves what it learns, so its credential may write.
+            // The agent saves what it learns, so its credential may write,
+            // and its mint names that write (AGENT-CREDENTIAL-VERB-ALLOWLIST).
             assert_ne!(flag_value(&argv, "--tier"), Some("read-only"), "{line:?}");
+            let listed = flag_value(&argv, "--verbs").expect("the mint names its verbs");
+            assert!(
+                listed.split(',').any(|verb| verb == "vault.remember"),
+                "{line:?}"
+            );
+            for verb in listed.split(',') {
+                assert!(
+                    verbs_dir.join(format!("{verb}.json")).is_file(),
+                    "the mint names {verb}, which scripts/sdk/verbs/ does not hold"
+                );
+            }
             minted.insert(out.to_owned());
         }
     }

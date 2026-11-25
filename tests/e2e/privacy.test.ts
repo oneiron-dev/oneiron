@@ -1364,11 +1364,12 @@ suite.test(test, "PRIVACY-07", "Off-record save from the middle: only a person o
   // The propose-only agent and the full-access agent are minted on the stopped vault before the stretch exists.
   await engine.client.call("vault.receipts", { limit: 1 });
   await engine.kill();
-  const minted = await engine.cli.run(["token", "agent", "--name", "privacy-suggesting-agent", "--tier", "propose-only",
+  // `--verbs all`: no verb list, so the tier alone bounds what it may call (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+  const minted = await engine.cli.run(["token", "agent", "--name", "privacy-suggesting-agent", "--tier", "propose-only", "--verbs", "all",
     "--config", resolve(engine.root, "oneiron.toml"), "--out", resolve(engine.root, "privacy-suggesting-agent.credential")],
     undefined, undefined, true);
   expect(minted.exitCode).toBe(0);
-  const mintedHolder = await engine.cli.run(["token", "agent", "--name", "privacy-holder-agent", "--tier", "full-access",
+  const mintedHolder = await engine.cli.run(["token", "agent", "--name", "privacy-holder-agent", "--tier", "full-access", "--verbs", "all",
     "--config", resolve(engine.root, "oneiron.toml"), "--out", resolve(engine.root, "privacy-holder-agent.credential")],
     undefined, undefined, true);
   expect(mintedHolder.exitCode).toBe(0);
