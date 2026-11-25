@@ -78,7 +78,14 @@ every quote refuses and no worker starts.
   (open claims and open holds are not history). An occupancy is shown only
   where a machine measured it or a provider reported a chunk's final run time
   (its exit); a stop, a cancel and a lost machine or resource show it as
-  unknown, never as zero. A chunk the provider refused before anything ran
+  unknown, never as zero. A chunk one of the vault's machines ran shows what
+  the issuer holds of its key (`JOB_OBSERVATION`): the machine that answered
+  and its device, and from the end the issuer confirmed, the machine's end
+  cause, when the issuer received it, the seconds the machine measured (a
+  stop's and a cancel's too), a lost key's last seen run time as lost, and
+  the meter (`agreed` when the machine's seconds lay inside the issuer's own
+  bracket, `bracketed` when the bracket was billed, `unknown` for a lost
+  machine). A chunk the provider refused before anything ran
   charged nothing and returned its whole quote. A stopped job that the
   customer cancels keeps its last chunk's end at its maximum. An attempt a
   work order made names its order and its number there, who ordered, how

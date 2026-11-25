@@ -21,11 +21,18 @@
 //! same snapshot. It shows the attempt's number, who ordered, how long the order waited for the
 //! attempt, and what the RANK, PLACE and AFTER slots decided, as the order's row keeps them.
 //!
-//! What the rows do not keep, history does not invent: a plain offer chunk has no end time and
-//! no machine of its own, a resumed chunk's starter is not stored (the job's starter or the
-//! owner), and an occupancy is known only where a machine measured it or a provider reported a
-//! chunk's final run time; a lost machine's or a lost resource's occupancy is unknown, never
-//! zero.
+//! A chunk one of the vault's machines ran has the issuer's observation of its key
+//! (`JOB_OBSERVATION`, pass 33 5.1): the newest receipt the machine signed, read in the same
+//! snapshot. Its confirmed end gives how the billed seconds were found (the meter), and for a
+//! plain offer chunk, whose job row names no machine and keeps no end time, also the machine
+//! that answered, its device, the machine's end cause, when the issuer received it, the seconds
+//! the machine measured and a lost key's last seen run time.
+//!
+//! What the rows do not keep, history does not invent: a plain offer chunk on a provider has no
+//! end time and no machine of its own, a resumed chunk's starter is not stored (the job's
+//! starter or the owner), and an occupancy is known only where a machine measured it or a
+//! provider reported a chunk's final run time; a lost machine's or a lost resource's occupancy
+//! is unknown, never zero.
 
 use std::collections::BTreeSet;
 
@@ -160,17 +167,24 @@ pub struct JobHistoryAttempt {
     pub device: Option<String>,
     /// When it was reserved, on the vault's clock, where a row keeps it.
     pub reserved_at_ms: Option<u64>,
-    /// When its end was written, where a row keeps it.
+    /// When its end was written, where a row keeps it; for a chunk a vault machine ran, when the
+    /// issuer received the machine's end.
     pub ended_at_ms: Option<u64>,
     /// The seconds it held: the reservation, or the chunk's quote.
     pub reserved_secs: u64,
-    /// The machine's occupied seconds; for an offer chunk the provider's final run time, known
-    /// only from the exit it reported (and 0 for a chunk held before anything ran); absent when
-    /// unknown, as for a stop, a cancel or a lost resource, whose last reported run time is
-    /// only a sample.
+    /// The machine's occupied seconds, as it measured them (0 for a run that never started); for
+    /// an offer chunk on a provider, the final run time, known only from the exit it reported
+    /// (and 0 for a chunk held before anything ran); absent when unknown, as for a lost machine,
+    /// or a provider's stop, cancel or lost resource, whose last reported run time is only a
+    /// sample.
     pub occupied_secs: Option<u64>,
     /// The seconds billed, where a row keeps them.
     pub billed_secs: Option<u64>,
+    /// How the billed seconds were found, where the issuer confirmed a vault machine's end:
+    /// `agreed` (the machine's measured seconds lie inside the issuer's own bracket),
+    /// `bracketed` (they were above it, so the bracket was billed) or `unknown` (no measured
+    /// seconds: a lost machine, billed 0).
+    pub meter: Option<String>,
     /// The seconds charged: for a line unit what the line's pools paid (`min(billed,
     /// reserved)` for a run that ended, else 0); for an offer chunk its settled units over its
     /// quote's price of one second. Absent where no settlement is recorded.
@@ -351,9 +365,10 @@ pub fn job_history_embedded(
     job_history_as(memory, owner.as_ref(), input)
 }
 
-/// Reads the rows history projects, the jobs, the claims, their periods and the work orders, in
-/// one snapshot (a claim's terminal and its job's terminal row are one write, and an order's
-/// attempt entry is written with its job), and projects them.
+/// Reads the rows history projects, the jobs, the claims, their periods, the work orders and the
+/// issuer's observations of their attempt keys, in one snapshot (a claim's terminal and its
+/// job's terminal row are one write, and an order's attempt entry is written with its job), and
+/// projects them.
 ///
 /// # Errors
 ///
@@ -377,6 +392,12 @@ fn read_job_history_in_txn(
     let jobs = vault.gpu_jobs_in_txn(txn)?;
     let claims = claims_in_txn(vault, txn)?;
     let orders = vault.work_orders_in_txn(txn)?;
+    let mut observations = Vec::new();
+    for key in project::attempt_keys(&jobs, &claims) {
+        if let Some(observation) = vault.job_observation_in_txn(txn, &key)? {
+            observations.push(observation);
+        }
+    }
     let windows: BTreeSet<(EntityId, u32)> = claims
         .iter()
         .filter(|claim| !claim.is_open())
@@ -394,6 +415,7 @@ fn read_job_history_in_txn(
             claims: &claims,
             periods: &periods,
             orders: &orders,
+            observations: &observations,
         },
         filter,
         viewer,

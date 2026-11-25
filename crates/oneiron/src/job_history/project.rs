@@ -1,12 +1,13 @@
-//! The pure projection behind `vault.jobs.history`: stored jobs, claims, periods and work
-//! orders in, the ended attempts and their totals out. It reads the claim's terminal exactly
-//! as the line's fold does, so its charged seconds are the fold's.
+//! The pure projection behind `vault.jobs.history`: stored jobs, claims, periods, work orders
+//! and the issuer's observations in, the ended attempts and their totals out. It reads the
+//! claim's terminal exactly as the line's fold does, so its charged seconds are the fold's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobState};
+use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobEnd, GpuJobState, MeterVerdict};
 use crate::gpu_line::{ClaimState, GpuLinePeriod, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal};
+use crate::job_dispatch::JobObservation;
 use crate::work_order::{OrderAttempt, WorkOrder};
 
 use super::{
@@ -26,6 +27,9 @@ pub struct HistoryInputs<'a> {
     pub periods: &'a [GpuLinePeriod],
     /// Every work order: each attempt entry names the job it made.
     pub orders: &'a [WorkOrder],
+    /// The issuer's observation of each attempt key a vault machine answered for
+    /// (`JOB_OBSERVATION`, pass 33 5.1), in any order.
+    pub observations: &'a [JobObservation],
 }
 
 /// Whose attempts the answer holds.
@@ -108,6 +112,11 @@ pub fn project(
     let unit_jobs: BTreeSet<EntityId> = inputs.claims.iter().map(|claim| claim.id).collect();
     let jobs: BTreeMap<EntityId, &GpuJob> = inputs.jobs.iter().map(|job| (job.id, job)).collect();
     let ordered = OrderIndex::of(inputs.orders);
+    let observed: BTreeMap<&str, &JobObservation> = inputs
+        .observations
+        .iter()
+        .map(|observation| (observation.key.as_str(), observation))
+        .collect();
     let mut attempts: Vec<JobHistoryAttempt> = inputs
         .claims
         .iter()
@@ -120,6 +129,9 @@ pub fn project(
                 .flat_map(offer_attempts),
         )
         .map(|mut attempt| {
+            if let Some(observation) = observed.get(attempt.key.as_str()) {
+                observe(&mut attempt, observation);
+            }
             attempt.order = ordered.order_of(&attempt, viewer);
             attempt
         })
@@ -170,7 +182,10 @@ fn admitted(attempt: &JobHistoryAttempt, filter: &JobHistoryFilter, viewer: Hist
         return false;
     }
     if let Some(wanted) = hex(&filter.order)
-        && attempt.order.as_ref().is_none_or(|order| order.order != wanted)
+        && attempt
+            .order
+            .as_ref()
+            .is_none_or(|order| order.order != wanted)
     {
         return false;
     }
@@ -251,6 +266,68 @@ impl<'a> OrderIndex<'a> {
     }
 }
 
+/// What the issuer's observation of an attempt's key adds (pass 33, 5.1). Every attempt whose
+/// end the issuer confirmed shows how its billed seconds were found. A plain offer chunk's job
+/// row names no machine and keeps no end time, so for a chunk a vault machine ran the
+/// observation names the machine that answered and its device, and its confirmed end gives the
+/// machine's end cause, when the issuer received it, the seconds the machine measured (0 for a
+/// run that never started) and a lost key's last seen run time. A line unit's claim terminal
+/// already holds those, from the same receipt, as the line's fold charged it.
+fn observe(attempt: &mut JobHistoryAttempt, observation: &JobObservation) {
+    let terminal = observation.terminal.as_ref();
+    attempt.meter = terminal.map(|terminal| meter_label(terminal.meter));
+    if attempt.line.is_some() {
+        return;
+    }
+    let machine = terminal
+        .and_then(|terminal| terminal.machine)
+        .unwrap_or(observation.machine);
+    attempt.machine = Some(machine.to_hex());
+    attempt.device = terminal
+        .and_then(|terminal| terminal.device_id.clone())
+        .or_else(|| observation.device_id.clone());
+    let Some(terminal) = terminal else {
+        return;
+    };
+    attempt.node_end = Some(terminal.end.label());
+    attempt.ended_at_ms = observation.end_seen.as_ref().map(|seen| seen.wall_ms);
+    attempt.occupied_secs = if terminal.end.never_ran() {
+        Some(0)
+    } else {
+        terminal.measured_secs
+    };
+    attempt.lost_secs = if let GpuJobEnd::Lost { last_seen_secs, .. } = terminal.end {
+        last_seen_secs
+    } else {
+        0
+    };
+}
+
+/// The meter verdict as views show it: `agreed`, `bracketed` or `unknown`.
+fn meter_label(meter: MeterVerdict) -> String {
+    match meter {
+        MeterVerdict::Agreed => "agreed",
+        MeterVerdict::Bracketed { .. } => "bracketed",
+        MeterVerdict::Unknown => "unknown",
+    }
+    .to_owned()
+}
+
+/// The key of every attempt `jobs` and `claims` can list: each chunk's, and a claim's first
+/// chunk key where its job row is gone. History reads each key's observation by it.
+pub(super) fn attempt_keys(jobs: &[GpuJob], claims: &[UnitClaim]) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    for job in jobs {
+        for chunk in &job.chunks {
+            keys.insert(chunk.idempotency_key.clone());
+        }
+    }
+    for claim in claims {
+        keys.insert(chunk_key(&claim.id, 0));
+    }
+    keys
+}
+
 /// A line unit's attempt, from its claim's terminal; `None` while the claim is open.
 fn unit_attempt(claim: &UnitClaim, job: Option<&GpuJob>) -> Option<JobHistoryAttempt> {
     let ClaimState::Ended(terminal) = &claim.state else {
@@ -297,6 +374,7 @@ fn unit_attempt(claim: &UnitClaim, job: Option<&GpuJob>) -> Option<JobHistoryAtt
         reserved_secs: claim.reserved_secs,
         occupied_secs,
         billed_secs: chunk.and_then(|chunk| chunk.billed_secs),
+        meter: None,
         charged_secs: Some(terminal.charged_secs),
         returned_secs: Some(claim.reserved_secs.saturating_sub(terminal.charged_secs)),
         lost_secs: terminal.lost_secs,
@@ -370,8 +448,9 @@ impl OfferEnd {
 /// resume starts only from a stop); the last has ended when the job no longer runs, and its end
 /// is the job's, except that a stopped job the customer cancelled keeps its `at_maximum`. The
 /// row keeps no chunk's own end time (the job's last write moves at every later write, a resume
-/// or a cancel), so none is shown, and no offer chunk names a machine: an offer's inputs are the
-/// customer's, not a placement. Only the first chunk names its starter: a resume's is not stored
+/// or a cancel) and names no machine (an offer's inputs are the customer's, not a placement); a
+/// chunk a vault machine ran takes both from the issuer's observation of its key ([`observe`]).
+/// Only the first chunk names its starter: a resume's is not stored
 /// (an agent resumes only its own job, the owner any). The run time a chunk last reported is
 /// final only for an exit, which the provider reports with it; a stop or a cancel terminates
 /// after the last report, so its occupancy is unknown, and a lost resource's is a lower bound,
@@ -433,6 +512,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                 reserved_secs: chunk.quote.quantity,
                 occupied_secs,
                 billed_secs: chunk.billed_secs,
+                meter: None,
                 charged_secs,
                 returned_secs: charged_secs
                     .map(|charged| chunk.quote.quantity.saturating_sub(charged)),
