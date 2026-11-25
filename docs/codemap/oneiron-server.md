@@ -1444,7 +1444,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/issuer/connector.rs` | src | m | 2 struct · 2 fn | VaultMachineConnector, VaultMachineParts | [`VaultMachineConnector`]: the GPU job backend `vault_machine`, which runs a chunk of a job on one of the… |
 | `src/gpu_execution_node/issuer/connector/receipts.rs` | src | s | 4 crate-vis | — | The receipts of a key on the issuer: each one is checked, then judged against the stored rows and written in… |
 | `src/gpu_execution_node/issuer/connector/sends.rs` | src | s | 7 crate-vis | — | What the connector sends a node for a key, and how `status` steps it: the reserve and the submit, the gate… |
-| `src/gpu_execution_node/issuer/guard.rs` | src | s | 3 fn | — | The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the… |
+| `src/gpu_execution_node/issuer/guard.rs` | src | m | 2 struct · 6 fn · 1 const | ReadinessObserved, ReadinessReads | The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the… |
 | `src/gpu_execution_node/issuer/machine_execution.rs` | src | s | 1 fn · 1 const | — | The issuer's half of `vault.machines.execution.get` (pass 33 door 11): the issuer asks each machine the… |
 | `src/gpu_execution_node/issuer/mod.rs` | src | s | 1 struct · 6 fn · 2 const · 12 mod · 9 re-export | VaultMachineInputs | The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a job's chunk on… |
 | `src/gpu_execution_node/issuer/node_client.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 fn · 1 re-export | JobNodeClient, MeshJobNodeClient, NodeCallError | How the issuer asks a node (pass 33 section 7.1): one request and one answer per call, on [`JOB_ALPN`] for… |
@@ -2329,7 +2329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/web_search_count.rs` | src | s | 1 fn | — | Door for `tests/web_search_owner_max.rs` (restriction wave 19, C73 = B): the result count one web search… |
 | `src/test_doors/wire_health_sweep.rs` | src | s | 8 fn | — | Door for the health-check tests (`tests/own_rate_health_ask.rs`, `tests/wire_health_actor_erase.rs`): one… |
 | `src/test_doors/wire_thresholds.rs` | src | s | 1 fn | — | Door for `tests/esign_qr_refusals.rs` and the signing wire test in `tests/it_esign_public.rs`: the… |
-| `src/test_doors/work_order_host.rs` | src | s | 1 fn | — | Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call through the node… |
+| `src/test_doors/work_order_host.rs` | src | s | 2 fn | — | Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call through the node… |
 | `src/test_doors/workflow_park.rs` | src | s | 1 re-export | — | Doors for `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a workflow step's leaf… |
 | `src/test_engine_stack.rs` | src | s | 2 crate-vis | — | Drives facade-touching lib tests on the engine's stack |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
@@ -2395,7 +2395,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire_telemetry/kept.rs` | src | s | 4 crate-vis | — | The kept questions as the health check reads them (OF-520): the call-volume questions past its cursor, a… |
 | `src/wire_telemetry/rows.rs` | src | s | 1 enum · 1 fn · 1 const | LimitRow | The `[limits]` rows this server's questions name (moved out of `wire_telemetry.rs` whole, so the telemetry… |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
-| `src/work_order_host.rs` | src | m | 2 fn · 13 crate-vis | — | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… |
+| `src/work_order_host.rs` | src | m | 2 fn · 16 crate-vis | — | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… |
 | `src/xlsx_recalc.rs` | src | m | 1 crate-vis | — | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… |
 | `tests/action_table_unkept_replies.rs` | test | s | — | — | The app's action table offers no verb-table row whose answer an invocation never keeps (FIX… |
 | `tests/admitted_skill_call_large_view_spill.rs` | test | m | — | — | [ADMITTED-SKILL-CALL-LARGE-POST-VIEW-SPILL] (FIX-LIST 29927): an admitted `self.skills.call` whose post-hook… |
@@ -2554,6 +2554,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/inference_door_refusal.rs` | test | s | — | — | Both inference doors name the vault policy's typed refusal (STEP-DOOR-REFUSAL-REASON): `ai.steps.submit` and… |
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |
 | `tests/inquiry_federation.rs` | test | L | — | — | INQUIRE-1 PR 5 (federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2, Q4, Q7 = A): the inquiry verbs and… |
+| `tests/issuer_readiness_drain.rs` | test | m | — | — | CG-2 row 9 (owner COMPUTE-CG = AA, 25 Nov 22:56): "A drained machine clears itself once its readiness check… |
 | `tests/it/agent_credentials.rs` | test | s | — | — | A local agent's identity and read credential, from the shipped CLI |
 | `tests/it/ai_serve.rs` | test | m | 9 crate-vis | — | The shipped binary with no model, and with one: without `[models]` every model-free path works and the… |
 | `tests/it/api_cli.rs` | test | s | — | — | `oneiron api call` through the shipped binary: a literal `--data` body and an `@FILE` body reach an… |
