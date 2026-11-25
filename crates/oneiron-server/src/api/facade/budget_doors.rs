@@ -351,8 +351,18 @@ pub(crate) async fn vault_budgets_resident_shares(
         auth,
         "vault.budgets.resident_shares",
         move |server, owner| {
-            resident_doors::resident_shares_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
+            let allocation = server
+                .host_account()
+                .status()
+                .resident_share_allocation()
+                .cloned();
+            resident_doors::resident_shares_on_allocation_as_owner(
+                server.vault(),
+                owner,
+                &input,
+                allocation.as_ref(),
+            )
+            .map_err(MemoryError::from)
         },
         residents,
     )
@@ -371,8 +381,18 @@ pub(crate) async fn vault_budgets_resident_shares_set(
         auth,
         "vault.budgets.resident_shares.set",
         move |server, owner| {
-            resident_doors::set_resident_share_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
+            let allocation = server
+                .host_account()
+                .status()
+                .resident_share_allocation()
+                .cloned();
+            resident_doors::set_resident_share_on_allocation_as_owner(
+                server.vault(),
+                owner,
+                &input,
+                allocation.as_ref(),
+            )
+            .map_err(MemoryError::from)
         },
         residents,
     )

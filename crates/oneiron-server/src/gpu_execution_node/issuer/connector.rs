@@ -11,14 +11,24 @@
 //!   a revoke closes the key with a stop; an expiry does not.
 //! - `terminate` marks the key closing, sends a stop, and confirms once the node's terminal
 //!   receipt shows the unit empty, billed by [`super::billing`].
-use std::sync::Arc;
+//!
+//! The calls of one key run one after another in this process: a create, a status, a signal
+//! and a terminate of a key never interleave, so a close never crosses a send of the key, and
+//! two receipts of the key are never judged at once. Every reserve and submit reads the row
+//! again before it goes out and sends nothing once the key is closing ([`sends`]). A receipt is
+//! judged and stored in the same write as the row's `Held` mark ([`receipts`]).
+mod receipts;
+mod sends;
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::gpu_job::{
     GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
     GpuResourceStatus, GpuTermination,
 };
 use oneiron::job_dispatch::{
-    DispatchAsk, DispatchClose, DispatchPhase, DispatchRefusal, JobDispatch, JobObservation,
+    DispatchAsk, DispatchClose, DispatchPhase, DispatchRefusal, JobDispatch,
 };
 use oneiron::job_workload::WorkloadStarter;
 use oneiron::machine_signature::MachineSignatures;
@@ -26,15 +36,17 @@ use oneiron::{EntityId, Vault};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::billing::{billing, bracket, terminal};
 use super::clock::IssuerClock;
 use super::node_client::{JobNodeClient, NodeCallError};
 use super::reconcile::{OrphanKeys, Reconciled};
-use super::{job_answer_kind, job_refusal_code, status_answer_kind, vault_machine_inputs};
+use super::{
+    NOT_AVAILABLE_TO_THIS_CALLER, job_answer_kind, job_refusal_code, status_answer_kind,
+    vault_machine_inputs,
+};
 use crate::config::gpu_jobs::VaultMachineSettings;
 use crate::gpu_execution_node::wire::{
-    HoldRef, JobAnswer, JobEnd, JobReceipt, JobRequest, JobReserve, JobState, JobStatusAnswer,
-    JobStatusRequest, JobSubmit, SignedJobReceipt, SignedJobSubmit, Starter,
+    HoldRef, JobAnswer, JobEnd, JobReceipt, JobState, JobStatusAnswer, JobStatusRequest, JobSubmit,
+    SignedJobSubmit, Starter,
 };
 
 /// What a [`VaultMachineConnector`] is built from.
@@ -53,6 +65,7 @@ pub struct VaultMachineParts {
 pub struct VaultMachineConnector {
     parts: VaultMachineParts,
     reconciled: Reconciled,
+    keys: KeyLocks,
 }
 
 /// What a reserve or a submit brought back.
@@ -63,6 +76,9 @@ enum Sent {
     NoReceipt(String),
     /// No answer arrived: the request may have reached the node.
     NoAnswer(GpuConnectorError),
+    /// The issuer closed the key, or found its history lost, before the request went out:
+    /// nothing was sent.
+    Withheld,
 }
 
 /// Whether a reserve or a submit may go out now.
@@ -72,10 +88,34 @@ enum Gate {
     Answer(GpuResourceStatus),
 }
 
-/// A receipt that passed its checks, with the bytes it arrived as.
-struct Admitted {
-    receipt: JobReceipt,
-    bytes: Vec<u8>,
+/// One lock for each key this process is working on: the calls of a key run one after another.
+/// A key's lock is forgotten once no call holds or waits on it.
+#[derive(Default)]
+struct KeyLocks {
+    held: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+impl KeyLocks {
+    /// Runs `work` while this process holds the lock of `key`.
+    fn with<T>(&self, key: &str, work: impl FnOnce() -> T) -> T {
+        let lock = Arc::clone(
+            self.held
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(key.to_owned())
+                .or_default(),
+        );
+        let answer = {
+            let _key = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            work()
+        };
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        // The table and this call are the only holders: no other call waits on the key.
+        if Arc::strong_count(&lock) == 2 {
+            held.remove(key);
+        }
+        answer
+    }
 }
 
 impl VaultMachineConnector {
@@ -84,6 +124,7 @@ impl VaultMachineConnector {
         Self {
             parts,
             reconciled: Reconciled::default(),
+            keys: KeyLocks::default(),
         }
     }
 
@@ -117,20 +158,20 @@ impl VaultMachineConnector {
 
     /// The dispatch row a resource names.
     fn dispatch_of(&self, resource: &GpuResourceRef) -> Result<JobDispatch, GpuConnectorError> {
-        let (machine, key) = resource
-            .0
-            .split_once('#')
-            .and_then(|(machine, key)| Some((EntityId::from_hex(machine).ok()?, key)))
-            .ok_or_else(|| unavailable("resource_invalid"))?;
-        let row = self
-            .vault()
-            .job_dispatch(key)
-            .map_err(store)?
-            .ok_or_else(|| unavailable("no_dispatch_row"))?;
+        let (machine, key) = resource_parts(resource)?;
+        let row = self.current(key)?;
         if row.machine != machine {
             return Err(unavailable("resource_names_another_machine"));
         }
         Ok(row)
+    }
+
+    /// The dispatch row of `key` as it stands now.
+    fn current(&self, key: &str) -> Result<JobDispatch, GpuConnectorError> {
+        self.vault()
+            .job_dispatch(key)
+            .map_err(store)?
+            .ok_or_else(|| unavailable("no_dispatch_row"))
     }
 
     /// The starter a submit names: its Grant, or the owner who started the job.
@@ -212,325 +253,12 @@ impl VaultMachineConnector {
         .map(|_| ())
     }
 
-    /// Checks a receipt of `row`'s key and stores it when it is the newest: it must carry the
-    /// node's signature, name this key, this node and this issuer, and never go back in the
-    /// journal it came from. A receipt older than one the issuer holds, or from another journal
-    /// than the one that held the reserve, means the node's history is lost: nothing is sent
-    /// again.
-    fn admit(
+    /// `create` under the key's lock.
+    fn create_key(
         &self,
-        row: &JobDispatch,
-        signed: SignedJobReceipt,
-    ) -> Result<Admitted, GpuConnectorError> {
-        signed
-            .verify(self.parts.signer.as_ref())
-            .map_err(|_| unavailable("receipt_signature_invalid"))?;
-        let receipt = &signed.receipt;
-        if receipt.key != row.key
-            || receipt.machine != row.machine
-            || receipt.issuer != self.parts.issuer
-        {
-            return Err(unavailable("receipt_names_another_key"));
-        }
-        let held_epoch = row
-            .held
-            .as_deref()
-            .map(decode::<SignedJobReceipt>)
-            .transpose()?
-            .map(|held| held.receipt.epoch);
-        let stored = self.vault().job_observation(&row.key).map_err(store)?;
-        let went_back = stored
-            .as_ref()
-            .is_some_and(|stored| stored.epoch == receipt.epoch && receipt.seq < stored.seq);
-        if went_back || held_epoch.is_some_and(|epoch| epoch != receipt.epoch) {
-            self.mark_history_lost(&row.key)?;
-            return Err(unavailable("history_lost"));
-        }
-        let bytes = encode(&signed)?;
-        let newer = stored
-            .as_ref()
-            .is_none_or(|stored| stored.epoch != receipt.epoch || receipt.seq > stored.seq);
-        if newer {
-            let end_seen = stored
-                .as_ref()
-                .and_then(|stored| stored.end_seen.clone())
-                .or_else(|| {
-                    (receipt.state == JobState::Ended).then(|| self.parts.clock.boot_mark())
-                });
-            let observation = JobObservation {
-                key: row.key.clone(),
-                machine: row.machine,
-                device_id: receipt.device_id.clone(),
-                receipt: bytes.clone(),
-                epoch: receipt.epoch.clone(),
-                seq: receipt.seq,
-                last_measured_secs: receipt
-                    .measured_secs
-                    .or_else(|| stored.as_ref().and_then(|stored| stored.last_measured_secs)),
-                observed_at_ms: self.now_ms(),
-                end_seen,
-                meter: stored.as_ref().and_then(|stored| stored.meter),
-                terminal: stored.and_then(|stored| stored.terminal),
-            };
-            self.vault()
-                .put_job_observation(&observation)
-                .map_err(store)?;
-        }
-        Ok(Admitted {
-            receipt: signed.receipt,
-            bytes,
-        })
-    }
-
-    /// The reserve of `submit`'s key. A `Held` receipt is stored on the row.
-    fn send_reserve(
-        &self,
-        row: &JobDispatch,
-        submit: &JobSubmit,
-    ) -> Result<Sent, GpuConnectorError> {
-        let reserve = JobRequest::Reserve(JobReserve {
-            key: submit.key.clone(),
-            pin: submit.pin.clone(),
-            slot: submit.slot.clone(),
-            issuer: submit.issuer,
-            starter: submit.starter,
-            issued_at_ms: submit.issued_at_ms,
-            not_after_ms: submit.not_after_ms,
-        });
-        let answer = self.parts.client.job(row.machine, &reserve);
-        let answer = match answer {
-            Ok(answer) => answer,
-            Err(error) => return Ok(Sent::NoAnswer(call_error(error))),
-        };
-        let JobAnswer::Receipt(signed) = answer else {
-            return Ok(Sent::NoReceipt(job_answer_label(&answer)));
-        };
-        let admitted = self.admit(row, signed)?;
-        if admitted.receipt.state == JobState::Held && row.held.is_none() {
-            let held = admitted.bytes.clone();
-            self.update(&row.key, |row| {
-                row.held.get_or_insert(held);
-                if row.phase < DispatchPhase::Reserved {
-                    row.phase = DispatchPhase::Reserved;
-                }
-            })?;
-        }
-        Ok(Sent::Receipt(admitted.receipt))
-    }
-
-    /// The stored signed submit, sent again as first signed. The first send marks the start of
-    /// the issuer's bracket before it goes out.
-    fn send_submit(
-        &self,
-        row: &JobDispatch,
-        signed: &SignedJobSubmit,
-    ) -> Result<Sent, GpuConnectorError> {
-        if row.sent_boot.is_none() {
-            let mark = self.parts.clock.boot_mark();
-            self.update(&row.key, |row| {
-                row.sent_boot.get_or_insert(mark);
-            })?;
-        }
-        let answer = self
-            .parts
-            .client
-            .job(row.machine, &JobRequest::Submit(signed.clone()));
-        let answer = match answer {
-            Ok(answer) => answer,
-            Err(error) => return Ok(Sent::NoAnswer(call_error(error))),
-        };
-        let JobAnswer::Receipt(receipt) = answer else {
-            return Ok(Sent::NoReceipt(job_answer_label(&answer)));
-        };
-        let admitted = self.admit(row, receipt)?;
-        if !matches!(admitted.receipt.state, JobState::Held | JobState::Ended) {
-            self.update(&row.key, |row| {
-                if row.phase < DispatchPhase::Submitted {
-                    row.phase = DispatchPhase::Submitted;
-                }
-            })?;
-        }
-        Ok(Sent::Receipt(admitted.receipt))
-    }
-
-    /// The three rules before a reserve or submit goes out again: the live recheck (a no closes
-    /// the key with a stop), and the node's reconcile (none yet: the job waits).
-    fn gate(&self, row: &JobDispatch, submit: &JobSubmit) -> Result<Gate, GpuConnectorError> {
-        if let Err(refusal) = self.recheck(row, submit)? {
-            let closed = self.close(
-                &row.key,
-                DispatchClose::RefusedBeforeSend {
-                    code: refusal.code().to_owned(),
-                },
-            )?;
-            return Ok(Gate::Answer(self.stop_and_read(&closed)?));
-        }
-        if let Err(error) = self.reconciled.ensure(
-            row.machine,
-            self.vault(),
-            self.parts.client.as_ref(),
-            self.parts.orphans.as_ref(),
-        ) {
-            tracing::info!(node = %row.machine.to_hex(), error = %error, "vault_machine: the node is not reconciled yet");
-            return Ok(Gate::Answer(GpuResourceStatus::Pending));
-        }
-        Ok(Gate::Go)
-    }
-
-    /// Sends a stop for a key the issuer closed, and answers what the node's receipt says.
-    fn stop_and_read(&self, row: &JobDispatch) -> Result<GpuResourceStatus, GpuConnectorError> {
-        Ok(match self.stop(row)? {
-            Some(receipt) => receipt_status(&receipt),
-            None => GpuResourceStatus::Pending,
-        })
-    }
-
-    /// One stop of the key: the node's receipt when it answered with one. An absent key after a
-    /// `Held` receipt, and a lost history, are marked.
-    fn stop(&self, row: &JobDispatch) -> Result<Option<JobReceipt>, GpuConnectorError> {
-        let answer = self
-            .parts
-            .client
-            .job_status(
-                row.machine,
-                &JobStatusRequest::Stop {
-                    key: row.key.clone(),
-                },
-            )
-            .map_err(call_error)?;
-        match answer {
-            JobStatusAnswer::Known(signed) => Ok(Some(self.admit(row, signed)?.receipt)),
-            JobStatusAnswer::Absent { .. } if row.held.is_some() => {
-                self.mark_history_lost(&row.key)?;
-                Ok(None)
-            }
-            JobStatusAnswer::HistoryLost => {
-                self.mark_history_lost(&row.key)?;
-                Ok(None)
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// `status` when the node does not hold the key.
-    fn status_absent(
-        &self,
-        row: &JobDispatch,
-        signed: &SignedJobSubmit,
-    ) -> Result<GpuResourceStatus, GpuConnectorError> {
-        if row.held.is_some() || row.phase >= DispatchPhase::Reserved {
-            self.mark_history_lost(&row.key)?;
-            return Err(unavailable("history_lost"));
-        }
-        if self.now_ms() >= row.not_after_ms {
-            let closed = self.close(&row.key, DispatchClose::StartWindowPassed)?;
-            return self.stop_and_read(&closed);
-        }
-        if let Gate::Answer(status) = self.gate(row, &signed.submit)? {
-            return Ok(status);
-        }
-        Ok(match self.send_reserve(row, &signed.submit)? {
-            Sent::Receipt(receipt) if receipt.state == JobState::Ended => receipt_status(&receipt),
-            Sent::Receipt(_) | Sent::NoReceipt(_) | Sent::NoAnswer(_) => GpuResourceStatus::Pending,
-        })
-    }
-
-    /// `status` on the key's newest receipt.
-    fn status_known(
-        &self,
-        row: JobDispatch,
-        signed: &SignedJobSubmit,
-        admitted: Admitted,
-    ) -> Result<GpuResourceStatus, GpuConnectorError> {
-        let receipt = admitted.receipt;
-        match receipt.state {
-            JobState::Held => {
-                let row = if row.held.is_none() {
-                    self.update(&row.key, |row| {
-                        row.held.get_or_insert(admitted.bytes);
-                        if row.phase < DispatchPhase::Reserved {
-                            row.phase = DispatchPhase::Reserved;
-                        }
-                    })?
-                } else {
-                    row
-                };
-                if self.now_ms() >= row.not_after_ms {
-                    let closed = self.close(&row.key, DispatchClose::StartWindowPassed)?;
-                    return self.stop_and_read(&closed);
-                }
-                if let Gate::Answer(status) = self.gate(&row, &signed.submit)? {
-                    return Ok(status);
-                }
-                Ok(match self.send_submit(&row, signed)? {
-                    Sent::Receipt(receipt) => receipt_status(&receipt),
-                    Sent::NoReceipt(_) | Sent::NoAnswer(_) => GpuResourceStatus::Pending,
-                })
-            }
-            JobState::Accepted | JobState::Staging | JobState::Launching => {
-                if row.phase < DispatchPhase::Submitted {
-                    self.update(&row.key, |row| {
-                        if row.phase < DispatchPhase::Submitted {
-                            row.phase = DispatchPhase::Submitted;
-                        }
-                    })?;
-                }
-                Ok(GpuResourceStatus::Pending)
-            }
-            JobState::Running | JobState::Ending | JobState::Ended => Ok(receipt_status(&receipt)),
-        }
-    }
-
-    /// The terminal receipt the issuer already holds for the key, if any.
-    fn stored_terminal(&self, key: &str) -> Result<Option<JobReceipt>, GpuConnectorError> {
-        let Some(observation) = self.vault().job_observation(key).map_err(store)? else {
-            return Ok(None);
-        };
-        let held = decode::<SignedJobReceipt>(&observation.receipt)?.receipt;
-        Ok((held.state == JobState::Ended).then_some(held))
-    }
-
-    /// Confirms the key's end on its terminal receipt: bills it, stores the meter and the typed
-    /// terminal beside the receipt, and closes the dispatch for good.
-    fn confirm(
-        &self,
-        row: &JobDispatch,
-        submit: &JobSubmit,
-        ended: &JobReceipt,
-    ) -> Result<GpuTermination, GpuConnectorError> {
-        let mut observation = self
-            .vault()
-            .job_observation(&row.key)
-            .map_err(store)?
-            .ok_or_else(|| unavailable("no_observation"))?;
-        let end_seen = observation
-            .end_seen
-            .clone()
-            .unwrap_or_else(|| self.parts.clock.boot_mark());
-        let bracket = row.sent_boot.as_ref().map(|sent| bracket(sent, &end_seen));
-        let billing = billing(ended, submit.maximum_secs, bracket);
-        let revoked = matches!(row.closed, Some(DispatchClose::Revoked { .. }));
-        let typed = terminal(
-            ended,
-            billing,
-            revoked,
-            observation.last_measured_secs.unwrap_or(0),
-        );
-        observation.end_seen = Some(end_seen);
-        observation.meter = Some(billing.meter);
-        observation.terminal = Some(typed);
-        self.vault()
-            .put_job_observation(&observation)
-            .map_err(store)?;
-        self.update(&row.key, |row| row.phase = DispatchPhase::Closed)?;
-        Ok(GpuTermination::Confirmed {
-            billed_secs: billing.billed_secs,
-        })
-    }
-}
-
-impl GpuJobConnector for VaultMachineConnector {
-    fn create(&self, key: &str, spec: &GpuJobSpec) -> Result<GpuResourceRef, GpuConnectorError> {
+        key: &str,
+        spec: &GpuJobSpec,
+    ) -> Result<GpuResourceRef, GpuConnectorError> {
         let inputs = vault_machine_inputs(&spec.inputs).map_err(refused)?;
         if let Some(row) = self.vault().job_dispatch(key).map_err(store)? {
             return Ok(GpuResourceRef(row.resource()));
@@ -609,46 +337,46 @@ impl GpuJobConnector for VaultMachineConnector {
             .map_err(|error| unavailable(format!("reconcile: {error}")))?;
         let receipt = match self.send_reserve(&row, &signed.submit)? {
             Sent::Receipt(receipt) => receipt,
+            Sent::Withheld => return Ok(resource),
             Sent::NoReceipt(why) => return Err(unavailable(why)),
             Sent::NoAnswer(error) => return Err(error),
         };
         let receipt = match receipt.state {
-            JobState::Held => {
-                let row = self
-                    .vault()
-                    .job_dispatch(key)
-                    .map_err(store)?
-                    .unwrap_or(row);
-                match self.send_submit(&row, &signed)? {
-                    Sent::Receipt(receipt) => receipt,
-                    Sent::NoReceipt(why) => return Err(unavailable(why)),
-                    Sent::NoAnswer(error) => return Err(error),
-                }
-            }
+            JobState::Held => match self.send_submit(&row, &signed)? {
+                Sent::Receipt(receipt) => receipt,
+                // A terminate closed the key after the reserve: its status stops the key.
+                Sent::Withheld => return Ok(resource),
+                Sent::NoReceipt(why) => return Err(unavailable(why)),
+                Sent::NoAnswer(error) => return Err(error),
+            },
             _ => receipt,
         };
         if let (JobState::Ended, Some(JobEnd::Refused { reason })) = (receipt.state, &receipt.end) {
+            tracing::info!(
+                node = %row.machine.to_hex(),
+                key,
+                reason = %reason,
+                "vault_machine: the node refused the key"
+            );
             let reason = reason.clone();
             self.update(key, |row| {
                 row.phase = DispatchPhase::Closed;
-                row.closed.get_or_insert(DispatchClose::NodeRefused {
-                    reason: reason.clone(),
-                });
+                row.closed
+                    .get_or_insert(DispatchClose::NodeRefused { reason });
             })?;
-            return Err(refused(reason));
+            // The node's reason names the machine and what it said, which door 7 shows only a
+            // caller who may read `vault.machines.execution.get` (section 6). The job's reason
+            // is the code any caller may see; the dispatch row keeps the node's own.
+            return Err(refused(NOT_AVAILABLE_TO_THIS_CALLER));
         }
         Ok(resource)
     }
 
-    fn find(&self, key: &str) -> Result<Option<GpuResourceRef>, GpuConnectorError> {
-        Ok(self
-            .vault()
-            .job_dispatch(key)
-            .map_err(store)?
-            .map(|row| GpuResourceRef(row.resource())))
-    }
-
-    fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
+    /// `status` under the key's lock.
+    fn status_key(
+        &self,
+        resource: &GpuResourceRef,
+    ) -> Result<GpuResourceStatus, GpuConnectorError> {
         let row = self.dispatch_of(resource)?;
         if row.history_lost_at_ms.is_some() {
             return Err(unavailable("history_lost"));
@@ -678,8 +406,8 @@ impl GpuJobConnector for VaultMachineConnector {
             .map_err(call_error)?;
         match answer {
             JobStatusAnswer::Known(receipt) => {
-                let admitted = self.admit(&row, receipt)?;
-                self.status_known(row, &signed, admitted)
+                let receipt = self.admit(&row, receipt)?;
+                self.status_known(&row, &signed, &receipt)
             }
             JobStatusAnswer::Absent { .. } => self.status_absent(&row, &signed),
             JobStatusAnswer::HistoryLost => {
@@ -690,7 +418,8 @@ impl GpuJobConnector for VaultMachineConnector {
         }
     }
 
-    fn signal(
+    /// `signal` under the key's lock.
+    fn signal_key(
         &self,
         resource: &GpuResourceRef,
         signal: GpuJobSignal,
@@ -717,7 +446,11 @@ impl GpuJobConnector for VaultMachineConnector {
         }
     }
 
-    fn terminate(&self, resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
+    /// `terminate` under the key's lock.
+    fn terminate_key(
+        &self,
+        resource: &GpuResourceRef,
+    ) -> Result<GpuTermination, GpuConnectorError> {
         let row = self.dispatch_of(resource)?;
         let signed = decode::<SignedJobSubmit>(&row.submit)?;
         if row.phase == DispatchPhase::Closed
@@ -743,13 +476,50 @@ impl GpuJobConnector for VaultMachineConnector {
                 .stored_terminal(&row.key)?
                 .ok_or_else(|| unavailable("stop_not_confirmed"))?,
         };
-        let row = self
-            .vault()
-            .job_dispatch(&row.key)
-            .map_err(store)?
-            .unwrap_or(row);
-        self.confirm(&row, &signed.submit, &ended)
+        self.confirm(&row.key, &signed.submit, &ended)
     }
+}
+
+impl GpuJobConnector for VaultMachineConnector {
+    fn create(&self, key: &str, spec: &GpuJobSpec) -> Result<GpuResourceRef, GpuConnectorError> {
+        self.keys.with(key, || self.create_key(key, spec))
+    }
+
+    fn find(&self, key: &str) -> Result<Option<GpuResourceRef>, GpuConnectorError> {
+        Ok(self
+            .vault()
+            .job_dispatch(key)
+            .map_err(store)?
+            .map(|row| GpuResourceRef(row.resource())))
+    }
+
+    fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
+        let (_, key) = resource_parts(resource)?;
+        self.keys.with(key, || self.status_key(resource))
+    }
+
+    fn signal(
+        &self,
+        resource: &GpuResourceRef,
+        signal: GpuJobSignal,
+    ) -> Result<(), GpuConnectorError> {
+        let (_, key) = resource_parts(resource)?;
+        self.keys.with(key, || self.signal_key(resource, signal))
+    }
+
+    fn terminate(&self, resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
+        let (_, key) = resource_parts(resource)?;
+        self.keys.with(key, || self.terminate_key(resource))
+    }
+}
+
+/// The machine and the key a resource names: `<machine hex>#<key>`.
+fn resource_parts(resource: &GpuResourceRef) -> Result<(EntityId, &str), GpuConnectorError> {
+    resource
+        .0
+        .split_once('#')
+        .and_then(|(machine, key)| Some((EntityId::from_hex(machine).ok()?, key)))
+        .ok_or_else(|| unavailable("resource_invalid"))
 }
 
 /// What a receipt says to the engine (the table of 8.2).

@@ -14,8 +14,14 @@
 //! nothing, so it is no authority op. A whole-vault archive import omits it
 //! (the `machine` namespace is local history there): a restored image is
 //! another install, which measures itself.
+//!
+//! Each GPU is recorded by its stable device id, model and memory
+//! ([`GpuDevice`]): what the card is, never whether it is free. Whether a
+//! card is free is asked of its machine at the moment of use, never read
+//! from this hourly record.
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -41,6 +47,10 @@ const MEMORY_TOTAL_BYTES: &str = "memory_total_bytes";
 const MEMORY_RESERVE_BYTES: &str = "memory_reserve_bytes";
 const MEMORY_AVAILABLE_BYTES: &str = "memory_available_bytes";
 const GPU_MEMORY_MIB: &str = "gpu_memory_mib";
+const GPUS: &str = "gpus";
+const GPU_DEVICE_ID: &str = "device_id";
+const GPU_MODEL: &str = "model";
+const GPU_MEMORY_TOTAL_MIB: &str = "memory_total_mib";
 const DISK_TOTAL_BYTES: &str = "disk_total_bytes";
 const DISK_FREE_BYTES: &str = "disk_free_bytes";
 const POWER: &str = "power";
@@ -75,6 +85,70 @@ impl MachinePower {
     }
 }
 
+/// One GPU as its machine's driver names it: what the card is, never
+/// whether it is free.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GpuDevice {
+    /// The driver's stable id for the card (NVIDIA's UUID, `GPU-...`): it
+    /// stays the same across restarts and a changed card order.
+    pub device_id: String,
+    /// The card's model, as the driver names it.
+    pub model: String,
+    /// The card's memory in MiB.
+    pub memory_total_mib: u64,
+}
+
+impl GpuDevice {
+    fn to_value(&self) -> Value {
+        Value::Map(vec![
+            (
+                Value::from(GPU_DEVICE_ID),
+                Value::from(self.device_id.as_str()),
+            ),
+            (Value::from(GPU_MODEL), Value::from(self.model.as_str())),
+            (
+                Value::from(GPU_MEMORY_TOTAL_MIB),
+                Value::from(self.memory_total_mib),
+            ),
+        ])
+    }
+
+    /// Reads one entry [`Self::to_value`] wrote; each field is present once,
+    /// and a key it does not know is passed over.
+    fn from_value(value: &Value) -> Result<Self> {
+        let Value::Map(entries) = value else {
+            return Err(invalid_value());
+        };
+        let field = |name: &str| one_field(entries, name)?.ok_or_else(invalid_value);
+        let text = |name: &str| -> Result<String> {
+            field(name)?
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(invalid_value)
+        };
+        Ok(Self {
+            device_id: text(GPU_DEVICE_ID)?,
+            model: text(GPU_MODEL)?,
+            memory_total_mib: field(GPU_MEMORY_TOTAL_MIB)?
+                .as_u64()
+                .ok_or_else(invalid_value)?,
+        })
+    }
+}
+
+/// The value under `name` in `entries`: `None` when no entry names it, an
+/// error when two do.
+fn one_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<Option<&'a Value>> {
+    let mut found = entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value);
+    match (found.next(), found.next()) {
+        (found, None) => Ok(found),
+        _ => Err(invalid_value()),
+    }
+}
+
 /// One reading of the machine, as its host's probe takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MachineMeasurement {
@@ -87,6 +161,8 @@ pub struct MachineMeasurement {
     pub memory_available_bytes: u64,
     /// Each GPU's memory in MiB; empty where none is known.
     pub gpu_memory_mib: Vec<u64>,
+    /// Each GPU's device id, model and memory; empty where none is known.
+    pub gpus: Vec<GpuDevice>,
     /// The size of the disk the vault lives on.
     pub disk_total_bytes: u64,
     /// The bytes an unprivileged writer may still use on that disk.
@@ -110,6 +186,10 @@ pub struct MachineCapacity {
     pub memory_available_bytes: u64,
     /// Each GPU's memory in MiB; empty where none is known.
     pub gpu_memory_mib: Vec<u64>,
+    /// Each GPU's device id, model and memory, in device id order; empty
+    /// where none is known. A record written before GPUs were named reads
+    /// empty.
+    pub gpus: Vec<GpuDevice>,
     /// The size of the disk the vault lives on.
     pub disk_total_bytes: u64,
     /// The bytes an unprivileged writer could still use on it.
@@ -123,6 +203,13 @@ pub struct MachineCapacity {
     pub agents: u64,
     /// When it was measured, in Unix seconds.
     pub measured_at: u64,
+}
+
+/// `values` in ascending order: a changed card order alone is no move.
+fn sorted(values: &[u64]) -> Vec<u64> {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted
 }
 
 /// Available memory after the reserve, over the per-agent budget.
@@ -144,12 +231,16 @@ impl MachineCapacity {
     #[must_use]
     pub fn from_measurement(measured: MachineMeasurement, measured_at: u64) -> Self {
         let memory_reserve_bytes = crate::host_memory::memory_reserve(measured.memory_total_bytes);
+        // Device id order, so a changed card order alone moves nothing.
+        let mut gpus = measured.gpus;
+        gpus.sort();
         Self {
             cores: measured.cores,
             memory_total_bytes: measured.memory_total_bytes,
             memory_reserve_bytes,
             memory_available_bytes: measured.memory_available_bytes,
             gpu_memory_mib: measured.gpu_memory_mib,
+            gpus,
             disk_total_bytes: measured.disk_total_bytes,
             disk_free_bytes: measured.disk_free_bytes,
             power: measured.power,
@@ -163,14 +254,16 @@ impl MachineCapacity {
         }
     }
 
-    /// Whether a total, the power source, the agent budget or the agent
-    /// count differs from `recorded`: the moves that write a new record.
-    /// Free disk, free memory and the time alone write none.
+    /// Whether a total, the GPUs, the power source, the agent budget or the
+    /// agent count differs from `recorded`: the moves that write a new
+    /// record. Free disk, free memory, the time and the order the cards
+    /// were listed in write none.
     #[must_use]
     pub fn moved_from(&self, recorded: &Self) -> bool {
         self.cores != recorded.cores
             || self.memory_total_bytes != recorded.memory_total_bytes
-            || self.gpu_memory_mib != recorded.gpu_memory_mib
+            || sorted(&self.gpu_memory_mib) != sorted(&recorded.gpu_memory_mib)
+            || self.gpus != recorded.gpus
             || self.disk_total_bytes != recorded.disk_total_bytes
             || self.power != recorded.power
             || self.agent_memory_budget_bytes != recorded.agent_memory_budget_bytes
@@ -196,6 +289,10 @@ impl MachineCapacity {
                         .collect(),
                 ),
             ),
+            (
+                Value::from(GPUS),
+                Value::Array(self.gpus.iter().map(GpuDevice::to_value).collect()),
+            ),
             count(DISK_TOTAL_BYTES, self.disk_total_bytes),
             count(DISK_FREE_BYTES, self.disk_free_bytes),
             (Value::from(POWER), Value::from(self.power.wire())),
@@ -207,24 +304,28 @@ impl MachineCapacity {
 
     /// Reads a claim value [`Self::to_value`] wrote. Each field is present
     /// once, and the agent count is the one its own memory and budget give.
-    /// A key it does not know is passed over, so a later field is additive.
-    pub(crate) fn from_value(value: &Value) -> Result<Self> {
+    /// A key it does not know is passed over, so a later field is additive;
+    /// `gpus` came later, and a record without it names no GPU.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidClaimBody`] for a value that is not a capacity record.
+    pub fn from_value(value: &Value) -> Result<Self> {
         let Value::Map(entries) = value else {
             return Err(invalid_value());
         };
-        let field = |name: &str| -> Result<&Value> {
-            let mut found = entries
-                .iter()
-                .filter(|(key, _)| key.as_str() == Some(name))
-                .map(|(_, value)| value);
-            match (found.next(), found.next()) {
-                (Some(value), None) => Ok(value),
-                _ => Err(invalid_value()),
-            }
-        };
+        let field = |name: &str| one_field(entries, name)?.ok_or_else(invalid_value);
         let count = |name: &str| field(name)?.as_u64().ok_or_else(invalid_value);
         let Value::Array(gpus) = field(GPU_MEMORY_MIB)? else {
             return Err(invalid_value());
+        };
+        let devices = match one_field(entries, GPUS)? {
+            None => Vec::new(),
+            Some(Value::Array(devices)) => devices
+                .iter()
+                .map(GpuDevice::from_value)
+                .collect::<Result<_>>()?,
+            Some(_) => return Err(invalid_value()),
         };
         let capacity = Self {
             cores: count(CORES)?,
@@ -235,6 +336,7 @@ impl MachineCapacity {
                 .iter()
                 .map(|gpu| gpu.as_u64().ok_or_else(invalid_value))
                 .collect::<Result<_>>()?,
+            gpus: devices,
             disk_total_bytes: count(DISK_TOTAL_BYTES)?,
             disk_free_bytes: count(DISK_FREE_BYTES)?,
             power: field(POWER)?

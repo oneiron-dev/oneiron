@@ -4,6 +4,7 @@
 use oneiron::job_dispatch::BootMark;
 
 /// Where Linux names this boot.
+#[cfg(not(target_vendor = "apple"))]
 const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 
 /// The issuer's clocks. A test scripts them.
@@ -33,12 +34,41 @@ impl IssuerClock for SystemIssuerClock {
     }
 }
 
-/// This boot's id, empty where the system names none.
+/// This boot's id, empty where the system names none: Linux's `boot_id`.
+#[cfg(not(target_vendor = "apple"))]
 #[must_use]
 pub fn boot_id() -> String {
     std::fs::read_to_string(BOOT_ID_PATH)
         .map(|id| id.trim().to_owned())
         .unwrap_or_default()
+}
+
+/// This boot's id, empty when it cannot be read: the `kern.bootsessionuuid` sysctl, which
+/// names one boot of an Apple system, so two marks of one boot bill on the boot clock there
+/// too.
+#[cfg(target_vendor = "apple")]
+#[must_use]
+pub fn boot_id() -> String {
+    let name = c"kern.bootsessionuuid";
+    let mut buffer = [0_u8; 64];
+    let mut len: libc::size_t = buffer.len();
+    // SAFETY: `sysctlbyname` writes at most `len` bytes of one string sysctl into `buffer` and
+    // sets `len` to the bytes written.
+    let read = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast::<libc::c_void>(),
+            &raw mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read != 0 {
+        return String::new();
+    }
+    let written = buffer.get(..len).unwrap_or_default();
+    let text = written.split(|byte| *byte == 0).next().unwrap_or_default();
+    String::from_utf8_lossy(text).trim().to_owned()
 }
 
 /// Nanoseconds since boot, the time suspended included: `CLOCK_BOOTTIME` on Linux and Android,

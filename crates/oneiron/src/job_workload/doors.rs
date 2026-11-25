@@ -1,18 +1,17 @@
-//! The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5). Who
-//! approves is the Setting `jobs.workloads.agent_may_approve`, whose default
-//! is EN-1 A: the owner approves each exact workload.
+//! The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5; pass 34,
+//! section 6.5).
 //!
 //! - `pin`: the owner, or an agent whose own live Grant names the verb, pins
-//!   one exact workload. A pin approves nothing, and it is written once.
-//! - `approve`: the owner's act, with presence at `Important`, since it
-//!   widens what runs on the owner's machines. While the key is on, also an
-//!   agent's under its own Grant naming the verb, on a workload not pinned
-//!   under that Grant and for starters other than that Grant.
-//! - `revoke`: the owner's act, and while the key is on an agent's under its
-//!   own Grant naming the verb; the issuer then stops the workload's running
-//!   jobs (EN-4 A, the connector's step).
+//!   one exact workload, and the pin checks in ([`super::pin_door`]). It is
+//!   written once. The pin is its own key, so no handle can stand in for a
+//!   secret in it: the vault's secret scan refuses one before it is stored.
+//! - `approve`: the owner's own act, with presence at `Important`, since it
+//!   widens what runs on the owner's machines.
+//! - `revoke`: the owner's own act; the issuer then stops the workload's
+//!   running jobs (EN-4 A, the connector's step).
 //! - `get`, `list`: reads for the owner, or an agent whose Grant names the
-//!   verb. An agent reads only the workloads its Grant pinned or may start.
+//!   verb. An agent reads the workloads its Grant pinned, and those whose
+//!   approval, unexpired and not revoked, names its Grant to start.
 use crate::EdgeActorClass;
 use crate::authority::{
     NoStanding, PACT_STANDING_LAPSED, VerifiedSlip, principal_standing_or_lapse_in_txn,
@@ -25,16 +24,14 @@ use crate::memory::{
 use crate::world_keys::OwnerActImportance;
 use crate::{EntityId, Vault};
 
+use super::JOB_ALPN;
 use super::record::{
     JOB_WORKLOADS, JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadRevocation,
     digest_key,
 };
-use super::setting_keys::agent_may_approve_in_txn;
 use super::wire::{
-    WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadPinRequest, WorkloadRef,
-    WorkloadView, parse_ids,
+    WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadRef, WorkloadView, parse_ids,
 };
-use super::{JOB_ALPN, PIN_ARG_BYTES_MAX, PIN_ARGS_MAX, PIN_OUTPUTS_MAX, WorkloadPin};
 
 /// The `vault.jobs.workloads.*` verbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,10 +71,10 @@ impl WorkloadVerb {
         Self::ALL.into_iter().find(|verb| verb.name() == name)
     }
 
-    /// Whether it approves or revokes: the owner's act, and an agent's only
-    /// while `jobs.workloads.agent_may_approve` is on.
+    /// Whether it approves or revokes: the vault owner's own act, which no
+    /// agent's Grant admits.
     #[must_use]
-    pub const fn is_approval_act(self) -> bool {
+    pub const fn is_owner_act(self) -> bool {
         matches!(self, Self::Approve | Self::Revoke)
     }
 }
@@ -108,13 +105,6 @@ pub enum WorkloadError {
     MachineNotGranted { machine: String },
     #[error("another approval of this workload stands until it expires or is revoked")]
     ApprovalStands,
-    /// An agent's approval of a workload pinned under its own Grant, or one
-    /// naming its own Grant as a starter: an agent never mints its own
-    /// approval.
-    #[error(
-        "an agent does not approve a workload pinned under its own Grant or name its own Grant as a starter"
-    )]
-    SelfApproval,
     /// An agent's pin of a workload pinned before under a Grant that agent
     /// may not read it through.
     #[error("this exact workload is already pinned under another Grant")]
@@ -139,7 +129,6 @@ impl From<WorkloadError> for MemoryError {
             | WorkloadError::MachineNotGranted { .. }
             | WorkloadError::ApprovalStands
             | WorkloadError::PinnedElsewhere => MEMORY_CODE_INVALID_STATE,
-            WorkloadError::SelfApproval => MEMORY_CODE_FORBIDDEN,
             WorkloadError::NotFound => MEMORY_CODE_NOT_FOUND,
         };
         MemoryError::new(code, refusal.to_string(), &[])
@@ -172,21 +161,17 @@ impl WorkloadAgent {
     }
 
     /// The live Grant that admits this agent to `verb` now, as the standing
-    /// rule picks it: an approval act only while
-    /// `jobs.workloads.agent_may_approve` is on; its actor binding holds, its
-    /// presented credential is still live, and one live Grant from a live
-    /// owner names it and lists the verb.
-    fn grant_in_txn(
+    /// rule picks it: never for the owner's own acts; its actor binding
+    /// holds, its presented credential is still live, and one live Grant from
+    /// a live owner names it and lists the verb.
+    pub(super) fn grant_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         verb: WorkloadVerb,
     ) -> MemoryResult<EntityId> {
-        if verb.is_approval_act() && !agent_may_approve_in_txn(vault, txn)? {
-            return Err(refused(
-                verb,
-                "it is the owner's own act while jobs.workloads.agent_may_approve is off",
-            ));
+        if verb.is_owner_act() {
+            return Err(refused(verb, "it is the vault owner's own act"));
         }
         crate::memory::verify_actor_binding_in_txn(vault, txn, self.actor, self.class)?;
         if let Some(slip) = &self.credential
@@ -225,8 +210,8 @@ impl Memory<'_> {
     /// Admits this handle's caller to `verb`. With `owner`, the caller's own
     /// proof decides: revalidated as a live owner of this vault and this
     /// handle's own human actor. Without one, one live Grant a live owner
-    /// gave this handle's agent must name `verb` now, and an approval act
-    /// needs `jobs.workloads.agent_may_approve` on.
+    /// gave this handle's agent must name `verb` now, and an approve or a
+    /// revoke admits no agent.
     ///
     /// # Errors
     ///
@@ -258,11 +243,8 @@ impl Memory<'_> {
 
 /// The refusal of a caller `verb` does not admit.
 fn refused(verb: WorkloadVerb, why: &str) -> MemoryError {
-    let (takes, hint) = if verb.is_approval_act() {
-        (
-            "the vault owner's own proof, or an agent's own Grant that names it while jobs.workloads.agent_may_approve is on",
-            "Call it as the vault owner, or ask the owner to turn jobs.workloads.agent_may_approve on and name the verb in the agent's Grant.",
-        )
+    let (takes, hint) = if verb.is_owner_act() {
+        ("the vault owner's own proof", "Call it as the vault owner.")
     } else {
         (
             "the vault owner's own proof or an agent's own Grant that names it",
@@ -276,16 +258,12 @@ fn refused(verb: WorkloadVerb, why: &str) -> MemoryError {
     )
 }
 
-/// Who the caller is in a read or write: the owner's id, or the agent and
-/// its Grant for `verb`.
+/// Who the caller is in a read or write: the owner's id, or the agent's
+/// Grant for `verb`.
 #[derive(Clone, Copy)]
 enum Resolved {
     Owner(EntityId),
-    Agent {
-        actor: EntityId,
-        class: EdgeActorClass,
-        grant: EntityId,
-    },
+    Agent { grant: EntityId },
 }
 
 fn resolve_in_txn(
@@ -299,24 +277,22 @@ fn resolve_in_txn(
             Ok(Ok(Resolved::Owner(owner.revalidate_in_txn(vault, txn)?)))
         }
         WorkloadCaller::Agent(agent) => Ok(match agent.grant_in_txn(vault, txn, verb) {
-            Ok(grant) => Ok(Resolved::Agent {
-                actor: agent.actor(),
-                class: agent.class,
-                grant,
-            }),
+            Ok(grant) => Ok(Resolved::Agent { grant }),
             Err(refusal) => Err(WorkloadError::Caller(refusal)),
         }),
     }
 }
 
-/// Whether an agent under `grant` may read `row`: its Grant pinned it, or
-/// the approval names it as a starter.
-fn agent_reads(row: &JobWorkload, grant: EntityId) -> bool {
+/// Whether an agent under `grant` may read `row` at `now_ms`: its Grant
+/// pinned it, or the workload is not revoked and its approval, unexpired,
+/// names that Grant as a starter. A starter that may no longer start it
+/// reads nothing of it.
+pub(super) fn agent_reads(row: &JobWorkload, grant: EntityId, now_ms: u64) -> bool {
     row.pinned_under == Some(grant)
-        || row
-            .approval
-            .as_ref()
-            .is_some_and(|approval| approval.starters.contains(&grant))
+        || (row.revoked.is_none()
+            && row.approval.as_ref().is_some_and(|approval| {
+                approval.expires_at_ms > now_ms && approval.starters.contains(&grant)
+            }))
 }
 
 /// The ids in `ids`, sorted and without repeats.
@@ -327,83 +303,13 @@ fn id_set(mut ids: Vec<EntityId>) -> Vec<EntityId> {
 }
 
 impl Vault {
-    /// `caller` pins the exact workload `request.pin`. Pinning approves
-    /// nothing. A pin is written once: pinning the same workload again
-    /// answers the row that stands.
-    ///
-    /// # Errors
-    ///
-    /// [`WorkloadError::BadPin`] for a pin of the wrong shape;
-    /// [`WorkloadError::PinConflict`] for a digest pinned with other content;
-    /// [`WorkloadError::PinnedElsewhere`] for an agent's pin of a workload
-    /// that stands under a Grant it may not read it through, so the answer
-    /// carries no approval it may not read;
-    /// [`WorkloadError::Caller`] for a caller the door does not admit.
-    pub fn pin_job_workload(
-        &self,
-        caller: WorkloadCaller<'_>,
-        request: &WorkloadPinRequest,
-        now_ms: u64,
-    ) -> Result<WorkloadChange, WorkloadError> {
-        check_pin_shape(&request.pin).map_err(|why| WorkloadError::BadPin { why })?;
-        let digest = request.pin.digest()?;
-        let key = digest_key(&digest).ok_or(crate::Error::InvariantViolation(
-            "a workload digest is 64 lower hex",
-        ))?;
-        if let WorkloadCaller::Owner(owner) = caller {
-            owner.revalidate(self)?;
-        }
-        self.with_write_txn_grouped(
-            |txn| -> crate::Result<Result<WorkloadChange, WorkloadError>> {
-                let resolved = match resolve_in_txn(self, txn, caller, WorkloadVerb::Pin)? {
-                    Ok(resolved) => resolved,
-                    Err(refused) => return Ok(Err(refused)),
-                };
-                if let Some(row) = JOB_WORKLOADS.get(&self.store, txn, &key)? {
-                    if row.pin != request.pin {
-                        return Ok(Err(WorkloadError::PinConflict));
-                    }
-                    if let Resolved::Agent { grant, .. } = resolved
-                        && !agent_reads(&row, grant)
-                    {
-                        return Ok(Err(WorkloadError::PinnedElsewhere));
-                    }
-                    return Ok(Ok(WorkloadChange {
-                        changed: false,
-                        workload: WorkloadView::of(&row, now_ms),
-                    }));
-                }
-                let (pinned_by, pinned_under) = match resolved {
-                    Resolved::Owner(owner) => (owner, None),
-                    Resolved::Agent { actor, grant, .. } => (actor, Some(grant)),
-                };
-                let row = JobWorkload {
-                    digest,
-                    pin: request.pin.clone(),
-                    pinned_by: Some(pinned_by),
-                    pinned_under,
-                    pinned_at_ms: now_ms,
-                    approval: None,
-                    revoked: None,
-                };
-                JOB_WORKLOADS.put(&self.store, txn, &key, &row)?;
-                Ok(Ok(WorkloadChange {
-                    changed: true,
-                    workload: WorkloadView::of(&row, now_ms),
-                }))
-            },
-        )?
-    }
-
     /// `caller` approves the workload `request.workload` on
     /// `request.machines`, for `request.starters`, until
     /// `request.expires_at_ms`. The owner's approval widens what runs on the
     /// owner's machines, so the owner's presence is checked at `Important`
-    /// first. An agent approves only while `jobs.workloads.agent_may_approve`
-    /// is on, under its own Grant naming the verb, and never a workload
-    /// pinned under that Grant or for that Grant as a starter. Each machine's
-    /// job grant is judged again in the write. The same approval again
-    /// answers `changed: false`.
+    /// first. No agent approves. Each machine's job grant is judged again in
+    /// the write. An approval stands until it expires: the same approval
+    /// again answers `changed: false`, and another one is refused.
     ///
     /// # Errors
     ///
@@ -411,8 +317,8 @@ impl Vault {
     /// [`WorkloadError::ExpiryPast`], [`WorkloadError::NoMachines`],
     /// [`WorkloadError::MachineNotGranted`] for a machine with no live grant
     /// of the job protocol, [`WorkloadError::ApprovalStands`] for a different
-    /// approval while one stands, [`WorkloadError::SelfApproval`],
-    /// [`WorkloadError::Caller`] for a caller the door does not admit; a
+    /// approval while one stands, [`WorkloadError::Caller`] for a caller the
+    /// door does not admit (every agent); a
     /// refused presence check.
     pub fn approve_job_workload(
         &self,
@@ -451,15 +357,12 @@ impl Vault {
             |txn| -> crate::Result<Result<WorkloadChange, WorkloadError>> {
                 let by = match resolve_in_txn(self, txn, caller, WorkloadVerb::Approve)? {
                     Ok(Resolved::Owner(owner)) => WorkloadApprovedBy::Owner { owner: Some(owner) },
-                    Ok(Resolved::Agent {
-                        actor,
-                        class,
-                        grant,
-                    }) => WorkloadApprovedBy::Grant {
-                        actor: Some(actor),
-                        class,
-                        grant,
-                    },
+                    Ok(Resolved::Agent { .. }) => {
+                        return Ok(Err(WorkloadError::Caller(refused(
+                            WorkloadVerb::Approve,
+                            "it is the vault owner's own act",
+                        ))));
+                    }
                     Err(refused) => return Ok(Err(refused)),
                 };
                 let Some(mut row) = JOB_WORKLOADS.get(&self.store, txn, &key)? else {
@@ -467,11 +370,6 @@ impl Vault {
                 };
                 if row.revoked.is_some() {
                     return Ok(Err(WorkloadError::Revoked));
-                }
-                if let WorkloadApprovedBy::Grant { grant, .. } = &by
-                    && (row.pinned_under == Some(*grant) || starters.contains(grant))
-                {
-                    return Ok(Err(WorkloadError::SelfApproval));
                 }
                 for machine in &machines {
                     if !self.mesh_machine_granted_in_txn(txn, *machine, JOB_ALPN)? {
@@ -511,15 +409,14 @@ impl Vault {
     }
 
     /// `caller` revokes the workload `request.workload`: no later start
-    /// passes the gate, and the issuer stops its running jobs. The owner
-    /// revokes; an agent only while `jobs.workloads.agent_may_approve` is
-    /// on, under its own Grant naming the verb. A repeat answers
-    /// `changed: false`.
+    /// passes the gate, and the issuer stops its running jobs. The owner's
+    /// own act: no agent revokes. A repeat answers `changed: false`.
     ///
     /// # Errors
     ///
     /// [`WorkloadError::NotFound`] for no such workload;
-    /// [`WorkloadError::Caller`] for a caller the door does not admit.
+    /// [`WorkloadError::Caller`] for a caller the door does not admit (every
+    /// agent).
     pub fn revoke_job_workload(
         &self,
         caller: WorkloadCaller<'_>,
@@ -532,9 +429,14 @@ impl Vault {
         }
         self.with_write_txn_grouped(
             |txn| -> crate::Result<Result<WorkloadChange, WorkloadError>> {
-                let (by, under) = match resolve_in_txn(self, txn, caller, WorkloadVerb::Revoke)? {
-                    Ok(Resolved::Owner(owner)) => (owner, None),
-                    Ok(Resolved::Agent { actor, grant, .. }) => (actor, Some(grant)),
+                let by = match resolve_in_txn(self, txn, caller, WorkloadVerb::Revoke)? {
+                    Ok(Resolved::Owner(owner)) => owner,
+                    Ok(Resolved::Agent { .. }) => {
+                        return Ok(Err(WorkloadError::Caller(refused(
+                            WorkloadVerb::Revoke,
+                            "it is the vault owner's own act",
+                        ))));
+                    }
                     Err(refused) => return Ok(Err(refused)),
                 };
                 let Some(mut row) = JOB_WORKLOADS.get(&self.store, txn, &key)? else {
@@ -548,7 +450,6 @@ impl Vault {
                 }
                 row.revoked = Some(WorkloadRevocation {
                     by: Some(by),
-                    under,
                     at_ms: now_ms,
                 });
                 JOB_WORKLOADS.put(&self.store, txn, &key, &row)?;
@@ -561,8 +462,8 @@ impl Vault {
     }
 
     /// The workload `request.workload`, as `caller` may read it. An agent
-    /// reads only a workload its Grant pinned or may start; any other answers
-    /// not found, so a read discloses nothing.
+    /// reads only a workload its Grant pinned or may start now; any other
+    /// answers not found, so a read discloses nothing.
     ///
     /// # Errors
     ///
@@ -580,7 +481,7 @@ impl Vault {
             .job_workload_in_txn(&txn, &request.workload)?
             .ok_or(WorkloadError::NotFound)?;
         if let Resolved::Agent { grant, .. } = resolved
-            && !agent_reads(&row, grant)
+            && !agent_reads(&row, grant, now_ms)
         {
             return Err(WorkloadError::NotFound);
         }
@@ -604,97 +505,10 @@ impl Vault {
             .iter()
             .filter(|row| match resolved {
                 Resolved::Owner(_) => true,
-                Resolved::Agent { grant, .. } => agent_reads(row, grant),
+                Resolved::Agent { grant, .. } => agent_reads(row, grant, now_ms),
             })
             .map(|row| WorkloadView::of(row, now_ms))
             .collect();
         Ok(WorkloadList { workloads })
     }
-}
-
-/// Whether `text` is `len` lower-hex characters.
-fn is_lower_hex(text: &str, len: usize) -> bool {
-    text.len() == len
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-/// Whether `path` is a plain relative path: not empty, not absolute, no
-/// empty, `.` or `..` part, no backslash and no NUL.
-fn is_relative_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.contains('\\')
-        && !path.contains('\0')
-        && path
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
-}
-
-/// Why `pin` has the wrong shape, if it does (door 2's refusals). The node
-/// judges the rest against its own template: the allow-list, the ceilings,
-/// the scope.
-fn check_pin_shape(pin: &WorkloadPin) -> Result<(), String> {
-    if pin.template.is_empty()
-        || pin.template.len() > 64
-        || !pin.template.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"-_.".contains(&byte)
-        })
-    {
-        return Err("template is a name of 1-64 characters a-z, 0-9, '-', '_' or '.'".into());
-    }
-    if !is_lower_hex(&pin.template_digest, 64) {
-        return Err("template_digest is a sha256 in 64 lower hex".into());
-    }
-    if !is_lower_hex(&pin.commit, 40) {
-        return Err("commit is a revision in 40 lower hex".into());
-    }
-    if !is_lower_hex(&pin.contract_sha256, 64) {
-        return Err("contract_sha256 is a sha256 in 64 lower hex".into());
-    }
-    if !is_relative_path(&pin.contract_path) {
-        return Err("contract_path is a relative path inside the checkout".into());
-    }
-    if !is_relative_path(&pin.entry) {
-        return Err("entry is a relative path inside the checkout".into());
-    }
-    if pin.args.len() > PIN_ARGS_MAX {
-        return Err(format!("args carries at most {PIN_ARGS_MAX} strings"));
-    }
-    if pin.args.iter().map(String::len).sum::<usize>() > PIN_ARG_BYTES_MAX {
-        return Err(format!(
-            "args carries at most {PIN_ARG_BYTES_MAX} bytes together"
-        ));
-    }
-    if pin.args.iter().any(|arg| arg.contains('\0')) {
-        return Err("an argument holds no NUL".into());
-    }
-    if pin.request.maximum_secs == 0 {
-        return Err("request.maximum_secs is above 0".into());
-    }
-    if let super::ScopeKind::Container { image } = &pin.scope {
-        let pinned = image
-            .split_once("@sha256:")
-            .is_some_and(|(name, digest)| !name.is_empty() && is_lower_hex(digest, 64));
-        if !pinned {
-            return Err("a container image is pinned as name@sha256:<64 lower hex>".into());
-        }
-    }
-    if pin.outputs.len() > PIN_OUTPUTS_MAX {
-        return Err(format!("outputs declares at most {PIN_OUTPUTS_MAX}"));
-    }
-    let mut names: Vec<&str> = pin
-        .outputs
-        .iter()
-        .map(|output| output.name.as_str())
-        .collect();
-    if names.iter().any(|name| !is_relative_path(name)) {
-        return Err("an output name is a relative path".into());
-    }
-    names.sort_unstable();
-    if names.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err("output names are distinct".into());
-    }
-    Ok(())
 }

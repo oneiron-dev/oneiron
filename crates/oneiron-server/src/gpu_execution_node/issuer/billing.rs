@@ -1,6 +1,7 @@
-//! What a vault machine job is billed (pass 33 section 8.4): occupied device time, from the
-//! launch commit to the empty unit, as the node measured it on its boot clock, and never more
-//! than the issuer saw pass or the quote's maximum:
+//! What a vault machine job is billed (pass 33 section 8.4; pass 34, 9.2): the occupied time of
+//! the attempt's leases, from the launch commit to the empty unit, as the node measured it on its
+//! boot clock, and never more than the issuer saw pass or the quote's maximum. An attempt with no
+//! device lease (CPU only) bills the same way:
 //!
 //! ```text
 //! billed_secs = min(quote maximum, node measured_secs, issuer bracket)

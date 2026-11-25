@@ -8,6 +8,10 @@
 //!   digest, the agent's verb call the same.
 //! - T25: an agent without a Grant that lists the verb is refused FORBIDDEN;
 //!   once the owner's Grant lists it, the same call answers the owner's card.
+//! - T26 (review-10395 P1): the card lists the rows it was read from, so a
+//!   host can withhold it from a destination one of them is kept from: a
+//!   project team receipt's fact and outcome sources reach the handle's
+//!   producer listing.
 //!
 //! The owner reads through the engine door under its own proof; the agent
 //! calls the verb by name through the SDK, as a code-mode or SDK caller does.
@@ -17,16 +21,21 @@
 //! --locked -p oneiron --all-features --test planner_card_door`.
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, MachineRole};
+use oneiron::claim::learning_evidence::Anchor;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::invoke;
+use oneiron::team::pattern::{TeamAxis, TeamPattern};
 use oneiron::team::planner_card_door::{
     PLANNER_CARD_VERB, PlannerCardRequest, PlannerCardView, planner_card_as, planner_card_as_owner,
+};
+use oneiron::team::receipt::{
+    DecidedBy, TeamOutcome, TeamReceipt, TeamShape, record_team_receipt_sourced,
 };
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::store_writes::last_committed_write;
@@ -163,7 +172,7 @@ fn the_planner_card_door_reads_and_writes_nothing() {
     assert_eq!(
         first.digest.len(),
         64,
-        "expected a sha256 lower-hex digest; seen {first:?}"
+        "expected a 64-digit lower-hex content hash; seen {first:?}"
     );
     assert_eq!(
         first, second,
@@ -218,4 +227,78 @@ fn an_agent_without_the_grant_is_refused_the_card() {
         Some(owner.digest.as_str()),
         "expected the granted agent to read the owner's card; seen {answer}"
     );
+}
+
+/// T26: the card lists the rows it was read from. A settled team receipt of
+/// the card's project names the rows its facts and its outcome were read
+/// from; the agent's read hands both to the handle's producer listing.
+#[test]
+fn the_card_lists_the_rows_it_was_read_from() {
+    let fixture = fixture();
+    let agent = fixture
+        .vault
+        .ensure_agent_principal("planner-card-reader")
+        .expect("named agent principal");
+    mint(&fixture, agent, &[PLANNER_CARD_VERB]);
+    let project = EntityId::now();
+    let input = card_request(&fixture.vault, project);
+    let (fact_source, deliverable) = (EntityId::now(), EntityId::now());
+    let receipt = TeamReceipt {
+        team_ref: "planner-card-sourced-team".to_owned(),
+        project: Some(project),
+        type_ref: input.type_ref.clone(),
+        pattern: TeamPattern::Solo,
+        pattern_skill: None,
+        axis: TeamAxis::Converge,
+        models: input.models.clone(),
+        shape: TeamShape {
+            width: 1,
+            roles: BTreeMap::from([("solo".to_owned(), 1)]),
+        },
+        decided_by: DecidedBy::Leader { actor: agent },
+        coverage: None,
+        confessions: None,
+        spend: None,
+        spend_cap: None,
+        elapsed_secs: 60,
+        calls: None,
+        outcome: Some(TeamOutcome {
+            receipt: "planner-card-sourced-outcome".to_owned(),
+            anchor: Anchor::OwnerVerdict,
+            success: true,
+            at: 1,
+            critics: None,
+        }),
+        at: 1,
+    };
+    record_team_receipt_sourced(
+        &fixture.vault,
+        &receipt,
+        Some(vec![fact_source]),
+        Some(vec![deliverable]),
+    )
+    .expect("the sourced team receipt is recorded");
+
+    let producers = ProducerRows::default();
+    let card = planner_card_as(
+        &fixture
+            .vault
+            .memory(agent, EdgeActorClass::Agent)
+            .listing_producers(&producers),
+        None,
+        &input,
+    )
+    .unwrap_or_else(|error| panic!("the granted agent reads the card: {error:?}"));
+    assert_eq!(
+        card.rows.iter().map(|row| row.wins).sum::<u64>(),
+        1,
+        "expected the card to fold the project's one settled run; seen {card:?}"
+    );
+    let listed = producers.take();
+    for (row, what) in [(fact_source, "fact"), (deliverable, "outcome")] {
+        assert!(
+            listed.contains(&row),
+            "expected the card's producer listing to name the receipt's {what} source {row:?}; seen {listed:?}"
+        );
+    }
 }

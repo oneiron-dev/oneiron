@@ -19,10 +19,13 @@
 
 use oneiron::EntityId;
 pub use oneiron::job_workload::{
-    JOB_ALPN, JOB_STATUS_ALPN, NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
+    BoundRequirement, DeviceClaim, JOB_ALPN, JOB_STATUS_ALPN, NetworkMode, OutputDecl,
+    ResourceRequest, ScopeCapabilities, ScopeKind, WorkloadPin,
 };
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
 use serde::{Deserialize, Serialize};
+
+use super::availability::GpuAvailability;
 
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
@@ -77,6 +80,9 @@ impl ScopeClass {
 pub enum JobRequest {
     /// What the node offers now: [`JobAnswer::Node`].
     Node,
+    /// A fresh sample of the node's GPUs: [`JobAnswer::Availability`]. A
+    /// reading, not a hold.
+    Availability,
     /// Hold a key and its disk space, never a device: answered by the
     /// key's receipt in state `Held`, or the key's existing receipt, or
     /// `Busy`. Journaled before it is answered; a reserve never starts a
@@ -92,8 +98,8 @@ pub enum JobRequest {
 
 /// Which of the node's GPUs a key may take: the selectors of a GPU slot
 /// request. The node forms the whole request from the key, these selectors
-/// and the pin's resource request (the least GPU memory is `vram_mib`, the
-/// disk is `disk_mib`), so a slot never disagrees with its pin.
+/// and the pin's resource request (its device claims and its `disk_mib`), so
+/// a slot never disagrees with its pin.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlotSelector {
     /// This GPU only, by the driver's device id (the vendor's UUID).
@@ -156,6 +162,8 @@ pub struct SignedJobSubmit {
 #[serde(rename_all = "snake_case")]
 pub enum JobAnswer {
     Node(NodeAnswer),
+    /// The node's GPUs now, as OPUS-LE-FLEET's slot table reads them.
+    Availability(GpuAvailability),
     /// The key's receipt: the one the request made, or the one it already
     /// had.
     Receipt(SignedJobReceipt),
@@ -178,6 +186,10 @@ pub struct NodeAnswer {
     /// Why it takes no new work until a person clears its drain.
     pub drained: Option<String>,
     pub templates: Vec<TemplateOffer>,
+    /// The launch scopes this node starts runs in, each with what it can
+    /// enforce now (pass 34, section 2.2). A scope that does not meet the
+    /// minimum contract is listed and runs nothing.
+    pub scopes: Vec<ScopeReport>,
     pub disk_free_bytes: u64,
     /// The disk the held keys have booked.
     pub disk_reserved_bytes: u64,
@@ -196,13 +208,24 @@ pub struct NodeAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateOffer {
     pub name: String,
-    /// The sha256 (lower hex) of the template's canonical form, which a pin
-    /// names.
+    /// The content hash (BLAKE3, lower hex) of the template's canonical
+    /// JSON form, made as a pin's digest is made; a pin names it.
     pub digest: String,
     pub scopes: Vec<ScopeClass>,
     pub network: Vec<NetworkMode>,
     /// The outputs that may travel to the issuer.
     pub returnable: Vec<String>,
+    /// The bounds a run of this template needs from its scope: a scope that
+    /// lacks one does not fit. Every bound not listed that the scope does
+    /// not enforce is recorded on the run as unproven.
+    pub require: Vec<BoundRequirement>,
+}
+
+/// One launch scope a node starts runs in, and what it can enforce now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeReport {
+    pub class: ScopeClass,
+    pub capabilities: ScopeCapabilities,
 }
 
 /// Why a node refused a request before journaling any key. A refusal the
@@ -237,6 +260,8 @@ pub enum JobRefusal {
     NotTheKeysIssuer,
     /// The submit's signature is not its issuer's.
     SubmitSignatureInvalid,
+    /// The node's GPUs could not be read now, with why.
+    DevicesUnreadable { why: String },
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is
@@ -421,6 +446,12 @@ pub struct ScopeFacts {
     pub namespaces: Vec<String>,
     /// The filesystem fence's read and write paths.
     pub fence: Vec<String>,
+    /// The bounds the template required, each proven from inside the scope
+    /// before the workload existed.
+    pub required: Vec<BoundRequirement>,
+    /// Each bound as the scope enforced it for this run: kernel, supervised
+    /// or none. A bound outside `required` at none is unproven.
+    pub bounds: ScopeCapabilities,
 }
 
 /// What a node observed about a key. It travels inside a

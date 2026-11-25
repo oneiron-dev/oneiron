@@ -123,6 +123,12 @@ fn settle_merged(
     if let Some(embedder) = resolved.embedder.as_mut() {
         super::super::embedder_space::settle_local_space(embedder, space_naming)?;
     }
+    // One GPU, one booker, judged on the merged sections: a later layer's
+    // `[gpu_jobs.devices]` or `[models]` stands over an earlier one's.
+    crate::config::gpu_jobs::refuse_offered_worker_devices(
+        &resolved.gpu_jobs.devices,
+        resolved.models.as_ref(),
+    )?;
     check(&resolved)?;
     Ok(resolved)
 }

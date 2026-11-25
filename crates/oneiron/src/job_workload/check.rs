@@ -5,23 +5,24 @@
 //! Nothing is held when it says no.
 //!
 //! The check has two halves. The vault half reads the `JOB_WORKLOAD` row: the
-//! pin exists, is not revoked, holds an approval in force, has not expired,
-//! names the starter and the machine, and its maximum covers the quote's. An
-//! approval is in force when the owner gave it, or when an agent gave it and
-//! `jobs.workloads.agent_may_approve` is still on and that agent still holds
-//! a live Grant naming `vault.jobs.workloads.approve`. The node half
+//! pin exists, is not revoked, and was let go: by the owner's approval, which
+//! governs once given (its expiry, starters and machines), or else by its
+//! check-in (pass 34, 6.5), until `jobs.workloads.approval_days` after it
+//! went, for the Grant it was pinned under, on a machine that holds a live
+//! job-protocol grant. A pin a `compute.pin` grant let go is read again
+//! live: a live grant must still cover it with `machine:<id>` added, so a
+//! revoked or narrowed grant stops the next start. Its maximum covers the
+//! quote's. The node half
 //! judges what the machine answered to `Node` and `Availability`: it was
 //! reached, it holds the pin's template under the same digest, and it did not
 //! refuse. The vault half alone is also the recheck inside the reservation
 //! write and before every dispatch that could make work.
-use crate::authority::principal_standing_or_lapse_in_txn;
 use crate::gpu_job::GpuJobQuote;
-use crate::{EdgeActorClass, EntityId, Vault};
+use crate::{EntityId, Vault};
 
-use super::WorkloadPin;
-use super::doors::WorkloadVerb;
-use super::record::{JobWorkload, WorkloadApprovedBy};
-use super::setting_keys::agent_may_approve_in_txn;
+use super::compute_bound::pin_candidate;
+use super::record::{JobWorkload, PinCheckInOutcome, PinGoBasis};
+use super::{JOB_ALPN, WorkloadPin};
 
 /// Who starts a workload, as the start gate resolved the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,8 +98,12 @@ pub enum WorkloadStartRefusal {
     MachineMissing,
     #[error("no workload is pinned under this digest")]
     WorkloadUnknown,
-    #[error("no approval of this workload is in force")]
+    #[error("the owner has not approved this workload")]
     WorkloadNotApproved,
+    #[error("this workload's check-in waits for an answer")]
+    WorkloadWaiting,
+    #[error("no live compute.pin grant covers this workload on this machine")]
+    ComputeGrantEnded,
     #[error("the owner revoked this workload")]
     WorkloadRevoked,
     #[error("the owner's approval of this workload has expired")]
@@ -123,6 +128,8 @@ impl WorkloadStartRefusal {
             Self::MachineMissing => "machine_missing",
             Self::WorkloadUnknown => "workload_unknown",
             Self::WorkloadNotApproved => "workload_not_approved",
+            Self::WorkloadWaiting => "workload_waiting",
+            Self::ComputeGrantEnded => "compute_grant_ended",
             Self::WorkloadRevoked => "workload_revoked",
             Self::WorkloadExpired => "workload_expired",
             Self::StarterNotNamed => "starter_not_named",
@@ -179,10 +186,10 @@ impl Vault {
     }
 
     /// The vault half of the workload check, read in `txn`: the pin exists,
-    /// is not revoked, holds an approval in force that has not expired by
-    /// `now_ms`; its approval names the starter and the machine; its maximum
-    /// covers the ask's. A recheck before a dispatch passes `now_ms` plus the
-    /// window the approval must still cover.
+    /// is not revoked, and was let go, by the owner's approval or its
+    /// check-in, unexpired at `now_ms`, for the starter and the machine; its
+    /// maximum covers the ask's. A recheck before a dispatch passes `now_ms`
+    /// plus the window the approval must still cover.
     ///
     /// # Errors
     ///
@@ -196,59 +203,74 @@ impl Vault {
         let Some(row) = self.job_workload_in_txn(txn, ask.workload)? else {
             return Ok(Err(WorkloadStartRefusal::WorkloadUnknown));
         };
-        let in_force = match row.approval.as_ref() {
-            Some(approval) => self.approval_in_force_in_txn(txn, &approval.by)?,
-            None => false,
-        };
-        Ok(judge_approval(row, in_force, ask, now_ms))
+        if row.revoked.is_some() {
+            return Ok(Err(WorkloadStartRefusal::WorkloadRevoked));
+        }
+        if row.approval.is_some() {
+            return Ok(judge_approval(row, ask, now_ms));
+        }
+        self.judge_check_in_in_txn(txn, row, ask, now_ms)
     }
 
-    /// Whether an approval given by `by` is in force, read in `txn`: the
-    /// owner's always is; an agent's is while
-    /// `jobs.workloads.agent_may_approve` is on and the agent still holds a
-    /// live Grant from a live owner naming `vault.jobs.workloads.approve`.
-    fn approval_in_force_in_txn(
+    /// The vault half's verdict on a row the owner has not approved: its
+    /// check-in let it go and that has not expired; the starter is the Grant
+    /// it was pinned under (or the owner); the machine holds a live grant of
+    /// the job protocol and, for a pin a `compute.pin` grant let go, a live
+    /// grant still covers it on that machine.
+    fn judge_check_in_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        by: &WorkloadApprovedBy,
-    ) -> crate::Result<bool> {
-        let (actor, class) = match by {
-            WorkloadApprovedBy::Owner { .. } => return Ok(true),
-            WorkloadApprovedBy::Grant { actor: None, .. } => return Ok(false),
-            WorkloadApprovedBy::Grant {
-                actor: Some(actor),
-                class,
-                ..
-            } => (*actor, *class),
+        row: JobWorkload,
+        ask: &WorkloadStartAsk<'_>,
+        now_ms: u64,
+    ) -> crate::Result<Result<WorkloadPin, WorkloadStartRefusal>> {
+        let (basis, until_ms) = match row.check_in.as_ref().map(|check_in| &check_in.outcome) {
+            Some(PinCheckInOutcome::Went {
+                basis, until_ms, ..
+            }) => (*basis, *until_ms),
+            Some(PinCheckInOutcome::Waits { .. }) => {
+                return Ok(Err(WorkloadStartRefusal::WorkloadWaiting));
+            }
+            None => return Ok(Err(WorkloadStartRefusal::WorkloadNotApproved)),
         };
-        if !matches!(class, EdgeActorClass::Agent | EdgeActorClass::System)
-            || !agent_may_approve_in_txn(self, txn)?
-        {
-            return Ok(false);
+        if until_ms <= now_ms {
+            return Ok(Err(WorkloadStartRefusal::WorkloadExpired));
         }
-        let standing = principal_standing_or_lapse_in_txn(
-            self,
-            txn,
-            actor,
-            class,
-            WorkloadVerb::Approve.name(),
-        )?;
-        Ok(standing.is_ok_and(|standing| standing.grant.is_some()))
+        if let WorkloadStarter::Grant(grant) = ask.starter
+            && row.pinned_under != Some(grant)
+        {
+            return Ok(Err(WorkloadStartRefusal::StarterNotNamed));
+        }
+        if ask.maximum_secs > row.pin.request.maximum_secs {
+            return Ok(Err(WorkloadStartRefusal::RequestAbovePin));
+        }
+        if !self.mesh_machine_granted_in_txn(txn, ask.machine, JOB_ALPN)? {
+            return Ok(Err(WorkloadStartRefusal::MachineNotApproved));
+        }
+        if basis == PinGoBasis::StandingRow {
+            let Some(grant) = row.pinned_under else {
+                return Ok(Err(WorkloadStartRefusal::ComputeGrantEnded));
+            };
+            let candidate = pin_candidate(grant, row.project, &row.pin, Some(ask.machine))?;
+            if self
+                .covering_compute_grant_in_txn(txn, &candidate)?
+                .is_none()
+            {
+                return Ok(Err(WorkloadStartRefusal::ComputeGrantEnded));
+            }
+        }
+        Ok(Ok(row.pin))
     }
 }
 
-/// The vault half's verdict on one row; `in_force` says whether its
-/// approval, if it has one, is in force.
+/// The vault half's verdict on a row the owner approved: his approval
+/// governs it once given.
 fn judge_approval(
     row: JobWorkload,
-    in_force: bool,
     ask: &WorkloadStartAsk<'_>,
     now_ms: u64,
 ) -> Result<WorkloadPin, WorkloadStartRefusal> {
-    if row.revoked.is_some() {
-        return Err(WorkloadStartRefusal::WorkloadRevoked);
-    }
-    let Some(approval) = row.approval.as_ref().filter(|_| in_force) else {
+    let Some(approval) = row.approval.as_ref() else {
         return Err(WorkloadStartRefusal::WorkloadNotApproved);
     };
     if approval.expires_at_ms <= now_ms {

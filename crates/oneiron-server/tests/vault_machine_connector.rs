@@ -12,7 +12,7 @@ mod engine_stack;
 mod mesh_machines;
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
@@ -26,7 +26,8 @@ use oneiron::gpu_job::{
 };
 use oneiron::job_dispatch::{BootMark, DispatchClose, DispatchPhase, JobDispatch, JobObservation};
 use oneiron::job_workload::{
-    WorkloadApproveRequest, WorkloadCaller, WorkloadPinRequest, WorkloadRef, WorkloadStartRefusal,
+    NoScreenModel, WorkloadApproveRequest, WorkloadCaller, WorkloadPinRequest, WorkloadRef,
+    WorkloadStartRefusal,
 };
 use oneiron::llm::ModelLocality;
 use oneiron::llm::run_admission::{
@@ -37,9 +38,9 @@ use oneiron::machine_signature::{
     MachineSignatureError, MachineSignatures, machine_signature_transcript,
 };
 use oneiron::test_doors::steward;
-use oneiron::{EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, Vault};
 use oneiron_server::config::SyncServerConfig;
-use oneiron_server::config::gpu_jobs::VaultMachineSettings;
+use oneiron_server::config::gpu_jobs::{AtMaximum, VaultMachineSettings};
 use oneiron_server::gpu_execution_node::issuer::{
     IssuerClock, JobNodeClient, LoggedOrphanKeys, NodeCallError, VAULT_MACHINE_BACKEND,
     VaultMachineConnector, VaultMachineNotRegistered, VaultMachineParts, not_the_issuer,
@@ -51,6 +52,7 @@ use oneiron_server::gpu_execution_node::wire::{
     NodeAnswer, OutputsState, ScopeClass, SignedJobReceipt, TemplateOffer,
 };
 use oneiron_server::server::SyncServer;
+use oneiron_server::test_doors::gpu_backend::gpu_jobs_section;
 use serde::Serialize;
 use serde_json::json;
 
@@ -163,6 +165,12 @@ struct Call {
     bytes: Vec<u8>,
 }
 
+struct HeldCall {
+    kind: &'static str,
+    entered: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+}
+
 #[derive(Default)]
 struct NodeState {
     journal: BTreeMap<String, SignedJobReceipt>,
@@ -171,6 +179,9 @@ struct NodeState {
     calls: Vec<Call>,
     unreachable: bool,
     drop_next: Option<&'static str>,
+    hold_next: Option<HeldCall>,
+    lose_next_answer: Option<&'static str>,
+    repeat_key_cursor: u32,
     refuse_submits: Option<String>,
 }
 
@@ -237,6 +248,52 @@ impl ScriptedNode {
 
     fn drop_next(&self, kind: &'static str) {
         self.state().drop_next = Some(kind);
+    }
+
+    fn hold_next(&self, kind: &'static str) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered, wait_for_entry) = mpsc::channel();
+        let (release_call, release) = mpsc::channel();
+        self.state().hold_next = Some(HeldCall {
+            kind,
+            entered,
+            release,
+        });
+        (wait_for_entry, release_call)
+    }
+
+    fn lose_next_answer(&self, kind: &'static str) {
+        self.state().lose_next_answer = Some(kind);
+    }
+
+    fn repeat_key_cursor(&self, pages: u32) {
+        self.state().repeat_key_cursor = pages;
+    }
+
+    fn enter_call(
+        &self,
+        machine: EntityId,
+        kind: &'static str,
+        key: Option<&str>,
+        request: &impl Serialize,
+    ) -> Result<(MutexGuard<'_, NodeState>, bool), NodeCallError> {
+        let mut node = self.state();
+        node.record(machine, kind, key, request)?;
+        let lose_answer = node.lose_next_answer == Some(kind);
+        if lose_answer {
+            node.lose_next_answer = None;
+        }
+        if node
+            .hold_next
+            .as_ref()
+            .is_some_and(|hold| hold.kind == kind)
+        {
+            let hold = node.hold_next.take().expect("the matching call is held");
+            drop(node);
+            hold.entered.send(()).expect("the test waits for entry");
+            hold.release.recv().expect("the test releases the call");
+            node = self.state();
+        }
+        Ok((node, lose_answer))
     }
 
     fn refuse_submits(&self, reason: Option<&str>) {
@@ -338,15 +395,15 @@ impl ScriptedNode {
 
 impl JobNodeClient for ScriptedNode {
     fn job(&self, machine: EntityId, request: &JobRequest) -> Result<JobAnswer, NodeCallError> {
-        let mut node = self.state();
         let (kind, key) = match request {
             JobRequest::Node => ("node", None),
+            JobRequest::Availability => ("availability", None),
             JobRequest::Reserve(req) => ("reserve", Some(req.key.as_str())),
             JobRequest::Release { key } => ("release", Some(key.as_str())),
             JobRequest::Submit(req) => ("submit", Some(req.submit.key.as_str())),
         };
-        node.record(machine, kind, key, request)?;
-        Ok(match request {
+        let (mut node, lose_answer) = self.enter_call(machine, kind, key, request)?;
+        let answer = (|| match request {
             JobRequest::Node => JobAnswer::Node(NodeAnswer {
                 enabled: true,
                 paused: None,
@@ -357,7 +414,9 @@ impl JobNodeClient for ScriptedNode {
                     scopes: vec![ScopeClass::Host],
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
+                    require: Vec::new(),
                 }],
+                scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,
                 disk_reserved_bytes: 0,
                 disk_reserve_bytes: 0,
@@ -366,9 +425,13 @@ impl JobNodeClient for ScriptedNode {
                 boot_id: "node-boot".to_owned(),
                 engine_version: "scripted".to_owned(),
             }),
+            // The connector never asks for a GPU reading; the script has none.
+            JobRequest::Availability => JobAnswer::Refused(JobRefusal::DevicesUnreadable {
+                why: "the scripted node has no GPUs".to_owned(),
+            }),
             JobRequest::Reserve(req) => {
                 if let Some(receipt) = node.journal.get(&req.key) {
-                    return Ok(JobAnswer::Receipt(receipt.clone()));
+                    return JobAnswer::Receipt(receipt.clone());
                 }
                 let mut receipt = self.blank(&req.key);
                 receipt.starter = Some(req.starter);
@@ -382,15 +445,15 @@ impl JobNodeClient for ScriptedNode {
             },
             JobRequest::Submit(signed) => {
                 if signed.verify(self.signer.as_ref()).is_err() {
-                    return Ok(JobAnswer::Refused(JobRefusal::SubmitSignatureInvalid));
+                    return JobAnswer::Refused(JobRefusal::SubmitSignatureInvalid);
                 }
                 let submit = &signed.submit;
                 if submit.issuer != self.issuer {
-                    return Ok(JobAnswer::Refused(JobRefusal::NotIssuer));
+                    return JobAnswer::Refused(JobRefusal::NotIssuer);
                 }
                 let (mut receipt, refusal) = match node.journal.get(&submit.key) {
                     Some(known) if known.receipt.state != JobState::Held => {
-                        return Ok(JobAnswer::Receipt(known.clone()));
+                        return JobAnswer::Receipt(known.clone());
                     }
                     Some(known) => (known.receipt.clone(), node.refuse_submits.clone()),
                     None => {
@@ -410,7 +473,12 @@ impl JobNodeClient for ScriptedNode {
                 }
                 JobAnswer::Receipt(self.publish(&mut node, receipt))
             }
-        })
+        })();
+        if lose_answer {
+            Err(NodeCallError::Timeout)
+        } else {
+            Ok(answer)
+        }
     }
 
     fn job_status(
@@ -418,7 +486,6 @@ impl JobNodeClient for ScriptedNode {
         machine: EntityId,
         request: &JobStatusRequest,
     ) -> Result<JobStatusAnswer, NodeCallError> {
-        let mut node = self.state();
         let (kind, key) = match request {
             JobStatusRequest::Find { key } => ("find", Some(key.as_str())),
             JobStatusRequest::Status { key } => ("status", Some(key.as_str())),
@@ -428,12 +495,19 @@ impl JobNodeClient for ScriptedNode {
             JobStatusRequest::Fetch { key, .. } => ("fetch", Some(key.as_str())),
             JobStatusRequest::Ack { key } => ("ack", Some(key.as_str())),
         };
-        node.record(machine, kind, key, request)?;
-        Ok(match request {
+        let (mut node, lose_answer) = self.enter_call(machine, kind, key, request)?;
+        let answer = match request {
             JobStatusRequest::Find { key } | JobStatusRequest::Status { key } => {
                 node.known_or_absent(key)
             }
             JobStatusRequest::Stop { key } => JobStatusAnswer::Known(self.stop(&mut node, key)),
+            JobStatusRequest::Keys { .. } if node.repeat_key_cursor > 0 => {
+                node.repeat_key_cursor -= 1;
+                JobStatusAnswer::Keys(KeyPage {
+                    entries: Vec::new(),
+                    next: Some("cursor-r".to_owned()),
+                })
+            }
             JobStatusRequest::Keys { after } => JobStatusAnswer::Keys(KeyPage {
                 entries: node
                     .journal
@@ -452,7 +526,12 @@ impl JobNodeClient for ScriptedNode {
             }
             // The script never produces an output to fetch.
             JobStatusRequest::Fetch { .. } => JobStatusAnswer::Refused(JobRefusal::NotEnabled),
-        })
+        };
+        if lose_answer {
+            Err(NodeCallError::Timeout)
+        } else {
+            Ok(answer)
+        }
     }
 }
 
@@ -595,8 +674,17 @@ impl Rig {
                 "entry": "fixture/run.py",
                 "args": ["--case", tag],
                 "request": {
-                    "gpus": 1, "vram_mib": 22_528, "memory_mib": 22_528,
-                    "disk_mib": 2_048, "maximum_secs": MAXIMUM_SECS,
+                    "cpu_threads": 0,
+                    "memory_mib": 22_528,
+                    "disk_mib": 2_048,
+                    "devices": [{
+                        "kind": "gpu",
+                        "count": 1,
+                        "memory_mib": 22_528,
+                        "features": ["cuda"],
+                        "sharing": "exclusive",
+                    }],
+                    "maximum_secs": MAXIMUM_SECS,
                 },
                 "scope": "host",
                 "network": "none",
@@ -606,9 +694,11 @@ impl Rig {
         .expect("a valid workload pin request");
         let caller = WorkloadCaller::Owner(&self.owner);
         let now = self.clock.now_ms();
+        let owner_id = self.owner.revalidate(self.vault()).expect("the owner's id");
         let pinned = self
             .vault()
-            .pin_job_workload(caller, &request, now)
+            .memory(owner_id, EdgeActorClass::Human)
+            .pin_job_workload(&request, &NoScreenModel, now)
             .expect("pin a workload");
         assert!(pinned.changed, "the fixture writes a new workload pin");
         let digest = pinned.workload.digest;
@@ -1035,7 +1125,7 @@ fn billed_seconds_never_pass_the_issuers_bracket_and_a_job_between_two_polls_is_
 }
 
 #[test]
-fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
+fn a_job_that_never_started_settles_nothing_and_its_dispatch_keeps_the_nodes_reason() {
     with_rig(|rig| {
         let workload = rig.approve("never-started", FAR_EXPIRY_MS);
         rig.node.refuse_submits(Some("no_device"));
@@ -1043,9 +1133,9 @@ fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
         assert_eq!(
             refused.job.state,
             GpuJobState::Held {
-                reason: "no_device".to_owned()
+                reason: "not_available_to_this_caller".to_owned()
             },
-            "create preserves the node's refusal",
+            "the job's reason does not disclose what the machine said (section 6; review round 1 of #10414)",
         );
         assert_eq!(
             refused.settled(),
@@ -1322,4 +1412,189 @@ fn a_caller_who_may_not_read_machines_gets_a_refusal_that_names_none() {
         Err("device_id_invalid"),
         "a device selector must be a string",
     );
+}
+
+/// A `[gpu_jobs]` section with one own-machine offer.
+const OWN_MACHINE_SECTION: &str = r#"
+[offers.own-a6000]
+class = "a6000"
+provider = "own"
+region = "home"
+backend = "vault_machine"
+at_maximum = "stop"
+price_per_second = 1
+cost_unit = "credit-micros"
+catalog_revision = "own-prices-1"
+startup_secs = 0
+teardown_secs = 0
+rounding_secs = 1
+"#;
+
+/// Pass 34, 9.2: a `vault_machine` offer states `at_maximum = "stop"`, because its node ends the
+/// run at the maximum (pass 33, 8.6); a provisioned offer leaves it out and follows C2.
+#[test]
+fn a_vault_machine_offer_states_at_maximum_stop() {
+    let settings = gpu_jobs_section(OWN_MACHINE_SECTION).expect("an own-machine offer that stops");
+    assert_eq!(
+        settings.offer("own-a6000").map(|offer| offer.at_maximum),
+        Some(Some(AtMaximum::Stop)),
+    );
+    let unstated = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("at_maximum = \"stop\"\n", ""))
+        .expect_err("a vault_machine offer that states no at_maximum");
+    assert!(
+        format!("{unstated:#}").contains("at_maximum must be \"stop\""),
+        "{unstated:#}"
+    );
+    let provisioned = gpu_jobs_section(
+        &OWN_MACHINE_SECTION.replace("backend = \"vault_machine\"", "backend = \"skypilot\""),
+    )
+    .expect_err("at_maximum on a provisioned offer");
+    assert!(
+        format!("{provisioned:#}").contains("vault_machine backend only"),
+        "{provisioned:#}"
+    );
+    let renew = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
+        .expect_err("renew comes with row W1");
+    assert!(format!("{renew:#}").contains("renew"), "{renew:#}");
+}
+
+#[test]
+fn a_terminate_during_a_create_sends_no_submit_after_its_stop() {
+    with_rig(|rig| {
+        let workload = rig.approve("terminate-during-create", FAR_EXPIRY_MS);
+        let (entered, release) = rig.node.hold_next("reserve");
+        // An unanswered Stop leaves the late Reserve free to return Held. A scripted
+        // Stop that journals a withdrawal for an unknown key would mask the race.
+        rig.node.drop_next("stop");
+
+        let run = std::thread::scope(|scope| {
+            let release = release;
+            let create = scope.spawn(|| {
+                let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    rig.start_job(&workload)
+                }));
+                // Wake the receiver if create never got as far as Reserve.
+                drop(rig.node.state().hold_next.take());
+                match started {
+                    Ok(run) => run,
+                    Err(panic) => std::panic::resume_unwind(panic),
+                }
+            });
+            entered.recv().expect("create sent Reserve");
+            let key = rig
+                .node
+                .calls()
+                .into_iter()
+                .find(|call| call.kind == "reserve")
+                .and_then(|call| call.key)
+                .expect("Reserve names the key");
+            let resource = GpuResourceRef(format!("{}#{key}", rig.node.machine.to_hex()));
+            let (terminating, begin_terminate) = mpsc::channel();
+            let terminate = scope.spawn(move || {
+                terminating.send(()).expect("the test waits for terminate");
+                rig.connector.terminate(&resource)
+            });
+            begin_terminate.recv().expect("terminate thread started");
+            // A release before terminate reaches the key can pass on old and new code alike.
+            release.send(()).expect("release the held Reserve");
+            let run = create.join().expect("create thread panicked");
+            let _ = terminate.join().expect("terminate thread panicked");
+            run
+        });
+
+        let calls = rig.node.calls();
+        let first_stop = calls
+            .iter()
+            .position(|call| call.kind == "stop" && call.key.as_deref() == Some(run.key()))
+            .expect("terminate sent Stop for the key");
+        assert!(
+            calls[first_stop + 1..]
+                .iter()
+                .all(|call| call.kind != "submit" || call.key.as_deref() != Some(run.key())),
+            "no Submit for the key may follow its first Stop: {calls:?}",
+        );
+        assert!(matches!(
+            rig.dispatch(&run).phase,
+            DispatchPhase::Closing | DispatchPhase::Closed
+        ));
+    });
+}
+
+#[test]
+fn an_absent_key_after_a_stored_receipt_is_history_lost_even_with_no_held_mark() {
+    with_rig(|rig| {
+        let workload = rig.approve("lost-journal-after-observation", FAR_EXPIRY_MS);
+        rig.node.lose_next_answer("reserve");
+        let run = rig.start_job(&workload);
+        assert_eq!(
+            run.job.state,
+            GpuJobState::Running,
+            "find recovered the key"
+        );
+        let signed = rig
+            .node
+            .state()
+            .journal
+            .get(run.key())
+            .expect("the node journaled the unanswered Reserve")
+            .clone();
+        assert_eq!(signed.receipt.state, JobState::Held);
+        rig.vault()
+            .put_job_observation(&JobObservation {
+                key: run.key().to_owned(),
+                machine: signed.receipt.machine,
+                device_id: signed.receipt.device_id.clone(),
+                receipt: oneiron_organ_protocol::to_vec(&signed).expect("encode the Held receipt"),
+                epoch: signed.receipt.epoch.clone(),
+                seq: signed.receipt.seq,
+                last_measured_secs: None,
+                observed_at_ms: rig.clock.now_ms(),
+                end_seen: None,
+                meter: None,
+                terminal: None,
+            })
+            .expect("write the observation without the dispatch's Held mark");
+        let row = rig.dispatch(&run);
+        assert!(row.held.is_none());
+        assert_eq!(row.phase, DispatchPhase::Reserving);
+
+        rig.node.forget_journal();
+        let reserve_calls = || {
+            rig.node
+                .calls()
+                .iter()
+                .filter(|call| call.kind == "reserve" && call.key.as_deref() == Some(run.key()))
+                .count()
+        };
+        let before = reserve_calls();
+        let _ = rig.step(&run);
+        assert_eq!(
+            reserve_calls(),
+            before,
+            "the issuer did not send Reserve again",
+        );
+        assert!(rig.dispatch(&run).history_lost_at_ms.is_some());
+    });
+}
+
+#[test]
+fn a_node_that_repeats_its_key_cursor_is_not_reconciled_and_gets_no_reserve() {
+    with_rig(|rig| {
+        let workload = rig.approve("repeated-key-cursor", FAR_EXPIRY_MS);
+        rig.node.repeat_key_cursor(10);
+        let run = rig.start_job(&workload);
+        let _ = rig.step(&run);
+
+        let calls = rig.node.calls();
+        assert!(
+            calls.iter().all(|call| call.kind != "reserve"),
+            "the issuer must not reserve before reconciliation: {calls:?}",
+        );
+        assert_eq!(
+            calls.iter().filter(|call| call.kind == "keys").count(),
+            4,
+            "create and step each stop reconciliation on their second page",
+        );
+        assert_eq!(rig.dispatch(&run).phase, DispatchPhase::Reserving);
+    });
 }

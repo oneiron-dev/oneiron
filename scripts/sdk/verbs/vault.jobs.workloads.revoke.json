@@ -1,6 +1,6 @@
 {
   "name": "vault.jobs.workloads.revoke",
-  "description": "Revokes one pinned workload: no later job starts on it, and its running jobs are stopped. The owner's act; an agent's under its own Grant only while the owner's jobs.workloads.agent_may_approve key is on.",
+  "description": "Revokes one pinned workload: no later job starts on it, and its running jobs are stopped. The vault owner's own act; no agent's Grant admits it.",
   "input": "crate::job_workload::WorkloadRef",
   "output": "crate::job_workload::WorkloadChange",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.revoke\", &input)?",
