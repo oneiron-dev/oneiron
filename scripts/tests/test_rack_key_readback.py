@@ -235,6 +235,7 @@ def test_the_authorized_keys_file_patterns_are_expanded_as_sshd_expands_them(rac
     keys_dir.mkdir()
     (keys_dir / "owen-1000").write_text(f"ssh-ed25519 {rack.kel} kel\n")
     rack.box.config["keys"]["authorized_keys_file_patterns"] = [".ssh/authorized_keys", f"{keys_dir}/%u-%U"]
+    rack.box.output("sshd", "T", sshd_settings(authorizedkeysfile=f".ssh/authorized_keys {keys_dir}/%u-%U"))
     done = rack.run(phase="after")
     assert done.returncode == 1
     assert "1 rack keys still authorized" in done.stderr
@@ -328,7 +329,8 @@ def test_an_sshd_that_logs_below_info_for_a_rack_login_is_no_proof(rack):
     rack.box.output("sshd", "T-owen", sshd_settings(loglevel="ERROR"))
     done = rack.run()
     assert done.returncode == 1
-    assert "LogLevel ERROR" in done.stderr and "user=owen,addr=192.0.2.40,host=kel" in done.stderr
+    # The reason line names the login; its address is redacted, as every printed address is.
+    assert "LogLevel ERROR" in done.stderr and "(user=owen,addr=<address>,host=kel)" in done.stderr
     rack.box.output("sshd", "T-owen", sshd_settings(loglevel="VERBOSE"))
     assert rack.run().returncode == 0
 
