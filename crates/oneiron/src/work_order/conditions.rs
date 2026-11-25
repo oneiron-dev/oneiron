@@ -8,7 +8,7 @@ use crate::{EntityId, Vault};
 use super::blocker::{BlockedOn, Blocker};
 use super::caps::RunningCaps;
 use super::pass::{OrderFit, PassReport};
-use super::record::{GiveUpWhy, OrderState, WorkOrder};
+use super::record::{GiveUpWhy, OrderState, WORK_ORDERS, WorkOrder};
 use super::upstream::UpstreamHold;
 
 impl Vault {
@@ -52,6 +52,38 @@ impl Vault {
                     .collect(),
             )
         }))
+    }
+
+    /// Q5's conditions again in the attempt's own write `txn` (pass 34, 1.1: fit is checked
+    /// again where the attempt is written), so a cap the owner lowered or an attempt another
+    /// caller made after the pass read its rows still holds the order: the order its `after`
+    /// names has ended well, and no cap it counts against is full, with the live attempts
+    /// counted over every order `txn` reads. The first blocker that holds it, else `None`.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(super) fn attempt_conditions_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        order: &WorkOrder,
+    ) -> Result<Option<Blocker>> {
+        if let Some(UpstreamHold::Waiting(upstream) | UpstreamHold::Ended(upstream)) =
+            self.upstream_hold_in_txn(txn, order)?
+        {
+            return Ok(Some(Blocker::After {
+                order: upstream.to_hex(),
+            }));
+        }
+        if order.limits.caps.is_empty() && order.group.is_none() {
+            return Ok(None);
+        }
+        let orders = WORK_ORDERS.scan(&self.store, txn)?;
+        let running = RunningCaps::of(orders.iter().map(|(_, row)| row));
+        Ok(self
+            .cap_blockers_in_txn(txn, order, &running)?
+            .into_iter()
+            .next())
     }
 
     /// Gives `order` up: the order its `after` names, `upstream`, ended without the end it

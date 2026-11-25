@@ -17,7 +17,7 @@ use crate::{EntityId, Vault};
 use super::blocker::Blocker;
 use super::caps::{RunningCaps, caps_problem};
 use super::fit::{MachineFacts, scope_allowed};
-use super::group::admit_group_member_in_txn;
+use super::group::{admit_group_member_in_txn, replay_keeps_group_cap_in_txn};
 use super::pass::OrderFit;
 use super::place::place;
 use super::record::{
@@ -199,7 +199,9 @@ pub fn order_work_as(
                             && order.ordered_by.actor() == by.actor()
                     });
                 if let Some(order) = earlier {
-                    if same_request(&order, input, &by) {
+                    if same_request(&order, input, &by)
+                        && replay_keeps_group_cap_in_txn(vault, txn, input.group.as_ref())?
+                    {
                         let view =
                             vault.order_view_in_txn(txn, order_seen_by(caller, order), true)?;
                         return Ok(Ok(view));

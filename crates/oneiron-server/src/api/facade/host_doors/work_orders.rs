@@ -17,8 +17,8 @@ use oneiron::work_order::{
     ORDER_VERB, ORDERS_CANCEL_VERB, ORDERS_GET_VERB, ORDERS_LIST_VERB, ORDERS_WAIT_VERB,
     OrderCharge, OrderState, WorkOrderList, WorkOrderListRequest, WorkOrderRef, WorkOrderRequest,
     WorkOrderView, WorkOrderWaitAnswer, WorkOrderWaitRequest, allowed_machines, machines_place_as,
-    order_refusal, order_work_as, ordered_view_as, work_order_cancel_as, work_order_get_as,
-    work_order_list_as, work_order_wait_as,
+    order_refusal, order_work_as, ordered_view_as, upstream_ended_refusal, work_order_cancel_as,
+    work_order_get_as, work_order_list_as, work_order_wait_as,
 };
 
 use super::support::Listed;
@@ -29,13 +29,14 @@ use crate::server::SyncServer;
 use crate::work_order_host::{dispatches_offer, locked_order_pass, machine_facts_now};
 
 /// The refusal an order that ended at once answers: a spent budget when money is what stands
-/// in its way, else an invalid state, with every blocker as a reason code (14.4).
+/// in its way, else an invalid state, with every blocker as a reason code (14.4). An order
+/// whose `after` ended without its end answers as the door's admission does, whichever of the
+/// two found that end first.
 fn refusal_of_end(why: &GiveUpWhy) -> Option<oneiron::memory::MemoryError> {
     let blocked = match why {
         GiveUpWhy::NeverFits { blocked } | GiveUpWhy::WaitEnded { blocked } => blocked,
-        GiveUpWhy::Ended { .. } | GiveUpWhy::WrittenOff | GiveUpWhy::Upstream { .. } => {
-            return None;
-        }
+        GiveUpWhy::Upstream { order } => return Some(upstream_ended_refusal(order)),
+        GiveUpWhy::Ended { .. } | GiveUpWhy::WrittenOff => return None,
     };
     let blockers: Vec<Blocker> = blocked.iter().map(|on| on.blocker.clone()).collect();
     let money = blockers

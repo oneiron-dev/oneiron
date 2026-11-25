@@ -1206,7 +1206,10 @@ fn a_pending_cancel_does_not_end_the_wait_until_the_attempt_ends() {
 }
 
 /// Row Q5 (pass 34, 1.1, 4.5, 13; test in section 10): an order that waits on another's end,
-/// named running caps and the array group's cap, through the loop and the order door.
+/// named running caps and the array group's cap, through the loop and the order door. The
+/// fixtures provision the engine's machines through `oneiron::test_support`, so the module
+/// needs the `test-support` feature beside the cfg flag.
+#[cfg(feature = "test-support")]
 mod after_and_caps {
     use super::*;
 
@@ -1223,7 +1226,7 @@ mod after_and_caps {
     use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
     use oneiron::work_order::{
         AfterCondition, AfterOn, GroupMember, GroupRequest, WorkOrderGroup, WorkOrderRequest,
-        group_cap_name, order_work_as,
+        WorkOrderView, group_cap_name, order_work_as,
     };
 
     /// `order` as stored after `change`, as the order door would have written it.
@@ -1233,10 +1236,14 @@ mod after_and_caps {
         order
     }
 
-    /// The owner proves himself on a vault that signs his acts.
+    /// The owner proves himself on a vault that signs his acts, through the install it serves
+    /// from: a setting that syncs is his signed act, carried by a live serving machine.
     fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        oneiron::test_support::provision_engine_machines(vault);
+        let issuer = oneiron::test_support::provision_engine_machines(vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("enroll the install");
         embedded_owner(vault).expect("the owner's proof").1
     }
 
@@ -1304,6 +1311,78 @@ mod after_and_caps {
             rig.stored(held).attempts.len(),
             1,
             "the next is admitted once one ends"
+        );
+    }
+
+    /// The test host with one act run just before its `before_start`th start: a write that
+    /// lands after the pass last fitted that order and before the order's own start write.
+    struct RacedHost<'a, F: Fn()> {
+        inner: TestHost<'a>,
+        before_start: usize,
+        act: F,
+    }
+
+    impl<F: Fn()> OrderHost for RacedHost<'_, F> {
+        fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
+            self.inner.machine_facts(machines)
+        }
+
+        fn make_attempt(&self, attempt: &AttemptToMake<'_>) -> AttemptOutcome {
+            if self.inner.asked.get() + 1 == self.before_start {
+                (self.act)();
+            }
+            self.inner.make_attempt(attempt)
+        }
+
+        fn stop_attempt(&self, order: &WorkOrder, job: &EntityId) -> Result<(), String> {
+            self.inner.stop_attempt(order, job)
+        }
+    }
+
+    #[test]
+    fn a_cap_lowered_after_the_fit_holds_the_attempt_in_its_start_write() {
+        let rig = rig();
+        let proof = owner_proof(&rig.vault);
+        set_running_cap(&rig.vault, &proof, "sol-seat", 2);
+        let free = EntityId::now();
+        let digest = rig.workload(0, &[free]);
+        let seated: Vec<WorkOrder> = (0..2)
+            .map(|_| {
+                put_with(&rig, rig.order(&digest, 0, WaitRule::Open), |order| {
+                    order.limits.caps = vec!["sol-seat".to_owned()];
+                })
+            })
+            .collect();
+        // The owner lowers the cap to one after the pass fitted the second order against two.
+        let host = RacedHost {
+            inner: TestHost::new(&rig, vec![machine(free, None)]),
+            before_start: 2,
+            act: || set_running_cap(&rig.vault, &proof, "sol-seat", 1),
+        };
+
+        rig.vault.work_order_pass(&host, NOW).expect("pass");
+
+        assert_eq!(
+            host.inner.asked.get(),
+            2,
+            "the pass fitted both under a cap of two"
+        );
+        let stored: Vec<WorkOrder> = seated.iter().map(|order| rig.stored(order)).collect();
+        let made = stored.iter().filter(|o| !o.attempts.is_empty()).count();
+        assert_eq!(made, 1, "the start write counts the cap of one: {stored:?}");
+        let held = stored
+            .iter()
+            .find(|order| order.attempts.is_empty())
+            .expect("the second waits");
+        assert_eq!(
+            blockers(held),
+            vec![(
+                Some(free.to_hex()),
+                Blocker::CapFull {
+                    cap: "sol-seat".to_owned(),
+                    running: 1
+                }
+            )]
         );
     }
 
@@ -1501,6 +1580,46 @@ mod after_and_caps {
     }
 
     impl DoorRig {
+        /// The request for the workload with `after` and `group`.
+        fn request(
+            &self,
+            after: Option<EntityId>,
+            group: Option<GroupRequest>,
+        ) -> WorkOrderRequest {
+            WorkOrderRequest {
+                workload: self.digest.clone(),
+                charge: OrderCharge::Offer {
+                    name: OFFER.to_owned(),
+                },
+                limits: OrderLimits::default(),
+                wishes: OrderWishes::default(),
+                class: OrderClass::Normal,
+                wait: WaitRule::Open,
+                retry_on: Vec::new(),
+                result: None,
+                intent_key: None,
+                after: after.map(|order| AfterCondition {
+                    order,
+                    on: AfterOn::Success,
+                }),
+                group,
+            }
+        }
+
+        /// Agent `agent` (0 or 1) sends `request` to the order door.
+        fn send(
+            &self,
+            agent: usize,
+            request: &WorkOrderRequest,
+        ) -> Result<WorkOrderView, MemoryError> {
+            order_work_as(
+                &self.vault.memory(self.agents[agent], EdgeActorClass::Agent),
+                None,
+                request,
+                NOW,
+            )
+        }
+
         /// Agent `agent` (0 or 1) orders the workload with `after` and `group`.
         fn order(
             &self,
@@ -1508,30 +1627,8 @@ mod after_and_caps {
             after: Option<EntityId>,
             group: Option<GroupRequest>,
         ) -> Result<WorkOrder, MemoryError> {
-            order_work_as(
-                &self.vault.memory(self.agents[agent], EdgeActorClass::Agent),
-                None,
-                &WorkOrderRequest {
-                    workload: self.digest.clone(),
-                    charge: OrderCharge::Offer {
-                        name: OFFER.to_owned(),
-                    },
-                    limits: OrderLimits::default(),
-                    wishes: OrderWishes::default(),
-                    class: OrderClass::Normal,
-                    wait: WaitRule::Open,
-                    retry_on: Vec::new(),
-                    result: None,
-                    intent_key: None,
-                    after: after.map(|order| AfterCondition {
-                        order,
-                        on: AfterOn::Success,
-                    }),
-                    group,
-                },
-                NOW,
-            )
-            .map(|view| view.order)
+            self.send(agent, &self.request(after, group))
+                .map(|view| view.order)
         }
     }
 
@@ -1607,5 +1704,39 @@ mod after_and_caps {
             2,
             "the row never changes"
         );
+    }
+
+    #[test]
+    fn a_replay_under_its_intent_key_that_names_another_group_cap_is_another_request() {
+        let rig = door_rig();
+        let group = EntityId::now();
+        let member = |cap: Option<u32>| {
+            Some(GroupRequest {
+                group,
+                index: 0,
+                cap,
+            })
+        };
+        let mut request = rig.request(None, member(Some(2)));
+        request.intent_key = Some("q5-group-replay".to_owned());
+        let first = rig.send(0, &request).expect("the first member");
+        assert!(!first.replayed);
+        let again = rig.send(0, &request).expect("the same request again");
+        assert!(again.replayed);
+        assert_eq!(again.order.id, first.order.id);
+        request.group = member(None);
+        let no_cap = rig.send(0, &request).expect("a replay that names no cap");
+        assert!(no_cap.replayed, "no cap means the group's own");
+        request.group = member(Some(3));
+        let other = rig
+            .send(0, &request)
+            .expect_err("another cap under the same intent key");
+        assert_eq!(other.code, MEMORY_CODE_INVALID_STATE, "{other:?}");
+        let row = rig
+            .vault
+            .work_order_group(&group)
+            .expect("read")
+            .expect("the group row");
+        assert_eq!(row.cap, 2, "the row never changes");
     }
 }

@@ -88,13 +88,21 @@ pub(super) fn admit_after_in_txn(
     };
     if let Some(UpstreamHold::Ended(order)) = upstream_hold(after.order, Some(&upstream), after.on)
     {
-        return Ok(Err(order_refusal(
-            MEMORY_CODE_INVALID_STATE,
-            "the order this one would wait on ended without the end it waits for; nothing is queued",
-            &[Blocker::After {
-                order: order.to_hex(),
-            }],
-        )));
+        return Ok(Err(upstream_ended_refusal(&order)));
     }
     Ok(Ok(()))
+}
+
+/// The refusal of an order whose `after` names `upstream`, an order that ended without the end
+/// it waits for: `invalid_state` with the reason `after`. The order door answers it at
+/// admission, and again when the door's own pass is what finds that end.
+#[must_use]
+pub fn upstream_ended_refusal(upstream: &EntityId) -> MemoryError {
+    order_refusal(
+        MEMORY_CODE_INVALID_STATE,
+        "the order this one would wait on ended without the end it waits for; nothing is queued",
+        &[Blocker::After {
+            order: upstream.to_hex(),
+        }],
+    )
 }

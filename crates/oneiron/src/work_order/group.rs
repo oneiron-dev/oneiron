@@ -115,6 +115,26 @@ pub(super) fn admit_group_member_in_txn(
     Ok(Ok(None))
 }
 
+/// Whether a replayed member `request` asks for its group's cap, read in `txn`: true when it
+/// names no cap (the group's own then holds), or names the cap the group's row holds. A replay
+/// that names another cap is another request.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn replay_keeps_group_cap_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: Option<&GroupRequest>,
+) -> crate::Result<bool> {
+    let Some((group, cap)) = request.and_then(|request| Some((request.group, request.cap?))) else {
+        return Ok(true);
+    };
+    Ok(WORK_ORDER_GROUPS
+        .get(&vault.store, txn, &group)?
+        .is_some_and(|row| row.cap == cap))
+}
+
 impl Vault {
     /// Writes `group`, the row of a group's first member, in the member's create write.
     ///

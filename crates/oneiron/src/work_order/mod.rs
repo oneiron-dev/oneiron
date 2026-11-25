@@ -56,6 +56,7 @@ pub use record::{
     OrderedBy, ResultBinding, SlotDecision, SlotName, WaitRule, WorkOrder, attempt_job_id,
 };
 pub use start_check::{AttemptRefused, OrderAttemptRef, OrderStarter};
+pub use upstream::upstream_ended_refusal;
 pub use wait::{order_wait_id, work_order_wait_as};
 pub use wire::{
     AttemptReceipt, MachinesPlaceRequest, MachinesPlaceView, WaitUntil, WorkOrderList,

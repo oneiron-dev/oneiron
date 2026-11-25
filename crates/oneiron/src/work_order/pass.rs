@@ -571,8 +571,10 @@ impl Vault {
                 }
             }
         }
-        let orders: Vec<WorkOrder> = self
-            .work_orders()?
+        let all_orders = self.work_orders()?;
+        // Caps count every live attempt in the vault, as the attempt's own write counts them.
+        let mut caps = RunningCaps::of(&all_orders);
+        let orders: Vec<WorkOrder> = all_orders
             .into_iter()
             .filter(|order| host.holds(order))
             .collect();
@@ -601,7 +603,6 @@ impl Vault {
                 *running.entry(order.family_key()).or_default() += 1;
             }
         }
-        let mut caps = RunningCaps::of(&orders);
         let mut runnable = Vec::new();
         for order in orders
             .iter()
