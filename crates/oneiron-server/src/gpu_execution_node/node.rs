@@ -46,7 +46,7 @@ use super::node_settings::{
 use super::slots::GpuSlotTable;
 use super::wire::{
     JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer,
-    ScopeReport, SignedJobSubmit, TemplateOffer,
+    NodeReadiness, ScopeReport, SignedJobSubmit, TemplateOffer,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -269,6 +269,12 @@ pub trait NodeKeys: Send + Sync {
     fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
         let _ = (peer, request);
         JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// What the node's last idle readiness check found (pass 34, 7.3), for
+    /// `Node`; `None` while the node keeps no journal.
+    fn readiness(&self) -> Option<NodeReadiness> {
+        None
     }
 
     /// The launch scopes the keys' job unit starts runs in, each with what
@@ -652,6 +658,7 @@ impl ExecutionNode {
             swept: keys.is_some_and(|keys| keys.swept()),
             boot_id: boot_id(),
             engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+            readiness: keys.and_then(|keys| keys.readiness()),
         }
     }
 
