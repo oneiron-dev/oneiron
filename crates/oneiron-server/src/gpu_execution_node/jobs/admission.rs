@@ -44,6 +44,17 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 /// would refuse.
 const RENEWAL_MARGIN_NS: u64 = RENEW_BEFORE_STOP_NS + 4 * NANOS_PER_SEC;
 
+/// A renewal's refusals that no wait undoes (row W1): the run is gone or
+/// can no longer take a renewal, the signed submit expired, or the run
+/// reached its longest. Only these close a chunk key while the node's fold
+/// lags the issuer's authority heads; every other refusal waits for it.
+const RENEWAL_REFUSALS_FOR_GOOD: [&str; 4] = [
+    "continues_unknown",
+    "continues_ended",
+    "submit_expired",
+    "session_max_reached",
+];
+
 /// The most devices one key leases in this slice: the GPU slot table holds
 /// one lease per key, and a receipt names one device. A bound of the
 /// table's shape, not a policy.
@@ -634,17 +645,17 @@ impl NodeJobs {
                 .get(first)
                 .filter(|holder| holder.issuer == peer)
                 .cloned();
+            let folded = self
+                .parts()
+                .authority
+                .folded(&signed.submit.authority_heads);
             match self.renewal(&signed, holder.as_ref(), &now) {
-                // A renewal that would pass waits for the node's fold to
-                // hold the issuer's authority heads, and writes nothing; one
-                // whose run ends or comes too near its stop meanwhile is
-                // refused by the arm below.
-                Ok(_)
-                    if !self
-                        .parts()
-                        .authority
-                        .folded(&signed.submit.authority_heads) =>
-                {
+                // While the node's fold lags the issuer's authority heads, a
+                // renewal waits and writes nothing, unless no wait could let
+                // it pass: its run ended or came too near its stop, so the
+                // wait ends there.
+                Ok(_) if !folded => return busy(),
+                Err(reason) if !folded && !RENEWAL_REFUSALS_FOR_GOOD.contains(&reason.as_str()) => {
                     return busy();
                 }
                 Err(reason) => {
