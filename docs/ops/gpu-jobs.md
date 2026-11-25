@@ -79,8 +79,10 @@ every quote refuses and no worker starts.
   where a machine measured it or a provider reported a chunk's final run time
   (its exit); a stop, a cancel and a lost machine or resource show it as
   unknown, never as zero. A chunk the provider refused before anything ran
-  charged nothing and returned its whole quote. A stopped job that the
-  customer cancels keeps its last chunk's end at its maximum. An attempt a
+  charged nothing and returned its whole quote. A chunk the owner wrote off
+  (door 10) shows `written_off`: its occupancy is unknown, and it settled
+  zero. A stopped job that the customer cancels keeps its last chunk's end at
+  its maximum. An attempt a
   work order made names its order and its number there, who ordered, how
   long the order waited for it (from the order, or from the end of the
   attempt before), when the machine was first seen running it, and what the

@@ -272,6 +272,12 @@ oneiron mcp --url https://<vault-host> --auth-mode owner \
   The latest mint for a name revokes that name's previous slips. In owner
   mode, minting a slip does not help: sign in again on the surface that
   wrote `--owner-upgrade-headers-file`.
+- **`mcp_grant_missing`:** the credential is sound, and its tier lacks the
+  grant `error.data.required_scope` names: `core:write` for a write that
+  takes effect at once (a `read-only` agent's `vault.notes.create`, a
+  `propose-only` agent's claim edit in place), `core:propose` for one that
+  waits for review (a `read-only` agent's new claim). Replacing the slip at
+  the same tier does not help: mint it again at a tier that holds the grant.
 - **`proof_clock_ahead`:** follow the clock-specific recovery instructions in
   [owner actions](ops/owner-actions.md#agents-refused-after-the-host-clock-ran-ahead),
   rather than repeatedly replacing credentials.

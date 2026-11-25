@@ -3,8 +3,8 @@
 //! [`crate::gpu_execution_node::jobs::EndRecord`]):
 //! - `exec.json` ([`ExecFile`]): the prepare step (root) writes it into the
 //!   job's exchange directory; `job-exec` applies it and nothing else;
-//! - the scope report ([`ScopeReport`]): `job-exec` writes it into the gate
-//!   pipe before the workload exists;
+//! - the scope report ([`ScopeReport`]): `job-exec` sends it on its
+//!   connection to the gate's socket before the workload exists;
 //! - `prepared.json` ([`PreparedRecord`]), `scope.json` ([`ScopeRecord`])
 //!   and `cutoff.json` ([`CutoffMark`]): root's records in the key's control
 //!   directory, which the end step and the engine read.
@@ -184,7 +184,7 @@ pub struct ScopeRecord {
     pub released: bool,
     pub refusal: Option<String>,
     /// Why the workload's `execve` failed after the go, in `job-exec`'s
-    /// words on the report pipe (review r2 R2-02); the workload then never
+    /// words on the gate connection (review r2 R2-02); the workload then never
     /// started.
     #[serde(default)]
     pub exec_failed: Option<String>,
