@@ -40,7 +40,7 @@ use oneiron_server::gpu_execution_node::wire::{
     WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
-    ExecutionNode, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe,
+    DrainClearBy, ExecutionNode, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe,
 };
 use oneiron_server::test_doors::node_jobs::{ScriptedAdmission, ScriptedNode, ScriptedSigner};
 use serde_json::{Value, json};
@@ -52,6 +52,8 @@ const ISSUER: &str = "5d1e3c8a9b7f4e21a0c6d2b8f3e9a714";
 const GPU: &str = "GPU-0f1e2d3c";
 
 const EXECUTION: &str = "machines.execution";
+const DRAIN_CLEAR_BY: &str = "machines.drain.clear_by";
+const READINESS_EVERY_SECS: &str = "jobs.readiness.every_secs";
 const SET: &str = "vault.settings.set";
 
 /// The box's file: an enabled node holding the template `probe`, which may use no network or the
@@ -764,5 +766,78 @@ fn the_owners_pause_during_staging_refuses_the_launch_inside_the_launch_commit()
     wait_for(&jobs, next, |entry| entry.state == JobState::Launching)?;
     jobs.tick();
     wait_for(&jobs, next, |entry| entry.state == JobState::Running)?;
+    Ok(())
+}
+
+/// Row P0 with row Q4 (pass 34 2.4 and 7.3): a passed readiness check clears the node's drain
+/// only when the box's `drain_clear_by` and the owner's `machines.drain.clear_by` both leave it to
+/// the check. The owner's `owner` keeps the drain for the box, since no act of his reaches the
+/// node's own drain yet, and the box's `person_at_box` holds whatever the owner's row says.
+#[test]
+fn a_passing_readiness_check_clears_the_drain_only_when_the_owner_leaves_it_to_the_check()
+-> TestResult {
+    let rig = Rig::new("")?;
+    let clear_by = |rig: &Rig| NodeAdmission::job_settings(&rig.node).drain_clear_by;
+    assert_eq!(
+        clear_by(&rig),
+        DrainClearBy::AfterReadinessCheck,
+        "with no row of the owner's, the box's default leaves the clear to the check"
+    );
+
+    rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
+    assert_eq!(
+        clear_by(&rig),
+        DrainClearBy::PersonAtBox,
+        "the owner's `owner` keeps the node's drain from the check"
+    );
+
+    rig.owner_sets(
+        DRAIN_CLEAR_BY,
+        None,
+        json!({ "by": "after_readiness_check" }),
+    )?;
+    assert_eq!(
+        clear_by(&rig),
+        DrainClearBy::AfterReadinessCheck,
+        "the owner gives the clear back to the check"
+    );
+
+    rig.box_writes(r#"drain_clear_by = "person_at_box""#)?;
+    assert_eq!(
+        clear_by(&rig),
+        DrainClearBy::PersonAtBox,
+        "the box's `person_at_box` holds under the owner's `after_readiness_check`"
+    );
+    Ok(())
+}
+
+/// Row P0 with row Q4 (pass 34 6.3 and 7.3): the node checks itself at the shorter of the box's
+/// `readiness_every_secs` and the owner's `jobs.readiness.every_secs`, and at the box's alone when
+/// its file does not accept the owner's policy.
+#[test]
+fn the_node_checks_itself_at_the_shorter_of_the_box_and_owner_periods() -> TestResult {
+    let rig = Rig::new("readiness_every_secs = 900")?;
+    let every_secs = |rig: &Rig| NodeAdmission::job_settings(&rig.node).readiness_every_secs;
+    assert_eq!(every_secs(&rig), 900, "no row of the owner's: the box's");
+
+    rig.owner_sets(READINESS_EVERY_SECS, None, json!(60))?;
+    assert_eq!(every_secs(&rig), 60, "the owner's shorter period");
+
+    rig.owner_sets(READINESS_EVERY_SECS, None, json!(3600))?;
+    assert_eq!(every_secs(&rig), 900, "the box's shorter period");
+
+    rig.box_writes("readiness_every_secs = 7200")?;
+    assert_eq!(
+        every_secs(&rig),
+        3600,
+        "the owner's period, now the shorter"
+    );
+
+    rig.box_writes("readiness_every_secs = 7200\nowner_policy = false")?;
+    assert_eq!(
+        every_secs(&rig),
+        7200,
+        "a box that does not accept the owner's policy keeps its own"
+    );
     Ok(())
 }
