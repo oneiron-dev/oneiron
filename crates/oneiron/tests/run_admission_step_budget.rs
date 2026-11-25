@@ -339,6 +339,7 @@ fn park_on_share(
         Some(DreamerParkedWait {
             wait: DreamerParkWait::ResidentShare {
                 resident,
+                unit: LeaseUnit::tokens().as_str().to_owned(),
                 needed_units: STEP_RESERVE,
             },
             lease_generation: row.attempt_count,
@@ -419,6 +420,7 @@ fn pin_share(
             resident: resident.to_hex(),
             units: Some(units),
             pinned: true,
+            unit: Some(LeaseUnit::tokens().as_str().to_owned()),
         },
     )?;
     Ok(())
@@ -445,10 +447,12 @@ fn the_run_admission_names_an_unfunded_call_and_a_spent_resident_share() {
     assert_eq!(
         llm::LlmError::from(RunDenied::ResidentShareSpent {
             resident,
+            unit: LeaseUnit::tokens(),
             needed_units: 7,
         }),
         llm::LlmError::BudgetDenied(llm::BudgetDenied::ResidentShareSpent {
             resident,
+            unit: LeaseUnit::tokens().as_str().to_owned(),
             needed_units: 7,
         }),
         "a resident's spent pinned share keeps its resident and the share the call needed"

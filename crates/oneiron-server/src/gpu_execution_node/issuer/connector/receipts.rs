@@ -94,7 +94,7 @@ impl VaultMachineConnector {
     ) -> Result<GpuTermination, GpuConnectorError> {
         let end_mark = self.parts.clock.boot_mark();
         let maximum_secs = submit.maximum_secs;
-        let (_, billed_secs) = self
+        let (row, confirmed) = self
             .vault()
             .update_job_dispatch_and_observation(key, |row, stored| {
                 let Some(mut observation) = stored else {
@@ -112,13 +112,46 @@ impl VaultMachineConnector {
                 ));
                 observation.end_seen = Some(end_seen);
                 observation.meter = Some(billing.meter);
+                let closes_now = row.phase != DispatchPhase::Closed;
                 row.phase = DispatchPhase::Closed;
-                (Some(observation), Some(billing.billed_secs))
+                (
+                    Some(observation),
+                    Some((billing.billed_secs, billing.meter, closes_now)),
+                )
             })
             .map_err(store)?
             .ok_or_else(|| unavailable("no_dispatch_row"))?;
-        let billed_secs = billed_secs.ok_or_else(|| unavailable("no_observation"))?;
+        let (billed_secs, meter, closes_now) =
+            confirmed.ok_or_else(|| unavailable("no_observation"))?;
+        // Row R4, 7.9: the end counts for the machine's guard on the issuer once, after the
+        // write that closed the dispatch; a later confirm of the closed key counts nothing.
+        if closes_now {
+            self.count_machine_end(row.machine, ended, &meter);
+        }
+        // Row R4, EM-12 = A: the outputs land when the quote binds a result, then the node is
+        // told it may clean them. What does not finish here is owed to the housekeeping pass.
+        self.result_returns().return_outputs(&row, ended);
         Ok(GpuTermination::Confirmed { billed_secs })
+    }
+
+    /// Counts the end `ended` (billed as `meter`) for `machine`'s job guard on the issuer.
+    fn count_machine_end(
+        &self,
+        machine: oneiron::EntityId,
+        ended: &JobReceipt,
+        meter: &oneiron::gpu_job::MeterVerdict,
+    ) {
+        match self.vault().machine_job_settings(machine) {
+            Ok(settings) => super::super::guard::count_outcome(
+                self.vault(),
+                machine,
+                &super::super::guard::machine_job_outcome(ended, meter, settings.fast_exit_secs),
+                self.now_ms(),
+            ),
+            Err(error) => {
+                tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the job guard's settings not read; this end is not counted");
+            }
+        }
     }
 }
 

@@ -514,6 +514,18 @@ impl Vault {
         Ok(MachineCapacityWrite::Recorded(id))
     }
 
+    /// [`Self::machine_capacity`] with the id of the claim that holds it, so a
+    /// read that answers from it can list it as a producer.
+    pub(crate) fn machine_capacity_claim(
+        &self,
+        machine: EntityId,
+    ) -> Result<Option<(EntityId, MachineCapacity)>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(latest_capacity(&capacity_heads_in_txn(
+            self, &txn, machine,
+        )?))
+    }
+
     /// The latest recorded capacity of `machine`, this install's or another
     /// machine of the owner's, or `None` while it has recorded none.
     pub fn machine_capacity(&self, machine: EntityId) -> Result<Option<MachineCapacity>> {

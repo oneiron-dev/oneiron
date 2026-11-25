@@ -19,7 +19,9 @@ use axum::http::{Request, StatusCode};
 use oneiron::authority::HostSlipIssuer;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::actions::SharedActionExecutor;
-use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use oneiron_server::{
+    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
+};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -103,50 +105,77 @@ async fn as_owner(app: &Router, vault: &Vault, path: &str, body: Value) -> (Stat
     (status, body)
 }
 
+/// Runs one served case on threads that have the engine's native stack, as
+/// `oneiron serve` runs its doors: the served router's future is larger than
+/// a libtest thread's stack in a dev build (a `#[tokio::test]` here overflowed
+/// it in proof run rp2, 25 Nov).
+fn on_engine_stack<F>(case: impl FnOnce() -> F + Send + 'static)
+where
+    F: std::future::Future<Output = ()>,
+{
+    let thread = std::thread::Builder::new()
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(case());
+        })
+        .expect("engine-stack thread");
+    if let Err(panic) = thread.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 /// The owner calls the withdrawn row as an action, then again under the same
 /// idempotency key, as a replay: each answers "unknown action verb", so no
 /// answer is kept or served again. The same row called directly still
 /// answers the owner.
-#[tokio::test]
-async fn a_withdrawn_row_is_an_unknown_action_and_its_direct_row_answers() {
-    let dir = tempfile::tempdir().expect("vault directory");
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
-    let server = SyncServer::new(
-        Arc::clone(&vault),
-        SyncServerConfig {
-            auth_secret: Some("owner".into()),
-            ..Default::default()
-        },
-    )
-    .expect("create server");
-    let app = build_app(Arc::new(server));
-    let action = format!("/v1/core/actions/{WITHDRAWN_ROW}");
-    let call = json!({
-        "args": [{"kind": "json", "value": {}}],
-        "idempotencyKey": "unkept-replies-workloads-list",
-    });
-    for attempt in ["the first call", "its replay under the same key"] {
-        let (status, body) = as_owner(&app, &vault, &action, call.clone()).await;
+#[test]
+fn a_withdrawn_row_is_an_unknown_action_and_its_direct_row_answers() {
+    on_engine_stack(|| async {
+        let dir = tempfile::tempdir().expect("vault directory");
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
+        let server = SyncServer::new(
+            Arc::clone(&vault),
+            SyncServerConfig {
+                auth_secret: Some("owner".into()),
+                ..Default::default()
+            },
+        )
+        .expect("create server");
+        let app = build_app(Arc::new(server));
+        let action = format!("/v1/core/actions/{WITHDRAWN_ROW}");
+        let call = json!({
+            "args": [{"kind": "json", "value": {}}],
+            "idempotencyKey": "unkept-replies-workloads-list",
+        });
+        for attempt in ["the first call", "its replay under the same key"] {
+            let (status, body) = as_owner(&app, &vault, &action, call.clone()).await;
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "{attempt} of {WITHDRAWN_ROW} as an action: {body}"
+            );
+            assert!(
+                body.to_string().contains("unknown action verb"),
+                "{attempt} of {WITHDRAWN_ROW} as an action: {body}"
+            );
+        }
+        let (status, body) = as_owner(
+            &app,
+            &vault,
+            &format!("/v1/core/facade/{WITHDRAWN_ROW}"),
+            json!({}),
+        )
+        .await;
         assert_eq!(
             status,
-            StatusCode::BAD_REQUEST,
-            "{attempt} of {WITHDRAWN_ROW} as an action: {body}"
+            StatusCode::OK,
+            "{WITHDRAWN_ROW} called directly: {body}"
         );
-        assert!(
-            body.to_string().contains("unknown action verb"),
-            "{attempt} of {WITHDRAWN_ROW} as an action: {body}"
-        );
-    }
-    let (status, body) = as_owner(
-        &app,
-        &vault,
-        &format!("/v1/core/facade/{WITHDRAWN_ROW}"),
-        json!({}),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "{WITHDRAWN_ROW} called directly: {body}"
-    );
+    });
 }
