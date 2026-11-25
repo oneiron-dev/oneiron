@@ -597,6 +597,14 @@ pub struct DeviceEnrolArgs {
     /// Config file the vault runs with. Defaults to the XDG path.
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Enrol a machine already enrolled for this vault again, with a new
+    /// link from its home (for example to take every protocol a newer home
+    /// serves): its stored enrolment is replaced only once the home has
+    /// answered and the new one is written, so a re-enrolment that fails
+    /// leaves the old one as it was.
+    #[arg(long)]
+    pub replace: bool,
 }
 
 /// A local agent's read credential, minted through the same host-rooted

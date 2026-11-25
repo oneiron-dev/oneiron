@@ -48,7 +48,8 @@ pub use journal_file::{
 };
 pub use node_parts::{
     AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeDevices, NodeJobParts,
-    NodeJobPaths, NodeJobSettings, StageFailure, StageOrder, Stager, StagingNotBuilt,
+    NodeJobPaths, NodeJobSettings, NodeJobsAttachment, StageFailure, StageOrder, Stager,
+    StagingNotBuilt,
 };
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 

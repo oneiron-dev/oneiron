@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::gpu_execution_node::wire::ScopeFacts;
 use oneiron::job_workload::{BoundRequirement, DeviceLease, ScopeBound, ScopeCapabilities};
+
+use crate::gpu_execution_node::wire::{ScopeClass, ScopeFacts};
 
 /// The name every job unit instance starts with.
 pub const JOB_UNIT_TEMPLATE_PREFIX: &str = "oneiron-job@";
@@ -57,7 +58,7 @@ impl JobKeyId {
     /// The id of `key`.
     #[must_use]
     pub fn for_key(key: &str) -> Self {
-        let hash = blake3::hash(key.as_bytes());
+        let hash = oneiron_contracts::fingerprint::ContentHash::of(key.as_bytes());
         Self(hash.to_hex()[..JOB_KEY_ID_HEX_DIGITS].to_owned())
     }
 
@@ -184,6 +185,13 @@ pub enum RenewRefusal {
 /// puts its own timeout on the ask and answers [`JobUnitError`] past it,
 /// since the end handling asks under the admission lock.
 pub trait JobUnit: Send + Sync {
+    /// The class of scope the unit runs its workload in: the host scope (the
+    /// job unit's own OS account and control group) for the systemd unit and
+    /// the scripted one.
+    fn class(&self) -> ScopeClass {
+        ScopeClass::Host
+    }
+
     /// What this machine's scope can enforce now, bound by bound. The
     /// launch commit refuses a launch while the minimum contract is not met.
     fn probe(&self) -> ScopeCapabilities;
@@ -295,13 +303,14 @@ fn boot_clock_ns() -> u64 {
 }
 
 /// Not a boot clock: a machine without Linux runs no job (it has no job
-/// unit), so this only keeps the node's answers well formed there.
+/// unit), so the wall clock only keeps the node's answers well formed there.
 #[cfg(not(target_os = "linux"))]
 fn boot_clock_ns() -> u64 {
-    use std::sync::OnceLock;
-    static ANCHOR: OnceLock<std::time::Instant> = OnceLock::new();
-    let anchor = ANCHOR.get_or_init(std::time::Instant::now);
-    u64::try_from(anchor.elapsed().as_nanos()).unwrap_or(u64::MAX)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
 }
 
 /// The unit's exact parameters, written by the engine into the key's control

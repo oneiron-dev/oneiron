@@ -89,15 +89,17 @@ impl NodeJobs {
         let deadline = run.deadline;
         let closed = || self.key_closed(key) || Instant::now() >= deadline;
         let staged = self.parts().stager.stage(&run.order, &closed);
+        // Staging that ran past the limit, and a fold that did not reach the
+        // submit's heads by the limit, end the key with their own reasons.
         let failure = match staged {
-            Ok(()) => None,
+            Ok(()) if Instant::now() >= deadline => Some("staging_limit".to_owned()),
+            Ok(()) => (!self.wait_for_authority(key, &run.authority_heads, deadline))
+                .then(|| "authority_stale".to_owned()),
             Err(StageFailure::Closed) if self.key_closed(key) => return,
             Err(StageFailure::Closed) => Some("staging_limit".to_owned()),
             Err(StageFailure::Refused(reason)) => Some(reason),
         };
-        let fresh =
-            failure.is_none() && self.wait_for_authority(key, &run.authority_heads, deadline);
-        self.launch_commit(key, failure, fresh, deadline);
+        self.launch_commit(key, failure, deadline);
     }
 
     /// Records that staging began (an `accepted` key) or takes up a key
@@ -169,13 +171,7 @@ impl NodeJobs {
     }
 
     /// The launch commit, under the admission lock.
-    fn launch_commit(
-        &self,
-        key: &str,
-        staging_failure: Option<String>,
-        authority_fresh: bool,
-        deadline: Instant,
-    ) {
+    fn launch_commit(&self, key: &str, staging_failure: Option<String>, deadline: Instant) {
         let mut guard = self.lock();
         let now = self.now();
         let book: &mut NodeBook = &mut guard;
@@ -195,7 +191,7 @@ impl NodeJobs {
         };
         let refusal = staging_failure
             .or_else(|| (Instant::now() >= deadline).then(|| "staging_limit".to_owned()))
-            .or_else(|| self.launch_policy_refusal(&known, &signed, authority_fresh));
+            .or_else(|| self.launch_policy_refusal(&known, &signed));
         if let Some(reason) = refusal {
             if let Err(error) = journal.record(
                 key,
@@ -216,6 +212,9 @@ impl NodeJobs {
         let leased = placement(self.parts().devices.as_ref(), &reserve, Placing::AtLaunch)
             .map_err(|reason| format!("device_refused: {reason}"))
             .and_then(|placed| {
+                // The sum rule against the template's memory ceiling, before
+                // any lease.
+                self.parts().admission.admit_placement(pin, &placed)?;
                 let mut leases = Vec::with_capacity(placed.devices.len());
                 for device in &placed.devices {
                     let request =
@@ -321,12 +320,7 @@ impl NodeJobs {
 
     /// Steps 2 and 3 of the launch commit: the reason the key may not
     /// launch now, or `None`.
-    fn launch_policy_refusal(
-        &self,
-        known: &NodeKey,
-        signed: &SignedJobSubmit,
-        authority_fresh: bool,
-    ) -> Option<String> {
+    fn launch_policy_refusal(&self, known: &NodeKey, signed: &SignedJobSubmit) -> Option<String> {
         let admission = &self.parts().admission;
         if let Some(reason) = admission.controls().refusal() {
             return Some(reason);
@@ -343,11 +337,10 @@ impl NodeJobs {
         if !missing.is_empty() {
             return Some(format!("no_scope: {}", missing.join(", ")));
         }
-        if !authority_fresh
-            || !self
-                .parts()
-                .authority
-                .folded(&signed.submit.authority_heads)
+        if !self
+            .parts()
+            .authority
+            .folded(&signed.submit.authority_heads)
         {
             return Some("authority_stale".to_owned());
         }

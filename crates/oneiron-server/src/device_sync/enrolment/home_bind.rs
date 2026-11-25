@@ -97,7 +97,10 @@ impl From<MeshBindRefusal> for MeshRefusedReason {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum MeshBindReceipt {
     /// The endpoint is bound and holds the ALPN: on a fresh pairing slip,
-    /// named here, or on the binding an earlier pairing made.
+    /// named here, or on the binding an earlier pairing made. A re-enrolment
+    /// that moved that binding to a new pairing names the new slip here, for
+    /// the owner to bind the machine on in each other replica that bound it
+    /// (`vault.mesh.bind_machine`).
     Bound {
         machine: String,
         endpoint_key: String,
@@ -122,11 +125,13 @@ impl MeshBindReceipt {
             MeshEnrolment::Regranted {
                 machine,
                 endpoint_key,
+                re_paired,
             }
             | MeshEnrolment::AlreadyGranted {
                 machine,
                 endpoint_key,
-            } => Self::granted(*machine, endpoint_key, None, alpn),
+                re_paired,
+            } => Self::granted(*machine, endpoint_key, re_paired.as_ref(), alpn),
             MeshEnrolment::Refused(refusal) => Self::Refused {
                 reason: (*refusal).into(),
             },
