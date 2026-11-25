@@ -20,6 +20,7 @@ mod graduate;
 mod intent;
 mod mint;
 pub(crate) mod notice;
+mod preset;
 pub(crate) mod setting_keys;
 mod store;
 pub(crate) mod tables;
@@ -47,6 +48,7 @@ pub use mint::{
     pools, posterior_sampling,
 };
 pub use notice::{LineNoticeKind, notify_machine_returned_in_txn};
+pub use preset::{LinePresetDocument, LinePresetRef, check_document, lay_over, resolve_policy};
 pub(crate) use store::erase_line_actor_in_txn;
 pub(crate) use store::period_row_seals_seed;
 pub use store::{
@@ -55,7 +57,8 @@ pub use store::{
 };
 pub use tally::settled_tallies_in_txn;
 pub use wire::{
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,
+    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest,
+    GpuLineSetWire, GpuLineView,
 };
 
 pub use fold::{

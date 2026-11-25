@@ -48891,7 +48891,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -48994,7 +48994,21 @@
      "surface": {
       "crate-vis": 7,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinePresetDocument",
+      "LinePresetRef"
+     ],
+     "path": "src/gpu_line/preset.rs",
+     "purpose": "Line presets (design pass 34, sections 3.2 and 3.3; row L1): a lane's line policy document, carried by a…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -49025,14 +49039,16 @@
      "notable": [
       "GpuLineFamilyAdmitRequest",
       "GpuLinePolicy",
+      "GpuLinePolicyFields",
       "GpuLineRef",
       "GpuLineSetRequest",
+      "GpuLineSetWire",
       "GpuLineView"
      ],
      "path": "src/gpu_line/wire.rs",
      "purpose": "The `vault.gpu.lines.*` verbs' inputs and answers (design pass 32, section 5)",
      "surface": {
-      "struct": 5
+      "struct": 7
      }
     },
     {
@@ -51993,6 +52009,7 @@
       "JobHistoryLineSum",
       "JobHistoryMachineSum",
       "JobHistoryOfferCharge",
+      "JobHistoryOrder",
       "JobHistoryPeriodSum",
       "JobHistoryRequest",
       "JobHistorySum",
@@ -52004,7 +52021,7 @@
       "const": 3,
       "fn": 4,
       "re-export": 1,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -52017,7 +52034,7 @@
       "JobHistoryFilter"
      ],
      "path": "src/job_history/project.rs",
-     "purpose": "The pure projection behind `vault.jobs.history`: stored jobs, claims and periods in, the ended attempts and…",
+     "purpose": "The pure projection behind `vault.jobs.history`: stored jobs, claims, periods and work orders in, the ended…",
      "surface": {
       "enum": 1,
       "fn": 2,
@@ -81592,6 +81609,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "PackLinePreset"
+     ],
+     "path": "src/skill_hub/pack_catalog/line_preset_pack.rs",
+     "purpose": "Line presets as pack data (design pass 34, sections 3.2 and 3.3; row L1): a pack of kind `capability` may…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/local.rs",
      "purpose": "The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1), and the vault's `local` pack",
@@ -81638,7 +81669,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 1,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -81844,7 +81875,7 @@
      "purpose": "A table of setting defaults as pack data (design pass 34, section 3.2; row L1): a pack of kind `capability`…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -81935,7 +81966,7 @@
      "purpose": "Validated exact source trees",
      "surface": {
       "crate-vis": 3,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -107411,7 +107442,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AttemptOutcome",
@@ -107423,7 +107454,7 @@
      "purpose": "The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 2,
@@ -115120,6 +115151,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/gpu_line_presets.rs",
+     "purpose": "Design pass 34, sections 3.2 and 3.3 (row L1): `vault.gpu.lines.set { preset }`",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/graduated_scope_demotion_authors.rs",
      "purpose": "Who may demote another actor's graduated ramp scope (census L7-33; FIX 22934; Engine RULING L7-33-WHO = A…",
      "surface": {}
@@ -116858,6 +116897,14 @@
      "notable": [],
      "path": "tests/job_history_offers.rs",
      "purpose": "`vault.jobs.history` over plain offer jobs, from the rows the job's own lifecycle writes (review round 1 of…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_history_orders.rs",
+     "purpose": "`vault.jobs.history` joined to `WORK_ORDER` (pass 34, 1.1 and section 5; row Q2): an attempt the work-order…",
      "surface": {}
     },
     {
@@ -123468,7 +123515,7 @@
     },
     "gpu_line": {
      "entry": "crates/oneiron/src/gpu_line/mod.rs",
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124546,7 +124593,7 @@
     },
     "skill_hub": {
      "entry": "crates/oneiron/src/skill_hub/mod.rs",
-     "files": 112,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -124997,7 +125044,7 @@
      "entry": "crates/oneiron/src/work_order/mod.rs",
      "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22…",
      "spec_ids": []
@@ -125023,10 +125070,10 @@
      "spec_ids": []
     }
    },
-   "over_bar": 276,
+   "over_bar": 277,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8603,
-   "test_files": 2315
+   "source_files": 8605,
+   "test_files": 2317
   },
   "oneiron-agent-runtime": {
    "files": [
