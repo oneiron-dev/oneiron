@@ -11,6 +11,14 @@
 //! the template's host-local mirror stages its code (row R3c), and the vault
 //! signs each receipt with this install's machine key. Linux only: the job
 //! unit is systemd's (pass 34, section 2.2).
+//!
+//! One served node per machine: `execution-node install` makes one job
+//! account, one unit template and one control socket for the machine, and
+//! the start-up reconciliation stops every `oneiron-job@*` unit its journal
+//! does not name, as started outside the journal, and drains the node
+//! (design 7.7). A second server with an enabled node file on the same
+//! machine is outside that design; the control socket refuses every caller
+//! but the engine's account and root.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -22,9 +30,13 @@ use crate::gpu_execution_node::scope_systemd::SystemdJobUnit;
 use crate::gpu_execution_node::{ExecutionNode, GpuSlotTable};
 
 /// The node's job service on a server: opened once it can be, attached to
-/// the node, and stepped on the listener's tick. It holds the service's one
-/// strong handle; the node holds a weak one ([`NodeJobs::attachment`]), so
-/// dropping this at the listener's stop frees the journal's writer lock.
+/// the node, and stepped on the listener's tick. The node holds a weak
+/// handle ([`NodeJobs::attachment`]); this holds the strong one the server
+/// keeps. Dropping this, at the listener's stop or at a start that failed
+/// after the opening, closes the service ([`NodeJobs::close`]): no launch
+/// commit begins after it, the node answers as one with no keys, and the
+/// journal's writer lock frees once the last staging worker, which holds a
+/// handle of its own, has returned at its next step.
 pub struct ServedNodeJobs {
     node: ExecutionNode,
     vault: Arc<Vault>,
@@ -100,16 +112,16 @@ impl ServedNodeJobs {
         let node = Arc::new(self.node.clone());
         let parts = NodeJobParts {
             machine,
-            admission: Arc::clone(&node),
-            devices: Arc::clone(&self.slots),
+            admission: Arc::<ExecutionNode>::clone(&node),
+            devices: Arc::<GpuSlotTable>::clone(&self.slots),
             floor: Arc::clone(&self.floor),
             units: Arc::new(SystemdJobUnit::new(
                 self.node.file().to_path_buf(),
                 paths.state_dir.clone(),
             )),
             clock: Arc::new(SystemNodeClock),
-            signer: Arc::clone(&self.vault),
-            stager: Arc::new(MirrorStager::new(Arc::clone(&node))),
+            signer: Arc::<Vault>::clone(&self.vault),
+            stager: Arc::new(MirrorStager::new(Arc::<ExecutionNode>::clone(&node))),
             authority: node,
         };
         let opened = NodeJobs::open(paths, parts)
@@ -138,6 +150,19 @@ impl ServedNodeJobs {
                     tracing::warn!(%why, "the execution node's job service is not open; the next tick tries again");
                 }
             }
+        }
+    }
+}
+
+impl Drop for ServedNodeJobs {
+    fn drop(&mut self) {
+        let jobs = self
+            .jobs
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(jobs) = jobs {
+            jobs.close();
         }
     }
 }

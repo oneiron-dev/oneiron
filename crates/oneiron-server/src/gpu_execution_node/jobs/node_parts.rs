@@ -496,16 +496,19 @@ pub struct NodeJobsAttachment {
 }
 
 impl NodeJobsAttachment {
+    /// The service while it lives and the server serves it: a closed
+    /// service that a staging worker still holds answers as no service.
     fn service(&self) -> Option<super::NodeJobs> {
         self.service
             .upgrade()
             .map(|shared| super::NodeJobs { shared })
+            .filter(|jobs| !jobs.service_closed())
     }
 }
 
 impl super::NodeJobs {
     /// The handle to attach to R1's node: it answers for this service while
-    /// the service lives, and never keeps it alive.
+    /// the service lives and is not closed, and never keeps it alive.
     #[must_use]
     pub fn attachment(&self) -> Arc<dyn NodeKeys> {
         Arc::new(NodeJobsAttachment {
