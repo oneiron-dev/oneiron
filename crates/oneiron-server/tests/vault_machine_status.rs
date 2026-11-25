@@ -26,12 +26,13 @@ use oneiron::blob_artifact::ArtifactCreateRequest;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
     GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobError,
-    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, MeterVerdict,
+    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, GpuJobStatus, MeterVerdict,
 };
 use oneiron::job_dispatch::machine_records::{
     MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase};
+use oneiron::job_history::{HistoryViewer, JobHistoryAttempt, JobHistoryRequest, read_job_history};
 use oneiron::job_workload::{WorkloadCaller, WorkloadRef, WorkloadStarter};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
 use oneiron::provenance::made_by::MadeByTrigger;
@@ -357,6 +358,120 @@ fn a_node_reset_reports_lost_with_unknown_seconds_and_bills_nothing() {
         assert_eq!(guard.failures_in_a_row, 1);
         assert_eq!(guard.last_failure.as_deref(), Some("lost: node_reset"));
         assert_eq!(guard.drained, None, "one failure does not drain");
+    });
+}
+
+/// Pass 33, 8.6 (10.3 need 5): a run its node ends at the job's maximum ends the job with the
+/// end reason `time_limit`. It is never shown as a natural exit, and never as `stopped`, whose
+/// stop offers a resume from a checkpoint: a hard stop offers none.
+#[test]
+fn a_job_its_node_ends_at_the_maximum_ends_time_limit_not_exited() {
+    with_rig(|rig| {
+        let workload = rig.approve("time-limit", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(30), None, true);
+        rig.step(&run).expect("poll the running job");
+        rig.clock.advance_secs(60);
+        end_clean(rig, &run, JobEnd::TimeLimit, Some(90));
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+            "the node ended the job at its maximum; it did not end by itself",
+        );
+        let status = GpuJobStatus::from(&ended);
+        assert_eq!(status.state, "ended");
+        assert_eq!(status.end_reason.as_deref(), Some("time_limit"));
+        assert!(
+            status.stop.is_none(),
+            "a hard stop offers no resume: {:?}",
+            status.stop
+        );
+        let node = view(rig, &run).node.expect("the node's receipt");
+        assert_eq!(node.end.as_deref(), Some("time_limit"));
+    });
+}
+
+/// The owner's jobs' history row of `run`'s chunk.
+fn history_attempt(rig: &Rig, run: &JobRun) -> JobHistoryAttempt {
+    let filter = JobHistoryRequest::default()
+        .filter()
+        .expect("a valid history request");
+    read_job_history(rig.vault(), &filter, HistoryViewer::Owner)
+        .expect("read the jobs' history")
+        .attempts
+        .into_iter()
+        .find(|attempt| attempt.key == run.key())
+        .expect("the chunk's history row")
+}
+
+/// Pass 33, 8.6: a cancel that reaches a run its node has already ended at the maximum does not
+/// overwrite the cause. The node's confirmed hard stop is the end: the job ends `time_limit`,
+/// never `cancelled`, and its history shows the node's measure of the run.
+#[test]
+fn a_cancel_after_the_nodes_hard_stop_ends_the_job_time_limit_not_cancelled() {
+    with_rig(|rig| {
+        let workload = rig.approve("time-limit-cancel", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(30), None, true);
+        rig.step(&run).expect("poll the running job");
+        rig.clock.advance_secs(60);
+        end_clean(rig, &run, JobEnd::TimeLimit, Some(90));
+
+        rig.vault()
+            .cancel_gpu_job(
+                GpuJobActor::Owner(&rig.owner),
+                &run.job.id,
+                &rig.permits,
+                &rig.connector,
+                rig.clock.now_ms(),
+            )
+            .expect("cancel the job before the issuer polls its end");
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+            "the node's hard stop came first; the cancel ended nothing",
+        );
+        assert_eq!(
+            GpuJobStatus::from(&ended).end_reason.as_deref(),
+            Some("time_limit")
+        );
+        let attempt = history_attempt(rig, &run);
+        assert_eq!(attempt.end, "time_limit");
+        assert_eq!(attempt.occupied_secs, Some(90), "the node's measure");
+    });
+}
+
+/// Pass 33, 8.6: a status taken while the node's journal still said running estimates the run
+/// time to the issuer's clock, which can pass the node's own measure to the hard stop. The
+/// node's measure at the end is the run's occupancy: the history never shows the estimate.
+#[test]
+fn a_hard_stop_shows_the_nodes_measure_not_an_earlier_larger_estimate() {
+    with_rig(|rig| {
+        let workload = rig.approve("time-limit-measure", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(15), None, true);
+        rig.step(&run).expect("poll the running job");
+        assert_eq!(rig.job(&run).chunks[0].used_secs, 15, "the live estimate");
+        end_clean(rig, &run, JobEnd::TimeLimit, Some(11));
+
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+        );
+        assert_eq!(ended.chunks[0].used_secs, 11, "the node's measure");
+        let attempt = history_attempt(rig, &run);
+        assert_eq!(attempt.end, "time_limit");
+        assert_eq!(
+            attempt.occupied_secs,
+            Some(11),
+            "the node measured 11 s to the hard stop; 15 s was an estimate"
+        );
     });
 }
 

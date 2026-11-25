@@ -195,6 +195,9 @@ pub enum GpuEndReason {
     /// The owner wrote the job off: its end could not be confirmed, and it settled zero (pass 33
     /// row R4, door 10).
     Unconfirmed,
+    /// The backend ended the job at its maximum seconds, with or without a checkpoint (pass 33,
+    /// 8.6): never a natural exit, and never `AtMaximum`, whose stop offers a resume.
+    TimeLimit,
 }
 
 /// Where a job stands.

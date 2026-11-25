@@ -39,6 +39,9 @@ pub enum GpuResourceStatus {
     },
     /// The job's process ended by itself.
     Exited { used_secs: u64 },
+    /// The provider ended the job at its maximum seconds: a hard stop, with or
+    /// without a checkpoint (design pass 33, 8.6).
+    TimeLimit { used_secs: u64 },
     /// The provider no longer knows the resource.
     Gone,
 }
