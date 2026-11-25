@@ -10,4 +10,13 @@ crate::side_table::side_tables! {
         // reopens a claim that ended; the line reconciles its claims with the machines first.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::gpu_line::claim::erase_claim_actor_in_txn;
+    /// One machine's newest answer for one GPU allocation generation (row M2-I2, Engine
+    /// EM-15): the vault writer acquisition it came in and the occupied seconds of the jobs it
+    /// ran against that generation that no row of this vault names. Key: u64be (generation) +
+    /// id16 (machine) + the allocation id.
+    GPU_ALLOCATION_NODE: VaultMeta b"gpu_allocation_node:v1:" Named
+        // Restore class: An answer is live: a restore never forgets the seconds a machine ran
+        // that the restored rows lack. An answer from an earlier start never admits; the line
+        // asks every machine again after each start.
+        [restore: live] [family: unclassified] [tier: canonical];
 }

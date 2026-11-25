@@ -22,7 +22,8 @@
 //! - [`TemplateNetwork`]: fewer network modes;
 //! - [`FreeForm`]: `grants`, then `owner`, then `off`;
 //! - [`DrainClearBy`]: towards `person_at_box`;
-//! - the five `placement.cache.*` keys of [`CachePolicy`]: a smaller figure.
+//! - the five `placement.cache.*` keys of [`CachePolicy`]: a smaller figure;
+//! - `jobs.readiness.every_secs`: a shorter period.
 //!
 //! [`Vault::machine_policy`] reads every key for one machine in one read, as this install's rows
 //! give them.
@@ -54,6 +55,10 @@ pub const WORK_ROLES_MAX: usize = 16;
 
 /// The longest work role, in bytes.
 pub const WORK_ROLE_MAX_BYTES: usize = 32;
+
+/// The default of `jobs.readiness.every_secs`: how often, in seconds, a machine's execution node
+/// checks itself while no work runs on it (pass 34 DESIGN 6.3 and 7.3).
+pub const READINESS_EVERY_SECS_DEFAULT: u64 = 900;
 
 /// Whether a machine takes work: the state of `machines.execution`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -546,6 +551,8 @@ pub struct MachinePolicy {
     pub drain_clear_by: DrainClearBy,
     /// The five `placement.cache.*` keys.
     pub cache: CachePolicy,
+    /// `jobs.readiness.every_secs`.
+    pub readiness_every_secs: u64,
     /// `machines.devices.offered` for each device asked for, by its id.
     pub devices: BTreeMap<String, DeviceOffer>,
     /// `machines.templates.network` for each template asked for, by its name.
@@ -587,7 +594,8 @@ pub fn machine_policy_in_txn(
     use setting_keys::{
         CACHE_CAP_GIB, CACHE_IDLE_DAYS, CACHE_KEYS_MAX, CACHE_PROTECT_HOURS,
         CACHE_WANTED_HOLD_SECS, DEVICES_OFFERED, DRAIN_CLEAR_BY, EXECUTION, FREE_FORM,
-        KEEP_HEADROOM, MACHINE_ACCEPTS, TEMPLATES_NETWORK, WINDOWS, WORK_ROLES,
+        KEEP_HEADROOM, MACHINE_ACCEPTS, READINESS_EVERY_SECS, TEMPLATES_NETWORK, WINDOWS,
+        WORK_ROLES,
     };
     let item = machine_item(machine);
     let item = Some(item.as_str());
@@ -611,6 +619,9 @@ pub fn machine_policy_in_txn(
         free_form: FREE_FORM.read_in_txn(vault, txn, &[], item)?.value,
         drain_clear_by: DRAIN_CLEAR_BY.read_in_txn(vault, txn, &[], item)?.value,
         cache,
+        readiness_every_secs: READINESS_EVERY_SECS
+            .read_in_txn(vault, txn, &[], item)?
+            .value,
         devices: BTreeMap::new(),
         template_network: BTreeMap::new(),
     };

@@ -1,6 +1,6 @@
 {
   "name": "vault.arms.get",
-  "description": "One experiment arm of a GPU line: its family, frozen contract, runner, first-allowance hold and rungs, whether it is open and its rung. The owner calls it, or an agent whose Grant names it and reaches the line.",
+  "description": "One experiment arm of a GPU line: its family, frozen contract, runner, first-allowance hold and rungs, whether it is open and its rung. The owner calls it, or an agent whose Grant names it, reaches the line and holds a role there.",
   "input": "crate::experiment_arm::ArmRef",
   "output": "crate::experiment_arm::ArmView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.arms.get\", &input)?",

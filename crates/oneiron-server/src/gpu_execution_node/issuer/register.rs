@@ -159,13 +159,10 @@ fn mesh_backend(
 }
 
 /// Registers [`vault_machine_backend`] in `server`'s backend registry as `vault_machine`.
-/// Behind the test cfg while the registry's own insert is (OPUS-LE-FLEET's M2-C PR D lifts
-/// both gates and calls it at server start).
 ///
 /// # Errors
 ///
 /// As [`vault_machine_backend`]; nothing is registered then.
-#[cfg(oneiron_test_support)]
 pub fn register_vault_machine(
     server: &Arc<SyncServer>,
     signer: Arc<dyn MachineSignatures>,
@@ -175,4 +172,30 @@ pub fn register_vault_machine(
         .gpu_jobs
         .register_backend(VAULT_MACHINE_BACKEND, backend);
     Ok(())
+}
+
+/// Server start's registration of the `vault_machine` backend, before the GPU job worker starts
+/// (R6 runbook B2). The vault signs as this install's machine (`impl MachineSignatures for
+/// Vault`). A disabled section registers nothing and logs nothing. Any other refusal is one warn
+/// line, and the server serves on: a start on the backend's offer then answers
+/// `gpu_jobs.no_backend` before any reservation.
+///
+/// # Errors
+///
+/// As [`register_vault_machine`]; nothing is registered then.
+pub fn register_vault_machine_at_start(
+    server: &Arc<SyncServer>,
+) -> Result<(), VaultMachineNotRegistered> {
+    let signer: Arc<dyn MachineSignatures> = Arc::<oneiron::Vault>::clone(server.vault());
+    let registered = register_vault_machine(server, signer);
+    match &registered {
+        Ok(()) => tracing::info!(backend = VAULT_MACHINE_BACKEND, "GPU backend registered"),
+        Err(VaultMachineNotRegistered::Disabled) => {}
+        Err(refusal) => tracing::warn!(
+            backend = VAULT_MACHINE_BACKEND,
+            refusal = %refusal,
+            "GPU backend not registered"
+        ),
+    }
+    registered
 }
