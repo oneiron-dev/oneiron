@@ -249,6 +249,16 @@ impl ReadinessReads {
     fn drop_idle(&mut self, now_ms: u64) {
         self.machines
             .retain(|_, reads| now_ms.saturating_sub(reads.read_at_ms) < Self::IDLE_MS);
+        // RED STUB: the count cap, which evicts the machine read longest ago.
+        if self.machines.len() >= 1_024
+            && let Some(oldest) = self
+                .machines
+                .iter()
+                .min_by_key(|(_, reads)| reads.read_at_ms)
+                .map(|(machine, _)| *machine)
+        {
+            self.machines.remove(&oldest);
+        }
     }
 }
 
@@ -271,6 +281,13 @@ fn observe_node_readiness(
             let step = match baseline.as_ref().filter(|base| base.guard == *guard) {
                 None => ClearStep::Baseline,
                 Some(base) => match base.settled_after_ms {
+                    // RED STUB: the first newer passed check clears.
+                    None if readiness.checked_at_ms > base.checked_at_ms
+                        && matches!(readiness.state, ReadinessState::Ready)
+                        && node_drained.is_none() =>
+                    {
+                        ClearStep::Clear
+                    }
                     None if readiness.checked_at_ms > base.checked_at_ms => {
                         ClearStep::SettledAfter(readiness.checked_at_ms)
                     }

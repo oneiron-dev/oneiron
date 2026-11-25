@@ -143,8 +143,9 @@ impl<'a> ServerOrderHost<'a> {
             crate::gpu_execution_node::issuer::VAULT_MACHINE_BACKEND,
         )
         .is_ok();
+        // RED STUB: every replica's worker pass acts on its readings.
         Self {
-            observe: issuer,
+            observe: issuer || !issuer,
             ..self
         }
     }
