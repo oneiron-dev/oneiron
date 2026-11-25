@@ -5,9 +5,11 @@
 //!
 //! The walk opens each directory beneath the one before it and never
 //! through a link. It counts the blocks each entry holds on disk, so a
-//! sparse file counts what it holds and not its length, and a file with
-//! more than one name once. It stops as soon as the count passes the bound
-//! it was given.
+//! sparse file counts what it holds and not its length, and each file once
+//! by its inode, whatever its names. It stops as soon as the count passes
+//! the bound it was given. A walk is no snapshot: a file a job renames from
+//! a directory not yet read into one already read is missed until the next
+//! check, and a name removed while it runs is skipped.
 //!
 //! A payload the walk cannot finish within its bounds ([`PayloadWalkBounds`]:
 //! so many directory levels, so many entries; the node file's
@@ -41,9 +43,6 @@ pub const PAYLOAD_ENTRIES_MAX_DEFAULT: u64 = 1_000_000;
 /// The longest one walk takes: within the job control handler's own limit
 /// and the engine's wait for its answer.
 pub const PAYLOAD_WALK_TIME_MAX: Duration = Duration::from_secs(15);
-
-/// How often, in entries, the walk reads the clock.
-const CLOCK_EVERY_ENTRIES: u64 = 1_024;
 
 /// The unit of `st_blocks`.
 const BLOCK_BYTES: u64 = 512;
@@ -175,34 +174,44 @@ pub fn measure_payload_fd(
     bounds: &PayloadWalkBounds,
 ) -> io::Result<PayloadUsage> {
     let started = Instant::now();
+    let out_of_time = |entries: u64| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "not measured within {} s ({entries} entries)",
+                bounds.time_max.as_secs()
+            ),
+        )
+    };
     let depth_max = bounds.depth_max.min(PAYLOAD_DEPTH_MAX_CEILING);
     let deepest = usize::try_from(depth_max).unwrap_or(usize::MAX);
-    let mut bytes: u64 = 0;
+    // Every listed name is charged to the entry bound and reads the clock,
+    // also one gone by the time of its stat (review r12 R12-06).
     let mut entries: u64 = 0;
-    // The files with more than one name counted so far.
-    let mut linked = HashSet::new();
-    let mut count = |stat: &Stat| -> io::Result<Option<PayloadUsage>> {
+    let mut charge = || -> io::Result<Option<PayloadUsage>> {
         entries = entries.saturating_add(1);
         if entries > bounds.entries_max {
             return Ok(Some(PayloadUsage::Unmeasurable {
                 why: format!("more than {} entries", bounds.entries_max),
             }));
         }
-        if entries.is_multiple_of(CLOCK_EVERY_ENTRIES) && started.elapsed() > bounds.time_max {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "not measured within {} s ({entries} entries)",
-                    bounds.time_max.as_secs()
-                ),
-            ));
+        if started.elapsed() > bounds.time_max {
+            return Err(out_of_time(entries));
         }
-        if !is_directory(stat) && stat.st_nlink > 1 && !linked.insert((stat.st_dev, stat.st_ino)) {
-            return Ok(None);
+        Ok(None)
+    };
+    // Each file once by its inode, whatever its names now: a file whose
+    // second name goes while the walk runs is not counted twice (review r12
+    // R12-05).
+    let mut bytes: u64 = 0;
+    let mut counted = HashSet::new();
+    let mut add = |stat: &Stat| -> Option<PayloadUsage> {
+        if !is_directory(stat) && !counted.insert((stat.st_dev, stat.st_ino)) {
+            return None;
         }
         let blocks = u64::try_from(stat.st_blocks).unwrap_or(0);
         bytes = bytes.saturating_add(blocks.saturating_mul(BLOCK_BYTES));
-        Ok((bytes > stop_past).then_some(PayloadUsage::Past { bytes }))
+        (bytes > stop_past).then_some(PayloadUsage::Past { bytes })
     };
 
     let top_stat = rustix::fs::fstat(&top)?;
@@ -212,7 +221,10 @@ pub fn measure_payload_fd(
             "the payload is not a directory",
         ));
     }
-    if let Some(done) = count(&top_stat)? {
+    if let Some(done) = charge()? {
+        return Ok(done);
+    }
+    if let Some(done) = add(&top_stat) {
         return Ok(done);
     }
     // One open directory per level: the payload's, then each directory on
@@ -232,6 +244,9 @@ pub fn measure_payload_fd(
         if name == c"." || name == c".." {
             continue;
         }
+        if let Some(done) = charge()? {
+            return Ok(done);
+        }
         let parent = dir.fd()?;
         let stat = match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat) => stat,
@@ -239,7 +254,7 @@ pub fn measure_payload_fd(
             Err(rustix::io::Errno::NOENT) => continue,
             Err(error) => return Err(error.into()),
         };
-        if let Some(done) = count(&stat)? {
+        if let Some(done) = add(&stat) {
             return Ok(done);
         }
         if !is_directory(&stat) {
@@ -254,10 +269,21 @@ pub fn measure_payload_fd(
         }
         let child = match rustix::fs::openat(parent, name, directory_flags(), Mode::empty()) {
             Ok(child) => child,
-            Err(rustix::io::Errno::NOENT) => continue,
+            // Removed, or replaced by a file or a link, since its stat: the
+            // walk goes on, and the next check counts what replaced it
+            // (review r12 R12-02).
+            Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP) => {
+                continue;
+            }
             Err(error) => return Err(error.into()),
         };
         open.push(Dir::new(child)?);
+    }
+    // The clock once more: a slow last read is no measure (review r12
+    // R12-06). The bound is the walk's own; a caller that needs a hard
+    // deadline keeps the walk in a process it can stop.
+    if started.elapsed() > bounds.time_max {
+        return Err(out_of_time(entries));
     }
     Ok(PayloadUsage::Measured { bytes })
 }

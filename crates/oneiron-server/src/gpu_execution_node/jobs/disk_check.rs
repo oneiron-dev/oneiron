@@ -43,6 +43,11 @@ impl NodeJobs {
         let bounds = self.parts().admission.job_settings().payload_walk;
         let mut ended = Vec::new();
         for measured in launched {
+            // A closed service measures and ends nothing more (review r12
+            // R12-07).
+            if self.service_closed() {
+                break;
+            }
             let payload_dir = measured.id.payload_dir(&self.paths().work_dir);
             let usage = match self.parts().units.payload_usage(
                 &measured.id,
@@ -65,10 +70,19 @@ impl NodeJobs {
                 limit_bytes = measured.limit_bytes,
                 "job payload passed its disk request; the key ends as disk_limit"
             );
+            if self.service_closed() {
+                break;
+            }
             match self.end_key(&measured.key, EndingCause::DiskLimit) {
                 Ok(()) => ended.push(measured.key),
                 Err(error) => {
-                    tracing::warn!(key = %measured.key, %error, "job key over its disk request not ended yet; the next disk check ends it");
+                    // The `Ending` record did not land, perhaps on the very
+                    // disk the job filled: the unit is stopped all the same,
+                    // and the end handling names its end from the end
+                    // record (review r12 R12-09).
+                    tracing::error!(key = %measured.key, %error, "job key over its disk request not journaled as ending; its unit is stopped anyway");
+                    self.stop_unit(&measured.key);
+                    ended.push(measured.key);
                 }
             }
         }

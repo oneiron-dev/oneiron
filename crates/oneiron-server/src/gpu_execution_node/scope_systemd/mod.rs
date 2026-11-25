@@ -72,6 +72,7 @@ pub mod exchange;
 pub mod exec;
 pub mod gate;
 pub mod handover;
+pub mod held_files;
 pub mod install;
 pub mod job_ids;
 pub mod log_writer;

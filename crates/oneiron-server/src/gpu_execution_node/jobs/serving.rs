@@ -7,8 +7,10 @@
 //!
 //! Beside the tick, a thread of its own runs the disk check
 //! ([`NodeJobs::check_payload_disk`]) every `disk_check_secs` of the node's
-//! file (design 7.9: the listener's tick is 30 s, the check 5 s). It ends
-//! once this service is dropped.
+//! file (design 7.9: the listener's tick is 30 s, the check 5 s), each pass
+//! planned from the one before it, not from its end. It holds the service
+//! only during a pass, and ends once this service is dropped. A service
+//! whose disk check did not start is not opened.
 //!
 //! The parts are the server's own: the node is the admission and the
 //! authority, the server's GPU slot table leases the devices, the machine's
@@ -27,7 +29,7 @@
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron_organ_host::MachineFloor;
@@ -138,40 +140,51 @@ impl ServedNodeJobs {
         };
         let opened = NodeJobs::open(paths, parts)
             .map_err(|error| format!("the job journal did not open: {error}"))?;
+        // No job runs unchecked for disk: a service whose check did not
+        // start is dropped, and the next tick opens it again (review r12
+        // R12-08).
+        self.start_disk_check(&opened, disk_check_every)?;
         self.node
             .attach_keys(opened.attachment())
             .map_err(|_| "the node already holds other keys".to_owned())?;
-        self.start_disk_check(&opened, disk_check_every);
         *jobs = Some(opened);
         Ok(())
     }
 
     /// Starts the disk check's thread on `jobs`: one pass every `every`,
-    /// until this service is dropped. A thread that did not start is
-    /// logged; the jobs still run, unchecked for disk.
-    fn start_disk_check(&self, jobs: &NodeJobs, every: Duration) {
+    /// until this service is dropped. Between passes it holds the service
+    /// weakly, so a dropped service is not kept by it (review r12 R12-07).
+    ///
+    /// # Errors
+    ///
+    /// The thread did not start.
+    fn start_disk_check(&self, jobs: &NodeJobs, every: Duration) -> Result<(), String> {
         let (keep, kept) = mpsc::channel::<()>();
-        let jobs = jobs.clone();
-        let started = std::thread::Builder::new()
+        let service = Arc::downgrade(&jobs.shared);
+        std::thread::Builder::new()
             .name("oneiron-node-disk-check".to_owned())
             .spawn(move || {
+                // Each pass is planned from the one before it, so a slow
+                // pass does not stretch the period (review r12 R12-03).
+                let mut next = Instant::now() + every;
                 // Only a timeout runs a pass: the sender's drop, at this
                 // service's, ends the thread.
-                while let Err(RecvTimeoutError::Timeout) = kept.recv_timeout(every) {
-                    jobs.check_payload_disk();
+                while let Err(RecvTimeoutError::Timeout) =
+                    kept.recv_timeout(next.saturating_duration_since(Instant::now()))
+                {
+                    let Some(shared) = service.upgrade() else {
+                        break;
+                    };
+                    NodeJobs { shared }.check_payload_disk();
+                    next = (next + every).max(Instant::now());
                 }
-            });
-        match started {
-            Ok(_) => {
-                *self
-                    .disk_check
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(keep);
-            }
-            Err(error) => {
-                tracing::error!(%error, "the execution node's disk check did not start; running jobs are not checked for disk");
-            }
-        }
+            })
+            .map_err(|error| format!("the disk check's thread did not start: {error}"))?;
+        *self
+            .disk_check
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(keep);
+        Ok(())
     }
 
     /// One pass of the listener's tick. It blocks. A service that has not
@@ -205,8 +218,8 @@ impl Drop for ServedNodeJobs {
         if let Some(jobs) = jobs {
             jobs.close();
         }
-        // The disk check's thread ends at once, and drops its handle of the
-        // service once a pass it is in returns.
+        // The disk check's thread ends at once; a pass it is in stops
+        // before its next measure, as the service is closed.
         self.disk_check
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner)

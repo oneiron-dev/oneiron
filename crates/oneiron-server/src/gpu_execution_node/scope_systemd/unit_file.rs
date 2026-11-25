@@ -35,6 +35,10 @@ pub struct UnitInputs {
     pub start_timeout_secs: u64,
 }
 
+/// The system calls a job unit refuses, each with the error it answers.
+pub const JOB_SYSTEM_CALL_FILTER: &str =
+    "~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS io_uring_enter:ENOSYS io_uring_register:ENOSYS";
+
 /// The unit's sandbox and life-cycle properties, as `(name, value)` pairs in
 /// the order the template lists them. `instance` is `%i` in the template and
 /// the probe's id in a probe unit.
@@ -71,6 +75,12 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("RestrictSUIDSGID", "yes".to_owned());
     set("RestrictRealtime", "yes".to_owned());
     set("LockPersonality", "yes".to_owned());
+    // Disk a job takes goes through the unit's write-rate cap, which the
+    // disk check's bound rests on (design 7.9): `fallocate` would take
+    // blocks with no write, and io_uring would reach it past the filter
+    // (review r12 R12-04 of #10512). `posix_fallocate` falls back to
+    // writing on EOPNOTSUPP.
+    set("SystemCallFilter", JOB_SYSTEM_CALL_FILTER.to_owned());
     set("CapabilityBoundingSet", "CAP_SETUID CAP_SETGID".to_owned());
     set("AmbientCapabilities", String::new());
     set("UMask", "0022".to_owned());
@@ -196,7 +206,9 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
 /// Why an installed template cannot run a job as its own ids, if it cannot:
 /// a template written before the uid per job names one job account
 /// (`User=`, `Group=`) or leaves `job-exec` no capability to take the job's
-/// ids (review r8 R8-09). `install` writes it again.
+/// ids (review r8 R8-09); one written before the disk check lets a job take
+/// disk past the write-rate cap (review r12 R12-04). `install` writes it
+/// again.
 #[must_use]
 pub fn template_outdated(unit_text: &str) -> Option<&'static str> {
     let mut lines = unit_text.lines().map(str::trim);
@@ -206,8 +218,17 @@ pub fn template_outdated(unit_text: &str) -> Option<&'static str> {
     {
         return Some("the installed template names one job account (User=, Group=)");
     }
-    if !lines.any(|line| line == "CapabilityBoundingSet=CAP_SETUID CAP_SETGID") {
+    if !lines
+        .clone()
+        .any(|line| line == "CapabilityBoundingSet=CAP_SETUID CAP_SETGID")
+    {
         return Some("the installed template's bounding set is not CAP_SETUID CAP_SETGID");
+    }
+    let filter = format!("SystemCallFilter={JOB_SYSTEM_CALL_FILTER}");
+    if !lines.any(|line| line == filter) {
+        return Some(
+            "the installed template lets a job take disk with no write (no SystemCallFilter= for fallocate and io_uring)",
+        );
     }
     None
 }
@@ -308,6 +329,11 @@ mod tests {
             "CapabilityBoundingSet=\n",
         );
         assert!(template_outdated(&no_capabilities).is_some_and(|why| why.contains("bounding")));
+        let no_filter = text.replace(&format!("SystemCallFilter={JOB_SYSTEM_CALL_FILTER}\n"), "");
+        assert!(template_outdated(&no_filter).is_some_and(|why| why.contains("fallocate")));
+        assert!(text.contains(
+            "SystemCallFilter=~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS io_uring_enter:ENOSYS io_uring_register:ENOSYS\n"
+        ));
     }
 
     #[test]

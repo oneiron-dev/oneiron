@@ -14,6 +14,7 @@
 #![cfg(all(oneiron_test_support, unix))]
 
 use std::io::Write as _;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -281,11 +282,39 @@ fn a_payload_is_counted_on_disk_once_and_never_through_a_link() {
     sparse.set_len(64 * MIB).expect("sparse length");
     drop(sparse);
 
+    // What the filesystem itself says each entry holds, each file once
+    // (review r12 R12-12: no assumption about block sizes).
+    let held = [
+        payload.clone(),
+        out.clone(),
+        out.join("data.bin"),
+        out.join("to-outside"),
+        out.join("to-big.bin"),
+        out.join("sparse.bin"),
+    ]
+    .iter()
+    .map(|path| std::fs::symlink_metadata(path).expect("entry").blocks() * 512)
+    .sum::<u64>();
+    let sparse_blocks = std::fs::metadata(out.join("sparse.bin"))
+        .expect("sparse file")
+        .blocks()
+        * 512;
     match measure_payload(&payload, u64::MAX).expect("measured") {
-        PayloadUsage::Measured { bytes } => assert!(
-            (MIB..2 * MIB).contains(&bytes),
-            "1 MiB of data once, the links and the sparse file's length not counted: {bytes} bytes"
-        ),
+        PayloadUsage::Measured { bytes } => {
+            assert_eq!(
+                bytes, held,
+                "each entry's blocks once, the hard link's file once, no link followed"
+            );
+            assert!(bytes >= MIB, "the 1 MiB of data: {bytes}");
+            assert!(
+                bytes < 8 * MIB,
+                "neither the link's target nor the sparse length: {bytes}"
+            );
+            assert!(
+                sparse_blocks < MIB,
+                "the sparse file holds no data: {sparse_blocks}"
+            );
+        }
         other => panic!("expected a measure, got {other:?}"),
     }
     match measure_payload(&payload, MIB / 2).expect("measured") {
@@ -416,8 +445,9 @@ fn a_payload_too_deep_or_too_wide_to_measure_counts_as_over_its_request() {
     assert_eq!(ended.end, Some(JobEnd::DiskLimit));
 }
 
-/// T23d, the engine's half: the end step ran and a process of the unit was
-/// left. The kill is not confirmed: the key stays `Ending`, never ended,
+/// T23d, the engine's half (coverage of R3a's end handling, which this PR
+/// does not change: it passes on the base too; review r12 R12-11): the end
+/// step ran and a process of the unit was left. The kill is not confirmed: the key stays `Ending`, never ended,
 /// and its device is quarantined, so no reserve takes it, also after an
 /// engine restart. A host reset ends the key as `Lost`, and only then a
 /// clean probe gives the device back.

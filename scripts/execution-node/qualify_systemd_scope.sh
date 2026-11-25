@@ -32,7 +32,7 @@ done
 # Every tool a case reads its verdict with, checked once here, so a missing one never reads as a failed bound (cmp was
 # missing from the Arch container and failed the log case in run q5: FIX EXEC-UNIT-QUALIFY-LOG-CASE-NO-CMP; review r7
 # R7-06).
-for tool in jq socat runuser setpriv getent timeout journalctl systemctl sha256sum stat awk; do
+for tool in jq socat runuser setpriv getent timeout journalctl systemctl sha256sum stat awk fallocate; do
   command -v "$tool" > /dev/null || { echo "## QUALIFY rc=77 why=no-$tool"; exit 77; }
 done
 
@@ -933,13 +933,20 @@ EOF
 
 # FIX EXEC-NODE-DISK-CHECK-UNBUILT (design 7.9): the engine's disk check asks root for a running job's payload size
 # through the control socket's `usage` verb, since a job runs as its own uid and may make a directory the engine's
-# account cannot list. Here the job writes 3 MiB into a 0700 directory of its own; root's answer counts them, a bound
-# below the payload answers `past`, and an account that is not the engine's is not answered. Red (a binary from before
-# the verb): the CLI refuses `usage`.
+# account cannot list. Here the job writes 3 MiB into a 0700 directory of its own and 2 MiB into a file it holds open
+# with its name removed (review r12 R12-01: no walk of names sees it); root's answer counts both. Its `fallocate` of
+# 64 MiB is refused (R12-04: no disk past the write-rate cap without a write). A bound below the payload answers
+# `past`, and an account that is not the engine's is not answered. Red (a binary from before the verb): the CLI
+# refuses `usage`, and the fallocate takes its 64 MiB.
 the_engine_learns_the_size_of_a_payload_with_a_private_directory_through_root() {
   launch t75 qual 120 256 "" <<'EOF'
 mkdir -m 0700 "$ONEIRON_JOB_OUT/private"
 head -c 3145728 /dev/urandom > "$ONEIRON_JOB_OUT/private/blob"
+exec 3> "$ONEIRON_JOB_OUT/held"
+rm "$ONEIRON_JOB_OUT/held"
+head -c 2097152 /dev/urandom >&3
+fallocate -l 67108864 "$ONEIRON_JOB_OUT/prealloc" 2> "$ONEIRON_JOB_OUT/fallocate.err"
+echo $? > "$ONEIRON_JOB_OUT/fallocate.rc"
 sync
 echo written > "$ONEIRON_JOB_OUT/written"
 sleep 60
@@ -958,14 +965,20 @@ EOF
   as_engine "$BIN" execution-node unit-control stop "$KEY" > /dev/null 2>&1
   wait_ended 60 || why="${why:-no end record in 60 s after the stop}"
   [ -z "$why" ] && [ "$listed" = yes ] && why="the engine's account could list the job's 0700 directory, so the case proves nothing"
-  if [ -z "$why" ] && ! { [[ "$whole" =~ ^bytes\ [0-9]+$ ]] && [ "${whole#bytes }" -ge 3145728 ]; }; then
-    why="root's answer for the whole payload: ${whole:-none}"
+  if [ -z "$why" ] && ! { [[ "$whole" =~ ^bytes\ [0-9]+$ ]] && [ "${whole#bytes }" -ge 5242880 ]; }; then
+    why="root's answer for the whole payload (3 MiB named, 2 MiB held with no name): ${whole:-none}"
+  fi
+  if [ -z "$why" ] && [ "${whole#bytes }" -ge 67108864 ]; then
+    why="root's answer counts the 64 MiB fallocate: ${whole}"
+  fi
+  if [ -z "$why" ] && ! { [ "$(cat "$P/out/fallocate.rc" 2> /dev/null)" != 0 ] && grep -qi 'not supported' "$P/out/fallocate.err" 2> /dev/null; }; then
+    why="the job's fallocate was not refused: rc $(cat "$P/out/fallocate.rc" 2>&1), $(tr '\n' ' ' < "$P/out/fallocate.err" 2>&1)"
   fi
   if [ -z "$why" ] && ! { [[ "$past" =~ ^past\ [0-9]+$ ]] && [ "${past#past }" -gt 1048576 ]; }; then
     why="root's answer under a 1 MiB bound: ${past:-none}"
   fi
   if [ -z "$why" ]; then
-    result "$FUNCNAME" PASS "the engine's account cannot list the job's 0700 directory; root answered '$whole' for the payload (3 MiB written there) and '$past' under a 1 MiB bound; a job's uid was refused"
+    result "$FUNCNAME" PASS "the engine's account cannot list the job's 0700 directory; root answered '$whole' (3 MiB there and 2 MiB held with no name) and '$past' under a 1 MiB bound; the job's 64 MiB fallocate was refused ($(head -c 80 "$P/out/fallocate.err")); a job's uid was refused"
   else
     result "$FUNCNAME" FAIL "$why"
   fi

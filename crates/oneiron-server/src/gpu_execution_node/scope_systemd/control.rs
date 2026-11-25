@@ -39,6 +39,7 @@
 use std::ffi::OsStr;
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
+use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -49,6 +50,7 @@ use super::super::jobs::payload_usage::{
 use super::super::jobs::{JobKeyId, PayloadUsage};
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::PAYLOAD_ROOT;
+use super::held_files::unlinked_held_bytes;
 use super::safe_fs::{account, borrow, facts, open_dir_beneath, open_dir_path};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
@@ -377,13 +379,18 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<String, String> {
 /// Root's measure of the job `id`'s payload: the unit's bind source
 /// `<PAYLOAD_ROOT>/<id>`, opened beneath the root-only payload root and
 /// never through a link, so the walk counts the directory the unit binds
-/// and no path the engine's account could replace. The bind carries no
-/// submount.
+/// and no path the engine's account could replace (the bind carries no
+/// submount), and then the files on its device that the unit's processes
+/// hold with no name left (review r12 R12-01). Both within the walk's time
+/// bound, from the request's start.
 fn payload_usage(
     id: &JobKeyId,
     stop_past: u64,
     bounds: &PayloadWalkBounds,
 ) -> Result<PayloadUsage, String> {
+    let deadline = Instant::now() + bounds.time_max;
+    let found = show(&id.unit_name(), &["ControlGroup"])?;
+    let control_group = found.get("ControlGroup").map_or("", String::as_str);
     let root = open_dir_path(Path::new(PAYLOAD_ROOT))
         .map_err(|error| format!("payload_not_published: {error}"))?;
     let root_facts = facts(borrow(&root)).map_err(|error| format!("payload_root: {error}"))?;
@@ -395,8 +402,29 @@ fn payload_usage(
     }
     let payload = open_dir_beneath(borrow(&root), OsStr::new(id.as_str()))
         .map_err(|error| format!("payload_not_published: {error}"))?;
-    measure_payload_fd(payload, stop_past, bounds)
-        .map_err(|error| format!("payload_not_measured: {error}"))
+    let payload_device = payload
+        .try_clone()
+        .map(std::fs::File::from)
+        .and_then(|file| file.metadata())
+        .map_err(|error| format!("payload_not_measured: {error}"))?
+        .dev();
+    let walk_bounds = PayloadWalkBounds {
+        time_max: deadline.saturating_duration_since(Instant::now()),
+        ..bounds.clone()
+    };
+    let walked = measure_payload_fd(payload, stop_past, &walk_bounds)
+        .map_err(|error| format!("payload_not_measured: {error}"))?;
+    let PayloadUsage::Measured { bytes } = walked else {
+        return Ok(walked);
+    };
+    let held = unlinked_held_bytes(control_group, payload_device, deadline)
+        .map_err(|why| format!("payload_not_measured: {why}"))?;
+    let bytes = bytes.saturating_add(held);
+    Ok(if bytes > stop_past {
+        PayloadUsage::Past { bytes }
+    } else {
+        PayloadUsage::Measured { bytes }
+    })
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel
