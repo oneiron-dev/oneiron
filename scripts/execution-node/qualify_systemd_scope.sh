@@ -3,6 +3,10 @@
 # pass 34 (34-compute-general/DESIGN.md) sections 2.2 and 9.2 amend them (T23 is replaced; T18b runs at the attempt's
 # own maximum, first case 1,800 s; the minimum contract is G1's and R3b's).
 #
+# Each job runs as its own uid from the node's job_uid_first/job_uid_count range (FIX EXEC-UNIT-CROSS-JOB-SAME-UID,
+# ruling A 18:20). A binary from before that reads only `job_account`: setup finds out which one it runs and writes the
+# node file it reads, so a red run of such a head fails only the cases about the uid per job.
+#
 # It needs root and systemd as process 1 on a SCRATCH machine: it installs the job unit, makes accounts and fake
 # device nodes, and starts job units. Run it in a container with systemd as process 1 (qualify_in_container.sh), or
 # on a node before its first job (row R6). No engine and no issuer run while it does: every job is started the way
@@ -28,7 +32,7 @@ done
 # Every tool a case reads its verdict with, checked once here, so a missing one never reads as a failed bound (cmp was
 # missing from the Arch container and failed the log case in run q5: FIX EXEC-UNIT-QUALIFY-LOG-CASE-NO-CMP; review r7
 # R7-06).
-for tool in jq socat runuser timeout journalctl systemctl sha256sum stat awk; do
+for tool in jq socat runuser setpriv timeout journalctl systemctl sha256sum stat awk; do
   command -v "$tool" > /dev/null || { echo "## QUALIFY rc=77 why=no-$tool"; exit 77; }
 done
 
@@ -38,6 +42,9 @@ ENGINE_HOME=/var/lib/oneiron-qual-engine
 VAULT=$ENGINE_HOME/vault
 KEYSTORE=/var/lib/oneiron-qual-keystore
 JOB=oneiron-job
+JOB_UID_FIRST=1879048192
+JOB_UID_COUNT=64
+IDS_MODE=range
 NODE_FILE=/etc/oneiron/execution-node.toml
 STATE=/var/lib/oneiron-qual/jobs
 WORK=/srv/oneiron-qual-jobs
@@ -62,7 +69,7 @@ state_dir = "$STATE"
 work_dir = "$WORK"
 disk_reserve_gib = 0
 state_floor_mib = 0
-job_account = "$JOB"
+$(identity_lines)
 
 [execution_node.device_files]
 ${1:-}
@@ -87,6 +94,43 @@ require = ["file_wall", "network_closed", "processes_hidden"]
 EOF
   chmod 0644 "$NODE_FILE"
 }
+
+# The node file's lines that say which uid a job runs as: the range, or (a binary from before the uid per job) the one
+# job account.
+identity_lines() {
+  if [ "$IDS_MODE" = range ]; then
+    printf 'job_uid_first = %s\njob_uid_count = %s\n' "$JOB_UID_FIRST" "$JOB_UID_COUNT"
+  else
+    printf 'job_account = "%s"\n' "$JOB"
+  fi
+}
+
+# as_job_id <uid> <gid> <command>...: root runs <command> as a job's ids, with no supplementary group.
+as_job_id() { local uid=$1 gid=$2; shift 2; setpriv --reuid="$uid" --regid="$gid" --clear-groups -- "$@"; }
+
+# The uid and gid of a job of this node that runs no unit: the range's last id (the lowest free one is given first),
+# or the job account.
+outside_job_ids() {
+  if [ "$IDS_MODE" = range ]; then
+    echo "$((JOB_UID_FIRST + JOB_UID_COUNT - 1)) $((JOB_UID_FIRST + JOB_UID_COUNT - 1))"
+  else
+    echo "$(id -u "$JOB") $(id -g "$JOB")"
+  fi
+}
+
+# job_ids_of_exchange <instance>: the uid and gid the job runs as, once the prepare step wrote its exec.json (its
+# identity; on a binary from before the uid per job, the job account's).
+job_ids_of_exchange() {
+  local exec=/run/oneiron-jobs/$1/exec.json ids
+  [ -s "$exec" ] || return 1
+  ids=$(jq -r 'if .identity then "\(.identity.uid) \(.identity.gid)" else empty end' "$exec" 2> /dev/null)
+  [ -n "$ids" ] || ids="$(id -u "$JOB" 2> /dev/null) $(id -g "$JOB" 2> /dev/null)"
+  [ "$ids" != " " ] && echo "$ids"
+}
+
+# The account that owns a job's payload files once the job ended: the engine's (job-ended hands them over), or, on a
+# binary from before the uid per job, the job account.
+owner_after_end() { if [ "$IDS_MODE" = range ]; then echo "$ENGINE"; else echo "$JOB"; fi; }
 
 digest_of() { "$BIN" execution-node install --file "$NODE_FILE" --engine-account "$ENGINE" --protect "$KEYSTORE" --dry-run | awk -v t="$1" '$1 == "template" && $2 == t { print $4 }'; }
 
@@ -144,25 +188,33 @@ setup() {
   printf 'keystore-secret\n' > "$KEYSTORE/key"; chmod 0644 "$KEYSTORE/key"
   mkdir -p /srv/git/qual.git
   node_file ""
+  # A binary from before the uid per job refuses the range's fields: it gets the job account instead.
+  if "$BIN" execution-node install --file "$NODE_FILE" --engine-account "$ENGINE" --protect "$KEYSTORE" --dry-run 2>&1 \
+      | grep -q 'unknown field `job_uid_first`'; then
+    IDS_MODE=account
+    node_file ""
+  fi
 }
 
 do_install() {
   INSTALL_OUT=$("$BIN" execution-node install --file "$NODE_FILE" --engine-account "$ENGINE" --protect "$KEYSTORE" 2>&1)
   local rc=$?
   echo "$INSTALL_OUT" | sed 's/^/## INSTALL /'
-  [ $rc -eq 0 ] && id "$JOB" > /dev/null 2>&1
+  [ $rc -eq 0 ] || return 1
+  [ "$IDS_MODE" = range ] || id "$JOB" > /dev/null 2>&1
 }
 
-# Two device nodes the job account can open outside any unit stand in for cards.
+# Two device nodes a job's uid can open outside any unit stand in for cards.
 pick_devices() {
-  local spec path
+  local spec path ids
+  ids=$(outside_job_ids)
   mkdir -p /dev/qual
   DEVICES=()
   for spec in "10 200" "10 229" "10 237" "10 238" "10 223" "10 232"; do
     path=/dev/qual/node-${spec// /-}
     [ -e "$path" ] || mknod "$path" c $spec 2> /dev/null || continue
     chmod 0666 "$path"
-    runuser -u "$JOB" -- bash -c "exec 3<> $path" 2> /dev/null && DEVICES+=("$path")
+    as_job_id ${ids% *} ${ids#* } bash -c "exec 3<> $path" 2> /dev/null && DEVICES+=("$path")
     [ ${#DEVICES[@]} -eq 2 ] && break
   done
   if [ ${#DEVICES[@]} -eq 2 ]; then
@@ -176,7 +228,8 @@ QUAL-DEV-1 = [\"${DEVICES[1]}\"]"
 # start a transient unit, a job unit or any other unit through the service manager. The control socket is root's,
 # open to the engine's group alone, and starts the job unit only.
 the_engines_account_starts_only_job_units_and_only_through_the_control_socket() {
-  local id key marker=/run/qual-transient-ran other=/run/qual-other-ran why= stat_line
+  local id key marker=/run/qual-transient-ran other=/run/qual-other-ran why= stat_line ids
+  ids=$(outside_job_ids)
   key="qual-control-$(date +%s%N)"
   id=$("$BIN" execution-node unit-name "$key"); id=${id#oneiron-job@}; id=${id%.service}
   rm -f "$marker" "$other"
@@ -190,8 +243,8 @@ the_engines_account_starts_only_job_units_and_only_through_the_control_socket() 
   sleep 1
   [ -e "$marker" ] && why+="the transient unit's command ran; "
   [ -e "$other" ] && why+="the other unit's command ran; "
-  runuser -u "$JOB" -- "$BIN" execution-node unit-control start "$key" > /dev/null 2>&1 \
-    && why+="the job account could use the control socket; "
+  as_job_id ${ids% *} ${ids#* } "$BIN" execution-node unit-control start "$key" > /dev/null 2>&1 \
+    && why+="a job's uid could use the control socket; "
   # Raw requests as the engine's account (review r4 R4-07): the handler itself refuses a name that is not a job
   # instance, a job mode and any other verb.
   local raw_name raw_mode raw_verb started
@@ -214,7 +267,7 @@ the_engines_account_starts_only_job_units_and_only_through_the_control_socket() 
   systemctl reset-failed "oneiron-job@$id.service" > /dev/null 2>&1
   rm -f /etc/systemd/system/qual-other.service "$marker" "$other"; systemctl daemon-reload
   if [ -z "$why" ]; then
-    result "$FUNCNAME" PASS "transient start, direct job start and another unit's start refused for the engine's account; the socket refused a non-job name, a job mode and isolate, and started the job unit for the engine; the job account cannot use it; socket $stat_line"
+    result "$FUNCNAME" PASS "transient start, direct job start and another unit's start refused for the engine's account; the socket refused a non-job name, a job mode and isolate, and started the job unit for the engine; a job's uid cannot use it; socket $stat_line"
   else
     result "$FUNCNAME" FAIL "$why"
   fi
@@ -438,7 +491,7 @@ a_unit_started_with_another_keys_parameters_fails_in_the_prepare_step() {
   fi
 }
 
-# forge_gate_report <exchange dir> <log> <seconds>: run as the job account. Waits until the gate of the job whose
+# forge_gate_report <exchange dir> <log> <seconds>: run as the job's own ids (forge_as_job). Waits until the gate of the job whose
 # exchange directory is <dir> listens (its socket, or, on a head that still has them, its report pipe), offers it the
 # report line in <log>.line once, and writes `<socket|pipe> <pid of the process that delivered it> <exit status>` to
 # <log>. The offer is bounded by 5 s; <log>.stop or the end of <seconds> ends the wait (review r7 R7-06, R7-08).
@@ -456,21 +509,33 @@ forge_gate_report() {
   done
 }
 
-# hold_job_exec <unit> <job uid> <log> <seconds>: root. As soon as the unit's main process has become job-exec (a
-# process of the job account named oneiron in the unit's cgroup, after its exec, so the service manager starts the
-# gate), stops it with STOP and writes `held <pid>` to <log>.held; `not-held` when none came within <seconds>. Once
+# forge_as_job <instance> <log>: root. Waits until the prepare step wrote the job's exec.json, then runs
+# forge_gate_report as the job's own uid and gid, the ids another process of that job would have.
+forge_as_job() {
+  local end=$((SECONDS + 30)) ids=
+  while [ $SECONDS -lt $end ] && [ ! -e "$2.stop" ]; do
+    ids=$(job_ids_of_exchange "$1") && break
+    sleep 0.005
+  done
+  [ -n "$ids" ] || return
+  as_job_id ${ids% *} ${ids#* } bash -c "$(declare -f forge_gate_report); forge_gate_report /run/oneiron-jobs/$1 $2 30"
+}
+
+# hold_job_exec <unit> <log> <seconds>: root. As soon as the unit's main process has become job-exec (the process in
+# the unit's cgroup whose arguments are `job-exec <instance>`, after its exec, so the service manager starts the gate;
+# it may not have taken the job's uid yet), stops it with STOP and writes `held <pid>` to <log>.held; `not-held` when none came within <seconds>. Once
 # <log> says the other process delivered (or after <seconds>), it waits 1 s for the gate to take and refuse that
 # connection, then lets job-exec go on with CONT (review r7 R7-06: the other process reaches the gate first).
 hold_job_exec() {
-  local unit=$1 uid=$2 log=$3 end=$((SECONDS + $4)) cgroup= p comm key value pid=
+  local unit=$1 log=$2 end=$((SECONDS + $3)) cgroup= p comm pid= args
   while [ -z "$pid" ] && [ $SECONDS -lt $end ]; do
     [ -n "$cgroup" ] || cgroup=$(systemctl show -P ControlGroup "$unit" 2> /dev/null)
     [ -n "$cgroup" ] && [ -r "/sys/fs/cgroup$cgroup/cgroup.procs" ] || continue
     while read -r p; do
       comm=; read -r comm < "/proc/$p/comm" 2> /dev/null
       [ "$comm" = oneiron ] || continue
-      value=; while read -r key value _; do [ "$key" = Uid: ] && break; done < "/proc/$p/status" 2> /dev/null
-      [ "$value" = "$uid" ] || continue
+      args=(); mapfile -d '' args < "/proc/$p/cmdline" 2> /dev/null
+      [ "${args[1]:-}" = job-exec ] || continue
       kill -STOP "$p" 2> /dev/null && pid=$p
       break
     done < "/sys/fs/cgroup$cgroup/cgroup.procs"
@@ -489,16 +554,14 @@ stop_helper() {
   kill -KILL "$1" 2> /dev/null; wait "$1" 2> /dev/null
 }
 
-# FIX EXEC-UNIT-ONE-JOB-ACCOUNT: every job runs as the one job account, so another job's workload can reach a starting
-# job's exchange (through /proc of a same-uid process where Landlock is missing). Here a shell of the job account on the
-# machine plays that workload, with a report that refuses the job. job-exec is held with STOP from its exec until that
+# FIX EXEC-UNIT-ONE-JOB-ACCOUNT: another process with the job's own ids (a process of the job account, before the uid
+# per job) can reach a starting job's exchange. Here a shell with the job's uid and gid on the machine plays it, with a report that refuses the job. job-exec is held with STOP from its exec until that
 # shell has delivered to the gate, so the other process always comes first (review r7 R7-06). Green: the gate refused
 # that very process (the journal names its pid and job-exec's), and the job started on job-exec's own report. Red: the
 # gate took the other process's report (the record names its refusal). A run where job-exec was not held in time, or
 # the other process never reached the gate, is run again, up to 3 runs; then UNPROVEN with why.
 another_process_of_the_job_account_cannot_answer_the_gate_for_a_job() {
-  local run why= verdict= log forger= holder= job_uid held held_pid via forger_pid rc said
-  job_uid=$(id -u "$JOB")
+  local run why= verdict= log forger= holder= held held_pid via forger_pid rc said
   log=$(mktemp /tmp/qual-forger.XXXXXX); chmod 0666 "$log"
   trap 'touch "$log.stop"; kill $forger $holder 2> /dev/null; rm -f "$log" "$log".*; exit 130' INT TERM
   for run in 1 2 3; do
@@ -506,9 +569,9 @@ another_process_of_the_job_account_cannot_answer_the_gate_for_a_job() {
     : > "$log"; rm -f "$log.stop" "$log.held" "$log.pid"
     jq -cn --arg i "$ID" '{instance: $i, proofs: {}, refusal: "forged_by_another_process"}' > "$log.line"
     chmod 0644 "$log.line"; touch "$log.pid"; chmod 0666 "$log.pid"
-    runuser -u "$JOB" -- bash -c "$(declare -f forge_gate_report); forge_gate_report /run/oneiron-jobs/$ID $log 30" &
+    forge_as_job "$ID" "$log" &
     forger=$!
-    hold_job_exec "$UNIT" "$job_uid" "$log" 20 &
+    hold_job_exec "$UNIT" "$log" 20 &
     holder=$!
     start
     wait_ended 60 || why="run $run: no end record in 60 s"
@@ -559,7 +622,7 @@ another_process_of_the_job_account_cannot_answer_the_gate_for_a_job() {
 a_stale_exchange_from_before_the_gate_socket_does_not_stop_the_job() {
   local stale why= group
   launch_marker t21-stale qual 120 256 ""
-  stale=/run/oneiron-jobs/$ID; group=$(id -g "$JOB")
+  stale=/run/oneiron-jobs/$ID; group=$(id -g "$JOB" 2> /dev/null || echo 0)
   mkdir -p "$stale" && chown "root:$group" "$stale" && chmod 0750 "$stale" && mkfifo -m 0620 "$stale/report" "$stale/go" \
     && chown "root:$group" "$stale/report" "$stale/go" || { result "$FUNCNAME" FAIL "the stale exchange could not be made"; return; }
   start
@@ -714,7 +777,7 @@ EOF
   [ -z "$why" ] && [ $((len + dropped)) != "$total" ] && why="file $len + dropped $dropped is not the stream's $total bytes"
   [ -z "$why" ] && ! same_bytes <(head -c "$at" "$log") <(head -c "$at" "$expected") && why="the head is not the stream's first $at bytes"
   [ -z "$why" ] && ! same_bytes <(tail -c $((len - at)) "$log") <(tail -c $((len - at)) "$expected") && why="the tail is not the stream's newest $((len - at)) bytes"
-  [ -z "$why" ] && [ "$(stat -c '%U %a' "$log")" != "$JOB 644" ] && why="log/stdout is $(stat -c '%U %a' "$log"), not $JOB 644"
+  [ -z "$why" ] && [ "$(stat -c '%U %a' "$log")" != "$(owner_after_end) 644" ] && why="log/stdout is $(stat -c '%U %a' "$log"), not $(owner_after_end) 644"
   [ -z "$why" ] && [ "$(cat "$P/log/stderr" 2> /dev/null)" != stderr-ok ] && why="log/stderr is not the workload's stderr: $(head -c 200 "$P/log/stderr" 2>&1)"
   [ -z "$why" ] && [ -e "$P/log/stderr.dropped" ] && why="log/stderr has a drop record under its cap"
   rm -f "$expected"
@@ -771,6 +834,67 @@ EOF
   fi
 }
 
+# FIX EXEC-UNIT-CROSS-JOB-SAME-UID (ruling A, 18:20): each job runs as its own uid from the node's range, so the kernel
+# keeps two jobs that run at once apart. Job B cannot see job A's process, signal it or read its /proc, and A's file in
+# its /dev/shm is not in B's. When A ends, job-ended hands every entry A's uid owned in its payload to the engine's
+# account (a directory A made 0700 included), and A's uid leaves the node's id table. Red (one job account for every
+# job): B sees and signals A, and A's files stay the job account's.
+a_job_cannot_signal_read_or_trace_another_running_job() {
+  local why= i a_unit a_key a_p a_c a_pid a_uid b_uid engine_ids found path
+  launch t24-a qual 120 256 "" <<'EOF'
+echo $$ > "$ONEIRON_JOB_OUT/pid"; id -u > "$ONEIRON_JOB_OUT/uid"
+printf 'secret-a\n' > /dev/shm/qual-a-shm
+mkdir -m 0700 "$ONEIRON_JOB_OUT/private" && printf 'x\n' > "$ONEIRON_JOB_OUT/private/file"
+echo a-ready
+touch "$ONEIRON_JOB_OUT/ready"
+exec sleep 60
+EOF
+  a_unit=$UNIT a_key=$KEY a_p=$P a_c=$C
+  start
+  for ((i = 0; i < 150; i++)); do [ -e "$a_p/out/ready" ] && break; sleep 0.2; done
+  if [ ! -e "$a_p/out/ready" ]; then
+    as_engine "$BIN" execution-node unit-control stop "$a_key" > /dev/null 2>&1
+    result "$FUNCNAME" FAIL "job A was not ready in 30 s: $(jq -c '{refusal}' "$a_c/prepared.json" 2>&1)"; return
+  fi
+  a_pid=$(cat "$a_p/out/pid"); a_uid=$(cat "$a_p/out/uid")
+  launch t24-b qual 120 256 "" <<EOF
+id -u > "\$ONEIRON_JOB_OUT/uid"
+{ [ -d /proc/$a_pid ] && echo "sees process $a_pid"
+  kill -0 $a_pid 2> /dev/null && echo "signals process $a_pid"
+  head -c 1 /proc/$a_pid/environ > /dev/null 2>&1 && echo "reads /proc/$a_pid/environ"
+  [ -e /dev/shm/qual-a-shm ] && echo "finds /dev/shm/qual-a-shm"; } > "\$ONEIRON_JOB_OUT/reached"
+EOF
+  start
+  wait_ended 60 || why="job B: no end record in 60 s; "
+  b_uid=$(cat "$P/out/uid" 2> /dev/null)
+  [ -z "$why" ] && [ "$(ended .workload_started)" != true ] && why="job B did not start: $(ended .refusal); "
+  [ -s "$P/out/reached" ] && why+="job B $(tr '\n' ',' < "$P/out/reached")of job A; "
+  # A ends as the engine ends a key: its stop through the control socket.
+  as_engine "$BIN" execution-node unit-control stop "$a_key" > /dev/null 2>&1
+  UNIT=$a_unit KEY=$a_key P=$a_p C=$a_c
+  wait_ended 60 || why+="job A: no end record in 60 s after its stop; "
+  [ -n "$a_uid" ] && [ "$a_uid" = "$b_uid" ] && why+="both jobs ran as uid $a_uid; "
+  if [ "$IDS_MODE" = range ]; then
+    for found in "$a_uid" "$b_uid"; do
+      [ -n "$found" ] && [ "$found" -ge "$JOB_UID_FIRST" ] && [ "$found" -lt $((JOB_UID_FIRST + JOB_UID_COUNT)) ] \
+        || why+="uid '$found' is not in the node's range; "
+    done
+  fi
+  [ "$(ended .cgroup_empty)" = true ] || why+="job A's end record has cgroup_empty $(ended .cgroup_empty); "
+  engine_ids="$(id -u "$ENGINE"):$(id -g "$ENGINE")"
+  for path in "$a_p/out/private" "$a_p/out/private/file" "$a_p/out/pid" "$a_p/log/stdout"; do
+    found=$(stat -c '%u:%g' "$path" 2>&1)
+    [ "$found" = "$engine_ids" ] || why+="${path#"$a_p"/} is $found after A's end, not the engine's $engine_ids; "
+  done
+  as_engine ls "$a_p/out/private" > /dev/null 2>&1 || why+="the engine cannot list the 0700 directory A made; "
+  [ -n "$a_uid" ] && [ -e "/run/oneiron-job-ids/$a_uid" ] && why+="A's uid $a_uid is still in the id table after its end; "
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "jobs A (uid $a_uid) and B (uid $b_uid) ran at once: B saw no process of A, could not signal it or read its environ, and found no /dev/shm file of A's; after A's end its out tree (a 0700 directory included) and log are the engine's and uid $a_uid left the id table"
+  else
+    result "$FUNCNAME" FAIL "$why"
+  fi
+}
+
 setup
 echo "## SETUP host=$(uname -r) systemd=$(systemctl --version | head -1) landlock-abi=$(cat /sys/kernel/security/landlock/abi_version 2> /dev/null || echo ?) cgroup=$(cut -d: -f3 /proc/self/cgroup) root-subtree=[$(cat /sys/fs/cgroup/cgroup.subtree_control 2> /dev/null)]"
 wanted a_machine_without_the_minimum_contract_offers_no_jobs && BEFORE_INSTALL=1
@@ -802,6 +926,7 @@ for test in \
   a_unit_started_with_another_keys_parameters_fails_in_the_prepare_step \
   another_process_of_the_job_account_cannot_answer_the_gate_for_a_job \
   a_stale_exchange_from_before_the_gate_socket_does_not_stop_the_job \
+  a_job_cannot_signal_read_or_trace_another_running_job \
   a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unproven \
   a_workload_cannot_write_or_replace_its_end_record \
   the_unit_opens_the_leased_device_and_no_other \
