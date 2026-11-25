@@ -27,10 +27,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
 use oneiron::EntityId;
-use oneiron::job_workload::{
-    BoundRequirement, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory,
-    DevicePlacement, DeviceState, HeldDevice, Sharing,
-};
+use oneiron::job_workload::{BoundRequirement, DevicePlacement, HeldDevice};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron_organ_host::MachineFloor;
 
@@ -366,58 +363,15 @@ impl AuthorityPosition for ExecutionNode {
     }
 }
 
-/// One GPU of the slot table as placement reads it (pass 34, 2.1), until
-/// OPUS-LE-FLEET's table reports `DeviceFacts` itself: a GPU with its own
-/// memory and no named features, which its job opens alone, one claim at a
-/// time. A compute process of another account does not show here: the
-/// lease's confirmation refuses it inside the launch commit.
-fn held_gpu(slot: &crate::gpu_execution_node::availability::GpuDeviceAvailability) -> HeldDevice {
-    use crate::gpu_execution_node::availability::GpuDeviceState;
-    let (state, holder) = match &slot.state {
-        GpuDeviceState::Free | GpuDeviceState::Busy { .. } => (DeviceState::Offered, None),
-        GpuDeviceState::Leased { key } | GpuDeviceState::Launched { key } => (
-            DeviceState::Leased {
-                keys: vec![key.clone()],
-            },
-            Some(Sharing::Exclusive),
-        ),
-        GpuDeviceState::Quarantined { why, key } => (
-            DeviceState::Quarantined { why: why.clone() },
-            key.as_ref().map(|_| Sharing::Exclusive),
-        ),
-        GpuDeviceState::Withheld | GpuDeviceState::NotOffered => (DeviceState::Withheld, None),
-    };
-    HeldDevice {
-        facts: DeviceFacts {
-            id: slot.device.device_id.clone(),
-            id_source: DeviceIdSource::VendorUuid,
-            kind: DeviceKind::Gpu,
-            vendor: String::new(),
-            model: slot.device.model.clone(),
-            memory: DeviceMemory::Dedicated {
-                mib: slot.device.memory_total_mib,
-            },
-            features: Vec::new(),
-            closure: DeviceClosure::Closed,
-            state,
-            max_claimants: 1,
-        },
-        holders: holder.into_iter().collect(),
-    }
-}
-
 impl NodeDevices for GpuSlotTable {
     fn devices(&self) -> Result<Vec<HeldDevice>, String> {
-        let availability = self
-            .availability(oneiron_base::unix_millis_now())
-            .map_err(|error| format!("devices_unreadable: {error}"))?;
-        if let Some(why) = &availability.paused {
-            return Err(format!("node_paused: {why}"));
-        }
-        if let Some(why) = &availability.drained {
-            return Err(format!("node_drained: {why}"));
-        }
-        Ok(availability.devices.iter().map(held_gpu).collect())
+        self.held_devices(oneiron_base::unix_millis_now())
+            .map_err(|refusal| match refusal {
+                GpuSlotRefusal::Paused { reason } => format!("node_paused: {reason}"),
+                GpuSlotRefusal::Drained { reason } => format!("node_drained: {reason}"),
+                GpuSlotRefusal::Unmeasured { reason } => format!("devices_unreadable: {reason}"),
+                other => format!("devices_unreadable: {other}"),
+            })
     }
 
     fn lease_for_launch(
