@@ -74,6 +74,13 @@ pub const DISK_CHECK_SECS_DEFAULT: u64 = 5;
 /// Default of a template's `tasks_max`: the job unit's task ceiling.
 pub const TASKS_MAX_DEFAULT: u64 = 4_096;
 
+/// Default of a template's `log_max_mib`: each of a run's two log files
+/// (stdout, stderr) keeps at most this many MiB (pass 34, 7.2).
+pub const LOG_MAX_MIB_DEFAULT: u32 = 64;
+
+/// The most a template's `log_max_mib` may say.
+pub const LOG_MAX_MIB_CEILING: u32 = 4_096;
+
 /// Default of a template's `cpu_threads`: the threads a run may use at once,
 /// which a request's 0 takes and no request exceeds.
 pub const CPU_THREADS_DEFAULT: u32 = 4;
@@ -211,6 +218,12 @@ pub struct NodeTemplate {
     /// template without it keeps its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_signal: Option<String>,
+    /// The MiB each of a run's log files keeps (pass 34, 7.2): past it, the
+    /// first half of the cap and the newest bytes. None:
+    /// [`LOG_MAX_MIB_DEFAULT`]. Absent from the digest when unset, so a
+    /// template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_max_mib: Option<u32>,
     /// The threads a run may use at once: a request's 0 takes this many, and
     /// no request asks more.
     #[serde(default = "cpu_threads_default")]
@@ -441,6 +454,12 @@ impl NodeTemplate {
         Ok(ContentHash::of(&bytes).to_hex())
     }
 
+    /// The bytes each of a run's log files keeps.
+    #[must_use]
+    pub fn log_max_bytes(&self) -> u64 {
+        u64::from(self.log_max_mib.unwrap_or(LOG_MAX_MIB_DEFAULT)) << 20
+    }
+
     fn validate(&self) -> Result<(), String> {
         if !self.repo.is_absolute() {
             return Err("repo must be an absolute path".to_owned());
@@ -484,6 +503,13 @@ impl NodeTemplate {
         {
             return Err(format!(
                 "checkpoint_signal {signal:?} must be one of {CHECKPOINT_SIGNALS:?}"
+            ));
+        }
+        if let Some(mib) = self.log_max_mib
+            && !(1..=LOG_MAX_MIB_CEILING).contains(&mib)
+        {
+            return Err(format!(
+                "log_max_mib {mib} must be 1 to {LOG_MAX_MIB_CEILING}"
             ));
         }
         for (name, pattern) in self.params.iter().flatten() {

@@ -69,6 +69,7 @@ pub mod exchange;
 pub mod exec;
 pub mod gate;
 pub mod install;
+pub mod log_writer;
 pub mod prepare;
 pub mod probe_unit;
 pub mod records;

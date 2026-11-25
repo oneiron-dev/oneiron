@@ -256,6 +256,14 @@ impl JobUnit for SystemdJobUnit {
         control::request(ControlVerb::Stop, unit).map_err(|reason| Self::error(unit, reason))
     }
 
+    /// The checkpoint notice, through the control socket's `signal` verb:
+    /// root sends it to the unit's main process alone.
+    fn signal(&self, unit: &JobKeyId, signal: &str) -> Result<(), JobUnitError> {
+        let verb = ControlVerb::from_words("signal", Some(signal))
+            .map_err(|reason| Self::error(unit, format!("signal {signal}: {reason}")))?;
+        control::request(verb, unit).map_err(|reason| Self::error(unit, reason))
+    }
+
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {
         let found = show(&unit.unit_name(), &["ActiveState", "ControlGroup"])
             .map_err(|reason| Self::error(unit, reason))?;

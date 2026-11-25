@@ -7,15 +7,24 @@
 //! before any workload process exists (pass 34, 2.2: any other bound is
 //! recorded unproven).
 //!
-//! Order: open the two gate pipes; prove the device policy (before the file
-//! wall, so a refusal is the device policy's and not the wall's); apply the
-//! inner file wall (Landlock); prove the wall, the protected paths, the
-//! network, the hidden processes and the cgroup limits; report (one line,
-//! the pipe kept open); wait for the go; close every descriptor above 2 at
-//! the exec; write the exec mark; `execve`. The report pipe closes with a
-//! successful exec; a failed one writes why on it after the mark, so the
-//! gate records that the workload never started (review r2 R2-02; the mark:
-//! FIX EXEC-UNIT-GATE-EXEC-RACE).
+//! Order: catch the checkpoint signals; open the two gate pipes; prove the
+//! device policy (before the file wall, so a refusal is the device policy's
+//! and not the wall's); apply the inner file wall (Landlock); prove the
+//! wall, the protected paths, the network, the hidden processes and the
+//! cgroup limits; report (one line, the pipe kept open); wait for the go;
+//! start the log writer ([`super::log_writer`]: descriptors 1 and 2 become
+//! its pipes); close every descriptor above 2 at the exec; write the exec
+//! mark; `execve`. The report pipe closes with a successful exec; a failed
+//! one writes why on it after the mark, so the gate records that the
+//! workload never started (review r2 R2-02; the mark: FIX
+//! EXEC-UNIT-GATE-EXEC-RACE). A log writer that does not start is said on
+//! the pipe without the mark: the workload never started either.
+//!
+//! The checkpoint signals (design 7.1 `Signal`; the template's
+//! `checkpoint_signal`) reach the unit's main process, which is `job-exec`
+//! until its exec. It catches them with a handler that does nothing, and the
+//! exec resets that handler, so a notice that comes before the workload
+//! exists is lost, as a notice may be, and does not end the job.
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -25,6 +34,8 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::super::node_settings::CHECKPOINT_SIGNALS;
+use super::log_writer::{self, WorkloadStreams};
 use super::records::{
     BoundReport, BoundRequirement, ExecFile, PROVED_INSIDE, ScopeBound, ScopeReport,
     enforced_by_kernel, first_unmet, not_enforced,
@@ -40,6 +51,7 @@ const GATE_WAIT: Duration = Duration::from_secs(45);
 /// The step. Returns its exit status when it does not become the workload.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
+    catch_checkpoint_signals();
     let [instance] = args else {
         journal_line!("job-exec: usage: job-exec <instance>");
         return exec_status::EXEC_FILE;
@@ -118,7 +130,53 @@ pub fn run(args: &[String]) -> i32 {
         return exec_status::GATE_REFUSED;
     }
     drop(go_pipe);
-    become_workload(&exec, report_pipe)
+    let streams = match log_writer::start(&exec.cwd.join("log"), exec.log_max_bytes) {
+        Ok(streams) => streams,
+        Err(why) => {
+            let mut report = std::fs::File::from(report_pipe);
+            return exec_failed(&mut report, &format!("log_writer_not_started: {why}"));
+        }
+    };
+    become_workload(&exec, report_pipe, streams)
+}
+
+/// The signal number of a checkpoint signal's name.
+fn checkpoint_signal_number(name: &str) -> Option<libc::c_int> {
+    Some(match name {
+        "HUP" => libc::SIGHUP,
+        "INT" => libc::SIGINT,
+        "USR1" => libc::SIGUSR1,
+        "USR2" => libc::SIGUSR2,
+        "WINCH" => libc::SIGWINCH,
+        _ => return None,
+    })
+}
+
+extern "C" fn checkpoint_notice_before_the_workload(_signal: libc::c_int) {}
+
+/// Catches each checkpoint signal with a handler that does nothing, until
+/// the exec resets it (module doc).
+fn catch_checkpoint_signals() {
+    for name in CHECKPOINT_SIGNALS {
+        let Some(number) = checkpoint_signal_number(name) else {
+            continue;
+        };
+        let handler: extern "C" fn(libc::c_int) = checkpoint_notice_before_the_workload;
+        // SAFETY: a zeroed sigaction is valid; the handler is an extern "C"
+        // function that touches nothing, so it is async-signal-safe.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = handler as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&raw mut action.sa_mask);
+            if libc::sigaction(number, &raw const action, std::ptr::null_mut()) != 0 {
+                journal_line!(
+                    "job-exec: SIG{name} not caught: {}",
+                    io::Error::last_os_error()
+                );
+            }
+        }
+    }
 }
 
 fn read_exec_file(exchange: &Path, instance: &str) -> Result<ExecFile, String> {
@@ -379,14 +437,28 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
     }
 }
 
-/// Marks every descriptor above 2 close-on-exec, enters the payload
-/// directory and becomes the workload's program. Just before the exec it
-/// writes [`EXEC_MARK`] on the report pipe, and the pipe closes with the
-/// exec; when the exec fails, why goes on the pipe after the mark
-/// ([`exec_failed`]). Returns only when the exec failed.
-fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
+/// Puts the log pipes on descriptors 1 and 2, marks every descriptor above
+/// 2 close-on-exec, enters the payload directory and becomes the workload's
+/// program. Just before the exec it writes [`EXEC_MARK`] on the report pipe,
+/// and the pipe closes with the exec; when the exec fails, why goes on the
+/// pipe after the mark ([`exec_failed`]). Returns only when the exec failed.
+fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStreams) -> i32 {
     use std::os::unix::process::CommandExt as _;
     let mut report = std::fs::File::from(report_pipe);
+    for (stream, target) in [(&streams.stdout, 1), (&streams.stderr, 2)] {
+        // SAFETY: both descriptors are open; dup2 makes `target` a copy of
+        // the pipe's write end, without close-on-exec.
+        if unsafe { libc::dup2(stream.as_raw_fd(), target) } != target {
+            return exec_failed(
+                &mut report,
+                &format!(
+                    "log pipe on descriptor {target}: {}",
+                    io::Error::last_os_error()
+                ),
+            );
+        }
+    }
+    drop(streams);
     // SAFETY: CLOSE_RANGE_CLOEXEC marks descriptors 3 and up close-on-exec;
     // it closes nothing this process still reads before the exec.
     let marked = unsafe {
@@ -440,4 +512,17 @@ fn exec_failed(report: &mut std::fs::File, why: &str) -> i32 {
         journal_line!("job-exec: the gate was not told: {error}");
     }
     exec_status::EXEC_FAILED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CHECKPOINT_SIGNALS, checkpoint_signal_number};
+
+    #[test]
+    fn every_checkpoint_signal_a_template_may_name_is_caught_before_the_exec() {
+        for name in CHECKPOINT_SIGNALS {
+            assert!(checkpoint_signal_number(name).is_some(), "{name}");
+        }
+        assert_eq!(checkpoint_signal_number("TERM"), None);
+    }
 }
