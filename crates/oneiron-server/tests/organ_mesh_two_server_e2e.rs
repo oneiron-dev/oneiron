@@ -204,7 +204,8 @@ impl Home {
     /// (seeded by `holder_seed`), its enrolment request, its machine key's
     /// possession proof and its mesh identity; H enrols it, and binds and
     /// grants its endpoint on `alpn` in the same redemption. Its pairing
-    /// covers `alpn` alone, so no replica can grant it another protocol.
+    /// covers every protocol the engine serves, and it holds `alpn` alone
+    /// until an owner grants it another.
     fn enrol(&self, holder_seed: u8, alpn: &[u8]) -> TestResult<Device> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::device())
@@ -270,7 +271,14 @@ impl Home {
                 &holder.sign(&transcript).to_bytes(),
                 &request,
                 Some(&possession),
-                (&identity, alpn),
+                // The binding's pairing covers every protocol the engine
+                // serves (MESH-PAIRING-CEILING = A); each grant stays the
+                // owner's.
+                oneiron::authority::MeshEnrolmentAsk {
+                    identity: &identity,
+                    granted: alpn,
+                    ceiling: &oneiron_server::SERVED_MESH_ALPNS,
+                },
             )
             .map_err(at("the home redeems the device's enrolment"))?;
         let pairing_slip_id = match redeemed.mesh {

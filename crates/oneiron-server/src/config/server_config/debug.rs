@@ -18,6 +18,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("bulk_chunk_size", &self.bulk_chunk_size)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("cloud_registration_pins", &self.cloud_registration_pins)
+            .field("execution_node_file", &self.execution_node_file)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
             .field("house_role", &self.house_role)
