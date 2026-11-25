@@ -11,6 +11,7 @@
 //!   through its claim; a refused start returns the hold once; a plain start or resume on a
 //!   line-managed offer is refused; a released claim cannot start; a started unit's job is
 //!   cancelled through the unit door only.
+//! - The owner's write-off of a unit's live job ends its claim in the same write (pass 33, 8.4).
 //!
 //! The earlier tests change the claim through the start test door and start no GPU job. The
 //! start-gate tests call `Vault::start_claimed_gpu_job` with an in-memory connector that counts
@@ -1139,6 +1140,7 @@ struct UnitJobConnector {
     creates: AtomicUsize,
     status_calls: AtomicUsize,
     terminations: AtomicUsize,
+    write_offs: AtomicUsize,
     statuses: Mutex<VecDeque<GpuResourceStatus>>,
     billed_secs: u64,
     checkpoint_signal: Option<GpuJobSignal>,
@@ -1187,6 +1189,11 @@ impl GpuJobConnector for UnitJobConnector {
         Ok(GpuTermination::Confirmed {
             billed_secs: self.billed_secs,
         })
+    }
+
+    fn write_off(&self, _job: &GpuJob, _now_ms: u64) -> Result<(), GpuConnectorError> {
+        self.write_offs.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -2241,4 +2248,60 @@ fn a_units_end_carries_its_machines_typed_terminal() {
     assert_eq!(terminal.charged_secs, 0);
     assert_eq!(terminal.lost_secs, 30);
     assert_eq!(fixture.allocation_room(claim), room_before_lost_unit);
+}
+
+#[test]
+fn a_written_off_units_job_ends_its_claim_in_the_same_write() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let ask = fixture.ask(&arm, "written-off-unit", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve unit");
+    let reserved_rows = fixture.claims(&arm, 1);
+    let room_before_reserve = fixture.allocation_room(only_claim(&reserved_rows)) + ask.secs;
+    let jobs = UnitJobs::new(None);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let live = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("start unit");
+    assert_eq!(live.state, GpuJobState::Running);
+    assert_eq!(
+        only_claim(&fixture.claims(&arm, 1)).state,
+        ClaimState::Started
+    );
+
+    let written = fixture
+        .vault
+        .write_off_gpu_job(
+            &fixture.owner_proof,
+            &view.job,
+            &jobs.permits,
+            &jobs.connector,
+            NOW_MS + 1_000,
+        )
+        .expect("the owner writes off the unit's job");
+    assert_eq!(
+        written.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Unconfirmed
+        }
+    );
+    assert_eq!(written.claim, Some(key));
+    assert_eq!(jobs.connector.write_offs.load(Ordering::Relaxed), 1);
+    assert_eq!(jobs.connector.terminations.load(Ordering::Relaxed), 0);
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    assert_eq!(claim.key(), key);
+    let terminal = unit_terminal(claim);
+    assert_eq!(
+        terminal.end,
+        UnitEnd::WrittenOff {
+            by: Some(fixture.owner)
+        }
+    );
+    assert_eq!(terminal.charged_secs, 0);
+    assert_eq!(terminal.ended_at_ms, NOW_MS + 1_000);
+    assert_eq!(fixture.allocation_room(claim), room_before_reserve);
 }
