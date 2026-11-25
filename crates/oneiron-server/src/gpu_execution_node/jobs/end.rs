@@ -12,8 +12,9 @@
 //!    record is still missing when read again ends as `Lost`.
 //! 2. The release check: the unit is inactive with its control group gone,
 //!    and the device probe answers with every compute entry named by a
-//!    process id (none is the unit's: its control group is gone). Then
-//!    `released`, and the device and the memory go back. A probe that fails,
+//!    process id (none is the unit's: its control group is gone). Then the
+//!    staged code goes (`unstage`; `out/` and `log/` stay), `released` is
+//!    journaled, and the device and the memory go back. A probe that fails,
 //!    cannot answer, or lists an entry with no process id quarantines the
 //!    device: it is never read as an empty device. A later clean probe
 //!    releases it.
@@ -634,6 +635,11 @@ impl NodeJobs {
             quarantine(why, processes.pids, journal);
             return;
         }
+        // No process of the unit is left: its staged code goes before
+        // `released`, and a crash in between runs this check again. `out/`
+        // and `log/` stay until the `Ack` and the keep time (design 7.6).
+        let payload_dir = known.id.payload_dir(&self.paths().work_dir);
+        self.parts().stager.unstage(&known.key, &payload_dir);
         let event = JournalEvent::Released {
             other_compute_pids: processes.pids,
         };

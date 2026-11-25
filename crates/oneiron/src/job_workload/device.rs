@@ -222,6 +222,10 @@ pub enum DevicePlacementError {
     },
     /// Devices meet every claim, but too few take this one now.
     DeviceBusy { claim: usize },
+    /// The request's own memory plus the memory of its claims on devices
+    /// that share the host's memory has no value in MiB, from the claim at
+    /// this place on: no machine holds it, and waiting never clears it.
+    HostMemoryOverflow { claim: usize },
 }
 
 impl ResourceRequest {
@@ -234,7 +238,8 @@ impl ResourceRequest {
     /// [`DevicePlacementError::NoDevice`] when the machine's devices cannot
     /// serve the claims even with nothing else holding them, else
     /// [`DevicePlacementError::DeviceBusy`] when the holders and states now
-    /// leave too few.
+    /// leave too few. [`DevicePlacementError::HostMemoryOverflow`] when the
+    /// host memory the placement leases has no value in MiB.
     pub fn place_devices(
         &self,
         devices: &[HeldDevice],
@@ -277,7 +282,9 @@ impl ResourceRequest {
             let Some(unit) = unit else { continue };
             let (claim, claim_at) = units[*unit];
             if device.facts.memory.is_unified() {
-                host_memory_mib = host_memory_mib.saturating_add(claim_at.memory_mib);
+                host_memory_mib = host_memory_mib
+                    .checked_add(claim_at.memory_mib)
+                    .ok_or(DevicePlacementError::HostMemoryOverflow { claim })?;
             }
             leases.push(DeviceLease {
                 claim,

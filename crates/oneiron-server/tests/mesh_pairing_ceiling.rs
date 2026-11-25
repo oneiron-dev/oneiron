@@ -11,7 +11,11 @@
 //! when it re-enrols, and the pairing it leaves stays standing for every
 //! other replica that bound the machine on it. The re-enrolment names the
 //! new pairing, and another replica's owner binds the machine again on it,
-//! which keeps the grants that replica holds for it.
+//! which keeps the grants that replica holds for it. A replica whose vault
+//! was closed binds on a pairing the home minted meanwhile: a pairing's start
+//! is its presence in the home's signed fold, never the replica's clock,
+//! which stood still while the vault was closed (MESH-PAIRING-REPLICA-CLOCK
+//! = A, Engine 25 Nov 11:55).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -22,6 +26,8 @@ mod engine_stack;
 #[path = "support/mesh_machines.rs"]
 mod mesh_machines;
 
+use std::time::Duration;
+
 use engine_stack::on_engine_stack;
 use mesh_machines::{Machines, TestResult, home};
 use oneiron::authority::MeshEnrolment;
@@ -31,6 +37,10 @@ use oneiron_server::SERVED_MESH_ALPNS;
 
 const A: usize = 0;
 const B: usize = 1;
+
+/// How long a replica's vault stays closed: its clock then reads about this
+/// far behind the home's.
+const REPLICA_CLOSED: Duration = Duration::from_secs(5);
 
 #[test]
 fn an_enrolled_machine_can_be_granted_every_served_protocol_and_no_other() -> TestResult {
@@ -138,6 +148,39 @@ fn another_replica_binds_a_re_enrolled_machine_again_on_its_new_pairing_and_keep
     assert!(
         b.admits(&a, SYNC_ALPN)?,
         "a re-bind keeps the grants B holds for A"
+    );
+    b.grant(&a, JOB_ALPN)?;
+    assert!(b.admits(&a, JOB_ALPN)?, "B admits A on the job protocol");
+    Ok(())
+}
+
+#[test]
+fn a_replica_whose_vault_was_closed_binds_a_pairing_the_home_minted_meanwhile() -> TestResult {
+    let home = home()?;
+    let a = home.enrol_with(0x10, &[SYNC_ALPN])?;
+    let b = home.enrol(0x11)?;
+    home.share_history(&[&a, &b])?;
+    b.bind_at(&a, Vec::new())?;
+    b.grant(&a, SYNC_ALPN)?;
+
+    // B's vault is closed for a while. Its authority clock stops there and
+    // resumes from its floor when the vault opens again, so B reads behind H.
+    let b = b.reopened_after(REPLICA_CLOSED)?;
+    let pairing = match home.re_enrol(&a, 0x13, &SERVED_MESH_ALPNS)? {
+        Some(MeshEnrolment::AlreadyGranted {
+            re_paired: Some(pairing),
+            ..
+        }) => pairing,
+        other => panic!("a re-enrolment that moves the binding names its new pairing: {other:?}"),
+    };
+    home.share_history(&[&b])?;
+
+    // H minted the new pairing at a second B's clock has not reached. B
+    // binds A on it all the same, and keeps the grant it holds for A.
+    b.bind_on(&a, Vec::new(), pairing)?;
+    assert!(
+        b.admits(&a, SYNC_ALPN)?,
+        "a replica behind the home keeps its grants on the new pairing"
     );
     b.grant(&a, JOB_ALPN)?;
     assert!(b.admits(&a, JOB_ALPN)?, "B admits A on the job protocol");

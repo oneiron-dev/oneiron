@@ -6,9 +6,7 @@
 use std::{
     collections::BTreeMap,
     net::SocketAddr,
-    pin::Pin,
     sync::{Arc, Mutex as StdMutex, PoisonError},
-    task::{Context, Poll},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -20,23 +18,23 @@ use iroh::{
     protocol::AcceptError,
 };
 use n0_future::{boxed::BoxStream, task::AbortOnDropHandle};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinSet;
 
 use crate::{
-    AcceptPolicy, MachineId, MachineRoster, MeshConnection, MeshDuplex, MeshError, MeshFuture,
-    MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt, MeshStream, MeshTransport,
-    PathReceipts, transport_key::TransportKey,
+    AcceptPolicy, MachineId, MachineRoster, MeshConnection, MeshError, MeshFuture,
+    MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt, MeshTransport, PathReceipts,
+    transport_key::TransportKey,
 };
 
 // Fair dispatch of authenticated admissions, and their receipts (FIX 8620, 8621).
 mod admission;
+// An admitted connection and its policy-checked streams.
+mod connection;
 mod dial;
 mod outbound;
 
+use connection::IrohConnection;
 pub use dial::{OwnerMachineLookup, owner_machine_lookup};
-
-const MAX_MESSAGE: usize = 1024 * 1024;
 
 /// How long the refused or failed attempts from one machine, or from keys no
 /// MACHINE names, fold into one path receipt.
@@ -607,216 +605,5 @@ impl IrohTransport {
             receipts.flush().await;
         }
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct IrohConnection {
-    machine: MachineId,
-    alpn: Vec<u8>,
-    inner: Connection,
-    policy: AcceptPolicy,
-    incoming: bool,
-}
-impl IrohConnection {
-    fn check(&self) -> Result<(), MeshError> {
-        let key = *self.inner.remote_id().as_bytes();
-        if self.incoming {
-            if self.policy.inbound(key, &self.alpn)? != self.machine {
-                return Err(MeshError::Refused);
-            }
-        } else if self.policy.outbound(self.machine, &self.alpn)?.endpoint_key != key {
-            return Err(MeshError::Refused);
-        }
-        Ok(())
-    }
-}
-impl MeshConnection for IrohConnection {
-    fn machine(&self) -> MachineId {
-        self.machine
-    }
-    fn alpn(&self) -> &[u8] {
-        &self.alpn
-    }
-    fn open_stream(&self) -> MeshFuture<'_, Box<dyn MeshStream>> {
-        Box::pin(async move {
-            self.check()?;
-            let (send, recv) = self
-                .inner
-                .open_bi()
-                .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.check()?;
-            Ok(Box::new(IrohStream {
-                send,
-                recv,
-                grant: StreamGrant {
-                    policy: self.policy.clone(),
-                    machine: self.machine,
-                    alpn: self.alpn.clone(),
-                    endpoint_key: *self.inner.remote_id().as_bytes(),
-                    incoming: self.incoming,
-                },
-            }) as Box<dyn MeshStream>)
-        })
-    }
-    fn accept_stream(&self) -> MeshFuture<'_, Box<dyn MeshStream>> {
-        Box::pin(async move {
-            self.check()?;
-            let (send, recv) = self
-                .inner
-                .accept_bi()
-                .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.check()?;
-            Ok(Box::new(IrohStream {
-                send,
-                recv,
-                grant: StreamGrant {
-                    policy: self.policy.clone(),
-                    machine: self.machine,
-                    alpn: self.alpn.clone(),
-                    endpoint_key: *self.inner.remote_id().as_bytes(),
-                    incoming: self.incoming,
-                },
-            }) as Box<dyn MeshStream>)
-        })
-    }
-    fn endpoint_key(&self) -> [u8; 32] {
-        *self.inner.remote_id().as_bytes()
-    }
-    fn open_duplex(&self) -> MeshFuture<'_, Box<dyn MeshDuplex>> {
-        Box::pin(async move {
-            self.check()?;
-            let (send, recv) = self
-                .inner
-                .open_bi()
-                .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.check()?;
-            Ok(Box::new(IrohDuplex {
-                send,
-                recv,
-                _connection: self.inner.clone(),
-            }) as Box<dyn MeshDuplex>)
-        })
-    }
-    fn accept_duplex(&self) -> MeshFuture<'_, Box<dyn MeshDuplex>> {
-        Box::pin(async move {
-            self.check()?;
-            let (send, recv) = self
-                .inner
-                .accept_bi()
-                .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.check()?;
-            Ok(Box::new(IrohDuplex {
-                send,
-                recv,
-                _connection: self.inner.clone(),
-            }) as Box<dyn MeshDuplex>)
-        })
-    }
-    fn close(&self) {
-        self.inner.close(0u32.into(), b"closed");
-    }
-}
-
-/// One bidirectional QUIC stream as a byte pipe. It keeps a handle to its
-/// connection: the last handle dropped closes the connection.
-struct IrohDuplex {
-    send: iroh::endpoint::SendStream,
-    recv: iroh::endpoint::RecvStream,
-    _connection: Connection,
-}
-impl AsyncRead for IrohDuplex {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        AsyncRead::poll_read(Pin::new(&mut self.get_mut().recv), cx, buf)
-    }
-}
-impl AsyncWrite for IrohDuplex {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().send), cx, buf)
-    }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        AsyncWrite::poll_flush(Pin::new(&mut self.get_mut().send), cx)
-    }
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        AsyncWrite::poll_shutdown(Pin::new(&mut self.get_mut().send), cx)
-    }
-}
-#[derive(Debug)]
-struct StreamGrant {
-    policy: AcceptPolicy,
-    machine: MachineId,
-    alpn: Vec<u8>,
-    endpoint_key: [u8; 32],
-    incoming: bool,
-}
-impl StreamGrant {
-    fn check(&self) -> Result<(), MeshError> {
-        if self.incoming {
-            if self.policy.inbound(self.endpoint_key, &self.alpn)? != self.machine {
-                return Err(MeshError::Refused);
-            }
-        } else if self.policy.outbound(self.machine, &self.alpn)?.endpoint_key != self.endpoint_key
-        {
-            return Err(MeshError::Refused);
-        }
-        Ok(())
-    }
-}
-struct IrohStream {
-    send: iroh::endpoint::SendStream,
-    recv: iroh::endpoint::RecvStream,
-    grant: StreamGrant,
-}
-impl MeshStream for IrohStream {
-    fn send<'a>(&'a mut self, bytes: &'a [u8]) -> MeshFuture<'a, ()> {
-        Box::pin(async move {
-            self.grant.check()?;
-            if bytes.len() > MAX_MESSAGE {
-                return Err(MeshError::Unavailable);
-            }
-            self.send
-                .write_all(bytes)
-                .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.send
-                .finish()
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.grant.check()
-        })
-    }
-    fn recv(&mut self) -> MeshFuture<'_, Vec<u8>> {
-        Box::pin(async move {
-            self.grant.check()?;
-            let bytes = self
-                .recv
-                .read_to_end(MAX_MESSAGE)
-                .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.grant.check()?;
-            Ok(bytes)
-        })
-    }
-    fn delivered(&mut self) -> MeshFuture<'_, ()> {
-        // The finished write half's end: the peer acknowledged all of it,
-        // or stopped the stream.
-        Box::pin(async move {
-            self.send
-                .stopped()
-                .await
-                .map(drop)
-                .map_err(|e| MeshError::Io(e.to_string()))
-        })
     }
 }
