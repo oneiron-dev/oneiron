@@ -284,6 +284,17 @@ impl VaultMachineConnector {
             None => None,
         }
         .ok_or_else(|| refused(DispatchRefusal::StarterLapsed.code()))?;
+        // A result binds only rows its starter may read: once the starter lapses, the result
+        // lands through the owner's lane, which reads every row (RESULT-LANDING-LAPSED-STARTER
+        // = A). Nothing is written or sent.
+        if let (Some(binding), Some(by)) = (&inputs.result, started_by)
+            && !self
+                .vault()
+                .gpu_job_result_binding_readable(by, binding)
+                .map_err(store)?
+        {
+            return Err(refused("result_binding_unreadable"));
+        }
         let now = self.now_ms();
         let ask = DispatchAsk {
             starter,

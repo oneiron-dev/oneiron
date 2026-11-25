@@ -14,17 +14,21 @@
 //!
 //! Whose lane a landing waits in (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov 23:19):
 //! - A key the issuer closed because a Grant or the workload approval was revoked
-//!   (`DispatchClose::Revoked`) lands nothing (ARCH-0075: the host drops work after a revoke).
-//!   Each returnable output is recorded refused `job_revoked`, unfetched.
-//! - Any other ended key returns its result even when the starter stopped standing after the
-//!   end (ARCH-0046: a paid result still returns). Then the issuer writes the proposal in the
+//!   (`DispatchClose::Revoked`), and whose job that revoke stopped (the node's end is `Stopped`
+//!   or `Revoked`), lands nothing (ARCH-0075: the host drops work after a revoke). Each
+//!   returnable output is recorded refused `job_revoked`, unfetched.
+//! - Any other ended key returns its result, also one that ended by itself before the issuer
+//!   saw the revoke, and also when the starter stopped standing after the end (ARCH-0046: a
+//!   paid result still returns). The landing judges the starter the chunk's signed submit
+//!   names, that exact Grant; once it no longer stands, the issuer writes the proposal in the
 //!   owner's lane, and Keep stays the owner's act.
 
 use std::sync::Arc;
 
-use oneiron::gpu_job::{GpuJobResultBinding, GpuJobResultFile};
+use oneiron::gpu_job::{GpuJob, GpuJobResultBinding, GpuJobResultFile};
 use oneiron::job_dispatch::machine_records::{JobReturn, ReturnRefusal};
 use oneiron::job_dispatch::{DispatchClose, JobDispatch};
+use oneiron::job_workload::WorkloadStarter;
 use oneiron::machine_signature::MachineSignatures;
 use oneiron::{EntityId, Vault};
 use sha2::{Digest, Sha256};
@@ -32,8 +36,8 @@ use sha2::{Digest, Sha256};
 use super::clock::IssuerClock;
 use super::node_client::JobNodeClient;
 use crate::gpu_execution_node::wire::{
-    JobReceipt, JobState, JobStatusAnswer, JobStatusRequest, OutputDigest, OutputsState,
-    SignedJobReceipt,
+    JobEnd, JobReceipt, JobState, JobStatusAnswer, JobStatusRequest, OutputDigest, OutputsState,
+    SignedJobReceipt, SignedJobSubmit, Starter,
 };
 
 /// The parts one return needs: the issuer's store, its node calls, the key that checks a
@@ -47,7 +51,7 @@ pub struct ResultReturns {
     pub clock: Arc<dyn IssuerClock>,
 }
 
-/// Why each output of a key the issuer closed for a revoke was refused, unfetched.
+/// Why each output of a job a revoke stopped was refused, unfetched.
 const JOB_REVOKED: &str = "job_revoked";
 
 /// How far one pass over a key's outputs came.
@@ -155,7 +159,11 @@ impl ResultReturns {
                 None => return Outputs::Owed,
             },
         };
-        let revoked = matches!(row.closed, Some(DispatchClose::Revoked { .. }));
+        // A revoke drops only work it stopped: a job that ended by itself before the issuer saw
+        // the revoke keeps its result (its stop found it ended).
+        let revoked = matches!(row.closed, Some(DispatchClose::Revoked { .. }))
+            && matches!(ended.end, Some(JobEnd::Stopped | JobEnd::Revoked));
+        let starter = submit_starter(row, &job);
         let mut state = Outputs::Decided;
         for output in outputs
             .iter()
@@ -164,7 +172,7 @@ impl ResultReturns {
             let landed = if revoked {
                 Some(Err(JOB_REVOKED.to_owned()))
             } else {
-                self.land_one(row, &job, &binding, output)
+                self.land_one(row, &job, starter, &binding, output)
             };
             match landed {
                 Some(Ok(())) => self.decide(row, |owed| owed.landed.push(output.name.clone())),
@@ -185,7 +193,8 @@ impl ResultReturns {
     fn land_one(
         &self,
         row: &JobDispatch,
-        job: &oneiron::gpu_job::GpuJob,
+        job: &GpuJob,
+        starter: Option<WorkloadStarter>,
         binding: &GpuJobResultBinding,
         output: &OutputDigest,
     ) -> Option<Result<(), String>> {
@@ -224,14 +233,22 @@ impl ResultReturns {
         };
         Some(
             self.vault
-                .propose_gpu_job_result(job, binding, &file, self.issuer, self.clock.now_ms())
+                .propose_gpu_job_result(
+                    job.id,
+                    starter,
+                    binding,
+                    &file,
+                    self.issuer,
+                    self.clock.now_ms(),
+                )
                 .map(drop)
                 .map_err(|error| format!("proposal_refused: {error}")),
         )
     }
 
     /// The outputs of the node's newest receipt of `row`'s key, once it hashed them and its
-    /// receipt checks; `None` while it has not, or did not answer.
+    /// receipt checks: none when its hashing failed, so nothing is fetched and the return ends,
+    /// as for a stored `Failed` receipt. `None` while it has not, or did not answer.
     fn newest_outputs(&self, row: &JobDispatch) -> Option<Vec<OutputDigest>> {
         let answer = self
             .client
@@ -252,6 +269,7 @@ impl ResultReturns {
             && signed.verify(self.signer.as_ref()).is_ok();
         match &signed.receipt.outputs {
             OutputsState::Hashed(outputs) if checked => Some(outputs.clone()),
+            OutputsState::Failed { .. } if checked => Some(Vec::new()),
             _ => None,
         }
     }
@@ -292,5 +310,15 @@ impl ResultReturns {
                 tracing::debug!(key = %row.key, %error, "vault_machine: the acknowledgement did not arrive; asked again at the next pass");
             }
         }
+    }
+}
+
+/// The starter `row`'s signed submit names, as the issuer's checks read it: that exact Grant, or
+/// the owner who started `job`. `None` when the submit does not decode.
+fn submit_starter(row: &JobDispatch, job: &GpuJob) -> Option<WorkloadStarter> {
+    let signed = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&row.submit).ok()?;
+    match signed.submit.starter {
+        Starter::Grant { grant } => Some(WorkloadStarter::Grant(grant)),
+        Starter::Owner => job.started_by.map(WorkloadStarter::Owner),
     }
 }

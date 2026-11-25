@@ -4,23 +4,29 @@
 //! checks the bytes against the machine's signed receipt first; Keep is a separate act.
 //!
 //! A job that ended by itself still returns its result when its starter stopped standing
-//! afterwards (its Grant expired or was revoked, or the starter was erased): the proposal then
-//! waits in the owner's lane, written by the issuer as a System write, and Keep stays the
-//! owner's act (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov 23:19; ARCH-0046). A job the
-//! issuer stopped because a Grant or the approval was revoked never comes here (ARCH-0075).
+//! afterwards (the Grant its chunk's submit names expired or was revoked, or the starter was
+//! erased): the proposal then waits in the owner's lane, written by the issuer as a System
+//! write, and Keep stays the owner's act (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov
+//! 23:19; ARCH-0046). The issuer is then made_by's process, as the writer always is (FIX 9618),
+//! and the starter stays named as made_by's input. A job a revoke stopped never comes here
+//! (ARCH-0075). Since the owner's lane reads every row, a result binds only rows its starter
+//! may read: the issuer checks the binding at each chunk's first dispatch
+//! ([`Vault::gpu_job_result_binding_readable`]).
 
 use oneiron_contracts::fingerprint::ContentHash;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::GpuJob;
 use crate::authority::live_agent_principal_in;
 use crate::edit_settle::{NativeOutput, PendingProposalView};
 use crate::error::{Error, RecordError, Result};
 use crate::job_workload::WorkloadStarter;
+use crate::llm::decision::questions::principal_lane;
 use crate::policy_model::owners_in_txn;
-use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess, MadeByTrigger};
+use crate::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+};
 use crate::write_envelope::WriteActor;
 use crate::{EdgeActorClass, EntityId, Vault};
 
@@ -43,17 +49,20 @@ pub struct GpuJobResultFile {
 }
 
 impl Vault {
-    /// Lands `file` of `job` as a proposal on `binding.artifact`, with
-    /// `binding.task` as its made_by trigger. While the starter stands, the
-    /// starter writes it under their own read lane. Once the starter no longer
-    /// stands, `issuer` (this install's MACHINE) writes it as a System write
-    /// under the owner's lane. made_by still names the starter, or the issuer
-    /// after the starter's erase (RESULT-LANDING-LAPSED-STARTER = A).
+    /// Lands `file` of job `job` as a proposal on `binding.artifact`, with
+    /// `binding.task` as its made_by trigger. `starter` is the starter the
+    /// chunk's signed submit names. While that starter stands (the owner, or
+    /// that exact Grant), the job's starter writes it under their own read
+    /// lane. Otherwise `issuer` (this install's MACHINE) writes it as a
+    /// System write under the owner's lane, made_by's process is the issuer,
+    /// and the job's starter is made_by's input, unless they were erased
+    /// (RESULT-LANDING-LAPSED-STARTER = A). The starter is read from the job
+    /// row as it stands now, so an erase during the fetch is seen.
     /// [`Self::propose_native_output_with_reads`] takes the ordinary organ
     /// landing path without an organ hold. Keep is a separate act, and the
-    /// owner's. The caller supplies the job's binding and a file it has
-    /// verified against the receipt, and never calls this for a job it stopped
-    /// because a Grant or the approval was revoked.
+    /// owner's. The caller supplies the binding the dispatch checked and a
+    /// file it has verified against the receipt, and never calls this for a
+    /// job a revoke stopped.
     ///
     /// The consume-once ref is `gpu-job-<job hex>-<digest hex>`. The digest
     /// is BLAKE3 over the JSON array `[job hex, key, name]`. The digest keeps
@@ -61,31 +70,45 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// The starter no longer stands and the vault has no one live owner, the
-    /// task is dead or unreadable in the landing lane, or the native output is
-    /// refused (for example, the file's media type differs from the
-    /// artifact's or the ref already waits or has settled). Store and lane
-    /// errors propagate.
+    /// The job row is gone; the starter no longer stands and the vault has no
+    /// one live owner; the task is dead or unreadable in the landing lane; or
+    /// the native output is refused (for example, the file's media type
+    /// differs from the artifact's or the ref already waits or has settled).
+    /// Store and lane errors propagate.
     pub fn propose_gpu_job_result(
         &self,
-        job: &GpuJob,
+        job: EntityId,
+        starter: Option<WorkloadStarter>,
         binding: &GpuJobResultBinding,
         file: &GpuJobResultFile,
         issuer: EntityId,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        let (actor, lane) = match self.standing_gpu_job_starter(job)? {
-            Some(starter) => (starter, starter.entity_ref()),
+        let started_by = self.gpu_job(&job)?.ok_or(Error::EntityNotFound)?.started_by;
+        let writer = match (starter, started_by) {
+            (Some(starter), Some(started_by)) => {
+                self.standing_gpu_job_result_writer(starter, started_by)?
+            }
+            _ => None,
+        };
+        let (actor, lane, inputs) = match writer {
+            Some(writer) => (writer, writer.entity_ref(), Vec::new()),
+            // An erased starter is never named again.
             None => (
                 WriteActor::new(issuer, EdgeActorClass::System),
                 self.gpu_job_result_owner()?,
+                started_by
+                    .map(|row| MadeByInput {
+                        row,
+                        role: MadeByInputRole::Input,
+                    })
+                    .into_iter()
+                    .collect(),
             ),
         };
         let reader = self.organ_landing_reader(Some(lane))?;
-        // An erased starter is never named again: the issuer that writes the landing stands in.
-        let made_by_actor = job.started_by.unwrap_or(issuer);
 
-        let job_hex = job.id.to_hex();
+        let job_hex = job.to_hex();
         let identity = json!([job_hex, file.key, file.name]).to_string();
         let params_hash = ContentHash::of(identity.as_bytes()).to_hex();
         // Every version keeps the artifact's own media type, whatever the file is called.
@@ -107,9 +130,9 @@ impl Vault {
             })
             .to_string(),
             made_by: Some(MadeBy {
-                inputs: Vec::new(),
+                inputs,
                 process: MadeByProcess {
-                    actor: made_by_actor,
+                    actor: actor.entity_ref(),
                     class: MadeByClass::Concluded,
                     identity: "gpu_job.result_landing".into(),
                     version: "1".into(),
@@ -129,17 +152,36 @@ impl Vault {
         )
     }
 
-    /// The job's starter as the writer of its result while they stand: the
-    /// owner as Human, an agent under a live Grant as Agent or System. `None`
-    /// once they no longer stand, and after their erase.
-    fn standing_gpu_job_starter(&self, job: &GpuJob) -> Result<Option<WriteActor>> {
-        let Some(started_by) = job.started_by else {
+    /// Whether `principal`'s own read lane reads both rows `binding` names.
+    /// The issuer asks it before each chunk's first dispatch and refuses a
+    /// binding its starter cannot read, since a result whose starter lapsed
+    /// lands through the owner's lane, which reads every row.
+    ///
+    /// # Errors
+    ///
+    /// A store or lane read failure.
+    pub fn gpu_job_result_binding_readable(
+        &self,
+        principal: EntityId,
+        binding: &GpuJobResultBinding,
+    ) -> Result<bool> {
+        principal_lane(self, principal)?.all_refs_readable(&[binding.artifact, binding.task])
+    }
+
+    /// The writer of a result while `starter`, the chunk's submit's starter,
+    /// stands: the owner as Human, or the agent `started_by` under that exact
+    /// live Grant, as Agent or System. `None` once it no longer stands.
+    fn standing_gpu_job_result_writer(
+        &self,
+        starter: WorkloadStarter,
+        started_by: EntityId,
+    ) -> Result<Option<WriteActor>> {
+        if !self.dispatch_starter_stands(starter)? {
             return Ok(None);
-        };
-        let class = match self.dispatch_starter(started_by)? {
-            Some(WorkloadStarter::Owner(_)) => EdgeActorClass::Human,
-            Some(WorkloadStarter::Grant(_)) => {
-                // Dispatch already resolved the Grant; it does not return the class.
+        }
+        let class = match starter {
+            WorkloadStarter::Owner(_) => EdgeActorClass::Human,
+            WorkloadStarter::Grant(_) => {
                 let txn = self.store.env.read_txn()?;
                 if live_agent_principal_in(&self.store, &txn, started_by, EdgeActorClass::Agent)? {
                     EdgeActorClass::Agent
@@ -154,7 +196,6 @@ impl Vault {
                     return Ok(None);
                 }
             }
-            None => return Ok(None),
         };
         Ok(Some(WriteActor::new(started_by, class)))
     }
