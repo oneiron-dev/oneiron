@@ -92,7 +92,9 @@ pub(crate) fn curl_transport(
 /// curl reads as one: dotted (`192.0.2.7`), shortened (`127.1`), octal or hex
 /// parts (`0177.0.0.1`, `0x7f.1`), one number (`2130706433`), or bracketed
 /// IPv6. A name's last label is never all digits (RFC 3696 section 2), so a
-/// last label of digits or of a `0x` number marks an address.
+/// last label of digits or of a `0x` number marks an address. Every label is
+/// a DNS label: not empty, and starting and ending with a letter or digit, so
+/// the `--resolve` entry never starts with `-` (curl's "remove this entry").
 fn is_host_name(host: &str) -> bool {
     let name = host.strip_suffix('.').unwrap_or(host);
     // ASCII first: the label checks below slice by byte.
@@ -100,6 +102,12 @@ fn is_host_name(host: &str) -> bool {
         || !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+    {
+        return false;
+    }
+    if name
+        .split('.')
+        .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
     {
         return false;
     }

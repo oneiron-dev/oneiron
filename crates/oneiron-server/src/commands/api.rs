@@ -42,8 +42,11 @@ pub(crate) use transport::{CurlTransport, curl_transport};
 /// non-zero: the server's error body still reaches stdout, and the process
 /// still fails. It says nothing about a 3xx — no `--location` is passed here,
 /// so a redirect arrives as its own response and exits zero — and it needs
-/// curl 7.76 or newer, the release that added the flag.
-pub(crate) const CURL_FLAGS: [&str; 3] = ["--silent", "--show-error", "--fail-with-body"];
+/// curl 7.76 or newer, the release that added the flag. `--globoff` keeps
+/// curl from reading `{a,b}` or `[1-9]` in a URL as a pattern of several
+/// transfers: one call is one request, and `--max-time` bounds all of it.
+pub(crate) const CURL_FLAGS: [&str; 4] =
+    ["--silent", "--show-error", "--fail-with-body", "--globoff"];
 
 /// curl reads the host's own config (`$CURL_HOME/.curlrc`, the XDG location,
 /// or `~/.curlrc`) BEFORE the flags above, and it reads it EVEN WHEN
@@ -51,7 +54,7 @@ pub(crate) const CURL_FLAGS: [&str; 3] = ["--silent", "--show-error", "--fail-wi
 /// host, which would then be handed the credential this process puts on the
 /// config channel. `-q` refuses that file, and curl honours it only as the
 /// FIRST argument — which is why it is a separate constant applied before
-/// [`CURL_FLAGS`] rather than a fourth entry inside it.
+/// [`CURL_FLAGS`] rather than one more entry inside it.
 pub(crate) const CURL_DISABLE_HOST_CONFIG: &str = "-q";
 
 /// curl also routes by the environment: an `http_proxy`, `https_proxy` or

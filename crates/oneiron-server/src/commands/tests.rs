@@ -954,6 +954,10 @@ fn api_pins_the_connect_to_the_checked_addresses_and_bounds_the_transfer() {
         "{argv}"
     );
     assert!(argv.contains("--max-time\n30\n"), "{argv}");
+    assert!(
+        argv.contains("--globoff\n"),
+        "one call is one transfer: {argv}"
+    );
 
     assert_eq!(
         api::curl_transport("http://vault.example:8080/", &addresses[..1], None).unwrap(),
@@ -998,6 +1002,8 @@ fn api_refuses_a_pin_or_deadline_it_cannot_hold_to_the_base_url() {
     }
     // Dotted, shortened, octal, hex, one number, a trailing dot, bracketed
     // IPv6: curl connects to each as an address, so a pin would never apply.
+    // A label that is empty or starts or ends with `-` is no DNS name, and a
+    // `--resolve` entry starting with `-` removes an entry instead of adding one.
     for host in [
         "192.0.2.7",
         "127.1",
@@ -1007,7 +1013,10 @@ fn api_refuses_a_pin_or_deadline_it_cannot_hold_to_the_base_url() {
         "2130706433",
         "192.0.2.7.",
         "[::1]",
-        "[::1]:8443",
+        "[::1]:0",
+        "-pin.example",
+        "pin-.example",
+        "pin..example",
     ] {
         let base = format!("https://{host}");
         assert!(
