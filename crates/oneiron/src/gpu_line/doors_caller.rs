@@ -10,7 +10,7 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// Who a GPU line door admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LineCaller {
+pub(crate) enum LineCaller {
     /// The vault owner under their own proof, as this actor.
     Owner(EntityId),
     /// An agent under the one live Grant that admits it to the verb.
@@ -19,7 +19,7 @@ pub(super) enum LineCaller {
 
 impl LineCaller {
     /// The owner's actor, when the owner's own proof admitted the call.
-    pub(super) fn owner(self) -> Option<EntityId> {
+    pub(crate) fn owner(self) -> Option<EntityId> {
         match self {
             Self::Owner(actor) => Some(actor),
             Self::Agent { .. } => None,
@@ -32,7 +32,7 @@ impl LineCaller {
     /// # Errors
     ///
     /// `forbidden` (`not_this_line`) for a Grant that holds none of them.
-    pub(super) fn require_role(
+    pub(crate) fn require_role(
         self,
         line: &GpuLine,
         roles: &[LineRole],
@@ -75,7 +75,7 @@ fn roles_named(roles: &[LineRole]) -> String {
 /// # Errors
 ///
 /// `forbidden` for a caller the kit does not admit; a store read failure.
-pub(super) fn admit_in_txn(
+pub(crate) fn admit_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     owner: Option<&AuthenticatedOwner>,

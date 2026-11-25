@@ -14,7 +14,7 @@ pub(crate) mod claim;
 mod cohort;
 pub mod defaults;
 mod doors;
-mod doors_caller;
+pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
@@ -23,8 +23,10 @@ pub(crate) mod tables;
 mod wire;
 
 pub use claim::{
-    AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
-    UnitSettleRefused, UnitSettlement, UnitTerminal, claim_in_txn, claims_at_rung_in_txn,
+    AllocationSettle, AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused,
+    ClaimKey, ClaimState, UnattributedJob, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
+    UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn, claim_hold_in_txn,
+    claim_in_txn, claims_at_rung_in_txn, open_claim_in_txn, record_node_answer_in_txn,
     settle_unit_in_txn,
 };
 pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
