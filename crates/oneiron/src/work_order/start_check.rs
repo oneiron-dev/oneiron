@@ -3,9 +3,7 @@
 //! authority lives, the workload's approval covers the machine, and the attempt is the order's
 //! next one under the job id the order fixes. The loop's fit asks the same authority question
 //! ([`Vault::order_authority_in_txn`]), so a pass and the start's write never disagree on it.
-use crate::authority::{
-    principal_standing_covering_or_lapse_in_txn, principal_standing_or_lapse_in_txn,
-};
+use crate::authority::principal_standing_covering_or_lapse_in_txn;
 use crate::federation::{FederationGrant, agent_grants_for_store_in_txn};
 use crate::gpu_job::GpuJobVerb;
 use crate::job_workload::WorkloadStartAsk;
@@ -89,10 +87,10 @@ fn grant_stands_for_in_txn(
     Ok(standing.is_ok_and(|standing| standing.grant == Some(grant)))
 }
 
-/// Whether `grant` is the Grant the standing rule picks for `actor` and
-/// `vault.gpu.jobs.start` now: the one whose per-job maximum the start reads
-/// (`gpu_job/allowance.rs`) and whose standing the issuer rechecks before each send
-/// (`job_dispatch/recheck.rs`).
+/// Whether `grant` stands for `actor` and `vault.gpu.jobs.start` now, asked for this Grant
+/// first, as the issuer rechecks it before each send (`job_dispatch/recheck.rs`): a lower-id
+/// Grant the owner gives the agent later never cancels an order made under `grant`. The start
+/// reads the per-job maximum set beside `grant` itself.
 fn grant_starts_jobs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -100,18 +98,17 @@ fn grant_starts_jobs_in_txn(
     class: EdgeActorClass,
     grant: EntityId,
 ) -> crate::Result<bool> {
-    let standing =
-        principal_standing_or_lapse_in_txn(vault, txn, actor, class, GpuJobVerb::Start.name())?;
-    Ok(standing.is_ok_and(|standing| standing.grant == Some(grant)))
+    grant_stands_for_in_txn(vault, txn, actor, class, grant, GpuJobVerb::Start.name())
 }
 
 impl Vault {
     /// Whether the authority `order.ordered_by` names still lives in `txn` (I8: the order is
     /// carried out only while it does): the owner who ordered is not gone; or the exact Grant
     /// the agent ordered under still stands for it and `vault.jobs.order`, and, for an offer's
-    /// charge, is still the Grant that starts its GPU jobs (the charge is "the caller's
-    /// allowance (the built start)", 1.1). A revoked order Grant ends the order even while
-    /// another Grant of the agent names the verb.
+    /// charge, still stands for it and `vault.gpu.jobs.start` (the charge is "the caller's
+    /// allowance (the built start)", 1.1). Each is asked for this Grant first: a revoked order
+    /// Grant ends the order even while another Grant of the agent names the verb, and another
+    /// live Grant that outranks it never does.
     ///
     /// # Errors
     ///
