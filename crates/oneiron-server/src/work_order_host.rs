@@ -44,6 +44,7 @@ impl From<&JobRefusal> for Blocker {
             JobRefusal::KeyConflict => Self::KeyConflict,
             JobRefusal::NotTheKeysIssuer => Self::NotTheKeysIssuer,
             JobRefusal::SubmitSignatureInvalid => Self::SubmitSignatureInvalid,
+            JobRefusal::DevicesUnreadable { why } => Self::DevicesUnreadable { why: why.clone() },
         }
     }
 }
@@ -73,8 +74,10 @@ pub fn facts_of_answer(machine: EntityId, answer: Option<&JobAnswer>, now_ms: u6
             facts.enabled = !matches!(refusal, JobRefusal::NotEnabled);
             facts.refusal = Some(Blocker::from(refusal));
         }
-        // Busy, a receipt, or no answer: not reachable for new work now.
-        Some(JobAnswer::Busy { .. } | JobAnswer::Receipt(_)) | None => {}
+        // Busy, a receipt, a GPU sample (the answer to another request), or no answer: not
+        // reachable for new work now.
+        Some(JobAnswer::Busy { .. } | JobAnswer::Receipt(_) | JobAnswer::Availability(_))
+        | None => {}
     }
     facts
 }

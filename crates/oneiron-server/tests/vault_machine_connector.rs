@@ -26,7 +26,8 @@ use oneiron::gpu_job::{
 };
 use oneiron::job_dispatch::{BootMark, DispatchClose, DispatchPhase, JobDispatch, JobObservation};
 use oneiron::job_workload::{
-    WorkloadApproveRequest, WorkloadCaller, WorkloadPinRequest, WorkloadRef, WorkloadStartRefusal,
+    NoScreenModel, WorkloadApproveRequest, WorkloadCaller, WorkloadPinRequest, WorkloadRef,
+    WorkloadStartRefusal,
 };
 use oneiron::llm::ModelLocality;
 use oneiron::llm::run_admission::{
@@ -37,7 +38,7 @@ use oneiron::machine_signature::{
     MachineSignatureError, MachineSignatures, machine_signature_transcript,
 };
 use oneiron::test_doors::steward;
-use oneiron::{EntityId, Vault};
+use oneiron::{EdgeActorClass, EntityId, Vault};
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::config::gpu_jobs::{AtMaximum, VaultMachineSettings};
 use oneiron_server::gpu_execution_node::issuer::{
@@ -693,9 +694,11 @@ impl Rig {
         .expect("a valid workload pin request");
         let caller = WorkloadCaller::Owner(&self.owner);
         let now = self.clock.now_ms();
+        let owner_id = self.owner.revalidate(self.vault()).expect("the owner's id");
         let pinned = self
             .vault()
-            .pin_job_workload(caller, &request, now)
+            .memory(owner_id, EdgeActorClass::Human)
+            .pin_job_workload(&request, &NoScreenModel, now)
             .expect("pin a workload");
         assert!(pinned.changed, "the fixture writes a new workload pin");
         let digest = pinned.workload.digest;
