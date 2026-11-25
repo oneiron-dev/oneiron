@@ -1,8 +1,7 @@
 //! Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the
 //! `[gpu_jobs]` section as `serve` resolves it, a GPU backend registered on a
 //! built server, an allocation on its host account, and one pass of its GPU
-//! job worker, so a test does not wait on `step_secs`. Also the node client the work-order
-//! loop and `vault.jobs.logs.tail` call machines through, for a test's scripted machines.
+//! job worker, so a test does not wait on `step_secs`.
 
 use std::sync::Arc;
 
