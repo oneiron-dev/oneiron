@@ -407,12 +407,6 @@ impl VaultMachineConnector {
         }
         let signed = decode::<SignedJobSubmit>(&row.submit)?;
         if let Some(refusal) = self.revoked(&row, &signed.submit)? {
-            // A key the node had already ended when the issuer saw the revoke keeps its end and
-            // its result: the revoke stops only work the node has not ended (a stop at the box
-            // ends a job `Stopped` too, which is not the revoke's).
-            if let Some(ended) = self.ended_at_node(&row) {
-                return self.status_known(&row, &signed, &ended);
-            }
             let closed = self.close(
                 &row.key,
                 DispatchClose::Revoked {
