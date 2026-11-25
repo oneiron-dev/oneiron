@@ -333,7 +333,7 @@ impl OrderLoop {
     }
 
     /// The node client passes call through, made at first use.
-    fn nodes(&self, server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
+    pub(crate) fn nodes(&self, server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
         Arc::clone(self.nodes.get_or_init(|| node_client(server)))
     }
 
