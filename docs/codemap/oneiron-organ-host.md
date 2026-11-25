@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/image.rs` | src | m | 4 struct · 4 enum · 6 fn · 13 const | ImageEdit, ImageEditRefusal, ImageEdited, ImageFormat, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter | The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `src/landing.rs` | src | m | 5 fn · 1 crate-vis | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
-| `src/lib.rs` | src | s | 3 mod · 19 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/lib.rs` | src | s | 3 mod · 20 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/measure.rs` | src | s | 1 crate-vis | — | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
 | `src/mesh/client.rs` | src | m | 3 crate-vis | — | The asking side of a mesh organ call: stage the inputs, send the call, answer the organ's asks while it… |
 | `src/mesh/mod.rs` | src | s | 1 struct · 1 const · 1 re-export · 17 crate-vis | Offer | Organ calls between the owner's nodes (OF-575, owner ruling MESH) |
@@ -41,6 +41,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/process/shutdown.rs` | src | s | 4 crate-vis | — | A call the host's mesh stop cancels (FIX 4756): told with the protocol's shutdown reason, as a deadline… |
 | `src/receipt.rs` | src | s | 7 struct · 1 enum · 2 fn · 1 const · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, ReceiptSignature, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
+| `src/resource_gpu.rs` | src | s | 3 struct · 2 enum · 2 trait · 2 fn | GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotGrant, GpuSlotRefusal, GpuSlotRequest, MachineGpus | GPU leases, beside the memory floor's ([`crate::FloorLease`]) |
 | `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 crate-vis | FloorLease, FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 6 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `src/sandbox.rs` | src | m | 1 fn · 6 crate-vis | — | What the host does to an organ process between fork and exec |
