@@ -256,6 +256,7 @@ pub(super) fn authority_mesh(
                 "machine": row.machine.to_hex(),
                 "authority": encode(&row.authority),
                 "address": encode(&row.address),
+                "bare": row.bare,
             })
         })
         .collect();

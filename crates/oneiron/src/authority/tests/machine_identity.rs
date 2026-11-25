@@ -18,8 +18,13 @@ pub(super) struct Host {
 }
 
 pub(super) fn host() -> Host {
+    host_with(VaultConfig::default())
+}
+
+/// [`host`] over a vault opened with `config`.
+pub(super) fn host_with(config: VaultConfig) -> Host {
     let dir = crate::test_support::restore_tempdir();
-    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
     let issuer = crate::test_support::test_host_issuer();
     vault.ensure_host_root_slip(&issuer).unwrap();
     let person = crate::vault::embedded_owner_actor_id().unwrap();

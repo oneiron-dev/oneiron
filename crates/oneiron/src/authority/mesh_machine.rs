@@ -277,8 +277,8 @@ impl Vault {
     /// reason its end is judged no earlier than the newest time a live owner
     /// signed into the fold, so a replica that slept does not keep a pairing
     /// past its expiry for the time it was closed (MESH-REPLICA-CLOCK-LIFETIMES
-    /// = A, Engine 25 Nov 19:45). The mesh grants this vault minted itself
-    /// stay on its own clock.
+    /// = A, Engine 25 Nov 19:45). A grant is judged alike
+    /// (`mesh_grant_permits_in_txn`).
     fn mesh_pairing_live(
         &self,
         fold: &AuthorityFold,
@@ -497,10 +497,18 @@ impl Vault {
             return Ok(false);
         }
         let grant = &mint.action.claims;
+        // Its start is its presence in the signed fold and its end is judged
+        // no earlier than the newest owner-signed time, as for its pairing: a
+        // replica proves peers on the home's grants (REVIEW-10536 round 2).
         let now = self.instant_in_txn(txn)?.secs();
+        let signed = super::readonly_fold::newest_owner_signed_ts_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            &fold,
+        )?;
         Ok(fold.slip_is_live(grant_id)
-            && now >= grant.issued_at
-            && now < grant.expires_at
+            && now.max(signed.unwrap_or(0)) < grant.expires_at
             && fold.vault_id == Some(grant.vault_id)
             && mint.signer == AuthorityKey::Ed25519(claims.host_key)
             && grant.parent_id.is_none()

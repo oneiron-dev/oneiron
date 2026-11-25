@@ -12,10 +12,11 @@
 //! Each test's replica takes the home's signed authority history only, as a joined machine's
 //! authority catch-up brings it, and no window.
 //!
-//! Red: the stub branch, where the replica refuses every binding the home serves. The tests
+//! Red r3: the stub branch, where the replica refuses every binding the home serves. The tests
 //! that need a binding to land fail (1, 2, 5, 6 and 7); the refusal and serving tests (3 and 4)
-//! pass.
-use super::machine_identity::{Host, host, pair_and_bind, request_for};
+//! pass. Red r4: this head with the round-2 fixes of the pager, the importer and the grant check
+//! undone. Tests 8, 9 and 10 fail; 1 to 7 pass.
+use super::machine_identity::{Host, host, host_with, pair_and_bind, request_for};
 use super::support::ed_key;
 use super::*;
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -27,8 +28,13 @@ const GRANTED: &[u8] = b"mesh/sync";
 /// A replica of `host`'s vault: a fresh install that took the home's signed authority history
 /// and nothing else. It holds no host issuer, no MACHINE row and no binding.
 fn replica(host: &Host) -> (tempfile::TempDir, Vault) {
+    replica_with(host, VaultConfig::default())
+}
+
+/// [`replica`] over a vault opened with `config`.
+fn replica_with(host: &Host, config: VaultConfig) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let history = host.vault.export_signed_authority_history().unwrap();
     vault.import_signed_authority_history(&history).unwrap();
@@ -38,17 +44,18 @@ fn replica(host: &Host) -> (tempfile::TempDir, Vault) {
 /// Every page of the home's bindings, as `residence.authority.mesh` serves them to a proven
 /// machine of the owner's.
 fn served(host: &Host) -> Vec<MeshAuthorityRow> {
-    served_within(host, usize::MAX).concat()
+    served_within(host, usize::MAX, usize::MAX).concat()
 }
 
-/// The pages of the home's bindings within `budget` base64 bytes each.
-fn served_within(host: &Host, budget: usize) -> Vec<Vec<MeshAuthorityRow>> {
+/// The pages of the home's bindings within `budget` base64 bytes each, a page's first row
+/// within `lone`.
+fn served_within(host: &Host, budget: usize, lone: usize) -> Vec<Vec<MeshAuthorityRow>> {
     let mut pages = Vec::new();
     let mut after = None;
     loop {
         let page = host
             .vault
-            .mesh_authority_page_within(after, budget)
+            .mesh_authority_page_within(after, budget, lone)
             .unwrap();
         pages.push(page.rows);
         match page.next {
@@ -61,6 +68,35 @@ fn served_within(host: &Host, budget: usize) -> Vec<Vec<MeshAuthorityRow>> {
 /// The base64 bytes a page reply spends on `row`.
 fn reply_bytes(row: &MeshAuthorityRow) -> usize {
     row.authority.len().div_ceil(3) * 4 + row.address.len().div_ceil(3) * 4
+}
+
+/// Gives `machine`'s MACHINE row on the home 200 direct addresses at `endpoint_key`, so its
+/// address alone passes a page that fits every other row.
+fn crowd(host: &Host, machine: EntityId, endpoint_key: [u8; 32]) {
+    let crowded = MeshMachineAddress {
+        endpoint_key,
+        direct_addrs: (0..200u16)
+            .map(|port| std::net::SocketAddr::from(([10, 0, 0, 1], 4000 + port)))
+            .collect(),
+        relay_url: None,
+    };
+    host.vault
+        .put_entity(
+            &machine,
+            ENTITY_TYPE_MACHINE,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(crowded)).unwrap(),
+        )
+        .unwrap();
+}
+
+/// How many direct addresses `vault`'s MACHINE row of `machine` holds.
+fn direct_addrs(vault: &Vault, machine: EntityId) -> usize {
+    vault
+        .mesh_machine(machine)
+        .unwrap()
+        .map_or(0, |address| address.direct_addrs.len())
 }
 
 /// A machine the owner paired, bound and granted on the home: its id, its proof as a node's
@@ -308,24 +344,8 @@ fn a_row_past_the_page_bytes_is_served_bare_and_the_scan_goes_on() {
     let host = host();
     let (machine, proven, endpoint_key) = bound_machine(&host, 87);
     bound_machine(&host, 89);
-    let bare = served(&host);
-    let budget = bare.iter().map(reply_bytes).max().unwrap() + 1;
-    let crowded = MeshMachineAddress {
-        endpoint_key,
-        direct_addrs: (0..200u16)
-            .map(|port| std::net::SocketAddr::from(([10, 0, 0, 1], 4000 + port)))
-            .collect(),
-        relay_url: None,
-    };
-    host.vault
-        .put_entity(
-            &machine,
-            ENTITY_TYPE_MACHINE,
-            TimeRange { start: 1, end: 1 },
-            2,
-            &rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(crowded)).unwrap(),
-        )
-        .unwrap();
+    let budget = served(&host).iter().map(reply_bytes).max().unwrap() + 1;
+    crowd(&host, machine, endpoint_key);
     assert!(
         served(&host)
             .iter()
@@ -333,7 +353,7 @@ fn a_row_past_the_page_bytes_is_served_bare_and_the_scan_goes_on() {
         "control: the crowded address alone passes the budget"
     );
 
-    let pages = served_within(&host, budget);
+    let pages = served_within(&host, budget, budget);
     assert_eq!(
         pages.iter().map(Vec::len).collect::<Vec<_>>(),
         vec![1, 1],
@@ -345,6 +365,7 @@ fn a_row_past_the_page_bytes_is_served_bare_and_the_scan_goes_on() {
         .find(|row| row.machine == machine)
         .unwrap();
     assert!(reply_bytes(&row) <= budget, "served within the budget");
+    assert!(row.bare, "served without its direct addresses");
 
     let (_dir, replica) = replica(&host);
     let import = replica.import_mesh_authority_rows(pages.concat()).unwrap();
@@ -353,5 +374,139 @@ fn a_row_past_the_page_bytes_is_served_bare_and_the_scan_goes_on() {
         replica.mesh_peer_machine(endpoint_key, GRANTED).unwrap(),
         proven,
         "the bare address proves the machine"
+    );
+}
+
+/// A row past the page's bytes but within the lone row's is served whole, on a page of its own,
+/// so a binding of many grants or addresses still syncs (review round 2 of #10536).
+#[test]
+fn a_row_past_the_page_bytes_is_served_whole_on_a_page_of_its_own() {
+    let host = host();
+    let (machine, proven, endpoint_key) = bound_machine(&host, 91);
+    bound_machine(&host, 93);
+    let budget = served(&host).iter().map(reply_bytes).max().unwrap() + 1;
+    crowd(&host, machine, endpoint_key);
+
+    let pages = served_within(&host, budget, usize::MAX);
+    assert_eq!(
+        pages.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![1, 1],
+        "the crowded row alone on its page, none left behind"
+    );
+    let row = pages
+        .concat()
+        .into_iter()
+        .find(|row| row.machine == machine)
+        .unwrap();
+    assert!(!row.bare, "served whole");
+    assert!(reply_bytes(&row) > budget, "control: past the page's bytes");
+
+    let (_dir, replica) = replica(&host);
+    let import = replica.import_mesh_authority_rows(pages.concat()).unwrap();
+    assert_eq!(import.written.len(), 2, "{import:?}");
+    assert_eq!(
+        direct_addrs(&replica, machine),
+        200,
+        "every direct address crossed"
+    );
+    assert_eq!(
+        replica.mesh_peer_machine(endpoint_key, GRANTED).unwrap(),
+        proven
+    );
+}
+
+/// A bare row never takes the direct addresses a replica holds at that endpoint: they may be its
+/// only route to the machine (review round 2 of #10536).
+#[test]
+fn a_bare_row_keeps_the_direct_addresses_the_replica_holds() {
+    let host = host();
+    let (machine, proven, endpoint_key) = bound_machine(&host, 95);
+    bound_machine(&host, 97);
+    let budget = served(&host).iter().map(reply_bytes).max().unwrap() + 1;
+    crowd(&host, machine, endpoint_key);
+    let (_dir, replica) = replica(&host);
+    let whole = replica.import_mesh_authority_rows(served(&host)).unwrap();
+    assert_eq!(whole.written.len(), 2, "{whole:?}");
+    assert_eq!(
+        direct_addrs(&replica, machine),
+        200,
+        "control: the whole address crossed"
+    );
+
+    let pages = served_within(&host, budget, budget);
+    assert!(
+        pages
+            .concat()
+            .iter()
+            .any(|row| row.machine == machine && row.bare),
+        "control: the home serves that row bare now"
+    );
+    let import = replica.import_mesh_authority_rows(pages.concat()).unwrap();
+    assert!(import.held.contains(&machine), "{import:?}");
+    assert_eq!(
+        direct_addrs(&replica, machine),
+        200,
+        "the route the replica held stays"
+    );
+    assert_eq!(
+        replica.mesh_peer_machine(endpoint_key, GRANTED).unwrap(),
+        proven
+    );
+}
+
+/// A replica judges the home's grants as it judges their pairings: a grant's start is its
+/// presence in the signed fold, and its end comes no later than the newest time a live owner
+/// signed into it. A replica whose clock stood still while the home went on neither keeps a grant
+/// the home expired nor refuses one the home has just minted (review round 2 of #10536, FIX
+/// MESH-GRANT-REPLICA-CLOCK).
+#[test]
+fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
+    const MINTED: u64 = 1_790_000_000;
+    let clock = crate::ports::ManualClock::new(MINTED);
+    let host = host_with(VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    });
+    let (expiring, _, expiring_key) = bound_machine(&host, 101);
+    // The owner's grant ceiling drops to an hour, and that machine's grant is minted again under
+    // it: it now ends before the pairing it rides on.
+    host.vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&host.owner),
+            crate::setting::SetSetting::vault_value(
+                "mesh.grant.max_ttl_secs",
+                serde_json::json!(3600),
+            ),
+        )
+        .unwrap();
+    host.vault
+        .set_mesh_alpn_grant(&host.issuer, expiring, expiring_key, GRANTED, true)
+        .unwrap();
+    clock.set(MINTED + 7200);
+    let (_, fresh, fresh_key) = bound_machine(&host, 103);
+    assert_eq!(
+        host.vault.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
+        PeerMachine::Unknown,
+        "control: the home's grant expired"
+    );
+
+    let (_dir, replica) = replica_with(
+        &host,
+        VaultConfig {
+            store_clock: crate::ports::ManualClock::new(MINTED + 100).bundle(),
+            ..VaultConfig::default()
+        },
+    );
+    let import = replica.import_mesh_authority_rows(served(&host)).unwrap();
+    assert_eq!(import.written.len(), 2, "{import:?}");
+    assert_eq!(
+        replica.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
+        PeerMachine::Unknown,
+        "the grant the home expired admits nothing here"
+    );
+    assert_eq!(
+        replica.mesh_peer_machine(fresh_key, GRANTED).unwrap(),
+        fresh,
+        "the grant the home has just minted admits at once"
     );
 }

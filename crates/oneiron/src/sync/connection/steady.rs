@@ -98,9 +98,6 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(MACHINE_HISTORY_RETRY_INTERVAL_SECS));
         machine_history.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let machine_history_due = std::sync::Arc::new(AtomicBool::new(false));
-        // Where the last round's read of the home's mesh bindings stopped
-        // (MESH-AUTHORITY-REPLICATION): the next round goes on from there.
-        let mesh_cursor = std::sync::Arc::new(std::sync::Mutex::new(None::<crate::EntityId>));
         // A residence-mode switch closes this socket; the next connect sends
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
@@ -488,7 +485,7 @@ impl SyncConnection {
                         let predicted = std::sync::Arc::clone(&self.predicted_wake);
                         let follow = std::sync::Arc::clone(&self.follow_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
-                        let mesh_cursor = std::sync::Arc::clone(&mesh_cursor);
+                        let mesh_cursor = std::sync::Arc::clone(&self.mesh_cursor);
                         let jobs = upkeep.blocking_jobs();
                         upkeep.sealed = Some(tokio::spawn(async move {
                             let _batch = sealed_batch;

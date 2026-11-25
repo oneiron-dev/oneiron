@@ -28,6 +28,9 @@ struct MeshAuthorityRowReply {
     machine: String,
     authority: String,
     address: String,
+    /// The address was served without its direct addresses, to fit the page.
+    #[serde(default)]
+    bare: bool,
 }
 
 /// The home's answer to one mesh bindings ask: the page's rows, and the
@@ -41,15 +44,16 @@ struct MeshAuthorityReply {
 
 /// Reads the home's mesh bindings for one round and imports each page. The
 /// round starts after the MACHINE `cursor` holds, or at the first binding
-/// when it holds none, and leaves in `cursor` where it stopped: `None` once
-/// the scan reached the home's last binding. A home that serves no such
-/// method answers nothing to import. Returns how many bindings were written
-/// here.
+/// when it holds none. Each page this machine committed moves `cursor` past
+/// it, so a round that stops early, or a reconnect, goes on from there; it
+/// holds `None` once the scan reached the home's last binding. Returns how
+/// many bindings were written here.
 ///
 /// # Errors
 ///
-/// A member lane; the home is offline or answers what this machine refuses;
-/// storage errors.
+/// A member lane; the home is offline, serves no such method (a home older
+/// than MESH-AUTHORITY-REPLICATION) or answers what this machine refuses;
+/// storage errors. Pages committed before the error stay committed.
 pub(crate) async fn catch_up_mesh_authority(
     vault: &Vault,
     config: &SyncClientConfig,
@@ -65,20 +69,12 @@ pub(crate) async fn catch_up_mesh_authority(
     let mut after = *cursor.lock().unwrap_or_else(PoisonError::into_inner);
     let mut written = 0;
     for _ in 0..MAX_PAGES {
-        let reply = match rpc
+        let reply = rpc
             .request(
                 "residence.authority.mesh",
                 json!({ "after": after.as_ref().map(EntityId::to_hex) }),
             )
-            .await
-        {
-            Ok(reply) => reply,
-            Err(TransportError::InvalidPayload(_)) => {
-                after = None;
-                break;
-            }
-            Err(error) => return Err(error),
-        };
+            .await?;
         let reply: MeshAuthorityReply = serde_json::from_value(reply).map_err(|_| refused())?;
         let (rows, next) = decoded_page(reply, after)?;
         let import = vault.import_mesh_authority_rows(rows).map_err(storage)?;
@@ -90,11 +86,11 @@ pub(crate) async fn catch_up_mesh_authority(
         }
         written += import.written.len();
         after = next;
+        *cursor.lock().unwrap_or_else(PoisonError::into_inner) = after;
         if after.is_none() {
             break;
         }
     }
-    *cursor.lock().unwrap_or_else(PoisonError::into_inner) = after;
     Ok(written)
 }
 
@@ -126,6 +122,7 @@ fn decoded_page(
             machine,
             authority: decode(&row.authority)?,
             address: decode(&row.address)?,
+            bare: row.bare,
         });
     }
     let next = reply

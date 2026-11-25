@@ -24,6 +24,8 @@
 //!   bring back the older pairing);
 //! - a revoked binding stays revoked;
 //! - a binding never moves to another endpoint or machine key;
+//! - an address served bare, without its direct addresses, never takes the
+//!   one this replica holds at that endpoint;
 //! - this install's own MACHINE row stays its own to write.
 
 use super::*;
@@ -35,9 +37,15 @@ use std::ops::Bound;
 /// The most bindings one page of [`Vault::mesh_authority_page`] carries.
 pub const MESH_AUTHORITY_PAGE_MAX: usize = 32;
 
-/// The base64 bytes one page's rows may take: half the 16 MiB a residence
-/// page reply may carry, so the reply's framing stays well inside it.
+/// The base64 bytes one page's rows may take: a quarter of the 32 MiB a
+/// residence RPC reply may carry, so the reply's framing stays well inside it.
 const MESH_AUTHORITY_PAGE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The base64 bytes a page's first row may take alone: three quarters of
+/// that reply, room for the 26,000 grants of 255-byte ALPNs review round 2 of
+/// #10536 measured, twice over. A signed row past it is left out; serving it
+/// in parts is FIX MESH-AUTHORITY-ROW-PARTS.
+const MESH_AUTHORITY_LONE_ROW_BYTES: usize = 24 * 1024 * 1024;
 
 /// One host-signed binding as a home holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +56,9 @@ pub struct MeshAuthorityRow {
     pub authority: Vec<u8>,
     /// The MACHINE row's address envelope.
     pub address: Vec<u8>,
+    /// The envelope was served without its direct addresses, to fit the
+    /// page: an importer keeps the address it holds at that endpoint.
+    pub bare: bool,
 }
 
 /// One page of the bindings a home holds, in MACHINE id order.
@@ -150,26 +161,33 @@ fn is_authority_refusal(error: &crate::Error) -> bool {
 impl Vault {
     /// The bindings this vault holds after MACHINE `after`, at most
     /// [`MESH_AUTHORITY_PAGE_MAX`] and as many as fit the page's encoded
-    /// bytes, each as stored with its MACHINE row's address. A binding that
-    /// does not verify here, one whose MACHINE carries no address, and one
-    /// whose signed row alone passes the page's bytes, is left out. An
-    /// address that alone passes them is served without its direct
-    /// addresses: the binding's signature covers only its endpoint key. The
-    /// caller has already admitted the machine it serves
-    /// (`residence.authority.mesh`).
+    /// bytes, each as stored with its MACHINE row's address. A row past
+    /// them starts a page of its own, which it may fill alone up to the
+    /// lone row's bytes. A binding that does not verify here, one whose
+    /// MACHINE carries no address, and one whose signed row alone passes the
+    /// lone row's bytes, is left out. An address that passes them beside its
+    /// row is served bare, without its direct addresses: the binding's
+    /// signature covers only its endpoint key. The caller has already
+    /// admitted the machine it serves (`residence.authority.mesh`).
     ///
     /// # Errors
     ///
     /// An authority history this vault cannot fold; storage errors.
     pub fn mesh_authority_page(&self, after: Option<EntityId>) -> Result<MeshAuthorityPage> {
-        self.mesh_authority_page_within(after, MESH_AUTHORITY_PAGE_BYTES)
+        self.mesh_authority_page_within(
+            after,
+            MESH_AUTHORITY_PAGE_BYTES,
+            MESH_AUTHORITY_LONE_ROW_BYTES,
+        )
     }
 
-    /// [`Self::mesh_authority_page`] within `budget` base64 bytes.
+    /// [`Self::mesh_authority_page`] within `budget` base64 bytes, or `lone`
+    /// for a page's first row.
     pub(crate) fn mesh_authority_page_within(
         &self,
         after: Option<EntityId>,
         budget: usize,
+        lone: usize,
     ) -> Result<MeshAuthorityPage> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
@@ -194,21 +212,24 @@ impl Vault {
                 last = Some(machine);
                 continue;
             };
-            let Some(encoded) = served_address(&address, authority.len(), budget)? else {
+            let Some((encoded, bare)) =
+                served_address(&address, authority.len(), lone.max(budget))?
+            else {
                 last = Some(machine);
                 continue;
             };
             let size = base64_len(authority.len()) + base64_len(encoded.len());
-            if bytes.saturating_add(size) > budget {
+            if !page.rows.is_empty() && bytes.saturating_add(size) > budget {
                 page.next = last;
                 break;
             }
-            bytes += size;
+            bytes = bytes.saturating_add(size);
             last = Some(machine);
             page.rows.push(MeshAuthorityRow {
                 machine,
                 authority,
                 address: encoded,
+                bare,
             });
         }
         Ok(page)
@@ -295,6 +316,7 @@ impl Vault {
             machine,
             authority,
             address,
+            bare,
         } = row;
         let Ok(signed) = MESH_AUTHORITY.decode_value(&authority) else {
             return Ok(RowOutcome::Refused);
@@ -330,7 +352,7 @@ impl Vault {
             return Ok(RowOutcome::Refused);
         }
         let Some(address_held) =
-            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, count)?
+            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, bare, count)?
         else {
             return Ok(RowOutcome::Refused);
         };
@@ -368,14 +390,17 @@ impl Vault {
     /// `None` when another kind, a deleted or stale holder, a mesh address at
     /// another endpoint, or another MACHINE at this endpoint refuses it, two
     /// MACHINE rows here naming that endpoint included; else whether the row
-    /// holds that envelope already. An absent row takes it: no peer sends a
-    /// MACHINE row.
+    /// keeps what it holds: that envelope already, or, for a `bare` one, a
+    /// mesh address at that endpoint, whose direct addresses may be this
+    /// replica's only route (REVIEW-10536 round 2). An absent row takes it:
+    /// no peer sends a MACHINE row.
     fn machine_row_takes_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
         address: &MeshMachineAddress,
         encoded: &[u8],
+        bare: bool,
         count: &mut ScanCount,
     ) -> Result<Option<bool>> {
         let visibility = TombstoneStoreRead::port_deletion_state(&self.store, txn, &machine)?;
@@ -406,31 +431,37 @@ impl Vault {
             Err(error) if is_authority_refusal(&error) => return Ok(None),
             Err(error) => return Err(error),
         }
-        Ok(Some(existing.is_some_and(|row| row.body == encoded)))
+        Ok(Some(existing.is_some_and(|row| {
+            row.body == encoded
+                || (bare
+                    && parse_address(&row.body)
+                        .is_some_and(|held| held.endpoint_key == address.endpoint_key))
+        })))
     }
 }
 
 /// The envelope a page serves `address` in, beside a signed row of
-/// `authority_len` bytes, within `budget` base64 bytes: whole when it fits,
-/// else without its direct addresses (the signature covers only the endpoint
-/// key, REVIEW-10536 P1). `None` when even that does not fit.
+/// `authority_len` bytes, within `budget` base64 bytes, and whether it is
+/// bare: whole when it fits, else without its direct addresses (the
+/// signature covers only the endpoint key, REVIEW-10536 P1). `None` when even
+/// that does not fit.
 fn served_address(
     address: &MeshMachineAddress,
     authority_len: usize,
     budget: usize,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<(Vec<u8>, bool)>> {
     let fits = |encoded: &[u8]| base64_len(authority_len) + base64_len(encoded.len()) <= budget;
     let whole = rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(address.clone()))
         .map_err(|_| invalid_authority())?;
     if fits(&whole) {
-        return Ok(Some(whole));
+        return Ok(Some((whole, false)));
     }
     let bare = rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(MeshMachineAddress {
         direct_addrs: Vec::new(),
         ..address.clone()
     }))
     .map_err(|_| invalid_authority())?;
-    Ok(fits(&bare).then_some(bare))
+    Ok(fits(&bare).then_some((bare, true)))
 }
 
 /// What one import did with one binding.
