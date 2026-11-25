@@ -19,7 +19,8 @@ use oneiron::work_order::{
 
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
+    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, LogTailRequest,
+    NodeAnswer,
 };
 use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
 use crate::server::SyncServer;
@@ -417,6 +418,17 @@ pub(crate) fn run_order_pass(server: &Arc<SyncServer>, now_ms: u64) {
         }
         Err(error) => tracing::warn!(error = %error, "work order pass failed"),
     }
+}
+
+/// One `Tail` of a key's log on `machine` through the node client the loop calls through
+/// (`vault.jobs.logs.tail`, pass 34 7.2). It blocks on the node: call it off the runtime.
+pub(crate) fn tail_on_machine(
+    server: &Arc<SyncServer>,
+    machine: EntityId,
+    request: LogTailRequest,
+) -> Result<JobStatusAnswer, NodeCallError> {
+    let nodes = server.gpu_jobs.orders().nodes(server);
+    nodes.job_status(machine, &JobStatusRequest::Tail(request))
 }
 
 /// The facts of `machines` as this server's node client reads them now.

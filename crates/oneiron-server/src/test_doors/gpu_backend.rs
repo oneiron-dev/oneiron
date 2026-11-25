@@ -1,7 +1,8 @@
 //! Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the
 //! `[gpu_jobs]` section as `serve` resolves it, a GPU backend registered on a
 //! built server, an allocation on its host account, and one pass of its GPU
-//! job worker, so a test does not wait on `step_secs`.
+//! job worker, so a test does not wait on `step_secs`. Also the node client the work-order
+//! loop and `vault.jobs.logs.tail` call machines through, for a test's scripted machines.
 
 use std::sync::Arc;
 
@@ -9,6 +10,7 @@ use oneiron::EntityId;
 use oneiron::gpu_job::{GpuJobConnector, GpuJobStepReport};
 use oneiron::llm::run_admission::{Allocation, AllocationRef, LeaseUnit};
 
+use crate::gpu_execution_node::issuer::JobNodeClient;
 use crate::server::SyncServer;
 
 /// The `[gpu_jobs]` section whose body is `section` (the lines under the
@@ -63,4 +65,11 @@ pub fn step_gpu_jobs(server: &SyncServer) -> Vec<(EntityId, Result<GpuJobStepRep
         .into_iter()
         .map(|(job, outcome)| (job, outcome.map_err(|error| error.to_string())))
         .collect()
+}
+
+/// Answers `server`'s node calls (the work-order loop's and `vault.jobs.logs.tail`'s) through
+/// `nodes` from now on. False when the loop already made its own client: call it before the
+/// first order or tail.
+pub fn use_job_nodes(server: &SyncServer, nodes: Arc<dyn JobNodeClient>) -> bool {
+    server.gpu_jobs.orders().use_nodes(nodes)
 }
