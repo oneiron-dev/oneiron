@@ -38,9 +38,18 @@
 //! never) finish failed, the machine takes no new GPU job until a person
 //! clears the drain. `drain_file` keeps the drain across a restart, and
 //! deleting it clears the drain. `owner_lock_dir` is where the server takes
-//! one lock file per offered GPU while it runs, so a second Oneiron server
-//! on the machine does not offer the same GPU; it is the temp directory's
-//! `oneiron-gpu-owners` unless named.
+//! one lock file per offered GPU while it runs, and where a launched job's
+//! record keeps its GPU past a restart of its server, so no other Oneiron
+//! server on the machine offers that GPU. A machine that offers a GPU names
+//! it, and the directory must already exist. It is one directory of the
+//! host, named by every server that sees these GPUs; a server in a container
+//! names a bind mount of that host directory, since a container's own
+//! `/dev/shm` or `/tmp` is not the host's.
+//!
+//! While a GPU is offered, every managed model worker names its CUDA device
+//! (`[models.workers.<id>].device`) by device id, and never an offered one:
+//! a worker with no device would see every GPU. A worker that runs on no
+//! GPU names `"-1"`.
 //!
 //! ```toml
 //! [gpu_jobs.devices]
@@ -59,9 +68,6 @@ use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnect
 use serde::Deserialize;
 
 use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GpuDeviceOffer};
-
-/// The owner lock directory, under the temp directory, when none is named.
-const GPU_OWNER_LOCK_DIR: &str = "oneiron-gpu-owners";
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -194,8 +200,9 @@ impl GpuJobsFile {
 }
 
 /// Refuses a GPU `[gpu_jobs.devices]` offers that a managed model worker's
-/// launch device names (`[models.workers.<id>].device`), so one GPU has one
-/// booker inside Oneiron too.
+/// launch device names (`[models.workers.<id>].device`), or could use
+/// because it names none, so one GPU has one booker inside Oneiron too. A
+/// worker this server does not launch takes no GPU from it.
 pub(crate) fn refuse_offered_worker_devices(
     devices: &GpuDeviceOffer,
     models: Option<&super::ModelsConfig>,
@@ -208,38 +215,54 @@ pub(crate) fn refuse_offered_worker_devices(
         models.workers.iter().filter_map(|worker| {
             Some((
                 worker.id.as_str(),
-                worker.launch.as_ref()?.device.as_deref()?,
+                worker.launch.as_ref()?.device.as_deref(),
             ))
         }),
     )
 }
 
 /// Refuses an offered GPU that one of `workers` (each its id and its
-/// `CUDA_VISIBLE_DEVICES` entry) names. An index (`0`) names no device id
-/// until the driver is read, and CUDA may number the cards otherwise, so
-/// while any GPU is offered a worker names its GPU by device id.
+/// `CUDA_VISIBLE_DEVICES` entry, `None` when it names none) names or could
+/// use. A worker that names no device sees every GPU, so while any GPU is
+/// offered each worker names its own. CUDA takes a unique prefix of a UUID,
+/// and the older MIG form `MIG-GPU-<uuid>/<gi>/<ci>` holds its GPU's id, so
+/// an entry names an offered GPU when it is a prefix of the GPU's id or
+/// holds it, in any letter case. An index (`0`) names no device id until
+/// the driver is read, and CUDA may number the cards otherwise, so while
+/// any GPU is offered a worker names its GPU by device id. `-1` names no
+/// GPU.
 ///
 /// # Errors
 ///
-/// The worker and the GPU that overlap, or the worker that names a GPU by
-/// index.
+/// The worker and the GPU that overlap, the worker that names no device,
+/// or the worker that names a GPU by index.
 pub fn refuse_worker_device_overlap<'a>(
     offered: &BTreeSet<String>,
-    workers: impl IntoIterator<Item = (&'a str, &'a str)>,
+    workers: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
 ) -> anyhow::Result<()> {
     if offered.is_empty() {
         return Ok(());
     }
     for (worker, named) in workers {
+        let Some(named) = named else {
+            anyhow::bail!(
+                "the model worker {worker} names no device while gpu_jobs.devices offers GPUs, so it would see every GPU, offered ones too: name its GPU by device id (nvidia-smi -L), or \"-1\" for none"
+            );
+        };
         for entry in named
             .split(',')
             .map(str::trim)
             .filter(|entry| !entry.is_empty())
         {
-            anyhow::ensure!(
-                !offered.contains(entry),
-                "gpu_jobs.devices.offered names GPU {entry}, which the model worker {worker} runs on: a GPU has one booker"
-            );
+            let lower = entry.to_ascii_lowercase();
+            if let Some(gpu) = offered.iter().find(|gpu| {
+                let gpu = gpu.to_ascii_lowercase();
+                gpu.starts_with(&lower) || lower.contains(&gpu)
+            }) {
+                anyhow::bail!(
+                    "gpu_jobs.devices.offered names GPU {gpu}, which the model worker {worker} runs on ({entry}): a GPU has one booker"
+                );
+            }
             anyhow::ensure!(
                 !entry.chars().all(|c| c.is_ascii_digit()),
                 "the model worker {worker} names its GPU by index ({entry}) while gpu_jobs.devices offers GPUs: name it by device id (nvidia-smi -L), so no offered GPU is one it runs on"
@@ -283,15 +306,27 @@ impl GpuDevicesFile {
                 file.display()
             );
         }
+        // No default: only the owner knows which directory every server that
+        // sees these GPUs shares (a container's /dev/shm is its own).
+        if !offered.is_empty() {
+            let Some(dir) = &self.owner_lock_dir else {
+                anyhow::bail!(
+                    "gpu_jobs.devices.owner_lock_dir must be named while GPUs are offered: one host directory that every Oneiron server seeing these GPUs names (in a container, a bind mount of it), so one server owns each GPU"
+                );
+            };
+            anyhow::ensure!(
+                dir.is_dir(),
+                "gpu_jobs.devices.owner_lock_dir must be an existing directory, the one every server seeing these GPUs shares: {}",
+                dir.display()
+            );
+        }
         Ok(GpuDeviceOffer {
             withheld_file: self.withheld_file,
             drain_after_failures: self
                 .drain_after_failures
                 .unwrap_or(GPU_DRAIN_AFTER_FAILURES),
             drain_file: self.drain_file,
-            owner_lock_dir: self.owner_lock_dir.or_else(|| {
-                (!offered.is_empty()).then(|| std::env::temp_dir().join(GPU_OWNER_LOCK_DIR))
-            }),
+            owner_lock_dir: self.owner_lock_dir,
             offered,
         })
     }

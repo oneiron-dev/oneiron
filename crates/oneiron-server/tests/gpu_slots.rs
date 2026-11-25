@@ -136,6 +136,13 @@ impl GpuJobDisk for FakeDisk {
             claimed: Arc::clone(&self.claimed),
         }))
     }
+    fn restore(&self, bytes: u64) -> Box<dyn Send + Sync> {
+        *self.claimed.lock().unwrap() += bytes;
+        Box::new(FakeClaim {
+            bytes,
+            claimed: Arc::clone(&self.claimed),
+        })
+    }
     fn reading(&self) -> std::io::Result<GpuDiskReading> {
         Ok(GpuDiskReading {
             free_bytes: self.free,
@@ -605,7 +612,7 @@ fn a_quarantined_gpu_still_reattaches_its_key_and_availability_names_it() -> Tes
     slots.quarantine("GPU-aaaa", why.clone());
     probe.run_on("GPU-aaaa", 4_242);
 
-    let reattached = slots.reattach("job", "GPU-aaaa", T0)?;
+    let reattached = slots.reattach("job", "GPU-aaaa", 0, T0)?;
     assert_eq!(reattached.device, rtx4090("GPU-aaaa"));
     assert_eq!(
         state_of(&slots.availability(T0)?, "GPU-aaaa"),
@@ -1010,7 +1017,7 @@ fn selection_chooses_the_machine_whose_answer_names_the_request_key() -> TestRes
         FakePeers::default().machine(better, vec![gpu("GPU-better", A4000, A4000_MIB)]);
     let (peers, _) = peers.machine(keyed, vec![rtx4090("GPU-keyed")]);
     let (peers, _) = peers.machine(later, vec![gpu("GPU-later", A4000, A4000_MIB)]);
-    peers.tables[&keyed].reattach("chunk", "GPU-keyed", T0)?;
+    peers.tables[&keyed].reattach("chunk", "GPU-keyed", 0, T0)?;
 
     let candidates = vec![
         GpuNodeCandidate {
@@ -1094,6 +1101,7 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
     let dir = tempfile::tempdir()?;
     let drain_file = dir.path().join("gpu-drained");
     let owner_lock_dir = dir.path().join("gpu-owners");
+    std::fs::create_dir(&owner_lock_dir)?;
     let devices = gpu_jobs_section(&format!(
         "[devices]\noffered = [\"GPU-aaaa\", \"GPU-bbbb\"]\nwithheld_file = \"/var/lib/oneiron/gpu-withheld\"\ndrain_after_failures = 5\ndrain_file = {:?}\nowner_lock_dir = {:?}\n",
         drain_file.display().to_string(),
@@ -1113,12 +1121,29 @@ fn the_devices_section_offers_listed_gpus_and_none_by_default() -> TestResult {
             owner_lock_dir: Some(owner_lock_dir),
         }
     );
+    // review-10425 round 2, P1 1: no default lock directory, since only the
+    // owner knows the host directory every server (and container) shares.
+    let unnamed = gpu_jobs_section("[devices]\noffered = [\"GPU-aaaa\"]\n")
+        .expect_err("an offering server names its owner lock directory");
+    assert!(
+        unnamed.to_string().contains("owner_lock_dir must be named"),
+        "{unnamed}"
+    );
+    let missing = gpu_jobs_section(&format!(
+        "[devices]\noffered = [\"GPU-aaaa\"]\nowner_lock_dir = {:?}\n",
+        dir.path().join("not-made").display().to_string(),
+    ))
+    .expect_err("the owner lock directory must already exist");
+    assert!(
+        missing.to_string().contains("existing directory"),
+        "{missing}"
+    );
     assert_eq!(
-        gpu_jobs_section("[devices]\noffered = [\"GPU-aaaa\"]\n")?
+        gpu_jobs_section("[devices]\nowner_lock_dir = \"/no/such/gpu-owners\"\n")?
             .devices
             .owner_lock_dir,
-        Some(std::env::temp_dir().join("oneiron-gpu-owners")),
-        "an offering server takes owner locks by default"
+        Some("/no/such/gpu-owners".into()),
+        "a machine that offers no GPU takes no lock, wherever the directory is"
     );
 
     for refused in [
@@ -1188,17 +1213,20 @@ fn a_kept_lease_stays_with_its_running_job_until_its_key_ends_it_and_a_restart_r
         state_of(&restarted.availability(T0)?, "GPU-aaaa"),
         GpuDeviceState::Busy { pids: vec![4_242] }
     );
-    let reattached = restarted.reattach("job", "GPU-aaaa", T0)?;
+    let reattached = restarted.reattach("job", "GPU-aaaa", 0, T0)?;
     assert_eq!(reattached.device, rtx4090("GPU-aaaa"));
-    assert_eq!(restarted.reattach("job", "GPU-aaaa", T0 + 1)?, reattached);
     assert_eq!(
-        restarted.reattach("twin", "GPU-aaaa", T0),
+        restarted.reattach("job", "GPU-aaaa", 0, T0 + 1)?,
+        reattached
+    );
+    assert_eq!(
+        restarted.reattach("twin", "GPU-aaaa", 0, T0),
         Err(GpuSlotRefusal::Taken {
             device_id: "GPU-aaaa".to_owned()
         })
     );
     assert_eq!(
-        restarted.reattach("lost", "GPU-zzzz", T0),
+        restarted.reattach("lost", "GPU-zzzz", 0, T0),
         Err(GpuSlotRefusal::UnknownDevice {
             device_id: "GPU-zzzz".to_owned()
         })
@@ -1303,14 +1331,67 @@ fn an_offered_gpu_that_a_model_worker_runs_on_is_refused() -> TestResult {
     use oneiron_server::config::gpu_jobs::refuse_worker_device_overlap;
 
     let offered: BTreeSet<String> = ["GPU-aaaa".to_owned()].into_iter().collect();
-    refuse_worker_device_overlap(&offered, [("chat", "GPU-bbbb")])?;
-    refuse_worker_device_overlap(&BTreeSet::new(), [("chat", "0")])?;
-    let overlap = refuse_worker_device_overlap(&offered, [("chat", "GPU-bbbb, GPU-aaaa")])
+    refuse_worker_device_overlap(&offered, [("chat", Some("GPU-bbbb"))])?;
+    refuse_worker_device_overlap(&offered, [("cpu", Some("-1"))])?;
+    refuse_worker_device_overlap(&BTreeSet::new(), [("chat", Some("0"))])?;
+    refuse_worker_device_overlap(&BTreeSet::new(), [("chat", None)])?;
+    let overlap = refuse_worker_device_overlap(&offered, [("chat", Some("GPU-bbbb, GPU-aaaa"))])
         .expect_err("a worker on an offered GPU is refused");
     assert!(overlap.to_string().contains("chat"), "{overlap}");
-    let by_index = refuse_worker_device_overlap(&offered, [("voice", "0")])
+    let by_index = refuse_worker_device_overlap(&offered, [("voice", Some("0"))])
         .expect_err("an index cannot be told apart from an offered GPU");
     assert!(by_index.to_string().contains("by index"), "{by_index}");
+    // review-10425 round 2, P1 2: a worker that names no device sees every
+    // GPU (CUDA_VISIBLE_DEVICES unset), the offered one too.
+    let unpinned = refuse_worker_device_overlap(&offered, [("exl3", None)])
+        .expect_err("a worker with no device is refused while a GPU is offered");
+    assert!(
+        unpinned.to_string().contains("exl3") && unpinned.to_string().contains("no device"),
+        "{unpinned}"
+    );
+    // CUDA takes a unique UUID prefix, in any case, and the older MIG form
+    // holds its GPU's id (review-10425 P1 4).
+    for named in ["GPU-aa", "gpu-AAAA", "MIG-GPU-aaaa/1/0"] {
+        let refused = refuse_worker_device_overlap(&offered, [("chat", Some(named))])
+            .expect_err("a worker naming an offered GPU by another form is refused");
+        assert!(
+            refused.to_string().contains("GPU-aaaa"),
+            "{named}: {refused}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_drain_written_after_a_failed_write_clears_when_its_file_is_deleted() -> TestResult {
+    // review-10425 P1 7: a drain kept in memory after a failed write must
+    // not outlive a later drain that the file holds.
+    let dir = tempfile::tempdir()?;
+    let drain_file = dir.path().join("later").join("gpu-drained");
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(
+        &probe,
+        GpuDeviceOffer {
+            drain_file: Some(drain_file.clone()),
+            ..offering(&["GPU-aaaa"])
+        },
+    );
+    slots.drain("first".to_owned());
+    assert_eq!(
+        slots.drained()?,
+        Some("first".to_owned()),
+        "kept in memory while its file cannot be written"
+    );
+    std::fs::create_dir(dir.path().join("later"))?;
+    slots.drain("second".to_owned());
+    assert!(drain_file.is_file(), "the second drain is written");
+    assert_eq!(slots.drained()?, Some("second".to_owned()));
+    std::fs::remove_file(&drain_file)?;
+    assert_eq!(
+        slots.drained()?,
+        None,
+        "deleting the written drain clears it"
+    );
     Ok(())
 }
 
@@ -1319,7 +1400,7 @@ fn two_servers_on_one_machine_never_offer_the_same_gpu() -> TestResult {
     let dir = tempfile::tempdir()?;
     let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
     let offer = GpuDeviceOffer {
-        owner_lock_dir: Some(dir.path().join("owners")),
+        owner_lock_dir: Some(dir.path().to_path_buf()),
         ..offering(&["GPU-aaaa"])
     };
     let first = table(&probe, offer.clone());
@@ -1343,6 +1424,13 @@ fn two_servers_on_one_machine_never_offer_the_same_gpu() -> TestResult {
             device_id: "GPU-aaaa".to_owned()
         })
     );
+    // A restarted server takes back only a GPU it owns (review-10425 P1 3).
+    assert_eq!(
+        second.reattach("b", "GPU-aaaa", 0, T0).map(|_| ()),
+        Err(GpuSlotRefusal::Withheld {
+            device_id: "GPU-aaaa".to_owned()
+        })
+    );
     first.lease(&request("a"), T0)?;
 
     // The first server stops: the second owns the GPU at its next reading.
@@ -1352,5 +1440,192 @@ fn two_servers_on_one_machine_never_offer_the_same_gpu() -> TestResult {
         GpuDeviceState::Free
     );
     second.lease(&request("b"), T0)?;
+    Ok(())
+}
+
+#[test]
+fn a_job_that_outlives_its_server_keeps_its_gpu_until_its_restarted_server_ends_it() -> TestResult {
+    // review-10425 round 2, P1 3: the owner lock alone ended with its server,
+    // so a second server could confirm another job on a GPU whose job had not
+    // opened its CUDA context yet.
+    let dir = tempfile::tempdir()?;
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let offer = GpuDeviceOffer {
+        owner_lock_dir: Some(dir.path().to_path_buf()),
+        ..offering(&["GPU-aaaa"])
+    };
+    let first = table(&probe, offer.clone());
+    let second = table(&probe, offer.clone());
+    let mut lease = first.lease(&request("job"), T0)?;
+    lease.confirm_launch()?;
+    assert_eq!(lease.keep().key, "job");
+
+    // The first server stops while the driver still shows the GPU idle.
+    drop(first);
+    assert_eq!(
+        state_of(&second.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Withheld,
+        "the running job keeps its GPU past its server"
+    );
+    assert_eq!(
+        second.lease(&request("other"), T0).map(|_| ()),
+        Err(GpuSlotRefusal::NoneFree)
+    );
+    assert_eq!(
+        second.reattach("other", "GPU-aaaa", 0, T0).map(|_| ()),
+        Err(GpuSlotRefusal::Withheld {
+            device_id: "GPU-aaaa".to_owned()
+        })
+    );
+    assert!(
+        !second.release("other"),
+        "releasing another key clears nothing"
+    );
+
+    // The first server restarts and takes its job back under its key.
+    let restarted = table(&probe, offer.clone());
+    assert_eq!(restarted.reattach("job", "GPU-aaaa", 0, T0)?.key, "job");
+    assert_eq!(
+        state_of(&restarted.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Launched {
+            key: "job".to_owned()
+        }
+    );
+    assert_eq!(
+        state_of(&second.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Withheld
+    );
+
+    // The job ends: its record goes with its slot, and the GPU is offered.
+    assert!(restarted.finish("job", &GpuLeaseEnd::Succeeded));
+    assert_eq!(
+        state_of(&restarted.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free
+    );
+    drop(restarted);
+    assert_eq!(
+        state_of(&second.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free
+    );
+
+    // A journaled job that did not survive a restart: releasing its key
+    // clears its record, and the GPU is offered again.
+    let mut lease = second.lease(&request("lost"), T0)?;
+    lease.confirm_launch()?;
+    assert_eq!(lease.keep().key, "lost");
+    drop(second);
+    let third = table(&probe, offer);
+    assert_eq!(
+        state_of(&third.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Withheld
+    );
+    assert!(!third.release("lost"), "no slot ended");
+    assert_eq!(
+        state_of(&third.availability(T0)?, "GPU-aaaa"),
+        GpuDeviceState::Free,
+        "the record of the job that did not survive is cleared"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reattached_job_claims_its_booked_disk_again_before_new_work() -> TestResult {
+    // review-10425 round 2, P1 4: a reattached job's booking was lost, so a
+    // second job could book room the first still needs.
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa"), rtx4090("GPU-bbbb")]);
+    let disk = Arc::new(FakeDisk {
+        free: 110 * GIB,
+        reserve: 10 * GIB,
+        claimed: Arc::default(),
+    });
+    let with_disk = || {
+        GpuSlotTable::with_disk(
+            Arc::clone(&probe) as Arc<dyn GpuDeviceProbe>,
+            offering(&["GPU-aaaa", "GPU-bbbb"]),
+            Some(Arc::clone(&disk) as Arc<dyn GpuJobDisk>),
+        )
+    };
+    let sized = |key: &str, disk_bytes: u64| GpuSlotRequest {
+        disk_bytes,
+        ..request(key)
+    };
+    let slots = with_disk();
+    let mut lease = slots.lease(&sized("job", 80 * GIB), T0)?;
+    assert_eq!(lease.grant().device.device_id, "GPU-aaaa");
+    lease.confirm_launch()?;
+    assert_eq!(lease.keep().key, "job");
+    assert_eq!(*disk.claimed.lock().unwrap(), 80 * GIB);
+    drop(slots);
+    assert_eq!(
+        *disk.claimed.lock().unwrap(),
+        0,
+        "a stopped server's claims end with it"
+    );
+
+    // Restarted, the server reattaches the job with its journaled booking.
+    let restarted = with_disk();
+    restarted.reattach("job", "GPU-aaaa", 80 * GIB, T0)?;
+    assert_eq!(*disk.claimed.lock().unwrap(), 80 * GIB);
+    assert_eq!(
+        restarted.lease(&sized("next", 50 * GIB), T0).map(|_| ()),
+        Err(GpuSlotRefusal::DiskUnderReserve {
+            needed_bytes: 140 * GIB,
+            free_bytes: 110 * GIB,
+        }),
+        "the live job's 80 GiB and a new 50 GiB do not both fit past the reserve"
+    );
+
+    // The job ends: its claim goes with its slot.
+    assert!(restarted.finish("job", &GpuLeaseEnd::Succeeded));
+    assert_eq!(*disk.claimed.lock().unwrap(), 0);
+    restarted.lease(&sized("next", 50 * GIB), T0)?;
+    Ok(())
+}
+
+#[test]
+fn every_launch_attempt_is_checked_afresh() -> TestResult {
+    // review-10425 round 2, P1 6: a confirmation after an earlier success
+    // answered from that success, so a retry launched on a GPU withheld since.
+    let dir = tempfile::tempdir()?;
+    let withheld = dir.path().join("gpu-withheld");
+    std::fs::write(&withheld, "")?;
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(
+        &probe,
+        GpuDeviceOffer {
+            withheld_file: Some(withheld.clone()),
+            ..offering(&["GPU-aaaa"])
+        },
+    );
+    let mut lease = slots.lease(&request("job"), T0)?;
+    lease.confirm_launch()?;
+
+    // The first start failed; another booker takes the GPU before the retry.
+    std::fs::write(&withheld, "GPU-aaaa\n")?;
+    assert_eq!(
+        lease.confirm_launch(),
+        Err(GpuSlotRefusal::Withheld {
+            device_id: "GPU-aaaa".to_owned()
+        })
+    );
+    std::fs::write(&withheld, "")?;
+    slots.drain("a person drained the machine".to_owned());
+    assert!(matches!(
+        lease.confirm_launch(),
+        Err(GpuSlotRefusal::Drained { .. })
+    ));
+    slots.clear_drain()?;
+
+    // A process the first attempt left running refuses a relaunch on top.
+    probe.run_on("GPU-aaaa", 7);
+    assert_eq!(
+        lease.confirm_launch(),
+        Err(GpuSlotRefusal::Busy {
+            device_id: "GPU-aaaa".to_owned(),
+            pids: vec![7],
+        })
+    );
+    probe.end_processes();
+    lease.confirm_launch()?;
     Ok(())
 }

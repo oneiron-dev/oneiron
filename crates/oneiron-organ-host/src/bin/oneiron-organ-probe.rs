@@ -63,10 +63,11 @@ mod probe {
         /// it ignores cancels, as a hostile organ would. `probe.fork` leaves
         /// a child behind and reports its pid. `probe.outputs {count, bytes}`
         /// answers with `count` outputs of `bytes` bytes each.
-        /// `probe.ask {verb, value, times, fail}` asks `times` times, going on
-        /// past refusals, and reports each answer (its value, the length and
-        /// fold of its bytes) or refusal code; a cancel ends it as cancelled.
-        /// With `fail`, it ends in an error once it has asked.
+        /// `probe.ask {verb, value, times, fail, sleep_ms}` asks `times` times,
+        /// going on past refusals, and reports each answer (its value, the
+        /// length and fold of its bytes) or refusal code; a cancel ends it as
+        /// cancelled. With `fail`, it ends in an error once it has asked; with
+        /// `sleep_ms`, it then sleeps that long, obeying cancels.
         /// `probe.ptrace {in_child}` makes one ptrace call and
         /// `probe.inet_socket {in_child}` opens one inet socket (`ptrace`
         /// and `inet_socket` below). `probe.reach {call, pid, nice}` makes
@@ -154,6 +155,12 @@ mod probe {
                     }
                     if field("fail").and_then(|v| v.as_bool()) == Some(true) {
                         return Err(OrganError::new(ErrorCode::Internal, "failed after asking"));
+                    }
+                    let sleep_ms = field("sleep_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let until = Instant::now() + Duration::from_millis(sleep_ms);
+                    while Instant::now() < until {
+                        call.check_cancel()?;
+                        std::thread::sleep(Duration::from_millis(2));
                     }
                     Ok(Answer {
                         report: Value::Array(report),

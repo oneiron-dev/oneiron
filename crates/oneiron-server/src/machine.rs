@@ -373,6 +373,17 @@ impl DiskFloor {
         Ok(claim)
     }
 
+    /// A claim on `bytes` a live GPU job booked before a restart, counted
+    /// whatever the disk holds now, held until it drops.
+    pub(crate) fn restore_room(&self, bytes: u64) -> Arc<DiskClaim> {
+        let claim = self.claim();
+        let mut claimed = lock(&self.claimed);
+        *claimed = claimed.saturating_add(bytes);
+        claim.bytes.store(bytes, Ordering::Relaxed);
+        drop(claimed);
+        claim
+    }
+
     /// What this floor measures now: the disk's free bytes, its reserve and
     /// the bytes claimed past it.
     pub(crate) fn measured(&self) -> std::io::Result<(u64, u64, u64)> {

@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 use oneiron::EntityId;
+use oneiron::job_workload::{BoundRequirement, DevicePlacement, ScopeBound};
 use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
@@ -54,8 +55,26 @@ pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
 /// unit's write rate to the payload device.
 pub const WRITE_MIB_PER_SEC_DEFAULT: u64 = 200;
 
-/// Default of a template's `max_devices`: the devices one pin may claim.
+/// Default of a template's `max_devices`: the devices one pin may claim,
+/// of every kind together.
 pub const MAX_DEVICES_DEFAULT: u32 = 1;
+
+/// Default of a template's `cpu_threads`: the threads a run may use at once,
+/// which a request's 0 takes and no request exceeds.
+pub const CPU_THREADS_DEFAULT: u32 = 4;
+
+/// Default of a template's `require`: a workload stays out of the vault and
+/// off the network.
+pub const REQUIRE_DEFAULT: [BoundRequirement; 2] = [
+    BoundRequirement {
+        bound: ScopeBound::FileWall,
+        kernel: false,
+    },
+    BoundRequirement {
+        bound: ScopeBound::NetworkClosed,
+        kernel: false,
+    },
+];
 
 /// The longest template name, in bytes.
 const TEMPLATE_NAME_MAX: usize = 64;
@@ -68,29 +87,6 @@ const PARAM_PATTERN_SIZE_MAX: usize = 1 << 16;
 #[serde(deny_unknown_fields)]
 struct ExecutionNodeFile {
     execution_node: ExecutionNodeSettings,
-}
-
-/// A bound a job's scope gives the workload (pass 34 section 2.2). A
-/// template lists the bounds it requires; a required bound the scope cannot
-/// give blocks the job, and one that is not required and not available is
-/// recorded in the receipt as unproven (row R3b proves them on the machine).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum ScopeBound {
-    /// The workload reads and writes only its paths: never the vault.
-    #[serde(rename = "file_wall")]
-    FileWall,
-    /// The workload reaches no network.
-    #[serde(rename = "network_closed")]
-    NetworkClosed,
-    /// The workload opens its claimed devices and no other.
-    #[serde(rename = "device_closure")]
-    DeviceClosure,
-    /// The kernel caps the workload's memory.
-    #[serde(rename = "memory_cap:kernel")]
-    MemoryCapKernel,
-    /// The kernel enforces the cutoff, with no engine alive.
-    #[serde(rename = "cutoff:kernel")]
-    CutoffKernel,
 }
 
 /// The node's `[execution_node]` table.
@@ -170,10 +166,13 @@ pub struct NodeTemplate {
     pub memory_gib: u64,
     /// The job's disk ceiling on the payload disk.
     pub disk_gib: u64,
-    /// The bounds the job's scope must give, else the job is blocked. The
-    /// default keeps a workload out of the vault and off the network.
+    /// The bounds the job's scope must give, else the job is blocked
+    /// (pass 34, section 2.2): `file_wall` at any strength,
+    /// `memory_cap:kernel` only from the kernel. Every other bound the scope
+    /// does not enforce is recorded on the run as unproven.
     #[serde(default = "require_default")]
-    pub require: Vec<ScopeBound>,
+    pub require: Vec<BoundRequirement>,
+    /// The devices one pin may claim, the counts of all its claims together.
     #[serde(default = "max_devices_default")]
     pub max_devices: u32,
     /// The operating-system signal a checkpoint notice delivers to the
@@ -182,6 +181,10 @@ pub struct NodeTemplate {
     /// template without it keeps its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_signal: Option<String>,
+    /// The threads a run may use at once: a request's 0 takes this many, and
+    /// no request asks more.
+    #[serde(default = "cpu_threads_default")]
+    pub cpu_threads: u32,
 }
 
 /// The signals a template may name as its checkpoint notice: each one a
@@ -209,8 +212,11 @@ fn write_mib_per_sec_default() -> u64 {
 fn max_devices_default() -> u32 {
     MAX_DEVICES_DEFAULT
 }
-fn require_default() -> Vec<ScopeBound> {
-    vec![ScopeBound::FileWall, ScopeBound::NetworkClosed]
+fn require_default() -> Vec<BoundRequirement> {
+    REQUIRE_DEFAULT.to_vec()
+}
+fn cpu_threads_default() -> u32 {
+    CPU_THREADS_DEFAULT
 }
 fn host_scope() -> Vec<ScopeClass> {
     vec![ScopeClass::Host]
@@ -317,6 +323,7 @@ impl ExecutionNodeSettings {
                         .collect(),
                     network: template.network.clone(),
                     returnable: template.returnable.clone(),
+                    require: template.require.clone(),
                 })
             })
             .collect()
@@ -352,6 +359,29 @@ impl ExecutionNodeSettings {
             return Err("scope_not_permitted".to_owned());
         }
         template.admit_pin(pin)
+    }
+
+    /// The launch commit's fit of `pin`'s placement (pass 34, section 2.1,
+    /// the sum rule): on a device that shares the host's memory, the claim's
+    /// memory and the request's own draw on one pool, so the host memory the
+    /// placement leases is within the template's memory ceiling. The pin
+    /// passed [`Self::admit_pin`].
+    ///
+    /// # Errors
+    ///
+    /// The refusal reason, for the key's end.
+    pub fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+    ) -> Result<(), String> {
+        let Some(template) = self.templates.get(&pin.template) else {
+            return Err("template_unknown".to_owned());
+        };
+        if placement.host_memory_mib > template.memory_gib.saturating_mul(1024) {
+            return Err("request_above_ceiling: host_memory_mib".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -395,6 +425,9 @@ impl NodeTemplate {
         }
         if self.network.is_empty() {
             return Err("network must permit at least one mode".to_owned());
+        }
+        if self.cpu_threads == 0 {
+            return Err("cpu_threads must be at least 1".to_owned());
         }
         if self.scopes.is_empty() {
             return Err("scopes must permit at least one scope kind".to_owned());
@@ -449,8 +482,16 @@ impl NodeTemplate {
             return Err(format!("output_not_returnable: {}", output.name));
         }
         let request = &pin.request;
+        let devices = request.devices.iter().fold(0_u64, |sum, claim| {
+            sum.saturating_add(u64::from(claim.count))
+        });
         for (field, asked, ceiling) in [
-            ("gpus", u64::from(request.gpus), u64::from(self.max_devices)),
+            ("devices", devices, u64::from(self.max_devices)),
+            (
+                "cpu_threads",
+                u64::from(request.cpu_threads),
+                u64::from(self.cpu_threads),
+            ),
             ("maximum_secs", request.maximum_secs, self.max_secs),
             (
                 "memory_mib",

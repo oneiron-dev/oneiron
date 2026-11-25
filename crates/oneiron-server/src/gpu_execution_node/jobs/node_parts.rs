@@ -19,13 +19,18 @@
 //! The server's parts implement these traits here, each method a call of
 //! the same name: [`ExecutionNode`] is the [`NodeAdmission`] and the
 //! [`AuthorityPosition`], [`GpuSlotTable`] the [`NodeDevices`], and
-//! [`super::NodeJobs`] is R1's [`NodeKeys`].
+//! [`NodeJobsAttachment`] is R1's [`NodeKeys`]: a weak handle, since the
+//! service holds the node.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use oneiron::EntityId;
+use oneiron::job_workload::{
+    BoundRequirement, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory,
+    DevicePlacement, DeviceState, HeldDevice, Sharing,
+};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron_organ_host::MachineFloor;
 
@@ -36,11 +41,10 @@ pub use oneiron_organ_host::{
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
-use crate::gpu_execution_node::node_settings::ScopeBound;
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, SignedJobSubmit,
-    WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, ScopeReport,
+    SignedJobSubmit, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -137,7 +141,17 @@ pub trait NodeAdmission: Send + Sync {
 
     /// The scope bounds the template requires now (its `require`, pass 34
     /// section 2.2); `None` when the node holds no such template.
-    fn template_requires(&self, template: &str) -> Option<Vec<ScopeBound>>;
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>>;
+
+    /// The launch commit's fit of the pin's placement on this node (pass 34
+    /// section 2.1, the sum rule): the host memory the placement leases is
+    /// within the template's memory ceiling.
+    ///
+    /// # Errors
+    ///
+    /// The refusal reason, for the key's end.
+    fn admit_placement(&self, pin: &WorkloadPin, placement: &DevicePlacement)
+    -> Result<(), String>;
 
     /// Design 7.3 reserve step 6: the payload disk's free space, less what
     /// live keys booked (`booked_mib`), covers `request_mib` plus the disk
@@ -160,17 +174,19 @@ pub trait NodeAdmission: Send + Sync {
     }
 }
 
-/// The machine's GPUs, as the job service leases them. The server's
-/// implementation is OPUS-LE-FLEET's GPU slot table.
+/// The machine's devices, as the job service places and leases them. The
+/// server's implementation is OPUS-LE-FLEET's GPU slot table.
 pub trait NodeDevices: Send + Sync {
-    /// Design 7.3 reserve step 7: a device that could take `request` exists
-    /// now (offered, not withheld, not quarantined, enough memory). A look,
-    /// not a hold.
+    /// Every device of the machine now, from a fresh reading, with the
+    /// sharing of each claim that holds it: what
+    /// `ResourceRequest::place_devices` reads (pass 34, 2.1). A look, not a
+    /// hold.
     ///
     /// # Errors
     ///
-    /// The refusal reason, for the key's end.
-    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String>;
+    /// The refusal reason, for the key's end: the devices cannot be read,
+    /// or the table is paused or drained.
+    fn devices(&self) -> Result<Vec<HeldDevice>, String>;
 
     /// Design 7.5 step 4: leases a device under `request.key` from a fresh
     /// reading, and confirms the launch at once: offered, not withheld, no
@@ -202,6 +218,15 @@ pub trait NodeDevices: Send + Sync {
 
     /// Gives the key's device back and records how its job ended.
     fn finish(&self, key: &str, end: &GpuLeaseEnd);
+
+    /// Puts the device out of every reserve and launch until
+    /// [`NodeDevices::clear_quarantine`]: the journal's quarantine of a
+    /// key's device, as it is written and as recovery replays it (design
+    /// 7.6). The slot table keeps it in memory only.
+    fn quarantine(&self, device_id: &str, why: &str);
+
+    /// Ends the device's quarantine, at its key's clean release.
+    fn clear_quarantine(&self, device_id: &str);
 
     /// Drains the machine: it takes no new GPU job until a person clears it
     /// at the box (`oneiron execution-node resume`). One drain per machine:
@@ -321,12 +346,20 @@ impl NodeAdmission for ExecutionNode {
         ExecutionNode::template_digest(self, template)
     }
 
-    fn template_requires(&self, template: &str) -> Option<Vec<ScopeBound>> {
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>> {
         let settings = ExecutionNode::settings(self).ok().flatten()?;
         settings
             .templates
             .get(template)
             .map(|held| held.require.clone())
+    }
+
+    fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+    ) -> Result<(), String> {
+        ExecutionNode::admit_placement(self, pin, placement)
     }
 
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {
@@ -352,9 +385,48 @@ impl AuthorityPosition for ExecutionNode {
     }
 }
 
+/// One GPU of the slot table as placement reads it (pass 34, 2.1), until
+/// OPUS-LE-FLEET's table reports `DeviceFacts` itself: a GPU with its own
+/// memory and no named features, which its job opens alone, one claim at a
+/// time. A compute process of another account does not show here: the
+/// lease's confirmation refuses it inside the launch commit.
+fn held_gpu(slot: &crate::gpu_execution_node::availability::GpuDeviceAvailability) -> HeldDevice {
+    use crate::gpu_execution_node::availability::GpuDeviceState;
+    let (state, holder) = match &slot.state {
+        GpuDeviceState::Free | GpuDeviceState::Busy { .. } => (DeviceState::Offered, None),
+        GpuDeviceState::Leased { key } | GpuDeviceState::Launched { key } => (
+            DeviceState::Leased {
+                keys: vec![key.clone()],
+            },
+            Some(Sharing::Exclusive),
+        ),
+        GpuDeviceState::Quarantined { why, key } => (
+            DeviceState::Quarantined { why: why.clone() },
+            key.as_ref().map(|_| Sharing::Exclusive),
+        ),
+        GpuDeviceState::Withheld | GpuDeviceState::NotOffered => (DeviceState::Withheld, None),
+    };
+    HeldDevice {
+        facts: DeviceFacts {
+            id: slot.device.device_id.clone(),
+            id_source: DeviceIdSource::VendorUuid,
+            kind: DeviceKind::Gpu,
+            vendor: String::new(),
+            model: slot.device.model.clone(),
+            memory: DeviceMemory::Dedicated {
+                mib: slot.device.memory_total_mib,
+            },
+            features: Vec::new(),
+            closure: DeviceClosure::Closed,
+            state,
+            max_claimants: 1,
+        },
+        holders: holder.into_iter().collect(),
+    }
+}
+
 impl NodeDevices for GpuSlotTable {
-    fn could_take(&self, request: &GpuSlotRequest) -> Result<(), String> {
-        use crate::gpu_execution_node::availability::GpuDeviceState;
+    fn devices(&self) -> Result<Vec<HeldDevice>, String> {
         let availability = self
             .availability(oneiron_base::unix_millis_now())
             .map_err(|error| format!("devices_unreadable: {error}"))?;
@@ -364,20 +436,7 @@ impl NodeDevices for GpuSlotTable {
         if let Some(why) = &availability.drained {
             return Err(format!("node_drained: {why}"));
         }
-        let open = availability.devices.iter().any(|device| {
-            request.admits(&device.device)
-                && !matches!(
-                    device.state,
-                    GpuDeviceState::NotOffered
-                        | GpuDeviceState::Withheld
-                        | GpuDeviceState::Quarantined { .. }
-                )
-        });
-        if open {
-            Ok(())
-        } else {
-            Err("no_device".to_owned())
-        }
+        Ok(availability.devices.iter().map(held_gpu).collect())
     }
 
     fn lease_for_launch(
@@ -391,7 +450,7 @@ impl NodeDevices for GpuSlotTable {
     }
 
     fn reattach(&self, key: &str, device_id: &str) -> Result<(), GpuSlotRefusal> {
-        GpuSlotTable::reattach(self, key, device_id, oneiron_base::unix_millis_now()).map(drop)
+        GpuSlotTable::reattach(self, key, device_id, 0, oneiron_base::unix_millis_now()).map(drop)
     }
 
     fn end_check(&self, key: &str) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
@@ -402,69 +461,150 @@ impl NodeDevices for GpuSlotTable {
         GpuSlotTable::finish(self, key, end);
     }
 
+    fn quarantine(&self, device_id: &str, why: &str) {
+        GpuSlotTable::quarantine(self, device_id, why.to_owned());
+    }
+
+    fn clear_quarantine(&self, device_id: &str) {
+        GpuSlotTable::clear_quarantine(self, device_id);
+    }
+
     fn drain(&self, why: &str) {
         GpuSlotTable::drain(self, why.to_owned());
     }
 }
 
-impl NodeKeys for super::NodeJobs {
+/// The job service as R1's node holds it ([`ExecutionNode::attach_keys`]):
+/// a weak handle. The service holds the node as its admission and its
+/// authority, so a strong handle back would keep both alive, and the
+/// journal's writer lock with them, after the server dropped the service.
+/// The server keeps the strong [`super::NodeJobs`]; once it is gone, every
+/// request answers `NotEnabled`, as a node with no keys attached does, and
+/// the journal's directory can be opened again.
+#[derive(Debug, Clone)]
+pub struct NodeJobsAttachment {
+    service: Weak<super::NodeJobsShared>,
+}
+
+impl NodeJobsAttachment {
+    fn service(&self) -> Option<super::NodeJobs> {
+        self.service
+            .upgrade()
+            .map(|shared| super::NodeJobs { shared })
+    }
+}
+
+impl super::NodeJobs {
+    /// The handle to attach to R1's node: it answers for this service while
+    /// the service lives, and never keeps it alive.
+    #[must_use]
+    pub fn attachment(&self) -> Arc<dyn NodeKeys> {
+        Arc::new(NodeJobsAttachment {
+            service: Arc::downgrade(&self.shared),
+        })
+    }
+}
+
+fn not_enabled() -> JobAnswer {
+    JobAnswer::Refused(JobRefusal::NotEnabled)
+}
+
+fn status_not_enabled() -> JobStatusAnswer {
+    JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+}
+
+impl NodeKeys for NodeJobsAttachment {
     fn reserve(&self, peer: EntityId, reserve: JobReserve) -> JobAnswer {
-        super::NodeJobs::reserve(self, peer, reserve)
+        self.service()
+            .map_or_else(not_enabled, |jobs| jobs.reserve(peer, reserve))
     }
 
     fn release(&self, peer: EntityId, key: &str) -> JobAnswer {
-        super::NodeJobs::release(self, peer, key)
+        self.service()
+            .map_or_else(not_enabled, |jobs| jobs.release(peer, key))
     }
 
     fn submit(&self, peer: EntityId, signed: SignedJobSubmit) -> JobAnswer {
-        super::NodeJobs::submit(self, peer, signed)
+        self.service()
+            .map_or_else(not_enabled, |jobs| jobs.submit(peer, signed))
     }
 
     fn swept(&self) -> bool {
-        super::NodeJobs::swept(self)
+        self.service().is_some_and(|jobs| jobs.swept())
     }
 
     fn epoch(&self) -> Option<String> {
-        super::NodeJobs::epoch(self).map(|epoch| epoch.to_hex())
+        self.service()
+            .and_then(|jobs| jobs.epoch())
+            .map(|epoch| epoch.to_hex())
     }
 
     fn booked_disk_mib(&self) -> u64 {
-        super::NodeJobs::booked_disk_mib(self)
+        self.service().map_or(0, |jobs| jobs.booked_disk_mib())
     }
 
     fn live_issuers(&self) -> BTreeSet<EntityId> {
-        super::NodeJobs::live_issuers(self)
+        self.service()
+            .map(|jobs| jobs.live_issuers())
+            .unwrap_or_default()
     }
 
     fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str) {
-        super::NodeJobs::revoke_live_keys(self, issuer, why);
+        if let Some(jobs) = self.service() {
+            jobs.revoke_live_keys(issuer, why);
+        }
     }
 
     fn stop_live_keys(&self) {
-        super::NodeJobs::stop_live_keys(self);
+        if let Some(jobs) = self.service() {
+            jobs.stop_live_keys();
+        }
+    }
+
+    fn scopes(&self) -> Vec<ScopeReport> {
+        self.service().map(|jobs| jobs.scopes()).unwrap_or_default()
     }
 
     fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        super::NodeJobs::find(self, peer, key)
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.find(peer, key))
     }
 
     fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        super::NodeJobs::stop(self, peer, key)
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.stop(peer, key))
     }
 
     fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
-        super::NodeJobs::keys_page(self, peer, after)
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.keys_page(peer, after))
     }
 
     fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
-        super::NodeJobs::signal(self, peer, key, signal)
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.signal(peer, key, signal))
     }
 
     fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
-        super::NodeJobs::fetch(self, peer, key, name)
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.fetch(peer, key, name))
     }
 
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        super::NodeJobs::acknowledge(self, peer, key)
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
+    }
+}
+
+impl super::NodeJobs {
+    /// The launch scope this service's job unit starts runs in, with what
+    /// it can enforce now, as its probe reads it: `Node`'s `scopes`.
+    #[must_use]
+    pub fn scopes(&self) -> Vec<ScopeReport> {
+        let units = &self.parts().units;
+        vec![ScopeReport {
+            class: units.class(),
+            capabilities: units.probe(),
+        }]
     }
 }

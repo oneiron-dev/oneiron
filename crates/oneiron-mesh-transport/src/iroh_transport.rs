@@ -435,7 +435,11 @@ pub struct IrohTransport {
     policy: AcceptPolicy,
     allowed_relays: RelayMap,
     admissions: Arc<admission::Admissions>,
+    /// The protocols this endpoint serves, and so dials.
     alpns: Vec<Vec<u8>>,
+    /// The protocols this endpoint dials but does not serve
+    /// ([`Self::dialing`]).
+    dial_only_alpns: Vec<Vec<u8>>,
     receipts: Option<PathRecorder>,
 }
 impl IrohTransport {
@@ -529,8 +533,30 @@ impl IrohTransport {
             allowed_relays,
             admissions,
             alpns,
+            dial_only_alpns: Vec::new(),
             receipts,
         })
+    }
+    /// This endpoint dials each of `alpns` as well, whether or not it serves
+    /// it: a machine that offers no job protocol still dials the execution
+    /// nodes that do. The handshake offers inbound only the protocols the
+    /// endpoint serves, and every dial still passes the live grant check.
+    #[must_use]
+    pub fn dialing(mut self, alpns: impl IntoIterator<Item = Vec<u8>>) -> Self {
+        for alpn in alpns {
+            if !alpn.is_empty() && !self.dials(&alpn) {
+                self.dial_only_alpns.push(alpn);
+            }
+        }
+        self
+    }
+    /// Whether this endpoint dials `alpn`: one it serves, or one
+    /// [`Self::dialing`] added.
+    fn dials(&self, alpn: &[u8]) -> bool {
+        self.alpns
+            .iter()
+            .chain(&self.dial_only_alpns)
+            .any(|known| known.as_slice() == alpn)
     }
     /// Production pairing door: the device key derives the transport signer,
     /// and every connection and refused attempt leaves a path receipt in
@@ -780,6 +806,17 @@ impl MeshStream for IrohStream {
                 .map_err(|e| MeshError::Io(e.to_string()))?;
             self.grant.check()?;
             Ok(bytes)
+        })
+    }
+    fn delivered(&mut self) -> MeshFuture<'_, ()> {
+        // The finished write half's end: the peer acknowledged all of it,
+        // or stopped the stream.
+        Box::pin(async move {
+            self.send
+                .stopped()
+                .await
+                .map(drop)
+                .map_err(|e| MeshError::Io(e.to_string()))
         })
     }
 }

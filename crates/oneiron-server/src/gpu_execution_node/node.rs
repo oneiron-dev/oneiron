@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::authority::PeerMachine;
+use oneiron::job_workload::DevicePlacement;
 use oneiron::{EntityId, Vault};
 
 use super::node_settings::{
@@ -43,8 +44,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, SignedJobSubmit,
-    WorkloadPin,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, ScopeReport,
+    SignedJobSubmit, TemplateOffer, WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -258,6 +259,35 @@ pub trait NodeKeys: Send + Sync {
         let _ = (peer, key);
         JobStatusAnswer::Refused(JobRefusal::NotEnabled)
     }
+
+    /// The launch scopes the keys' job unit starts runs in, each with what
+    /// it can enforce now, as its probe reads them (pass 34, section 2.2):
+    /// `Node`'s `scopes`. A scope that does not meet the minimum contract is
+    /// listed and runs nothing. None until a unit probes them.
+    fn scopes(&self) -> Vec<ScopeReport> {
+        Vec::new()
+    }
+}
+
+/// `offers`, each keeping only the scope kinds a probed scope of `scopes`
+/// can run it in: the scope meets the minimum contract and gives every bound
+/// the template requires (pass 34, section 2.2). A scope that fails the
+/// minimum contract runs nothing, and a template no scope can run is still
+/// listed, with no scope.
+fn offered_in_scopes(offers: Vec<TemplateOffer>, scopes: &[ScopeReport]) -> Vec<TemplateOffer> {
+    offers
+        .into_iter()
+        .map(|mut offer| {
+            offer.scopes.retain(|class| {
+                scopes.iter().any(|scope| {
+                    scope.class == *class
+                        && scope.capabilities.meets_minimum_contract()
+                        && scope.capabilities.missing(&offer.require).is_empty()
+                })
+            });
+            offer
+        })
+        .collect()
 }
 
 /// The execution node of this machine. Cloning it shares it.
@@ -497,6 +527,26 @@ impl ExecutionNode {
         }
     }
 
+    /// The launch commit's fit of a pin's placement on this node's devices
+    /// (pass 34, section 2.1, the sum rule): the host memory the placement
+    /// leases, the request's own and each leased unified device's claim
+    /// together, is within the template's memory ceiling.
+    ///
+    /// # Errors
+    ///
+    /// The refusal reason, for the key's end.
+    pub fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+    ) -> Result<(), String> {
+        match self.settings() {
+            Ok(Some(settings)) => settings.admit_placement(pin, placement),
+            Ok(None) => Err("node_disabled".to_owned()),
+            Err(why) => Err(format!("node_settings_unreadable: {why}")),
+        }
+    }
+
     /// The digest of the template named `template` now; `None` when this
     /// node holds no such template.
     #[must_use]
@@ -587,10 +637,13 @@ impl ExecutionNode {
         self.node_answer_from(&self.snapshot())
     }
 
-    /// What the node offers, as `snapshot` reads it.
+    /// What the node offers, as `snapshot` reads it. Once the keys are
+    /// attached, each template is offered only in the scopes their unit's
+    /// probe says can run it ([`offered_in_scopes`]).
     #[must_use]
     pub fn node_answer_from(&self, snapshot: &NodeSnapshot) -> NodeAnswer {
         let keys = self.keys();
+        let scopes = keys.map(|keys| keys.scopes());
         let (templates, disk_free_bytes, disk_reserve_bytes) = match snapshot.settings() {
             Some(settings) => (
                 settings.template_offers().unwrap_or_else(|why| {
@@ -606,7 +659,11 @@ impl ExecutionNode {
             enabled: snapshot.controls.enabled,
             paused: snapshot.controls.paused.clone(),
             drained: snapshot.controls.drained.clone(),
-            templates,
+            templates: match &scopes {
+                Some(scopes) => offered_in_scopes(templates, scopes),
+                None => templates,
+            },
+            scopes: scopes.unwrap_or_default(),
             disk_free_bytes,
             disk_reserved_bytes: self.booked_disk_bytes(),
             disk_reserve_bytes,

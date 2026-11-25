@@ -39,7 +39,7 @@ use super::job_unit::{
     EndRecord, JobUnitPhase, RECEIPT_FILE_NAME, TICK_FILE_NAME, read_end_record, write_file_synced,
 };
 use super::journal::{EndingCause, JournalEvent, NodeKey};
-use super::node_parts::{GpuLeaseEnd, NodeJobSettings};
+use super::node_parts::{GpuDeviceProcesses, GpuLeaseEnd, NodeJobSettings};
 use super::receipt::{receipt_of, sign_receipt};
 use super::{NodeBook, NodeGate, NodeJobs};
 use crate::gpu_execution_node::wire::{
@@ -192,7 +192,67 @@ impl NodeJobs {
                 KeyFollowUp::HashOutputs { pin } => self.hash_and_seal(&key, &pin),
             }
         }
+        self.keep_missing_terminal_receipts();
         self.clean_acknowledged_payloads();
+    }
+
+    /// Writes the signed terminal receipt again for each sealed key whose
+    /// control directory lacks it: an engine that stopped between the
+    /// `hashed` record and the file, or a write that failed, leaves it
+    /// missing, and the journal alone rebuilds it.
+    fn keep_missing_terminal_receipts(&self) {
+        let now = self.now();
+        let (sealed, epoch): (Vec<NodeKey>, _) = {
+            let book = self.lock();
+            let Some(journal) = book.journal.as_ref() else {
+                return;
+            };
+            let sealed = journal
+                .table()
+                .iter()
+                .filter(|key| key.launch.is_some() && key.outputs != OutputsState::Pending)
+                .cloned()
+                .collect();
+            (sealed, journal.epoch())
+        };
+        for key in &sealed {
+            let file = key
+                .id
+                .control_dir(&self.paths().state_dir)
+                .join(RECEIPT_FILE_NAME);
+            if !file.exists() {
+                self.keep_terminal_receipt(key, epoch, &now);
+            }
+        }
+    }
+
+    /// Signs the sealed key's terminal receipt and keeps it in the key's
+    /// control directory, synced.
+    fn keep_terminal_receipt(
+        &self,
+        sealed: &NodeKey,
+        epoch: super::JournalEpoch,
+        now: &super::ReceiptClock,
+    ) {
+        let parts = self.parts();
+        let signed = sign_receipt(
+            receipt_of(sealed, parts.machine, epoch, now),
+            parts.signer.as_ref(),
+        );
+        let written = signed
+            .map_err(std::io::Error::other)
+            .and_then(|signed| {
+                oneiron_organ_protocol::to_vec(&signed).map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+                })
+            })
+            .and_then(|bytes| {
+                let control_dir = sealed.id.control_dir(&self.paths().state_dir);
+                write_file_synced(&control_dir.join(RECEIPT_FILE_NAME), &bytes)
+            });
+        if let Err(error) = written {
+            tracing::warn!(key = %sealed.key, %error, "terminal job receipt not kept; the next tick writes it again");
+        }
     }
 
     fn close_expired_held_keys(&self) {
@@ -250,7 +310,9 @@ impl NodeJobs {
         };
         match known.state {
             JobState::Launching | JobState::Running | JobState::Ending => {
-                self.read_unit_end(book, &known, &now);
+                if let Err(why) = self.read_unit_end(book, &known, &now) {
+                    tracing::debug!(key, %why, "job end handling tries again at the next tick");
+                }
             }
             JobState::Ended => {}
             _ => return KeyFollowUp::Nothing,
@@ -290,14 +352,20 @@ impl NodeJobs {
     }
 
     /// Step 1: reads the key's end record and its unit, and moves the key.
+    ///
+    /// # Errors
+    ///
+    /// The key could not be moved now: its end record or its unit's phase
+    /// could not be read, or the record it needs did not land. Recovery keeps
+    /// the gate closed on it (design 7.7); the tick asks again.
     pub(super) fn read_unit_end(
         &self,
         book: &mut NodeBook,
         known: &NodeKey,
         now: &super::ReceiptClock,
-    ) {
+    ) -> Result<(), String> {
         let Some(journal) = book.journal.as_mut() else {
-            return;
+            return Err("job_service.history_lost".to_owned());
         };
         let control_dir = known.id.control_dir(&self.paths().state_dir);
         match read_end_record(&control_dir, &known.key) {
@@ -305,8 +373,26 @@ impl NodeJobs {
             Ok(None) => self.read_unit_phase(journal, known, now),
             Err(error) => {
                 tracing::warn!(key = %known.key, %error, "job end record unreadable; asking again at the next tick");
+                Err(format!("job_end_record {}: {error}", known.key))
             }
         }
+    }
+
+    /// Appends `event` for `known`; a write that did not land is logged and
+    /// returned.
+    fn record_end_step(
+        journal: &mut super::JobJournal,
+        known: &NodeKey,
+        now: &super::ReceiptClock,
+        event: JournalEvent,
+    ) -> Result<(), String> {
+        journal
+            .record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
+            .map(drop)
+            .map_err(|error| {
+                log_write_error(&known.key, &error);
+                format!("job_record {}: {error}", known.key)
+            })
     }
 
     /// An end record ends the key when the unit's control group was empty;
@@ -317,20 +403,15 @@ impl NodeJobs {
         known: &NodeKey,
         end_record: &EndRecord,
         now: &super::ReceiptClock,
-    ) {
+    ) -> Result<(), String> {
         if !end_record.cgroup_empty {
-            self.kill_unconfirmed(journal, known, now);
-            return;
+            return self.kill_unconfirmed(journal, known, now);
         }
         let event = JournalEvent::Ended {
             end: end_of(end_record, known.ending_cause),
             end_boot_ns: Some(end_record.end_boot_ns),
         };
-        if let Err(error) =
-            journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
-        {
-            log_write_error(&known.key, &error);
-        }
+        Self::record_end_step(journal, known, now, event)
     }
 
     /// A process of the unit remained: the key stays `Ending` and its device
@@ -340,26 +421,31 @@ impl NodeJobs {
         journal: &mut super::JobJournal,
         known: &NodeKey,
         now: &super::ReceiptClock,
-    ) {
-        let mut record = |event: JournalEvent| {
-            journal
-                .record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
-                .map(drop)
-                .map_err(|error| log_write_error(&known.key, &error))
-        };
-        if known.state != JobState::Ending
-            && record(JournalEvent::Ending {
+    ) -> Result<(), String> {
+        if known.state != JobState::Ending {
+            let event = JournalEvent::Ending {
                 cause: EndingCause::UnitStopping,
-            })
-            .is_err()
-        {
-            return;
+            };
+            Self::record_end_step(journal, known, now, event)?;
         }
         if !matches!(known.release, DeviceRelease::Unconfirmed { .. }) {
-            let _ = record(JournalEvent::Quarantined {
-                why: "kill_unconfirmed".to_owned(),
+            let why = "kill_unconfirmed";
+            let event = JournalEvent::Quarantined {
+                why: why.to_owned(),
                 other_compute_pids: Vec::new(),
-            });
+            };
+            Self::record_end_step(journal, known, now, event)?;
+            self.quarantine_device(known, why);
+        }
+        Ok(())
+    }
+
+    /// Puts the key's device out of every reserve and launch, as the
+    /// journal just recorded (design 7.6): the slot table counts it again
+    /// only after the key's clean release. Recovery replays it.
+    pub(super) fn quarantine_device(&self, known: &NodeKey, why: &str) {
+        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
+            self.parts().devices.quarantine(&lease.device_id, why);
         }
     }
 
@@ -372,29 +458,27 @@ impl NodeJobs {
         journal: &mut super::JobJournal,
         known: &NodeKey,
         now: &super::ReceiptClock,
-    ) {
+    ) -> Result<(), String> {
         let status = match self.parts().units.status(&known.id) {
             Ok(status) => status,
             Err(error) => {
                 tracing::warn!(key = %known.key, %error, "job unit status unknown; asking again at the next tick");
-                return;
+                return Err(format!("job_unit_status {}: {error}", known.key));
             }
         };
         if status.phase == JobUnitPhase::Inactive {
             if !status.cgroup_empty {
-                self.kill_unconfirmed(journal, known, now);
-                return;
+                return self.kill_unconfirmed(journal, known, now);
             }
             let control_dir = known.id.control_dir(&self.paths().state_dir);
             match read_end_record(&control_dir, &known.key) {
                 Ok(Some(end_record)) => {
-                    self.apply_end_record(journal, known, &end_record, now);
-                    return;
+                    return self.apply_end_record(journal, known, &end_record, now);
                 }
                 Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(key = %known.key, %error, "job end record unreadable; asking again at the next tick");
-                    return;
+                    return Err(format!("job_end_record {}: {error}", known.key));
                 }
             }
         }
@@ -422,17 +506,15 @@ impl NodeJobs {
             _ => None,
         };
         if let Some(event) = event {
-            if let Err(error) =
-                journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
-            {
-                log_write_error(&known.key, &error);
-            }
-        } else if known.state == JobState::Ending && status.phase != JobUnitPhase::Stopping {
+            return Self::record_end_step(journal, known, now, event);
+        }
+        if known.state == JobState::Ending && status.phase != JobUnitPhase::Stopping {
             // A stop the service manager did not take: ask again.
             self.stop_unit(&known.key);
         } else if matches!(known.state, JobState::Launching | JobState::Running) {
             self.write_tick(known, now);
         }
+        Ok(())
     }
 
     /// While the history is lost: asks the service manager again to stop
@@ -484,7 +566,8 @@ impl NodeJobs {
         }
     }
 
-    /// Step 2: the release check of an ended key that holds its device.
+    /// Step 2: the release check of an ended key that holds its leases. A
+    /// key with no device lease is released once its unit is gone.
     pub(super) fn release_check(
         &self,
         book: &mut NodeBook,
@@ -500,13 +583,12 @@ impl NodeJobs {
                 return;
             }
             let event = JournalEvent::Quarantined {
-                why,
+                why: why.clone(),
                 other_compute_pids: pids,
             };
-            if let Err(error) =
-                journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event)
-            {
-                log_write_error(&known.key, &error);
+            match journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event) {
+                Ok(_) => self.quarantine_device(known, &why),
+                Err(error) => log_write_error(&known.key, &error),
             }
         };
         match self.parts().units.status(&known.id) {
@@ -521,12 +603,20 @@ impl NodeJobs {
                 return;
             }
         }
-        let processes = match self.parts().devices.end_check(&known.key) {
-            Ok(processes) => processes,
-            Err(refusal) => {
-                quarantine(format!("device_probe: {refusal}"), Vec::new(), journal);
-                return;
+        let has_device_lease = known
+            .launch
+            .as_ref()
+            .is_some_and(super::journal::KeyLaunch::has_device_lease);
+        let processes = if has_device_lease {
+            match self.parts().devices.end_check(&known.key) {
+                Ok(processes) => processes,
+                Err(refusal) => {
+                    quarantine(format!("device_probe: {refusal}"), Vec::new(), journal);
+                    return;
+                }
             }
+        } else {
+            GpuDeviceProcesses::default()
         };
         // The unit's control group is gone, so a compute entry with a process
         // id is another process's. One with no process id cannot be told
@@ -544,11 +634,19 @@ impl NodeJobs {
         };
         match journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event) {
             Ok(released) => {
-                let end = drain_end(
-                    released,
-                    self.parts().admission.job_settings().fast_exit_secs,
-                );
-                self.parts().devices.finish(&known.key, &end);
+                if has_device_lease {
+                    let end = drain_end(
+                        released,
+                        self.parts().admission.job_settings().fast_exit_secs,
+                    );
+                    if unconfirmed {
+                        // The clean probe ends the quarantine the journal set.
+                        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
+                            self.parts().devices.clear_quarantine(&lease.device_id);
+                        }
+                    }
+                    self.parts().devices.finish(&known.key, &end);
+                }
                 book.floors.remove(&known.key);
             }
             Err(error) => log_write_error(&known.key, &error),
@@ -582,25 +680,7 @@ impl NodeJobs {
             }
         };
         drop(book);
-        let parts = self.parts();
-        let signed = sign_receipt(
-            receipt_of(&sealed, parts.machine, epoch, &now),
-            parts.signer.as_ref(),
-        );
-        let written = signed
-            .map_err(std::io::Error::other)
-            .and_then(|signed| {
-                oneiron_organ_protocol::to_vec(&signed).map_err(|error| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
-                })
-            })
-            .and_then(|bytes| {
-                let control_dir = sealed.id.control_dir(&self.paths().state_dir);
-                write_file_synced(&control_dir.join(RECEIPT_FILE_NAME), &bytes)
-            });
-        if let Err(error) = written {
-            tracing::warn!(key, %error, "terminal job receipt not kept; the journal still holds the key");
-        }
+        self.keep_terminal_receipt(&sealed, epoch, &now);
     }
 }
 

@@ -30,8 +30,11 @@ pub struct GpuDeviceOffer {
     /// it to clear the drain. `None` keeps the drain in memory only.
     pub drain_file: Option<PathBuf>,
     /// Where the table takes one lock file per offered GPU, for as long as
-    /// it runs, so no other Oneiron server on this machine offers the same
-    /// GPU. `None` takes no lock.
+    /// it runs, and keeps each launched job's record, so no other Oneiron
+    /// server on this machine offers the same GPU, even while a job outlives
+    /// its server. It must exist and be the one directory every server that
+    /// sees these GPUs names. `None` takes no lock and keeps no record: one
+    /// server on the machine.
     pub owner_lock_dir: Option<PathBuf>,
 }
 
@@ -83,6 +86,11 @@ pub trait GpuJobDisk: Send + Sync {
     /// [`GpuSlotRefusal::Unmeasured`] when the disk cannot be read.
     fn claim(&self, bytes: u64) -> Result<Box<dyn Send + Sync>, GpuSlotRefusal>;
 
+    /// Claims `bytes` a live job booked before a restart, whatever the disk
+    /// holds now: the job may still write them, so new bookings count them.
+    /// Held until the returned claim drops.
+    fn restore(&self, bytes: u64) -> Box<dyn Send + Sync>;
+
     /// What the disk holds now.
     ///
     /// # Errors
@@ -109,6 +117,10 @@ impl GpuJobDisk for crate::machine::DiskFloor {
                 })
             }
         }
+    }
+
+    fn restore(&self, bytes: u64) -> Box<dyn Send + Sync> {
+        Box::new(self.restore_room(bytes))
     }
 
     fn reading(&self) -> std::io::Result<GpuDiskReading> {

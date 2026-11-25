@@ -613,6 +613,16 @@ mod host {
         let alpns: Vec<Vec<u8>> = routes.routes.iter().map(|(alpn, _)| alpn.clone()).collect();
         #[cfg(oneiron_test_support)]
         let bound = alpns.clone();
+        // A full listener dials every protocol the engine serves, whether or
+        // not this machine serves it: an issuer that is no execution node
+        // dials the nodes (pass 33 row R1). A sync-only device dials sync.
+        let dialed: Vec<Vec<u8>> = match route_set {
+            super::MeshRouteSet::Full => super::SERVED_MESH_ALPNS
+                .iter()
+                .map(|alpn| alpn.to_vec())
+                .collect(),
+            super::MeshRouteSet::SyncOnly => Vec::new(),
+        };
         let transport = Arc::new(
             IrohTransport::bind_paired(
                 key,
@@ -623,7 +633,8 @@ mod host {
                 Arc::new(VaultPathReceipts(vault)),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?,
+            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?
+            .dialing(dialed),
         );
         server
             .mesh_transport

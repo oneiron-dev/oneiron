@@ -18,7 +18,7 @@
 //! `Find`, `Status`, `Stop`, `Keys`, `Signal`, `Fetch` and `Ack`.
 
 use std::future::Future;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
@@ -36,6 +36,13 @@ use super::wire::{
 /// How long a `Busy` answer asks the issuer to wait when the node could
 /// not answer now (the engine stopping).
 const BUSY_RETRY_AFTER_MS: u64 = 2_000;
+
+/// How long a stream may take to bring its whole request. A job request is
+/// a few KiB (a pin's arguments are at most 4 KiB together), so this bounds
+/// a stream that stalls or never finishes its request, not a slow link: at
+/// the deadline the stream is dropped, which frees its slot among the
+/// connection's streams. A wire bound, not a policy.
+pub const REQUEST_READ_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Serves [`JOB_ALPN`]: new work.
 #[derive(Debug, Clone)]
@@ -195,9 +202,11 @@ fn now_ms() -> u64 {
 /// which `answer` answers on the same stream. The streams are served side by
 /// side, so a stream whose request never finishes, or whose peer stops
 /// reading its answer, loses only itself; the next stream is still accepted
-/// and answered. Each accept checks the peer's live grant, and the loop ends
-/// when the connection closes or the grant ends; a request still in flight
-/// then ends with it.
+/// and answered. A stream whose request is not whole by
+/// [`REQUEST_READ_DEADLINE`] is dropped, so unfinished requests never hold
+/// all of the connection's stream slots. Each accept checks the peer's live
+/// grant, and the loop ends when the connection closes or the grant ends; a
+/// request still in flight then ends with it.
 async fn serve_each_stream<Q, A, F, Fut>(conn: &dyn MeshConnection, answer: F)
 where
     Q: DeserializeOwned,
@@ -218,8 +227,9 @@ where
     }
 }
 
-/// One stream's request and its answer. A stream whose request does not
-/// decode gets no answer; a failure ends this stream alone.
+/// One stream's request and its answer. A stream whose request is not whole
+/// by [`REQUEST_READ_DEADLINE`], or does not decode, gets no answer; a
+/// failure ends this stream alone.
 async fn serve_stream<Q, A, F, Fut>(mut stream: Box<dyn MeshStream>, answer: &F)
 where
     Q: DeserializeOwned,
@@ -227,7 +237,7 @@ where
     F: Fn(Q) -> Fut,
     Fut: Future<Output = A>,
 {
-    let Ok(bytes) = stream.recv().await else {
+    let Ok(Ok(bytes)) = tokio::time::timeout(REQUEST_READ_DEADLINE, stream.recv()).await else {
         return;
     };
     let Ok(request) = decode_message::<Q>(JOB_PROTOCOL, &bytes) else {

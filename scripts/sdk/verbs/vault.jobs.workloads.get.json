@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.workloads.get",
+  "description": "Reads one pinned workload with its approval and standing. The owner calls it, or an agent whose Grant names it; an agent reads only workloads its Grant pinned, or that an unexpired approval lets it start.",
+  "input": "crate::job_workload::WorkloadRef",
+  "output": "crate::job_workload::WorkloadView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.get\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "job_workload_caller"
+}

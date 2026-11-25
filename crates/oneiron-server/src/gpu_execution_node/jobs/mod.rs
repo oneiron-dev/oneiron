@@ -42,8 +42,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use oneiron_organ_host::FloorLease;
 
 pub use job_unit::{
-    BoundReport, EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus,
-    LaunchFile, NodeClock, RenewRefusal, ScopeCapabilities, Strength, SystemNodeClock,
+    EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
+    RenewRefusal, SystemNodeClock, scope_missing,
 };
 pub use journal::{EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey};
 pub use journal_file::{
@@ -51,7 +51,8 @@ pub use journal_file::{
 };
 pub use node_parts::{
     AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeDevices, NodeJobParts,
-    NodeJobPaths, NodeJobSettings, StageFailure, StageOrder, Stager, StagingNotBuilt,
+    NodeJobPaths, NodeJobSettings, NodeJobsAttachment, StageFailure, StageOrder, Stager,
+    StagingNotBuilt,
 };
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 pub use status::KEYS_PAGE_MAX_BYTES;

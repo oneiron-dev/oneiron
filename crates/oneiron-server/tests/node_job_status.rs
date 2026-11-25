@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron::machine_capacity::GpuDevice;
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, KEYS_PAGE_MAX_BYTES, NodeDevices, NodeJobs, NodeKey,
@@ -63,10 +64,16 @@ fn pin() -> WorkloadPin {
         entry: "tools/units/run.sh".to_owned(),
         args: vec!["seed=7".to_owned()],
         request: ResourceRequest {
-            gpus: 1,
-            vram_mib: 22 * 1024,
+            cpu_threads: 0,
             memory_mib: 22 * 1024,
             disk_mib: 2 * 1024,
+            devices: vec![DeviceClaim {
+                kind: DeviceKind::Gpu,
+                count: 1,
+                memory_mib: 22 * 1024,
+                features: Vec::new(),
+                sharing: Sharing::Exclusive,
+            }],
             maximum_secs: 1_800,
         },
         scope: ScopeKind::Host,
