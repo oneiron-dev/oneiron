@@ -126,13 +126,12 @@ fn selected(devices: Vec<HeldDevice>, slot: &SlotSelector) -> Vec<HeldDevice> {
 pub(super) fn device_slot_request(
     key: &str,
     lease: &DeviceLease,
-    claim: Option<&DeviceClaim>,
+    claim: &DeviceClaim,
 ) -> GpuSlotRequest {
     GpuSlotRequest {
         key: key.to_owned(),
         device_id: Some(lease.device_id.clone()),
-        model: None,
-        min_memory_mib: claim.map_or(0, |claim| claim.memory_mib),
+        claim: claim.clone(),
         disk_bytes: 0,
     }
 }

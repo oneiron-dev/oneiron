@@ -13,6 +13,7 @@ pub mod availability;
 pub mod device;
 #[cfg(unix)]
 pub mod jobs;
+pub mod machine_policy;
 pub mod node;
 pub mod node_settings;
 #[cfg(target_os = "linux")]

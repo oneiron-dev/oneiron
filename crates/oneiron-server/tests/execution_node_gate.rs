@@ -36,8 +36,9 @@ use oneiron_mesh_transport::message::exchange;
 use oneiron_server::gpu_execution_node::node::{DISABLED_MARKER_EXTENSION, marker_beside};
 use oneiron_server::gpu_execution_node::wire::{
     DeviceClaim, HoldRef, JOB_ALPN, JOB_PROTOCOL, JOB_STATUS_ALPN, JobAnswer, JobRefusal,
-    JobRequest, JobReserve, JobStatusAnswer, JobStatusRequest, JobSubmit, NetworkMode,
-    ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
+    JobRequest, JobReserve, JobStatusAnswer, JobStatusRequest, JobSubmit, LogStream,
+    LogTailRequest, NetworkMode, ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector,
+    Starter, WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
     ExecutionNode, GpuDeviceOffer, GpuSlotTable, NodeKeys, NvidiaSmiProbe,
@@ -329,6 +330,12 @@ async fn granted_machine_not_the_issuer_is_refused() -> TestResult {
             key: "key-1".to_owned(),
             name: "verdict.json".to_owned(),
         },
+        JobStatusRequest::Tail(LogTailRequest {
+            key: "key-1".to_owned(),
+            stream: LogStream::Stdout,
+            offset: 0,
+            max: 1024,
+        }),
     ] {
         let answer = ask::<_, JobStatusAnswer>(c, b, JOB_STATUS_ALPN, &request)
             .await?

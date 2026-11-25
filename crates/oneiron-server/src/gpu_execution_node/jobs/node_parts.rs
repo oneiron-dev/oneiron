@@ -27,10 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use oneiron::EntityId;
-use oneiron::job_workload::{
-    BoundRequirement, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory,
-    DevicePlacement, DeviceState, HeldDevice, Sharing,
-};
+use oneiron::job_workload::{BoundRequirement, DevicePlacement, HeldDevice};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron_organ_host::MachineFloor;
 
@@ -43,8 +40,8 @@ pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, ScopeReport,
-    SignedJobSubmit, WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
+    ScopeReport, SignedJobSubmit, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -145,13 +142,20 @@ pub trait NodeAdmission: Send + Sync {
 
     /// The launch commit's fit of the pin's placement on this node (pass 34
     /// section 2.1, the sum rule): the host memory the placement leases is
-    /// within the template's memory ceiling.
+    /// within the template's memory ceiling; and, with the box file and the
+    /// owner's machine policy (row P0), every placed device is offered, the
+    /// memory with `held_mib` that launched keys hold fits the memory work
+    /// may hold, and the run's threads fit.
     ///
     /// # Errors
     ///
     /// The refusal reason, for the key's end.
-    fn admit_placement(&self, pin: &WorkloadPin, placement: &DevicePlacement)
-    -> Result<(), String>;
+    fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+        held_mib: u64,
+    ) -> Result<(), String>;
 
     /// Design 7.3 reserve step 6: the payload disk's free space, less what
     /// live keys booked (`booked_mib`), covers `request_mib` plus the disk
@@ -367,8 +371,9 @@ impl NodeAdmission for ExecutionNode {
         &self,
         pin: &WorkloadPin,
         placement: &DevicePlacement,
+        held_mib: u64,
     ) -> Result<(), String> {
-        ExecutionNode::admit_placement(self, pin, placement)
+        ExecutionNode::admit_placement(self, pin, placement, held_mib)
     }
 
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {
@@ -394,58 +399,15 @@ impl AuthorityPosition for ExecutionNode {
     }
 }
 
-/// One GPU of the slot table as placement reads it (pass 34, 2.1), until
-/// OPUS-LE-FLEET's table reports `DeviceFacts` itself: a GPU with its own
-/// memory and no named features, which its job opens alone, one claim at a
-/// time. A compute process of another account does not show here: the
-/// lease's confirmation refuses it inside the launch commit.
-fn held_gpu(slot: &crate::gpu_execution_node::availability::GpuDeviceAvailability) -> HeldDevice {
-    use crate::gpu_execution_node::availability::GpuDeviceState;
-    let (state, holder) = match &slot.state {
-        GpuDeviceState::Free | GpuDeviceState::Busy { .. } => (DeviceState::Offered, None),
-        GpuDeviceState::Leased { key } | GpuDeviceState::Launched { key } => (
-            DeviceState::Leased {
-                keys: vec![key.clone()],
-            },
-            Some(Sharing::Exclusive),
-        ),
-        GpuDeviceState::Quarantined { why, key } => (
-            DeviceState::Quarantined { why: why.clone() },
-            key.as_ref().map(|_| Sharing::Exclusive),
-        ),
-        GpuDeviceState::Withheld | GpuDeviceState::NotOffered => (DeviceState::Withheld, None),
-    };
-    HeldDevice {
-        facts: DeviceFacts {
-            id: slot.device.device_id.clone(),
-            id_source: DeviceIdSource::VendorUuid,
-            kind: DeviceKind::Gpu,
-            vendor: String::new(),
-            model: slot.device.model.clone(),
-            memory: DeviceMemory::Dedicated {
-                mib: slot.device.memory_total_mib,
-            },
-            features: Vec::new(),
-            closure: DeviceClosure::Closed,
-            state,
-            max_claimants: 1,
-        },
-        holders: holder.into_iter().collect(),
-    }
-}
-
 impl NodeDevices for GpuSlotTable {
     fn devices(&self) -> Result<Vec<HeldDevice>, String> {
-        let availability = self
-            .availability(oneiron_base::unix_millis_now())
-            .map_err(|error| format!("devices_unreadable: {error}"))?;
-        if let Some(why) = &availability.paused {
-            return Err(format!("node_paused: {why}"));
-        }
-        if let Some(why) = &availability.drained {
-            return Err(format!("node_drained: {why}"));
-        }
-        Ok(availability.devices.iter().map(held_gpu).collect())
+        self.held_devices(oneiron_base::unix_millis_now())
+            .map_err(|refusal| match refusal {
+                GpuSlotRefusal::Paused { reason } => format!("node_paused: {reason}"),
+                GpuSlotRefusal::Drained { reason } => format!("node_drained: {reason}"),
+                GpuSlotRefusal::Unmeasured { reason } => format!("devices_unreadable: {reason}"),
+                other => format!("devices_unreadable: {other}"),
+            })
     }
 
     fn lease_for_launch(
@@ -605,6 +567,11 @@ impl NodeKeys for NodeJobsAttachment {
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         self.service()
             .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
+    }
+
+    fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.tail(peer, request))
     }
 }
 
