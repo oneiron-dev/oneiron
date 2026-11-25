@@ -19,7 +19,7 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 type Events = SideTable<(EntityId, u64), LegalHoldEvent, Named>;
 
 /// Customer holds' log. Key: id16 (hold) + u64be (sequence).
-const EVENTS: Events = SideTable::new(&side_table::LEGAL_HOLD_EVENT);
+pub(super) const EVENTS: Events = SideTable::new(&side_table::LEGAL_HOLD_EVENT);
 /// The host-only log. Key: id16 (hold) + u64be (sequence).
 const HOST_EVENTS: Events = SideTable::new(&side_table::LEGAL_HOLD_HOST_EVENT);
 
@@ -58,7 +58,23 @@ pub(crate) fn log_in_txn(
     at: u64,
     request_id: Option<String>,
 ) -> Result<()> {
-    let row = LegalHoldEvent {
+    let row = event_row(hold, event, reason, targets, actor, at, request_id);
+    append_event_in_txn(dbs, txn, hold, &row)
+}
+
+/// One event of `hold`'s log, not yet written: what [`log_in_txn`] appends.
+/// An event that placed or widened a sealed capture sets its
+/// `clone_fingerprint` before [`append_event_in_txn`] writes it.
+pub(crate) fn event_row(
+    hold: &LegalHold,
+    event: LegalHoldEventKind,
+    reason: LegalHoldReason,
+    targets: Vec<LegalHoldTarget>,
+    actor: &HoldActor,
+    at: u64,
+    request_id: Option<String>,
+) -> LegalHoldEvent {
+    LegalHoldEvent {
         hold_id: hold.hold_id,
         kind: hold.kind,
         targets,
@@ -69,29 +85,61 @@ pub(crate) fn log_in_txn(
         reason,
         matter_ref: hold.matter_ref.clone(),
         request_id,
-    };
-    let table = match hold.kind {
-        LegalHoldKind::Customer => EVENTS,
-        LegalHoldKind::HostOrder => HOST_EVENTS,
-    };
-    append_in_txn(dbs, txn, table, &row)
+        clone_fingerprint: None,
+        recipient_fingerprint: None,
+    }
 }
 
-/// The newest event of `hold`'s own log.
-pub(super) fn last_event_in_txn(
+/// Appends `row` to `hold`'s own log, as [`log_in_txn`] does.
+pub(crate) fn append_event_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    hold: &LegalHold,
+    row: &LegalHoldEvent,
+) -> Result<()> {
+    append_in_txn(dbs, txn, own_log(hold), row)
+}
+
+/// `hold`'s own log: a customer hold's, or a host order's host-only one.
+fn own_log(hold: &LegalHold) -> Events {
+    match hold.kind {
+        LegalHoldKind::Customer => EVENTS,
+        LegalHoldKind::HostOrder => HOST_EVENTS,
+    }
+}
+
+/// Whether `hold`'s own log already holds an `event` row.
+pub(crate) fn logged_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
     hold: &LegalHold,
-) -> Result<Option<LegalHoldEvent>> {
-    let table = match hold.kind {
-        LegalHoldKind::Customer => EVENTS,
-        LegalHoldKind::HostOrder => HOST_EVENTS,
-    };
-    Ok(table
-        .iter_rev_from(dbs, txn, hold.hold_id.as_bytes())?
-        .next()
-        .transpose()?
-        .map(|(_, event)| event))
+    event: LegalHoldEventKind,
+) -> Result<bool> {
+    Ok(own_log(hold)
+        .scan_from(dbs, txn, hold.hold_id.as_bytes())?
+        .iter()
+        .any(|(_, row)| row.event == event))
+}
+
+/// Whether `hold`'s own log holds an `event` row after its last `since`
+/// row. The gate-partition door places and lifts one hold id again and
+/// again, so a release's follow-up reads only the rows since that release.
+pub(crate) fn logged_since_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    hold: &LegalHold,
+    event: LegalHoldEventKind,
+    since: LegalHoldEventKind,
+) -> Result<bool> {
+    let mut logged = false;
+    for (_, row) in own_log(hold).scan_from(dbs, txn, hold.hold_id.as_bytes())? {
+        if row.event == since {
+            logged = false;
+        } else if row.event == event {
+            logged = true;
+        }
+    }
+    Ok(logged)
 }
 
 fn by_time(table: Events, dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<Vec<LegalHoldEvent>> {

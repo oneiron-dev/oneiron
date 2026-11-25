@@ -153,6 +153,16 @@ pub(crate) struct McpGatewayError {
     pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
     /// The held room join, surfaced as `error.data.room_join_hold`.
     pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// The pending check-in, surfaced as `error.data.pending`.
+    pub(super) pending: Option<Box<oneiron::memory::MemoryPending>>,
+    /// A reap pause's bound and self-host route (L9-61), surfaced as
+    /// `error.data.bound` and `error.data.self_hosted` as the managed HTTP
+    /// body carries them. Boxed for size, as `effective_scope` is.
+    pub(super) reap_pause: Option<Box<crate::managed::ReapPauseBound>>,
+    /// The grant a call needed and the credential does not hold (`core:write`,
+    /// `core:propose`), surfaced as `error.data.required_scope` as the HTTP
+    /// door's `forbidden_scope` names it.
+    pub(super) required_scope: Option<&'static str>,
 }
 
 impl McpGatewayError {
@@ -177,7 +187,15 @@ impl McpGatewayError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
+            reap_pause: None,
+            required_scope: None,
         }
+    }
+
+    /// The refusal's stable code and message, as the gateway typed them.
+    pub(crate) fn code_and_message(&self) -> (&'static str, &str) {
+        (self.kind, &self.message)
     }
 
     /// A request field past a byte bound (`[limits]`): the typed tool error
@@ -199,6 +217,11 @@ impl McpGatewayError {
 
     pub(super) fn with_hook_notice(mut self, notice: Option<String>) -> Self {
         self.hook_notice = notice.or(self.hook_notice);
+        self
+    }
+
+    pub(super) fn with_required_scope(mut self, required_scope: &'static str) -> Self {
+        self.required_scope = Some(required_scope);
         self
     }
 

@@ -204,6 +204,7 @@ fn agent_with_grant(
             verb_classes: std::collections::BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a Grant");
@@ -323,10 +324,15 @@ impl Fixture {
             .is_some()
     }
 
+    /// Whether the vault still stores `id`'s row, archived or live. The live
+    /// raw read (`Vault::get_raw`) reads a cleanup-archived record that kept
+    /// its body as absent, as every live door does, so a kept record and an
+    /// emptied one would read alike there; the stored type byte tells them
+    /// apart.
     fn stored(&self, id: &str) -> bool {
         self.vault
-            .get_raw(&EntityId::from_hex(id).expect("record id"))
-            .expect("raw read")
+            .get_entity_type(&EntityId::from_hex(id).expect("record id"))
+            .expect("stored row read")
             .is_some()
     }
 

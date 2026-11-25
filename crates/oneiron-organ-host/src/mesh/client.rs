@@ -13,6 +13,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
+use oneiron::machine_signature::MachineSignatures;
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshStream};
 use oneiron_organ_protocol::{ASK_MEMORY_GROW, AskCode, AskRefusal, ByteBuf, Hash32};
 
@@ -25,6 +26,7 @@ use crate::clock::Clock;
 use crate::error::HostError;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::outcome::{Leased, OrganOutcome, OrganOutput, OutputBytes};
+use crate::receipt::digest;
 use crate::resource_memory::{FloorRefusal, SharedFloor};
 use crate::shutdown;
 use crate::spec::{FetchGrant, LentInput, OrganCall, OrganInput};
@@ -41,6 +43,18 @@ pub(crate) enum PeerError {
 
 fn absent(err: MeshError) -> PeerError {
     PeerError::Absent(err.to_string())
+}
+
+/// Bytes a reply named that did not come once the node had answered the
+/// call: the call ran there, so it is that node's failure, never an absent
+/// node to run the call again on (round-2 blind-review P1 on #10409).
+fn not_fetched(machine: EntityId) -> impl Fn(MeshError) -> PeerError {
+    move |err| {
+        PeerError::Failed(HostError::Remote {
+            machine: machine.to_hex(),
+            detail: format!("the call ran there, but what it returned did not come: {err}"),
+        })
+    }
 }
 
 fn unexpected(reply: &Reply) -> MeshError {
@@ -106,6 +120,18 @@ impl Here<'_> {
             return Ok(None);
         };
         self.lease(*len).map_err(PeerError::Failed)
+    }
+
+    /// A lease of this machine's memory for an ask the serving node staged
+    /// (FIX 8023), before it is got back; none for an ask that rode inline,
+    /// or with no floor here. A refusal ends the answer as the mesh's own
+    /// error, and the organ reads its own host's refusal.
+    fn hold_asked(self, carried: &Carried) -> Result<Option<Leased>, MeshError> {
+        let Carried::Staged { len, .. } = carried else {
+            return Ok(None);
+        };
+        self.lease(*len)
+            .map_err(|err| MeshError::Io(format!("organ mesh ask: {err}")))
     }
 
     /// A lease of this machine's memory for `len` bytes this node sends,
@@ -185,6 +211,7 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
 pub(crate) async fn call_on(
     conn: &dyn MeshConnection,
     machine: EntityId,
+    verifier: &dyn MachineSignatures,
     call: &OrganCall,
     inputs: &[(Option<OrganInput>, LentInput)],
     asks: &AskHandlers<'_>,
@@ -208,6 +235,7 @@ pub(crate) async fn call_on(
                 .map_err(absent)?,
         });
     }
+    let call_nonce = draw_call_nonce()?;
     let peer = PeerCall {
         organ: call.organ.clone(),
         verb: call.verb.clone(),
@@ -219,6 +247,7 @@ pub(crate) async fn call_on(
         grant: call.grant.clone(),
         inputs: wire,
         answers: asks.verbs(),
+        call_nonce: call_nonce.clone(),
     };
     let encoded = encode(&peer).map_err(absent)?;
     let carried = if encoded.len() <= INLINE {
@@ -255,15 +284,30 @@ pub(crate) async fn call_on(
     let result = match decode::<Reply>(&reply.map_err(absent)?).map_err(absent)? {
         Reply::Call(carried) => {
             let _held = here.hold(&carried)?;
-            decode::<PeerResult>(&take(conn, carried).await.map_err(absent)?).map_err(absent)?
+            let bytes = take(conn, carried).await.map_err(not_fetched(machine))?;
+            // The call ran there once its result came: a result that does
+            // not decode is a broken rule, never an absent node to run the
+            // call on again (blind-review P1 on #10409).
+            decode::<PeerResult>(&bytes).map_err(|err| {
+                PeerError::Failed(HostError::ReplyInvalid(format!(
+                    "the node's result does not decode: {err}"
+                )))
+            })?
         }
         other => return Err(absent(unexpected(&other))),
     };
     match result {
-        PeerResult::Done(mut outcome) => {
-            receipts.reconcile(std::mem::take(&mut outcome.receipt.asks));
-            outcome.receipt.asks = receipts.lines.clone();
-            received(conn, outcome, here).await
+        PeerResult::Done(outcome) => {
+            // The serving machine's word on this call, before anything of
+            // the outcome is used. A reply that fails it is a broken rule,
+            // not an absent node: the call already ran there.
+            answers_this_call(&outcome, machine, verifier, call, inputs, &call_nonce)
+                .map_err(|why| PeerError::Failed(HostError::ReplyInvalid(why)))?;
+            // The receipt stays as the serving machine signed it; this
+            // node's own ask evidence is reconciled into the lines the
+            // handlers keep.
+            receipts.reconcile(outcome.receipt.asks.clone());
+            received(conn, machine, outcome, here).await
         }
         PeerResult::Failed(failure) => {
             receipts.reconcile(failure.asks);
@@ -285,6 +329,81 @@ pub(crate) async fn call_on(
             })
         }
     }
+}
+
+/// 32 bytes drawn for one call, hex: the serving node's receipt signature
+/// must name them.
+fn draw_call_nonce() -> Result<String, PeerError> {
+    let mut nonce = [0_u8; 32];
+    getrandom::fill(&mut nonce).map_err(|err| {
+        PeerError::Failed(HostError::Io(io::Error::other(format!(
+            "no call nonce: {err}"
+        ))))
+    })?;
+    Ok(oneiron_hex::encode(&nonce))
+}
+
+/// Whether `outcome` is the serving node's word on this call: its receipt
+/// is signed by `machine`, the node the handshake proved, against its
+/// MACHINE row there (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE); the
+/// signature names this call's nonce and the report beside it; and the
+/// receipt describes the call this node sent, with its inputs (each one's
+/// artifact, version, lent mark, length and hash), and the body it returned
+/// (blind-review P1s on #10409). The output files are checked against the
+/// receipt as they are taken.
+fn answers_this_call(
+    outcome: &PeerOutcome,
+    machine: EntityId,
+    verifier: &dyn MachineSignatures,
+    call: &OrganCall,
+    inputs: &[(Option<OrganInput>, LentInput)],
+    call_nonce: &str,
+) -> Result<(), String> {
+    let receipt = &outcome.receipt;
+    let signer = receipt
+        .signer(verifier)
+        .map_err(|why| format!("the node's receipt does not hold: {why}"))?;
+    if signer != machine {
+        return Err(format!(
+            "the node's receipt is signed by machine {}, not by the node that ran the call",
+            signer.to_hex()
+        ));
+    }
+    let signed = receipt
+        .signed_by
+        .as_ref()
+        .ok_or("the node's receipt is not signed")?;
+    if signed.call_nonce != call_nonce {
+        return Err("the node's receipt answers another call than this one".into());
+    }
+    if signed.report != digest(&outcome.report) {
+        return Err("the node's report is not the one its receipt names".into());
+    }
+    if receipt.result_body != outcome.body.as_ref().map(digest) {
+        return Err("the node's body is not the one its receipt names".into());
+    }
+    let same_inputs = receipt.inputs.len() == inputs.len()
+        && receipt
+            .inputs
+            .iter()
+            .zip(inputs)
+            .all(|(line, (read, lent))| {
+                line.artifact == read.map(|read| read.artifact.to_hex()).unwrap_or_default()
+                    && line.version == read.map_or(0, |read| read.version)
+                    && line.lent == read.is_none()
+                    && line.len == lent.bytes.len() as u64
+                    && line.content_hash == Hash32::of(&lent.bytes)
+            });
+    if receipt.organ.name != call.organ
+        || receipt.verb != call.verb
+        || receipt.schema != call.schema
+        || receipt.args_digest != digest(&call.args)
+        || receipt.base_body != call.body.as_ref().map(digest)
+        || !same_inputs
+    {
+        return Err("the node's receipt describes another call than the one sent".into());
+    }
+    Ok(())
 }
 
 /// This one mesh attempt's receipt, retained before each callback and
@@ -364,10 +483,11 @@ impl Drop for AttemptReceipts<'_> {
     }
 }
 
-/// Takes the outputs back and checks each against the serving host's
-/// receipt: the bytes that came are the bytes it hashed.
+/// Takes the outputs back from `machine`, which ran the call, and checks
+/// each against its receipt: the bytes that came are the bytes it hashed.
 async fn received(
     conn: &dyn MeshConnection,
+    machine: EntityId,
     outcome: PeerOutcome,
     here: Here<'_>,
 ) -> Result<OrganOutcome, PeerError> {
@@ -385,7 +505,9 @@ async fn received(
     let mut outputs = Vec::with_capacity(wire.len());
     for (output, line) in wire.into_iter().zip(&receipt.outputs) {
         let leased = here.hold(&output.bytes)?;
-        let bytes = take(conn, output.bytes).await.map_err(absent)?;
+        let bytes = take(conn, output.bytes)
+            .await
+            .map_err(not_fetched(machine))?;
         let content_hash = Hash32::of(&bytes);
         if content_hash != output.content_hash
             || content_hash != line.content_hash
@@ -425,7 +547,11 @@ async fn answer(
     here: Here<'_>,
     lines: &mut Vec<crate::receipt::AskReceipt>,
 ) -> Result<(), MeshError> {
-    let ask: PeerAsk = decode(&stream.recv().await?)?;
+    // An ask past the inline bound was staged on the serving node (FIX
+    // 8023): it is got in pieces once this machine holds their memory.
+    let carried: Carried = decode(&stream.recv().await?)?;
+    let _asked = here.hold_asked(&carried)?;
+    let ask: PeerAsk = decode(&take(conn, carried).await?)?;
     let (answered, signed, slot) = run_handler(&ask, asks, lines);
     let _held = match &answered {
         Ok(Answered { value, data, .. }) => {
@@ -446,11 +572,15 @@ async fn answer(
         }),
         Err(refusal) => Err(refusal),
     };
+    // The answer rides as the ask did: staged on the serving node past the
+    // inline bound, so no answer the organ may take fails on the size of
+    // one transport message (FIX 8023).
     let encoded = encode(&PeerAnswer { answered, signed })?;
+    let carried = put(conn, &encoded, sent, here).await?;
     // Sending may partially succeed even on an error. Only the serving
     // host's final receipt can confirm what the organ received.
     lines[slot].unanswered = Some(crate::receipt::Unanswered::Unknown);
-    stream.send(&encoded).await
+    stream.send(&encode(&carried)?).await
 }
 
 fn run_handler(

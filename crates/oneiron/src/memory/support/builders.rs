@@ -91,6 +91,20 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds this surface's reads to the account API key the host verified
+    /// (OF-448): the key's verdict names this handle's actor, a person, and
+    /// grants `core:read`. Only the host that verified the key calls this.
+    /// With no read proof bound, a person who is not the vault's owner then
+    /// reads as that person ([`crate::Vault::account_key_read_key`]; the
+    /// lead's ruling DEL2-ROOTLESS-MEMBER-KEY-READ = B, 21 Nov): every bound
+    /// the key's read lane already holds still binds. A bound read proof
+    /// keeps its own key.
+    #[must_use]
+    pub fn with_account_key_read(mut self) -> Self {
+        self.account_key_read = true;
+        self
+    }
+
     /// Conjoins the frozen call ceilings of a genuine phone reader holding
     /// this exact actor and verified credential. It grants no read, replaces
     /// no proof, and never drops an earlier phone ceiling.
@@ -120,6 +134,24 @@ impl Memory<'_> {
     #[must_use]
     pub fn with_owner_authorship(mut self, owner: &crate::consent::AuthenticatedOwner) -> Self {
         self.owner_authorship = Some(owner.clone());
+        self
+    }
+
+    /// Marks this surface as answering asks as this install's owner device
+    /// (UC-05 PR 2b): an ask word it gives with no owner proof bound carries
+    /// the one this install's owner key mints for that word
+    /// ([`crate::Vault::authenticate_owner_device`]). An embedded host sets
+    /// it only on a handle its owner opted into; where this install holds no
+    /// key the authority fold trusts as the owner's, each such word refuses
+    /// `owner_key_required`. It proves nothing else this surface does.
+    /// A word that approves an act asks for the person at this device
+    /// before the key signs ([`crate::Vault::owner_presence`], row
+    /// OWNER-CONFIRM-SHEET): the answer can wait on the device's prompt and
+    /// refuse with the prompt's or the device PIN's refusal. A word that
+    /// denies asks nobody.
+    #[must_use]
+    pub fn answering_as_owner_device(mut self) -> Self {
+        self.answers_as_owner_device = true;
         self
     }
 
@@ -563,5 +595,25 @@ impl Memory<'_> {
     /// The TASK creator a host bound, if any.
     pub(crate) fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
         self.task_host.as_ref()
+    }
+
+    /// Binds the leased agent attempt whose run makes this handle's calls
+    /// (census L9-37): each graph_fs mount read it makes then logs that
+    /// attempt on its telemetry run, as a run-row search logs it, so a run's
+    /// mount reads count toward the read shape it woke under. A host takes
+    /// it from the lease it holds, never from caller text. It grants
+    /// nothing.
+    #[must_use]
+    pub fn with_dispatch_attempt(
+        mut self,
+        attempt: Option<crate::attempt_queue::AttemptId>,
+    ) -> Self {
+        self.dispatch_attempt = attempt;
+        self
+    }
+
+    /// The leased agent attempt a host bound, if any.
+    pub(crate) const fn dispatch_attempt(&self) -> Option<crate::attempt_queue::AttemptId> {
+        self.dispatch_attempt
     }
 }

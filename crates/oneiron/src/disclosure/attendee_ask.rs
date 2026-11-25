@@ -565,8 +565,10 @@ impl Vault {
 }
 
 /// A candidate or a chosen identity is a live, active CID-7 contact, read
-/// from its claims (OF-272).
-fn require_live_contact_in_txn(
+/// from its claims (OF-272). The attendee ask's answer door makes the same
+/// read before a device asks for the person
+/// (`task_verb::attendee_answer::approved_act_stands_in`).
+pub(crate) fn require_live_contact_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     contact: &EntityId,

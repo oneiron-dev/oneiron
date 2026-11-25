@@ -72,6 +72,20 @@ pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {
     }
 }
 
+/// The size of the filesystem holding `path`.
+pub(crate) fn disk_total_bytes(path: &Path) -> std::io::Result<u64> {
+    #[cfg(unix)]
+    {
+        let stat = rustix::fs::statvfs(path)?;
+        Ok(stat.f_blocks.saturating_mul(stat.f_frsize))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(0)
+    }
+}
+
 /// The disk the vault lives on, the free space it keeps, and the room work in
 /// flight has claimed on it. Free space alone is not the floor: two uploads
 /// that each see room for one stored copy would both take it, so each claims
@@ -343,6 +357,38 @@ impl DiskFloor {
             available: self.free().unwrap_or(0),
             reserve: self.reserve,
         }
+    }
+}
+
+impl DiskFloor {
+    /// A claim on `bytes` of this disk past its reserve and every other
+    /// claim, as a GPU job's booking takes it, held until it drops. 0 bytes
+    /// still requires the disk to be at or above its reserve.
+    pub(crate) fn claim_room(
+        &self,
+        bytes: u64,
+    ) -> Result<Arc<DiskClaim>, oneiron::code_sandbox::SpoolFloorRefusal> {
+        let claim = self.claim();
+        self.admit(&claim, bytes)?;
+        Ok(claim)
+    }
+
+    /// A claim on `bytes` a live GPU job booked before a restart, counted
+    /// whatever the disk holds now, held until it drops.
+    pub(crate) fn restore_room(&self, bytes: u64) -> Arc<DiskClaim> {
+        let claim = self.claim();
+        let mut claimed = lock(&self.claimed);
+        *claimed = claimed.saturating_add(bytes);
+        claim.bytes.store(bytes, Ordering::Relaxed);
+        drop(claimed);
+        claim
+    }
+
+    /// What this floor measures now: the disk's free bytes, its reserve and
+    /// the bytes claimed past it.
+    pub(crate) fn measured(&self) -> std::io::Result<(u64, u64, u64)> {
+        let claimed = *lock(&self.claimed);
+        Ok((self.free()?, self.reserve, claimed))
     }
 }
 

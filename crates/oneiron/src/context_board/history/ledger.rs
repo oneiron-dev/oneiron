@@ -643,6 +643,7 @@ impl Vault {
             documents.insert(*id, raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
         }
         let read_receipt = scoped.read_receipt_in(&txn, None, 0)?;
+        scoped.charge_served(documents.keys().copied());
         Ok(ReconstructedBoard {
             turn: *turn,
             owner: anchor.owner,

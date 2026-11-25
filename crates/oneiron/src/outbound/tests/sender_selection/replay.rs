@@ -62,6 +62,10 @@ fn admitted_sender_replays_after_new_facet_without_another_effect_or_debit()
         // Prove the choice survives a restart, not just a cached request.
         drop(vault);
         let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+        // This reopen restores the seed marker; the built-in pack gate is not under test.
+        vault.remove_builtin_pack_seed_marker_for_test().expect(
+            "FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)",
+        );
         if !with_sender {
             put_sending_identity(&vault, first, ChannelIdentityBinding::actor(actor_ref))?;
         }
@@ -74,8 +78,7 @@ fn admitted_sender_replays_after_new_facet_without_another_effect_or_debit()
         let receipts_before = vault.receipts(ReceiptQuery::new(100))?;
         let key_before = vault.get_connector_key(&entity(0xB7))?;
 
-        // Same paid logical send, but a fresh sink-facing scheduled reference.
-        request.intent_ref = "intent:task:sender-retry-new-attempt".to_owned();
+        // Same paid logical send with a fresh receipt; intent_ref stays pinned (FIX6424).
         request.receipt_id = "outbound:sender-retry-new-attempt".to_owned();
         request.occurred_at += 1;
         let retried = vault.dispatch_outbound_intent(request.clone(), &mut sink)?;
@@ -162,6 +165,10 @@ fn pending_sender_retry_rechecks_policy_without_changing_frozen_admission()
 
         drop(vault);
         let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+        // This reopen restores the seed marker; the built-in pack gate is not under test.
+        vault.remove_builtin_pack_seed_marker_for_test().expect(
+            "FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)",
+        );
         put_sending_identity(
             &vault,
             entity(0x94),

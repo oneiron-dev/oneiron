@@ -1,6 +1,14 @@
 //! Closed organization-administration powers. No member key custody or root power.
 use super::ScopeId;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::side_table::{self, HexId, LegacyJson, SideTable};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -80,11 +88,32 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         policy: &OrgAdminPolicy,
     ) -> Result<(), OrgAdminError> {
+        self.configure_org_admin_with_check_in(owner, policy, None)
+            .map(drop)
+    }
+
+    /// [`Self::configure_org_admin_as_owner`] with the owner's check-in
+    /// decision: the owner's own act on their own proof, and with `applied`
+    /// another asker's approved check-in for this exact configuration,
+    /// spent in the same writer after every check (ROLES-CHECKIN 2k8;
+    /// P25-SHAPE Q1 = A).
+    pub(crate) fn configure_org_admin_with_check_in(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        policy: &OrgAdminPolicy,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<crate::check_in::CheckInDecision, OrgAdminError> {
         let mut txn = self.store.env.write_txn()?;
         owner.owner_authored_write_in_txn(self, &txn)?;
         self.configure_org_admin_in_txn(&mut txn, policy)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::GrantWiden,
+            applied,
+        )?;
         txn.commit().map_err(crate::Error::from)?;
-        Ok(())
+        Ok(decision)
     }
 
     fn configure_org_admin_in_txn(
@@ -120,6 +149,65 @@ impl Vault {
         )?;
         Ok(policy)
     }
+}
+
+/// Lands archived org-admin policies in input order, one outcome per row.
+///
+/// A row installs only when its org matches its key and every named admin is
+/// a live PERSON. There is no foreign-org check: the vault holds one policy
+/// per org with no own-org registry to judge against, and the setup door
+/// never requires an ORG entity while no read dereferences one.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcomes.
+pub(crate) fn land_archived_org_admin_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> crate::error::Result<Vec<ArchivedSideRowOutcome>> {
+    use RetainedSideHeldBackReason::InvalidValue;
+
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&ORG_ADMIN_POLICY, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, value)) => {
+                if value.org_ref.0 != key.0 {
+                    ArchivedSideRowOutcome::HeldBack(InvalidValue)
+                } else {
+                    match live_admin_holdback_in_txn(vault, txn, &value)? {
+                        Some(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+                        None => {
+                            install_archived_row(&ORG_ADMIN_POLICY, vault, txn, permit, &key, row)?
+                        }
+                    }
+                }
+            }
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
+/// The holdback reason when a named admin is not a live PERSON, or `None` when all are.
+fn live_admin_holdback_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    value: &OrgAdminPolicy,
+) -> crate::error::Result<Option<RetainedSideHeldBackReason>> {
+    use RetainedSideHeldBackReason::{MissingLiveEntity, WrongEntityKind};
+
+    for admin in &value.admin_refs {
+        match live_entity_row_in_txn(&vault.store, txn, &admin.0)? {
+            LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_PERSON => {}
+            LiveEntityRow::Live { .. } => return Ok(Some(WrongEntityKind)),
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+                return Ok(Some(MissingLiveEntity));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

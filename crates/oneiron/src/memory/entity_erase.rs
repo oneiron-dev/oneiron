@@ -2,24 +2,21 @@
 //! default drops one record and its own hold on shared bytes; the same-bytes flag is a live
 //! vault owner's act by hand. A record another owner wrote waits out the shared vault's
 //! `erase` veto window first, and in a shared vault with two or more Owners every erase does,
-//! the confirmed record's included (ARCH-0043). A GDPR request erases what no legal hold names
-//! and keeps the held part, its reason logged (OF-470 C5).
+//! the confirmed record's included (ARCH-0043). A GDPR request erases every match.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use super::support::verify_deletion_authority_in_txn;
 use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
-use crate::check_in::CheckInDecision;
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{DeleteEntityPreview, DeleteReason, LegalHoldActorKind};
-use crate::edge::EdgeActorClass;
+use crate::deletion::{DeleteEntityPreview, DeleteReason};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::{ActExecution, PendingAuthorityAct, SharedVaultPreset};
-use crate::store::legal_hold::{self, HoldActor};
 use crate::write_envelope::WriteActor;
 
 /// The shared vault's act a held record waits on.
@@ -65,10 +62,6 @@ pub enum SameBytesHold {
     /// A shared vault's record whose writer is not the caller, or does not resolve: it needs
     /// that owner's veto window.
     AnotherOwnersRecord,
-    /// A customer hold names it. A GDPR request keeps it and erases the rest; its refusal and
-    /// reason are in that hold's log, and where Oneiron hosts the bytes it is use-limited
-    /// (OF-470 C5, C6).
-    LegalHold,
     /// A shared vault with two or more Owners: every erase waits out the vault's `erase`
     /// veto window, the caller's own records included (ARCH-0043).
     VetoWindow,
@@ -95,10 +88,11 @@ pub enum SameBytesOutcome {
 /// order. Empty rows without the same-bytes flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityEraseOutcome {
-    /// When a GDPR request keeps the confirmed record under a customer hold, it is not erased:
-    /// `reason` is the [`SameBytesHold`] code `privacy_erase_kept` and `receipt_ref` is `None`.
-    /// In a shared vault with two or more Owners the confirmed record is not erased either:
-    /// `reason` is `veto_window`, and [`Self::first_act`] names the `erase` act it waits on.
+    /// A legal hold never keeps the confirmed record (LEGAL-HOLD-USE = B,
+    /// ARCH-0038 #legal-hold-clone-ruling). In a shared vault with two or more
+    /// Owners an owner's erase does not erase it at once: `reason` is
+    /// `veto_window`, `receipt_ref` is `None`, and [`Self::first_act`] names
+    /// the `erase` act it waits on.
     pub first: DeleteReceipt,
     /// The confirmed record's own `erase` act; execute it with
     /// [`Memory::execute_completed_entity_erase`] once its window runs out.
@@ -123,9 +117,8 @@ impl Memory<'_> {
     /// holder's classification are read in one snapshot before anything is
     /// destroyed. A failure on the confirmed record returns the error and
     /// erases nothing else; a later row's failure never hides an earlier
-    /// completed erase. Under a GDPR request every record a legal hold names,
-    /// the confirmed one included, is kept and shows why, and the rest is
-    /// erased (OF-470 C5).
+    /// completed erase. A GDPR request erases every match, the confirmed one
+    /// included (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling).
     ///
     /// In a shared vault with two or more live Owners nothing is erased at
     /// once unless the reason is a GDPR request: the confirmed record and
@@ -140,18 +133,44 @@ impl Memory<'_> {
         preview: &DeleteEntityPreview,
         options: EraseOptions<'_>,
     ) -> MemoryResult<EntityEraseOutcome> {
-        self.confirm_entity_erase_with_check_in(preview, options, None)
+        self.confirm_entity_erase_deciding(preview, options, None)
     }
 
-    /// [`Self::confirm_entity_erase`], recording `check_in`, the check-in
-    /// decision the erase runs on (2j; P24-SHAPE Q9 = A), on each `erase`
-    /// act a veto window starts, so the act and its completion receipt
-    /// name it.
+    /// [`Self::confirm_entity_erase`] on the Owner's own proof,
+    /// [`EraseOptions::veto_starter`], which it requires, applying `applied`,
+    /// another asker's approved check-in, when given (2j; P24-SHAPE Q7 and
+    /// Q9 = A). `applied` is checked before any write and spent in the
+    /// writer that starts the first `erase` act, or in a writer of its own
+    /// just before the confirmed record's delete once that writer finds the
+    /// delete rail admits it, so an erase refused before then leaves the
+    /// approval unspent (FIX CHECK-IN-SPEND-BEFORE-RECORD-ERASE).
+    /// Each `erase` act a veto window starts records the decision, so the
+    /// act and its completion receipt name it; the decision comes back with
+    /// the outcome.
     pub(crate) fn confirm_entity_erase_with_check_in(
         &self,
         preview: &DeleteEntityPreview,
         options: EraseOptions<'_>,
-        check_in: Option<&CheckInDecision>,
+        applied: Option<&AppliedCheckIn<'_>>,
+    ) -> MemoryResult<(EntityEraseOutcome, CheckInDecision)> {
+        if options.veto_starter.is_none() || options.reason != EraseReason::OwnerErase {
+            return Err(Error::InvariantViolation(
+                "a decided erase is an owner erase on its proof",
+            )
+            .into());
+        }
+        let decision = EraseDecision::new(applied);
+        let outcome = self.confirm_entity_erase_deciding(preview, options, Some(&decision))?;
+        Ok((outcome, decision.into_decision()))
+    }
+
+    /// [`Self::confirm_entity_erase`], recording `decision` on each `erase`
+    /// act it starts and spending its applied check-in, when given.
+    fn confirm_entity_erase_deciding(
+        &self,
+        preview: &DeleteEntityPreview,
+        options: EraseOptions<'_>,
+        decision: Option<&EraseDecision<'_>>,
     ) -> MemoryResult<EntityEraseOutcome> {
         let (plan, shared_vault_id, veto) = {
             let txn = self
@@ -160,9 +179,19 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(&txn)?;
             if let Some(starter) = options.veto_starter {
                 self.require_own_proof_in_txn(&txn, starter)?;
+            }
+            // An applied check-in is spent in a later write: one it could not
+            // spend refuses the erase before any write.
+            if let Some(applied) = decision.and_then(|decision| decision.applied) {
+                crate::check_in::check_applied_check_in_in_txn(
+                    self.vault,
+                    &txn,
+                    applied,
+                    ActClass::Erase,
+                )?;
             }
             preview.check_before_unshare(self.vault, &txn)?;
             if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(
@@ -210,24 +239,8 @@ impl Memory<'_> {
             }
             (plan, shared_vault_id, veto)
         };
-        let kept = if options.reason == EraseReason::GdprDelete {
-            let records: Vec<EntityId> = std::iter::once(preview.entity())
-                .chain(plan.iter().map(|planned| planned.holder))
-                .collect();
-            self.keep_legally_held(&records)?
-        } else {
-            BTreeMap::new()
-        };
         let mut first_act = None;
-        let first = if let Some(hold) = kept.get(&preview.entity()) {
-            DeleteReceipt {
-                existed: true,
-                reason: hold.code().to_owned(),
-                receipt_ref: None,
-                state: DeleteRequestState::CompletionPending,
-                check_in: None,
-            }
-        } else if let (true, Some((starter, vault_id))) =
+        let first = if let (true, Some((starter, vault_id))) =
             (veto, options.veto_starter.zip(shared_vault_id))
         {
             // The confirmed record's own act: no bytes are named, so its
@@ -239,7 +252,7 @@ impl Memory<'_> {
                 act: None,
             };
             first_act = Some(
-                self.start_held_erase(starter, vault_id, &confirmed, check_in)?
+                self.start_held_erase(starter, vault_id, &confirmed, decision)?
                     .id,
             );
             DeleteReceipt {
@@ -259,6 +272,9 @@ impl Memory<'_> {
                 )?;
             }
             let reason = options.reason.delete_reason();
+            if let Some((decision, owner)) = decision.zip(options.veto_starter) {
+                decision.spend_before_delete(self, owner, preview)?;
+            }
             self.safe_delete_preview_checked(&preview.entity().to_hex(), reason, |txn| {
                 preview
                     .check_after_unshare(self.vault, txn)
@@ -268,19 +284,12 @@ impl Memory<'_> {
         let same_bytes = plan
             .into_iter()
             .map(|planned| {
-                if let Some(reason) = kept.get(&planned.holder) {
-                    let outcome = SameBytesOutcome::Held {
-                        reason: reason.clone(),
-                        act_id: None,
-                    };
-                    return (planned.holder, outcome);
-                }
                 let outcome = match (
                     planned.hold.clone(),
                     options.veto_starter.zip(shared_vault_id),
                 ) {
                     (Some(reason), Some((starter, vault_id))) => {
-                        match self.start_held_erase(starter, vault_id, &planned, check_in) {
+                        match self.start_held_erase(starter, vault_id, &planned, decision) {
                             Ok(act) => SameBytesOutcome::Held {
                                 reason,
                                 act_id: Some(act.id),
@@ -323,7 +332,7 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::Error::from)?;
-            verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(&txn)?;
             self.require_own_proof_in_txn(&txn, owner)?;
             let act = self
                 .vault
@@ -382,7 +391,7 @@ impl Memory<'_> {
     ) -> MemoryResult<DeleteReceipt> {
         self.vault.prepare_install_signing()?;
         let erased = self.vault.try_with_write_txn_grouped(|txn| {
-            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+            self.verify_own_deletion_authority_in(txn)?;
             self.require_own_proof_in_txn(txn, owner)?;
             self.require_live_owner_in_txn(txn)?;
             let act = self
@@ -412,15 +421,13 @@ impl Memory<'_> {
             {
                 return Err(Error::ConcurrentWrite("erase target changed").into());
             }
-            let actor = HoldActor::owner(self.actor);
             self.vault
                 .store
-                .reject_legal_holds_in_txn(txn, &[held.holder], &actor)?;
-            crate::world_keys::reject_held_pad_world_as_in_txn(
+                .reject_restricted_records_in_txn(txn, &[held.holder])?;
+            crate::world_keys::reject_held_pad_world_in_txn(
                 &self.vault.store,
                 txn,
                 &[held.holder],
-                &actor,
             )?;
             let request = self.vault.store.clock.ulid()?;
             let requested_at = self.vault.store.clock.now_recorded_at();
@@ -451,7 +458,6 @@ impl Memory<'_> {
                 check_in: None,
             })
         });
-        self.vault.store.flush_legal_hold_refusals_settled();
         if erased.is_ok() {
             self.vault
                 .store
@@ -461,13 +467,14 @@ impl Memory<'_> {
     }
 
     /// A held match's own `erase` act, its payload the record and the bytes the preview named,
-    /// recording `check_in`, the decision the erase runs on, when one is given.
+    /// recording `decision`, the one the erase runs on, when one is given. The first act an
+    /// erase starts before any write spent its applied check-in spends it in its start's writer.
     fn start_held_erase(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
         planned: &PlannedMatch,
-        check_in: Option<&CheckInDecision>,
+        decision: Option<&EraseDecision<'_>>,
     ) -> MemoryResult<PendingAuthorityAct> {
         let payload = serde_json::to_vec(&HeldErase {
             v: 1,
@@ -475,18 +482,30 @@ impl Memory<'_> {
             hashes: planned.hashes.clone(),
         })
         .map_err(|_| Error::InvariantViolation("erase act payload"))?;
-        Ok(match check_in {
-            Some(decision) => self.vault.start_authority_act_recorded(
-                starter,
-                vault_id,
-                ERASE_ACT,
-                payload,
-                decision.clone(),
-            )?,
-            None => self
+        let Some(decision) = decision else {
+            return Ok(self
                 .vault
-                .start_authority_act(starter, vault_id, ERASE_ACT, payload)?,
-        })
+                .start_authority_act(starter, vault_id, ERASE_ACT, payload)?);
+        };
+        if let Some(reached) = decision.reached() {
+            return Ok(self
+                .vault
+                .start_authority_act_recorded(starter, vault_id, ERASE_ACT, payload, reached)?);
+        }
+        let act = self.vault.start_authority_act_applying(
+            starter,
+            vault_id,
+            ERASE_ACT,
+            payload,
+            ActClass::Erase,
+            decision.applied,
+        )?;
+        decision.reach(
+            act.check_in
+                .clone()
+                .ok_or(Error::InvariantViolation("erase act decision"))?,
+        );
+        Ok(act)
     }
 
     /// The match an `erase` act names, when this caller started it in this vault.
@@ -557,29 +576,6 @@ impl Memory<'_> {
             "this act's erase is claimed and under way",
             &["Its deletion recovery finishes it; ask again later."],
         ))
-    }
-
-    /// Of the records a GDPR request names, the ones a customer hold keeps (C5). Each one's
-    /// refusal and reason go to its hold's log, and where Oneiron hosts the bytes it is kept
-    /// under a use limit (C6).
-    fn keep_legally_held(
-        &self,
-        records: &[EntityId],
-    ) -> MemoryResult<BTreeMap<EntityId, SameBytesHold>> {
-        let store = &self.vault.store;
-        let kind = match self.actor_class {
-            EdgeActorClass::Human => LegalHoldActorKind::Owner,
-            EdgeActorClass::Agent => LegalHoldActorKind::Agent,
-            EdgeActorClass::System => LegalHoldActorKind::Unattributed,
-        };
-        let actor = HoldActor::new(kind, Some(self.actor.to_hex()));
-        Ok(self.vault.with_write_txn_grouped(|txn| {
-            let (_, kept) = legal_hold::split_privacy_erase_in_txn(store, txn, records, &actor)?;
-            Ok(kept
-                .into_iter()
-                .map(|record| (record, SameBytesHold::LegalHold))
-                .collect())
-        })?)
     }
 
     /// One planned match through its own checked delete.
@@ -784,7 +780,6 @@ impl SameBytesHold {
     fn code(&self) -> &'static str {
         match self {
             Self::AnotherOwnersRecord => "another_owners_record",
-            Self::LegalHold => "privacy_erase_kept",
             Self::VetoWindow => "veto_window",
         }
     }
@@ -797,6 +792,89 @@ struct PlannedMatch {
     hold: Option<SameBytesHold>,
     /// The completed `erase` act that lifts its hold.
     act: Option<String>,
+}
+
+/// The check-in decision an Owner's erase runs on and records on each
+/// `erase` act it starts (2j; P24-SHAPE Q7 and Q9 = A): the Owner on their
+/// own proof, applying `applied`, another asker's approved check-in, when
+/// given. The erase spends `applied` once: in the writer that starts its
+/// first `erase` act, or in a writer of its own just before the confirmed
+/// record's delete, so an erase refused before then leaves it unspent (FIX
+/// CHECK-IN-SPEND-BEFORE-RECORD-ERASE); every later act records the
+/// decision reached there.
+struct EraseDecision<'a> {
+    applied: Option<&'a AppliedCheckIn<'a>>,
+    /// The decision once reached: at once with nothing to apply, else in the
+    /// write that spent `applied`.
+    reached: RefCell<Option<CheckInDecision>>,
+}
+
+impl<'a> EraseDecision<'a> {
+    fn new(applied: Option<&'a AppliedCheckIn<'a>>) -> Self {
+        Self {
+            applied,
+            reached: RefCell::new(
+                applied
+                    .is_none()
+                    .then(|| crate::check_in::owner_own_proof_decision(ActClass::Erase)),
+            ),
+        }
+    }
+
+    fn reached(&self) -> Option<CheckInDecision> {
+        self.reached.borrow().clone()
+    }
+
+    fn reach(&self, decision: CheckInDecision) {
+        *self.reached.borrow_mut() = Some(decision);
+    }
+
+    /// The decision the erase ran on: the one reached, or, when no write
+    /// spent `applied` (nothing was erased and no act started), the Owner on
+    /// their own proof alone.
+    fn into_decision(self) -> CheckInDecision {
+        self.reached
+            .into_inner()
+            .unwrap_or_else(|| crate::check_in::owner_own_proof_decision(ActClass::Erase))
+    }
+
+    /// Spends `applied`, unless an act already did, before the confirmed
+    /// record's delete: in a writer of its own, on `owner`'s live proof of
+    /// `memory`'s caller, once that writer finds that the delete rail admits
+    /// the record ([`crate::Vault::delete_admission_in_txn`]) and `preview`
+    /// still holds. The rail's writes are several, its purge can scrub the
+    /// asker's own rows, and recovery can finish it after a crash, so none of
+    /// them spends it: a refusal these checks foresee leaves it unspent, and
+    /// one a concurrent change brings between this writer and the rail
+    /// leaves it spent.
+    fn spend_before_delete(
+        &self,
+        memory: &Memory<'_>,
+        owner: &AuthenticatedOwner,
+        preview: &DeleteEntityPreview,
+    ) -> MemoryResult<()> {
+        let Some(applied) = self.applied.filter(|_| self.reached.borrow().is_none()) else {
+            return Ok(());
+        };
+        let vault = memory.vault;
+        let decision = vault.with_write_txn_grouped(|txn| {
+            if owner.revalidate_in_txn(vault, txn)? != memory.actor {
+                return Err(Error::InvalidConfig(
+                    "an erase applies a check-in on its caller's own owner proof".into(),
+                ));
+            }
+            vault.delete_admission_in_txn(
+                txn,
+                &preview.entity(),
+                DeleteReason::OwnerErase,
+                true,
+            )?;
+            preview.check_after_unshare(vault, txn)?;
+            crate::check_in::owner_act_decision_in_txn(vault, txn, ActClass::Erase, Some(applied))
+        })?;
+        self.reach(decision);
+        Ok(())
+    }
 }
 
 /// An `erase` act's payload.
@@ -817,55 +895,6 @@ impl crate::Vault {
             .flatten()
             .filter(|held| held.v == 1)
             .and_then(|held| EntityId::from_bytes(held.record).ok())
-    }
-
-    /// The shared vault whose `erase` veto window an owner's erase other
-    /// than a GDPR request waits out, read in `txn` as
-    /// [`Memory::confirm_entity_erase`] reads it: one not on the Personal
-    /// preset, with two or more live Owners (FIX 9781). `None` elsewhere.
-    pub(crate) fn owner_erase_veto_vault_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> crate::Result<Option<u64>> {
-        let Some(creation) = self
-            .shared_vault_creation_in_txn(txn)?
-            .filter(|creation| creation.preset != Some(SharedVaultPreset::Personal))
-        else {
-            return Ok(None);
-        };
-        let owners = self.live_shared_owner_count_in_txn(txn, creation.vault_id)?;
-        Ok((owners >= 2).then_some(creation.vault_id))
-    }
-
-    /// Starts `record`'s own `erase` act in shared vault `vault_id` under
-    /// `starter`'s proof, naming no bytes, as a confirmed record's own act
-    /// is started (FIX 9781), recording `check_in`, the decision the erase
-    /// runs on, when one is given (2k2). Returns its id; its starter
-    /// executes it once it completes, as any `erase` act.
-    pub(crate) fn start_record_erase_act(
-        &self,
-        starter: &AuthenticatedOwner,
-        vault_id: u64,
-        record: EntityId,
-        check_in: Option<&CheckInDecision>,
-    ) -> crate::Result<String> {
-        let payload = serde_json::to_vec(&HeldErase {
-            v: 1,
-            record: *record.as_bytes(),
-            hashes: Vec::new(),
-        })
-        .map_err(|_| Error::InvariantViolation("erase act payload"))?;
-        Ok(match check_in {
-            Some(decision) => self.start_authority_act_recorded(
-                starter,
-                vault_id,
-                ERASE_ACT,
-                payload,
-                decision.clone(),
-            )?,
-            None => self.start_authority_act(starter, vault_id, ERASE_ACT, payload)?,
-        }
-        .id)
     }
 }
 

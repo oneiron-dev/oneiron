@@ -19,6 +19,10 @@ pub struct CoreferenceShareConsentReceipt {
     pub other_person: EntityId,
     pub pact: String,
     pub consent_claim: EntityId,
+    /// The decision the consent ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// Only link metadata is retracted. Neither person's original claims change.

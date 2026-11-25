@@ -37,6 +37,7 @@ fn grant(vault: &Vault, classes: Vec<ToolGrantDataClass>) -> (EntityId, Standing
     key.retained_manifest = Some(
         crate::connector_key::ResolvedConnectorManifest::resolve(vec![
             crate::connector_key::ConnectorToolSchema {
+                output_schema: None,
                 name: "read_file".into(),
                 permissions: ["read".into()].into(),
                 triggers: Default::default(),
@@ -447,6 +448,7 @@ fn prepared_effect(
         admission_ceiling: None,
         co_actor: None,
         exclusive_route: None,
+        idempotency_attempt: None,
     }
 }
 

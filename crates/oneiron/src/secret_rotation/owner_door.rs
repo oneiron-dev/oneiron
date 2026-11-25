@@ -110,6 +110,7 @@ impl Vault {
                 "only the vault owner rotates a secret",
             )));
         }
+        let owner_authored = owner.owner_answer_in_txn(self, &wtxn)?;
         let id = resolve_secret_ref_in_txn(&self.store, &wtxn, secret_ref)?.ok_or_else(|| {
             Error::Secret(SecretError::SecretRefNotFound {
                 name: secret_ref.to_owned(),
@@ -134,7 +135,7 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,
-                actor,
+                (actor, owner_authored.as_ref()),
                 surface,
                 ActiveChange {
                     change: CustodyChange::Rotate,
@@ -210,10 +211,12 @@ impl Vault {
                 "only the vault owner revokes a secret",
             )));
         }
+        let owner_authored = owner.owner_answer_in_txn(self, &wtxn)?;
         let rotation =
             self.revoke_secret_in_txn(&mut wtxn, secret_ref, super::RevokeCause::Revoked, at)?;
+        let author = (actor, owner_authored.as_ref());
         let custody =
-            self.carry_custody_revoke_in_txn(&mut wtxn, actor, surface, secret_ref, at)?;
+            self.carry_custody_revoke_in_txn(&mut wtxn, author, surface, secret_ref, at)?;
         wtxn.commit()?;
         self.mirror_custody_change(&custody);
         Ok(SecretRevoked { rotation, custody })

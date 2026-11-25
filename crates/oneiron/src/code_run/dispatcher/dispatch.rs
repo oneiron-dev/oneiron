@@ -91,7 +91,11 @@ impl HostSelfDispatcher<'_> {
             SelfCall::Context(call) => dispatch_self_context(call),
             SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call, run_id),
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
+            SelfCall::ThinkAloud(call) => {
+                self.dispatch_speech(SelfEffect::ThinkAloud, call, run_id)
+            }
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
+            SelfCall::SayResult(call) => self.dispatch_say_result(call, run_id),
             SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
             SelfCall::InferenceDefaultsRead => self.dispatch_inference_defaults(None),
             SelfCall::InferenceDefaultsReplace(json) => {
@@ -105,6 +109,7 @@ impl HostSelfDispatcher<'_> {
             SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),
             SelfCall::TasksWaitSet(call) => self.dispatch_task_wait_set(call, site),
+            SelfCall::JobsOrdersWait(call) => self.dispatch_jobs_orders_wait(call, site),
             SelfCall::Summarize(call) => self.dispatch_summarize(*call, site),
             SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),

@@ -4,12 +4,46 @@
 use super::slate::ELICITATION_ROW_KEY;
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[doc(hidden)]
 pub use oneiron_records::connector_key::manifest_drift::{ConnectorDriftKind, ConnectorToolSchema};
 #[doc(hidden)]
 use oneiron_records::connector_key::manifest_drift::{defaults, invalid, resolve_schema};
+
+/// The largest literal schema, input or output, one tool may declare.
+const MAX_LITERAL_SCHEMA_BYTES: usize = 65_536;
+
+/// What a staged manifest's wrapper (`PendingConnectorManifest`) adds beside
+/// the manifest and its drift rows' tool names: the candidate id, the
+/// protocol revision (at most 128 bytes), the report hash, the drift kinds
+/// and the field names.
+const PENDING_WRAPPER_FIXED_BYTES: usize = 4_096;
+
+/// The serialized `,"output_schema":` beside each tool's output schema.
+const OUTPUT_SCHEMA_FIELD_BYTES: usize = r#","output_schema":"#.len();
+
+/// `value`'s serialized length, as the bound reads it.
+fn json_len<T: Serialize + ?Sized>(value: &T) -> Result<usize> {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .map_err(|_| invalid())
+}
+
+/// `schema` resolved, when it is an object within
+/// [`MAX_LITERAL_SCHEMA_BYTES`] that resolves to a schema the owner's slate
+/// admits (`slate::is_resolved_schema`); `None` otherwise, so an output
+/// schema never makes a slate invalid.
+fn resolved_output_schema(schema: &Value) -> Option<Value> {
+    let size = serde_json::to_vec(schema).ok()?.len();
+    if !schema.is_object() || size > MAX_LITERAL_SCHEMA_BYTES {
+        return None;
+    }
+    resolve_schema(schema, schema, &mut Vec::new(), 0)
+        .ok()
+        .filter(oneiron_records::connector_key::slate::is_resolved_schema)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +60,9 @@ impl ResolvedConnectorManifest {
     /// consent-visible use. Unsupported or cyclic references refuse admission;
     /// how many tools, permissions or triggers it declares never does (FIX
     /// 8684): admission measures those counts ([`Self::admission_counts`]).
+    /// Nor does an output schema: one that does not resolve, or that would
+    /// carry the manifest past the aggregate bound, is dropped
+    /// ([`Self::fit_output_schemas`]).
     pub fn resolve(mut tools: Vec<ConnectorToolSchema>) -> Result<Self> {
         if tools.is_empty() {
             return Err(invalid());
@@ -44,21 +81,61 @@ impl ResolvedConnectorManifest {
             if serde_json::to_vec(&tool.input_schema)
                 .map_err(|_| invalid())?
                 .len()
-                > 65_536
+                > MAX_LITERAL_SCHEMA_BYTES
             {
                 return Err(invalid());
             }
             tool.input_schema =
                 resolve_schema(&tool.input_schema, &tool.input_schema, &mut Vec::new(), 0)?;
+            tool.output_schema = tool.output_schema.as_ref().and_then(resolved_output_schema);
         }
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         if tools.windows(2).any(|w| w[0].name == w[1].name) {
             return Err(invalid());
         }
-        Ok(Self {
+        let mut manifest = Self {
             tools,
-            elicitation: false,
-        })
+            elicitation: true,
+        };
+        manifest.fit_output_schemas()?;
+        manifest.elicitation = false;
+        Ok(manifest)
+    }
+    /// Drops optional output schemas, the largest first (the earlier tool
+    /// name on a tie), until the manifest, declaring elicitation, and its
+    /// staged wrapper, whose drift rows name each tool and the elicitation
+    /// row twice, fit the aggregate bound every connector key record is
+    /// written under (`MAX_CONNECTOR_MANIFEST_BYTES`). The same tools without
+    /// outputs pass or refuse at staging as before (REVIEW-7972 round 2).
+    /// A manifest that fits keeps every output, so a resolved snapshot
+    /// resolves to itself.
+    fn fit_output_schemas(&mut self) -> Result<()> {
+        let mut names = json_len(ELICITATION_ROW_KEY)? + 1;
+        for tool in &self.tools {
+            names += json_len(&tool.name)? + 1;
+        }
+        let bound = super::record::MAX_CONNECTOR_MANIFEST_BYTES
+            .saturating_sub(PENDING_WRAPPER_FIXED_BYTES)
+            .saturating_sub(names.saturating_mul(2));
+        let mut size = json_len(self)?;
+        if size <= bound {
+            return Ok(());
+        }
+        let mut outputs = Vec::new();
+        for (at, tool) in self.tools.iter().enumerate() {
+            if let Some(output) = &tool.output_schema {
+                outputs.push((json_len(output)?, at));
+            }
+        }
+        outputs.sort_by_key(|&(len, at)| (std::cmp::Reverse(len), at));
+        for (len, at) in outputs {
+            if size <= bound {
+                break;
+            }
+            self.tools[at].output_schema = None;
+            size = size.saturating_sub(len + OUTPUT_SCHEMA_FIELD_BYTES);
+        }
+        Ok(())
     }
     /// The same snapshot, declaring elicitation or not.
     #[must_use]
@@ -196,6 +273,13 @@ impl ConnectorManifestDrift {
                     reconsent_tools.insert(name.clone());
                 }
             }
+            // The output schema is text the caller reads as the reply's type
+            // (`connector.schema`): a changed one reaches it only after the
+            // owner's tap, as a widened input does.
+            if a.output_schema != b.output_schema {
+                kinds.insert(ConnectorDriftKind::Schema);
+                reconsent_tools.insert(name.clone());
+            }
             if a != b {
                 affected_tools.insert(name);
             }
@@ -218,9 +302,10 @@ impl ConnectorManifestDrift {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
     fn manifest(schema: Value, permission: &str, trigger: &str) -> ResolvedConnectorManifest {
         ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+            output_schema: None,
             name: "send".into(),
             permissions: [permission.into()].into(),
             triggers: [trigger.into()].into(),
@@ -265,8 +350,8 @@ mod tests {
         );
         let revision = ConnectorManifestDrift::between(&old, &old, "r1", "r2");
         assert!(revision.requires_reregistration && revision.needs_reconsent());
-        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"$ref":"#/$defs/loop","$defs":{"loop":{"$ref":"#/$defs/loop"}}}) }]).is_err());
-        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"if":{"properties":{"secret":{"$ref":"#/$defs/power"}}}, "$defs":{"power":{"type":"string"}}}) }]).is_err());
+        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { output_schema: None, name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"$ref":"#/$defs/loop","$defs":{"loop":{"$ref":"#/$defs/loop"}}}) }]).is_err());
+        assert!(ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema { output_schema: None, name:"send".into(), permissions: BTreeSet::new(), triggers: BTreeSet::new(), input_schema:json!({"if":{"properties":{"secret":{"$ref":"#/$defs/power"}}}, "$defs":{"power":{"type":"string"}}}) }]).is_err());
     }
 
     fn prepare_resolved(
@@ -338,6 +423,7 @@ mod tests {
         ] {
             assert!(
                 ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+                    output_schema: None,
                     name: "send".into(),
                     permissions: BTreeSet::new(),
                     triggers: BTreeSet::new(),

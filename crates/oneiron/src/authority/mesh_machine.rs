@@ -26,7 +26,7 @@ mod endpoint_index;
 mod enrolment;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
-pub use enrolment::{MeshBindRefusal, MeshEnrolment};
+pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -99,6 +99,27 @@ fn mesh_verb(alpn: &[u8]) -> String {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     )
+}
+/// The claims of the pairing slip a binding stands on, when it stands for
+/// that binding at any time: minted and not revoked in `fold`, a root slip of
+/// this vault held by the binding's MACHINE under its machine key, and the
+/// MACHINE not removed. Whether it is live now is its lifetime's question
+/// ([`Vault::mesh_pairing_live`]).
+fn mesh_pairing_standing<'f>(
+    fold: &'f AuthorityFold,
+    claims: &MeshAuthorityClaims,
+) -> Option<&'f super::SlipClaims> {
+    let pair = &fold.slips.mints.get(&claims.pairing_slip_id)?.action.claims;
+    (fold.slip_is_live(&claims.pairing_slip_id)
+        && pair.holder_ref == claims.machine.to_hex()
+        && pair.binding_key == claims.device_key
+        && pair.parent_id.is_none()
+        && fold.vault_id == Some(pair.vault_id)
+        // A removed MACHINE's binding admits nothing (FIX 3374).
+        && !fold.machine(claims.machine).is_some_and(|folded| {
+            enrolment::machine_removed(folded, fold.pinned_root.as_ref())
+        }))
+    .then_some(pair)
 }
 /// The address a MACHINE body carries, every direct address in it: a
 /// binding is never refused or read as absent for how many it names (Phase2
@@ -198,6 +219,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
     ) -> Result<Option<MeshAuthorityClaims>> {
+        let Some((fold, claims)) = self.mesh_authority_signed_in_txn(txn, machine)? else {
+            return Ok(None);
+        };
+        if !self.mesh_pairing_live(&fold, txn, &claims)? {
+            return Ok(None);
+        }
+        Ok(Some(claims))
+    }
+    /// `machine`'s binding row as a live owner host signed it, with the fold
+    /// it was checked against: [`Self::mesh_authority_in_txn`] without its
+    /// check that the binding's pairing is live.
+    fn mesh_authority_signed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+    ) -> Result<Option<(AuthorityFold, MeshAuthorityClaims)>> {
         let Some(signed) = MESH_AUTHORITY
             .get(&self.store, txn, &HexId(machine))
             .map_err(|error| {
@@ -229,33 +266,40 @@ impl Vault {
         let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
         host.verify_strict(&transcript(&claims)?, &sig)
             .map_err(|_| invalid_authority())?;
-        if !self.mesh_pairing_live(&fold, txn, &claims)? {
-            return Ok(None);
-        }
-        Ok(Some(claims))
+        Ok(Some((fold, claims)))
     }
+    /// Whether the pairing a binding stands on is live on this vault now: it
+    /// stands ([`mesh_pairing_standing`]) and has not expired. Its start is
+    /// its presence in the home's signed fold, not a reading of this vault's
+    /// clock. The home mints a pairing on its own authority clock, and a
+    /// replica's clock stops while its vault is closed or its host sleeps, so
+    /// a replica behind the home would read a fresh pairing as not yet begun
+    /// and refuse every bind on it until its own clock caught up
+    /// (MESH-PAIRING-REPLICA-CLOCK = A, Engine 25 Nov 11:55). For the same
+    /// reason its end is judged no earlier than the newest time a live owner
+    /// signed into the fold, so a replica that slept does not keep a pairing
+    /// past its expiry for the time it was closed (MESH-REPLICA-CLOCK-LIFETIMES
+    /// = A, Engine 25 Nov 19:45). The mesh grants this vault minted itself
+    /// stay on its own clock.
     fn mesh_pairing_live(
         &self,
         fold: &AuthorityFold,
         txn: &heed::RoTxn<'_>,
         claims: &MeshAuthorityClaims,
     ) -> Result<bool> {
-        let Some(mint) = fold.slips.mints.get(&claims.pairing_slip_id) else {
+        let Some(pair) = mesh_pairing_standing(fold, claims) else {
             return Ok(false);
         };
-        let now = self.instant_in_txn(txn)?.secs();
-        let pair = &mint.action.claims;
-        Ok(fold.slip_is_live(&claims.pairing_slip_id)
-            && now >= pair.issued_at
-            && now < pair.expires_at
-            && pair.holder_ref == claims.machine.to_hex()
-            && pair.binding_key == claims.device_key
-            && pair.parent_id.is_none()
-            && fold.vault_id == Some(pair.vault_id)
-            // A removed MACHINE's binding admits nothing (FIX 3374).
-            && !fold
-                .machine(claims.machine)
-                .is_some_and(enrolment::machine_removed))
+        if self.instant_in_txn(txn)?.secs() >= pair.expires_at {
+            return Ok(false);
+        }
+        let signed = super::readonly_fold::newest_owner_signed_ts_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            fold,
+        )?;
+        Ok(signed.is_none_or(|signed| signed < pair.expires_at))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(
@@ -267,6 +311,25 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)
     }
+    /// Whether this vault's grants admit the MACHINE `machine` on `alpn`
+    /// under its current address key, read in `txn`: the one-machine form of
+    /// [`Self::mesh_machines_granted`], for a write that judges the grant in
+    /// its own transaction. A row whose grant does not check out answers
+    /// `false`, never an error.
+    pub(crate) fn mesh_machine_granted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+        alpn: &[u8],
+    ) -> Result<bool> {
+        let Some(row) = self.mesh_machine_in_txn(txn, machine)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .mesh_grant_permits_in_txn(txn, machine, row.endpoint_key, alpn)
+            .unwrap_or(false))
+    }
+
     /// Every MACHINE this vault's grants admit on `alpn` under its current
     /// address key, in one snapshot, as a caller picks a peer to dial. A
     /// row whose grant does not check out is left out, never an error.
@@ -288,6 +351,40 @@ impl Vault {
             }
         }
         Ok(granted)
+    }
+    /// Until when, in vault seconds, `machine` holds a live grant on `alpn` under its current
+    /// address key, as [`Self::mesh_grant_permits`] judges it now: the earlier of the grant's
+    /// expiry and its pairing's. `None` when no grant permits it now. The `vault_machine`
+    /// connector's live recheck reads it before each dispatch (pass 33 section 8.2: no grant may
+    /// end inside the submit window and the staging limit).
+    pub(crate) fn mesh_grant_live_until_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+        alpn: &[u8],
+    ) -> Result<Option<u64>> {
+        let Some(row) = self.mesh_machine_in_txn(txn, machine)? else {
+            return Ok(None);
+        };
+        if !self.mesh_grant_permits_in_txn(txn, machine, row.endpoint_key, alpn)? {
+            return Ok(None);
+        }
+        let Some(claims) = self.mesh_authority_in_txn(txn, machine)? else {
+            return Ok(None);
+        };
+        let Some(grant_id) = claims.alpns.get(alpn) else {
+            return Ok(None);
+        };
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let expires_at = |slip: &[u8; 32]| {
+            fold.slips
+                .mints
+                .get(slip)
+                .map(|mint| mint.action.claims.expires_at)
+        };
+        Ok(expires_at(grant_id)
+            .zip(expires_at(&claims.pairing_slip_id))
+            .map(|(grant, pairing)| grant.min(pairing)))
     }
     /// This install's MACHINE id and the seed of its mesh transport key, or
     /// `None` before it has a machine id (OF-535). The seed is derived from the
@@ -342,6 +439,28 @@ impl Vault {
             _ => Ok(super::PeerMachine::Unknown),
         }
     }
+    /// Whether `machine`'s grant of `alpn` was ended by an act this vault
+    /// folded, and not by time alone: the grant withdrawn or its slip
+    /// revoked, the machine's binding revoked or gone, its pairing revoked,
+    /// or the machine removed. A grant or a pairing that only expired is not
+    /// withdrawn, and neither is a grant whose mint this replica has not
+    /// folded yet: that is unknown here (pass 33 EN-4 A: a revoke stops what
+    /// it authorised; an expiry does not).
+    pub fn mesh_grant_withdrawn(&self, machine: EntityId, alpn: &[u8]) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some((fold, claims)) = self.mesh_authority_signed_in_txn(&txn, machine)? else {
+            return Ok(true);
+        };
+        // The pairing's standing apart from its lifetime: a revoke or the
+        // MACHINE's removal ends it, its expiry does not.
+        if claims.revoked || mesh_pairing_standing(&fold, &claims).is_none() {
+            return Ok(true);
+        }
+        let Some(grant_id) = claims.alpns.get(alpn) else {
+            return Ok(true);
+        };
+        Ok(fold.slips.mints.get(grant_id).is_some() && !fold.slip_is_live(grant_id))
+    }
     fn mesh_grant_permits_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -375,7 +494,7 @@ impl Vault {
         // the owner's door, another door, or a sync (FIX 3374, L02 05:3x).
         if fold
             .machine(machine)
-            .is_some_and(enrolment::machine_removed)
+            .is_some_and(|folded| enrolment::machine_removed(folded, fold.pinned_root.as_ref()))
         {
             return Ok(false);
         }
@@ -434,6 +553,7 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let host = HostSlipIssuer::from_secret(b"mesh grant host root").unwrap();
         vault.ensure_host_root_slip(&host).unwrap();
         let machine = EntityId::now();

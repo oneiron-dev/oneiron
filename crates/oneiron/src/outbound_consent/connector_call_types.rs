@@ -146,6 +146,13 @@ pub trait ConnectorCallHost: OutboundResultSender {
     fn take_send_hold(&mut self) -> Option<&'static str> {
         None
     }
+
+    /// Takes the session manifest of the runner the last `send` went
+    /// through (canon `#runner-fence`, row L8-27): a stdio connector's
+    /// child. `None` when it went through none, or this host starts none.
+    fn take_session_manifest(&mut self) -> Option<oneiron_container::SessionManifest> {
+        None
+    }
 }
 
 /// One held or pending-delivery call, as a settler lists it: its ref, the
@@ -165,12 +172,14 @@ pub struct PendingConnectorCallRef {
     pub paced: Option<bool>,
 }
 
-/// One tool's approved input schema, on the governing key the caller's own
-/// grant resolves, or why there is none. Read-only and secret-free.
+/// One tool's approved input schema, and its output schema when the
+/// connector declares one, on the governing key the caller's own grant
+/// resolves, or why there is none. Read-only and secret-free.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectorToolSchema {
     Approved {
         input_schema: Value,
+        output_schema: Option<Value>,
         destructive_hint: bool,
     },
     /// The hold or refusal a call of the tool would meet first.

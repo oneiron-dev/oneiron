@@ -11,6 +11,14 @@
 //! revokes it or the expiry he set. A vault write grant never implies it.
 //! Each grant shows in `vault.consent.registry` with its own one-tap revoke.
 //!
+//! `.mint` widens the holder's grant (ARCH-0082 #act-table "Widen another's
+//! grant"): the owner's own act on their own proof, never gated, and its
+//! answer records that decision (`check_in`). A Deputy who may not reach
+//! this door asks through `vault.check_in.open` for the exact mint; once
+//! the owner approves, the owner applies it here with `check_in_ref`, and
+//! the mint's writer spends the ask (ROLES-CHECKIN 2k7; Engine RULING
+//! P25-SHAPE Q1 = A).
+//!
 //! `vault.repo.anchor.bind` is also the owner's repository registration
 //! (FIX 4299, CODE-CUSTODY-01): it binds a served repo, or registers an
 //! external local Git repository, as one stable CODE anchor with its
@@ -21,10 +29,12 @@ use std::path::Path;
 use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
+use crate::check_in::AppliedCheckIn;
 use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
 use crate::federation::{GitPushBounds, GitPushRepo};
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::store::code_repo_registration::CodeRepoRegistration;
 
 #[doc(hidden)]
@@ -35,24 +45,65 @@ pub use oneiron_verb_wire::verbs::git_push_grant::{
 };
 
 /// `vault.repo.git_push.mint` under the owner's proof, his act recording
-/// `surface`.
+/// `surface`, applying with `check_in_ref` another asker's approved
+/// check-in for this exact mint (2k7; P25-SHAPE Q1 = A): the mint's writer
+/// spends it. The answer records the decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the owner's refusals and
+/// the mint's; a check-in that is not an approved ask for this mint.
 pub fn mint_git_push_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     surface: ActSurface,
     input: GitPushGrantMintInput,
 ) -> MemoryResult<GitPushGrantMintOutput> {
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.repo.git_push.mint",
+            effect_digest: git_push_grant_mint_effect_digest(&input)?,
+        }),
+        None => None,
+    };
     let minted = vault.mint_git_push_grant(
         owner,
         surface,
         input.member,
         GitPushBounds { repos: input.repos },
         input.expires_at,
+        applied.as_ref(),
     )?;
     Ok(GitPushGrantMintOutput {
         grant: git_push_grant_view(&minted.standing, minted.standing.created_at),
         act_ref: minted.act.to_hex(),
+        check_in: Some(minted.check_in),
     })
+}
+
+/// The digest of the owner's git_push mint `request`: the effect an asker's
+/// `vault.check_in.open` names for `vault.repo.git_push.mint`, and the one
+/// the owner's mint spends (2k7; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in git push grant mint v1`, over the request's
+/// MessagePack encoding with field names, without its `check_in_ref`: the
+/// holder, the repos ascending and the expiry.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn git_push_grant_mint_effect_digest(
+    request: &GitPushGrantMintInput,
+) -> MemoryResult<[u8; 32]> {
+    let mint = GitPushGrantMintInput {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&mint)
+        .map_err(|_| crate::error::Error::InvariantViolation("git push grant mint encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in git push grant mint v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// `vault.repo.git_push.revoke` under the owner's proof, his act recording
@@ -75,6 +126,9 @@ pub fn revoke_git_push_grant_as(
         act_ref: revoked.act.map(|act| act.to_hex()),
     })
 }
+
+/// The anchor-bind verb a delegate's Grant lists: `vault.repo.anchor.bind`.
+pub const REPO_ANCHOR_BIND_VERB: &str = "vault.repo.anchor.bind";
 
 /// `vault.repo.anchor.bind` under the owner's proof: binds the served repo,
 /// or registers the external local repository, as its CODE anchor in the
@@ -120,15 +174,98 @@ pub fn bind_repo_anchor_as(
             project: bound.project,
         },
         portable: bound.portable.to_hex(),
-        registration: bound.registration.as_ref().map(registration_view),
+        registration: bound
+            .registration
+            .as_ref()
+            .map(|registration| registration_view(registration, None)),
         changed: bound.changed,
     })
 }
 
-fn registration_view(registration: &CodeRepoRegistration) -> RepoRegistrationView {
+/// `vault.repo.anchor.bind` with a `local_folder` as the owner's delegate:
+/// the agent's binding, its live Grant for `vault.repo.anchor.bind` and the
+/// setting `codebase.registration.agent_may_register` are checked in the
+/// registration writer, and the agent's own verified `credential` must read
+/// the PROJECT, then the local repository registers as the owner's does. The
+/// served-repo arm never admits a delegate. A registration the call mints
+/// names the agent as its registrant, and the answer names a registrant
+/// only when it is this agent.
+///
+/// # Errors
+/// `FORBIDDEN` when the setting reads false at the agent, no live Grant
+/// lists the verb, or a served repo is named; a request that names both or
+/// neither of `repo` and `local_folder`; `InvalidConfig` and store failures
+/// of the registration writer.
+pub fn bind_repo_anchor_as_delegate(
+    vault: &Vault,
+    agent: EntityId,
+    credential: Option<&crate::authority::VerifiedSlip>,
+    input: RepoAnchorBindInput,
+) -> MemoryResult<RepoAnchorBindOutput> {
+    let editable = input.editable.as_deref();
+    let bound = match (&input.repo, &input.local_folder, input.anchor) {
+        (Some(_), None, None) => {
+            return Err(served_repo_delegate_refusal());
+        }
+        (None, Some(folder), anchor) => vault.register_local_repository_as_delegate(
+            agent,
+            credential,
+            Path::new(folder),
+            input.project,
+            anchor,
+            editable,
+        )?,
+        _ => {
+            return Err(MemoryError::bad_request_with(
+                "name exactly one of repo and local_folder; anchor names a local registration",
+                &[
+                    "Name a served repo by repo, or an external local Git repository by local_folder.",
+                ],
+            ));
+        }
+    };
+    Ok(RepoAnchorBindOutput {
+        repo: input.repo,
+        anchor: GitPushRepo {
+            repo: bound.repo,
+            project: bound.project,
+        },
+        portable: bound.portable.to_hex(),
+        registration: bound
+            .registration
+            .as_ref()
+            .map(|registration| registration_view(registration, Some(agent))),
+        changed: bound.changed,
+    })
+}
+
+/// The served-repo arm's refusal of a delegate: the owner's refusal, naming
+/// that only a local folder admits one. No setting opens this arm, so none
+/// is named.
+fn served_repo_delegate_refusal() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("{REPO_ANCHOR_BIND_VERB} is the vault owner's"),
+        &[
+            "Present the owner's own verified, unattenuated credential.",
+            "Only a local_folder registration admits the owner's delegate; a served repo stays the owner's.",
+        ],
+    )
+}
+
+/// The answer's view of `registration`. The owner's answer (`delegate`
+/// `None`) names its registrant; a delegate's names it only when that
+/// delegate is the registrant, so no agent learns another's id here.
+fn registration_view(
+    registration: &CodeRepoRegistration,
+    delegate: Option<EntityId>,
+) -> RepoRegistrationView {
     RepoRegistrationView {
         source: registration.source().spelling(),
         editable: registration.editable().to_vec(),
+        registrant: registration
+            .registrant()
+            .filter(|registrant| delegate.is_none_or(|agent| agent == *registrant)),
     }
 }
 

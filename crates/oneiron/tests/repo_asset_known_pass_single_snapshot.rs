@@ -185,6 +185,7 @@ fn known_pass_fixture() -> KnownPassFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the holder's base read grant");

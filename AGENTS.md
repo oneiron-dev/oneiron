@@ -7,35 +7,46 @@ public.
 - Consumer boundary: `CLAUDE.md`. Products are built on top of the engine, never inside it: no
   product names, prompt/persona text, or product-branded modules in engine code.
 - Review guidance: `REVIEW.md`.
-- HTTP API reference for `oneiron-server`: `oneiron.skills.md` (over 70KB, too big for one read). Fetch
-  it by tier heading, not by line number: `## Tier-1: Endpoint Activation Index`, `## Tier-2:
-  Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
+- HTTP API reference for `oneiron-server`: `oneiron.skills.md` (over 70KB, too big for one read). Find
+  the tier by its heading (`## Tier-1: Endpoint Activation Index`, `## Tier-2: Endpoint Details`,
+  `## Tier-3: Schemas And Error Catalog`) and read the range for the endpoint or schema you need;
+  follow a line citation only when it names this revision.
 
 ## Use the engine from an agent
 
-On a Linux/macOS development/build host, from the repo root:
+On a Linux x86-64 build host, from the repo root, with a built `oneiron` binary:
 
 ```sh
-python3 examples/agent-quickstart/quickstart.py --keep-running
+python3 examples/agent-quickstart/quickstart.py --binary /absolute/path/to/oneiron --keep-running
 ```
 
-This installs this checkout, initializes a fresh vault with no model downloads,
-mints an agent credential, starts loopback HTTP, saves and recalls a private diary
-memory, and connects MCP stdio. Needs Python 3.11+, curl 7.76+, rustup and native
-compiler tools; `--binary /absolute/path/to/oneiron` skips the build. It ignores
-inherited `ONEIRON_*` overrides and never overwrites a vault. It prints the URL,
-stop command, and absolute-path MCP config for Claude Code, Codex, or OpenCode.
-No account, dashboard, API key, or interactive pairing is needed. Follow the
-build-host rules below; never source-build this example on the owner's Mac.
+This initializes a fresh vault with no model downloads, mints an agent credential,
+starts loopback HTTP, writes an entry to the agent's private diary and reads it
+back, saves a research note and recalls it, and checks MCP stdio initialization.
+Needs Python 3.11+ and curl 7.76+. Without `--binary` the script builds this
+checkout first; that needs rustup and native compiler tools, and the release build
+takes hours and tens of GiB of memory (the README has the measured figures). On
+macOS the script needs a signed binary with a keychain access group; a plain Cargo
+build cannot mint the credential there. It ignores inherited `ONEIRON_*` overrides
+and never overwrites a vault. It prints the URL, stop command, and absolute-path
+MCP config for Claude Code, Codex, or OpenCode. No account, dashboard, API key, or
+interactive pairing is needed. Follow the build-host rules below; never
+source-build this example on the owner's Mac.
 
 Read `docs/agent-setup.md` for prerequisites, client config and repair. The complete
-script is `examples/agent-quickstart/quickstart.py`. For direct HTTP use
-`POST /v1/core/facade/self.memory.diary` with `{"content":"project note"}`, then
+script is `examples/agent-quickstart/quickstart.py`. For direct HTTP, write a private
+entry with `POST /v1/core/facade/self.memory.diary` and `{"content":"project note"}`,
+and read it back with `POST /v1/core/facade/self.memory.diary.query` and
+`{"agent":"<your principal id>","reason":"Read my project note"}`. Default
+`vault.recall` does not return diary entries. For a memory that recall returns,
+save a note with `POST /v1/core/facade/vault.notes.create` and
+`{"kind":"research","markdown":"project note"}`, then call
 `POST /v1/core/facade/vault.recall` with
 `{"query":"project note","effort":"light","limit":5}`. Authenticate with the
 paired credential and holder proof (`oneiron api` signs it). For MCP, use the
 printed `oneiron mcp --surface tool-first --credential-file <file> --url <origin>`
-command, call `tools/list`, and pass verb inputs under `arguments.spec`.
+command, call `tools/list`, and build each call from the input schema it lists
+(`schema_version`, `consent`, `arguments`).
 A stopped vault needs `serve --config <config>`; the MCP bridge does not start it.
 
 ## The vibe build (owner decree, 2026-10-17)
@@ -89,29 +100,44 @@ path dependency into the vendored `crates/heed`.
 
 ## Code map
 
-Read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules with layout,
-size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning module or type.
+For an unfamiliar area, start at `docs/CODEMAP.md` (one row per crate, then each crate's top-level
+modules with layout, size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning
+module or type. When you already know the owning module, go straight to it.
 File paths in a crate map are relative to `crates/<crate>/`. The maps cover `crates/` only; the
 macOS app lives at `apps/macos/src-tauri/` and is linked from the overview.
 
-`scripts/codemap/` generates both map levels and the machine-readable `docs/codemap/codemap.json`.
-Only `main` writes them: `.github/workflows/codemap.yml` regenerates and commits the map after
-every push to `main`. Never hand-edit the map and never commit map output from a branch, so a
-branch's map can lag its own changes. To read a fresh map for your branch, run
+`scripts/codemap/` generates both map levels, the machine-readable `docs/codemap/codemap.json`
+and the two lookup pages `docs/codemap/BY-CAPABILITY.md` and `docs/codemap/BY-SPEC.md`. Besides
+the source, it reads one reviewed input, `scripts/codemap/capability_aliases.md` (a table of
+phrase, synonyms, paths, spec IDs and a note on what it is and is not): add a row there in your PR
+when a capability is hard to find by the words its code uses, and fix its rows when you move or
+delete a file they name, since a path that names no file fails the map run on `main`.
+Only `main` writes the generated files: `.github/workflows/codemap.yml` regenerates and commits the map after every
+push to `main`. Never hand-edit the map and never commit map output from a branch, so a branch's
+map can lag its own changes. To read a fresh map for your branch, run
 `python3 scripts/codemap/codemap.py`, then drop the output with
 `git restore docs/CODEMAP.md docs/codemap`. `python3 scripts/codemap/codemap.py --sizes` prints
 live line counts without changing the maps. The map is a source summary, not a call graph or
 proof of which features compile.
 
 For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.md`, then open the
-matching path under `crates/oneiron/`. Do not load a large crate map (especially
-`docs/codemap/oneiron.md`) whole.
+matching path under `crates/oneiron/`. For a crate-wide question, read the sections it covers;
+`docs/codemap/oneiron.md` is about 1.9 MB, too big to load whole.
 
 Size and dependency questions without `tokei` or `cargo-modules` (`rg` is present):
 
     rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files
     rg -l 'crate::pipeline\b' crates --type rust                                     # who names a module
     rg -oIN '\bcrate::[a-z_]+' crates/oneiron/src/pipeline | sort | uniq -c | sort -rn  # what a module names
+
+## Find code by capability
+
+Start with `docs/CODEMAP.md`, then grep `docs/codemap/BY-CAPABILITY.md` for the capability or a synonym.
+For an OF or ARCH ID, grep `docs/codemap/BY-SPEC.md`; follow the listed source paths.
+If no index is available, grep `docs/codemap/*.md` by purpose and path (try node/machine, enrol/enroll).
+For a ref-specific sweep, use `git show <ref>:<path>` or `git grep ... <ref> -- <paths>`, not the worktree.
+Open the matching source and follow its caller or entry point before describing what runs.
+A search miss is not absence. Report “not located” with the ref, searched terms, and scope.
 
 ## Where code lives
 
@@ -136,12 +162,17 @@ unchanged.
 
 ## Ratchets
 
-`scripts/ratchet/check.sh` counts eight metrics over non-test code against
-`scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
+`scripts/ratchet/check.sh` counts thirteen metrics against `scripts/ratchet/baseline.json`.
+Eight count non-test code: files at or over 800 lines, `#[allow(` attributes, print macros,
 process-global mutable statics, the keyspace census, raw core writes, hand-started hashes
 (`raw_hasher_starts`) and lists of names spelled by hand (`hand_name_tables`; a new list of names
-is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). It skips
-`tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
+is declared once as a Register, `#[derive(Register)]` in `oneiron_contracts::register`). They skip
+`tests/` and `tests_*/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. Five count test code
+(those files, `*_test.rs` and `#[cfg(test)]` code in any other file), one per rule of
+`scripts/ratchet/test_lint.py` (`test_lint_*`): sleeps, wall-clock reads, URLs to real hosts,
+fixed loopback ports and real models. A test waits on a barrier, a channel or the
+`oneiron_testkit` fake clock, binds port 0 and uses its scripted provider; a line that must break a
+rule carries `testkit-lint: allow(<rule>) <reason>`.
 `scripts/ratchet/root-surface-check.sh` pins the `oneiron` crate root to the names in
 `scripts/ratchet/root-surface.txt`. Both run in `ratchet.yml` after a push to `main`; neither
 blocks a merge. The merge pipeline also counts both for each change before it lands. When a

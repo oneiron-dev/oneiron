@@ -291,11 +291,24 @@ pub(crate) struct StartCheckIn<'a> {
     pub(crate) applies: Option<EntityId>,
 }
 /// How a start reaches the check-in decision its act records (2j; P24-SHAPE
-/// Q9 = A): judged in the start's own writer, or already reached, and any
-/// applied check-in already spent, by the caller in its own writer.
+/// Q9 = A): judged in the start's own writer; already reached, and any
+/// applied check-in already spent, by the caller in its own writer; or an
+/// Owner's own act on their own proof, whose applied check-in the start's
+/// writer spends (2k2; P25-SHAPE Q1 = A).
 enum StartDecision<'a> {
     Judge(StartCheckIn<'a>),
     Reached(CheckInDecision),
+    Apply(ActClass, Option<&'a crate::check_in::AppliedCheckIn<'a>>),
+}
+/// Which grant holders a holder scan admits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HolderAdmission {
+    /// Live PERSON holders only: who may act, propose, approve or veto.
+    Persons,
+    /// Live PERSON holders and each house mind a live org link seats
+    /// (`workspace_roster::is_house_link_grant_in_txn`; its default role is
+    /// Deputy, canon HOUSE-BIND = A): who hears of an admin act.
+    PersonsAndHouses,
 }
 pub(super) struct LiveActHolder {
     pub(super) member: EntityId,
@@ -330,6 +343,46 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
         now: u64,
+    ) -> Result<Vec<LiveActHolder>> {
+        self.live_grant_holders_in_txn(txn, vault_id, now, HolderAdmission::Persons)
+    }
+
+    /// [`Self::live_act_holders`] and each house mind a live org link seats:
+    /// whom an admin act's notice goes to (UNBUILT06-SHAPE Q3 = A; review of
+    /// #8384). Never an authority read: a house acts through its own doors.
+    pub(super) fn live_notice_holders(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        now: u64,
+    ) -> Result<Vec<LiveActHolder>> {
+        self.live_grant_holders_in_txn(txn, vault_id, now, HolderAdmission::PersonsAndHouses)
+    }
+
+    /// Whether `grant`'s member counts as a holder under `admission`: a live
+    /// PERSON, or with `PersonsAndHouses` a live house mind its org link seats.
+    fn holder_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: &super::FederationGrant,
+        admission: HolderAdmission,
+    ) -> Result<bool> {
+        if crate::consent::person_is_live_in_txn(self, txn, &grant.member_ref)? {
+            return Ok(true);
+        }
+        Ok(admission == HolderAdmission::PersonsAndHouses
+            && crate::workspace_roster::is_house_link_grant_in_txn(self, txn, grant)?
+            && crate::vault::live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.is_live())
+    }
+
+    /// The live grant holders of shared vault `vault_id` at `now` that
+    /// `admission` admits.
+    fn live_grant_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        now: u64,
+        admission: HolderAdmission,
     ) -> Result<Vec<LiveActHolder>> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_root_is_conflicted() {
@@ -370,7 +423,7 @@ impl Vault {
                     federation_grant_activation(&fold, &id),
                     FederationGrantActivation::Unpacted | FederationGrantActivation::Active
                 )
-                && crate::consent::person_is_live_in_txn(self, txn, &grant.member_ref)?
+                && self.holder_admitted_in_txn(txn, &grant, admission)?
                 && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 // A pact can further restrict the grant's content ceiling. A
@@ -542,6 +595,30 @@ impl Vault {
         )
     }
 
+    /// [`Self::start_authority_act`] for an Owner's own act of class
+    /// `class` on their own proof (2k2; P25-SHAPE Q1 = A): with `applied`,
+    /// another asker's approved check-in, the start's own writer spends it
+    /// on the Owner's live proof, so an act that never starts leaves it
+    /// unspent. The act records the decision.
+    pub(crate) fn start_authority_act_applying(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        act: &str,
+        payload: Vec<u8>,
+        class: ActClass,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<PendingAuthorityAct> {
+        self.start_authority_act_with_policy_selection(
+            starter,
+            vault_id,
+            act,
+            payload,
+            SettingChoice::Stored,
+            Some(StartDecision::Apply(class, applied)),
+        )
+    }
+
     /// Use a host-selected setting for one request without mutating the stored
     /// policy row. `None` means no wait (for example, mandatory self-erasure).
     /// This is a host policy door, not an untrusted client-selected bypass.
@@ -591,14 +668,35 @@ impl Vault {
         // The common owner-change wait applies only to membership acts; the
         // parse runs once, before the chosen setting is consumed below.
         let holder_selected = matches!(selection, SettingChoice::Holder(_));
+        let builtin = super::shared_act::SharedActKind::parse(act);
         let owner_change_act = matches!(
-            super::shared_act::SharedActKind::parse(act),
+            builtin,
             Some(
                 super::shared_act::SharedActKind::AddOwner
                     | super::shared_act::SharedActKind::TransferOwnership
                     | super::shared_act::SharedActKind::RemoveOwner
             )
         );
+        // A built-in name whose plan does not decode could never run: its
+        // executor refuses it as an invalid shared-vault act. Refuse it here,
+        // before the store, instead of keeping such an act.
+        match builtin {
+            Some(super::shared_act::SharedActKind::AddOwner) => {
+                decode::<super::shared_act::AddOwnerPlan>(&payload)?;
+            }
+            Some(super::shared_act::SharedActKind::TransferOwnership) => {
+                decode::<super::shared_act::TransferOwnershipPlan>(&payload)?;
+            }
+            Some(super::shared_act::SharedActKind::RemoveOwner) => {
+                decode::<super::shared_act::RemoveOwnerPlan>(&payload)?;
+            }
+            Some(super::shared_act::SharedActKind::DeleteVault) => {
+                decode::<super::shared_act::DeleteVaultPlan>(&payload)?;
+            }
+            // A held erase names its record and runs through its own door;
+            // any other name is the host's own act with an opaque payload.
+            Some(super::shared_act::SharedActKind::Erase) | None => {}
+        }
         let policy = match selection {
             SettingChoice::Stored => base,
             SettingChoice::Host(Some(setting)) => setting,
@@ -655,6 +753,16 @@ impl Vault {
                 Some(self.start_check_in_in_txn(&mut txn, vault_id, starter_actor, &start, now)?)
             }
             Some(StartDecision::Reached(decision)) => Some(decision),
+            Some(StartDecision::Apply(class, applied)) => {
+                // The Owner applies another asker's check-in on their own
+                // proof, which this writer checks as the spend lands.
+                if applied.is_some() {
+                    starter.revalidate_in_txn(self, &txn)?;
+                }
+                Some(crate::check_in::owner_act_decision_in_txn(
+                    self, &mut txn, class, applied,
+                )?)
+            }
             None => None,
         };
         let id = self.store.clock.entity_id()?.to_hex();
@@ -826,48 +934,6 @@ impl Vault {
         self.store.vault_meta.put(txn, &k, &encode(&record)?)?;
         Ok(())
     }
-    /// Withdraws act `id`, which `starter` started, in the caller's writer:
-    /// its record goes, with every holder's started event and matured notice
-    /// for it. Seam addition (L01 pack-j, FIX 10401): the owner's withdrawal
-    /// of the waiting erase this act held back, which the caller records in
-    /// that erase's legal-hold trail first. An act another holder started
-    /// refuses, and so does one a request has claimed, its effect executed or
-    /// in flight, as its record says. `false` when no act `id` is stored.
-    pub(crate) fn withdraw_authority_act_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        id: &str,
-        starter: EntityId,
-    ) -> Result<bool> {
-        let id = EntityId::from_hex(id)?.to_hex();
-        let k = key(ACT_PREFIX, &id);
-        let Some(raw) = self.store.vault_meta.get(txn, &k)? else {
-            return Ok(false);
-        };
-        let record: PendingAuthorityAct = decode(&raw)?;
-        if record.starter != starter.to_hex() {
-            return Err(invalid());
-        }
-        if record.execution.is_some() {
-            return Err(Error::ConcurrentWrite("authority act already executed"));
-        }
-        self.store.vault_meta.delete(txn, &k)?;
-        // Each holder's rows key as `<prefix><holder hex>:<act id>`.
-        let suffix = format!(":{id}");
-        for prefix in [EVENT_PREFIX, matured::MATURED_PREFIX] {
-            let mut rows = Vec::new();
-            for row in self.store.vault_meta.prefix_iter(txn, prefix)? {
-                let (row_key, _) = row?;
-                if row_key.ends_with(suffix.as_bytes()) {
-                    rows.push(row_key.to_vec());
-                }
-            }
-            for row_key in &rows {
-                self.store.vault_meta.delete(txn, row_key)?;
-            }
-        }
-        Ok(true)
-    }
     /// Binds the receipt a deletion recovery wrote to the act whose claim
     /// named the same request, in that recovery's writer: the effect an
     /// interrupted claim carried finished there, so its receipt is the act's.
@@ -1003,14 +1069,12 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 
 mod matured;
 mod owner_change_wait;
-mod policy_change;
+pub(crate) mod policy_change;
 pub use matured::PendingActMatured;
 pub use policy_change::{
     NOTIFICATION_PRODUCER_POLICY_CHANGE, SharedActPoliciesView, SharedActPolicyChange,
     SharedActPolicyChangeState,
 };
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-PENDING-ACT-TESTS]: the lib test target's type check fails here (5 errors: E0639 x2, E0061 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

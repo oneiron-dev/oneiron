@@ -112,6 +112,45 @@ pub struct SpawnNeed {
     pub balance_free_prompt: bool,
 }
 
+/// The four knobs of a [`SpawnNeed`] as the spawn's own call set them,
+/// before the owner's rows filled an unset knob or put a pin over a seed.
+/// A plan receipt keeps them beside the need the planner read, so its
+/// reader sees what was asked apart from what the owner's choices
+/// supplied. No need text: nothing here is erasable content.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SpawnCallKnobs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<SpawnOverride<crate::llm::ModelId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<SpawnOverride<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<SpawnOverride<super::team_shape::CoordinationPattern>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_cap_units: Option<SpawnOverride<u64>>,
+}
+
+impl SpawnCallKnobs {
+    /// The knobs `need` carries, as set.
+    #[must_use]
+    pub fn of(need: &SpawnNeed) -> Self {
+        Self {
+            model: need.model.clone(),
+            width: need.width.clone(),
+            pattern: need.pattern.clone(),
+            budget_cap_units: need.budget_cap_units.clone(),
+        }
+    }
+
+    /// No knob set: the call left all four to the planner.
+    #[must_use]
+    pub fn is_unset(&self) -> bool {
+        self.model.is_none()
+            && self.width.is_none()
+            && self.pattern.is_none()
+            && self.budget_cap_units.is_none()
+    }
+}
+
 impl SpawnNeed {
     #[must_use]
     pub fn new(need: impl Into<String>, type_ref: crate::task_type::TaskTypeRef) -> Self {

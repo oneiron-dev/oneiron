@@ -351,7 +351,7 @@ async function fed02Accept(actor: PairedActor, vaultId: string, role: "owner" | 
 
 /* FEDERATION-02 — covers part of its promise (the runner sets its status).
  * Promise: two live Owners jointly configure a veto policy, an Owner objection survives restart, another Owner cannot clear it, and an Admin cannot object.
- * Doors: conversations.create, witness, get, people.create, self.actor, shape.plan/apply/read, members.invitations/accept/projection, shared.policy.get/propose/answer/change/changes, shared.propose_delete/object/withdraw_objection/execute/started/deletion/receipt, shared.owner_change_wait.get, receipts.get, restart.
+ * Doors: conversations.create, witness, get, people.create, self.actor, shape.plan/apply/read, members.invitations/accept/projection, shared.policy.get/propose/answer/change/changes, owner_confirm.preview, shared.propose_delete/object/withdraw_objection/execute/started/deletion/receipt, shared.owner_change_wait.get, receipts.get, restart.
  * Unproved: transfer/remove/erase veto journeys and the four-act 604800 default (transfer/remove ship at wait 0 with no veto; needs an engine ruling or fix, no new door).
  * Unproved: a public elapsed-maturity observation for the held act (matured only lists persisted notices; needs an Owner-grant act-status read such as vault.shared.act.get).
  * Unproved: former/dead third-Owner release (members.remove refuses Owners; needs a public person-liveness revocation verb behind Owner membership).
@@ -503,7 +503,11 @@ suite.test(test, "FEDERATION-02", "Two live Owners jointly configure a veto poli
     if (!deleteAfter) throw new Error("policy lost its delete_vault row after the change applied");
     expect(deleteAfter).toEqual(shortPolicy);
     expect(after.policy_hash).not.toBe(hash);
-    const act = await owner.call("vault.shared.propose_delete", { vault_id: vaultId });
+    // The vault delete is one-way: it takes the owner's shared confirm (L8-49).
+    const deletePreview = await owner.call("vault.owner_confirm.preview", {
+      verb: "vault.shared.propose_delete", input: { vault_id: vaultId },
+    });
+    const act = await owner.call("vault.shared.propose_delete", { vault_id: vaultId, confirm: deletePreview.confirm });
     expect(act.act).toBe("delete_vault");
     expect(act.vault_id).toBe(vaultId);
     expect(act.starter).toBe(ownerRef);
@@ -672,8 +676,11 @@ async function fed03Deliver(source: EngineFixture, recipient: EngineFixture, pac
     confidence: 0.9, source: "user_stated", sensitivity: 1, scope: { ...scope, world_id: world },
     occurred_at: FED03_LEARNED_AT, learned_at: FED03_LEARNED_AT,
   });
-  // A sensitivity-stamped claim requests Proposed (memory/support/wire.rs:59-71); it still syncs.
-  expect(written.approval).toBe("proposed");
+  // ARCH-0003's consent matrix routes on the sensitivity band: a user_stated claim with a private (1)
+  // stamp requests Auto (memory/support/wire.rs requested_approval). The imported copy keeps that
+  // approval: federated admission only allows or refuses it, under the recipient's own
+  // source_trust.imported permit (fed03PermitImported; with no permit the rejoin is refused).
+  expect(written.approval).toBe("auto");
   const delivery = await fed03ConnectSuccess("source vault.federation.connect.export", () => source.client.call("vault.federation.connect.export", {
     pact, window_key: `2026-10@${world}`, world_ref: world,
   }));
@@ -690,7 +697,7 @@ async function fed03Deliver(source: EngineFixture, recipient: EngineFixture, pac
   );
   const received = page.value.filter(row => row.world_ref === joined.world_ref && row.value === sentence);
   expect(received).toHaveLength(1);
-  expect(received[0]?.approval).toBe("proposed");
+  expect(received[0]?.approval).toBe("auto");
   expect(received[0]?.source).toBe("imported");
   expect(received[0]?.lifecycle).toBe("active");
   return delivery;
@@ -1472,6 +1479,7 @@ async function fed07Evidence(engine: EngineFixture, claimRef: string): Promise<F
  * Unproved: unusual_streak branch not triggered; needs public authorized ingress of genuinely malformed structural work with receipted disposition behind owner/peer grants.
  * Unproved: expired/stale_authority/erased transitions not driven; no universal clock door asserted, runtime scheduling unproved.
  * Unproved: same burst under distinct baselines/vault sizes not compared; needs independent receiving authority contexts behind Connect grants, not defeating idempotency.
+ * Unproved: that a replayed claim's writer differs from the receiver's owner; every vault pins the same embedded owner PERSON id, so writer_ref is asserted as the source author only.
  */
 suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the configured allow, isolate-and-propose, or defer route; review survives, and released/deferred work replays idempotently across restart with foreign provenance.", async () => {
   const catalog = await loadFixtures();
@@ -1538,8 +1546,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
       occurred_at: FED07_ALLOW_TS,
       learned_at: FED07_ALLOW_TS,
     });
-    // Explicit sensitivity requests Proposed; the peer burst route is asserted by allowReceipt below.
-    expect(allowUpsert.approval).toBe("proposed");
+    // A private (1) stamp requests Auto (ARCH-0003's consent matrix, memory/support/wire.rs
+    // requested_approval); the peer burst route is asserted by allowReceipt below.
+    expect(allowUpsert.approval).toBe("auto");
     const allowDelivery = await fed07ConnectSuccess("allow vault.federation.connect.export", () => engine.client.call("vault.federation.connect.export", {
       pact: pact.pact,
       window_key: allowWindow,
@@ -1554,6 +1563,7 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     expect(allowReceipt.batch_ref).toMatch(/^[a-f0-9]{64}$/);
     expect(allowReceipt.principal).toBe(pact.receiverGrant.guest_actor);
     expect(allowReceipt.grant).toBe(pact.receiverGrant.grant);
+    expect(allowReceipt.device).toBeUndefined();
     expect(allowReceipt.window_key).toBe(allowWindow);
     expect(allowReceipt.disposition).toEqual({ outcome: "allow" });
     expect(allowReceipt.state).toBe("imported");
@@ -1660,7 +1670,9 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     expect(releasedEvidence.source).toBe("imported");
     expect(releasedEvidence.foreign_world_ref).toBe(foreignWorld);
     expect(releasedEvidence.first_party_corroboration).toBe(false);
-    expect(releasedEvidence.writer_ref).not.toBe(receiver.pairedActor.principalRef);
+    // Independent vaults pin the same embedded owner PERSON id; writer_ref preserves the source
+    // author. Foreign standing is the source, foreign world and delivery history.
+    expect(releasedEvidence.writer_ref).toBe(engine.pairedActor.principalRef);
     expect(releasedEvidence.delivery_history).toHaveLength(1);
     const releasedOrigin = releasedEvidence.delivery_history?.[0];
     if (!releasedOrigin) throw new Error("Released claim has no delivery origin");
@@ -1716,6 +1728,7 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     expect(restored.batch_ref).toBe(deferReceipt.batch_ref);
     expect(restored.principal).toBe(pact.receiverGrant.guest_actor);
     expect(restored.grant).toBe(pact.receiverGrant.grant);
+    expect(restored.device).toBeUndefined();
     expect(restored.window_key).toBe(deferWindow);
     expect(restored.state).toBe("pending");
     expect(restored.disposition.outcome).toBe("defer");
@@ -1766,7 +1779,7 @@ suite.test(test, "FEDERATION-07", "A peer's authorized batches follow the config
     expect(deferredEvidence.source).toBe("imported");
     expect(deferredEvidence.foreign_world_ref).toBe(foreignWorld);
     expect(deferredEvidence.first_party_corroboration).toBe(false);
-    expect(deferredEvidence.writer_ref).not.toBe(receiver.pairedActor.principalRef);
+    expect(deferredEvidence.writer_ref).toBe(engine.pairedActor.principalRef);
     expect(deferredEvidence.delivery_history).toHaveLength(1);
     const deferredOrigin = deferredEvidence.delivery_history?.[0];
     if (!deferredOrigin) throw new Error("Deferred claim has no delivery origin");

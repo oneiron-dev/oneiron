@@ -29,7 +29,29 @@ pub(crate) fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 /// directory, the vault, its owner and the owner's proof.
 pub(crate) fn rooted() -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    let (vault, owner, owner_proof) = rooted_in(dir.path(), VaultConfig::device());
+    (dir, vault, owner, owner_proof)
+}
+
+/// [`rooted`] with a legal hold store outside the vault, for a case that
+/// places a hold (LEGAL-HOLD-USE = B): its directory, the hold store's
+/// directory, the vault, its owner and the owner's proof.
+pub(crate) fn rooted_with_hold_store() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    AuthenticatedOwner,
+) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let hold_dir = tempfile::tempdir().expect("hold store tempdir");
+    let config = VaultConfig::device().with_legal_hold_store(hold_dir.path().to_path_buf());
+    let (vault, owner, owner_proof) = rooted_in(dir.path(), config);
+    (dir, hold_dir, vault, owner, owner_proof)
+}
+
+fn rooted_in(path: &std::path::Path, config: VaultConfig) -> (Vault, EntityId, AuthenticatedOwner) {
+    let vault = Vault::open(path, config).expect("open vault");
     vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     vault
@@ -39,7 +61,7 @@ pub(crate) fn rooted() -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwne
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
     let owner_proof = proof(&vault, owner);
     vault.hold_checkpoint_root_signer(Arc::new(issuer));
-    (dir, vault, owner, owner_proof)
+    (vault, owner, owner_proof)
 }
 
 /// The decision of an Owner's own `act` on their own proof, applying

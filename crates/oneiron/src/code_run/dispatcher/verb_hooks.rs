@@ -16,10 +16,12 @@ mod parked;
 mod rewrite;
 mod session;
 
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::claim::ScopedReadActorKey;
+use crate::code_run::CompareKnown;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -27,6 +29,7 @@ use crate::code_run::types::{
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfLeaderCall,
 };
 use crate::error::{Error, Result};
+use crate::runtime_hooks::verb::TextView;
 use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
 };
@@ -63,6 +66,17 @@ pub(crate) type ParkedCall = (SelfEffect, rmpv::Value);
 /// `None` when no hook runs for the call; the second carries the dispatched
 /// rewritten call (FIX 1442), `None` when no hook rewrote it.
 pub(crate) struct HookedCall(pub(crate) Option<VerbHookPre>, pub(crate) Option<SelfCall>);
+
+/// What a skill answer's own post chain left of its view held as JSON text
+/// ([`HostSelfDispatcher::leave_verb_hooks_text`]).
+pub(crate) enum TextAnswerPost {
+    /// No hook changed it: the guest reads the answer.
+    Unchanged,
+    /// A Redact narrowed it: the guest reads this view in the answer's place.
+    Narrowed(TextView),
+    /// A hook stopped the call: the guest reads this view in its place.
+    Stopped(Value),
+}
 
 impl HostSelfDispatcher<'_> {
     /// `dispatch_effect` inside the call's verb hooks, and the dispatched
@@ -274,6 +288,41 @@ impl HostSelfDispatcher<'_> {
         self.hook_view.take()
     }
 
+    /// [`Self::leave_verb_hooks`] for a skill answer held as JSON text
+    /// (`answer`), one that nests past what a value may hold on the host's
+    /// stack (SKILL-ANSWER-DEEP-JSON-STACK-SAFE): the chain runs over its
+    /// view as text and never reads it into a value. The host stores the
+    /// answer once the chain is done and serves what it left
+    /// ([`Self::serve_hook_view`]).
+    pub(crate) fn leave_verb_hooks_text(
+        &self,
+        hooked: HookedCall,
+        answer: &RawValue,
+    ) -> Result<TextAnswerPost> {
+        // A room runs no skill call's hooks (`enter_room_verb_hooks`), so no
+        // room call reaches here.
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(Error::InvariantViolation(
+                "a room's post chain reads no skill answer held as text",
+            ));
+        };
+        let Some(pre) = hooked.0 else {
+            return Ok(TextAnswerPost::Unchanged);
+        };
+        let view = TextView::of_skill_answer(answer)?;
+        Ok(match vault.post_verb_hooks_text(pre, view)? {
+            Ok(seen) if seen.narrowed() => TextAnswerPost::Narrowed(seen),
+            Ok(_) => TextAnswerPost::Unchanged,
+            Err(stop) => TextAnswerPost::Stopped(stopped_view(&stop)),
+        })
+    }
+
+    /// Serves `view` in place of the last call's result, as a hook's view
+    /// is: the host's reply carries it ([`Self::take_hook_view`]).
+    pub(crate) fn serve_hook_view(&self, view: Value) {
+        *self.hook_view.borrow_mut() = Some(view);
+    }
+
     /// The invocation a call's hooks run under. The same call a hook's ask
     /// parked takes that ask's invocation again, so made later it resumes
     /// the ask; any other takes its place in the run, which a replay of its
@@ -300,13 +349,15 @@ impl HostSelfDispatcher<'_> {
     /// no note: the same call made again meets that note and reads the error.
     pub(super) fn observe_parked_hooks(&self, bridge_calls: &[CodeRunBridgeCall]) {
         let mut parked = self.parked_hooks.borrow_mut();
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         for row in bridge_calls {
             let parks = ParkedHook::of(row);
             // With nothing parked, a row that parks nothing has nothing to clear.
             if parks.is_none() && parked.is_empty() {
                 continue;
             }
-            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row)), Ok(true)));
+            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row), &known), Ok(true)));
             parked.extend(parks);
         }
     }
@@ -429,6 +480,7 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
         SelfCall::MemorySearch(_)
         | SelfCall::TasksWait(_)
         | SelfCall::TasksWaitSet(_)
+        | SelfCall::JobsOrdersWait(_)
         | SelfCall::InferenceDefaultsRead
         | SelfCall::Context(_)
         // Advice and a pattern load start no work and write no memory.
@@ -512,7 +564,13 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         }
         SelfDispatchOutcome::ReportBlocked { receipt } => json!({"receipt": receipt.to_hex()}),
         SelfDispatchOutcome::InferenceDefaults(text) => json!({"json": text}),
-        SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
+        SelfDispatchOutcome::StoredReply(value) => {
+            let mut body = json!({"output": value.output});
+            if !value.program_steps.is_empty() {
+                body["programSteps"] = json!(value.program_steps);
+            }
+            body
+        }
         SelfDispatchOutcome::Fold(answer) => json!({"output": answer.guest_output()}),
         SelfDispatchOutcome::Context(value) => json!({"spec": value.spec}),
         SelfDispatchOutcome::WakePolicyWritten(policy) => json!({"policy": policy}),
@@ -525,4 +583,47 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::Team(result) => json!({"output": result.answer}),
         SelfDispatchOutcome::TeamSubmitted(answer) => json!({"output": answer}),
     })
+}
+
+/// The outcome a pre-hook's ask that stopped a call of `effect` before it
+/// ran records: the call parked on the ask `ask`, under `invocation`. Door
+/// seam for `test_doors::parked_hook_custody` (FIX
+/// PARKED-HOOK-LIVE-EXACT-COMPARE), at the file's end, clear of its imports.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hook_parked_outcome_for_test(
+    effect: SelfEffect,
+    invocation: InvocationId,
+    ask: EntityId,
+) -> SelfDispatchOutcome {
+    stopped(
+        effect,
+        VerbHookStop::Pending {
+            invocation: invocation.to_hex(),
+            ask: ask.to_hex(),
+        },
+    )
+}
+
+/// Whether the note `row` leaves, when a hook's ask parked its call, is
+/// resumed by `call`, the same call made again, read with the values
+/// `base_known` gives, as the run's next try reads it, with the ask's saved
+/// args those of `saved`. `None` for a row that parked nothing. Door seam for
+/// `test_doors::parked_hook_custody`.
+///
+/// # Errors
+///
+/// A request the side-row wall cannot read, one that does not encode, the
+/// read of base custody's values, or a call's args.
+#[cfg(oneiron_test_support)]
+pub(crate) fn parked_note_resumed_for_test(
+    row: &CodeRunBridgeCall,
+    call: &SelfCall,
+    base_known: crate::code_run::BaseKnownRead<'_>,
+    saved: &SelfCall,
+) -> Result<Option<bool>> {
+    let known = CompareKnown::new(Some(base_known));
+    let saved = hook_args(saved)?;
+    ParkedHook::of(row)
+        .map(|parked| parked.resumed_by(call, &known, || Ok(Some(saved))))
+        .transpose()
 }

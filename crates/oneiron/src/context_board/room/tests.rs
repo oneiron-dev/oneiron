@@ -90,6 +90,7 @@ fn spoken(room: EntityId, turn: EntityId, at: u64) -> WitnessTurn {
         conversation_ref: room.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author: WitnessAuthor::User,
@@ -945,13 +946,15 @@ fn a_contact_bound_agent_definition_takes_its_contacts_clearance() -> Result<()>
 
 /// P7 follows a record's words to where they came from (ILDF2): a room
 /// TURN is disclosed only with its messages, and a summary's TURN copy,
-/// which has no messages of its own, only with the records and messages
-/// the summary came from. A clearance that reads TURNs but not MESSAGEs
-/// discloses neither; one that reads both discloses both.
+/// which has no messages of its own, only with the summary itself and the
+/// records and messages it came from. A clearance that reads TURNs but not
+/// MESSAGEs discloses neither; one that reads both discloses the TURN, and
+/// the copy only once it reads SUMMARY rows too (FIX
+/// COPY-SUMMARY-ROW-UNJUDGED).
 #[test]
 fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     use crate::ports::EntityStoreRead;
-    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let (_, record) = project_room(&vault, owner, &[])?;
@@ -996,13 +999,18 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     };
     let turns = clearance(&[ENTITY_TYPE_TURN]);
     let both = clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]);
+    let summarised = clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY]);
     assert!(!discloses(turn, &turns)?);
     assert!(
         !discloses(copy, &turns)?,
         "the copy carries the messages' words"
     );
     assert!(discloses(turn, &both)?);
-    assert!(discloses(copy, &both)?);
+    assert!(
+        !discloses(copy, &both)?,
+        "the copy carries the summary's own words"
+    );
+    assert!(discloses(copy, &summarised)?);
     let recover = |covers: Vec<EntityId>, at: u64| -> Result<()> {
         let mut body = crate::scope_summary::decode_scope_summary_body(
             &vault.get(&summary)?.expect("summary body"),
@@ -1018,25 +1026,30 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     };
     // A summary put again over other records leaves the copy's words with
     // the records they came from. The landing moved the room onto its DAG.
+    let writer = vault.memory(owner, EdgeActorClass::Human);
     let later = vault
-        .append_dag_record(&crate::conversation_dag::AppendRecord {
-            conversation: room,
-            parent: Some(copy),
-            reply_to: None,
-            quote: None,
-            address: crate::conversation_dag::AddressMode::Broadcast,
-            recipients: vec![],
-            advance: true,
-            kind: ENTITY_TYPE_TURN,
-            containing_turn: None,
-            occurred: TimeRange { start: 3, end: 3 },
-            learned_at: 3,
-            body: crate::conversation_dag::fixtures::body("later"),
-            text: vec![],
-            session: None,
-            actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
-            thread_audience: None,
-        })?
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                conversation: room,
+                parent: Some(copy),
+                reply_to: None,
+                quote: None,
+                address: crate::conversation_dag::AddressMode::Broadcast,
+                recipients: vec![],
+                advance: true,
+                kind: ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange { start: 3, end: 3 },
+                learned_at: 3,
+                body: crate::conversation_dag::fixtures::body("later"),
+                text: vec![],
+                session: None,
+                actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .expect("append")
         .id;
     recover(vec![later], 4)?;
     let sources = {
@@ -1059,17 +1072,18 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     // A summary put again to cover its own copy makes the copy's words a
     // cycle: P7 discloses nothing rather than walking it forever.
     recover(vec![copy], 5)?;
-    assert!(!discloses(copy, &both)?, "a cycle discloses nothing");
+    assert!(!discloses(copy, &summarised)?, "a cycle discloses nothing");
     Ok(())
 }
 
 /// A summary of summaries carries every level's words. P7 walks the whole
 /// closure on a heap stack, so the first turn's message still binds the
-/// last copy, and records the levels share are judged once.
+/// last copy, and so does each level's summary row; records the levels
+/// share are judged once.
 #[test]
 fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
     use crate::ports::EntityStoreRead;
-    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let (_, record) = project_room(&vault, owner, &[])?;
@@ -1115,7 +1129,7 @@ fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
     assert!(crate::disclosure::discloses_raw(
         &vault,
         &txn,
-        &clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]),
+        &clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY]),
         head,
         &raw
     )?);
@@ -1123,11 +1137,21 @@ fn p7_walks_a_summary_of_summaries_to_its_first_words() -> Result<()> {
         !crate::disclosure::discloses_raw(
             &vault,
             &txn,
-            &clearance(&[ENTITY_TYPE_TURN]),
+            &clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_SUMMARY]),
             head,
             &raw
         )?,
         "the last copy carries the first turn's message"
+    );
+    assert!(
+        !crate::disclosure::discloses_raw(
+            &vault,
+            &txn,
+            &clearance(&[ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE]),
+            head,
+            &raw
+        )?,
+        "the last copy carries every level's summary"
     );
     Ok(())
 }
@@ -1181,6 +1205,7 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
         ClaimApprovalStatus::Approved,
         crate::ClaimLifecycleStatus::Active,
     )?;
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.source = Some(ClaimSource::Observed);
     // A reader's grant makes later direct claim writes pend, so the
     // summary lands first.

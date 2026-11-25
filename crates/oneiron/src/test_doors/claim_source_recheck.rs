@@ -214,18 +214,38 @@ fn allow_recheck_extraction(_: &LlmRequest) -> bool {
     true
 }
 
-/// Seeds one mail source, one imported message, one live approved claim
-/// citing its TURN, the kept provider delete that owes the re-check, and the
-/// admitted maintenance attempt of facet
-/// `dreamer.claim_source_recheck`. The Dreamer is added to the thread's
-/// readers so the claim reads to its judge, and the seed refuses when it
-/// does not.
+/// [`seed_claim`] of a `profile.name` claim holding `Ada Lovelace`.
 ///
 /// # Errors
 ///
 /// The vault's, or a seeded row the Dreamer may not read.
 #[doc(hidden)]
 pub fn seed(vault: &Vault, now_ms: u64) -> Result<SeededRecheck> {
+    seed_claim(
+        vault,
+        now_ms,
+        "profile.name",
+        rmpv::Value::from("Ada Lovelace"),
+    )
+}
+
+/// Seeds one mail source, one imported message, one live approved
+/// `predicate` claim holding `value` and citing its TURN, the kept provider
+/// delete that owes the re-check, and the admitted maintenance attempt of
+/// facet `dreamer.claim_source_recheck`. The Dreamer is added to the
+/// thread's readers so the claim reads to its judge, and the seed refuses
+/// when it does not. The claim's scope is `sensitivity: public`.
+///
+/// # Errors
+///
+/// The vault's, or a seeded row the Dreamer may not read.
+#[doc(hidden)]
+pub fn seed_claim(
+    vault: &Vault,
+    now_ms: u64,
+    predicate: &str,
+    value: rmpv::Value,
+) -> Result<SeededRecheck> {
     let now_sec = now_ms / 1_000;
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -308,9 +328,9 @@ pub fn seed(vault: &Vault, now_ms: u64) -> Result<SeededRecheck> {
     )?;
     let claim = EntityId::now();
     let mut body = ClaimBody::new(
-        "profile.name",
+        predicate,
         ClaimSubject::Entity(subject),
-        rmpv::Value::from("Ada Lovelace"),
+        value,
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,

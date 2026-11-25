@@ -6,6 +6,7 @@ use super::{
     ledger::{append, append_inspected, state_in},
     model::*,
     principals::automated_signing_allowed,
+    sign_check_in::{SignAct, SignCheckIn, sign_check_in_in_txn},
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
@@ -14,10 +15,32 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SigningAction {
     Load,
-    SaveField { field: String, value: FieldValue },
-    Complete { consent: bool, next: Option<String> },
-    Reject { reason: String },
+    SaveField {
+        field: String,
+        value: FieldValue,
+    },
+    /// The signer reviews what they sign (UETA section 10): the frozen items
+    /// and their own field values as they stand now. Complete needs a review
+    /// that still stands; the signer's next saved field voids it.
+    Review,
+    Complete {
+        consent: bool,
+        next: Option<String>,
+        /// The check-in an earlier Complete's `check_in_pending` named, 32
+        /// hex: once it is approved, the Complete that names it spends it
+        /// and signs (ROLES-CHECKIN 2k6b).
+        #[serde(default)]
+        check_in_ref: Option<String>,
+    },
+    Reject {
+        reason: String,
+    },
 }
+
+/// The e-sign rule pack's UETA section 10 row (`esign.rules`; ARCH-0064
+/// :235, :241): the review-before-complete step, non-waivable. A Complete
+/// with no standing review is refused citing it.
+const UETA_REVIEW_ROW: &str = "us.ueta.s10.review_before_complete";
 #[doc(hidden)]
 pub use oneiron_verb_wire::blob_artifact::esign::ceremony::{
     SigningOutcome, SigningPage, SigningSealedItem,
@@ -53,6 +76,7 @@ impl SigningAction {
         match self {
             Self::Load => "load",
             Self::SaveField { .. } => "save_field",
+            Self::Review => "review",
             Self::Complete { .. } => "complete",
             Self::Reject { .. } => "reject",
         }
@@ -165,7 +189,10 @@ pub(super) fn sign(
 /// The PDFs a signing act's writer lays fields on, inspected before it (FIX
 /// 9609): none for an act that appends no field event, or that the writer's
 /// own capability, ceiling, turn, status, consent or D6 gates refuse in this
-/// read snapshot, so a refused call parses nothing.
+/// read snapshot, so a refused call parses nothing. The review gate is not
+/// mirrored: a Review landing between this read and the writer would leave
+/// the Complete the writer admits uninspected, parsed inside the writer. A
+/// Complete refused for want of a review is inspected here, outside it.
 fn inspect_act_pages(
     vault: &Vault,
     token: &EsignCapability,
@@ -232,7 +259,9 @@ fn inspect_act_pages(
                 }
                 EventFields::Signer(recipient.id.clone())
             }
-            SigningAction::Load | SigningAction::Reject { .. } => return Ok(None),
+            SigningAction::Load | SigningAction::Review | SigningAction::Reject { .. } => {
+                return Ok(None);
+            }
         };
         Ok(Some((state, fields)))
     })
@@ -496,21 +525,51 @@ impl Vault {
                         )?;
                     }
                 }
-                SigningAction::Complete { consent, next } => {
+                SigningAction::Review => {
+                    state = append(
+                        self,
+                        txn,
+                        document,
+                        EsignEvent::Reviewed {
+                            recipient: recipient.id.clone(),
+                            items: state.document.items.clone(),
+                            values: state.recipient_values(&recipient.id),
+                            authentication_method: caller.authentication_method(),
+                        },
+                        actor,
+                        now,
+                    )?;
+                }
+                SigningAction::Complete {
+                    consent,
+                    next,
+                    check_in_ref,
+                } => {
                     if !consent {
                         return Ok(SigningOutcome::ConsentRequired);
                     }
-                    let evidence = EsignSigningEvidence {
+                    let mut evidence = EsignSigningEvidence {
                         authentication_method: caller.authentication_method(),
                         disclosure_version: None,
                         consent: *consent,
                         intent: EsignSigningIntent::Direct,
+                        check_in: None,
                     };
                     let automated = recipient.automated || caller == SigningCaller::Agent;
                     if automated && recipient.natural_person.is_some() {
                         return Err(invalid(
                             "a natural-person recipient signs in person, never through an agent",
                         ));
+                    }
+                    // UETA section 10: the signer reviewed the frozen items
+                    // and these values, and has saved nothing since; a
+                    // person's Complete needs a person's review. A held sign
+                    // act lands later only on these values, while this
+                    // review still stands.
+                    if !state.review_stands(&recipient.id, caller.authentication_method()) {
+                        return Ok(SigningOutcome::ReviewRequired {
+                            row: UETA_REVIEW_ROW.to_owned(),
+                        });
                     }
                     if automated
                         && !automated_signing_allowed(
@@ -533,12 +592,39 @@ impl Vault {
                             &recipient,
                             next,
                             evidence.clone(),
+                            state.recipient_values(&recipient.id),
                             &actor,
                             now,
                         )?;
                         return Ok(SigningOutcome::HeldForOwner {
                             held_at: held.held_at,
                         });
+                    }
+                    // 2k6b: a credentialed person's sign act as the vault's
+                    // principal checks in after every gate above, over the
+                    // values it signs, so a spent check-in and the signature
+                    // commit together.
+                    let values = state.recipient_values(&recipient.id);
+                    let judged = sign_check_in_in_txn(
+                        self,
+                        txn,
+                        &SignAct {
+                            caller,
+                            verified_actor,
+                            document,
+                            recipient: &recipient,
+                            values: &values,
+                            check_in_ref: check_in_ref.as_deref(),
+                        },
+                    )?;
+                    match judged {
+                        SignCheckIn::Unjudged => {}
+                        SignCheckIn::Go(decision) => evidence.check_in = Some(decision),
+                        SignCheckIn::Waits(id) => {
+                            return Ok(SigningOutcome::CheckInPending {
+                                check_in_ref: id.to_hex(),
+                            });
+                        }
                     }
                     sign(
                         self,

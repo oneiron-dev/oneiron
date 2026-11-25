@@ -41,7 +41,7 @@ pub(crate) fn entity_doc_slots_in(
 /// `false`, with nothing read past the head, when no head of `entity`
 /// stands: the NOTE and text-plane path compacts it as before. Otherwise its
 /// cached document is held out while one writer checks the head and any
-/// legal hold again (OF-470). An erased entity's document goes through the
+/// cooperative restriction again (OF-470). An erased entity's document goes through the
 /// erase door. A live one keeps its whole history, text, version,
 /// generation and state vector: only its pending updates fold into a full
 /// snapshot. An unerased NOTE is the NOTE purge door's, left as it is.
@@ -85,12 +85,8 @@ fn compact_in_txn(
     {
         return Ok(());
     }
-    // A held document keeps its bytes and its history (FIX 10160).
-    store.reject_legal_holds_in_txn(
-        txn,
-        &[*entity],
-        &crate::store::legal_hold::HoldActor::TIMER,
-    )?;
+    // A restricted document keeps its bytes and its history (FIX 10160).
+    store.reject_restricted_records_in_txn(txn, &[*entity])?;
     if erased {
         return storage::erase_in_txn(store, txn, entity);
     }

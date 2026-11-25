@@ -16,6 +16,7 @@ use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
 use crate::store::{ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan};
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use rmpv::Value;
 
 // ---------------------------------------------------------------------------
@@ -438,6 +439,67 @@ fn erased_in_txn(
         ResponseRead::ErasedOpaque(_) => Ok(true),
         ResponseRead::Present(raw) => Ok(STEP_STATE.decode_value(raw)?.erased),
     }
+}
+
+/// Whether an erase took the step-state row of `(attempt_id, step_hash)`
+/// (KS-2B1, FIX 6226 and 6227): its erased skeleton, or the erased marker of
+/// a retired response. Such a step is over and is never asked again.
+pub(super) fn step_state_erased(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    erased_in_txn(vault, &rtxn, &(attempt_id, *step_hash))
+}
+
+/// The step-state key of the mark [`mark_follow_up_pending`] writes for the
+/// step `original`: a fingerprint of its own, never a request's content hash,
+/// so no step's own write or delete touches it.
+fn follow_up_mark(original: &[u8; 32]) -> [u8; 32] {
+    Fingerprint::of_parts(
+        purposes::dreamer::STEP_FOLLOW_UP_PENDING,
+        &[original.as_slice()],
+    )
+    .into_bytes()
+}
+
+/// Marks, in `ctx`'s attempt, that the step `original` was refused and that
+/// its caller's one follow-up request is pending: a later run of the try
+/// sends that follow-up in place of `original`, whose refused reply was
+/// never saved, so a follow-up a budget trap, the finalize window or a
+/// closed offer held back is not lost to a fresh `original` (#10269 review,
+/// round 2). The mark is a step-state row with no payload, stamped with the
+/// step's owners; it holds no model words and is never recovered as a
+/// reply.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn mark_follow_up_pending(
+    ctx: &DurableStepContext<'_>,
+    original: &[u8; 32],
+) -> Result<()> {
+    step_state_write_owned(
+        ctx.vault,
+        ctx.attempt_id,
+        &follow_up_mark(original),
+        StepProgression::Started,
+        StepStateOwners::of(ctx),
+        None,
+        None,
+        ctx.now_ms,
+    )
+    .map(|_| ())
+}
+
+/// Whether [`mark_follow_up_pending`] marked `original` in `ctx`'s attempt.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn follow_up_pending(ctx: &DurableStepContext<'_>, original: &[u8; 32]) -> Result<bool> {
+    Ok(step_state_read(ctx.vault, ctx.attempt_id, &follow_up_mark(original))?.is_some())
 }
 
 pub(super) fn step_state_delete(

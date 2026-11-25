@@ -9,28 +9,9 @@ use crate::verbs::skills::SkillLibraryLifecycle;
 use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_store::write_envelope::skill_source::SkillPackageFormat;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// `self.skills.package`'s package format on the wire: how source fields relate
-/// to native metadata, as the stored package declares it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillPackageFormatView {
-    Folder,
-    Native,
-}
-
-impl From<oneiron_store::write_envelope::skill_source::SkillPackageFormat>
-    for SkillPackageFormatView
-{
-    fn from(format: oneiron_store::write_envelope::skill_source::SkillPackageFormat) -> Self {
-        match format {
-            oneiron_store::write_envelope::skill_source::SkillPackageFormat::Folder => Self::Folder,
-            oneiron_store::write_envelope::skill_source::SkillPackageFormat::Native => Self::Native,
-        }
-    }
-}
 
 /// `self.skills.package`'s record on the wire: every `SkillRecord` field.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -62,5 +43,7 @@ pub struct SkillPackageView {
     pub record: SkillPackageRecordView,
     pub files: Vec<SkillLibraryFile>,
     pub capabilities: SkillCapabilityView,
-    pub format: SkillPackageFormatView,
+    /// How source fields relate to native metadata, as the stored package
+    /// declares it.
+    pub format: SkillPackageFormat,
 }

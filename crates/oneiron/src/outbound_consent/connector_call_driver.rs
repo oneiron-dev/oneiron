@@ -287,6 +287,7 @@ impl Vault {
                 WebProviderKey::Backend | WebProviderKey::Secret { .. } => {
                     return Ok(ConnectorToolSchema::Approved {
                         input_schema: web_tool_input_schema(web_tool)?,
+                        output_schema: None,
                         destructive_hint: false,
                     });
                 }
@@ -318,6 +319,7 @@ impl Vault {
             self.connector_tool_class(&governed.key, &route, tool, read)?;
         Ok(ConnectorToolSchema::Approved {
             input_schema: governed.schema,
+            output_schema: governed.output_schema,
             destructive_hint,
         })
     }
@@ -336,7 +338,9 @@ impl Vault {
     ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
         // A custody record a host presented for an earlier send is never
         // this pass's; the record and grant this call names are its own.
+        // Nor is the session manifest of a runner an earlier send went to.
         drop(host.take_sent_custody());
+        drop(host.take_session_manifest());
         // A pass ends a call's budget wait; this pass's step names any new
         // one (FIX 8686).
         let was_paced = pending.paced_until.take().is_some();
@@ -463,6 +467,7 @@ impl Vault {
                     result,
                     result_absence,
                     budget_steering,
+                    session_manifest: host.take_session_manifest(),
                 };
                 settle(
                     call_ref,
@@ -628,7 +633,7 @@ impl Vault {
                     self,
                     intent,
                     IntentEscalationReason::BindingInvalid,
-                    crate::unix_millis_now(),
+                    crate::unix_seconds_now(),
                 )?;
                 let settled = SettledConnectorCall::Refused {
                     decision_ref: None,
@@ -822,6 +827,7 @@ impl Vault {
             key_id,
             key,
             schema,
+            output_schema: _,
         } = match governed {
             Ok(governed) => governed,
             Err(stop) => {

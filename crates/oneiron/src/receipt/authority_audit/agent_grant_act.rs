@@ -17,7 +17,7 @@
 //! (FIX 22193). Every withdrawal this vault applied leaves that mark, so a
 //! mint a signed withdrawal ended reads so too, beside that revoke row.
 
-use super::{AuthorityAuditEventKind, AuthorityAuditRow, OpFields};
+use super::{AuthorityAuditEventKind, OpFields};
 use crate::Vault;
 use crate::error::Result;
 use oneiron_authority::authority::{
@@ -57,11 +57,12 @@ pub(super) fn classify(
     )
 }
 
-/// Pairs `row`, the row of `op`, with this vault's mark of a withdrawal: when
-/// `op` is an owner's signed mint the fold counts and `vault` marks the Grant
-/// it made withdrawn (`Vault::signed_mint_withdrawal_marked_in_txn`), the
-/// row's detail reads [`WITHDRAWN_MINT_DETAIL`]. Any other row is left as it
-/// is.
+/// Pairs the row of `op`, whose `detail` this sets, with this vault's mark
+/// of a withdrawal: when `op` is an owner's signed mint the fold counts
+/// (`fold_valid`) and `vault` marks the Grant it made withdrawn
+/// (`Vault::signed_mint_withdrawal_marked_in_txn`), the row's detail reads
+/// [`WITHDRAWN_MINT_DETAIL`]. Any other row is left as it is. A stored row
+/// and a cold row whose body the adopted image carries pair alike.
 ///
 /// # Errors
 /// A store failure reading the marks.
@@ -69,13 +70,14 @@ pub(super) fn pair_marked_withdrawal(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     op: &AuthorityOp,
-    row: &mut AuthorityAuditRow,
+    fold_valid: bool,
+    detail: &mut Option<String>,
 ) -> Result<()> {
     if let AuthorityOp::AgentGrantAct(record) = op
-        && row.fold_valid
+        && fold_valid
         && vault.signed_mint_withdrawal_marked_in_txn(txn, record)?
     {
-        row.detail = Some(WITHDRAWN_MINT_DETAIL.to_owned());
+        *detail = Some(WITHDRAWN_MINT_DETAIL.to_owned());
     }
     Ok(())
 }

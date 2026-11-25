@@ -23,22 +23,21 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{Store, StoreRead};
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 use oneiron_authority::federation::Scope;
 use oneiron_contracts::affect::Vad;
 
 use super::disclosable_set::DisclosableSet;
-use super::disclosure_tier;
 use super::home::{ConversationHome, home_admits_claim, home_clearance_in, vault_id_hex};
 use super::model_channel::DisclosureBand;
 use super::scope_codec::{DisclosureScope, disclosure_scope_body_value};
 
 use super::tier_classification::{
     DISCLOSURE_TIER_VALUE_TIER_A, DisclosureMode, DisclosureTier, PREDICATE_DISCLOSURE_SCOPE,
-    PREDICATE_DISCLOSURE_TIER, is_disclosure_claim_predicate, read_stored_claim_body,
-    validate_disclosure_claim_structure,
+    PREDICATE_DISCLOSURE_TIER, disclosure_tier_bound, is_disclosure_claim_predicate,
+    read_stored_claim_body, validate_disclosure_claim_structure,
 };
 
 /// Enforcement-truth per-counterparty-contact disclosure scope row; one O(1)
@@ -320,6 +319,11 @@ pub struct DisclosureContext {
     home: ConversationHome,
     /// The owner's home clearance for a home elsewhere (`None` here).
     home_band: Option<DisclosureBand>,
+    /// The session ref of the live room stretch a context pack is bound to,
+    /// when every interlocutor of the pack is seated in its room: Tier-A
+    /// rule 1 skips that stretch's own rows ([`disclosure_tier_bound`]).
+    /// `None` everywhere else, so rule 1 stays absolute.
+    bound_stretch: Option<String>,
 }
 
 impl DisclosureContext {
@@ -370,6 +374,7 @@ impl DisclosureContext {
             interlocutors: set,
             home: ConversationHome::ThisVault,
             home_band: None,
+            bound_stretch: None,
         })
     }
 
@@ -395,7 +400,43 @@ impl DisclosureContext {
             interlocutors: set,
             home: ConversationHome::ThisVault,
             home_band: None,
+            bound_stretch: None,
         })
+    }
+
+    /// [`Self::resolve`] read in the caller's snapshot `txn` (fix list row
+    /// 17645): the same mode and the same [`DisclosableSet`] fold, opening
+    /// no snapshot of its own, for a caller that judges rows in that one
+    /// read beside it.
+    pub(crate) fn resolve_in(vault: &Vault, txn: &RoTxn<'_>, set: InterlocutorSet) -> Result<Self> {
+        Ok(Self {
+            mode: DisclosureMode::from_set(&set),
+            disclosable: DisclosableSet::resolve_with_once_in(
+                vault,
+                txn,
+                &set,
+                false,
+                &BTreeMap::new(),
+            )?,
+            interlocutors: set,
+            home: ConversationHome::ThisVault,
+            home_band: None,
+            bound_stretch: None,
+        })
+    }
+
+    /// This clamp for a context pack bound to the live room stretch
+    /// `session_ref` names, whose every interlocutor is seated in that room
+    /// (ARCH-0052 D5 rule 1, ROOM-PACK-STRETCH-TIER-A = A): the stretch's
+    /// own rows are not Tier A by rule 1, so they meet the audience's
+    /// clearance (P7) as a base row does. Only the stretch's own bind sets
+    /// it ([`crate::off_record::RoomPackSession::bind_disclosure`]).
+    #[must_use]
+    pub(crate) fn bound_to_stretch(self, session_ref: &str) -> Self {
+        Self {
+            bound_stretch: Some(session_ref.to_owned()),
+            ..self
+        }
     }
 
     /// This assembly serves a conversation homed in `home` (DEC-0006
@@ -468,11 +509,29 @@ impl DisclosureContext {
     ///
     /// This reads the store alone, so it does not follow a scope summary's
     /// words or a copy of them to their sources: it is the pre-filter of a
-    /// bounded channel that holds no vault. A disclosure decision asks
+    /// read that holds no vault (a run's shared filter config). A disclosure
+    /// decision and a bounded result channel's admission ask
     /// [`Self::admits_in`].
     pub(crate) fn admits(
         &self,
         store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
+        self.admits_from(&store.read(), rtxn, id, entity_type, claim_body)
+    }
+
+    /// [`Self::admits`] on the content `store` reads: a context pack's own
+    /// read, a room's overlay ∪ base when the pack names a room. A pack bound
+    /// to a room stretch judges each row the stretch stages by what the room
+    /// holds for it, its row, edges and record-scope position, none of which
+    /// base holds (ARCH-0052 §2). Authority stays the vault's: rule 1's live
+    /// registry, owner Tier-A marks and retained-copy pacts are read on base.
+    pub(crate) fn admits_from(
+        &self,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
@@ -510,12 +569,12 @@ impl DisclosureContext {
     /// the other carriers `scope_summary::word_sources_in` names hold other
     /// records' words, so the row is admitted only with each of them, through
     /// nested copies, each judged by this context's own row test (Tier A, a
-    /// TURN's messages, the clearance, retained copies). A copy's summary
-    /// (`scope_summary::carried_summary`) is walked too: its own row is
-    /// judged by that test, and so is every record its words came from, its
-    /// registered dependencies included, so a Tier-A summary, or a Tier-A
-    /// record it was edited from, withholds every reply and header that
-    /// carries its words. Words whose sources no longer resolve, or that
+    /// TURN's messages, the clearance, retained copies). A copy's summary is
+    /// one of the copy's word sources: its own row is judged by that test,
+    /// and so is every record its words came from, its registered
+    /// dependencies included, so a Tier-A summary, or a Tier-A record it was
+    /// edited from, withholds every reply and header that carries its
+    /// words. Words whose sources no longer resolve, or that
     /// cycle, are refused. A claim passed with `claim_body` is judged on
     /// that body's words, the revision a caller serves, not on its live
     /// row's. The owner alone in a conversation of this vault is admitted
@@ -532,10 +591,51 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
-        let store = &vault.store;
-        if !self.admits(store, rtxn, id, entity_type, claim_body)? {
-            return Ok(false);
-        }
+        self.admits_in_from(
+            vault,
+            &vault.store.read(),
+            rtxn,
+            id,
+            entity_type,
+            claim_body,
+        )
+    }
+
+    /// [`Self::admits_in`] on the content `store` reads, each row judged as
+    /// [`Self::admits_from`] judges it: a room pack's overlay ∪ base. The
+    /// row's word sources are named through that view
+    /// (`scope_summary::word_sources_through_in`); the walk past them reads
+    /// the vault, so a source the overlay alone holds does not resolve there
+    /// and the row is refused.
+    pub(crate) fn admits_in_from(
+        &self,
+        vault: &Vault,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
+        Ok(self.admits_from(store, rtxn, id, entity_type, claim_body)?
+            && self.word_sources_admitted_in_from(vault, store, rtxn, id, claim_body)?)
+    }
+
+    /// [`Self::admits_in_from`]'s test of the sources of the record's words,
+    /// the record's own row aside: whether the audience may read every row
+    /// its words came from (a summary's covers, a copy's summary). The
+    /// caller judges the row itself. A bounded window that judges its rows
+    /// with their status aside ([`Self::admits_row_ignoring_status`]) asks
+    /// this beside that test, so a row whose words come from a row the
+    /// audience may not read takes no place in it. True when nothing is
+    /// clamped.
+    pub(crate) fn word_sources_admitted_in_from(
+        &self,
+        vault: &Vault,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
         if !self.clamps() {
             return Ok(true);
         }
@@ -552,8 +652,9 @@ impl DisclosureContext {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend(encode_claim_body(body)?);
         }
-        match crate::scope_summary::word_sources_in(vault, rtxn, id, &raw)? {
-            // Its own words: its row, and a TURN's messages, passed above.
+        match crate::scope_summary::word_sources_through_in(vault, store, rtxn, id, &raw)? {
+            // Its own words: its row, and a TURN's messages, which the
+            // caller's test of the row judges.
             crate::scope_summary::WordSources::Own => return Ok(true),
             crate::scope_summary::WordSources::Unresolved => return Ok(false),
             crate::scope_summary::WordSources::From(_) => {}
@@ -563,9 +664,9 @@ impl DisclosureContext {
             rtxn,
             *id,
             &raw,
-            super::disclosable_set::CarriedSummary::Follow,
             |record, record_raw| {
-                // The row itself passed above, judged with its claim body.
+                // The row itself is the caller's to judge, with its claim
+                // body ([`Self::admits_in_from`]).
                 if record == *id {
                     return Ok(true);
                 }
@@ -576,16 +677,42 @@ impl DisclosureContext {
         )
     }
 
+    /// [`Self::admits_from`]'s test of the record's own row with the row's
+    /// status aside: whether the audience could read the record were it
+    /// live (a deleted, stale or unsurfaceable claim is judged as a live
+    /// one), not what it was written from. A run asks it before its claim
+    /// status gate judges a row for a clamped pack, so the gate records no
+    /// suppression of a row the audience may not read whatever its status.
+    pub(crate) fn admits_row_ignoring_status(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> Result<bool> {
+        if !self.clamps() {
+            return Ok(true);
+        }
+        self.admits_row(store, rtxn, id, entity_type, None)
+    }
+
     /// [`Self::admits`] for one record's own row, not what it was written from.
     fn admits_row(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
-        if !Self::below_tier_a(store, rtxn, id, entity_type, claim_body)? {
+        if !Self::below_tier_a_bound(
+            store,
+            rtxn,
+            id,
+            entity_type,
+            claim_body,
+            self.bound_stretch.as_deref(),
+        )? {
             return Ok(false);
         }
         if !self.home_admits(store, rtxn, id, entity_type, claim_body)? {
@@ -611,6 +738,8 @@ impl DisclosureContext {
         // A pin may serve another CLAIM revision than the live row: the
         // audience admits the body served as well, by its own stamp, so a
         // live rewrite to public never carries an older sensitive body out.
+        // The served body sits where the row does, so it is judged on the
+        // same content view (a room stretch's position is in the overlay).
         if entity_type == ENTITY_TYPE_CLAIM
             && let Some(body) = claim_body
         {
@@ -622,17 +751,19 @@ impl DisclosureContext {
                 return Ok(false);
             }
         }
-        super::retained_copy_admits(store, rtxn, id, entity_type, claim_body, &row.body)
+        super::retained_copy_admits(store.base(), rtxn, id, entity_type, claim_body, &row.body)
     }
 
     /// DEC-0006 `#home-clearance`: homed in another vault, a CLAIM stamped
     /// with any band but public is admitted only at or under the owner's
     /// home clearance for that vault (`home::claim_home_band`). A claim
     /// whose body cannot be read is refused there. Every other row, and
-    /// every row of a conversation homed here, passes.
+    /// every row of a conversation homed here, passes. The body is read on
+    /// the content view the row is judged on, a room stretch's overlay ∪
+    /// base when the pack names a room.
     fn home_admits(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
@@ -660,7 +791,7 @@ impl DisclosureContext {
     /// (closed, unconsented or stale), the live-record rule the scoped lane
     /// applies. A claim whose body does not decode is withdrawn too.
     fn live(
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
@@ -694,6 +825,19 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
+        Self::below_tier_a_bound(&store.read(), rtxn, id, entity_type, claim_body, None)
+    }
+
+    /// [`Self::below_tier_a`] in an assembly bound to the live room stretch
+    /// `bound_stretch` names, as [`disclosure_tier_bound`] judges it.
+    fn below_tier_a_bound(
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+        bound_stretch: Option<&str>,
+    ) -> Result<bool> {
         // Signed claim-history controls are transport/audit bytes, never
         // agent-visible content to any audience but the owner alone.
         // Scoped sync has its own authenticated closure and effective-scope door.
@@ -724,7 +868,10 @@ impl DisclosureContext {
         } else {
             None
         };
-        Ok(disclosure_tier(store, rtxn, id, entity_type, body)? != DisclosureTier::TierA)
+        Ok(
+            disclosure_tier_bound(store, rtxn, id, entity_type, body, bound_stretch)?
+                != DisclosureTier::TierA,
+        )
     }
 
     /// Whether the clamp admits every MESSAGE `PartOf` `turn`. An erased
@@ -732,7 +879,7 @@ impl DisclosureContext {
     /// erasing write, so it does not count.
     fn admits_turn_messages(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         turn: &EntityId,
     ) -> Result<bool> {
@@ -744,7 +891,7 @@ impl DisclosureContext {
             if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.admits(store, rtxn, &message, ENTITY_TYPE_MESSAGE, None)? {
+            if !self.admits_from(store, rtxn, &message, ENTITY_TYPE_MESSAGE, None)? {
                 return Ok(false);
             }
         }

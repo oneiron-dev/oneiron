@@ -31,8 +31,8 @@ use super::chain::{covers_effect, grant_in_txn, grant_role, membership_role_in_t
 use super::mode::CheckInMode;
 use super::policy::CheckInScope;
 use super::resolve::{
-    CheckInAnswer, CheckInRequest, ResolvedMode, UnsureTest, WaitReason, check_in_with_mode,
-    resolve_mode,
+    CheckInAnswer, CheckInRequest, GoReason, ModeSource, ResolvedMode, UnsureTest, WaitReason,
+    check_in_with_mode, resolve_mode,
 };
 use super::role_preset::RolePreset;
 use super::verb_act_class::{VerbActClass, verb_act_class};
@@ -58,6 +58,28 @@ impl UnsureTest for AlwaysUnsure {
     }
 }
 
+/// What a door that composes its own ladder passes for an agent's act
+/// (pass 34, 6.5: the workload pin door): the mode its own rows give, the
+/// standing row that covers the act (rung 0), and its unsure test (rung 1).
+/// [`DoorRungs::NONE`] is every other door's: no row, no standing row, and
+/// always unsure.
+#[derive(Clone, Copy)]
+pub(crate) struct DoorRungs<'a> {
+    pub(crate) explicit_mode: Option<CheckInMode>,
+    pub(crate) standing_row: Option<&'a str>,
+    pub(crate) unsure: &'a dyn UnsureTest,
+}
+
+impl DoorRungs<'static> {
+    /// No explicit row, no standing row, and an unsure test that is never
+    /// sure.
+    pub(crate) const NONE: Self = Self {
+        explicit_mode: None,
+        standing_row: None,
+        unsure: &AlwaysUnsure,
+    };
+}
+
 /// Why an act goes, as the verbs report it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AskGo {
@@ -68,6 +90,10 @@ pub(crate) enum AskGo {
     /// The caller acts on its own proof: the vault owner, or a role whose
     /// cell is its own proof.
     OwnProof,
+    /// Rung 0: a standing row the door passed covers the act.
+    StandingRow,
+    /// Rung 1: the door's unsure test was sure.
+    Sure,
 }
 
 impl AskGo {
@@ -77,6 +103,8 @@ impl AskGo {
             Self::Read => "read",
             Self::NeverAsk => "never_ask",
             Self::OwnProof => "own_proof",
+            Self::StandingRow => "standing_row",
+            Self::Sure => "sure",
         }
     }
 }
@@ -184,63 +212,145 @@ pub(crate) fn judge_ask_in_txn(
                 holds_power,
             },
             VerbActClass::Act(act),
-        ) => judge_act(agent, grant, role, holds_power, act),
+        ) => judge_act(agent, grant, role, holds_power, act, &DoorRungs::NONE),
         (Asker::Unpowered { roles, why }, VerbActClass::Act(act)) => {
-            let proposes = roles.iter().any(|&role| {
-                resolve_mode(&CheckInRequest {
-                    act,
-                    role,
-                    holds_power: false,
-                    explicit_mode: None,
-                    standing_row: None,
-                }) == ResolvedMode::Propose
-            });
-            if proposes || act == ActClass::Erase {
-                AskVerdict::Propose { act }
-            } else {
-                AskVerdict::Absent { why }
-            }
+            unpowered_act(&roles, why, act)
         }
     })
 }
 
-/// An agent's act under its Grant's `role`: the role's default (no explicit
-/// row yet), the catastrophe and fixed rows, then the always-unsure test.
+/// Judges an agent's act at a door that names the act's class itself
+/// (ROLES-CHECKIN P2.6a, room_add; P25-SHAPE Q4 = A: the door names the
+/// typed class), in `txn`: [`judge_ask_in_txn`]'s judgment of a verb row of
+/// class `act`, with the role it read, under the door's `rungs`. The power
+/// is the agent's live owner Grant that lists `verb`, as there
+/// (P26-AGENT-GRANT = A). Writes nothing; the unsure test runs no model in
+/// here, since a door's test only reads what it was handed.
+///
+/// # Errors
+///
+/// As [`judge_ask_in_txn`], but for the verb row's name.
+pub(crate) fn judge_door_act_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    verb: &str,
+    act: ActClass,
+    scope: &CheckInScope,
+    rungs: &DoorRungs<'_>,
+) -> MemoryResult<(AskVerdict, RolePreset)> {
+    Ok(match asker_in_txn(memory, txn, verb, scope)? {
+        Asker::Owner => (
+            AskVerdict::Go {
+                reason: AskGo::OwnProof,
+                act: Some(act),
+            },
+            RolePreset::Owner,
+        ),
+        Asker::Agent {
+            agent,
+            grant,
+            role,
+            holds_power,
+        } => (judge_act(agent, grant, role, holds_power, act, rungs), role),
+        Asker::Unpowered { roles, why } => (
+            unpowered_act(&roles, why, act),
+            roles.first().copied().unwrap_or(RolePreset::Delegate),
+        ),
+    })
+}
+
+/// The live owner Grant listing `verb` that gives `memory`'s agent caller the
+/// power, read in `txn`, or `None`: the grant an agent's ask records when
+/// its act asks whatever its mode, as a closed room's add does (ARCH-0082
+/// #closed-room).
+///
+/// # Errors
+///
+/// As [`judge_door_act_in_txn`].
+pub(crate) fn agent_door_grant_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    verb: &str,
+    scope: &CheckInScope,
+) -> MemoryResult<Option<EntityId>> {
+    Ok(match asker_in_txn(memory, txn, verb, scope)? {
+        Asker::Agent {
+            grant,
+            holds_power: true,
+            ..
+        } => Some(grant),
+        Asker::Owner | Asker::Agent { .. } | Asker::Unpowered { .. } => None,
+    })
+}
+
+/// An agent's act with no Grant that gives it the power: a proposal where
+/// a role it reads may propose the act (an erase always may), else absent.
+fn unpowered_act(roles: &[RolePreset], why: &'static str, act: ActClass) -> AskVerdict {
+    let proposes = roles.iter().any(|&role| {
+        resolve_mode(&CheckInRequest {
+            act,
+            role,
+            holds_power: false,
+            explicit_mode: None,
+            standing_row: None,
+        }) == ResolvedMode::Propose
+    });
+    if proposes || act == ActClass::Erase {
+        AskVerdict::Propose { act }
+    } else {
+        AskVerdict::Absent { why }
+    }
+}
+
+/// An agent's act under its Grant's `role`: the role's default, or the
+/// door's explicit mode, the catastrophe and fixed rows, then the door's
+/// standing row and unsure test ([`DoorRungs::NONE`] for every door but the
+/// workload pin's).
 fn judge_act(
     agent: EntityId,
     grant: EntityId,
     role: RolePreset,
     holds_power: bool,
     act: ActClass,
+    rungs: &DoorRungs<'_>,
 ) -> AskVerdict {
     let request = CheckInRequest {
         act,
         role,
         holds_power,
-        explicit_mode: None,
-        standing_row: None,
+        explicit_mode: rungs.explicit_mode,
+        standing_row: rungs.standing_row,
     };
     match resolve_mode(&request) {
-        ResolvedMode::Mode { mode, .. } => match check_in_with_mode(act, mode, None, &AlwaysUnsure)
-        {
-            CheckInAnswer::Wait(reason) => AskVerdict::Wait {
-                asker: agent,
-                grant,
-                act,
-                mode,
-                reason,
-            },
-            // No standing row is passed and the unsure test is never sure,
-            // so only `NeverAsk` goes here.
-            CheckInAnswer::Go(_) => AskVerdict::Go {
-                reason: AskGo::NeverAsk,
-                act: Some(act),
-            },
-            CheckInAnswer::Propose => AskVerdict::Propose { act },
-            CheckInAnswer::Absent => AskVerdict::Absent {
-                why: ROLE_LACKS_POWER,
-            },
-        },
+        ResolvedMode::Mode { mode, source } => {
+            // No stop-asking row reaches a catastrophe or fixed row.
+            let standing = match source {
+                ModeSource::CatastropheRow | ModeSource::FixedRow => None,
+                _ => rungs.standing_row,
+            };
+            match check_in_with_mode(act, mode, standing, rungs.unsure) {
+                CheckInAnswer::Wait(reason) => AskVerdict::Wait {
+                    asker: agent,
+                    grant,
+                    act,
+                    mode,
+                    reason,
+                },
+                CheckInAnswer::Go(reason) => AskVerdict::Go {
+                    reason: match reason {
+                        GoReason::NeverAsk => AskGo::NeverAsk,
+                        GoReason::StandingRow(_) => AskGo::StandingRow,
+                        GoReason::Sure => AskGo::Sure,
+                        GoReason::OwnProof => AskGo::OwnProof,
+                    },
+                    act: Some(act),
+                },
+                CheckInAnswer::Propose => AskVerdict::Propose { act },
+                CheckInAnswer::Absent => AskVerdict::Absent {
+                    why: ROLE_LACKS_POWER,
+                },
+            }
+        }
         ResolvedMode::OwnProof => AskVerdict::Go {
             reason: AskGo::OwnProof,
             act: Some(act),

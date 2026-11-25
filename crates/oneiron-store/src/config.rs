@@ -195,6 +195,18 @@ pub struct VaultConfig {
     /// Both presets declare a computer; a phone's host sets
     /// `authority::MachineDeviceClass::Phone`.
     pub machine_device_class: oneiron_authority::authority::MachineDeviceClass,
+    /// The name this install reports for itself in the owner's machine list
+    /// (FIX [DEVICE-DISPLAY-NAME]), as its host declares it: a phone's own
+    /// name (iOS `UIDevice.name`), a computer's host name. Display only: no
+    /// authority, policy or routing code reads it, and it never enters the
+    /// signed machine profile. The owner's own name for the machine wins over
+    /// it; with neither, the list names the machine by its model, else its
+    /// class. `None` in both presets.
+    pub machine_reported_name: Option<String>,
+    /// The model this install reports for itself (`MacBook Air`, `iPhone`,
+    /// `Linux server`), as its host declares it; display only, as
+    /// [`Self::machine_reported_name`] is. `None` in both presets.
+    pub machine_reported_model: Option<String>,
     /// The maximum tier (OF-570): the page seal every LMDB page of the vault
     /// is sealed under. `None` opens a plain vault; a sealed one opens only
     /// with its seal (`world_keys::unlock_page_seal`), and a new one
@@ -209,6 +221,10 @@ pub struct VaultConfig {
     /// vault's owner to choose checkpoint roots without the host. Never an
     /// owner setting or a request credential; false in both presets.
     pub allow_host_checkpoint_opt_out: bool,
+    /// Where an owner's legal holds keep their sealed copies: outside the
+    /// vault directory, so a vault erase never reaches them. `None` in both
+    /// presets; placing an owner's hold without one is refused.
+    pub legal_hold_store: Option<PathBuf>,
     /// The most bytes this vault's folder may hold on disk, as its host
     /// declares it (`[import] storage_cap_bytes`; ARCH-0027
     /// #archive-precheck): an archive an import unpacks stops at the room
@@ -397,9 +413,12 @@ impl VaultConfig {
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
+            machine_reported_name: None,
+            machine_reported_model: None,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            legal_hold_store: None,
             storage_cap_bytes: None,
         }
     }
@@ -435,9 +454,12 @@ impl VaultConfig {
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: oneiron_contracts::limit_ask::EngineLimits::default(),
             machine_device_class: oneiron_authority::authority::MachineDeviceClass::Computer,
+            machine_reported_name: None,
+            machine_reported_model: None,
             page_seal: None,
             checkpoint_host_holds: crate::checkpoint_host_recipient::HostHoldsSealing::NotHosted,
             allow_host_checkpoint_opt_out: false,
+            legal_hold_store: None,
             storage_cap_bytes: None,
         }
     }
@@ -457,6 +479,16 @@ impl VaultConfig {
             }
             None => crate::checkpoint_host_recipient::HostHoldsSealing::RecipientMissing,
         };
+        self
+    }
+
+    /// This config, its owner-hold sealed copies kept under `store`: a
+    /// directory outside the vault directory, so a vault erase never
+    /// reaches them. Set by the host; placing an owner's hold without one
+    /// is refused.
+    #[must_use]
+    pub fn with_legal_hold_store(mut self, store: PathBuf) -> Self {
+        self.legal_hold_store = Some(store);
         self
     }
 }

@@ -36,6 +36,8 @@ pub enum SelfEffect {
     Speak,
     /// `self.think(text)` (ONE-1686) — reasoning the run keeps for itself.
     Think,
+    /// `self.think.aloud(text)` (L8-25) — reasoning the run publishes.
+    ThinkAloud,
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
@@ -95,8 +97,11 @@ pub enum SelfEffect {
     RepoCheckoutBind,
     RepoExport,
     /// The run's read of its own symbol declaration (NO-DOOR
-    /// SYMBOL-LEASE-OBSERVATION). Last, so no earlier label moves.
+    /// SYMBOL-LEASE-OBSERVATION).
     RepoSymbolsObserve,
+    /// `vault.jobs.orders.wait`: a wait on one work order's first started
+    /// attempt or its end (pass 34 row Q1). Last, so no earlier label moves.
+    JobsOrdersWait,
 }
 
 impl SelfEffect {
@@ -123,6 +128,7 @@ impl SelfEffect {
             Self::Context => "self.context",
             Self::Speak => "self.speak",
             Self::Think => "self.think",
+            Self::ThinkAloud => "self.think.aloud",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
             Self::InferenceDefaultsRead => "self.inference_defaults.read",
@@ -158,6 +164,7 @@ impl SelfEffect {
             Self::RepoCheckoutBind => "self.code.checkout.bind",
             Self::RepoExport => "self.code.export",
             Self::RepoSymbolsObserve => "self.code.symbols.observe",
+            Self::JobsOrdersWait => "vault.jobs.orders.wait",
         }
     }
 
@@ -172,6 +179,7 @@ impl SelfEffect {
         match self {
             Self::Speak => Some(ExecutorUtterance::Speak),
             Self::Think => Some(ExecutorUtterance::Think),
+            Self::ThinkAloud => Some(ExecutorUtterance::ThinkAloud),
             Self::Express => Some(ExecutorUtterance::Express),
             Self::AgentsSpawn
             | Self::AgentsPut
@@ -219,6 +227,7 @@ impl SelfEffect {
             | Self::RepoCheckoutBind
             | Self::RepoExport
             | Self::RepoSymbolsObserve => None,
+            Self::JobsOrdersWait => None,
         }
     }
 

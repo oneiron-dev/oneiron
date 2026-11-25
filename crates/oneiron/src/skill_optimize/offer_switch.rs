@@ -16,7 +16,7 @@ use super::{EvalSeat, OfferModelPin};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::names_no_actor;
 use crate::embed::{BindingMoveState, BindingNotApplied, BindingSource};
-use crate::llm::manifest::read_manifest;
+use crate::llm::manifest::{ModelManifest, read_manifest};
 use crate::model_binding::{MODEL_ROLES, ModelBinding, ModelRole};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -115,28 +115,33 @@ pub fn seat_model_role(seat: &EvalSeat) -> Option<ModelRole> {
         .find(|role| model_role_seat(*role) == *seat)
 }
 
-/// Binds the approved stock model to the seat's role, in the transaction
-/// that records the owner's switch approval. The new binding keeps the old
+/// What an approved stock switch binds, read with nothing written: the
+/// seat's role, the manifest that holds it, the binding the switch replaces
+/// and the one it puts there.
+struct SwitchBinding {
+    role: ModelRole,
+    manifest: ModelManifest,
+    previous: ModelBinding,
+    binding: ModelBinding,
+}
+
+/// [`SwitchBinding`] for a switch of `seat` from the offer's incumbent
+/// `from` to the offered `to`, read in `txn`. The new binding keeps the old
 /// one's slot, tier and disposition; the old model's narrower routes name
 /// other models and do not carry over.
 /// # Errors
 /// A seat with no model role or no binding, a binding that is no longer the
 /// offer's incumbent, an offered model the registry no longer serves at the
-/// offered revision, a manifest the new binding does not validate in, or
-/// storage errors.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn apply_switch_in_txn(
+/// offered revision, or storage errors.
+fn switch_binding_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    owner: EntityId,
-    offer: &EntityId,
+    txn: &heed::RoTxn<'_>,
     seat: &EvalSeat,
     from: &OfferModelPin,
     to: &OfferModelPin,
-    at: u64,
-) -> Result<OfferSwitchReceipt> {
+) -> Result<SwitchBinding> {
     let role = seat_model_role(seat).ok_or(invalid("the offer's seat names no model role"))?;
-    let mut manifest = read_manifest(&vault.store, txn)?.ok_or(invalid(
+    let manifest = read_manifest(&vault.store, txn)?.ok_or(invalid(
         "configure the model manifest before switching a seat",
     ))?;
     let previous = manifest
@@ -172,6 +177,71 @@ pub(super) fn apply_switch_in_txn(
         disposition: previous.disposition.clone(),
         reads_audio: previous.reads_audio && row.catalog.supports(&LlmCapability::AudioInput),
     };
+    Ok(SwitchBinding {
+        role,
+        manifest,
+        previous,
+        binding,
+    })
+}
+
+/// Refuses a stock switch of `seat` from `from` to `to` that would not bind
+/// now, read in `txn` with nothing written: every refusal
+/// [`apply_switch_in_txn`] gives before its first write. The training offer
+/// ask's answer door reads it before a device asks the owner to approve the
+/// switch (`task_verb::training_offer_ask::approved_act_stands_in`).
+/// # Errors
+/// As [`switch_binding_in_txn`]; a manifest the new binding does not
+/// validate in or, for a seat that binds in the approval's own write, one
+/// the pinned teacher probe approval does not admit; storage errors.
+pub(super) fn switch_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat: &EvalSeat,
+    from: &OfferModelPin,
+    to: &OfferModelPin,
+) -> Result<()> {
+    let SwitchBinding {
+        role,
+        mut manifest,
+        binding,
+        ..
+    } = switch_binding_in_txn(vault, txn, seat, from, to)?;
+    manifest.roles.insert(role, binding);
+    if role == ModelRole::RetrievalEmbedder {
+        // The embedder's binding is staged: its stage validates the
+        // manifest it would hold, then writes its space move.
+        manifest.validate()?;
+    } else {
+        vault.admitted_model_manifest_approval_in_txn(txn, &manifest, None)?;
+    }
+    Ok(())
+}
+
+/// Binds the approved stock model to the seat's role, in the transaction
+/// that records the owner's switch approval ([`switch_binding_in_txn`]).
+/// # Errors
+/// A seat with no model role or no binding, a binding that is no longer the
+/// offer's incumbent, an offered model the registry no longer serves at the
+/// offered revision, a manifest the new binding does not validate in, or
+/// storage errors.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn apply_switch_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+    offer: &EntityId,
+    seat: &EvalSeat,
+    from: &OfferModelPin,
+    to: &OfferModelPin,
+    at: u64,
+) -> Result<OfferSwitchReceipt> {
+    let SwitchBinding {
+        role,
+        mut manifest,
+        previous,
+        binding,
+    } = switch_binding_in_txn(vault, txn, seat, from, to)?;
     let application = if role == ModelRole::RetrievalEmbedder {
         let source = BindingSource::Offer {
             offer: *offer,

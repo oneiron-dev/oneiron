@@ -35,6 +35,8 @@ mod resume;
 mod settle;
 mod standing_offer;
 mod types;
+#[cfg(oneiron_test_support)]
+mod wait_facts_door;
 
 pub(crate) use self::binding::{
     CodeConsentDraft, attach_code_consent_ask_in_txn, code_consent_binds,
@@ -49,6 +51,8 @@ pub(crate) use self::replay::{
     consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::resume::code_consent_run_origin_digest_for_test;
 pub use self::resume::{
     CodeConsentParkedRun, CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer,
 };
@@ -71,6 +75,10 @@ pub(crate) use self::types::{
 
 pub(crate) use self::rebind_types::{
     CodeConsentRebind, CodeConsentRebindProposal, CodeConsentRebindTarget,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wait_facts_door::{
+    answer_code_consent_wait_for_test, settle_code_consent_wait_refused_for_test,
 };
 
 #[doc(hidden)]

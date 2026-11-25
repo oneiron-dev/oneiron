@@ -15,7 +15,10 @@ With neither, a machine dials no one.
      --machine yours > link.txt
    ```
 
-   Omit `--scope`: `/ws` admits only an owner-grade slip. `--machine` takes `yours`,
+   Omit `--scope` and keep `--actor-class human`: `/ws` full replication admits only the owner's
+   own full slip. An owner device paired with no actor class loses owner acts and does not
+   sync, and a slip narrowed by `--scope` does not sync.
+   `--machine` takes `yours`,
    `work_school` or `rented`; only the owner, in person, answers for a machine. The link lasts
    an hour and is spent once redeemed.
 
@@ -32,8 +35,15 @@ With neither, a machine dials no one.
    vault, so a copy of the vault never carries the credential:
    `<state>/oneiron/device-sync/<vault id>.json` (the home, its URL, node id and pin) and
    `<vault id>.cred` (the credential, mode 600). `<state>` is `$XDG_STATE_HOME`, else
-   `$HOME/.local/state`, or the parent of `keystore.dir` when that is set. Remove both to enrol
-   again with a new link.
+   `$HOME/.local/state`, or the parent of `keystore.dir` when that is set.
+
+   To enrol an enrolled machine again with a new link (for example so that the owner can grant
+   it a protocol its first enrolment's pairing did not cover), run the same command with
+   `--replace`. The two files are replaced only once the home has answered and the new ones are
+   written, so a re-enrolment that fails leaves the old enrolment as it was. When the home moves
+   the machine's mesh binding to a new pairing, its answer names the new slip in
+   `mesh_bind.pairing_slip_id`; on each other machine that bound this one, the owner binds it
+   again on that slip (`vault.mesh.bind_machine`), which keeps the grants it holds there.
 
 3. Start `oneiron serve`. It dials the enrolled home with no `[device_sync]` section. The
    connection's first authority catch-up adopts the pinned checkpoint, and it brings this
@@ -78,7 +88,12 @@ primary = false
   - `credential_file`: one line, `v2.cred.<slip>.<seed>`. That is the slip without its
     `v2.slip.` prefix, then the 64-hex seed of the key the slip is bound to. This is the form the
     MCP bridge's `--credential-file` reads. The file must be mode 600; on macOS it must also carry
-    no ACL entry (`chmod -N`). `/ws` admits only a logged, holder-bound owner-grade slip, so it
+    no ACL entry (`chmod -N`), and on an NFSv4 mount no list entry may grant anyone but its owner
+    (`OWNER@`) read or write (`nfs4_getfacl`). On an SMB mount, or an NFSv4 mount that reports no
+    list (a server without list support), it is refused unless the host owner sets
+    `ONEIRON_CREDENTIAL_FILES_TRUST_NETWORK_FS_ACL=1`, which trusts every user the server's list
+    admits. On an NFSv3 mount the mode decides, as on a local file system. `/ws` admits only a
+    logged, holder-bound owner-grade slip, so it
     refuses the scoped slips that `token agent` and `token read` mint.
 - `home_node_id`: the home's sync node id, which `oneiron whoami` prints on the home as
   `sync_node_id`. This is not its MACHINE id. Absent, the enrolled home's. Named (or enrolled),
@@ -144,8 +159,8 @@ carries the slip, a holder proof with its key, and this machine's own proof.
   the renewal is tried again after 30 seconds, doubling up to 15 minutes. The old slip works
   until it runs out.
 - A refusal (an expired or revoked slip, or a machine the home no longer counts as the owner's)
-  stands until serve starts again. Pair the machine again: with the vault stopped, remove both
-  device-sync files and run `oneiron device enrol` with a new link.
+  stands until serve starts again. Pair the machine again: with the vault stopped, run
+  `oneiron device enrol --replace` with a new link.
 
 ## Publication diagnostics
 
@@ -191,6 +206,12 @@ section is yours to repair. The field is left out when no such section rides.
   on without the connection.
 - `device sync` warnings for connection errors. The connection retries with backoff up to a
   minute.
+- `the home refuses this credential a sync socket (403)` when the home accepts the credential
+  but refuses it the socket. The connection does not retry on that credential, and neither does
+  its probe of the home while it syncs with another machine: that session ends too. What the
+  device writes meanwhile waits in its offline queue. A renewed credential opens a new
+  connection. A home whose own store fails while it checks the owner
+  answers 500 instead, and the connection retries with backoff.
 - `device credential renewed`, with the seconds until the next renewal; `device sync reconnects
   on its renewed credential` after it.
 - `device credential renewal failed (<reason>)` with the seconds until it tries again, and
@@ -263,10 +284,15 @@ sets it.
 
 At start, serve opens every entry and keeps its handle. Each active membership gets its own
 window manager and sync connection; one bad environment is logged and skipped without stopping
-the others. Once an hour, the lifecycle tick asks the engine's verified leave door for each
-active membership. A refusal or failed check is not a leave. Only a verified notice detaches the
-lane. The environment's own durable leave receipt is the record; there is no second registry in
-the vault and no new side table.
+the others. A membership whose lane slip names a member grant that the environment holds no live
+copy of yet starts no lane: a member's lane never falls back to full replication, and member sync
+without that live copy is not built. Once an hour, the lifecycle tick asks the engine's verified leave door for each
+active membership. A refusal or failed check is not a leave. A home that answers the lane's
+upgrade with 401 or 403 makes that check due at the next round. After a 403, which refuses that
+credential the socket, the lane does not redial on it while this serve runs; the next serve
+dials again on the same credential. Only a verified
+notice detaches the lane. The environment's own durable leave receipt is the record; there is
+no second registry in the vault and no new side table.
 
 The handle stays open after a confirmed leave. The person can still read retained removal
 archives, and the deferred orphan-body collection written by the leave purge can finish. The

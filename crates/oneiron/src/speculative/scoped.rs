@@ -73,6 +73,7 @@ impl SpeculativeReadScope {
             .corpus(self.corpus.clone())
             .authority_filter(candidates)
             .scoped_note_reader(self.key.clone())
+            .statistics_read(&lane)
             .filter_candidates(&admitted)
             .gate_candidates(&conversation_gate);
         if let Some(facet) = &self.facet {

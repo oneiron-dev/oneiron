@@ -2,6 +2,10 @@
 //! and a draft never widens past it. Only an authenticated owner sets the
 //! override columns; the key's holder may only tighten its own rows.
 use super::slate_revision::SlateRevisionCause;
+use crate::batch::export::archive_side_install::{ArchivedSideRowOutcome, decode_archived_row};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
@@ -149,6 +153,13 @@ pub struct SlateToolManifest {
     /// Unresolved refs/composition are refused rather than guessed at admission.
     #[serde(default)]
     pub resolved_input_schema: Option<serde_json::Value>,
+    /// Host-resolved output declaration (MCP `outputSchema`; L8-31): what the
+    /// caller is told a delivered reply holds, so the owner's stamp covers it
+    /// as it covers the input. Absent when the connector declares none, and
+    /// then absent from the serialized row, so a slate without one hashes as
+    /// it did before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_output_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub trigger: Option<String>,
     pub destroys: bool,
@@ -169,6 +180,13 @@ pub struct SlateToolManifest {
     /// Spend row that preauthorizes reserves it before the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price: Option<super::ConnectorSpendEstimate>,
+    /// Where a call goes, for a tool translated from an API document
+    /// (L8-31): the method and the path under the installed endpoint. It is
+    /// in the stamped row, so the owner's stamp covers where each tool
+    /// sends; a changed path drifts the slate. Absent for an MCP tool, and
+    /// then absent from the serialized row, so its hash is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<super::HttpOperation>,
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.
@@ -479,12 +497,11 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
     }
     let mut seen = BTreeSet::new();
     for row in rows {
-        // A draft grants nothing: it may pre-fill a tighter setting, but only
-        // the owner's own override can choose `always allow`.
-        if !seen.insert(&row.tool)
-            || row.rationale.trim().is_empty()
-            || row.rationale.len() > 4096
-            || row.disposition == SlateDisposition::AlwaysAllow
+        // A draft grants nothing: only the owner's stamp accepts a row. It
+        // pre-fills `always allow` only from the engine's drafter, under the
+        // owner's `connectors.slate.drafts_offer_always_allow` and his past
+        // rulings; an outside draft never does (`store_connector_slate`).
+        if !seen.insert(&row.tool) || row.rationale.trim().is_empty() || row.rationale.len() > 4096
         {
             return Err(invalid());
         }
@@ -501,6 +518,10 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
                     .resolved_input_schema
                     .as_ref()
                     .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
+                    || tool
+                        .resolved_output_schema
+                        .as_ref()
+                        .is_some_and(|schema| !is_resolved_schema(schema))
                     || row.data_class != tool.row_data_class()
                 {
                     return Err(invalid());
@@ -512,8 +533,9 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
 }
 
 /// Whether the declaration itself reaches further than before: a richer data
-/// class, new headers or effects, a changed trigger, or a schema that is not a
-/// provable restriction.
+/// class, new headers or effects, a changed trigger, an input schema that is
+/// not a provable restriction, or any change to the output schema the caller
+/// reads (L8-31).
 pub(in crate::connector_key) fn declaration_expands(
     old: &SlateToolManifest,
     next: &SlateToolManifest,
@@ -536,6 +558,10 @@ pub(in crate::connector_key) fn declaration_expands(
             old.resolved_input_schema.as_ref(),
             next.resolved_input_schema.as_ref(),
         )
+        || next.resolved_output_schema != old.resolved_output_schema
+        // Where the tool sends (L8-31): a new method or path is a new
+        // destination the owner never stamped.
+        || next.http != old.http
 }
 
 /// Whether the elicitation declaration reaches further than before: a
@@ -640,6 +666,32 @@ pub(in crate::connector_key) fn scan_slates_in_txn(
     GRANT_SLATE.scan(store, txn)
 }
 
+/// Owner restore of archived connector grant slates (SIDE-4b G6): decode, then always hold back.
+///
+/// The slate's binding table travels in no disposition and connector keys are refused on
+/// restore, so an installed slate could never bind: destination registration mints a new slate
+/// id and binds that one instead. Every decodable slate row is therefore held back as a
+/// non-portable reference; rows that fail the canonical decode keep the decode reason. No
+/// writes: neither the slate nor its binding is installed.
+pub(crate) fn land_archived_connector_slate_rows_in_txn(
+    _vault: &Vault,
+    _txn: &mut heed::RwTxn<'_>,
+    _permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&GRANT_SLATE, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok(_) => {
+                ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::NonPortableReference)
+            }
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
 /// A fresh, unstamped slate over validated draft rows. `prior` and `reask`
 /// are set only for a drift delta, which also carries the prior facet rows.
 pub(in crate::connector_key) fn new_slate(
@@ -728,6 +780,15 @@ impl Vault {
     ) -> Result<EntityId> {
         let manifest = SlateManifest::new(manifest.to_vec(), false);
         let rows: Vec<SlateDraftRow> = serde_json::from_str(model_output).map_err(|_| invalid())?;
+        // An outside draft may pre-fill a tighter setting, but never `always
+        // allow`: only the owner's own override, or the engine's drafter
+        // under his key and his past rulings, puts it on a row.
+        if rows
+            .iter()
+            .any(|row| row.disposition == SlateDisposition::AlwaysAllow)
+        {
+            return Err(invalid());
+        }
         let elicitation = manifest.elicitation.as_ref().map(|declaration| {
             super::slate_draft::rule_draft_elicitation_row(
                 declaration,
@@ -972,6 +1033,7 @@ mod tests {
         let mut manifest = Vec::new();
         for name in ["read", "send", "header", "legacy.ask"] {
             manifest.push(SlateToolManifest {
+                resolved_output_schema: None,
                 name: name.into(),
                 data_class: SlateDataClass::Personal,
                 header_parameters: if name == "header" {
@@ -988,6 +1050,7 @@ mod tests {
                 read_only: false,
                 idempotent: false,
                 price: None,
+                http: None,
             });
         }
         let rows = draft_connector_slate(&manifest);
@@ -1083,6 +1146,7 @@ mod revision_tests {
 
     fn tool(name: &str) -> SlateToolManifest {
         SlateToolManifest {
+            resolved_output_schema: None,
             name: name.into(),
             data_class: SlateDataClass::Public,
             header_parameters: vec![],
@@ -1096,6 +1160,7 @@ mod revision_tests {
             read_only: false,
             idempotent: false,
             price: None,
+            http: None,
         }
     }
     fn slate(manifest: Vec<SlateToolManifest>, rows: Vec<SlateDraftRow>) -> ConnectorGrantSlate {

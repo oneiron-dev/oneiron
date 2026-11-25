@@ -82,6 +82,7 @@ fn a_snapshot_pages_versioned_rows_and_marks_the_rows_learned_after_its_open() -
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
@@ -273,6 +274,7 @@ fn a_caller_is_paged_only_the_rows_it_reads() -> TestResult {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
@@ -493,6 +495,7 @@ mod withheld_row {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )?;
         Ok(agent)

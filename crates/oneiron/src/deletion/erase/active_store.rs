@@ -63,7 +63,8 @@ impl Vault {
     ) -> Result<(bool, Vec<EntityId>, crate::deletion::ErasureEffects)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::store::base_agent::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
@@ -108,9 +109,7 @@ impl Vault {
                 // entries' retirement staged; another record's stays (KS-3).
                 self.store.stage_known_history_erase_in_txn(wtxn, id)?;
                 crate::store::secret_handle_labels::erase_secret_handle_label_in_txn(
-                    &self.store,
-                    wtxn,
-                    id,
+                    self, wtxn, id,
                 )?;
                 crate::store::secret_payment_marks::erase_secret_payment_mark_in_txn(
                     &self.store,
@@ -242,6 +241,10 @@ impl Vault {
             // A MACHINE claim's signed history controls go with it.
             let (existed, had_vector, had_graph_mutation, neighbors) =
                 crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
+            // A project's unbound home room leaves no standing answer wider
+            // than its rows; no batch runs before the purge's caller commits
+            // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+            self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
             crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
             crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
             let note_removed = crate::note::erase::purge(self, wtxn, id)?;
@@ -297,8 +300,9 @@ impl Vault {
         erase: bool,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, bool, bool)> {
-        // A soft erase scrubs the body, so a hold refuses it too.
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        // A soft erase scrubs the body, so a restriction refuses it too.
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::store::base_agent::guard_actor_delete(id)?;
         self.store
@@ -400,6 +404,9 @@ impl Vault {
             .deindex_project_room(&self.store, wtxn, id, &|txn, id| {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
+        // A project's unbound home room leaves no standing answer wider than
+        // its rows (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS).
+        self.mark_answers_in_narrowed_rooms_in_txn(wtxn)?;
         if room_had_graph {
             ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &room_neighbors)?;
             crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
@@ -504,6 +511,18 @@ impl Vault {
             id,
             header.entity_type,
         )?;
+        // The floors waiting on the row are sealed before its lineage goes
+        // (#9289 Opus review 3 P1-A). A soft tombstone replayed over a soft
+        // scrub already applied here is no new erase, and seals nothing: a
+        // fact that waits for good on the row stays readable to the owner
+        // (FLOOR-OLD-FACT-ERASED-INPUT = A; #10108 review P1-3). An erase
+        // seals it, as the ruling says.
+        if erase
+            || !(IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
+                && ROW_DELETION_FENCE.contains(&self.store, &*wtxn, &HexId(*id))?)
+        {
+            crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
+        }
         crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
@@ -538,6 +557,7 @@ impl Vault {
         crate::llm::deindex_dreamer_step_claim(&self.store, wtxn, id)?;
         // The scrub below truncates a PERSON body in place: its party keys go first.
         crate::store::person_party_keys::reindex_person_party_keys(&self.store, wtxn, id, None)?;
+        crate::task_verb::speaker_entry_index::reindex_speaker_entry(&self.store, wtxn, id, None)?;
         // An epoch summary keeps its keyframe, so the next mint numbers above it.
         let scrubbed = crate::compaction::erased_form(&entity_record);
         self.store

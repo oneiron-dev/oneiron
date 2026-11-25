@@ -13,8 +13,13 @@
 //! body. The credential is presented only inside the credential door, as
 //! the call host presents it. No proxy, no redirects, bounded replies, and
 //! any server request on a reply stream is refused.
+//!
+//! A stdio connector's tools are listed from a child started for that
+//! listing alone, under the runner fence, and stopped after it (row L8-27);
+//! it presents no credential. Its probes run over HTTP only.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
@@ -24,14 +29,21 @@ use oneiron::connector_key::qualification::{
     QualificationFailure,
 };
 use oneiron::connector_key::{
-    ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
+    ConnectorToolSchema, HttpOperation, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
+use oneiron::secret_custody::SentValue;
 use oneiron::skill_hub::pack_catalog::PackObservedTool;
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use crate::config::ConnectorHostConfig;
+use crate::connector_call_host::stdio::upstream::{UpstreamDoors, UpstreamHeld, UpstreamIssuer};
+use crate::connector_call_host::stdio::{StdioChild, StdioStart};
+use crate::connector_translate::TranslatedTool;
+use crate::runtime::runner_fence::HostRunnerFence;
 
 /// The MCP revision discovery asks for.
 const REQUESTED_REVISION: &str = "2026-07-28";
@@ -56,8 +68,10 @@ const METHOD_HEADER: &str = "mcp-method";
 const NAME_HEADER: &str = "mcp-name";
 const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 
+mod api_document;
 mod issuer_rerun;
 mod reply_read;
+pub(crate) use api_document::list_tools;
 pub(crate) use issuer_rerun::rerun_issuer_dependents;
 use reply_read::read_reply;
 
@@ -88,12 +102,27 @@ pub(crate) fn with_credential<T>(
     connector: &str,
     work: impl FnOnce(Option<&HeaderValue>) -> T,
 ) -> oneiron::Result<T> {
+    with_credential_and_value(vault, secret_ref, connector, |auth, _| work(auth))
+}
+
+/// [`with_credential`], with the value the header was built from beside it,
+/// for a `work` that clears that value from what it hands on: a stdio
+/// connector's listing child, which must never see it.
+pub(crate) fn with_credential_and_value<T>(
+    vault: &Vault,
+    secret_ref: Option<&str>,
+    connector: &str,
+    work: impl FnOnce(Option<&HeaderValue>, Option<&SentValue<'_>>) -> T,
+) -> oneiron::Result<T> {
     let Some(secret_ref) = secret_ref else {
         if let Some(reason) = vault.connector_issuer_hold_for_connector(connector)? {
             return Err(refused(reason));
         }
-        return Ok(work(None));
+        return Ok(work(None, None));
     };
+    // The text each copy of the value becomes: the record's handle.
+    let custody = vault.resolve_secret_ref(secret_ref).ok().flatten();
+    let text = vault.secret_clear_text(custody.as_ref());
     let effector = format!("connector:{connector}");
     let mut work = Some(work);
     let mut done = None;
@@ -105,7 +134,7 @@ pub(crate) fn with_credential<T>(
         }
         let header = authorization_header(value)?;
         if let Some(work) = work.take() {
-            done = Some(work(Some(&header)));
+            done = Some(work(Some(&header), Some(&SentValue::new(value, &text))));
         }
         Ok(())
     })?;
@@ -141,12 +170,19 @@ pub(crate) struct ListedTool {
     description: String,
     /// The literal declaration; resolution happens on the engine side.
     input_schema: Value,
+    /// The literal `outputSchema`, when the tool declares an object one
+    /// (L8-31). It types the caller's reply and grants nothing; the engine
+    /// drops one it cannot resolve.
+    output_schema: Option<Value>,
     read_only: bool,
     destructive: bool,
     open_world: bool,
     idempotent: bool,
     /// The result types the connector declares for the probe suite.
     result_types: BTreeSet<String>,
+    /// Where a call goes, for a tool translated from an API document
+    /// (L8-31); `None` for an MCP tool, whose call is a `tools/call`.
+    http: Option<HttpOperation>,
 }
 
 impl ListedTool {
@@ -187,12 +223,35 @@ impl ListedTool {
                 .unwrap_or_default()
                 .to_owned(),
             input_schema: input_schema.clone(),
+            output_schema: tool
+                .get("outputSchema")
+                .filter(|schema| schema.is_object())
+                .cloned(),
             read_only,
             destructive: !read_only && hint("destructiveHint") != Some(false),
             open_world: hint("openWorldHint") != Some(false),
             idempotent: hint("idempotentHint") == Some(true),
             result_types,
+            http: None,
         })
+    }
+
+    /// An operation an API document declares (L8-31). The document is the
+    /// declaration: its method sets the hints, as `connector_translate`
+    /// reads them, and no probe result type is declared.
+    pub(crate) fn translated(tool: TranslatedTool) -> Self {
+        Self {
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+            output_schema: tool.output_schema,
+            read_only: tool.read_only,
+            destructive: tool.destructive,
+            open_world: true,
+            idempotent: tool.idempotent,
+            result_types: BTreeSet::new(),
+            http: Some(tool.http),
+        }
     }
 
     /// What the suite lists: the literal schema, the declared result types,
@@ -226,6 +285,7 @@ impl ListedTool {
             permissions,
             triggers: BTreeSet::new(),
             input_schema: self.input_schema.clone(),
+            output_schema: self.output_schema.clone(),
         }
     }
 
@@ -262,9 +322,13 @@ pub(crate) fn self_declared_hints_warning(tools: &[ListedTool]) -> Option<String
 
 /// What one discovery found.
 pub(crate) struct Discovery {
-    /// The revision `initialize` negotiated.
+    /// The revision `initialize` negotiated, or an API document's OpenAPI
+    /// version (`openapi-3.1`).
     pub(crate) revision: String,
     pub(crate) tools: Vec<ListedTool>,
+    /// What an API document holds that became no tool, each with why
+    /// (L8-31); empty for an MCP listing.
+    pub(crate) skipped: Vec<String>,
 }
 
 /// Lists the connector's tools at `endpoint`: at `pinned` once the key has
@@ -280,17 +344,127 @@ pub(crate) fn discover(
     Ok(Discovery {
         revision: std::mem::take(&mut session.revision),
         tools,
+        skipped: Vec::new(),
     })
+}
+
+/// Where a stdio connector's listing child reaches its upstream API: this
+/// server's upstream doors and loopback origin, the header the listing
+/// presents and the value it was built from, if any, and the vault whose
+/// issuer bindings of the connector the door reads again before each send.
+pub(crate) struct ListingDoor<'a> {
+    pub(crate) doors: &'a Arc<UpstreamDoors>,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) auth: Option<&'a HeaderValue>,
+    /// Cleared from each answer the listing child gets.
+    pub(crate) value: Option<&'a SentValue<'a>>,
+    pub(crate) vault: &'a Arc<Vault>,
+}
+
+/// Lists the tools of the stdio connector `name`, installed as `installed`,
+/// from a child started under `fence` for this listing alone: at `pinned`
+/// once the key has pinned a revision, else at the newest one both sides
+/// speak. A connector that names an upstream gets a door of its own for
+/// the listing, holding `door`'s header, the value to clear from each
+/// answer and the connector's issuer bindings. The child is stopped after
+/// it, and its door closed.
+pub(crate) fn discover_stdio(
+    fence: Option<&HostRunnerFence>,
+    name: &str,
+    installed: &ConnectorHostConfig,
+    pinned: Option<&str>,
+    door: &ListingDoor<'_>,
+) -> oneiron::Result<Discovery> {
+    let accepts = |answered: &str| {
+        pinned.map_or(SPOKEN_REVISIONS.contains(&answered), |pinned| {
+            pinned == answered
+        })
+    };
+    let opened = match (&installed.upstream, door.origin) {
+        (None, _) => None,
+        (Some(upstream), Some(origin)) => Some(door.doors.open(name, upstream, origin)),
+        (Some(_), None) => {
+            return Err(refused(
+                "a stdio connector that names an upstream needs this server's loopback listener \
+                 for its door",
+            ));
+        }
+    };
+    // Held until the child is stopped: locals drop in reverse order.
+    let _held = opened.as_ref().map(|(ticket, _)| {
+        ticket.hold(UpstreamHeld::new(
+            door.auth.cloned(),
+            door.value.map(SentValue::keep),
+            Some(UpstreamIssuer::Connector {
+                vault: Arc::clone(door.vault),
+                connector: name.to_owned(),
+            }),
+        ))
+    });
+    let mut child = StdioChild::start(&StdioStart {
+        name,
+        connector: installed,
+        fence,
+        requested_revision: pinned.unwrap_or(REQUESTED_REVISION),
+        accepts_revision: &accepts,
+        // A listing is bounded by its handshake and page bounds.
+        stop: None,
+        upstream_env: opened.as_ref().map(|(_, env)| env),
+    })
+    .map_err(refused)?;
+    let tools = list_pages(|_, params| child.request("tools/list", params, HANDSHAKE_TIMEOUT))
+        .map_err(refused)?;
+    Ok(Discovery {
+        revision: child.revision().to_owned(),
+        tools,
+        skipped: Vec::new(),
+    })
+}
+
+/// Every `tools/list` page, in the connector's order, however many it
+/// lists (FIX 8196): `page` sends the request numbered as its first
+/// argument, with its params, and returns its result. Only a cursor the
+/// connector already gave, which would page forever, is refused.
+fn list_pages(
+    mut page: impl FnMut(u64, Value) -> Result<Value, &'static str>,
+) -> Result<Vec<ListedTool>, &'static str> {
+    let mut tools = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut seen = std::collections::BTreeSet::new();
+    for number in 0u64.. {
+        let params = cursor
+            .take()
+            .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
+        let result = page(number, params)?;
+        let listed = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .ok_or("a tools/list page has no tools")?;
+        for tool in listed {
+            tools.push(ListedTool::parse(tool)?);
+        }
+        match result.get("nextCursor").and_then(Value::as_str) {
+            Some(next) if !seen.insert(next.to_owned()) => {
+                return Err("the connector's tools/list cursor repeats");
+            }
+            Some(next) => cursor = Some(next.to_owned()),
+            None => break,
+        }
+    }
+    Ok(tools)
 }
 
 /// The listed tools resolved as the retained manifest resolves them, with
 /// the elicitation declaration MCP admission makes for every connector it
 /// admits (ARCH-0072). Elicitation is a client capability: `initialize`
 /// carries no server flag for it, and the call host decides per revision
-/// whether to declare it on the wire.
+/// whether to declare it on the wire. Tools an API document declares
+/// (L8-31) are each one HTTP request, which never asks a question: they
+/// declare none.
 pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnectorManifest> {
+    let asks = !tools.iter().any(|tool| tool.http.is_some());
     ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect())
-        .map(|manifest| manifest.with_elicitation(true))
+        .map(|manifest| manifest.with_elicitation(asks))
 }
 
 /// What the owner names for one tool at registration. MCP declares none of it.
@@ -340,6 +514,7 @@ pub(crate) fn slate_manifest(
                 data_class: class.data_class,
                 header_parameters: header_parameters(&row.input_schema),
                 resolved_input_schema: Some(row.input_schema.clone()),
+                resolved_output_schema: row.output_schema.clone(),
                 trigger: None,
                 destroys: listed.destructive,
                 spends: class.spends,
@@ -348,6 +523,7 @@ pub(crate) fn slate_manifest(
                 read_only: listed.read_only,
                 idempotent: listed.idempotent,
                 price: class.price,
+                http: listed.http.clone(),
             })
         })
         .collect();
@@ -660,20 +836,13 @@ impl<'a> Session<'a> {
         read_reply(response, id, &mut |request: &Value| self.refuse(request))
     }
 
-    /// Every `tools/list` page, in the connector's order, however many it
-    /// lists (FIX 8196). Each page has its own timeout; only a cursor the
-    /// connector already gave, which would page forever, is refused.
+    /// Every `tools/list` page ([`list_pages`]), each with its own
+    /// timeout.
     fn list_tools(
         &self,
         mut requests: Option<&mut Vec<ProbeCapturedRequest>>,
     ) -> Result<Vec<ListedTool>, &'static str> {
-        let mut tools = Vec::new();
-        let mut cursor: Option<String> = None;
-        let mut seen = std::collections::BTreeSet::new();
-        for page in 0u64.. {
-            let params = cursor
-                .take()
-                .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
+        list_pages(|page, params| {
             let body = json!({
                 "jsonrpc": "2.0",
                 "id": format!("tools/list:{page}"),
@@ -694,26 +863,11 @@ impl<'a> Session<'a> {
                 .execute(built)
                 .map_err(|_| "the connector did not answer")?;
             let message = self.answer(response, &body["id"])?;
-            let result = message
+            message
                 .get("result")
                 .cloned()
-                .ok_or("the connector answered with an error")?;
-            let listed = result
-                .get("tools")
-                .and_then(Value::as_array)
-                .ok_or("a tools/list page has no tools")?;
-            for tool in listed {
-                tools.push(ListedTool::parse(tool)?);
-            }
-            match result.get("nextCursor").and_then(Value::as_str) {
-                Some(next) if !seen.insert(next.to_owned()) => {
-                    return Err("the connector's tools/list cursor repeats");
-                }
-                Some(next) => cursor = Some(next.to_owned()),
-                None => break,
-            }
-        }
-        Ok(tools)
+                .ok_or("the connector answered with an error")
+        })
     }
 
     /// Answers one server request on a reply stream with a refusal: this
@@ -751,5 +905,66 @@ impl Drop for Session<'_> {
             end = end.header(AUTHORIZATION, auth.clone());
         }
         drop(end.send());
+    }
+}
+
+#[cfg(test)]
+mod output_schema_tests {
+    use super::{ListedTool, resolve, slate_manifest};
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    /// L8-31: a listed tool's object `outputSchema` reaches the resolved
+    /// manifest and the owner's slate row resolved; a non-object one is not
+    /// read, and a tool without one carries none.
+    #[test]
+    fn a_listed_output_schema_reaches_the_slate_row_resolved() {
+        let tools: Vec<ListedTool> = [
+            json!({
+                "name": "search",
+                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {"hits": {"type": "array", "items": {"$ref": "#/$defs/hit"}}},
+                    "$defs": {"hit": {"type": "object", "properties": {"id": {"type": "string"}}}}
+                },
+                "annotations": {"readOnlyHint": true}
+            }),
+            json!({
+                "name": "delete_item",
+                "inputSchema": {"type": "object"},
+                "outputSchema": "not a schema"
+            }),
+        ]
+        .iter()
+        .map(|tool| ListedTool::parse(tool).expect("a listed tool"))
+        .collect();
+        let resolved = resolve(&tools).expect("the listing resolves");
+        let slate = slate_manifest(&resolved, &tools, &BTreeMap::new());
+        let row = |name: &str| {
+            slate
+                .tools
+                .iter()
+                .find(|row| row.name == name)
+                .expect("a slate row")
+        };
+        assert_eq!(
+            row("search").resolved_output_schema,
+            Some(json!({
+                "type": "object",
+                "properties": {"hits": {"type": "array", "items": {
+                    "type": "object", "properties": {"id": {"type": "string"}}
+                }}}
+            }))
+        );
+        assert_eq!(row("delete_item").resolved_output_schema, None);
+        assert_eq!(
+            resolved
+                .tools()
+                .iter()
+                .map(|tool| (tool.name.as_str(), tool.output_schema.is_some()))
+                .collect::<Vec<_>>(),
+            vec![("delete_item", false), ("search", true)]
+        );
     }
 }

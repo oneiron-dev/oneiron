@@ -79,6 +79,7 @@ impl Fixture {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )?;
         assert_eq!(minted.grant.agent, agent, "the read Grant names this agent");

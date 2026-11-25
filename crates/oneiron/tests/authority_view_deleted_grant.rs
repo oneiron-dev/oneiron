@@ -77,6 +77,7 @@ fn warm_view_of_a_deleted_agent_grant() -> (tempfile::TempDir, Vault, EntityId) 
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a world-privacy Grant");

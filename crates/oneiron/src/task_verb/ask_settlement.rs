@@ -2,11 +2,12 @@
 //!
 //! Entry: `settle_in`.
 //! Private reducers live in `reducers`; ask records belong to `ask_record`.
-use super::ask_record::{self, AskGroup};
+use super::ask_record::{self, AskGroup, AskMember, WordStanding};
 use super::ask_types::*;
 use super::{ConsultPayloadRef, TaskAskConfirmationDecision};
 use crate::entity_id::derived_domains::TASK_ASK_SETTLEMENT;
 use crate::{EntityId, Result, Vault};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod reducers;
@@ -78,9 +79,10 @@ pub(super) fn settle_in(
 
 /// Cuts the ask `id` when it is due. `owner` is the live proof of the
 /// owner whose word was admitted in this same transaction, when there was
-/// one; it is passed in-process and never stored. An attendee ask cuts on a
-/// definitive word only under it (`super::attendee_answer::may_cut`), and
-/// that cut resolves the speaker's identity in this transaction.
+/// one; it is passed in-process and never stored. An ask that asks one
+/// party cuts on a definitive word only under its proof
+/// (`super::ask_guard::may_cut_in`); an attendee ask's cut resolves the
+/// speaker's identity in this transaction.
 pub(super) fn settle_with_owner_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -105,6 +107,118 @@ pub(super) fn void_in(
     now: u64,
 ) -> Result<TaskAskResult> {
     settle_with_cutoff_in(vault, txn, id, now, None, true)?.ok_or_else(ask_record::invalid)
+}
+
+/// Reads the TASK of a member whose own answer the evidence does not hold.
+fn silent_member_task_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    member: &AskMember,
+    evidence: &[TaskAskEvidence],
+) -> Result<Option<(EntityId, super::consult_result::TaskVerbBody)>> {
+    let task = ask_record::entity(&member.task)?;
+    let person = ask_record::entity(&member.actor)?;
+    if evidence.iter().any(|entry| {
+        entry.person_ref == person
+            && (entry.source == TaskAskSource::Human
+                || entry.source == TaskAskSource::Executor
+                || (entry.source == TaskAskSource::Companion
+                    && entry.delegation_grant_ref.is_some()
+                    && !entry.soft_confirm))
+    }) {
+        return Ok(None);
+    }
+    let body = super::create_validation::task_body_in_txn(vault, txn, task)
+        .map_err(|_| ask_record::invalid())?;
+    Ok(Some((task, body)))
+}
+
+/// Whether settlement would pass its receipt and revision checks to scan the ask.
+fn first_cut_reads_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+) -> Result<bool> {
+    Ok(read_result(vault, txn, id)?.is_none() && ask_record::owns_revision(vault, txn, id, group)?)
+}
+
+/// Whether a word can still decide the ask `id`: it has no result, and the
+/// settlement this node runs on its next word does not cut it Stale. A Stale
+/// cut decides nothing: it takes the hold default, no kind's resolver applies
+/// a word on it (a comm widen round closes with nothing widened), and a verb
+/// hook's stopped call stays stopped. A node that does not own the revision
+/// cuts nothing, so there the ask stays open to a word.
+pub(super) fn decision_open_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+) -> Result<bool> {
+    if read_result(vault, txn, id)?.is_some() {
+        return Ok(false);
+    }
+    let cuts_stale =
+        ask_record::owns_revision(vault, txn, id, group)? && is_stale(vault, txn, group)?;
+    Ok(!cuts_stale)
+}
+
+/// Reads the same silent member TASKs as settlement, treating `answering`'s
+/// own word as already recorded.
+pub(super) fn silent_members_read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    answering: EntityId,
+) -> Result<()> {
+    if !first_cut_reads_in(vault, txn, id, group)? {
+        return Ok(());
+    }
+    let evidence = ask_record::evidence_in(vault, txn, id, group)?;
+    let answering = answering.to_hex();
+    for member in &group.members {
+        if member.actor != answering {
+            let _ = silent_member_task_in(vault, txn, member, &evidence)?;
+        }
+    }
+    Ok(())
+}
+
+/// Reads the silent members, then the pending waiter traps a new cut signals.
+pub(super) fn cut_reads_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    answering: EntityId,
+) -> Result<()> {
+    silent_members_read_in(vault, txn, id, group, answering)?;
+    if !first_cut_reads_in(vault, txn, id, group)? {
+        return Ok(());
+    }
+    super::ask_facade::pending_waiters_read_in(vault, txn, id).map_err(|_| ask_record::invalid())
+}
+
+/// A new word is the person's latest; a repeat keeps its original order,
+/// so the cut would count the person's latest stored human word instead.
+pub(super) fn word_a_cut_selects_in<'word>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    person: EntityId,
+    word: &'word TaskAskWord,
+    standing: WordStanding,
+) -> Result<Cow<'word, TaskAskWord>> {
+    if matches!(standing, WordStanding::GivenBefore)
+        && let Some(entry) = ask_record::evidence_in(vault, txn, id, group)?
+            .into_iter()
+            .rfind(|entry| entry.person_ref == person && entry.source == TaskAskSource::Human)
+    {
+        return Ok(Cow::Owned(entry.word));
+    }
+    Ok(Cow::Borrowed(word))
 }
 
 /// The cutoff behind [`settle_with_owner_in`] and [`void_in`]; `invalidated`
@@ -150,20 +264,9 @@ fn settle_with_cutoff_in(
     let deadline = group.effective.until.ok_or_else(ask_record::invalid)?;
     let mut all_responded = true;
     for member in &group.members {
-        let task = ask_record::entity(&member.task)?;
-        let person = ask_record::entity(&member.actor)?;
-        if evidence.iter().any(|entry| {
-            entry.person_ref == person
-                && (entry.source == TaskAskSource::Human
-                    || entry.source == TaskAskSource::Executor
-                    || (entry.source == TaskAskSource::Companion
-                        && entry.delegation_grant_ref.is_some()
-                        && !entry.soft_confirm))
-        }) {
+        let Some((task, body)) = silent_member_task_in(vault, txn, member, &evidence)? else {
             continue;
-        }
-        let body = super::create_validation::task_body_in_txn(vault, txn, task)
-            .map_err(|_| ask_record::invalid())?;
+        };
         // A terminal answer whose separate fact has not arrived is not proof
         // of exhaustion. The origin's cutoff, not a sender's timestamp, admits it.
         all_responded &= body.terminal().is_some_and(|terminal| {
@@ -192,22 +295,7 @@ fn settle_with_cutoff_in(
     } else {
         return Ok(None);
     };
-    if !super::attendee_answer::may_cut(vault, txn, &group, reason, &decision, owner)? {
-        return Ok(None);
-    }
-    if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
-        || !super::training_swap_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
-        || !super::contribution_pair::may_cut(vault, txn, &group, reason, &decision, owner)?
-        || !crate::office_body::may_cut_live_edit(
-            vault,
-            txn,
-            id,
-            &group.requested.intent_key,
-            reason,
-            &decision,
-            owner,
-        )?
-    {
+    if !super::ask_guard::may_cut_in(vault, txn, id, &group, reason, &decision, owner)? {
         return Ok(None);
     }
     let decision = if stale {
@@ -518,6 +606,13 @@ pub(crate) fn ask_settlement_in(
     id: EntityId,
 ) -> Result<Option<TaskAskResult>> {
     read_result(vault, txn, id)
+}
+
+/// The id of the settlement row that closes the ask group `group`. The
+/// commit that settles a group writes this row, and names it, not the
+/// group, among the TASKs it wrote.
+pub(crate) fn ask_settlement_id(group: EntityId) -> Result<EntityId> {
+    settlement_id(group)
 }
 
 pub(super) fn evidence(

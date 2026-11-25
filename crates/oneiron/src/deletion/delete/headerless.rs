@@ -1,12 +1,14 @@
 //! Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt.
 
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::gate::{
-    GatedDeletion, journal_deletion_in_txn, refuse_claim,
-    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
+    GatedDeletion, OwnerAtPublication, journal_deletion_in_txn, refuse_claim,
+    reverify_deletion_authority_when_unpublished, reverify_owner_proof_when_unpublished,
+    revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
@@ -21,7 +23,7 @@ use super::super::tombstone::{
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
-use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use super::DeleteEntityOutcome;
 use crate::side_table::HexId;
 
 impl Vault {
@@ -33,7 +35,7 @@ impl Vault {
         reason: DeleteReason,
         requested_at: u64,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteEntityOutcome> {
         refuse_claim(gate)?;
         // Probe first so a fully-missing id stays a strict no-op — deleting
@@ -50,7 +52,22 @@ impl Vault {
         // any write lock. This rendezvous is a no-op in non-test builds.
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
-        self.reserve_user_brief_delete(id, reason, gate)?;
+        let fence = self.reserve_user_brief_delete(id, reason, gate, owner)?;
+        let outcome = self.delete_reserved_without_header(id, reason, requested_at, gate, owner);
+        crate::deletion::conclude_brief_delete(fence, &self.store, outcome)
+    }
+
+    /// [`Self::delete_entity_without_header`] past its reservation: its
+    /// tombstone publishes, its residue purges, and a hard purge writes its
+    /// receipt. Its outcome concludes the reservation's hold.
+    fn delete_reserved_without_header(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        requested_at: u64,
+        gate: Option<&GatedDeletion<'_>>,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> Result<DeleteEntityOutcome> {
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
         // above says there is something to erase.
         let request_uuid = uuid::Uuid::from_bytes(self.store.clock.ulid()?);
@@ -92,19 +109,19 @@ impl Vault {
         let window_label = window_label_from_timestamp(requested_at);
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
-            let requester = due.map(PendingConfirmedErase::requester);
-            self.reject_erase_hold_in_txn(&txn, id, requester.as_ref())?;
+            self.store
+                .reject_restricted_record_in_txn(&txn, id.as_bytes())?;
             // A row may have landed since the header read (OF-470).
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
         }
-        let crdt_persisted = self.write_crdt_tombstone_due(
+        let crdt_persisted = self.write_crdt_tombstone(
             id,
             requested_at,
             &window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate,
-            due,
+            owner.map(OwnerAtPublication::BeforeScrub),
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
@@ -128,13 +145,18 @@ impl Vault {
         // its own view, atomically with the residue tear, the `dt:` marker, the
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
-        // A due confirmed erase nothing has published re-proves here that it
-        // still waits, before any marker, scrub or purge (FIX 6337).
-        let requester = due
-            .map(|due| due.prove_when_unpublished(self, &wtxn, id, crdt_persisted))
-            .transpose()?;
+        reverify_owner_proof_when_unpublished(self, owner, crdt_persisted, &wtxn)?;
+        // The last-bound-owner guard under the same conditional law (round-1
+        // P1 of #7900): only when nothing published does this purge linearize
+        // the delete; a publication decided it, for a soft reason too (round
+        // 2). A headerless id holds no live PERSON row, so this is the re-put
+        // race's refusal and nothing else.
+        if !crdt_persisted {
+            self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
+        }
         if reason.active_store_hard_purge_v1() {
-            self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
+            self.store
+                .reject_restricted_record_in_txn(&wtxn, id.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {
@@ -231,6 +253,10 @@ impl Vault {
                 &tombstone.request_id,
                 false,
             )?;
+            // With nothing published, this commit linearizes the delete: its brief
+            // fence settles under this writer (a published one settled at its
+            // publication).
+            self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
             pending_cloud_revokes.publish();
@@ -243,6 +269,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
+                version_release: false,
             });
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
@@ -314,6 +341,10 @@ impl Vault {
             crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         }
         if !reason.writes_receipt() {
+            // With nothing published, this commit linearizes the delete: its brief
+            // fence settles under this writer (a published one settled at its
+            // publication).
+            self.store.brief_delete_fences.settle(id);
             wtxn.commit()?;
             effects.committed(self);
             pending_cloud_revokes.publish();
@@ -326,6 +357,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
+                version_release: false,
             });
         }
 
@@ -352,6 +384,10 @@ impl Vault {
             },
             HardEraseSweepExtras::default(),
         )?;
+        // With nothing published, this commit linearizes the delete: its brief
+        // fence settles under this writer (a published one settled at its
+        // publication).
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
         effects.committed(self);
         pending_cloud_revokes.publish();
@@ -365,6 +401,7 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
             turn_program_details,
+            version_release: false,
         })
     }
 }

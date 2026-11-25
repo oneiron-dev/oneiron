@@ -57,6 +57,9 @@ use crate::server::SyncServer;
 pub(crate) mod hook;
 mod model_calls;
 
+/// A rung's run, kept off record for a bound caller whose off-record
+/// session keeps no model-call record (census L5-25).
+pub(crate) use model_calls::run_for_caller;
 /// Binds the capture caller [`model_call_context`] reads back (FIX
 /// 12516/12742), on the decision's blocking thread.
 pub(crate) use model_calls::scoped as with_model_call_context;
@@ -136,6 +139,29 @@ pub(crate) fn on_caller_payer<T>(payer: Option<&PayerPerson>, call: impl FnOnce(
     }
     let _restore = Restore(CALLER_PAYER.with(|slot| slot.replace(payer.cloned())));
     call()
+}
+
+/// Runs `call` on the caller's own line, as [`run_verdict`] seats a verdict:
+/// every model rung it reaches on this thread spends on a meter bound to
+/// `principal` with no limit ([`BudgetGuard::uncapped`]), named after
+/// `line`, and bills the vault owner; its model calls are captured under
+/// `session_ref`. A host door asking typed questions for a facade caller
+/// runs its ladder calls inside it, on a blocking thread.
+pub(crate) fn on_caller_line<T>(
+    vault: &oneiron::Vault,
+    (principal, class): (EntityId, EdgeActorClass),
+    line: &str,
+    session_ref: Option<&str>,
+    call: impl FnOnce() -> T,
+) -> T {
+    let meter = BudgetGuard::uncapped(
+        format!("{line}:{}:{}", principal.to_hex(), vault.now_recorded_at()),
+        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+        WriteActor::new(principal, class),
+    );
+    model_calls::scoped(principal, session_ref, || {
+        on_caller_meter(&meter, || on_caller_payer(None, call))
+    })
 }
 
 /// Each caller's verdict spend in the current window, on this server: a
@@ -247,6 +273,40 @@ pub(crate) fn run_verdict(
     evidence_read: &mut Vec<EntityId>,
     session_ref: Option<&str>,
 ) -> MemoryResult<AiVerdict> {
+    run_verdict_reasoned(
+        server,
+        principal,
+        class,
+        reader,
+        lane,
+        held,
+        request,
+        payer,
+        evidence_read,
+        session_ref,
+    )
+    .map(|(verdict, _)| verdict)
+}
+
+/// [`run_verdict`], with the ladder's reason when it gave no answer
+/// ([`answer_verdict_reasoned`]): a caller that must tell a ladder with no
+/// rung that takes the question from a judged abstain reads it here.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the caller's verdict"
+)]
+pub(crate) fn run_verdict_reasoned(
+    server: &SyncServer,
+    principal: EntityId,
+    class: EdgeActorClass,
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    held: Option<DecisionImage>,
+    request: &AiVerdictRequest,
+    payer: Option<&PayerPerson>,
+    evidence_read: &mut Vec<EntityId>,
+    session_ref: Option<&str>,
+) -> MemoryResult<(AiVerdict, Option<HumanAskReason>)> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
     // and nothing on it is refused for spend (rule 5).
@@ -262,7 +322,7 @@ pub(crate) fn run_verdict(
     let answered = model_calls::scoped(principal, session_ref, || {
         on_caller_meter(&meter, || {
             on_caller_payer(payer, || {
-                answer_verdict(
+                answer_verdict_reasoned(
                     server,
                     principal,
                     class,
@@ -540,7 +600,7 @@ fn answer_verdict_reasoned(
             &["Change the question, its options or its state as the ladder asks."],
         )
     };
-    let reversibility = request.reversibility.into();
+    let reversibility = request.reversibility;
     // A Box or Point question asks the host's presence question first.
     if question.contract.locates() {
         let located = ladder

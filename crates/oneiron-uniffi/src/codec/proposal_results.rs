@@ -304,19 +304,40 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                 result,
                 reasons,
                 budget_steering,
-            } => Ok(Self::Delivered {
-                result: result.map(crate::ConnectorToolResult::lift).transpose()?,
-                reasons: if reasons.is_empty() {
-                    None
-                } else {
-                    Some(reasons)
-                },
-                budget_steering: if budget_steering.is_empty() {
-                    None
-                } else {
-                    Some(budget_steering)
-                },
-            }),
+                mut session_manifest,
+            } => {
+                // The manifest's image-release evidence is opaque JSON, lifted
+                // apart as a browser answer's is.
+                let image_release = super::browser_answers::lift_image_release(
+                    session_manifest
+                        .as_mut()
+                        .and_then(|manifest| manifest.image_release.take()),
+                )?;
+                let mut reply = Self::Delivered {
+                    result: result.map(crate::ConnectorToolResult::lift).transpose()?,
+                    reasons: if reasons.is_empty() {
+                        None
+                    } else {
+                        Some(reasons)
+                    },
+                    budget_steering: if budget_steering.is_empty() {
+                        None
+                    } else {
+                        Some(budget_steering)
+                    },
+                    session_manifest: session_manifest
+                        .map(|manifest| lift_record("connector.call", &manifest))
+                        .transpose()?,
+                };
+                if let Self::Delivered {
+                    session_manifest: Some(manifest),
+                    ..
+                } = &mut reply
+                {
+                    manifest.image_release = image_release;
+                }
+                Ok(reply)
+            }
             oneiron::code_run::ConnectorCallReply::Held {
                 call_ref,
                 decision_ref,
@@ -378,17 +399,25 @@ impl Lift<oneiron::task_verb::sdk::ConnectorSchemaReply> for crate::ConnectorSch
             source,
             foreign,
             input_schema,
+            output_schema,
+            input_typescript,
+            output_typescript,
             destructive,
             reasons,
         } = value;
-        let input_schema = match input_schema {
-            None | Some(serde_json::Value::Null) => None,
-            Some(schema) => Some(WireJson::lift(schema)?),
+        let lift_schema = |schema: Option<serde_json::Value>| match schema {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(schema) => WireJson::lift(schema).map(Some),
         };
+        let input_schema = lift_schema(input_schema)?;
+        let output_schema = lift_schema(output_schema)?;
         Ok(Self {
             source,
             foreign,
             input_schema,
+            output_schema,
+            input_typescript,
+            output_typescript,
             destructive,
             reasons: if reasons.is_empty() {
                 None
