@@ -283,6 +283,18 @@ impl Device {
     /// This vault binds `peer`'s endpoint at `direct_addrs` (none for a peer
     /// no test dials), on the pairing H minted for it.
     pub(crate) fn bind_at(&self, peer: &Device, direct_addrs: Vec<SocketAddr>) -> TestResult {
+        self.bind_on(peer, direct_addrs, peer.mesh_pairing)
+    }
+
+    /// This vault binds `peer`'s endpoint at `direct_addrs` on the pairing
+    /// slip `pairing` (one a re-enrolment of `peer` named), as the owner
+    /// does with `vault.mesh.bind_machine`.
+    pub(crate) fn bind_on(
+        &self,
+        peer: &Device,
+        direct_addrs: Vec<SocketAddr>,
+        pairing: [u8; 32],
+    ) -> TestResult {
         self.vault
             .bind_mesh_machine(
                 &test_host_issuer(),
@@ -293,7 +305,7 @@ impl Device {
                     relay_url: None,
                 },
                 peer.identity.device_key,
-                peer.mesh_pairing,
+                pairing,
                 [
                     peer.identity.device_proof.as_slice(),
                     peer.identity.transport_proof.as_slice(),
