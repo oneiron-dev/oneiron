@@ -2,7 +2,9 @@
 //! 34, `34-compute-general/DESIGN.md` section 6.5): one check-in for each new
 //! pin.
 //!
-//! 1. Power: the owner, or an agent whose own live Grant names the verb.
+//! 1. Power: the owner, or an agent whose own live Grant names the verb and
+//!    covers where the pin sits: its project, placed by the project's world.
+//!    That Grant is the one the ask names and the row is pinned under.
 //! 2. Mode: `jobs.workloads.check_in_mode` at the agent and the vault, the
 //!    stricter winning, passed as the explicit mode, so the role table never
 //!    decides a pin. The owner's own pin goes on his own proof.
@@ -10,13 +12,15 @@
 //!    agent's Grant that covers the pin. In `manual` no standing row is
 //!    passed, so every pin waits.
 //! 4. Rung 1, in `auto` for a pin no grant covers: the screen
-//!    ([`WorkloadScreen`]), run before the writer. For a pin with no network
-//!    it decides; a network pin always asks, and the screen's verdict rides
-//!    on its record as the recommendation. With no model, or on a model
-//!    error, the deterministic fallback decides.
+//!    ([`WorkloadScreen`]), run before the writer, after the secret scan
+//!    reads the pin. For a pin with no network it decides; a network pin
+//!    always asks, and the screen's verdict rides on its record as the
+//!    recommendation. With no model on the host the deterministic fallback
+//!    decides; a model that fails or abstains is unsure, so the pin asks.
 //! 5. A wait opens the keyed pending check-in and answers `CHECK_IN_PENDING`
-//!    naming it; the same call naming `check_in_ref` once it is approved lets
-//!    the pin go. The owner may instead approve the exact digest
+//!    naming it; the same call naming `check_in_ref` once it is approved
+//!    spends it and lets the pin go, and its record keeps the screen the
+//!    pin was asked with. The owner may instead approve the exact digest
 //!    (`vault.jobs.workloads.approve`).
 //!
 //! The host reads the act from the pin (DEC-0006 invariant 6): a pin with no
@@ -24,7 +28,8 @@
 //! `ReversibleWork`; a pin with the host's network is `OutboundSend`
 //! (EM-23-EGRESS-ACT-CLASS = A).
 use crate::check_in::{
-    ActClass, DoorRungs, PinCheckIn, PinCheckInAsk, UnsureTest, workload_pin_check_in_in_txn,
+    ActClass, CheckInScope, DoorRungs, PinCheckIn, PinCheckInAsk, UnsureTest,
+    workload_pin_check_in_in_txn, workload_pin_grant_in_txn, workload_pin_scope_in_txn,
 };
 use crate::memory::Memory;
 use crate::setting::SettingSource;
@@ -36,7 +41,7 @@ use super::pin_shape::check_pin_shape;
 use super::record::{
     JOB_WORKLOADS, JobWorkload, PinCheckInOutcome, PinGoBasis, WorkloadCheckIn, digest_key,
 };
-use super::screen::{PinScreen, WorkloadScreen, pin_signals_in_txn};
+use super::screen::{PinScreen, PinSignals, WorkloadScreen, pin_signals_in_txn};
 use super::setting_keys::{PinCheckInMode, approval_window_ms_in_txn, check_in_mode_in_txn};
 use super::wire::{WorkloadChange, WorkloadPinRequest, WorkloadView};
 use super::{NetworkMode, WorkloadPin};
@@ -60,7 +65,8 @@ fn pin_act(pin: &WorkloadPin) -> (ActClass, Vec<String>) {
 }
 
 /// Rung 1 as the pin door passes it: the screen's answer for a pin with no
-/// network; never sure for a network pin, whose screen only recommends.
+/// network; never sure for a network pin, whose screen only recommends, nor
+/// for a pin no screen answered.
 struct PinUnsureTest<'a> {
     act: ActClass,
     screen: Option<&'a PinScreen>,
@@ -68,13 +74,7 @@ struct PinUnsureTest<'a> {
 
 impl UnsureTest for PinUnsureTest<'_> {
     fn is_sure(&self) -> crate::Result<bool> {
-        match (self.act, self.screen) {
-            (ActClass::ReversibleWork, Some(screen)) => Ok(screen.sure),
-            (ActClass::ReversibleWork, None) => Err(crate::Error::InvariantViolation(
-                "a pin's screen runs before its unsure test",
-            )),
-            _ => Ok(false),
-        }
+        Ok(self.act == ActClass::ReversibleWork && self.screen.is_some_and(|screen| screen.sure))
     }
 }
 
@@ -147,20 +147,28 @@ impl Memory<'_> {
         let vault = self.vault();
         let agent_read = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-            let pinner = self.pinner_in_txn(&txn)?;
+            let (pinner, _) = self.pinner_in_txn(&txn, &key, project)?;
             match judge_repeat(vault, &txn, &key, request, project, pinner, now_ms)? {
                 Repeat::Answer(change) => return Ok(change),
                 Repeat::Judge { project } => match pinner {
                     Pinner::Owner(_) => None,
-                    Pinner::Agent { actor, grant } => Some(read_agent_ladder(
-                        vault,
-                        &txn,
-                        actor,
-                        grant,
-                        project,
-                        &request.pin,
-                        check_in_ref.is_none(),
-                    )?),
+                    Pinner::Agent { actor, grant } => {
+                        let (read, signals) = read_agent_ladder(
+                            vault,
+                            &txn,
+                            actor,
+                            grant,
+                            project,
+                            &request.pin,
+                            check_in_ref.is_none(),
+                        )?;
+                        // The screen sends the pin's facts to a model: the
+                        // secret scan reads the pin first.
+                        if signals.is_some() {
+                            scan_pin_in_txn(vault, &txn, &request.pin)?;
+                        }
+                        Some((read, signals))
+                    }
                 },
             }
         };
@@ -190,24 +198,39 @@ impl Memory<'_> {
         }
     }
 
-    /// The caller in `txn`: the vault owner, or an agent with the live Grant
-    /// that names the pin verb.
-    fn pinner_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Pinner, WorkloadError> {
+    /// The caller in `txn`, and where its pin under `key` for `project` sits
+    /// (the stored row's project once one stands): the vault owner, or an
+    /// agent under the live Grant that names the pin verb and covers that
+    /// place, the Grant its ask names.
+    fn pinner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &[u8; 32],
+        project: Option<EntityId>,
+    ) -> Result<(Pinner, CheckInScope), WorkloadError> {
         let vault = self.vault();
         let (actor, class) = (self.actor(), self.actor_class());
         crate::memory::verify_actor_binding_in_txn(vault, txn, actor, class)
             .map_err(WorkloadError::Caller)?;
+        let project = match JOB_WORKLOADS.get(&vault.store, txn, key)? {
+            Some(row) => row.project,
+            None => project,
+        };
+        let scope = workload_pin_scope_in_txn(vault, txn, project)?;
         if class == EdgeActorClass::Human
             && crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, class)
                 .map_err(WorkloadError::Caller)?
         {
-            return Ok(Pinner::Owner(actor));
+            return Ok((Pinner::Owner(actor), scope));
         }
-        let grant = self
-            .workload_agent()
+        // The standing refusals first (binding, credential, lapsed pact),
+        // then the Grant whose bounds cover the pin's place.
+        self.workload_agent()
             .grant_in_txn(vault, txn, WorkloadVerb::Pin)
             .map_err(WorkloadError::Caller)?;
-        Ok(Pinner::Agent { actor, grant })
+        let grant = workload_pin_grant_in_txn(self, txn, WorkloadVerb::Pin.name(), &scope)
+            .map_err(WorkloadError::Caller)?;
+        Ok((Pinner::Agent { actor, grant }, scope))
     }
 
     /// The writer: judges the caller again, composes the ladder live, and
@@ -219,7 +242,7 @@ impl Memory<'_> {
         agent_read: Option<AgentRead>,
     ) -> Result<Pinned, WorkloadError> {
         let vault = self.vault();
-        let pinner = self.pinner_in_txn(txn)?;
+        let (pinner, scope) = self.pinner_in_txn(txn, &call.key, call.project)?;
         let project = match judge_repeat(
             vault,
             txn,
@@ -233,8 +256,7 @@ impl Memory<'_> {
             Repeat::Judge { project } => project,
         };
         let (act, act_reasons) = pin_act(&call.request.pin);
-        let ladder =
-            live_ladder_in_txn(vault, txn, pinner, project, &call.request.pin, agent_read)?;
+        let ladder = live_ladder_in_txn(vault, txn, pinner, project, call, agent_read)?;
         let unsure = PinUnsureTest {
             act,
             screen: ladder.as_ref().and_then(|read| read.screen.as_ref()),
@@ -246,6 +268,11 @@ impl Memory<'_> {
         let ask = PinCheckInAsk {
             verb: WorkloadVerb::Pin.name(),
             act,
+            scope,
+            grant: match pinner {
+                Pinner::Agent { grant, .. } => Some(grant),
+                Pinner::Owner(_) => None,
+            },
             rungs: DoorRungs {
                 explicit_mode: ladder.as_ref().map(|read| read.mode.check_in_mode()),
                 standing_row,
@@ -254,8 +281,8 @@ impl Memory<'_> {
             effect_digest: call.key,
             check_in_ref: call.check_in_ref.as_ref(),
         };
-        let judged = workload_pin_check_in_in_txn(self, txn, &ask, call.now_ms)
-            .map_err(WorkloadError::Caller)?;
+        let judged =
+            workload_pin_check_in_in_txn(self, txn, &ask).map_err(WorkloadError::Caller)?;
         let until_ms = call
             .now_ms
             .saturating_add(approval_window_ms_in_txn(vault, txn)?);
@@ -337,37 +364,33 @@ fn judge_repeat(
 }
 
 /// The agent's ladder as the writer reads it again, live: the mode and the
-/// covering grant decide, not the read before the model. The screen that
-/// ran before the writer stands where the screen is still wanted; where it
-/// did not run there (a grant covered the pin at that read, or the call
-/// named its check-in), the fallback decides, as with no model. `None` for
-/// the owner's own pin.
+/// covering grant decide, not the read before the model. The screen kept is
+/// the one that ran before the writer, where the screen is still wanted
+/// (`auto`, no covering grant). A call that names its check-in keeps the
+/// screen its pin was asked with, so the answered record carries the
+/// recommendation the person saw. A pin no screen answered asks: a screen
+/// that did not run never clears it. `None` for the owner's own pin.
 fn live_ladder_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pinner: Pinner,
     project: Option<EntityId>,
-    pin: &WorkloadPin,
+    call: &PinCall<'_>,
     agent_read: Option<AgentRead>,
 ) -> Result<Option<AgentRead>, WorkloadError> {
     let Pinner::Agent { actor, grant } = pinner else {
         return Ok(None);
     };
-    let (live, _) = read_agent_ladder(vault, txn, actor, grant, project, pin, false)?;
-    let screen = match (live.mode, live.covering_grant.as_ref()) {
-        (PinCheckInMode::Auto, None) => match agent_read.and_then(|read| read.screen) {
-            Some(screen) => Some(screen),
-            None => {
-                let signals = pin_signals_in_txn(vault, txn, grant, pin)?;
-                Some(PinScreen::of(
-                    Err(crate::Error::InvalidConfig(
-                        "the screen did not run before the writer".into(),
-                    )),
-                    &signals,
-                ))
-            }
-        },
-        _ => None,
+    let (live, _) = read_agent_ladder(vault, txn, actor, grant, project, &call.request.pin, false)?;
+    let screen = if call.check_in_ref.is_some() {
+        JOB_WORKLOADS
+            .get(&vault.store, txn, &call.key)?
+            .and_then(|row| row.check_in)
+            .and_then(|record| record.screen)
+    } else if live.mode == PinCheckInMode::Auto && live.covering_grant.is_none() {
+        agent_read.and_then(|read| read.screen)
+    } else {
+        None
     };
     Ok(Some(AgentRead { screen, ..live }))
 }
@@ -416,12 +439,7 @@ fn pinned_row_in_txn(
         row.check_in = Some(record);
         return Ok(row);
     }
-    // The pin is hashed into its own key and compared on a repeat, so no
-    // custody handle can stand in for a secret in it: the batch door's scan
-    // refuses one, under the owner's switch, before the row is written.
-    let pin_bytes = crate::llm::canonical_json_bytes(&call.request.pin)
-        .map_err(|_| crate::Error::InvariantViolation("workload pin encode"))?;
-    crate::batch::secret_scan::scan_content_in_txn(&vault.store, txn, &pin_bytes)?;
+    scan_pin_in_txn(vault, txn, &call.request.pin)?;
     let (pinned_by, pinned_under) = match pinner {
         Pinner::Owner(owner) => (owner, None),
         Pinner::Agent { actor, grant } => (actor, Some(grant)),
@@ -451,7 +469,7 @@ fn read_agent_ladder(
     project: Option<EntityId>,
     pin: &WorkloadPin,
     screen_wanted: bool,
-) -> Result<(AgentRead, Option<super::screen::PinSignals>), WorkloadError> {
+) -> Result<(AgentRead, Option<PinSignals>), WorkloadError> {
     let (mode, mode_source) = check_in_mode_in_txn(vault, txn, actor)?;
     let candidate = pin_candidate(grant, project, pin, None)?;
     let covering_grant = vault.covering_compute_grant_in_txn(txn, &candidate)?;
@@ -469,6 +487,21 @@ fn read_agent_ladder(
         },
         signals,
     ))
+}
+
+/// The secret scan of `pin`, under the owner's switch. The pin is hashed into
+/// its own key and compared on a repeat, so no custody handle can stand in
+/// for a secret in it: the batch door's scan refuses one before the screen
+/// sends the pin's facts to a model, and again before a new row is written.
+fn scan_pin_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pin: &WorkloadPin,
+) -> Result<(), WorkloadError> {
+    let pin_bytes = crate::llm::canonical_json_bytes(pin)
+        .map_err(|_| crate::Error::InvariantViolation("workload pin encode"))?;
+    crate::batch::secret_scan::scan_content_in_txn(&vault.store, txn, &pin_bytes)?;
+    Ok(())
 }
 
 /// The id `hex` names, if any, or a bad request naming `field`.

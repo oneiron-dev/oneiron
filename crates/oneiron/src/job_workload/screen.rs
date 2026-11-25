@@ -5,16 +5,17 @@
 //! go and ask: it never grants. It runs before the pin door's writer, so no
 //! transaction spans a model call.
 //!
-//! With no model, or on a model error, R2's deterministic fallback decides
-//! ([`fallback_is_sure`]). A network pin outside a grant always asks; the
-//! screen's verdict rides on its record as a recommendation.
+//! With no decision model on the host, R2's deterministic fallback decides
+//! ([`fallback_is_sure`]); a model that fails or abstains is unsure, so the
+//! pin asks. A network pin outside a grant always asks; the screen's verdict
+//! rides on its record as a recommendation.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 
 use super::record::{JOB_WORKLOADS, JobWorkload, PinCheckInOutcome};
-use super::{NetworkMode, ResourceRequest, ScopeKind, WorkloadPin};
+use super::{DeviceClaim, NetworkMode, ResourceRequest, ScopeKind, WorkloadPin};
 
 /// What the screen reads about one pin: the pin's own facts and the signals
 /// the owner named, against the earlier pins of the same Grant (its family)
@@ -52,27 +53,35 @@ pub struct ScreenVerdict {
     pub receipt: Option<String>,
 }
 
+/// What the screen answered, or why it gave no verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScreenAnswer {
+    /// The ladder answered: sure goes, unsure asks.
+    Verdict(ScreenVerdict),
+    /// No decision model on this host takes the question (none is bound, or
+    /// none answers its contract): the deterministic fallback decides.
+    NoModel { why: String },
+    /// A model was asked and gave no verdict (an error, a refusal, the
+    /// deadline): the pin asks.
+    Failed { why: String },
+}
+
 /// The screen: the host's decision ladder behind one question.
 pub trait WorkloadScreen {
     /// The ladder's answer for a pin with `signals`.
-    ///
-    /// # Errors
-    ///
-    /// Any failure, including "no model available": the deterministic
-    /// fallback decides then.
-    fn screen(&self, signals: &PinSignals) -> crate::Result<ScreenVerdict>;
+    fn screen(&self, signals: &PinSignals) -> ScreenAnswer;
 }
 
-/// No decision model: every screen fails, so the deterministic fallback
-/// decides.
+/// No decision model on the host: the deterministic fallback decides every
+/// screen.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoScreenModel;
 
 impl WorkloadScreen for NoScreenModel {
-    fn screen(&self, _signals: &PinSignals) -> crate::Result<ScreenVerdict> {
-        Err(crate::Error::InvalidConfig(
-            "no decision model screens workload pins here".into(),
-        ))
+    fn screen(&self, _signals: &PinSignals) -> ScreenAnswer {
+        ScreenAnswer::NoModel {
+            why: "no decision model screens workload pins here".to_owned(),
+        }
     }
 }
 
@@ -82,7 +91,8 @@ impl WorkloadScreen for NoScreenModel {
 pub enum ScreenSource {
     /// The host's decision ladder.
     Model,
-    /// The deterministic fallback, when no model answered.
+    /// The deterministic fallback, when no model on the host takes the
+    /// question.
     Fallback,
 }
 
@@ -99,18 +109,28 @@ pub struct PinScreen {
     /// The `ai.verdict` receipt: the decision's question id (hex).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<String>,
-    /// Why no model answered, when the fallback decided.
+    /// Why no model gave a verdict: none on the host takes the question (the
+    /// fallback decided), or the one asked failed (the pin asks).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_failure: Option<String>,
 }
 
 impl PinScreen {
-    /// The record of `answer`, or of the fallback's decision on `signals`
-    /// when the screen failed.
+    /// The record of `answer`: the model's verdict; the fallback's decision
+    /// on `signals` when no model takes the question; unsure when the model
+    /// asked failed.
     #[must_use]
-    pub(super) fn of(answer: crate::Result<ScreenVerdict>, signals: &PinSignals) -> Self {
+    pub(super) fn of(answer: ScreenAnswer, signals: &PinSignals) -> Self {
+        let unanswered = |sure, by, why| Self {
+            sure,
+            by,
+            probability_permille: None,
+            rung: None,
+            receipt: None,
+            model_failure: Some(why),
+        };
         match answer {
-            Ok(verdict) => Self {
+            ScreenAnswer::Verdict(verdict) => Self {
                 sure: verdict.sure,
                 by: ScreenSource::Model,
                 probability_permille: verdict.probability_permille,
@@ -118,14 +138,10 @@ impl PinScreen {
                 receipt: verdict.receipt,
                 model_failure: None,
             },
-            Err(error) => Self {
-                sure: fallback_is_sure(signals),
-                by: ScreenSource::Fallback,
-                probability_permille: None,
-                rung: None,
-                receipt: None,
-                model_failure: Some(error.to_string()),
-            },
+            ScreenAnswer::NoModel { why } => {
+                unanswered(fallback_is_sure(signals), ScreenSource::Fallback, why)
+            }
+            ScreenAnswer::Failed { why } => unanswered(false, ScreenSource::Model, why),
         }
     }
 }
@@ -143,34 +159,82 @@ pub fn fallback_is_sure(signals: &PinSignals) -> bool {
 }
 
 /// Whether `asked` asks no more than `earlier` on any axis: threads, memory,
-/// disk, maximum, the number of devices, and each device's memory against
-/// the largest an earlier claim named (0, any device, is the largest).
+/// disk, maximum, and its devices ([`devices_within`]).
 fn request_within(asked: &ResourceRequest, earlier: &ResourceRequest) -> bool {
-    let count = |request: &ResourceRequest| -> u64 {
-        request
-            .devices
-            .iter()
-            .map(|claim| u64::from(claim.count))
-            .sum()
-    };
-    let largest =
-        earlier
-            .devices
-            .iter()
-            .map(|claim| claim.memory_mib)
-            .fold(Some(0), |most, mib| match (most, mib) {
-                (None, _) | (_, 0) => None,
-                (Some(most), mib) => Some(most.max(mib)),
-            });
     asked.cpu_threads <= earlier.cpu_threads
         && asked.memory_mib <= earlier.memory_mib
         && asked.disk_mib <= earlier.disk_mib
         && asked.maximum_secs <= earlier.maximum_secs
-        && count(asked) <= count(earlier)
-        && asked.devices.iter().all(|claim| match largest {
-            None => true,
-            Some(largest) => claim.memory_mib != 0 && claim.memory_mib <= largest,
+        && devices_within(&asked.devices, &earlier.devices)
+}
+
+/// Whether each device `asked` claims takes its own device of `earlier`: of
+/// the same kind, features and sharing, with at least its memory (0, any
+/// device, counts as the most), no earlier device serving two.
+fn devices_within(asked: &[DeviceClaim], earlier: &[DeviceClaim]) -> bool {
+    asked.iter().all(|claim| {
+        let same = |other: &&DeviceClaim| same_device_class(other, claim);
+        memory_fits(
+            &device_runs(asked.iter().filter(same)),
+            &device_runs(earlier.iter().filter(same)),
+        )
+    })
+}
+
+/// Whether two claims ask for the same class of device: kind, features (as
+/// a set) and sharing.
+fn same_device_class(one: &DeviceClaim, other: &DeviceClaim) -> bool {
+    let features = |claim: &DeviceClaim| {
+        claim
+            .features
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    one.kind == other.kind && one.sharing == other.sharing && features(one) == features(other)
+}
+
+/// The devices of `claims` as runs of (memory per device, how many), most
+/// memory first; a claim of any device (0) counts as the most.
+fn device_runs<'a>(claims: impl Iterator<Item = &'a DeviceClaim>) -> Vec<(u64, u64)> {
+    let mut runs: Vec<(u64, u64)> = claims
+        .map(|claim| {
+            let memory = if claim.memory_mib == 0 {
+                u64::MAX
+            } else {
+                claim.memory_mib
+            };
+            (memory, u64::from(claim.count))
         })
+        .collect();
+    runs.sort_unstable_by_key(|run| std::cmp::Reverse(run.0));
+    runs
+}
+
+/// Whether the asked devices, most memory first, each take the next earlier
+/// device, most memory first, with at least as much memory: a matching of
+/// each asked device to its own earlier one exists exactly then.
+fn memory_fits(asked: &[(u64, u64)], earlier: &[(u64, u64)]) -> bool {
+    let mut earlier = earlier.iter().copied();
+    let mut held: Option<(u64, u64)> = None;
+    for &(needed, mut count) in asked {
+        while count > 0 {
+            let (memory, left) = match held.take() {
+                Some(run) if run.1 > 0 => run,
+                _ => match earlier.next() {
+                    Some(run) => run,
+                    None => return false,
+                },
+            };
+            if memory < needed {
+                return false;
+            }
+            let taken = left.min(count);
+            count -= taken;
+            held = Some((memory, left - taken));
+        }
+    }
+    true
 }
 
 /// Whether `row`'s pin was let go (by its check-in or the owner's approval)

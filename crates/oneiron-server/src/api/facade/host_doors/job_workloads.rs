@@ -12,13 +12,15 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::job_workload::{
-    PinSignals, ScreenVerdict, WorkloadAgent, WorkloadApproveRequest, WorkloadCaller,
+    PinSignals, ScreenAnswer, ScreenVerdict, WorkloadAgent, WorkloadApproveRequest, WorkloadCaller,
     WorkloadChange, WorkloadList, WorkloadListRequest, WorkloadPinRequest, WorkloadRef,
     WorkloadScreen, WorkloadVerb, WorkloadView,
 };
-use oneiron::llm::decision::DecisionAnswer;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use oneiron::task_verb::sdk::AiVerdictRequest;
+use oneiron::llm::decision::{DecisionAnswer, DecisionRung, HumanAskReason};
+use oneiron::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+};
+use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest};
 
 use super::super::FacadeApiError;
 use super::support::{Listed, credential_listing, owner_proof};
@@ -137,23 +139,26 @@ or any network use.";
 
 /// The pin's screen on the host's decision ladder, the path `ai.verdict`
 /// takes, asked for the pinning caller and metered to its line. Sure is a
-/// yes; a no, an abstain or another answer is unsure.
+/// yes; a no, an abstain or another answer is unsure. A ladder with no model
+/// rung that takes the question is no model ([`no_model_took_it`]), and the
+/// deterministic fallback decides; a model that failed is unsure.
 struct LadderScreen<'a, 'm> {
     server: &'a SyncServer,
     memory: &'a Memory<'m>,
 }
 
 impl WorkloadScreen for LadderScreen<'_, '_> {
-    fn screen(&self, signals: &PinSignals) -> oneiron::Result<ScreenVerdict> {
-        let state = serde_json::to_value(signals)
-            .map_err(|_| oneiron::Error::InvariantViolation("pin signals encode"))?;
-        let request: AiVerdictRequest = serde_json::from_value(serde_json::json!({
-            "question": PIN_SCREEN_QUESTION,
-            "state": state,
-        }))
-        .map_err(|_| oneiron::Error::InvariantViolation("the pin screen's verdict request"))?;
+    fn screen(&self, signals: &PinSignals) -> ScreenAnswer {
+        let request = match pin_screen_request(signals) {
+            Ok(request) => request,
+            Err(why) => {
+                return ScreenAnswer::Failed {
+                    why: why.to_owned(),
+                };
+            }
+        };
         let mut evidence_read = Vec::new();
-        let verdict = crate::decision_verdict::run_verdict(
+        let answered = crate::decision_verdict::run_verdict_reasoned(
             self.server,
             self.memory.actor(),
             self.memory.actor_class(),
@@ -164,21 +169,55 @@ impl WorkloadScreen for LadderScreen<'_, '_> {
             None,
             &mut evidence_read,
             None,
-        )
-        .map_err(|error| {
-            oneiron::Error::InvalidConfig(format!("the pin screen did not answer: {error}"))
-        })?;
-        Ok(ScreenVerdict {
-            sure: matches!(verdict.answer, DecisionAnswer::Noul(true)),
-            probability_permille: verdict.p.map(permille),
-            rung: verdict.rung.and_then(|rung| {
-                serde_json::to_value(rung)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_owned))
+        );
+        match answered {
+            Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => ScreenAnswer::NoModel {
+                why: format!("the pin screen found no rung: {error}"),
+            },
+            Err(error) => ScreenAnswer::Failed {
+                why: format!("the pin screen did not answer: {error}"),
+            },
+            Ok((verdict, no_answer)) if no_model_took_it(&verdict, no_answer.as_ref()) => {
+                ScreenAnswer::NoModel {
+                    why: "no decision model on this host takes the pin's question".to_owned(),
+                }
+            }
+            Ok((verdict, _)) => ScreenAnswer::Verdict(ScreenVerdict {
+                sure: matches!(verdict.answer, DecisionAnswer::Noul(true)),
+                probability_permille: verdict.p.map(permille),
+                rung: verdict.rung.and_then(|rung| {
+                    serde_json::to_value(rung)
+                        .ok()
+                        .and_then(|value| value.as_str().map(str::to_owned))
+                }),
+                receipt: Some(verdict.receipt.question.to_hex()),
             }),
-            receipt: Some(verdict.receipt.question.to_hex()),
-        })
+        }
     }
+}
+
+/// The screen's `ai.verdict` request: the question over the pin's signals.
+fn pin_screen_request(signals: &PinSignals) -> Result<AiVerdictRequest, &'static str> {
+    let state = serde_json::to_value(signals).map_err(|_| "the pin's signals do not encode")?;
+    serde_json::from_value(serde_json::json!({
+        "question": PIN_SCREEN_QUESTION,
+        "state": state,
+    }))
+    .map_err(|_| "the pin screen's verdict request does not decode")
+}
+
+/// Whether the ladder gave no answer because no model rung takes the
+/// question: it abstained as unavailable, and only the rule rung (or no
+/// rung) read it. A model that read the question and abstained, or a cut at
+/// the deadline, is the model's unsure answer.
+fn no_model_took_it(verdict: &AiVerdict, no_answer: Option<&HumanAskReason>) -> bool {
+    matches!(verdict.answer, DecisionAnswer::Abstain)
+        && matches!(no_answer, Some(HumanAskReason::ProviderUnavailable))
+        && verdict
+            .receipt
+            .providers
+            .iter()
+            .all(|pin| matches!(pin.rung, DecisionRung::Rule | DecisionRung::Human))
 }
 
 /// `p`, a probability, in thousandths: 0 to 1000.

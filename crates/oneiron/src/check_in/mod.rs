@@ -115,7 +115,10 @@ pub(crate) use waits::advance_pending_check_in_in_txn;
 pub(crate) use wake::CHECK_IN_DUE_JOB;
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
-pub(crate) use workload_pin::{PinCheckIn, PinCheckInAsk, workload_pin_check_in_in_txn};
+pub(crate) use workload_pin::{
+    PinCheckIn, PinCheckInAsk, workload_pin_check_in_in_txn, workload_pin_grant_in_txn,
+    workload_pin_scope_in_txn,
+};
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, check_applied_check_in_in_txn, owner_act_decision_in_txn};

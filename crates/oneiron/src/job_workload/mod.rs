@@ -43,8 +43,8 @@ pub use record::{
     WorkloadCheckIn, WorkloadRevocation,
 };
 pub use screen::{
-    NoScreenModel, PinScreen, PinSignals, ScreenSource, ScreenVerdict, WorkloadScreen,
-    fallback_is_sure,
+    NoScreenModel, PinScreen, PinSignals, ScreenAnswer, ScreenSource, ScreenVerdict,
+    WorkloadScreen, fallback_is_sure,
 };
 pub use setting_keys::{ApprovalDays, PinCheckInMode};
 pub use wire::{

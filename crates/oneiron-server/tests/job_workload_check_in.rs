@@ -4,8 +4,10 @@
 //! asked; `manual` waits even inside a grant; `full-access` goes with a
 //! record; outside a grant in `auto` a reversible pin goes only on a sure
 //! screen, a network pin always asks, and with no model the deterministic
-//! fallback decides; a revoked or narrowed grant stops the next start; and
-//! an agent never answers its own pin.
+//! fallback decides (a failed model asks); a revoked or narrowed grant
+//! stops the next start; an approved ask is spent and keeps the screen the
+//! pin was asked with; the secret scan reads a pin before any screen; and an
+//! agent never answers its own pin.
 //!
 //! The tests run on the owner's machines from the mesh harness, whose first
 //! machine's vault grants the second the job protocol. Every clock here is
@@ -33,19 +35,23 @@ use oneiron::consent::lifecycle::{
     ComputeScope, CreateStandingGrantRequest, RevokeGrantRequest, StandingGrantBound,
     create_standing_grant, revoke,
 };
-use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::job_workload::{
-    COMPUTE_PIN_CLASS, JOB_ALPN, JobWorkload, NoScreenModel, PinCheckInMode, PinCheckInOutcome,
-    PinGoBasis, PinSignals, ScreenSource, ScreenVerdict, WorkloadChange, WorkloadError,
-    WorkloadNodeAnswer, WorkloadPin, WorkloadPinRequest, WorkloadScreen, WorkloadStanding,
-    WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter,
+    COMPUTE_PIN_CLASS, DeviceClaim, JOB_ALPN, JobWorkload, NoScreenModel, PinCheckInMode,
+    PinCheckInOutcome, PinGoBasis, PinSignals, ScreenAnswer, ScreenSource, ScreenVerdict,
+    WorkloadChange, WorkloadError, WorkloadNodeAnswer, WorkloadPin, WorkloadPinRequest,
+    WorkloadScreen, WorkloadStanding, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter,
 };
+use oneiron::memory::MEMORY_CODE_FORBIDDEN;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::steward;
+use oneiron::test_support::test_host_issuer;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, CheckInAnswerRequest, CheckInAnswerWord,
     check_in_answer_as_person, create_agent_definition_as, mint_agent_grant_as,
 };
+use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use serde_json::json;
 
@@ -87,30 +93,60 @@ fn pin_request(tag: &str, memory_mib: u64, network: &str, project: EntityId) -> 
     .expect("a pin request")
 }
 
-/// A screen that answers `sure` and counts the times it is asked.
+/// `request` with its devices `claims` (JSON device claims).
+fn with_devices(mut request: WorkloadPinRequest, claims: serde_json::Value) -> WorkloadPinRequest {
+    request.pin.request.devices =
+        serde_json::from_value::<Vec<DeviceClaim>>(claims).expect("device claims");
+    request
+}
+
+/// `count` exclusive GPUs of `memory_mib` each, as one claim.
+fn gpus(count: u32, memory_mib: u64) -> serde_json::Value {
+    json!({
+        "kind": "gpu",
+        "count": count,
+        "memory_mib": memory_mib,
+        "features": [],
+        "sharing": "exclusive",
+    })
+}
+
+/// A screen that answers `answer` and counts the times it is asked.
 struct ScriptedScreen {
-    sure: bool,
+    answer: ScreenAnswer,
     asked: Cell<u32>,
 }
 
 impl ScriptedScreen {
+    /// A model's verdict, sure or unsure.
     fn answering(sure: bool) -> Self {
-        Self {
+        Self::of(ScreenAnswer::Verdict(ScreenVerdict {
             sure,
+            probability_permille: Some(if sure { 920 } else { 480 }),
+            rung: Some("head".to_owned()),
+            receipt: None,
+        }))
+    }
+
+    /// A model that was asked and failed.
+    fn failing() -> Self {
+        Self::of(ScreenAnswer::Failed {
+            why: "the provider answered 503".to_owned(),
+        })
+    }
+
+    fn of(answer: ScreenAnswer) -> Self {
+        Self {
+            answer,
             asked: Cell::new(0),
         }
     }
 }
 
 impl WorkloadScreen for ScriptedScreen {
-    fn screen(&self, _signals: &PinSignals) -> oneiron::Result<ScreenVerdict> {
+    fn screen(&self, _signals: &PinSignals) -> ScreenAnswer {
         self.asked.set(self.asked.get() + 1);
-        Ok(ScreenVerdict {
-            sure: self.sure,
-            probability_permille: Some(if self.sure { 920 } else { 480 }),
-            rung: Some("head".to_owned()),
-            receipt: None,
-        })
+        self.answer.clone()
     }
 }
 
@@ -153,6 +189,12 @@ impl Rack {
     /// An enabled agent the owner defines and gives one Grant naming the pin
     /// verb.
     fn agent(&self, agent_id: &str) -> Agent {
+        self.agent_in(agent_id, ScopeAxis::All)
+    }
+
+    /// An enabled agent the owner defines and gives one Grant naming the pin
+    /// verb, bounded to `worlds`.
+    fn agent_in(&self, agent_id: &str, worlds: ScopeAxis<ScopeId>) -> Agent {
         let actor = EntityId::now();
         create_agent_definition_as(
             self.vault(),
@@ -171,6 +213,7 @@ impl Rack {
         )
         .expect("the owner defines the agent");
         let mut authority_scope = Scope::top();
+        authority_scope.worlds = worlds;
         authority_scope.verbs =
             ScopeAxis::Some([PIN].iter().map(|verb| (*verb).to_owned()).collect());
         let minted = mint_agent_grant_as(
@@ -224,6 +267,11 @@ impl Rack {
     /// template, network `none`, the host scope and `machines`, for the
     /// rack's project; answers its digest.
     fn mint_compute(&self, agent: Agent, machines: &[EntityId]) -> String {
+        self.mint_compute_for(agent, self.project, machines)
+    }
+
+    /// [`Self::mint_compute`] for `project`.
+    fn mint_compute_for(&self, agent: Agent, project: EntityId, machines: &[EntityId]) -> String {
         let receipt = create_standing_grant(
             self.vault(),
             &self.owner,
@@ -232,7 +280,7 @@ impl Rack {
                     actor: agent.grant.to_hex(),
                     class: COMPUTE_PIN_CLASS.to_owned(),
                     envelope: ActionEnvelopeRequest {
-                        project: self.project.to_hex(),
+                        project: project.to_hex(),
                         audience: Vec::new(),
                         budget: None,
                         compute: Some(ComputeEnvelopeRequest {
@@ -248,6 +296,38 @@ impl Rack {
         )
         .expect("the owner mints the family's compute grant");
         receipt.grant_ref.expect("the grant's digest")
+    }
+
+    /// A project the owner creates under the root project, its slice in
+    /// `world`: the owner-signed birth a rooted vault requires.
+    fn project_in(&self, world: EntityId) -> EntityId {
+        let vault = self.vault();
+        let owner = self.owner.revalidate(vault).expect("the owner's id");
+        let root = vault.root_project().expect("the root project");
+        let id = EntityId::now();
+        let mut record = ProjectRecord::new(id, Some(root), root, owner).expect("a project record");
+        record.slice.world = Some(world);
+        let issuer = test_host_issuer();
+        let signer = vault
+            .owner_project_signer(&issuer)
+            .expect("the owner's project signer");
+        create_owner_project(vault, &issuer, &self.owner, &signer, owner, id, &record)
+            .expect("the owner creates a project in the world");
+        id
+    }
+
+    /// The owner approves the check-in `check_in` of the pin `digest`.
+    fn approve(&self, check_in: &str, digest: &str) {
+        check_in_answer_as_person(
+            self.vault(),
+            &self.owner,
+            CheckInAnswerRequest {
+                handle: check_in.to_owned(),
+                answer: CheckInAnswerWord::Approve,
+                effect_digest: digest.to_owned(),
+            },
+        )
+        .expect("the owner approves the pin's check-in");
     }
 
     /// The owner sets the vault's check-in mode for pins.
@@ -414,21 +494,26 @@ fn under_manual_every_agent_pin_waits_even_inside_a_grant() {
             ),
             "it waits for the ladder: {row:?}"
         );
+        // The pending check-in keeps the vault's recording clock, in
+        // seconds: its next rung falls due within days of now, not at a
+        // millisecond instant.
+        let now_secs = rack.vault().now_recorded_at();
+        let handle = EntityId::from_hex(&check_in).expect("the check-in's id");
+        let due = oneiron::test_doors::check_in::due_rows(rack.vault())
+            .expect("the due index reads")
+            .into_iter()
+            .find_map(|(due, row)| (row == handle).then_some(due))
+            .expect("the pin's check-in has a rung due");
+        assert!(
+            due.saturating_add(3_600) >= now_secs && due <= now_secs + 7 * 86_400,
+            "the rung falls due on the seconds clock: due {due}, now {now_secs}"
+        );
         assert_eq!(
             rack.start_on(&digest, rack.machine, agent),
             Err(WorkloadStartRefusal::WorkloadWaiting)
         );
 
-        check_in_answer_as_person(
-            rack.vault(),
-            &rack.owner,
-            CheckInAnswerRequest {
-                handle: check_in.clone(),
-                answer: CheckInAnswerWord::Approve,
-                effect_digest: digest.clone(),
-            },
-        )
-        .expect("the owner approves the pin's check-in");
+        rack.approve(&check_in, &digest);
         request.check_in_ref = Some(check_in);
         let pinned = rack
             .pin(agent, &request, &screen)
@@ -557,6 +642,217 @@ fn an_agent_never_answers_its_own_pin() {
             rack.start_on(&digest, rack.machine, agent),
             Err(WorkloadStartRefusal::WorkloadWaiting)
         );
+        rack.mesh.stop().await;
+    });
+}
+
+/// The secret scan reads an agent's pin before the screen sends its facts
+/// to a model: a pin that holds a token is refused, no model is asked, and
+/// nothing is stored.
+#[test]
+fn a_pin_that_holds_a_secret_is_refused_before_any_screen() {
+    run_on_engine_stack("job-workload-check-in-secret", || async {
+        let rack = Rack::start().await;
+        let agent = rack.agent("compute-secret");
+        let screen = ScriptedScreen::answering(true);
+        let mut request = pin_request("holds-a-token", 4_096, "none", rack.project);
+        request
+            .pin
+            .args
+            .push("token=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned());
+        let refused = rack.pin(agent, &request, &screen);
+        assert!(
+            matches!(
+                refused,
+                Err(WorkloadError::Vault(oneiron::Error::Gate(
+                    oneiron::error::GateError::GateWriteRejected { .. }
+                )))
+            ),
+            "the secret scan refuses the pin: {refused:?}"
+        );
+        assert_eq!(screen.asked.get(), 0, "no model read the pin");
+        assert!(
+            rack.vault()
+                .job_workload(&digest_of(&request))
+                .expect("the row reads")
+                .is_none(),
+            "nothing is stored"
+        );
+        rack.mesh.stop().await;
+    });
+}
+
+/// A model that was asked and failed is unsure: the pin asks, even where
+/// the fallback would let it go. With no model on the host, the same pin,
+/// pinned again, goes on the fallback.
+#[test]
+fn a_failed_screen_asks_where_the_fallback_would_let_the_pin_go() {
+    run_on_engine_stack("job-workload-check-in-failed-screen", || async {
+        let rack = Rack::start().await;
+        let agent = rack.agent("compute-failed-screen");
+        let earlier = pin_request("earlier", 8_192, "none", rack.project);
+        rack.pin(agent, &earlier, &ScriptedScreen::answering(true))
+            .expect("a sure screen lets the earlier pin go");
+
+        let failing = ScriptedScreen::failing();
+        let routine = pin_request("routine", 4_096, "none", rack.project);
+        rack.pin_waits(agent, &routine, &failing);
+        assert_eq!(failing.asked.get(), 1);
+        let screened = rack
+            .row(&digest_of(&routine))
+            .check_in
+            .and_then(|record| record.screen)
+            .expect("the failed screen is kept");
+        assert!(!screened.sure, "a failed model is unsure");
+        assert_eq!(screened.by, ScreenSource::Model);
+        assert!(screened.model_failure.is_some());
+
+        rack.pin(agent, &routine, &NoScreenModel)
+            .expect("with no model the fallback lets the routine pin go");
+        let row = rack.row(&digest_of(&routine));
+        assert_eq!(went(&row), Some(PinGoBasis::Sure));
+        assert_eq!(
+            row.check_in
+                .and_then(|record| record.screen)
+                .map(|screen| screen.by),
+            Some(ScreenSource::Fallback)
+        );
+        rack.mesh.stop().await;
+    });
+}
+
+/// The fallback weighs each device a pin claims against its own earlier
+/// device: four 24 GiB GPUs are more than one 24 GiB and three 8 GiB GPUs,
+/// so that pin asks; one 24 GiB and two 8 GiB GPUs fit, so that one goes.
+#[test]
+fn the_fallback_asks_for_devices_larger_than_the_earlier_pin_held() {
+    run_on_engine_stack("job-workload-check-in-devices", || async {
+        let rack = Rack::start().await;
+        let agent = rack.agent("compute-devices");
+        let earlier = with_devices(
+            pin_request("earlier-gpus", 8_192, "none", rack.project),
+            json!([gpus(1, 24_576), gpus(3, 8_192)]),
+        );
+        rack.pin(agent, &earlier, &ScriptedScreen::answering(true))
+            .expect("a sure screen lets the earlier pin go");
+
+        let larger = with_devices(
+            pin_request("larger-gpus", 8_192, "none", rack.project),
+            json!([gpus(4, 24_576)]),
+        );
+        rack.pin_waits(agent, &larger, &NoScreenModel);
+        let screened = rack
+            .row(&digest_of(&larger))
+            .check_in
+            .and_then(|record| record.screen)
+            .expect("the fallback's verdict is kept");
+        assert_eq!(screened.by, ScreenSource::Fallback);
+        assert!(
+            !screened.sure,
+            "four large GPUs are more than the earlier pin held"
+        );
+
+        let within = with_devices(
+            pin_request("within-gpus", 8_192, "none", rack.project),
+            json!([gpus(2, 8_192), gpus(1, 24_576)]),
+        );
+        rack.pin(agent, &within, &NoScreenModel)
+            .expect("devices the earlier pin held let the pin go");
+        assert_eq!(went(&rack.row(&digest_of(&within))), Some(PinGoBasis::Sure));
+        rack.mesh.stop().await;
+    });
+}
+
+/// An approved ask is spent on the call that names it, whatever the ladder
+/// says now, and the answered record keeps the screen the pin was asked
+/// with: a reversible pin the model doubted, which the fallback would now
+/// let go, and a network pin whose sure screen rode on its ask.
+#[test]
+fn an_approved_ask_is_spent_and_keeps_the_screen_it_was_asked_with() {
+    run_on_engine_stack("job-workload-check-in-spend", || async {
+        let rack = Rack::start().await;
+        let agent = rack.agent("compute-spend");
+        let earlier = pin_request("earlier", 8_192, "none", rack.project);
+        rack.pin(agent, &earlier, &ScriptedScreen::answering(true))
+            .expect("a sure screen lets the earlier pin go");
+
+        for (tag, network, sure) in [("doubted", "none", false), ("egress", "host", true)] {
+            let mut request = pin_request(tag, 4_096, network, rack.project);
+            let check_in = rack.pin_waits(agent, &request, &ScriptedScreen::answering(sure));
+            let digest = digest_of(&request);
+            rack.approve(&check_in, &digest);
+            request.check_in_ref = Some(check_in.clone());
+            let pinned = rack
+                .pin(agent, &request, &NoScreenModel)
+                .expect("the call naming the approved check-in goes");
+            assert_eq!(pinned.workload.standing, WorkloadStanding::Cleared);
+            let row = rack.row(&digest);
+            let record = row.check_in.clone().expect("the record");
+            assert!(
+                matches!(
+                    &record.outcome,
+                    PinCheckInOutcome::Went {
+                        basis: PinGoBasis::Answered,
+                        check_in: Some(spent),
+                        ..
+                    } if *spent == check_in
+                ),
+                "{tag}: the approved ask is spent: {record:?}"
+            );
+            let screened = record.screen.expect("the screen the pin was asked with");
+            assert_eq!(screened.by, ScreenSource::Model, "{tag}");
+            assert_eq!(screened.sure, sure, "{tag}");
+            assert_eq!(
+                screened.probability_permille,
+                Some(if sure { 920 } else { 480 }),
+                "{tag}"
+            );
+        }
+        rack.mesh.stop().await;
+    });
+}
+
+/// A Grant bounded to one world pins for a project in that world: the pin
+/// sits at its project, placed by the project's world, so the Grant that
+/// admits the agent is the one its ask names and its row is pinned under,
+/// and a pin its family's grant covers goes at rung 0. A pin whose project
+/// names no world is outside that Grant: refused at the admission, before
+/// any screen.
+#[test]
+fn a_grant_bounded_to_a_world_pins_for_a_project_in_that_world() {
+    run_on_engine_stack("job-workload-check-in-world", || async {
+        let rack = Rack::start().await;
+        let world = rack
+            .vault()
+            .create_world(&rack.owner, "compute world", 1)
+            .expect("the owner creates a world");
+        let project = rack.project_in(world);
+        let agent = rack.agent_in(
+            "compute-world",
+            ScopeAxis::Some([ScopeId(world)].into_iter().collect()),
+        );
+        let grant = rack.mint_compute_for(agent, project, &[rack.machine]);
+        let screen = ScriptedScreen::answering(true);
+        let request = pin_request("in-world", 4_096, "none", project);
+        let pinned = rack
+            .pin(agent, &request, &screen)
+            .expect("the covered pin in the Grant's world goes");
+        assert_eq!(pinned.workload.standing, WorkloadStanding::Cleared);
+        let row = rack.row(&pinned.workload.digest);
+        assert_eq!(went(&row), Some(PinGoBasis::StandingRow));
+        assert_eq!(row.pinned_under, Some(agent.grant));
+        assert_eq!(
+            row.check_in.and_then(|record| record.covering_grant),
+            Some(grant)
+        );
+
+        let elsewhere = pin_request("no-world", 4_096, "none", rack.project);
+        let refused = rack.pin(agent, &elsewhere, &screen);
+        assert!(
+            matches!(&refused, Err(WorkloadError::Caller(error)) if error.code == MEMORY_CODE_FORBIDDEN),
+            "a pin outside the Grant's world is refused: {refused:?}"
+        );
+        assert_eq!(screen.asked.get(), 0, "no screen ran");
         rack.mesh.stop().await;
     });
 }
