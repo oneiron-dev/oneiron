@@ -66,6 +66,8 @@ pub mod native_board;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
+#[cfg(all(feature = "mesh", unix))]
+pub mod organ_mesh;
 pub mod owner_backup;
 pub mod owner_check;
 #[cfg(unix)]

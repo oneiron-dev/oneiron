@@ -22,6 +22,9 @@
 //! - The intent key and the seat's logical key; setting a line is the
 //!   owner's act; one line per account; the schedule is fixed once minted; a
 //!   period once passed never reopens; every floor fits its own side.
+//! - Review round 1: a caller off the line neither replays a seat nor mints
+//!   a period; a lead's cap is the minted period's, so an edit waits for the
+//!   next mint.
 //!
 //! On the base the r2 shapes do not exist, so every test fails there.
 //!
@@ -718,17 +721,37 @@ fn a_seat_past_the_cap_needs_the_owner() {
     pinned.budget.seat_cap = 2;
     pinned.budget.pinned_seat_cap = 1;
     fixture.owner_set("pinned-cap", lane, pinned, NOW_MS);
-    fixture
+    // The raised cap applies from the next mint: period 0 keeps its 0
+    // (review round 1 of #10398).
+    let early = fixture
         .admit(
+            Some(lead),
+            "interest-0a",
+            lane,
+            interest[0],
+            Track::Interest,
+        )
+        .expect_err("period 0 was minted with pinned_seat_cap 0");
+    assert_eq!(code(early), MEMORY_CODE_FORBIDDEN);
+    fixture
+        .admit_at(
             Some(lead),
             "interest-0b",
             lane,
             interest[0],
             Track::Interest,
+            in_period(1),
         )
-        .expect("inside the pinned cap");
+        .expect("inside the pinned cap from period 1");
     let past_pinned = fixture
-        .admit(Some(lead), "interest-1", lane, interest[1], Track::Interest)
+        .admit_at(
+            Some(lead),
+            "interest-1",
+            lane,
+            interest[1],
+            Track::Interest,
+            in_period(1),
+        )
         .expect_err("a second interest seat");
     assert_eq!(code(past_pinned), MEMORY_CODE_FORBIDDEN);
 
@@ -741,6 +764,44 @@ fn a_seat_past_the_cap_needs_the_owner() {
     }))
     .expect_err("a seat carries no seed");
     assert!(seeded.to_string().contains("seed"), "{seeded}");
+}
+
+/// Review round 1 of #10398: the admit door judges the caller's role on the
+/// stored line before an intent replay or a mint. A lead the owner took off
+/// the line, whose Grant still names the verb, neither replays the seat it
+/// made nor mints the next period with a fresh key.
+#[test]
+fn a_caller_off_the_line_neither_replays_nor_mints() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    let (lead, grant) = fixture.agent("gpu-line-lead", &[VAULT_GPU_LINES_FAMILIES_ADMIT]);
+    fixture.owner_set("set", lane, with_roles(&[grant], &[], &[]), NOW_MS);
+    let family = fixture.project_under(lane, 0);
+    fixture
+        .admit(Some(lead), "seat", lane, family, Track::Demand)
+        .expect("the lead seats a demand family");
+    fixture.owner_set("drop-lead", lane, with_roles(&[], &[], &[]), NOW_MS);
+
+    let replay = fixture
+        .admit(Some(lead), "seat", lane, family, Track::Demand)
+        .expect_err("no replay for a caller off the line");
+    assert_eq!(code(replay), MEMORY_CODE_FORBIDDEN);
+    let other = fixture.project_under(lane, 0);
+    let fresh = fixture
+        .admit_at(
+            Some(lead),
+            "seat-next",
+            lane,
+            other,
+            Track::Demand,
+            in_period(1),
+        )
+        .expect_err("no seat for a caller off the line");
+    assert_eq!(code(fresh), MEMORY_CODE_FORBIDDEN);
+    assert!(
+        fixture.view(lane, in_period(1)).preview,
+        "the refused call minted nothing: period 1 is still a preview"
+    );
 }
 
 /// T60.

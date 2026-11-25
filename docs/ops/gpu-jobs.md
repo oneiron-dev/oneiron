@@ -99,6 +99,47 @@ registered refuses with `gpu_jobs.no_backend` before any reservation. A
 backend implements `oneiron::gpu_job::GpuJobConnector`: `create`, `find`,
 `status`, `signal` and `terminate`, all blocking.
 
+## Pinned workloads (the vault's own machines)
+
+A job on one of the vault's own machines runs a pinned workload: one exact
+thing, named by its digest (BLAKE3 of the pin's canonical encoding). The pin
+names the template the machine holds and its digest, the code revision, the
+contract and its sha256, the entry, the arguments and the resource request.
+It never names a program or a host path. The issuer keeps each pin in the
+side table `JOB_WORKLOAD` (pass 33, row R2).
+
+- `vault.jobs.workloads.pin`: the owner, or an agent whose Grant names the
+  verb, pins a workload. A pin approves nothing, and it is written once. The
+  pin is hashed into its own key, so the vault's secret scan refuses a pin
+  that holds a secret (a token in an argument, say) instead of masking it.
+- `vault.jobs.workloads.approve`: the owner's act, with presence asked at
+  `Important`. It names the machines the workload may run on (each must hold
+  a live `oneiron/job/1` grant), the Grants that may start it (none named:
+  only the Grant it was pinned under), and an expiry.
+- `vault.jobs.workloads.revoke`: the owner's act. No later start passes the
+  gate, and a revoked workload is never approved again.
+
+Only the owner approves and revokes (card EN-1 A); no agent's Grant admits
+either act. Pass 34 moves an agent's own pins onto the built check-in under a
+standing grant (R2's follow-up PR); the owner's approval of an exact digest
+stays as its `manual` value.
+
+- `vault.jobs.workloads.get` and `.list`: the owner reads every workload; an
+  agent reads the workloads its Grant pinned, and those whose approval,
+  unexpired and not revoked, names its Grant as a starter. A revoked or
+  expired workload shows nothing to its starters. Neither read keeps its reply
+  for a retry under the same invocation id: the retry reads again.
+
+Before a start on a pinned workload reserves anything, the start gate checks
+the workload with `Vault::check_workload_start`. The pin must exist and must
+not be revoked; it must hold the owner's approval, which must not have
+expired; it must name the starter and the quoted machine; and the quote's
+maximum must be no more than the pin's. The machine's own answer must then hold the pin's
+template under the pinned digest and must not refuse. A refusal names
+`workload_unknown`, `workload_not_approved`, `workload_revoked`,
+`workload_expired`, `starter_not_named`, `request_above_pin`,
+`machine_not_approved`, `machine_unreachable` or `machine_refuses`.
+
 ## Restart
 
 A permit cannot be stored. When the server stops, each live chunk's permit is

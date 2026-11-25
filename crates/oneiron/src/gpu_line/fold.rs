@@ -1134,15 +1134,20 @@ pub struct BudgetDenied {
 
 /// The buckets an ask may draw, in order: the track's draw order in the
 /// period's policy, at rung 1 or at a later rung. A first-allowance hold
-/// takes the rung-1 order after its own step. The rung cap binds before this
-/// and the wallet after it; neither is checked here.
+/// takes the rung-1 order after its own step. Whatever the order names, the
+/// pinned pool pays only the policy's pinned track, and a new idea draws at
+/// rung 1 only (section 4.2, `new_idea_rung_one_only`: its later rungs draw
+/// nothing). The rung cap binds before this and the wallet after it; neither
+/// is checked here.
 #[must_use]
 pub fn draw_order(room: &PeriodRoom, ask: &DrawAsk) -> Vec<Bucket> {
-    let Some(order) = room.period().policy.draw_order_of(ask.track) else {
+    let policy = &room.period().policy;
+    let Some(order) = policy.draw_order_of(ask.track) else {
         return Vec::new();
     };
     let steps = match ask.purpose {
         DrawPurpose::Unit { rung: 1 } | DrawPurpose::FirstAllowanceHold => &order.first_rung,
+        DrawPurpose::Unit { .. } if ask.track == Track::NewIdea => return Vec::new(),
         DrawPurpose::Unit { .. } => &order.later_rungs,
     };
     steps
@@ -1151,7 +1156,7 @@ pub fn draw_order(room: &PeriodRoom, ask: &DrawAsk) -> Vec<Bucket> {
             DrawStep::FirstAllowance => (ask.purpose != DrawPurpose::FirstAllowanceHold)
                 .then_some(Bucket::FirstAllowance { arm: ask.arm }),
             DrawStep::Floor => Some(Bucket::Floor { family: ask.family }),
-            DrawStep::Pinned => Some(Bucket::Pinned),
+            DrawStep::Pinned => (ask.track == policy.pinned_track).then_some(Bucket::Pinned),
             DrawStep::Market => room.market_rule(&ask.arm).map(|rule| Bucket::Market {
                 family: ask.family,
                 rule,
