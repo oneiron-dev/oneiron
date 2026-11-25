@@ -17,6 +17,7 @@ mod migrations;
 mod model_pack;
 mod organs;
 pub mod predicate_rewrites;
+mod setting_defaults_pack;
 mod setup;
 mod setup_actor;
 mod setup_cards;
@@ -50,6 +51,7 @@ pub use organs::{
     PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree, host_platform,
 };
 pub use screening::PackInstallRules;
+pub use setting_defaults_pack::{PackSettingDefaults, SETTING_DEFAULTS_FILE};
 pub use setup::{
     PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
     PackSetupRisk, PackSetupSecret,
