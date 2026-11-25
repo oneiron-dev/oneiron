@@ -359,6 +359,7 @@ fn history_totals_equal_the_settled_holds_of_the_same_period() {
         jobs: &[],
         claims: &fixture.claims,
         periods: &fixture.periods,
+        orders: &[],
     };
     let filter = request().filter().expect("a valid request");
     let history = project(&inputs, &filter, HistoryViewer::Owner);
@@ -429,6 +430,7 @@ fn an_agent_reads_only_the_attempts_it_reserved_and_their_totals() {
         jobs: &[],
         claims: &fixture.claims,
         periods: &fixture.periods,
+        orders: &[],
     };
     let filter = request().filter().expect("a valid request");
     let own = project(&inputs, &filter, HistoryViewer::Requester(other_agent()));

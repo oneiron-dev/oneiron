@@ -383,6 +383,7 @@ fn a_resumed_chunk_is_never_an_agents_own() {
         jobs: &jobs,
         claims: &[],
         periods: &[],
+        orders: &[],
     };
     let filter = JobHistoryRequest::default()
         .filter()

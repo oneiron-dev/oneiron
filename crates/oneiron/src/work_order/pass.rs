@@ -199,6 +199,22 @@ impl Vault {
             .collect()
     }
 
+    /// Every work order of this vault, in the caller's read transaction: for a read that joins
+    /// the orders to other rows of one snapshot (`vault.jobs.history`).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn work_orders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<Vec<WorkOrder>> {
+        WORK_ORDERS
+            .iter_from(&self.store, txn, &[])?
+            .map(|row| row.map(|(_, order)| order))
+            .collect()
+    }
+
     /// One work order.
     ///
     /// # Errors

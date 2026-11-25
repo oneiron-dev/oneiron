@@ -80,13 +80,20 @@ every quote refuses and no worker starts.
   (its exit); a stop, a cancel and a lost machine or resource show it as
   unknown, never as zero. A chunk the provider refused before anything ran
   charged nothing and returned its whole quote. A stopped job that the
-  customer cancels keeps its last chunk's end at its maximum. The reply is
-  never kept for a same-id retry, which reads again.
+  customer cancels keeps its last chunk's end at its maximum. An attempt a
+  work order made names its order and its number there, who ordered, how
+  long the order waited for it (from the order, or from the end of the
+  attempt before), when the machine was first seen running it, and what the
+  RANK, PLACE and AFTER rules decided, all as the order's row keeps them; the
+  totals sum those waits, and `order` narrows the list to one order. The
+  reply is never kept for a same-id retry, which reads again.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
 verb. History admits the same callers, judged in the snapshot it reads; an
 agent sees only the line units it reserved and the first chunk of each job it
-started (a resumed chunk's starter is not stored), and totals over those.
+started (a resumed chunk's starter is not stored), and totals over those; of
+a RANK decision it sees only its own order among the options, as
+`vault.jobs.orders.get` shows it.
 Start and cancel admit the owner, or an agent whose own Grant names the
 verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 
