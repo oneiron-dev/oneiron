@@ -678,6 +678,7 @@ fn submit(issuer: EntityId, key: &str, pin: &WorkloadPin) -> TestResult<SignedJo
             generation: 1,
         },
         authority_heads: Vec::new(),
+        continues: None,
     };
     SignedJobSubmit::sign(submit, ScriptedSigner::new(issuer).as_ref())
         .map_err(at("the issuer signs"))

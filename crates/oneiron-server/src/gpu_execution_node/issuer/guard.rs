@@ -23,7 +23,14 @@ pub fn machine_job_outcome(
 ) -> MachineJobOutcome {
     let failure = |why: String| MachineJobOutcome::MachineFailure { why };
     match &ended.end {
-        Some(JobEnd::Stopped | JobEnd::Revoked | JobEnd::Withdrawn | JobEnd::Refused { .. }) => {
+        // A session slice's paid end (row W1) is no end of the machine's run.
+        Some(
+            JobEnd::Stopped
+            | JobEnd::Revoked
+            | JobEnd::Withdrawn
+            | JobEnd::Refused { .. }
+            | JobEnd::Continued,
+        ) => {
             return MachineJobOutcome::NotTheMachines;
         }
         Some(JobEnd::Lost { reason, .. }) => return failure(format!("lost: {reason}")),
@@ -37,6 +44,12 @@ pub fn machine_job_outcome(
     }
     if matches!(meter, MeterVerdict::Bracketed { .. }) {
         return failure("measured_above_bracket".to_owned());
+    }
+    // A renewed session's later slice (row W1) began only after the run went
+    // past a whole paid chunk: its run is past the window, however few of
+    // the slice's own seconds it used.
+    if ended.slice.as_ref().is_some_and(|slice| slice.renewal > 0) {
+        return MachineJobOutcome::RanPastFastExit;
     }
     match ended.measured_secs {
         Some(secs) if secs > fast_exit_secs => MachineJobOutcome::RanPastFastExit,

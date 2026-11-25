@@ -208,6 +208,21 @@ pub trait NodeAdmission: Send + Sync {
     fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
         Vec::new()
     }
+
+    /// A session template's longest run from its launch, in seconds (pass
+    /// 34, 2.5; row W1): only a run of such a template takes a renewal.
+    /// `None` for a job template or a template the node does not hold, and
+    /// by default.
+    fn template_session_max_secs(&self, template: &str) -> Option<u64> {
+        let _ = template;
+        None
+    }
+
+    /// The job unit's stop grace, in seconds: the cutoff stops a unit this
+    /// long before its cutoff time, so a renewal must come before then.
+    fn stop_grace_secs(&self) -> u64 {
+        crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT
+    }
 }
 
 /// The machine's devices, as the job service places and leases them. The
@@ -463,6 +478,21 @@ impl NodeAdmission for ExecutionNode {
 
     fn template_signal(&self, template: &str) -> Option<String> {
         ExecutionNode::template_signal(self, template)
+    }
+
+    fn template_session_max_secs(&self, template: &str) -> Option<u64> {
+        let settings = ExecutionNode::settings(self).ok().flatten()?;
+        settings
+            .templates
+            .get(template)
+            .and_then(crate::gpu_execution_node::node_settings::NodeTemplate::session_max_secs)
+    }
+
+    fn stop_grace_secs(&self) -> u64 {
+        ExecutionNode::settings(self).ok().flatten().map_or(
+            crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT,
+            |settings| settings.stop_grace_secs,
+        )
     }
 
     fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
