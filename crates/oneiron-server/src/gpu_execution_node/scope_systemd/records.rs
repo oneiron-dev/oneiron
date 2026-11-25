@@ -107,6 +107,10 @@ pub struct ExecFile {
     pub devices_denied: Vec<PathBuf>,
     /// Processes the job must not see: process 1 and the engine's.
     pub hidden_pids: Vec<u32>,
+    /// The machine's own network namespace, as `/proc/1/ns/net` names it
+    /// (`net:[<inode>]`): the job's must be another (review r2 R2-06). Empty
+    /// when root could not read it.
+    pub host_network_namespace: String,
     /// The bounds the template requires (pass 34, 2.2).
     pub require: Vec<BoundRequirement>,
 }
@@ -171,6 +175,11 @@ pub struct ScopeRecord {
     /// the gate writes its go, so a workload that started always has it.
     pub released: bool,
     pub refusal: Option<String>,
+    /// Why the workload's `execve` failed after the go, in `job-exec`'s
+    /// words on the report pipe (review r2 R2-02); the workload then never
+    /// started.
+    #[serde(default)]
+    pub exec_failed: Option<String>,
     pub at_boot_ns: u64,
 }
 

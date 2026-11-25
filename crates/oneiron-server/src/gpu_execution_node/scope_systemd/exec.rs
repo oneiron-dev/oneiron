@@ -10,8 +10,11 @@
 //! Order: open the two gate pipes; prove the device policy (before the file
 //! wall, so a refusal is the device policy's and not the wall's); apply the
 //! inner file wall (Landlock); prove the wall, the protected paths, the
-//! network, the hidden processes and the cgroup limits; report; wait for the
-//! go; close every descriptor above 2; `execve`.
+//! network, the hidden processes and the cgroup limits; report (one line,
+//! the pipe kept open); wait for the go; close every descriptor above 2 at
+//! the exec; `execve`. The report pipe closes with a successful exec; a
+//! failed one writes why on it first, so the gate records that the workload
+//! never started (review r2 R2-02).
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -26,8 +29,8 @@ use super::records::{
     enforced_by_kernel, first_unmet, not_enforced,
 };
 use super::{
-    EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_PIPE_NAME, exec_status,
-    is_job_instance,
+    EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END, REPORT_PIPE_NAME,
+    exec_status, is_job_instance,
 };
 
 /// How long `job-exec` waits for the gate's read end, and then for its go.
@@ -70,7 +73,7 @@ pub fn run(args: &[String]) -> i32 {
             Err(why) => not_enforced(format!("Landlock not applied: {why}")),
         },
     );
-    proofs.insert(ScopeBound::NetworkClosed, prove_network_closed());
+    proofs.insert(ScopeBound::NetworkClosed, prove_network_closed(&exec));
     proofs.insert(ScopeBound::ProcessesHidden, prove_processes_hidden(&exec));
     let (memory, write_rate) = prove_cgroup_limits();
     proofs.insert(ScopeBound::MemoryCap, memory);
@@ -93,7 +96,7 @@ pub fn run(args: &[String]) -> i32 {
         proofs,
         refusal: refusal.clone(),
     };
-    if let Err(error) = send_report(report_pipe, &report) {
+    if let Err(error) = send_report(&report_pipe, &report) {
         eprintln!("job-exec: the report did not reach the gate: {error}");
         return exec_status::GATE_PIPES;
     }
@@ -114,7 +117,7 @@ pub fn run(args: &[String]) -> i32 {
         return exec_status::GATE_REFUSED;
     }
     drop(go_pipe);
-    become_workload(&exec)
+    become_workload(&exec, report_pipe)
 }
 
 fn read_exec_file(exchange: &Path, instance: &str) -> Result<ExecFile, String> {
@@ -243,9 +246,21 @@ fn prove_file_wall(exec: &ExecFile, exchange: &Path) -> BoundReport {
     ))
 }
 
-/// The job is alone with its loopback: `/proc/net/dev` lists the job's own
-/// network namespace.
-fn prove_network_closed() -> BoundReport {
+/// The job is alone with its loopback in a network namespace that is not
+/// the machine's (review r2 R2-06): `/proc/self/ns/net` names another
+/// namespace than the one root read from process 1, and `/proc/net/dev`
+/// lists `lo` alone. Either check that cannot be made proves nothing.
+fn prove_network_closed(exec: &ExecFile) -> BoundReport {
+    if exec.host_network_namespace.is_empty() {
+        return not_enforced("the machine's network namespace is unknown");
+    }
+    let own = match std::fs::read_link("/proc/self/ns/net") {
+        Ok(link) => link.display().to_string(),
+        Err(error) => return not_enforced(format!("/proc/self/ns/net unreadable: {error}")),
+    };
+    if own == exec.host_network_namespace {
+        return not_enforced(format!("the machine's own network namespace {own}"));
+    }
     let text = match std::fs::read_to_string("/proc/net/dev") {
         Ok(text) => text,
         Err(error) => return not_enforced(format!("/proc/net/dev unreadable: {error}")),
@@ -257,7 +272,7 @@ fn prove_network_closed() -> BoundReport {
         .map(str::trim)
         .collect();
     if interfaces == ["lo"] {
-        enforced_by_kernel("a private network namespace: only lo")
+        enforced_by_kernel(format!("a private network namespace {own}: only lo"))
     } else {
         not_enforced(format!("interfaces {}", interfaces.join(" ")))
     }
@@ -307,7 +322,9 @@ fn own_cgroup() -> Option<PathBuf> {
     Some(Path::new("/sys/fs/cgroup").join(path.trim().trim_start_matches('/')))
 }
 
-fn send_report(pipe: OwnedFd, report: &ScopeReport) -> io::Result<()> {
+/// Writes the report as one line. The pipe stays open: it closes with the
+/// workload's exec, or carries the exec's failure.
+fn send_report(pipe: &OwnedFd, report: &ScopeReport) -> io::Result<()> {
     // SAFETY: the pipe stays open for this call; clearing O_NONBLOCK makes
     // the write wait for the reader instead of failing on a full pipe.
     unsafe {
@@ -316,8 +333,11 @@ fn send_report(pipe: OwnedFd, report: &ScopeReport) -> io::Result<()> {
             libc::fcntl(pipe.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK);
         }
     }
-    let bytes = serde_json::to_vec(report).map_err(io::Error::other)?;
-    let mut file = std::fs::File::from(pipe);
+    let mut bytes = serde_json::to_vec(report).map_err(io::Error::other)?;
+    bytes.push(REPORT_FRAME_END);
+    // The copy is close-on-exec like the original, and closing it leaves the
+    // original open.
+    let mut file = std::fs::File::from(pipe.try_clone()?);
     file.write_all(&bytes)?;
     file.flush()
 }
@@ -358,9 +378,11 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
     }
 }
 
-/// Closes every descriptor above 2, enters the payload directory and
-/// becomes the workload's program. Returns only when `execve` failed.
-fn become_workload(exec: &ExecFile) -> i32 {
+/// Marks every descriptor above 2 close-on-exec, enters the payload
+/// directory and becomes the workload's program. The report pipe closes with
+/// the exec; when the exec fails, why goes on the pipe first
+/// ([`exec_failed`]). Returns only when the exec failed.
+fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
     use std::os::unix::process::CommandExt as _;
     // SAFETY: CLOSE_RANGE_CLOEXEC marks descriptors 3 and up close-on-exec;
     // it closes nothing this process still reads before the exec.
@@ -373,15 +395,16 @@ fn become_workload(exec: &ExecFile) -> i32 {
         )
     };
     if marked != 0 {
-        eprintln!(
-            "job-exec: descriptors above 2 could not be closed: {}",
-            io::Error::last_os_error()
+        return exec_failed(
+            report_pipe,
+            &format!(
+                "descriptors above 2 could not be closed: {}",
+                io::Error::last_os_error()
+            ),
         );
-        return exec_status::EXEC_FAILED;
     }
     let Some((program, args)) = exec.argv.split_first() else {
-        eprintln!("job-exec: exec.json names no program");
-        return exec_status::EXEC_FAILED;
+        return exec_failed(report_pipe, "exec.json names no program");
     };
     let error = std::process::Command::new(program)
         .args(args)
@@ -389,6 +412,16 @@ fn become_workload(exec: &ExecFile) -> i32 {
         .envs(&exec.env)
         .current_dir(&exec.cwd)
         .exec();
-    eprintln!("job-exec: {program}: {error}");
+    exec_failed(report_pipe, &format!("{program}: {error}"))
+}
+
+/// Tells the gate on the report pipe why the workload's exec failed, as one
+/// line, and returns the status for it.
+fn exec_failed(report_pipe: OwnedFd, why: &str) -> i32 {
+    eprintln!("job-exec: {why}");
+    let mut file = std::fs::File::from(report_pipe);
+    if let Err(error) = writeln!(file, "{}", why.replace('\n', " ")) {
+        eprintln!("job-exec: the gate was not told: {error}");
+    }
     exec_status::EXEC_FAILED
 }

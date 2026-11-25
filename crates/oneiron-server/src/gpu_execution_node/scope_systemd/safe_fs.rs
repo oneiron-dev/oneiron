@@ -362,6 +362,15 @@ pub fn require_root_owned(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The machine's own network namespace, as process 1's `/proc` link names
+/// it (`net:[<inode>]`); empty when it cannot be read.
+#[must_use]
+pub fn host_network_namespace() -> String {
+    std::fs::read_link("/proc/1/ns/net")
+        .map(|link| link.display().to_string())
+        .unwrap_or_default()
+}
+
 /// The account `name`: its uid, gid and home directory.
 ///
 /// # Errors

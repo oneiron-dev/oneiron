@@ -19,6 +19,10 @@ pub struct StepArgs {
     pub instance: String,
     /// `job-prepare --after-exec`: the gate.
     pub after_exec: bool,
+    /// Why the step could not enter process 1's mount namespace
+    /// ([`enter_host_mount_namespace`]); `None` when it works on the
+    /// machine's own tree.
+    pub host_namespace_error: Option<String>,
 }
 
 impl StepArgs {
@@ -48,8 +52,42 @@ impl StepArgs {
             engine_account: engine_account.ok_or("--engine-account is required")?,
             instance: instance.ok_or("the unit's instance is required")?,
             after_exec,
+            host_namespace_error: None,
         })
     }
+}
+
+/// Moves this process into process 1's mount namespace, unless it is there
+/// already (review r2 R2-03, qualification q1 on systemd 262: the service
+/// manager gives a unit's `+` steps the unit's `BindPaths=`,
+/// `BindReadOnlyPaths=` and `TemporaryFileSystem=` too). Inside the unit a
+/// root step would see the job's read-only view of the exchange and payload
+/// roots, and could make neither; every root step works on the machine's own
+/// tree instead. Called first, while the process has one thread: `setns`
+/// refuses a new mount namespace to a process whose threads share its
+/// file-system attributes.
+///
+/// # Errors
+///
+/// A namespace could not be read, or the kernel refused the move.
+pub fn enter_host_mount_namespace() -> Result<(), String> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let identity = |path: &str| {
+        std::fs::metadata(path)
+            .map(|found| (found.dev(), found.ino()))
+            .map_err(|error| format!("{path}: {error}"))
+    };
+    if identity("/proc/self/ns/mnt")? == identity("/proc/1/ns/mnt")? {
+        return Ok(());
+    }
+    let host = std::fs::File::open("/proc/1/ns/mnt")
+        .map_err(|error| format!("/proc/1/ns/mnt: {error}"))?;
+    // SAFETY: host is an open namespace descriptor for the whole call.
+    if unsafe { libc::setns(host.as_raw_fd(), libc::CLONE_NEWNS) } != 0 {
+        return Err(format!("setns: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 /// The opened state of one root step.

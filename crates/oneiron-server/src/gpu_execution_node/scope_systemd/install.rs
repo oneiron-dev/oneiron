@@ -6,10 +6,14 @@
 //! reloads the service manager. It is idempotent: a second run with the same
 //! inputs changes nothing.
 
+use std::ffi::OsStr;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
 use super::super::node_settings::ExecutionNodeSettings;
-use super::safe_fs::{account, require_root_owned};
+use super::safe_fs::{
+    account, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path, require_root_owned,
+};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
 use super::unit_file::{
     UnitInputs, plain_account, render_job_unit, render_polkit_rule, unit_path_word,
@@ -172,29 +176,65 @@ fn ensure_job_account(name: &str) -> Result<(), String> {
     .map(drop)
 }
 
+/// Makes `path` the account's directory. It walks from `/` one component at
+/// a time, each opened beneath the one before it and never through a link
+/// (review r2 R2-10): a missing component is made root's (mode 0755), the
+/// last one `uid:gid` with `mode`, and each owner and mode is set on the
+/// directory this step opened, not on a path. A last component that exists
+/// must already be the account's.
 fn ensure_dir(path: &Path, uid: u32, gid: u32, mode: u32) -> Result<(), String> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() => {
-            if meta.uid() != uid {
-                return Err(format!(
-                    "{}: owned by uid {}, not the engine's account (uid {uid})",
-                    path.display(),
-                    meta.uid()
-                ));
+    use std::path::Component;
+    let fail = |why: &dyn std::fmt::Display| format!("{}: {why}", path.display());
+    let mut names = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(name) => names.push(name),
+            Component::ParentDir | Component::Prefix(_) => {
+                return Err(fail(&"a path with '..'"));
             }
-            Ok(())
         }
-        Ok(_) => Err(format!("{}: not a directory", path.display())),
+    }
+    let Some((last, parents)) = names.split_last() else {
+        return Err(fail(&"not a directory below /"));
+    };
+    let mut current = open_dir_path(Path::new("/")).map_err(|error| fail(&error))?;
+    for name in parents {
+        current = open_or_make(&current, name, 0o755, (0, 0))
+            .map_err(|error| fail(&error))?
+            .0;
+    }
+    let (leaf, made) =
+        open_or_make(&current, last, mode, (uid, gid)).map_err(|error| fail(&error))?;
+    if !made {
+        let found = facts(borrow(&leaf)).map_err(|error| fail(&error))?;
+        if found.uid != uid {
+            return Err(fail(&format!(
+                "owned by uid {}, not the engine's account (uid {uid})",
+                found.uid
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The directory `name` beneath `dir`, opened never through a link, or made
+/// with `owner` and `mode` when absent; with whether this call made it.
+fn open_or_make(
+    dir: &OwnedFd,
+    name: &OsStr,
+    mode: u32,
+    owner: (u32, u32),
+) -> std::io::Result<(OwnedFd, bool)> {
+    match open_dir_beneath(borrow(dir), name) {
+        Ok(found) => Ok((found, false)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir_all(path)
-                .map_err(|error| format!("{}: {error}", path.display()))?;
-            std::os::unix::fs::chown(path, Some(uid), Some(gid))
-                .map_err(|error| format!("{}: {error}", path.display()))?;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-                .map_err(|error| format!("{}: {error}", path.display()))
+            let text = name
+                .to_str()
+                .ok_or_else(|| std::io::Error::other("a name that is not UTF-8"))?;
+            make_dir_beneath(borrow(dir), text, mode, owner).map(|made| (made, true))
         }
-        Err(error) => Err(format!("{}: {error}", path.display())),
+        Err(error) => Err(error),
     }
 }
 

@@ -19,7 +19,7 @@
 //!   - `oneiron job-exec <id>` ([`exec`], the job account, `ExecStart=`):
 //!     the inner file wall, then the proof of each bound from the inside,
 //!     reported to the root gate;
-//!   - `oneiron job-prepare --after-exec <id>` ([`prepare`], root,
+//!   - `oneiron job-prepare --after-exec <id>` ([`gate`], root,
 //!     `ExecStartPost=+`): the gate. It records `job-exec`'s report and only
 //!     then lets the workload start, so whether the workload ever started is
 //!     a root record the workload cannot write;
@@ -31,12 +31,21 @@
 //! Every file a root step reads or writes in a directory the engine's
 //! account owns is opened beneath a directory descriptor and never through a
 //! link ([`safe_fs`]): the engine is not trusted with root.
+//!
+//! The service manager gives the `+` steps the unit's bind mounts and
+//! temporary file systems too, so each root step first enters process 1's
+//! mount namespace ([`step::enter_host_mount_namespace`]) and works on the
+//! machine's own tree; the job's view is built from what they made there
+//! ([`exchange`]), and its bind sources are optional (`-`), so a step that
+//! runs before they exist still starts.
 
 pub mod capabilities;
 pub mod cutoff;
 pub mod device_files;
 pub mod ended;
+pub mod exchange;
 pub mod exec;
+pub mod gate;
 pub mod install;
 pub mod prepare;
 pub mod probe_unit;
@@ -54,6 +63,17 @@ use super::jobs::JobUnit;
 /// `exec.json` and the two gate pipes, readable by the job account alone
 /// (mode 0750, group the job account's).
 pub const EXCHANGE_ROOT: &str = "/run/oneiron-jobs";
+
+/// The root-owned directory (mode 0700) of the payload bind sources: the
+/// prepare step bind-mounts the payload directory it opened and checked at
+/// `<PAYLOAD_ROOT>/<instance>`, and the unit binds that, not the engine's
+/// path, at `<work_dir>/<instance>` (review r2 R2-12).
+pub const PAYLOAD_ROOT: &str = "/run/oneiron-payloads";
+
+/// The byte that ends `job-exec`'s report on the report pipe: the report is
+/// one JSON line, and the pipe stays open after it until the workload's
+/// `execve` closes it (review r2 R2-02).
+pub const REPORT_FRAME_END: u8 = b'\n';
 
 /// `job-exec`'s parameters, written by the prepare step (root) into the
 /// job's exchange directory.
@@ -203,17 +223,24 @@ pub fn run_unit_step(args: &[String]) -> Option<i32> {
     };
     let status = match name {
         "job-exec" => exec::run(rest),
-        "job-prepare" | "job-cutoff" | "job-ended" => match step::StepArgs::parse(rest) {
-            Ok(parsed) => match name {
-                "job-prepare" => prepare::run(parsed),
-                "job-cutoff" => cutoff::run(parsed),
-                _ => ended::run(parsed),
-            },
-            Err(why) => {
-                eprintln!("{name}: {why}");
-                2
+        "job-prepare" | "job-cutoff" | "job-ended" => {
+            // First, while this process has one thread.
+            let entered = step::enter_host_mount_namespace();
+            match step::StepArgs::parse(rest) {
+                Ok(mut parsed) => {
+                    parsed.host_namespace_error = entered.err();
+                    match name {
+                        "job-prepare" => prepare::run(parsed),
+                        "job-cutoff" => cutoff::run(parsed),
+                        _ => ended::run(parsed),
+                    }
+                }
+                Err(why) => {
+                    eprintln!("{name}: {why}");
+                    2
+                }
             }
-        },
+        }
         _ => return None,
     };
     Some(status)

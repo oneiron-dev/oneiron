@@ -8,7 +8,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use super::EXCHANGE_ROOT;
+use super::{EXCHANGE_ROOT, PAYLOAD_ROOT};
 
 /// What a unit template is made from: the paths and accounts `install`
 /// resolved, and the node's settings that are unit properties.
@@ -79,17 +79,30 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("InaccessiblePaths", inaccessible.join(" "));
     // Each job sees its own payload and exchange directories and no other
     // job's: an empty read-only tmpfs over each root, with this instance's
-    // directory bound back in (systemd.exec(5), TemporaryFileSystem=).
+    // directory bound back in (systemd.exec(5), TemporaryFileSystem=). The
+    // payload comes from its root-owned bind source, never from the engine's
+    // path (review r2 R2-12). Each source is optional (`-`): the service
+    // manager gives the `+` root steps these mounts too, and the prepare step
+    // that makes the sources runs before they exist (qualification q1,
+    // systemd 262). A job whose sources are missing finds no exec.json and
+    // no payload, and refuses before any workload exists.
     set(
         "TemporaryFileSystem",
         format!("{}:ro {EXCHANGE_ROOT}:ro", quote_path(&inputs.work_dir)),
     );
     let payload = inputs.work_dir.join(instance);
-    set("BindPaths", quote_path(&payload));
-    set("ReadWritePaths", quote_path(&payload));
+    set(
+        "BindPaths",
+        format!(
+            "-{}:{}",
+            quote_path(&Path::new(PAYLOAD_ROOT).join(instance)),
+            quote_path(&payload)
+        ),
+    );
+    set("ReadWritePaths", format!("-{}", quote_path(&payload)));
     set(
         "BindReadOnlyPaths",
-        quote_path(&Path::new(EXCHANGE_ROOT).join(instance)),
+        format!("-{}", quote_path(&Path::new(EXCHANGE_ROOT).join(instance))),
     );
     properties
 }
@@ -218,7 +231,8 @@ mod tests {
         assert!(text.contains("ExecStopPost=+/usr/bin/oneiron job-ended "));
         assert!(text.contains("User=oneiron-job\n"));
         assert!(text.contains("PrivateNetwork=yes\n"));
-        assert!(text.contains("BindPaths=/data/oneiron-jobs/%i\n"));
+        assert!(text.contains("BindPaths=-/run/oneiron-payloads/%i:/data/oneiron-jobs/%i\n"));
+        assert!(text.contains("BindReadOnlyPaths=-/run/oneiron-jobs/%i\n"));
         assert_eq!(installed_runtime_max_secs(&text), Some(172_800));
     }
 

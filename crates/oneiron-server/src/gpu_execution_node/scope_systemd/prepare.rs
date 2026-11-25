@@ -4,40 +4,32 @@
 //! The prepare step reads `launch.json` as untrusted input (pass 33, 7.6):
 //! the key must hash to the unit's instance, the pin must pass the node
 //! file's own admission check again, and every limit must fit the root-owned
-//! ceilings. It then sets this job's limits on the unit, arms the cutoff, and
-//! writes `exec.json` where only the job account can read it. Any no fails
-//! the unit before a workload process exists.
-//!
-//! The gate runs once `job-exec` has started: it reads `job-exec`'s report
-//! from a pipe, records it with its verdict, and only then lets the workload
-//! start. The record is root's, so whether the workload started is never the
-//! workload's word.
+//! ceilings. It then publishes the payload it checked as the unit's bind
+//! source, sets this job's limits on the unit, arms the cutoff, and writes
+//! `exec.json` where only the job account can read it. Any no fails the unit
+//! before a workload process exists. The gate is [`super::gate`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use super::super::jobs::{JobKeyId, LaunchFile};
 use super::super::wire::NetworkMode;
 use super::capabilities::kernel_facts;
 use super::device_files;
+use super::exchange::{publish_payload, write_exchange};
 use super::records::{
     BoundReport, BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, ScopeBound,
-    ScopeRecord, ScopeReport, enforced_by_kernel, first_unmet, not_enforced,
+    enforced_by_kernel, first_unmet, not_enforced,
 };
 use super::safe_fs::{
-    self, boot_id, boot_ns, borrow, make_dir_beneath, make_fifo_beneath, open_dir_beneath,
-    open_dir_path, read_beneath, remove_beneath, write_beneath,
+    self, boot_id, boot_ns, borrow, make_dir_beneath, open_dir_beneath, open_dir_path, read_beneath,
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::installed_runtime_max_secs;
-use super::{
-    AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME,
-    PREPARED_FILE_NAME, REPORT_PIPE_NAME, SCOPE_FILE_NAME, UNIT_TEMPLATE_PATH,
-};
+use super::{AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_TEMPLATE_PATH};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -69,7 +61,7 @@ const HIDDEN_PIDS_MAX: usize = 64;
 #[must_use]
 pub fn run(args: StepArgs) -> i32 {
     if args.after_exec {
-        return gate(args);
+        return super::gate::run(args);
     }
     let context = match StepContext::open(args) {
         Ok(context) => context,
@@ -122,6 +114,9 @@ pub fn run(args: StepArgs) -> i32 {
 }
 
 fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), String> {
+    if let Some(why) = &context.args.host_namespace_error {
+        return Err(format!("host_mount_namespace_not_entered: {why}"));
+    }
     let settings = &context.settings;
     let instance = &context.args.instance;
     let bytes = read_beneath(
@@ -211,7 +206,9 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     }
 
     let payload_path = settings.work_dir.join(instance);
-    prepare_payload(context, &payload_path)?;
+    let payload = prepare_payload(context, &payload_path)?;
+    publish_payload(instance, &payload)?;
+    drop(payload);
     let exec = exec_file(
         context,
         &launch,
@@ -408,8 +405,9 @@ pub(super) fn installed_protected_paths(unit_text: &str, state_dir: &Path) -> Ve
 
 /// The payload directory is the engine's, not a link, and traversable by
 /// others; its checkout is there; `out`, `tmp` and `log` are made fresh for
-/// the job account.
-fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<(), String> {
+/// the job account. Returns the payload directory, open: the unit's bind
+/// source is made from this descriptor, never from the path again.
+fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<OwnedFd, String> {
     let work = open_dir_path(&context.settings.work_dir)
         .map_err(|error| format!("work_dir_unreadable: {error}"))?;
     let payload = open_dir_beneath(borrow(&work), OsStr::new(&context.args.instance))
@@ -438,7 +436,7 @@ fn prepare_payload(context: &StepContext, payload_path: &Path) -> Result<(), Str
         )
         .map_err(|error| format!("payload_not_fresh: {name}: {error}"))?;
     }
-    Ok(())
+    Ok(payload)
 }
 
 fn exec_file(
@@ -517,6 +515,7 @@ fn exec_file(
         devices_allowed: allowed.to_vec(),
         devices_denied: denied.to_vec(),
         hidden_pids,
+        host_network_namespace: safe_fs::host_network_namespace(),
         require: template.require.clone(),
     })
 }
@@ -535,60 +534,6 @@ fn processes_of(uid: u32) -> Vec<u32> {
         })
         .take(HIDDEN_PIDS_MAX)
         .collect()
-}
-
-/// Makes the job's exchange directory fresh (root, mode 0750, the job
-/// account's group): `exec.json` and the two gate pipes.
-///
-/// # Errors
-///
-/// A step that failed.
-pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), String> {
-    let root = exchange_root().map_err(|why| format!("exchange_root: {why}"))?;
-    let name = exec.instance.as_str();
-    if let Ok(stale) = open_dir_beneath(borrow(&root), OsStr::new(name)) {
-        for file in [EXEC_FILE_NAME, REPORT_PIPE_NAME, GO_PIPE_NAME] {
-            remove_beneath(borrow(&stale), file).map_err(|error| error.to_string())?;
-        }
-        drop(stale);
-        let c = std::ffi::CString::new(name).map_err(|error| error.to_string())?;
-        // SAFETY: c is NUL terminated; AT_REMOVEDIR removes an empty dir.
-        if unsafe { libc::unlinkat(root.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR) } < 0 {
-            return Err(format!(
-                "exchange_not_fresh: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-    }
-    let exchange = make_dir_beneath(borrow(&root), name, 0o750, (0, context.job_gid))
-        .map_err(|error| format!("exchange_dir: {error}"))?;
-    let bytes = serde_json::to_vec_pretty(exec).map_err(|error| error.to_string())?;
-    write_beneath(
-        borrow(&exchange),
-        EXEC_FILE_NAME,
-        &bytes,
-        0o640,
-        Some((0, context.job_gid)),
-    )
-    .map_err(|error| format!("exec_file: {error}"))?;
-    make_fifo_beneath(borrow(&exchange), REPORT_PIPE_NAME, 0o620, context.job_gid)
-        .map_err(|error| format!("report_pipe: {error}"))?;
-    make_fifo_beneath(borrow(&exchange), GO_PIPE_NAME, 0o640, context.job_gid)
-        .map_err(|error| format!("go_pipe: {error}"))?;
-    Ok(())
-}
-
-/// `/run/oneiron-jobs`, made root's (mode 0755) when absent.
-fn exchange_root() -> Result<OwnedFd, String> {
-    let path = Path::new(EXCHANGE_ROOT);
-    if !path.exists() {
-        std::fs::create_dir(path).map_err(|error| error.to_string())?;
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-            .map_err(|error| error.to_string())?;
-    }
-    safe_fs::require_root_owned(path)?;
-    open_dir_path(path).map_err(|error| error.to_string())
 }
 
 fn set_properties(unit: &str, properties: &[String]) -> Result<(), String> {
@@ -799,207 +744,4 @@ fn configured_bounds(
         },
     );
     out
-}
-
-/// The gate: reads `job-exec`'s report, records it with its verdict in
-/// `scope.json`, and only then writes the go. Returns the exit status: 0
-/// when the workload may start, 1 when the unit must fail.
-#[must_use]
-pub fn gate(args: StepArgs) -> i32 {
-    let context = match StepContext::open(args) {
-        Ok(context) => context,
-        Err(why) => {
-            eprintln!("job-prepare --after-exec: {why}");
-            return 1;
-        }
-    };
-    let deadline = Duration::from_secs(
-        context
-            .settings
-            .unit_start_timeout_secs
-            .saturating_sub(5)
-            .max(5),
-    );
-    let verdict = read_and_judge(&context, deadline);
-    let (report, refusal) = match verdict {
-        Ok(report) => {
-            let refusal = report.refusal.clone();
-            (Some(report), refusal)
-        }
-        Err(why) => (None, Some(why)),
-    };
-    let go = if refusal.is_none() {
-        match open_go(&context) {
-            Ok(go) => Some(go),
-            Err(why) => {
-                return finish_gate(&context, report, Some(why), None);
-            }
-        }
-    } else {
-        None
-    };
-    finish_gate(&context, report, refusal, go)
-}
-
-fn finish_gate(
-    context: &StepContext,
-    report: Option<ScopeReport>,
-    refusal: Option<String>,
-    go: Option<OwnedFd>,
-) -> i32 {
-    let released = refusal.is_none() && go.is_some();
-    let record = ScopeRecord {
-        instance: context.args.instance.clone(),
-        report,
-        released,
-        refusal: refusal.clone(),
-        at_boot_ns: boot_ns(),
-    };
-    // Recorded and synced before the go: a workload that started always has
-    // `released` on disk.
-    if let Err(why) = context.write_record(SCOPE_FILE_NAME, &record) {
-        eprintln!("job-prepare --after-exec: {why}");
-        return 1;
-    }
-    let Some(go) = go else {
-        eprintln!(
-            "job-prepare --after-exec: {} refused: {}",
-            context.unit(),
-            refusal.as_deref().unwrap_or("no go")
-        );
-        return 1;
-    };
-    let mut file = std::fs::File::from(go);
-    use std::io::Write as _;
-    if let Err(error) = file.write_all(GATE_GO) {
-        eprintln!("job-prepare --after-exec: the go did not reach job-exec: {error}");
-        return 1;
-    }
-    0
-}
-
-/// Reads the report from the pipe and judges it against the template's
-/// required bounds, from root's own copy of `exec.json`.
-fn read_and_judge(context: &StepContext, deadline: Duration) -> Result<ScopeReport, String> {
-    let exchange = open_dir_path(&context.exchange_path())
-        .map_err(|error| format!("exchange_dir: {error}"))?;
-    let exec: ExecFile = serde_json::from_slice(
-        &read_beneath(borrow(&exchange), EXEC_FILE_NAME, RECORD_MAX_BYTES, Some(0))
-            .map_err(|error| format!("exec_file: {error}"))?
-            .ok_or("exec_file_missing")?,
-    )
-    .map_err(|error| format!("exec_file: {error}"))?;
-    let bytes = read_pipe(&exchange, REPORT_PIPE_NAME, deadline)?;
-    let mut report: ScopeReport =
-        serde_json::from_slice(&bytes).map_err(|error| format!("report_invalid: {error}"))?;
-    if report.instance != context.args.instance {
-        return Err("report_for_another_instance".to_owned());
-    }
-    let inside: Vec<BoundRequirement> = exec
-        .require
-        .iter()
-        .copied()
-        .filter(|requirement| PROVED_INSIDE.contains(&requirement.bound))
-        .collect();
-    if report.refusal.is_none()
-        && let Some(missing) = first_unmet(&inside, &report.proofs)
-    {
-        report.refusal = Some(format!("required_bound_not_proved: {missing}"));
-    }
-    Ok(report)
-}
-
-/// Reads a pipe beneath `dir` to its end, waiting at most `deadline` for the
-/// writer.
-pub(super) fn read_pipe(dir: &OwnedFd, name: &str, deadline: Duration) -> Result<Vec<u8>, String> {
-    let c = std::ffi::CString::new(name).map_err(|error| error.to_string())?;
-    // SAFETY: c is NUL terminated; a non-blocking read end opens at once.
-    let fd = unsafe {
-        libc::openat(
-            dir.as_raw_fd(),
-            c.as_ptr(),
-            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(format!("{name}: {}", std::io::Error::last_os_error()));
-    }
-    // SAFETY: openat returned a new descriptor.
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-    if !safe_fs::facts(borrow(&fd)).is_ok_and(|found| found.is_fifo && found.uid == 0) {
-        return Err(format!("{name}: not root's pipe"));
-    }
-    let started = Instant::now();
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    loop {
-        let left = deadline.saturating_sub(started.elapsed());
-        if left.is_zero() {
-            return Err("report_late: job-exec sent no report in time".to_owned());
-        }
-        let mut poll = libc::pollfd {
-            fd: fd.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let millis = libc::c_int::try_from(left.as_millis()).unwrap_or(libc::c_int::MAX);
-        // SAFETY: one valid pollfd.
-        let ready = unsafe { libc::poll(&raw mut poll, 1, millis) };
-        if ready < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(format!("{name}: {error}"));
-        }
-        if ready == 0 {
-            continue;
-        }
-        // SAFETY: buffer is writable for its length.
-        let read = unsafe { libc::read(fd.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
-        match read {
-            0 => return Ok(bytes),
-            n if n > 0 => {
-                bytes.extend_from_slice(&buffer[..usize::try_from(n).unwrap_or(0)]);
-                if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > RECORD_MAX_BYTES {
-                    return Err("report_too_large".to_owned());
-                }
-            }
-            _ => {
-                let error = std::io::Error::last_os_error();
-                if error.kind() != std::io::ErrorKind::WouldBlock
-                    && error.kind() != std::io::ErrorKind::Interrupted
-                {
-                    return Err(format!("{name}: {error}"));
-                }
-                if poll.revents & libc::POLLHUP != 0 {
-                    return Ok(bytes);
-                }
-            }
-        }
-    }
-}
-
-/// Opens the go pipe for writing: it succeeds only while `job-exec` holds
-/// its read end, so a go is never written to nobody.
-fn open_go(context: &StepContext) -> Result<OwnedFd, String> {
-    let path = context.exchange_path().join(GO_PIPE_NAME);
-    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
-        .map_err(|error| error.to_string())?;
-    // SAFETY: c is NUL terminated; a non-blocking write end fails with ENXIO
-    // when no reader holds the pipe.
-    let fd = unsafe {
-        libc::open(
-            c.as_ptr(),
-            libc::O_WRONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(format!(
-            "go_unread: job-exec holds no go pipe: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    // SAFETY: open returned a new descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }

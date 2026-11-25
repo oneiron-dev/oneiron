@@ -106,6 +106,11 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
         make_dir_beneath(borrow(&payload_fd), name, 0o755, (job_uid, job_gid))
             .map_err(|error| format!("probe {name}: {error}"))?;
     }
+    if let Err(why) = super::exchange::publish_payload(&instance, &payload_fd) {
+        let _ = std::fs::remove_dir_all(&payload);
+        return Err(format!("probe {why}"));
+    }
+    drop(payload_fd);
     let protected = super::prepare::installed_protected_paths(&unit_text, &settings.state_dir);
     let exec = ExecFile {
         key: format!("probe-{instance}"),
@@ -128,10 +133,12 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
         devices_allowed: Vec::new(),
         devices_denied: device_files::files_denied(&[], &settings.device_files),
         hidden_pids: vec![1],
+        host_network_namespace: safe_fs::host_network_namespace(),
         require: Vec::new(),
     };
     let exchange = Path::new(EXCHANGE_ROOT).join(&instance);
     let outcome = probe_in_unit(settings, &unit_text, &binary, &exec, &exchange, job_gid);
+    super::exchange::withdraw(&instance);
     let _ = std::fs::remove_dir_all(&payload);
     let _ = std::fs::remove_dir_all(&exchange);
     let (proofs, probe_failure) = match outcome {
@@ -219,7 +226,8 @@ fn probe_in_unit(
     let mut child = command
         .spawn()
         .map_err(|error| format!("systemd-run: {error}"))?;
-    let read = super::prepare::read_pipe(&dir, REPORT_PIPE_NAME, PROBE_TIMEOUT);
+    let read = super::gate::read_report(&dir, REPORT_PIPE_NAME, PROBE_TIMEOUT)
+        .map(|(report, _pipe)| report);
     let waited = child.wait();
     let _ = exchange;
     let bytes = read?;
