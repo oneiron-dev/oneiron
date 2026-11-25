@@ -31,6 +31,7 @@ use super::record::{
 };
 use super::setting_keys::retry_policy_in_txn;
 use super::start_check::OrderAttemptRef;
+use crate::warm_key::WarmWanted;
 
 /// The node refusals inside a launch that clear by trying again (4.7): a busy device, an
 /// authority fold that had not caught up, a warm input gone since the facts (row P2: fit then
@@ -52,7 +53,7 @@ pub trait OrderHost {
 
     /// [`Self::machine_facts`], each machine asked with the warm keys of the open orders that
     /// may run there (row P2), which its cache budget keeps. The default asks without them.
-    fn machine_facts_wanting(&self, asks: &[(EntityId, Vec<String>)]) -> Vec<MachineFacts> {
+    fn machine_facts_wanting(&self, asks: &[(EntityId, WarmWanted)]) -> Vec<MachineFacts> {
         self.machine_facts(&asks.iter().map(|(machine, _)| *machine).collect::<Vec<_>>())
     }
 
@@ -596,10 +597,9 @@ impl Vault {
                 }
             }
         }
-        let bound = crate::warm_key::WANTED_WARM_KEYS_MAX;
-        let asks: Vec<(EntityId, Vec<String>)> = wanted
+        let asks: Vec<(EntityId, WarmWanted)> = wanted
             .into_iter()
-            .map(|(machine, keys)| (machine, keys.into_iter().take(bound).collect()))
+            .map(|(machine, keys)| (machine, WarmWanted::of(&keys)))
             .collect();
         let mut machines = if asks.is_empty() {
             Vec::new()

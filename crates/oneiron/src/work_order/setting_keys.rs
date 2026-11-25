@@ -14,7 +14,7 @@ fn table_4_7() -> RetryPolicy {
 }
 
 /// The default bound on the warm keys one order lists.
-pub const ORDER_WARM_KEYS_MAX_DEFAULT: u32 = 16;
+pub(crate) const ORDER_WARM_KEYS_MAX_DEFAULT: u32 = 16;
 
 fn order_warm_keys_max() -> u32 {
     ORDER_WARM_KEYS_MAX_DEFAULT

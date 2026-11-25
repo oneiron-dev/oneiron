@@ -3,11 +3,14 @@
 //! [`WARM_KEYS_FILE_NAME`] in the state directory. It is a node-local hint, not a record: a file
 //! that does not read is started again empty, and a key found again is counted from then, so a
 //! lost table keeps caches longer and removes nothing early. Each write replaces the file whole
-//! (a new file, synced, renamed over the old one, the directory synced).
+//! (a new file, synced, renamed over the old one, the directory synced). The table is encoded
+//! under the warm lock and written after it is dropped ([`TableWrite`]): writes land in the order
+//! of the changes, and a write older than the file on disk is skipped.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +50,46 @@ pub struct WarmKeyTable {
     path: PathBuf,
     records: BTreeMap<String, WarmKeyRecord>,
     counted: BTreeSet<String>,
+    /// The number of the table's newest change.
+    generation: u64,
+    /// The number of the change the file on disk holds.
+    written: Arc<Mutex<u64>>,
+}
+
+/// One write of the table, encoded under the warm lock and written after it is dropped.
+#[derive(Debug)]
+#[must_use = "a table write does nothing until it is written"]
+pub struct TableWrite {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    generation: u64,
+    written: Arc<Mutex<u64>>,
+}
+
+impl TableWrite {
+    /// Writes the table whole, unless the file already holds this change or a newer one.
+    ///
+    /// # Errors
+    ///
+    /// The write, sync or rename failed; the file on disk is then the one before.
+    pub fn write(self) -> std::io::Result<()> {
+        let mut written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        if *written >= self.generation {
+            return Ok(());
+        }
+        let staging = self.path.with_extension("json.new");
+        {
+            let mut out = std::fs::File::create(&staging)?;
+            out.write_all(&self.bytes)?;
+            out.sync_all()?;
+        }
+        std::fs::rename(&staging, &self.path)?;
+        if let Some(dir) = self.path.parent() {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
+        *written = self.generation;
+        Ok(())
+    }
 }
 
 impl WarmKeyTable {
@@ -84,6 +127,8 @@ impl WarmKeyTable {
             path,
             records,
             counted,
+            generation: 0,
+            written: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -160,59 +205,56 @@ impl WarmKeyTable {
         self.counted.len() != before
     }
 
-    /// Keeps at most `keys_max` records: the least recently used of the keys `has_path` says no
-    /// template maps are forgotten first, then the least recently used of the rest. Returns the
-    /// keys forgotten.
+    /// Keeps at most `keys_max` of the records whose keys `has_path` says no template maps (the
+    /// hints remembered from use alone), forgetting the least recently used first. A key a
+    /// template maps is never forgotten: its last use is what the cache budget ages it by, and
+    /// the templates bound those keys themselves. Returns the keys forgotten.
     pub fn bound(&mut self, keys_max: usize, has_path: impl Fn(&str) -> bool) -> Vec<String> {
-        let excess = self.records.len().saturating_sub(keys_max);
+        let mut hints: Vec<(u64, String)> = self
+            .records
+            .values()
+            .filter(|record| !has_path(&record.key))
+            .map(|record| (record.last_used_ms, record.key.clone()))
+            .collect();
+        let excess = hints.len().saturating_sub(keys_max);
         if excess == 0 {
             return Vec::new();
         }
-        let mut order: Vec<(bool, u64, String)> = self
-            .records
-            .values()
-            .map(|record| {
-                (
-                    has_path(&record.key),
-                    record.last_used_ms,
-                    record.key.clone(),
-                )
-            })
-            .collect();
-        order.sort();
-        let forgotten: Vec<String> = order
-            .into_iter()
-            .take(excess)
-            .map(|(_, _, key)| key)
-            .collect();
+        hints.sort();
+        let forgotten: Vec<String> = hints.into_iter().take(excess).map(|(_, key)| key).collect();
         for key in &forgotten {
             self.records.remove(key);
         }
         forgotten
     }
 
-    /// Writes the table whole.
+    /// The table as it is now, to write after the warm lock is dropped.
     ///
     /// # Errors
     ///
-    /// The write, sync or rename failed; the file on disk is then the one before.
-    pub fn save(&self) -> std::io::Result<()> {
+    /// The table does not encode.
+    pub fn encode(&mut self) -> std::io::Result<TableWrite> {
         let file = TableFile {
             version: WARM_KEYS_FILE_VERSION,
             keys: self.records.values().cloned().collect(),
             counted: self.counted.clone(),
         };
         let bytes = serde_json::to_vec(&file).map_err(std::io::Error::other)?;
-        let staging = self.path.with_extension("json.new");
-        {
-            let mut out = std::fs::File::create(&staging)?;
-            out.write_all(&bytes)?;
-            out.sync_all()?;
-        }
-        std::fs::rename(&staging, &self.path)?;
-        if let Some(dir) = self.path.parent() {
-            std::fs::File::open(dir)?.sync_all()?;
-        }
-        Ok(())
+        self.generation = self.generation.saturating_add(1);
+        Ok(TableWrite {
+            path: self.path.clone(),
+            bytes,
+            generation: self.generation,
+            written: Arc::clone(&self.written),
+        })
+    }
+
+    /// Writes the table whole, now.
+    ///
+    /// # Errors
+    ///
+    /// As [`TableWrite::write`].
+    pub fn save(&mut self) -> std::io::Result<()> {
+        self.encode()?.write()
     }
 }

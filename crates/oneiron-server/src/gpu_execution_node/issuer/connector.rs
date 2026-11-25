@@ -134,7 +134,7 @@ impl VaultMachineConnector {
     ///
     /// # Errors
     ///
-    /// `machine_missing`, `device_id_invalid` or `model_invalid`.
+    /// `machine_missing`, `device_id_invalid`, `model_invalid` or `warm_invalid`.
     pub fn check_inputs(&self, _job_type: &str, inputs: &serde_json::Value) -> Result<(), String> {
         vault_machine_inputs(inputs)
             .map(|_| ())

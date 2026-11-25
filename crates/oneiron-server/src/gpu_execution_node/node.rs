@@ -46,7 +46,7 @@ use super::node_settings::{
 use super::slots::GpuSlotTable;
 use super::wire::{
     JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer,
-    ScopeReport, SignedJobSubmit, TemplateOffer, WarmKeyFact,
+    ScopeReport, SignedJobSubmit, TemplateOffer, WarmKeyFact, WarmWanted,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -178,8 +178,11 @@ pub enum GateAsk {
     /// the node's file names the asker as an issuer, enabled or not, so the
     /// receipts of the jobs a `disable` stopped stay collectable.
     Status,
-    /// `Node`: what the node offers, answered to an issuer the file names
-    /// while the node is disabled too (it then says so).
+    /// `Node` or `NodeWanting`: what the node offers, answered to an issuer
+    /// the file names while the node is disabled too (it then says so).
+    /// `NodeWanting` also records the issuer's wanted warm keys (row P2): a
+    /// write in memory only, bounded by `WANTED_WARM_KEYS_MAX`, that keeps
+    /// caches from the cache budget for the wanted hold.
     Offer,
     /// `Availability` or `Release`: the node must be enabled.
     Read,
@@ -267,8 +270,8 @@ pub trait NodeKeys: Send + Sync {
 
     /// `NodeWanting` from `peer` (pass 34, row P2): the warm keys of its
     /// open orders that may run here.
-    fn warm_wanted(&self, peer: EntityId, keys: &[String]) {
-        let _ = (peer, keys);
+    fn warm_wanted(&self, peer: EntityId, wanted: &WarmWanted) {
+        let _ = (peer, wanted);
     }
 
     /// The warm keys `Node` reports (row P2), under the cache figures in
@@ -782,9 +785,23 @@ impl ExecutionNode {
         if snapshot.controls.stop_requested {
             keys.stop_live_keys();
         }
+        // Row P2: the cache pass removes files, so it runs only under figures read now. With
+        // the owner's rows accepted but not readable, it waits for a tick where they read.
         if let Some(settings) = snapshot.settings() {
-            let owner = snapshot.policy.as_ref().map(|policy| &policy.cache);
-            keys.cache_pass_if_due(settings, &settings.cache.tightened(owner));
+            let owner = match &snapshot.policy {
+                Some(policy) => Ok(Some(policy.cache)),
+                None => self
+                    .owner_policy(settings)
+                    .map(|policy| policy.map(|policy| policy.cache)),
+            };
+            match owner {
+                Ok(owner) => {
+                    keys.cache_pass_if_due(settings, &settings.cache.tightened(owner.as_ref()));
+                }
+                Err(why) => {
+                    tracing::debug!(%why, "warm keys: no cache pass while the owner's policy does not read")
+                }
+            }
         }
     }
 

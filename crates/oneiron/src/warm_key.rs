@@ -8,6 +8,14 @@
 //! a kind of lowercase letters, digits, `_` or `-`, a colon, and a name of printable ASCII with
 //! no whitespace, at most [`WARM_KEY_MAX_BYTES`] in all. The bounds here size a message and
 //! choose nothing (DESIGN 6.3, the constants paragraph).
+//!
+//! An order stored before row P2 may hold wishes of any form (`wishes.warm` was a free list
+//! then): it reads as before, and only the keys of a warm key's form reach a node
+//! ([`usable_warm_keys`]).
+
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
 
 /// The most bytes one warm key holds.
 pub const WARM_KEY_MAX_BYTES: usize = 128;
@@ -17,6 +25,48 @@ pub const ATTEMPT_WARM_KEYS_MAX: usize = 32;
 
 /// The most warm keys one issuer's wanted list names for a machine: the bound of that ask.
 pub const WANTED_WARM_KEYS_MAX: usize = 1024;
+
+/// What an issuer asks a node to keep (row P2): the warm keys of its open orders that may run
+/// there, at most [`WANTED_WARM_KEYS_MAX`]. `overflow`: those orders list more keys than one ask
+/// carries, so the node removes no cache while the ask holds. Each ask replaces the issuer's
+/// last.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WarmWanted {
+    pub keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub overflow: bool,
+}
+
+impl WarmWanted {
+    /// The ask for `keys`: the usable ones, at most [`WANTED_WARM_KEYS_MAX`], and whether one
+    /// was left out for the bound.
+    #[must_use]
+    pub fn of<'a>(keys: impl IntoIterator<Item = &'a String>) -> Self {
+        let (keys, overflow) = usable_warm_keys(keys, WANTED_WARM_KEYS_MAX);
+        Self { keys, overflow }
+    }
+}
+
+/// The keys of `keys` that have a warm key's form, each once, in their order, at most `max`;
+/// and whether such a key was left out for the bound.
+#[must_use]
+pub fn usable_warm_keys<'a>(
+    keys: impl IntoIterator<Item = &'a String>,
+    max: usize,
+) -> (Vec<String>, bool) {
+    let mut seen = BTreeSet::new();
+    let mut usable = Vec::new();
+    for key in keys {
+        if !warm_key_valid(key) || !seen.insert(key.as_str()) {
+            continue;
+        }
+        if usable.len() == max {
+            return (usable, true);
+        }
+        usable.push(key.clone());
+    }
+    (usable, false)
+}
 
 /// Why a list of warm keys is refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -70,7 +120,7 @@ pub fn check_warm_keys(keys: &[String], max: usize) -> Result<(), WarmKeyInvalid
             max,
         });
     }
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for key in keys {
         if !warm_key_valid(key) {
             return Err(WarmKeyInvalid::Form(key.clone()));

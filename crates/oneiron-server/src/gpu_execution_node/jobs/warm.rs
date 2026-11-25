@@ -3,27 +3,31 @@
 //! attempt lists is here, and the cache budget.
 //!
 //! - **What a key is here.** A template maps the keys it knows to paths (`warm`), and names
-//!   which of them are caches (`caches`). An attempt lists the keys its work reads (the
-//!   signed submit's `warm`, from the order). A key is present when its path exists.
-//!   A key no template maps is remembered from use alone, a hint.
-//! - **Before a launch** the stager checks each key the attempt lists that the template maps
+//!   which of them are caches (`caches`). A key names one thing on one machine: every template
+//!   that maps it maps it to one path ([`warm_paths`]). An attempt lists the keys its work reads
+//!   (the signed submit's `warm`, from the order). A key is present when its path exists. A key
+//!   no template maps is remembered from use alone, a hint.
+//! - **Before a launch** the stager checks each key the attempt lists that the node's file maps
 //!   to a path that is not a cache: its path must exist, or the key ends at zero seconds as
-//!   `LaunchRefused { warm_key_missing:<key> }`. Nothing is fetched. An absent cache is a cold
-//!   start.
-//! - **A key's last use** is when an attempt that listed it ended with exit 0. It is read from
-//!   the journal under the admission lock, each ended key counted once, so a crash between an
-//!   end and the table's write loses no use: the journal is the record, the table a summary
-//!   kept past the journal's own retention.
+//!   `LaunchRefused { warm_key_missing:<key> }` ([`missing_input`]). Nothing is fetched. An
+//!   absent cache is a cold start.
+//! - **A key's last use** is when an attempt that listed it ended with exit 0: the `Ended`
+//!   record's time. It is read from the journal under the admission lock, each ended key
+//!   counted once, so a crash between an end and the table's write loses no use: the journal is
+//!   the record, the table a summary kept past the journal's own retention.
 //! - **The cache budget** ([`cache_plan`]) removes cache keys only: first those unused for the
 //!   idle time, then the least recently used while the caches hold more than the cap, never one
 //!   used within the protected time. It never removes a busy key: one that a key of the journal
-//!   that has not ended lists or whose template maps it, or one that an open order on a live
-//!   issuer lists (the issuer's `NodeWanting` ask, kept for `wanted_hold_secs`). Busy is decided,
-//!   and each removed path renamed out of use, under the admission lock; the files are deleted
-//!   after it is dropped. A path is removed only directly inside a cache directory that is the
-//!   engine's alone, and only when the engine's account owns it.
+//!   that has not ended lists, or that the template it pinned maps, or one that an open order on
+//!   a live issuer lists (the issuer's `NodeWanting` ask, kept for `wanted_hold_secs`). It
+//!   removes nothing while a live key pins a template at a digest the file no longer holds (its
+//!   map is not known), or while a live ask left keys out for its bound. Busy is decided, and
+//!   each removed path moved out of use, under the admission lock; the files are deleted after
+//!   it is dropped. A path is removed only directly inside a cache directory that is the
+//!   engine's alone ([`eviction`]).
 //!
-//! Lock order: the admission lock, then the warm lock; never the other way.
+//! Lock order: the admission lock, then the warm lock; never the other way. The table's file is
+//! written after both are dropped.
 
 mod eviction;
 
@@ -35,55 +39,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{MutexGuard, PoisonError};
 
 use oneiron::EntityId;
-use oneiron::warm_key::{WANTED_WARM_KEYS_MAX, check_warm_keys};
+use oneiron::warm_key::{WANTED_WARM_KEYS_MAX, WarmWanted, check_warm_keys};
 
 pub use cache_plan::{CacheBudget, CacheEntry, Eviction, EvictionCause, cache_plan};
-pub use table::{WARM_KEYS_FILE_NAME, WarmKeyRecord, WarmKeyTable};
+pub use table::{TableWrite, WARM_KEYS_FILE_NAME, WarmKeyRecord, WarmKeyTable};
 
 use super::NodeJobs;
 use super::journal::NodeKey;
-use crate::gpu_execution_node::node_settings::{
-    ExecutionNodeSettings, NodeCacheSettings, NodeTemplate,
-};
+use crate::gpu_execution_node::node_settings::{ExecutionNodeSettings, NodeCacheSettings};
 use crate::gpu_execution_node::wire::{JobEnd, WarmKeyFact};
 
 /// The reason a launch refusal carries for a listed input that is not here: the key follows
 /// after a colon.
 pub const WARM_KEY_MISSING: &str = "warm_key_missing";
-
-/// One template's warm keys, for the stager: each key's path, and which are caches.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TemplateWarm {
-    pub paths: BTreeMap<String, PathBuf>,
-    pub caches: BTreeSet<String>,
-}
-
-impl TemplateWarm {
-    /// The warm keys of `template`.
-    #[must_use]
-    pub fn of(template: &NodeTemplate) -> Self {
-        Self {
-            paths: template.warm.clone(),
-            caches: template.caches.iter().cloned().collect(),
-        }
-    }
-
-    /// The first key of `listed` that this template maps to a path that is not a cache and
-    /// that does not exist now: the input the launch lacks.
-    #[must_use]
-    pub fn missing_input<'a>(&self, listed: &'a [String]) -> Option<&'a str> {
-        listed
-            .iter()
-            .find(|key| {
-                !self.caches.contains(*key)
-                    && self
-                        .paths
-                        .get(*key)
-                        .is_some_and(|path| !matches!(path.try_exists(), Ok(true)))
-            })
-            .map(String::as_str)
-    }
-}
 
 /// One warm key as the node's file maps it, over all its templates (the file's check makes
 /// every template that maps a key agree on its path and on whether it is a cache).
@@ -108,6 +76,23 @@ pub fn warm_paths(settings: &ExecutionNodeSettings) -> BTreeMap<String, WarmPath
     paths
 }
 
+/// The first key of `listed` that `paths` maps to a path that is not a cache and that does not
+/// exist now: the input the launch lacks.
+#[must_use]
+pub fn missing_input<'a>(
+    paths: &BTreeMap<String, WarmPath>,
+    listed: &'a [String],
+) -> Option<&'a str> {
+    listed
+        .iter()
+        .find(|key| {
+            paths
+                .get(*key)
+                .is_some_and(|warm| !warm.cache && !matches!(warm.path.try_exists(), Ok(true)))
+        })
+        .map(String::as_str)
+}
+
 /// The cache budget the box's ceiling gives. The owner's machine policy (row P0) may set each
 /// figure lower: the node then applies the smaller.
 #[must_use]
@@ -123,7 +108,16 @@ pub fn cache_budget(ceiling: &NodeCacheSettings) -> CacheBudget {
 #[derive(Debug, Clone)]
 struct WantedList {
     keys: BTreeSet<String>,
+    /// The issuer's open orders list more keys than its ask carried.
+    overflow: bool,
     at_ms: u64,
+}
+
+/// What the live issuers want kept now.
+#[derive(Debug, Default)]
+struct WantedNow {
+    keys: BTreeSet<String>,
+    overflow: bool,
 }
 
 /// What the warm lock holds.
@@ -149,8 +143,8 @@ impl WarmState {
         }
     }
 
-    /// Counts each key of the journal that ended with exit 0 and has not been counted: each
-    /// warm key it listed was used when it ended. Returns whether the table changed.
+    /// Counts each key of the journal that ended with exit 0, listed warm keys and has not been
+    /// counted: each key it listed was used when it ended. Returns whether the table changed.
     fn count_ended<'a>(&mut self, keys: impl Iterator<Item = &'a NodeKey>) -> bool {
         let mut in_journal = BTreeSet::new();
         let mut changed = false;
@@ -159,32 +153,49 @@ impl WarmState {
             if known.end != Some(JobEnd::Exited { code: 0 }) || self.table.counted(&known.key) {
                 continue;
             }
-            let listed = known
+            let Some(signed) = known
                 .submit
                 .as_ref()
-                .map(|signed| signed.submit.warm.clone())
-                .unwrap_or_default();
-            self.table.used(&listed, known.updated_at_ms);
+                .filter(|signed| !signed.submit.warm.is_empty())
+            else {
+                continue;
+            };
+            let ended_at_ms = known.ended_at_ms.unwrap_or(known.updated_at_ms);
+            self.table.used(&signed.submit.warm, ended_at_ms);
             self.table.count(&known.key);
             changed = true;
         }
         changed | self.table.retain_counted(|key| in_journal.contains(key))
     }
 
-    /// The keys an open order on a live issuer listed within `hold_ms` of `now_ms`.
-    fn wanted_now(&mut self, now_ms: u64, hold_ms: u64) -> BTreeSet<String> {
+    /// What open orders on live issuers listed within `hold_ms` of `now_ms`.
+    fn wanted_now(&mut self, now_ms: u64, hold_ms: u64) -> WantedNow {
         self.wanted
             .retain(|_, list| list.at_ms.saturating_add(hold_ms) > now_ms);
-        self.wanted
-            .values()
-            .flat_map(|list| list.keys.iter().cloned())
-            .collect()
+        let mut now = WantedNow::default();
+        for list in self.wanted.values() {
+            now.keys.extend(list.keys.iter().cloned());
+            now.overflow |= list.overflow;
+        }
+        now
     }
 
-    fn save(&self) {
-        if let Err(error) = self.table.save() {
-            tracing::warn!(%error, "warm keys: the table was not written; the next change tries again");
+    /// The table as it is now, to write after the locks are dropped.
+    fn table_write(&mut self) -> Option<TableWrite> {
+        match self.table.encode() {
+            Ok(write) => Some(write),
+            Err(error) => {
+                tracing::warn!(%error, "warm keys: the table does not encode; the next change tries again");
+                None
+            }
         }
+    }
+}
+
+/// Writes the table, with the warm lock dropped.
+fn write_table(write: Option<TableWrite>) {
+    if let Some(Err(error)) = write.map(TableWrite::write) {
+        tracing::warn!(%error, "warm keys: the table was not written; the next change tries again");
     }
 }
 
@@ -193,8 +204,11 @@ impl WarmState {
 pub struct CachePassReport {
     /// The cache keys removed, in the order the plan chose them.
     pub removed: Vec<Eviction>,
-    /// Cache keys the plan chose that were left, each with why.
+    /// Cache keys the plan chose that were left, each with why; the plan then went on without
+    /// them.
     pub left: Vec<(String, String)>,
+    /// Why the pass removed nothing, when it could not know what is busy.
+    pub deferred: Option<String>,
     /// What the cache keys hold after the pass.
     pub kept_bytes: u64,
 }
@@ -210,8 +224,8 @@ impl NodeJobs {
     /// The issuer `issuer` asked `NodeWanting`: the warm keys of its open orders that may run
     /// here. The newest list of each issuer replaces its last one. A list that is not one of
     /// warm keys is ignored.
-    pub fn warm_wanted(&self, issuer: EntityId, keys: &[String]) {
-        if let Err(invalid) = check_warm_keys(keys, WANTED_WARM_KEYS_MAX) {
+    pub fn warm_wanted(&self, issuer: EntityId, wanted: &WarmWanted) {
+        if let Err(invalid) = check_warm_keys(&wanted.keys, WANTED_WARM_KEYS_MAX) {
             tracing::warn!(%issuer, %invalid, "warm keys: an issuer's wanted list is not one of warm keys; it is ignored");
             return;
         }
@@ -219,7 +233,8 @@ impl NodeJobs {
         self.warm_lock().wanted.insert(
             issuer,
             WantedList {
-                keys: keys.iter().cloned().collect(),
+                keys: wanted.keys.iter().cloned().collect(),
+                overflow: wanted.overflow,
                 at_ms,
             },
         );
@@ -257,9 +272,7 @@ impl NodeJobs {
             .table
             .bound(keys_max, |key| paths.contains_key(key))
             .is_empty();
-        if changed {
-            warm.save();
-        }
+        let write = if changed { warm.table_write() } else { None };
         let fact = |key: &str, record: Option<&WarmKeyRecord>| WarmKeyFact {
             key: key.to_owned(),
             present: present.get(key).copied().unwrap_or(false),
@@ -279,15 +292,17 @@ impl NodeJobs {
                 .filter(|record| !paths.contains_key(&record.key))
                 .map(|record| fact(&record.key, Some(record))),
         );
+        drop(warm);
+        write_table(write);
         facts
     }
 
-    /// Starts a cache pass on its own thread when one is due: the box has a cache directory,
-    /// one wanted hold has passed since this service opened, the last pass started at least
+    /// Starts a cache pass on its own thread when one is due: a template marks a cache, one
+    /// wanted hold has passed since this service opened, the last pass started at least
     /// `pass_every_secs` ago, and none runs now. The authority tick calls this; it never waits
     /// for the pass.
     pub fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings, cache: &NodeCacheSettings) {
-        if settings.cache_dir.is_none() {
+        if !settings.marks_caches() {
             return;
         }
         let now_ms = self.now().wall_ms;
@@ -320,6 +335,9 @@ impl NodeJobs {
                         "warm keys: the cache pass ended"
                     );
                 }
+                if let Some(why) = &report.deferred {
+                    tracing::info!(%why, "warm keys: the cache pass removed nothing");
+                }
                 jobs.warm_lock().pass_running = false;
             });
         if let Err(error) = spawned {
@@ -347,15 +365,24 @@ impl NodeJobs {
         cache: &NodeCacheSettings,
         budget: &CacheBudget,
     ) -> CachePassReport {
-        let Some(cache_dir) = settings.cache_dir.as_deref() else {
+        if !settings.marks_caches() {
             return CachePassReport::default();
-        };
-        let Some(cache_dir) = eviction::trusted_cache_dir(cache_dir) else {
+        }
+        let Some(cache_dir) = eviction::trusted_cache_dir(&settings.cache_root()) else {
             return CachePassReport::default();
         };
         eviction::remove_evicted(&cache_dir);
         let paths = warm_paths(settings);
-        // What each present cache path holds is measured before any lock is taken.
+        let owners = eviction::EntryOwners::of(&settings.job_account);
+        // Each template's digest, and what each present cache path holds, are read before any
+        // lock is taken.
+        let digests: BTreeMap<&str, String> = settings
+            .templates
+            .iter()
+            .filter_map(|(name, template)| {
+                template.digest().ok().map(|digest| (name.as_str(), digest))
+            })
+            .collect();
         let measured: BTreeMap<String, u64> = paths
             .iter()
             .filter(|(_, warm)| warm.cache)
@@ -367,14 +394,20 @@ impl NodeJobs {
         let hold_ms = cache.wanted_hold_secs.saturating_mul(1000);
         let mut report = CachePassReport::default();
         let mut renamed = Vec::new();
-        {
+        let write = {
             let book = self.lock();
             let Some(journal) = book.journal.as_ref() else {
                 return report;
             };
             let mut warm = self.warm_lock();
             warm.count_ended(journal.table().iter());
-            let mut busy = warm.wanted_now(now_ms, hold_ms);
+            let wanted = warm.wanted_now(now_ms, hold_ms);
+            let mut busy = wanted.keys;
+            if wanted.overflow {
+                report.deferred = Some(
+                    "an issuer's open orders list more warm keys than its ask carried".to_owned(),
+                );
+            }
             for known in journal.table().iter().filter(|known| !known.is_ended()) {
                 if let Some(signed) = known.submit.as_ref() {
                     busy.extend(signed.submit.warm.iter().cloned());
@@ -382,9 +415,21 @@ impl NodeJobs {
                 let Some(reserve) = known.reserve.as_ref() else {
                     continue;
                 };
-                // Every key its template maps: a held key's run may read any.
-                if let Some(template) = settings.templates.get(&reserve.pin.template) {
-                    busy.extend(template.warm.keys().cloned());
+                // Every key the template it pinned maps: a held key's run may read any.
+                let pinned = &reserve.pin;
+                match settings.templates.get(&pinned.template) {
+                    Some(template)
+                        if digests.get(pinned.template.as_str())
+                            == Some(&pinned.template_digest) =>
+                    {
+                        busy.extend(template.warm.keys().cloned());
+                    }
+                    _ => {
+                        report.deferred = Some(format!(
+                            "the live key {} pins template {} at a digest the node's file does not hold now",
+                            known.key, pinned.template
+                        ));
+                    }
                 }
             }
             let mut entries = Vec::new();
@@ -399,29 +444,49 @@ impl NodeJobs {
                     key: key.clone(),
                     bytes: *bytes,
                     last_used_ms,
-                    busy: busy.contains(key),
+                    busy: busy.contains(key) || report.deferred.is_some(),
                 });
             }
-            let (plan, kept_bytes) = cache_plan(&entries, budget, now_ms);
-            report.kept_bytes = kept_bytes;
-            for eviction in plan {
-                let Some(warm_path) = paths.get(&eviction.key) else {
-                    continue;
-                };
-                match eviction::take_out_of_use(&cache_dir, &warm_path.path, now_ms) {
-                    Ok(taken) => {
-                        warm.table.measured(&eviction.key, 0);
-                        tracing::info!(key = %eviction.key, path = %warm_path.path.display(), cause = %eviction.cause, "warm keys: a cache key is removed");
-                        renamed.push(taken);
-                        report.removed.push(eviction);
+            // A key left (its move refused) keeps its bytes: plan again with it held, so the
+            // next candidate is tried. Each round holds one more key, so the rounds end.
+            loop {
+                let (plan, kept_bytes) = cache_plan(&entries, budget, now_ms);
+                report.kept_bytes = kept_bytes;
+                let mut refused = None;
+                for chosen in plan {
+                    let taken = paths
+                        .get(&chosen.key)
+                        .ok_or_else(|| "no template maps it now".to_owned())
+                        .and_then(|warm_path| {
+                            eviction::take_out_of_use(&cache_dir, &warm_path.path, owners, now_ms)
+                        });
+                    match taken {
+                        Ok(taken) => {
+                            warm.table.measured(&chosen.key, 0);
+                            tracing::info!(key = %chosen.key, cause = %chosen.cause, "warm keys: a cache key is removed");
+                            renamed.push(taken);
+                            entries.retain(|entry| entry.key != chosen.key);
+                            report.removed.push(chosen);
+                        }
+                        Err(why) => {
+                            report.left.push((chosen.key.clone(), why));
+                            refused = Some(chosen.key);
+                            break;
+                        }
                     }
-                    Err(why) => report.left.push((eviction.key.clone(), why)),
+                }
+                let Some(refused) = refused else {
+                    break;
+                };
+                for entry in &mut entries {
+                    entry.busy |= entry.key == refused;
                 }
             }
             let keys_max = usize::try_from(cache.keys_max).unwrap_or(usize::MAX);
             warm.table.bound(keys_max, |key| paths.contains_key(key));
-            warm.save();
-        }
+            warm.table_write()
+        };
+        write_table(write);
         for taken in renamed {
             eviction::remove_taken(&taken);
         }

@@ -23,6 +23,9 @@ pub use oneiron::job_workload::{
     ResourceRequest, ScopeCapabilities, ScopeKind, WorkloadPin,
 };
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
+/// The warm keys of an issuer's open orders that may run on the node it
+/// asks (row P2): one type with the issuer's pass.
+pub use oneiron::warm_key::WarmWanted;
 use serde::{Deserialize, Serialize};
 
 use super::availability::GpuAvailability;
@@ -100,16 +103,10 @@ pub enum JobRequest {
     /// [`JobRequest::Node`] from an issuer whose open orders may run here,
     /// with the warm keys they list (pass 34, row P2): answered as `Node`.
     /// The node's cache budget removes none of them while this list is
-    /// newer than its wanted hold.
+    /// newer than its wanted hold, and no cache at all while an ask that
+    /// left keys out for its bound holds. A node before row P2 cannot read
+    /// it and closes the stream: the issuer then asks `Node`.
     NodeWanting(WarmWanted),
-}
-
-/// The warm keys of an issuer's open orders that may run on the node it
-/// asks: at most [`oneiron::warm_key::WANTED_WARM_KEYS_MAX`]. Each ask
-/// replaces the issuer's last list.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WarmWanted {
-    pub keys: Vec<String>,
 }
 
 /// Which of the node's GPUs a key may take: the selectors of a GPU slot

@@ -105,12 +105,13 @@ fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
         .saturating_sub(node.disk_reserved_bytes)
         .saturating_sub(node.disk_reserve_bytes);
     facts.room.disk_free_mib = Some(free / MIB);
-    // Row P2: a key is warm here when its path is present, or, with no path, when an attempt
-    // here used it (a hint); a mapped input that is not there blocks an order that lists it.
+    // Row P2: a key is warm here when its path is present (a key remembered from use alone is a
+    // hint the PLACE rule does not count); a mapped input that is not there blocks an order that
+    // lists it.
     facts.warm = node
         .warm
         .iter()
-        .filter(|fact| fact.present || (!fact.mapped && fact.uses > 0))
+        .filter(|fact| fact.present)
         .map(|fact| fact.key.clone())
         .collect();
     facts.warm_absent = node
@@ -182,11 +183,18 @@ impl OrderHost for ServerOrderHost<'_> {
             .collect()
     }
 
-    fn machine_facts_wanting(&self, asks: &[(EntityId, Vec<String>)]) -> Vec<MachineFacts> {
+    fn machine_facts_wanting(&self, asks: &[(EntityId, WarmWanted)]) -> Vec<MachineFacts> {
         asks.iter()
-            .map(|(machine, keys)| {
-                let request = JobRequest::NodeWanting(WarmWanted { keys: keys.clone() });
-                let answer = self.nodes.job(*machine, &request).ok();
+            .map(|(machine, wanted)| {
+                let request = JobRequest::NodeWanting(wanted.clone());
+                let answer = match self.nodes.job(*machine, &request) {
+                    // A node before row P2 cannot read NodeWanting and closes the stream
+                    // unanswered: it is asked Node once, as before.
+                    Err(NodeCallError::Unreachable { .. }) => {
+                        self.nodes.job(*machine, &JobRequest::Node).ok()
+                    }
+                    answered => answered.ok(),
+                };
                 facts_of_answer(*machine, answer.as_ref(), self.now_ms)
             })
             .collect()
@@ -212,8 +220,13 @@ impl OrderHost for ServerOrderHost<'_> {
         if let [device] = attempt.devices.as_slice() {
             inputs["device_id"] = serde_json::Value::String(device.clone());
         }
-        if !attempt.order.wishes.warm.is_empty() {
-            inputs["warm"] = serde_json::json!(attempt.order.wishes.warm);
+        // Row P2: the order's usable warm keys; an order stored before P2 may hold others.
+        let (warm, _) = oneiron::warm_key::usable_warm_keys(
+            &attempt.order.wishes.warm,
+            oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX,
+        );
+        if !warm.is_empty() {
+            inputs["warm"] = serde_json::json!(warm);
         }
         if let Some(result) = attempt.order.result {
             inputs["result"] = serde_json::json!({

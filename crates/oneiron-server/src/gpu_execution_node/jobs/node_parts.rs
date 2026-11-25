@@ -42,7 +42,7 @@ use crate::gpu_execution_node::node_settings::{ExecutionNodeSettings, NodeCacheS
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
-    ScopeReport, SignedJobSubmit, WarmKeyFact, WorkloadPin,
+    ScopeReport, SignedJobSubmit, WarmKeyFact, WarmWanted, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -569,9 +569,9 @@ impl NodeKeys for NodeJobsAttachment {
             .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
     }
 
-    fn warm_wanted(&self, peer: EntityId, keys: &[String]) {
+    fn warm_wanted(&self, peer: EntityId, wanted: &WarmWanted) {
         if let Some(jobs) = self.service() {
-            jobs.warm_wanted(peer, keys);
+            jobs.warm_wanted(peer, wanted);
         }
     }
 

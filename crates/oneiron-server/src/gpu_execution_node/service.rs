@@ -9,9 +9,12 @@
 //! and is one of the node's `issuers`, and a request that admits work also
 //! needs the node's own job grant live in its own fold.
 //!
-//! `Node` is answered to an issuer the file names, enabled or not (it says
-//! which); `Availability` and every request that names a key need the node
-//! enabled. `Node` and `Availability` are answered here. A request that names a key
+//! `Node` and `NodeWanting` are answered to an issuer the file names,
+//! enabled or not (it says which); `NodeWanting` also records the issuer's
+//! list of wanted warm keys with the keys (row P2), in memory, bounded by
+//! `WANTED_WARM_KEYS_MAX`. `Availability` and every request that names a
+//! key need the node enabled. `Node`, `NodeWanting` and `Availability` are
+//! answered here. A request that names a key
 //! goes to the node's keys (row R3a's journal, [`super::node::NodeKeys`])
 //! once they are attached; until then it is refused as `NotEnabled`, and
 //! nothing is written. The status side (row R4) goes there the same way:
@@ -93,7 +96,7 @@ fn answer_job(node: &ExecutionNode, endpoint_key: [u8; 32], request: JobRequest)
         JobRequest::Node => JobAnswer::Node(node.node_answer_from(&snapshot)),
         JobRequest::NodeWanting(wanted) => {
             if let Some(keys) = &keys {
-                keys.warm_wanted(peer, &wanted.keys);
+                keys.warm_wanted(peer, &wanted);
             }
             JobAnswer::Node(node.node_answer_from(&snapshot))
         }

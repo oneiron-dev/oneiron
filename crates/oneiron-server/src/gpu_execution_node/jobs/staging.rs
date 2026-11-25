@@ -55,11 +55,13 @@
 //!   workload's contract names what it expects of them by hash and checks
 //!   that itself. Nothing from the vault is staged (a later row, R10).
 //! - **Warm inputs** (pass 34, row P2): each warm key the signed submit
-//!   lists that the template maps to a path that is not a cache must exist
-//!   once the contract passed, or the key ends as
-//!   `LaunchRefused { warm_key_missing:<key> }`. Nothing is fetched; an
-//!   absent cache is a cold start. The template's warm keys come from the
-//!   same reading of the node's file whose digest is the pin's.
+//!   lists that the node's file maps to a path that is not a cache must
+//!   exist once the contract passed, or the key ends as
+//!   `LaunchRefused { warm_key_missing:<key> }`. A key names one thing on
+//!   one machine, so any template's mapping counts, as the issuer's facts
+//!   count it. Nothing is fetched; an absent cache is a cold start. The
+//!   map comes from the same reading of the node's file in which the pin's
+//!   template has the pin's digest.
 //!
 //! Staging runs outside the admission lock, as the engine's account, and
 //! asks `closed` before each step and between the contract's read chunks.
@@ -75,6 +77,7 @@
 //! ended before its launch; and the release check removes it for a key that
 //! launched. So a closed key keeps no code on the node's disk.
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -84,8 +87,9 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use super::node_parts::{StageFailure, StageOrder, Stager};
-use super::warm::{TemplateWarm, WARM_KEY_MISSING};
+use super::warm::{WARM_KEY_MISSING, WarmPath, missing_input, warm_paths};
 use crate::gpu_execution_node::node::ExecutionNode;
+use crate::gpu_execution_node::node_settings::ExecutionNodeSettings;
 
 mod git_process;
 mod payload_dir;
@@ -210,31 +214,31 @@ pub trait TemplateMirrors: Send + Sync {
     /// when the node's file does not read.
     fn mirror(&self, template: &str, template_digest: &str) -> Result<PathBuf, StagingRefusal>;
 
-    /// The warm keys of `template` (pass 34, row P2), from one reading of
-    /// the node's configuration in which its digest is `template_digest`.
-    /// The default maps none.
+    /// Every warm key the node's templates map, with its path (pass 34,
+    /// row P2), from one reading of the node's configuration in which
+    /// `template`'s digest is `template_digest`. The default maps none.
     ///
     /// # Errors
     ///
     /// As [`TemplateMirrors::mirror`].
-    fn template_warm(
+    fn node_warm_paths(
         &self,
         template: &str,
         template_digest: &str,
-    ) -> Result<TemplateWarm, StagingRefusal> {
+    ) -> Result<BTreeMap<String, WarmPath>, StagingRefusal> {
         let _ = (template, template_digest);
-        Ok(TemplateWarm::default())
+        Ok(BTreeMap::new())
     }
 }
 
 impl ExecutionNode {
-    /// The node's template `template`, from one reading of its file in
-    /// which that template's digest is `template_digest`.
-    fn pinned_template(
+    /// One reading of the node's file in which the template `template`'s
+    /// digest is `template_digest`.
+    fn pinned_settings(
         &self,
         template: &str,
         template_digest: &str,
-    ) -> Result<crate::gpu_execution_node::node_settings::NodeTemplate, StagingRefusal> {
+    ) -> Result<ExecutionNodeSettings, StagingRefusal> {
         let settings = match self.settings() {
             Ok(Some(settings)) => settings,
             Ok(None) => return Err(StagingRefusal::TemplateUnknown),
@@ -248,7 +252,7 @@ impl ExecutionNode {
             .get(template)
             .ok_or(StagingRefusal::TemplateUnknown)?;
         match found.digest() {
-            Ok(digest) if digest == template_digest => Ok(found.clone()),
+            Ok(digest) if digest == template_digest => Ok(settings),
             Ok(_) => Err(StagingRefusal::TemplateChanged),
             Err(why) => {
                 tracing::warn!(template, %why, "job staging: the template's digest does not compute");
@@ -260,17 +264,21 @@ impl ExecutionNode {
 
 impl TemplateMirrors for ExecutionNode {
     fn mirror(&self, template: &str, template_digest: &str) -> Result<PathBuf, StagingRefusal> {
-        self.pinned_template(template, template_digest)
+        let mut settings = self.pinned_settings(template, template_digest)?;
+        settings
+            .templates
+            .remove(template)
             .map(|found| found.repo)
+            .ok_or(StagingRefusal::TemplateUnknown)
     }
 
-    fn template_warm(
+    fn node_warm_paths(
         &self,
         template: &str,
         template_digest: &str,
-    ) -> Result<TemplateWarm, StagingRefusal> {
-        self.pinned_template(template, template_digest)
-            .map(|found| TemplateWarm::of(&found))
+    ) -> Result<BTreeMap<String, WarmPath>, StagingRefusal> {
+        self.pinned_settings(template, template_digest)
+            .map(|settings| warm_paths(&settings))
     }
 }
 
@@ -347,8 +355,8 @@ impl MirrorStager {
         open_unless_closed(closed)?;
         let warm = self
             .mirrors
-            .template_warm(&pin.template, &pin.template_digest)?;
-        if let Some(key) = warm.missing_input(&order.warm) {
+            .node_warm_paths(&pin.template, &pin.template_digest)?;
+        if let Some(key) = missing_input(&warm, &order.warm) {
             tracing::info!(key = %order.key, warm_key = key, "job staging: a warm input the attempt lists is not on this node");
             return Err(StageFailure::Refused(format!("{WARM_KEY_MISSING}:{key}")));
         }

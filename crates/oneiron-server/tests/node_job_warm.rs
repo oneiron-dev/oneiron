@@ -3,8 +3,9 @@
 //! key may read; a listed input that is not on the node refuses the launch at zero seconds and
 //! fetches nothing, while an absent cache is a cold start; an exit-0 attempt is a use of each
 //! key it listed; `Node` reports each key with its presence; a cache path is removed only
-//! directly inside a cache directory that is the engine's alone; and a template or a submit
-//! without warm keys reads, hashes and signs as before.
+//! directly inside a cache directory that is the engine's alone, and none while what is busy is
+//! not known; no warm path may overlap a cache; and a template or a submit without warm keys
+//! reads, hashes and signs as before.
 //!
 //! The node is R3a's scripted node (unit manager, devices, clock). The launch tests put the
 //! real [`MirrorStager`] in place of the scripted stager, over a one-commit bare mirror that
@@ -13,7 +14,8 @@
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test node_job_warm`.
 #![cfg(all(oneiron_test_support, unix))]
 
-use std::os::unix::fs::PermissionsExt;
+use std::collections::BTreeMap;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -21,15 +23,15 @@ use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
-use oneiron_server::gpu_execution_node::jobs::warm::{CacheBudget, TemplateWarm};
+use oneiron_server::gpu_execution_node::jobs::warm::{CacheBudget, WarmPath};
 use oneiron_server::gpu_execution_node::jobs::{
     MirrorStager, NodeJobs, NodeKey, StagingRefusal, TemplateMirrors,
 };
-use oneiron_server::gpu_execution_node::node_settings::ExecutionNodeSettings;
+use oneiron_server::gpu_execution_node::node_settings::{EVICTED_DIR_NAME, ExecutionNodeSettings};
 use oneiron_server::gpu_execution_node::wire::{
     HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobSubmit, NetworkMode,
     OutputDecl, ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector, Starter, WarmKeyFact,
-    WorkloadPin,
+    WarmWanted, WorkloadPin,
 };
 use oneiron_server::test_doors::node_jobs::{ScriptedNode, ScriptedSigner};
 use sha2::{Digest, Sha256};
@@ -113,11 +115,11 @@ fn mirror(root: &Path) -> (PathBuf, String) {
     (path, commit)
 }
 
-/// The node's configuration as the stager reads it: one template at [`DIGEST`], its mirror
-/// and its warm keys.
+/// The node's configuration as the stager reads it: one template at [`DIGEST`], its mirror,
+/// and the warm keys the node's templates map.
 struct WarmMirror {
     path: PathBuf,
-    warm: TemplateWarm,
+    warm: BTreeMap<String, WarmPath>,
 }
 
 impl TemplateMirrors for WarmMirror {
@@ -131,11 +133,11 @@ impl TemplateMirrors for WarmMirror {
         }
     }
 
-    fn template_warm(
+    fn node_warm_paths(
         &self,
         template: &str,
         template_digest: &str,
-    ) -> Result<TemplateWarm, StagingRefusal> {
+    ) -> Result<BTreeMap<String, WarmPath>, StagingRefusal> {
         self.mirror(template, template_digest)?;
         Ok(self.warm.clone())
     }
@@ -290,8 +292,18 @@ caches = ["target:a", "target:b", "target:c"]
             .expect("the issuer signs")
     }
 
+    /// A second scripted node in this fixture's directory, whose template `open-models` is at
+    /// `digest`: the digest the node's file gives it, so a key's pin matches the file.
+    fn node_at(&self, digest: &str) -> ScriptedNode {
+        let root = self.path("pinned");
+        std::fs::create_dir_all(&root).expect("node dir");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+            .expect("node dir mode");
+        ScriptedNode::new(&root, EntityId::now(), TEMPLATE, digest, NOW_MS)
+    }
+
     /// The job service with the mirror stager over `mirror` and `warm`.
-    fn open_staging(&self, mirror: &Path, warm: TemplateWarm) -> NodeJobs {
+    fn open_staging(&self, mirror: &Path, warm: BTreeMap<String, WarmPath>) -> NodeJobs {
         let mut parts = self.node.parts();
         parts.stager = Arc::new(MirrorStager::new(Arc::new(WarmMirror {
             path: mirror.to_path_buf(),
@@ -371,6 +383,52 @@ fn fact<'a>(facts: &'a [WarmKeyFact], key: &str) -> &'a WarmKeyFact {
         .unwrap_or_else(|| panic!("no fact for {key}: {facts:?}"))
 }
 
+/// The disk `path` and what it holds take, as the cache pass measures it (allocated blocks).
+fn allocated(path: &Path) -> u64 {
+    let found = std::fs::symlink_metadata(path).expect("the path exists");
+    let mut bytes = found.blocks() * 512;
+    if found.is_dir() {
+        for entry in std::fs::read_dir(path)
+            .expect("the directory reads")
+            .flatten()
+        {
+            bytes += allocated(&entry.path());
+        }
+    }
+    bytes
+}
+
+fn wanted(keys: &[&str]) -> WarmWanted {
+    WarmWanted {
+        keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+        overflow: false,
+    }
+}
+
+fn input(path: PathBuf) -> WarmPath {
+    WarmPath { path, cache: false }
+}
+
+/// A node's file with no cache directory and one template, `builds`, with `extra` lines.
+fn builds_file(extra: &str) -> String {
+    format!(
+        r#"
+[execution_node]
+state_dir = "/var/lib/oneiron/node"
+work_dir = "/var/lib/oneiron/work"
+
+[execution_node.templates.builds]
+repo = "/srv/builds.git"
+entries = ["{ENTRY}"]
+interpreter = ["/usr/bin/bash"]
+max_secs = 3600
+memory_gib = 32
+disk_gib = 10
+{extra}
+"#
+    )
+}
+
 fn budget(cap_bytes: u64) -> CacheBudget {
     CacheBudget {
         cap_bytes,
@@ -384,19 +442,31 @@ fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
     let fixture = fixture();
     let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
     let settings = fixture.settings(&cache_dir);
-    let jobs = fixture.node.open();
+    // The held key pins `open-models` at the digest the file gives it, so its map is known.
+    let digest = settings
+        .template_digest(TEMPLATE)
+        .expect("open-models has a digest");
+    let node = fixture.node_at(&digest);
+    let jobs = node.open();
     // An open order on a live issuer lists `target:a`; a held key of `open-models` may read
     // `target:h`.
-    jobs.warm_wanted(fixture.issuer, &["target:a".to_owned()]);
+    jobs.warm_wanted(fixture.issuer, &wanted(&["target:a"]));
+    let held = WorkloadPin {
+        template_digest: digest,
+        ..pin(DIGEST)
+    };
     assert_eq!(
-        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-held", &pin(DIGEST)))).state,
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-held", &held))).state,
         JobState::Held
     );
 
-    // Four caches of 1 MiB under a cap of 2.5 MiB: the plan goes in last use, then key order.
-    let first = jobs.cache_pass_under(&settings, &settings.cache, &budget(5 * MIB / 2));
+    // Four caches of about 1 MiB under a cap that holds `target:a` and `target:h` as the disk
+    // measures them: the plan goes in last use, then key order.
+    let cap = allocated(&cache_dir.join("a")) + allocated(&cache_dir.join("h"));
+    let first = jobs.cache_pass_under(&settings, &settings.cache, &budget(cap));
     let removed: Vec<&str> = first.removed.iter().map(|gone| gone.key.as_str()).collect();
     assert_eq!(removed, ["target:b", "target:c"], "{first:?}");
+    assert_eq!(first.deferred, None);
     assert!(cache_dir.join("a").exists(), "the listed key was removed");
     assert!(
         cache_dir.join("h").exists(),
@@ -407,18 +477,21 @@ fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
         .expect("cache dir reads")
         .flatten()
         .map(|found| found.file_name())
+        .filter(|name| name != EVICTED_DIR_NAME)
         .collect();
     assert_eq!(
         leftovers.len(),
         2,
         "a removed cache was left: {leftovers:?}"
     );
+    let evicted = std::fs::read_dir(cache_dir.join(EVICTED_DIR_NAME))
+        .expect("the removed caches' directory reads")
+        .count();
+    assert_eq!(evicted, 0, "a removed cache's files were left");
 
     // Once the issuer's list is older than the wanted hold and no ask listed the key again,
     // it is a cache like any other; the held key still protects its own.
-    fixture
-        .node
-        .clock
+    node.clock
         .advance_ms(settings.cache.wanted_hold_secs * 1000 + 1000);
     let second = jobs.cache_pass_under(&settings, &settings.cache, &budget(MIB / 2));
     let removed: Vec<&str> = second
@@ -440,14 +513,16 @@ fn a_listed_warm_input_that_is_missing_refuses_the_launch_at_zero_seconds() {
     let (mirror, commit) = mirror(fixture.dir.path());
     let present = fixture.path("data/weights-bb");
     std::fs::create_dir_all(&present).expect("present input");
-    let warm = TemplateWarm {
-        paths: [
-            ("weights:aa".to_owned(), fixture.path("data/weights-aa")),
-            ("weights:bb".to_owned(), present),
-        ]
-        .into(),
-        caches: Default::default(),
-    };
+    // `weights:aa` is mapped by any template of the node's file: a key names one thing on one
+    // machine.
+    let warm = [
+        (
+            "weights:aa".to_owned(),
+            input(fixture.path("data/weights-aa")),
+        ),
+        ("weights:bb".to_owned(), input(present)),
+    ]
+    .into();
     let jobs = fixture.open_staging(&mirror, warm);
     let key = "job-warm/missing";
     let ended = fixture.run(&jobs, key, &pin(&commit), &["weights:bb", "weights:aa"]);
@@ -469,10 +544,14 @@ fn a_listed_warm_input_that_is_missing_refuses_the_launch_at_zero_seconds() {
 fn an_absent_cache_key_is_a_cold_start() {
     let fixture = fixture();
     let (mirror, commit) = mirror(fixture.dir.path());
-    let warm = TemplateWarm {
-        paths: [("target:t".to_owned(), fixture.path("caches/t"))].into(),
-        caches: ["target:t".to_owned()].into(),
-    };
+    let warm = [(
+        "target:t".to_owned(),
+        WarmPath {
+            path: fixture.path("caches/t"),
+            cache: true,
+        },
+    )]
+    .into();
     let jobs = fixture.open_staging(&mirror, warm);
     let key = "job-warm/cold";
     // An absent cache, and a key no template maps: neither stops the launch.
@@ -588,27 +667,85 @@ caches = ["target:x"]
 }
 
 #[test]
-fn a_template_and_a_submit_without_warm_keys_hash_and_sign_as_before() {
-    let template = |extra: &str| {
-        format!(
-            r#"
-[execution_node]
-state_dir = "/var/lib/oneiron/node"
-work_dir = "/var/lib/oneiron/work"
+fn a_cache_pass_removes_nothing_while_what_is_busy_is_not_known() {
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a", "b"], 1);
+    let settings = fixture.settings(&cache_dir);
+    // The scripted node admits `open-models` at DIGEST, a digest the node's file no longer
+    // gives it: the held key's map is not known.
+    let jobs = fixture.node.open();
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-held", &pin(DIGEST)))).state,
+        JobState::Held
+    );
+    let report = jobs.cache_pass_under(&settings, &settings.cache, &budget(0));
+    assert!(
+        report.removed.is_empty() && report.deferred.is_some(),
+        "{report:?}"
+    );
 
-[execution_node.templates.builds]
-repo = "/srv/builds.git"
-entries = ["{ENTRY}"]
-interpreter = ["/usr/bin/bash"]
-max_secs = 3600
-memory_gib = 32
-disk_gib = 10
-{extra}
-"#
-        )
+    // An issuer whose open orders list more keys than one ask carries: no cache goes while its
+    // ask holds.
+    let digest = settings
+        .template_digest(TEMPLATE)
+        .expect("open-models has a digest");
+    let node = fixture.node_at(&digest);
+    let jobs = node.open();
+    jobs.warm_wanted(
+        fixture.issuer,
+        &WarmWanted {
+            keys: Vec::new(),
+            overflow: true,
+        },
+    );
+    let report = jobs.cache_pass_under(&settings, &settings.cache, &budget(0));
+    assert!(
+        report.removed.is_empty() && report.deferred.is_some(),
+        "{report:?}"
+    );
+    for name in ["a", "b"] {
+        assert!(cache_dir.join(name).exists(), "{name} was removed");
+    }
+}
+
+#[test]
+fn a_warm_path_that_overlaps_a_cache_or_lies_where_removed_caches_go_is_refused() {
+    let file = |warm: &str, caches: &str| {
+        builds_file(&format!("warm = {{ {warm} }}\ncaches = [{caches}]"))
     };
-    let plain = ExecutionNodeSettings::parse(&template("")).expect("plain");
-    let empty = ExecutionNodeSettings::parse(&template("warm = {}\ncaches = []")).expect("empty");
+    let cache_a = r#""target:a" = "/var/lib/oneiron/work/caches/a""#;
+    // With no cache_dir, a cache lies directly in <work_dir>/caches.
+    ExecutionNodeSettings::parse(&file(cache_a, r#""target:a""#))
+        .expect("a cache in the default cache directory");
+    // Two keys on one cache path; an input inside a cache; an input where removed caches go.
+    let overlap = "one path or one inside the other";
+    for (warm, caches, why) in [
+        (
+            format!(r#"{cache_a}, "target:b" = "/var/lib/oneiron/work/caches/a""#),
+            r#""target:a""#,
+            overlap,
+        ),
+        (
+            format!(r#"{cache_a}, "weights:w" = "/var/lib/oneiron/work/caches/a/w""#),
+            r#""target:a""#,
+            overlap,
+        ),
+        (
+            format!(r#""weights:w" = "/var/lib/oneiron/work/caches/{EVICTED_DIR_NAME}/w""#),
+            "",
+            "where the cache pass moves what it removes",
+        ),
+    ] {
+        let refused = ExecutionNodeSettings::parse(&file(&warm, caches)).expect_err(&warm);
+        assert!(refused.contains(why), "{warm}: {refused}");
+    }
+}
+
+#[test]
+fn a_template_and_a_submit_without_warm_keys_hash_and_sign_as_before() {
+    let plain = ExecutionNodeSettings::parse(&builds_file("")).expect("plain");
+    let empty =
+        ExecutionNodeSettings::parse(&builds_file("warm = {}\ncaches = []")).expect("empty");
     assert_eq!(
         plain.template_digest("builds"),
         empty.template_digest("builds")

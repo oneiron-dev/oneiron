@@ -27,9 +27,9 @@ use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 mod warm;
 
 pub use warm::{
-    CACHE_CAP_GIB_DEFAULT, CACHE_IDLE_DAYS_DEFAULT, CACHE_KEYS_MAX_DEFAULT,
+    CACHE_CAP_GIB_DEFAULT, CACHE_DIR_NAME_DEFAULT, CACHE_IDLE_DAYS_DEFAULT, CACHE_KEYS_MAX_DEFAULT,
     CACHE_PASS_EVERY_SECS_DEFAULT, CACHE_PROTECT_HOURS_DEFAULT, CACHE_WANTED_HOLD_SECS_DEFAULT,
-    EVICTED_PREFIX, NodeCacheSettings, TEMPLATE_WARM_KEYS_MAX,
+    EVICTED_DIR_NAME, NodeCacheSettings, TEMPLATE_WARM_KEYS_MAX,
 };
 
 /// Where the node's file is when neither the server's configuration nor
@@ -130,8 +130,7 @@ pub struct ExecutionNodeSettings {
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
     /// The directory the templates' cache keys live in, each an entry
-    /// directly in it (pass 34, row P2). Unset: no template marks a cache,
-    /// and the cache budget removes nothing on this box.
+    /// directly in it (pass 34, row P2). Unset: `<work_dir>/caches`.
     #[serde(default)]
     pub cache_dir: Option<PathBuf>,
     /// `[execution_node.cache]`: the box's ceiling on the cache budget.
@@ -220,7 +219,8 @@ pub struct NodeTemplate {
     pub warm: BTreeMap<String, PathBuf>,
     /// The warm keys whose paths are caches: absent is a cold start, and
     /// the cache budget may remove them. Each is an entry directly in
-    /// `execution_node.cache_dir`. Absent from the digest when empty.
+    /// `execution_node.cache_dir` (default `<work_dir>/caches`). Absent from
+    /// the digest when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caches: Vec<String>,
 }
@@ -335,7 +335,7 @@ impl ExecutionNodeSettings {
         for (name, template) in &self.templates {
             template
                 .validate()
-                .and_then(|()| warm::check_template_warm(template, self.cache_dir.as_deref()))
+                .and_then(|()| warm::check_template_warm(template, &self.cache_root()))
                 .map_err(|why| format!("execution_node.templates.{name}: {why}"))?;
             if !plain_name(name, TEMPLATE_NAME_MAX) {
                 return Err(format!(
