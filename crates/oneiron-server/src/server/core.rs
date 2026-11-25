@@ -243,6 +243,9 @@ pub struct SyncServer {
     /// job chunks it runs (row L10-31), for the `vault.gpu.jobs.*` doors and
     /// the GPU job worker.
     pub(crate) gpu_jobs: Arc<crate::gpu_host::GpuJobHost>,
+    /// The GPU slots this machine holds for the vault's GPU jobs, on the
+    /// GPUs `[gpu_jobs.devices]` offers.
+    pub(crate) gpu_slots: Arc<crate::gpu_execution_node::GpuSlotTable>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -432,7 +435,7 @@ const _: fn(&SyncServer) = |server| {
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, embedding_line,
-        decision_read, decision_reads, decisions, hook_runtime, runner_fence, gpu_jobs,
+        decision_read, decision_reads, decisions, hook_runtime, runner_fence, gpu_jobs, gpu_slots,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,

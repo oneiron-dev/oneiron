@@ -12,6 +12,7 @@ pub use account_args::{
 mod continue_args;
 pub use continue_args::ContinueArgs;
 mod deployment_args;
+mod execution_node_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
@@ -26,6 +27,11 @@ pub use user_service_args::{UserServiceCommand, UserServiceInstallArgs};
 mod learning_setting_args;
 mod link_args;
 pub use link_args::{LinkArgs, LinkCommand, UnlinkArgs};
+mod measure_path_args;
+pub use measure_path_args::{
+    ExecutionNodeMeasurePathArgs, MeasurePathCommand, MeasurePathDialArgs, MeasurePathKeyArgs,
+    MeasurePathListenArgs,
+};
 mod model_workers_args;
 pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
@@ -39,6 +45,11 @@ mod seat_args;
 mod user_service_args;
 mod wake_args;
 mod widen_proposal_args;
+pub use execution_node_args::{
+    ExecutionNodeCommand, ExecutionNodeDisableArgs, ExecutionNodeFileArgs,
+    ExecutionNodeInstallArgs, ExecutionNodePauseArgs, ExecutionNodeResetHistoryArgs,
+    ExecutionNodeServeArgs, ExecutionNodeUnitControlArgs, ExecutionNodeUnitNameArgs,
+};
 pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
     HookRecallArgs,
@@ -204,6 +215,11 @@ pub enum Command {
     /// read it, set the full route, or clear it.
     #[command(subcommand)]
     ReminderRoute(ReminderRouteCommand),
+    /// This machine's execution node, at the box: check what would refuse a
+    /// job, enable or disable it, pause it, clear its drain, or reset its
+    /// history after a lost journal.
+    #[command(subcommand)]
+    ExecutionNode(ExecutionNodeCommand),
     /// Context-widen proposals your agents raised: list them, or approve or
     /// decline one as the board above.
     #[command(subcommand)]
@@ -586,6 +602,14 @@ pub struct DeviceEnrolArgs {
     /// Config file the vault runs with. Defaults to the XDG path.
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Enrol a machine already enrolled for this vault again, with a new
+    /// link from its home (for example to take every protocol a newer home
+    /// serves): its stored enrolment is replaced only once the home has
+    /// answered and the new one is written, so a re-enrolment that fails
+    /// leaves the old one as it was.
+    #[arg(long)]
+    pub replace: bool,
 }
 
 /// A local agent's read credential, minted through the same host-rooted
@@ -1134,6 +1158,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LearningSettings(command) => commands::learning_settings(command),
         Command::ReminderRoute(command) => commands::reminder_route(command),
+        Command::ExecutionNode(command) => commands::execution_node(command),
         Command::WidenProposals(command) => commands::widen_proposals(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),

@@ -22,8 +22,13 @@ pub use oneiron::job_workload::{
     BoundRequirement, DeviceClaim, JOB_ALPN, JOB_STATUS_ALPN, NetworkMode, OutputDecl,
     ResourceRequest, ScopeCapabilities, ScopeKind, WorkloadPin,
 };
+use oneiron::machine_readiness::ReadinessStreak;
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
+
+use super::availability::GpuAvailability;
+use super::device::DeviceSample;
 
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
@@ -34,6 +39,9 @@ pub const JOB_RECEIPT_DOMAIN: &[u8] = b"oneiron/job-receipt/v1\0";
 /// The most bytes one [`JobStatusRequest::Fetch`] answers: one transport
 /// piece under the 1 MiB message bound.
 pub const FETCH_MAX_BYTES: u64 = 1_044_480;
+/// The most log bytes one [`JobStatusRequest::Tail`] answers, whatever its
+/// `max`: one transport piece, as [`FETCH_MAX_BYTES`].
+pub const TAIL_MAX_BYTES: u32 = 1_044_480;
 
 /// Who started a job, as the submit states it and the receipt repeats it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +86,9 @@ impl ScopeClass {
 pub enum JobRequest {
     /// What the node offers now: [`JobAnswer::Node`].
     Node,
+    /// A fresh sample of the node's GPUs: [`JobAnswer::Availability`]. A
+    /// reading, not a hold.
+    Availability,
     /// Hold a key and its disk space, never a device: answered by the
     /// key's receipt in state `Held`, or the key's existing receipt, or
     /// `Busy`. Journaled before it is answered; a reserve never starts a
@@ -157,6 +168,8 @@ pub struct SignedJobSubmit {
 #[serde(rename_all = "snake_case")]
 pub enum JobAnswer {
     Node(NodeAnswer),
+    /// The node's GPUs now, as OPUS-LE-FLEET's slot table reads them.
+    Availability(GpuAvailability),
     /// The key's receipt: the one the request made, or the one it already
     /// had.
     Receipt(SignedJobReceipt),
@@ -195,14 +208,129 @@ pub struct NodeAnswer {
     pub swept: bool,
     pub boot_id: String,
     pub engine_version: String,
+    /// What the node's last idle readiness check found (pass 34, 4.1 and
+    /// 7.3); `None` while the node keeps no journal.
+    #[serde(default)]
+    pub readiness: Option<NodeReadiness>,
+}
+
+/// One check of a node's idle readiness check (pass 34, 7.3). Its names
+/// ([`Register::name`]) are the wire spelling.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
+#[serde(rename_all = "snake_case")]
+#[register("jobs.readiness.check")]
+pub enum ReadinessCheck {
+    /// The launch scope meets the minimum contract.
+    Scope,
+    /// The devices answer a fresh reading.
+    Devices,
+    /// The payload disk keeps its reserve, and the state directory its
+    /// floor.
+    Disk,
+    /// Each template's mirror is a readable directory.
+    Mirrors,
+    /// The wall clock kept step with the boot clock since the last check.
+    Clock,
+    /// No job unit runs that no key launched.
+    Units,
+}
+
+/// What a node's last readiness check found.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessState {
+    /// No check has run yet.
+    #[default]
+    Unchecked,
+    Ready,
+    /// The first check that failed, and why. The node takes no new work
+    /// (`Drained`) until a check passes.
+    NotReady {
+        check: ReadinessCheck,
+        why: String,
+    },
+}
+
+/// One readiness check's result, as the node keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadinessResult {
+    /// When the check ran, on the node's wall clock.
+    pub at_ms: u64,
+    pub state: ReadinessState,
+}
+
+impl ReadinessResult {
+    /// The result on one line: `<at_ms> ready`, or `<at_ms> <check>: <why>`.
+    #[must_use]
+    pub fn line(&self) -> String {
+        match &self.state {
+            ReadinessState::Unchecked => format!("{} unchecked", self.at_ms),
+            ReadinessState::Ready => format!("{} ready", self.at_ms),
+            ReadinessState::NotReady { check, why } => {
+                format!("{} {}: {why}", self.at_ms, check.name())
+            }
+        }
+    }
+}
+
+/// A node's readiness, as `Node` reports it (pass 34, 4.1 and 7.3): the
+/// facts the issuer escalates on (16, practice 6).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct NodeReadiness {
+    pub state: ReadinessState,
+    /// When the last check ran, on the node's wall clock; `None` before the
+    /// first.
+    pub checked_at_ms: Option<u64>,
+    /// Checks failed in a row; 0 once one passes.
+    pub failed_in_a_row: u32,
+    /// When the first check of the current run of failures ran: the
+    /// streak's identity. `None` while the last check passed.
+    pub failing_since_ms: Option<u64>,
+    /// The newest results, oldest first: at most
+    /// `jobs.readiness.results_kept`.
+    pub results: Vec<ReadinessResult>,
+}
+
+impl NodeReadiness {
+    /// The run of failed checks this fact reports, as the issuer escalates
+    /// it ([`oneiron::Vault::raise_machine_readiness_ask`]) for `machine`;
+    /// `None` while the last check passed, or before any ran.
+    #[must_use]
+    pub fn streak(&self, machine: EntityId) -> Option<ReadinessStreak> {
+        let ReadinessState::NotReady { check, why } = &self.state else {
+            return None;
+        };
+        Some(ReadinessStreak {
+            machine,
+            failed_in_a_row: self.failed_in_a_row,
+            failing_since_ms: self.failing_since_ms?,
+            check: check.name().to_owned(),
+            why: why.clone(),
+            results: self.results.iter().map(ReadinessResult::line).collect(),
+        })
+    }
+}
+
+/// One line the node writes every tick while a key runs (pass 34, 7.3):
+/// what a host reset leaves behind, on the `Lost` receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Breadcrumb {
+    pub boot_id: String,
+    pub boot_ns: u64,
+    pub wall_ms: u64,
+    /// The key's devices, as the probe sampled them; empty where it gives
+    /// nothing.
+    pub devices: Vec<DeviceSample>,
 }
 
 /// One template a node holds, as [`NodeAnswer`] names it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateOffer {
     pub name: String,
-    /// The sha256 (lower hex) of the template's canonical form, which a pin
-    /// names.
+    /// The content hash (BLAKE3, lower hex) of the template's canonical
+    /// JSON form, made as a pin's digest is made; a pin names it.
     pub digest: String,
     pub scopes: Vec<ScopeClass>,
     pub network: Vec<NetworkMode>,
@@ -253,6 +381,17 @@ pub enum JobRefusal {
     NotTheKeysIssuer,
     /// The submit's signature is not its issuer's.
     SubmitSignatureInvalid,
+    /// The node's GPUs could not be read now, with why.
+    DevicesUnreadable { why: String },
+    /// `Fetch` of an output the node does not hand out: not one of the
+    /// key's hashed returnable outputs, cleaned, or changed since it was
+    /// hashed, with why. Nothing was read for the issuer.
+    OutputNotFetchable { why: String },
+    /// `Ack` of a key that has not ended: nothing changed.
+    NotAcknowledgeable { state: JobState },
+    /// `Tail` of a log the node does not read: the payload is cleaned, or
+    /// the file or its drop record is not what the unit writes, with why.
+    LogNotReadable { why: String },
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is
@@ -280,6 +419,65 @@ pub enum JobStatusRequest {
     /// The issuer holds every returnable output it wants; only then may the
     /// node clean the key's `out/`.
     Ack { key: String },
+    /// Bytes of a key's log from an offset (pass 34, 7.2).
+    Tail(LogTailRequest),
+}
+
+/// A [`JobStatusRequest::Tail`]: at most `max` bytes (and at most
+/// [`TAIL_MAX_BYTES`]) of the key's `stream` from the logical `offset`,
+/// while the key runs and after it ended, until its payload is cleaned. The
+/// reader keeps its own offset: after a dropped connection it asks again
+/// from the last `next_offset` it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTailRequest {
+    pub key: String,
+    pub stream: LogStream,
+    pub offset: u64,
+    pub max: u32,
+}
+
+/// One of a key's two log files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogStream {
+    Stdout,
+    Stderr,
+}
+
+impl LogStream {
+    /// The file's name under the payload's `log/`.
+    #[must_use]
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+/// The answer to a [`JobStatusRequest::Tail`]. Offsets are logical: they
+/// count every byte the workload wrote to the stream, also the bytes the
+/// cap dropped later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTail {
+    /// The stream's bytes from `offset` plus the bytes `truncated` skipped.
+    #[serde(with = "serde_bytes")]
+    pub bytes: Vec<u8>,
+    /// Where the next `Tail` asks from: `offset`, plus the bytes skipped,
+    /// plus `bytes`' length. Never past the stream's end.
+    pub next_offset: u64,
+    /// The key ended and nothing follows `next_offset`: the stream is
+    /// whole.
+    pub ended: bool,
+    /// The cap dropped bytes the reader asked for: `bytes` begin after them.
+    pub truncated: Option<LogTruncation>,
+}
+
+/// The bytes the log cap removed between the asked offset and the first
+/// byte answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTruncation {
+    pub dropped: u64,
 }
 
 /// The answer on [`JOB_STATUS_ALPN`].
@@ -307,6 +505,8 @@ pub enum JobStatusAnswer {
     /// The signal or the acknowledgement is recorded.
     Acknowledged,
     Refused(JobRefusal),
+    /// The bytes of a `Tail`.
+    Tail(LogTail),
 }
 
 /// One page of a [`JobStatusRequest::Keys`] listing. A page stays under the
@@ -377,6 +577,10 @@ pub enum JobEnd {
     Lost {
         reason: String,
         last_tick_boot_ns: u64,
+        /// The key's last breadcrumb lines before it was lost, oldest
+        /// first: the evidence of a reset (pass 34, 7.3).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        breadcrumbs: Vec<Breadcrumb>,
     },
 }
 

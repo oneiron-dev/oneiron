@@ -149,6 +149,27 @@ impl EnrolmentFiles {
         }
         Ok(())
     }
+
+    /// Replaces the stored enrolment with a new one: the credential, then
+    /// the record, each written under a fresh name beside its file, synced
+    /// and renamed over it ([`credential_file::replace`]). A failure before
+    /// the credential's rename leaves the old enrolment as it was; a record
+    /// that does not land after the credential did says so.
+    pub(crate) fn replace(&self, credential: &str, record: &DeviceEnrolment) -> anyhow::Result<()> {
+        if let Some(dir) = self.record.parent() {
+            create_private_dir(dir)?;
+        }
+        let record_bytes = serde_json::to_vec_pretty(record)?;
+        credential_file::replace(&self.credential, credential.as_bytes())?;
+        credential_file::replace(&self.record, &record_bytes).map_err(|error| {
+            error.context(format!(
+                "the new credential is in {}, and {} still names the old enrolment; enrol again \
+                 with --replace and a new link",
+                self.credential.display(),
+                self.record.display()
+            ))
+        })
+    }
 }
 
 /// The redeem route's success body, as a device reads it.
@@ -201,19 +222,27 @@ const REDEEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// mesh endpoint key and its two binding proofs go along, for the home to
 /// bind and grant the sync ALPN (FIX 3374). A vault that joins from empty
 /// (`join`, FIX 3375) enrols for the genesis its verified pin names, and the
-/// pin and slip the home answers must match that pin, field by field.
+/// pin and slip the home answers must match that pin, field by field. With
+/// `replace` a machine already enrolled for this vault enrols again (`device
+/// enrol --replace`): its stored enrolment is replaced only after the home
+/// has answered ([`EnrolmentFiles::replace`]), so a re-enrolment that fails
+/// leaves it as it was.
 pub(crate) fn enrol(
     vault: &oneiron::Vault,
     files: &EnrolmentFiles,
     link: &str,
     join: Option<&join::JoinPin>,
+    replace: bool,
 ) -> anyhow::Result<Enrolled> {
     use base64::Engine as _;
     use ed25519_dalek::Signer;
 
+    let enrolled = files.record.exists() || files.credential.exists();
     anyhow::ensure!(
-        !files.record.exists() && !files.credential.exists(),
-        "this machine is already enrolled for this vault; remove {} and {} to enrol again",
+        replace || !enrolled,
+        "this machine is already enrolled for this vault; to enrol it again with a new link, \
+         pass --replace (the stored enrolment is replaced only once the home has answered and \
+         the new one is written), or remove {} and {}",
         files.record.display(),
         files.credential.display()
     );
@@ -333,7 +362,12 @@ pub(crate) fn enrol(
         home_mesh: paired.mesh,
     };
     record.validate()?;
-    files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
+    let credential = format!("v2.cred.{slip}.{}", hex(key.as_bytes()));
+    if enrolled {
+        files.replace(&credential, &record)?;
+    } else {
+        files.write(&credential, &record)?;
+    }
     Ok(Enrolled {
         record,
         re_paired: paired.re_paired,

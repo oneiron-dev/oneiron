@@ -164,7 +164,11 @@ impl Fixture {
             &proof,
             &request,
             None,
-            (&identity, ALPN),
+            oneiron::authority::MeshEnrolmentAsk {
+                identity: &identity,
+                granted: ALPN,
+                ceiling: &[ALPN],
+            },
         )?;
         let after = self.vault.capability_slip_now()?;
         let mesh = redeemed

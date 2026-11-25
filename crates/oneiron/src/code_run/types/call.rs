@@ -102,6 +102,10 @@ pub enum SelfCall {
     WorkflowDispatch(Box<crate::code_run::workflow_operations::WorkflowBoundDispatchRequest>),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
+    /// `vault.jobs.orders.wait({order, until?})`: one wait on a work order the
+    /// run's actor may read, until its first started attempt or its end. It
+    /// parks the run while the order has not reached it.
+    JobsOrdersWait(crate::work_order::WorkOrderWaitRequest),
     /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
     /// results, made by a host job on the run's route and memoised by its
     /// members' occurrences and recipe.
@@ -157,6 +161,7 @@ impl SelfCall {
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
+            Self::JobsOrdersWait(_) => SelfEffect::JobsOrdersWait,
             Self::Summarize(_) => SelfEffect::Summarize,
             Self::Leader(SelfLeaderCall::Split { .. }) => SelfEffect::LeaderSplit,
             Self::Leader(_) => SelfEffect::Leader,
