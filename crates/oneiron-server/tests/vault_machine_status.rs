@@ -324,6 +324,7 @@ fn a_node_reset_reports_lost_with_unknown_seconds_and_bills_nothing() {
             Some(JobEnd::Lost {
                 reason: "node_reset".to_owned(),
                 last_tick_boot_ns: 0,
+                breadcrumbs: Vec::new(),
             }),
             true,
         );
@@ -682,6 +683,7 @@ fn three_machine_failures_in_a_row_drain_the_node_until_a_person_clears_it() {
             JobEnd::Lost {
                 reason: "node_reset".to_owned(),
                 last_tick_boot_ns: 0,
+                breadcrumbs: Vec::new(),
             },
             Some(0),
         );

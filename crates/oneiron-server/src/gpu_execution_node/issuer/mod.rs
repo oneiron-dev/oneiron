@@ -37,10 +37,9 @@ pub use node_client::MeshJobNodeClient;
 pub use node_client::{JobNodeClient, NodeCallError};
 pub use orphans::{JobOrphanKeys, LoggedUnattributedLedger, UnattributedLedger};
 pub use reconcile::{LoggedOrphanKeys, OrphanKeys};
-#[cfg(oneiron_test_support)]
-pub use register::register_vault_machine;
 pub use register::{
-    NotTheIssuer, VaultMachineNotRegistered, issuer_machine, not_the_issuer, vault_machine_backend,
+    NotTheIssuer, VaultMachineNotRegistered, issuer_machine, not_the_issuer,
+    register_vault_machine, register_vault_machine_at_start, vault_machine_backend,
 };
 pub use returns::ResultReturns;
 
