@@ -155,9 +155,6 @@ fn file_began_ms(modified: SystemTime) -> u64 {
         return u64::MAX;
     };
     let began_ms = u64::try_from(since.as_millis()).unwrap_or(u64::MAX);
-    if since.subsec_nanos() == 0 {
-        began_ms.saturating_add(999)
-    } else {
-        began_ms
-    }
+    // RED PIN: a whole-second file time is taken as exact.
+    began_ms
 }
