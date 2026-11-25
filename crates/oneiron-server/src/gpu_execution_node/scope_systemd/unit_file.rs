@@ -164,7 +164,9 @@ pub fn render_control_socket(engine_gid: u32) -> String {
 
 /// The control socket's handler, one instance per connection: `oneiron
 /// job-control` as root, with the connection as its standard input and
-/// output.
+/// output. It reads the node file and may write beneath the state directory
+/// only for a session's renewal (pass 34, 2.5; row W1), which records the
+/// moved cutoff in the key's `prepared.json`.
 #[must_use]
 pub fn render_control_service(inputs: &UnitInputs) -> String {
     format!(
@@ -172,7 +174,7 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
          [Unit]\n\
          Description=Oneiron job control request\n\n\
          [Service]\n\
-         ExecStart={} job-control --engine-account {}\n\
+         ExecStart={} job-control --engine-account {} --node-file {}\n\
          StandardInput=socket\n\
          StandardOutput=socket\n\
          StandardError=journal\n\
@@ -181,9 +183,12 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
          PrivateNetwork=yes\n\
          PrivateTmp=yes\n\
          ProtectSystem=strict\n\
-         ProtectHome=read-only\n",
+         ProtectHome=read-only\n\
+         ReadWritePaths={}\n",
         quote_path(&inputs.binary),
-        inputs.engine_account
+        inputs.engine_account,
+        quote_path(&inputs.node_file),
+        quote_path(&inputs.state_dir),
     )
 }
 
@@ -272,9 +277,16 @@ mod tests {
         assert!(socket.contains("ListenStream=/run/oneiron-job-control.sock\n"));
         assert!(socket.contains("SocketUser=root\nSocketGroup=970\nSocketMode=0660\nAccept=yes\n"));
         let service = render_control_service(&inputs());
-        assert!(
-            service.contains("ExecStart=/usr/bin/oneiron job-control --engine-account oneiron\n")
-        );
+        assert!(service.contains(
+            "ExecStart=/usr/bin/oneiron job-control --engine-account oneiron --node-file /etc/oneiron/execution-node.toml\n"
+        ));
+        // A session's renewal records its moved cutoff beneath the state
+        // directory, and nowhere else (row W1).
+        assert!(service.contains("ProtectSystem=strict\n"));
+        assert!(service.contains(&format!(
+            "ReadWritePaths={}\n",
+            inputs().state_dir.display()
+        )));
         assert!(service.contains("StandardInput=socket\n"));
         assert!(!service.contains("User="));
     }

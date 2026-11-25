@@ -23,6 +23,10 @@
 //! process is the workload and never `job-exec` in its start, which a
 //! checkpoint signal could end (review r6 R6-06). Before that the notice is
 //! refused and lost, as a notice may be.
+//!
+//! The fourth verb, `renew <id> <cutoff boot ns>`, is a session's renewal
+//! (pass 34, 2.5; row W1): the handler, given the node file, moves that
+//! unit's cutoff forward by root's timer handoff ([`super::renew`]).
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -55,8 +59,13 @@ pub const CONTROL_JOB_MODE: &str = "replace";
 const SIGNAL_ACTIVE_STATE: &str = "active";
 
 /// The longest request line: `signal `, 32 hex digits, a space, the
-/// longest checkpoint signal's name and the newline fit with room.
+/// longest checkpoint signal's name and the newline fit with room, and so
+/// does `renew `, 32 hex digits, a space, a `u64`'s 20 digits and the
+/// newline (60 bytes).
 const REQUEST_MAX_BYTES: usize = 64;
+
+/// The most digits a renewal's cutoff has: a `u64`.
+const CUTOFF_DIGITS_MAX: usize = 20;
 
 /// The longest reply line the engine reads.
 const REPLY_MAX_BYTES: usize = 1024;
@@ -76,6 +85,11 @@ pub enum ControlVerb {
     Stop,
     /// A checkpoint notice: one of [`CHECKPOINT_SIGNALS`], by name.
     Signal(&'static str),
+    /// A session's renewal (row W1): move the unit's cutoff forward to this
+    /// boot-clock time.
+    Renew {
+        cutoff_boot_ns: u64,
+    },
 }
 
 impl ControlVerb {
@@ -86,6 +100,7 @@ impl ControlVerb {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Signal(_) => "signal",
+            Self::Renew { .. } => "renew",
         }
     }
 
@@ -111,9 +126,11 @@ impl ControlVerb {
         }
     }
 
-    /// The `systemctl` arguments that carry the verb out on `unit`.
-    fn systemctl_args(self, unit: &str) -> Vec<String> {
-        match self {
+    /// The `systemctl` arguments that carry the verb out on `unit`; `None`
+    /// for a renewal, which root carries out itself ([`super::renew`]).
+    fn systemctl_args(self, unit: &str) -> Option<Vec<String>> {
+        Some(match self {
+            Self::Renew { .. } => return None,
             Self::Start | Self::Stop => vec![
                 self.word().to_owned(),
                 "--no-block".to_owned(),
@@ -126,23 +143,41 @@ impl ControlVerb {
                 format!("--signal=SIG{name}"),
                 unit.to_owned(),
             ],
-        }
+        })
     }
 }
 
+/// A renewal's cutoff as the request line carries it: 1 to 20 decimal
+/// digits, not zero.
+fn parse_cutoff(text: &str) -> Result<u64, String> {
+    let malformed = || "renew_cutoff_malformed".to_owned();
+    if text.is_empty()
+        || text.len() > CUTOFF_DIGITS_MAX
+        || !text.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(malformed());
+    }
+    text.parse::<u64>()
+        .ok()
+        .filter(|cutoff| *cutoff > 0)
+        .ok_or_else(malformed)
+}
+
 /// The request line for `verb` on the job unit `id`: `<verb> <32 hex>\n`,
-/// or `signal <32 hex> <name>\n`.
+/// `signal <32 hex> <name>\n` or `renew <32 hex> <cutoff>\n`.
 #[must_use]
 pub fn render_request(verb: ControlVerb, id: &JobKeyId) -> String {
     match verb {
         ControlVerb::Signal(name) => format!("signal {id} {name}\n"),
+        ControlVerb::Renew { cutoff_boot_ns } => format!("renew {id} {cutoff_boot_ns}\n"),
         ControlVerb::Start | ControlVerb::Stop => format!("{} {id}\n", verb.word()),
     }
 }
 
 /// One request line, as the handler reads it: exactly a known verb, one
 /// space, a job instance id (32 lower-hex digits), for `signal` one space
-/// and a checkpoint signal's name, and a newline.
+/// and a checkpoint signal's name, for `renew` one space and the cutoff's
+/// boot-clock time in decimal, and a newline.
 ///
 /// # Errors
 ///
@@ -155,14 +190,23 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
     let (word, rest) = text
         .split_once(' ')
         .ok_or_else(|| "request_malformed".to_owned())?;
-    let (id, signal) = match word {
+    let (id, extra) = match word {
         "signal" => rest
             .split_once(' ')
             .map(|(id, name)| (id, Some(name)))
             .ok_or_else(|| "signal_name_missing".to_owned())?,
+        "renew" => rest
+            .split_once(' ')
+            .map(|(id, cutoff)| (id, Some(cutoff)))
+            .ok_or_else(|| "renew_cutoff_missing".to_owned())?,
         _ => (rest, None),
     };
-    let verb = ControlVerb::from_words(word, signal)?;
+    let verb = match (word, extra) {
+        ("renew", Some(cutoff)) => ControlVerb::Renew {
+            cutoff_boot_ns: parse_cutoff(cutoff)?,
+        },
+        _ => ControlVerb::from_words(word, extra)?,
+    };
     let id = JobKeyId::parse(id).ok_or_else(|| "instance_not_a_job".to_owned())?;
     Ok((verb, id))
 }
@@ -192,9 +236,11 @@ pub fn request(verb: ControlVerb, id: &JobKeyId) -> Result<(), String> {
         .map_or_else(|| format!("job-control answered {reply:?}"), str::to_owned))
 }
 
-/// `oneiron job-control --engine-account <name>` (root, one instance of the
-/// socket's handler per connection; the connection is its standard input
-/// and output). Answers `ok` or `refused <reason>` on one line.
+/// `oneiron job-control --engine-account <name> [--node-file <path>]` (root,
+/// one instance of the socket's handler per connection; the connection is
+/// its standard input and output). Answers `ok` or `refused <reason>` on one
+/// line. Only `renew` reads the node file; a handler installed without it
+/// refuses a renewal.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
     let answer = std::io::stdin()
@@ -223,9 +269,18 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
-    let engine = match args {
-        [flag, name] if flag == "--engine-account" && plain_account(name) => name,
-        _ => return Err("usage: job-control --engine-account <name>".to_owned()),
+    let (engine, node_file) = match args {
+        [flag, name] if flag == "--engine-account" && plain_account(name) => (name, None),
+        [flag, name, file_flag, file]
+            if flag == "--engine-account" && plain_account(name) && file_flag == "--node-file" =>
+        {
+            (name, Some(std::path::Path::new(file)))
+        }
+        _ => {
+            return Err(
+                "usage: job-control --engine-account <name> [--node-file <path>]".to_owned(),
+            );
+        }
     };
     let (engine_uid, _, _) =
         account(engine).map_err(|error| format!("engine account {engine}: {error}"))?;
@@ -236,6 +291,12 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
     let line = read_line(stream, REQUEST_MAX_BYTES, REQUEST_WAIT)
         .map_err(|error| format!("request: {error}"))?;
     let (verb, id) = parse_request(&line)?;
+    if let ControlVerb::Renew { cutoff_boot_ns } = verb {
+        let node_file = node_file.ok_or(
+            "renew_needs_node_file: run `oneiron execution-node install` again for sessions",
+        )?;
+        return super::renew::renew_cutoff(node_file, engine, &id, cutoff_boot_ns);
+    }
     let unit = id.unit_name();
     if matches!(verb, ControlVerb::Signal(_)) {
         let found = show(&unit, &["ActiveState"])?;
@@ -244,7 +305,9 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
             return Err(format!("workload_not_running: the unit is {state:?}"));
         }
     }
-    let args = verb.systemctl_args(&unit);
+    let args = verb
+        .systemctl_args(&unit)
+        .ok_or("verb_not_a_systemctl_request")?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(drop)
 }

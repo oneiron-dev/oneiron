@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use super::super::jobs::{JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus};
+use super::super::jobs::{
+    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, RenewRefusal,
+};
 use super::super::wire::ScopeFacts;
 use super::capabilities;
 use super::control::{self, ControlVerb};
@@ -284,6 +286,14 @@ impl JobUnit for SystemdJobUnit {
 
     fn stop(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
         control::request(ControlVerb::Stop, unit).map_err(|reason| Self::error(unit, reason))
+    }
+
+    /// A session's renewal (pass 34, 2.5; row W1), through the control
+    /// socket's `renew` verb: root hands the unit's cutoff over to a later
+    /// timer, forward only and within the session's longest run.
+    fn renew(&self, unit: &JobKeyId, cutoff_boot_ns: u64) -> Result<(), RenewRefusal> {
+        control::request(ControlVerb::Renew { cutoff_boot_ns }, unit)
+            .map_err(|reason| RenewRefusal::Unit(Self::error(unit, reason)))
     }
 
     /// The checkpoint notice, through the control socket's `signal` verb:

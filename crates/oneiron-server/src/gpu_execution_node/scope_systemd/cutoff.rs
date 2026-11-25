@@ -4,12 +4,30 @@
 //! record says the cutoff ended the job. The stop waits on nothing the mark
 //! needs: a node file that no longer reads, or a stalled state disk, still
 //! stops the unit.
+//!
+//! One exception (pass 34, 2.5; row W1): a session's renewal arms a later
+//! timer and then stops this one, so a timer that fires between the two
+//! finds `prepared.json` naming a later stop time than its own `--stop-at`,
+//! and stops nothing. Only a record that reads, is root's and names a later
+//! stop skips the stop: anything else stops the unit.
 
-use super::records::CutoffMark;
+use super::records::{CutoffMark, CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
-use super::{CUTOFF_FILE_NAME, is_job_instance};
+use super::{CUTOFF_FILE_NAME, PREPARED_FILE_NAME, is_job_instance};
+
+/// Whether a cutoff timer armed for `own_stop_at_boot_ns` was superseded by
+/// a renewal: root's record names a later stop time. A timer that names no
+/// stop time (armed before sessions) or a record without a cutoff is never
+/// superseded.
+#[must_use]
+pub fn cutoff_superseded(own_stop_at_boot_ns: Option<u64>, recorded: Option<&CutoffPlan>) -> bool {
+    match (own_stop_at_boot_ns, recorded) {
+        (Some(own), Some(plan)) => plan.stop_at_boot_ns > own,
+        _ => false,
+    }
+}
 
 /// The step. Returns its exit status.
 #[must_use]
@@ -20,6 +38,22 @@ pub fn run(args: StepArgs) -> i32 {
     }
     let unit = format!("oneiron-job@{}.service", args.instance);
     let fired_boot_ns = boot_ns();
+    if let Some(own) = args.stop_at_boot_ns {
+        let recorded = StepContext::open(args.clone())
+            .and_then(|context| context.read_record::<PreparedRecord>(PREPARED_FILE_NAME))
+            .ok()
+            .flatten()
+            // Root's record for this instance only: one moved in from
+            // another key's control directory is no record.
+            .filter(|prepared| prepared.instance == args.instance)
+            .and_then(|prepared| prepared.cutoff);
+        if cutoff_superseded(Some(own), recorded.as_ref()) {
+            journal_line!(
+                "job-cutoff: {unit}: a renewal moved the stop past {own}; this timer stops nothing"
+            );
+            return 0;
+        }
+    }
     // The stop goes first: nothing the mark needs (the node file, the state
     // disk) may hold it back. The end step also counts the cutoff by the time
     // the unit ended, so a mark that lands late or never still ends the run
