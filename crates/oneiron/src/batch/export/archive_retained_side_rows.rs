@@ -179,13 +179,24 @@ fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId
 /// and when its table states no rule or its rule cannot read the row. A ledger row, revision or
 /// role grant of a room deleted here, which the archive does not carry as a record
 /// ([`super::snapshot_body::row_exported_in_txn`]), stays home with it (round 2 P1-1; Engine
-/// ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A).
+/// ANSWER RETAINED-ROOM-ROWS-WITHHELD Q1 = A). A GPU line period whose cohort seed is still
+/// sealed on the store clock stays home until the period ends, as the get view keeps the seed
+/// back until then ([`crate::gpu_line::period_row_seals_seed`]; Engine ANSWER
+/// LE-ARCHIVE-PERIOD-SEED = A).
 fn retained_row_withheld(
     vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
     rule: Option<RetainedSubjectRule>,
     envelope: &ArchiveRetainedSideRow,
 ) -> Result<bool> {
+    if envelope.source_table == crate::side_table::GPU_LINE_PERIOD.name
+        && crate::gpu_line::period_row_seals_seed(
+            &envelope.source_value,
+            vault.store.clock.now_recorded_ms(),
+        )
+    {
+        return Ok(true);
+    }
     let Some(records) =
         rule.and_then(|rule| rule.records(&envelope.source_key, &envelope.source_value))
     else {
