@@ -291,6 +291,10 @@ impl Vault {
         row: MeshAuthorityRow,
         count: &mut ScanCount,
     ) -> Result<RowOutcome> {
+        // RED STUB: the replica refuses every binding the home serves.
+        if !row.machine.as_bytes().is_empty() {
+            return Ok(RowOutcome::Refused);
+        }
         let MeshAuthorityRow {
             machine,
             authority,
