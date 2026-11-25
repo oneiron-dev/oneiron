@@ -22,6 +22,7 @@ mod store;
 pub(crate) mod tables;
 mod wire;
 
+pub(crate) use claim::allocation_node_key_records;
 pub use claim::{
     AllocationSettle, AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused,
     ClaimKey, ClaimState, UnattributedJob, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,

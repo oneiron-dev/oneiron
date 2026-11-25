@@ -370,10 +370,10 @@ fn the_export_carries_each_lane_economy_table_and_holds_a_sealed_period_home() {
     );
 }
 
-/// A fresh destination whose engine-seed seconds differ from the source's, as
-/// `archive_import_retained_side_rows.rs` opens it.
+/// A fresh destination on the host's clock, later than any reading of the source's manual store
+/// clock, so the engine seeds' times differ without a wait, as `campaign_house_voice_guide.rs`
+/// opens its restored vault.
 fn open_later_vault() -> (tempfile::TempDir, Vault) {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dir = tempfile::tempdir().expect("temp dir for the destination vault");
     let vault =
         Vault::open(dir.path(), VaultConfig::default()).expect("open the destination vault");

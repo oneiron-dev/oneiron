@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authority::principal_standing_in_txn;
 use crate::consent::AuthenticatedOwner;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EdgeActorClass, EntityId, Vault};
 
 use super::{GpuJobError, GpuJobVerb};
@@ -116,6 +116,16 @@ fn start_grant_agent_in_txn(
         }
     }
     Ok(None)
+}
+
+/// The Grant a stored allowance row is keyed by and the agent whose erase
+/// drops it ([`erase_allowance_actor_in_txn`]), for the whole-vault export's
+/// subject rule; `None` when the bytes do not read as one row, or the row's
+/// Grant is not its key's.
+pub(crate) fn allowance_row_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    let grant = <EntityId as SideKey>::decode_key(key)?;
+    let row = GPU_JOB_ALLOWANCES.decode_value(value).ok()?;
+    (row.grant == grant).then(|| vec![row.grant, row.agent])
 }
 
 /// Takes the erased actor out of every allowance: an agent's rows go, and

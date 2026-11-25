@@ -31,6 +31,7 @@ use crate::{EntityId, Vault};
 mod allocation;
 pub(crate) mod tables;
 
+pub(crate) use allocation::allocation_node_key_records;
 #[cfg(oneiron_test_support)]
 pub(crate) use allocation::start_claim_in_txn;
 pub use allocation::{

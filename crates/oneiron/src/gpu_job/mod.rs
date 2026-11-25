@@ -35,6 +35,7 @@ pub(crate) mod tables;
 mod wire;
 
 pub use allowance::GpuJobAllowance;
+pub(crate) use allowance::allowance_row_records;
 pub(crate) use allowance::erase_allowance_actor_in_txn;
 pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
 pub use connector::{
