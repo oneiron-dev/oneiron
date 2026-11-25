@@ -315,11 +315,21 @@ impl Vault {
             else {
                 return Ok(Some(Vec::new()));
             };
-            let detail = format!(
-                "stopped at its maximum after {} of {} seconds; add funds and resume from \
-                 checkpoint {}",
-                stop.notice.used_units, stop.notice.maximum.units, stop.notice.checkpoint.0
-            );
+            // With no resume quote (a withdrawn offer quotes none, design pass
+            // 33, 8.1) the notice offers no resume.
+            let detail = if job.resume_quote.is_some() {
+                format!(
+                    "stopped at its maximum after {} of {} seconds; add funds and resume from \
+                     checkpoint {}",
+                    stop.notice.used_units, stop.notice.maximum.units, stop.notice.checkpoint.0
+                )
+            } else {
+                format!(
+                    "stopped at its maximum after {} of {} seconds at checkpoint {}; no resume \
+                     is offered",
+                    stop.notice.used_units, stop.notice.maximum.units, stop.notice.checkpoint.0
+                )
+            };
             self.notify_gpu_job_in_txn(
                 txn,
                 &job,

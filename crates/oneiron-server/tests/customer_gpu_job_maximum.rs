@@ -1093,6 +1093,20 @@ fn a_job_with_its_offer_withdrawn_stops_at_its_maximum_with_no_resume_quote() {
             stopped.resume_quote.is_none(),
             "the withdrawn offer quotes no resume"
         );
+        let stop_notice = owner_stop_notice(&fixture).await;
+        assert!(
+            stop_notice["actions"]
+                .as_array()
+                .is_none_or(|taps| taps.is_empty()),
+            "no resume tap without an offer: {stop_notice}"
+        );
+        let detail = stop_notice["source"]["detail"]
+            .as_str()
+            .expect("the stop notice's detail");
+        assert!(
+            !detail.contains("resume from"),
+            "the notice offers no resume: {stop_notice}"
+        );
     });
 }
 
