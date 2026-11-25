@@ -771,7 +771,7 @@ fn the_owners_pause_during_staging_refuses_the_launch_inside_the_launch_commit()
 
 /// Row P0 with row Q4 (pass 34 2.4 and 7.3): a passed readiness check clears the node's drain
 /// only when the box's `drain_clear_by` and the owner's `machines.drain.clear_by` both leave it to
-/// the check. The owner's `owner` keeps the drain for the box, since no act of his reaches the
+/// the check. The owner's `owner` keeps the drain for the box, since no owner act reaches the
 /// node's own drain yet, and the box's `person_at_box` holds whatever the owner's row says.
 #[test]
 fn a_passing_readiness_check_clears_the_drain_only_when_the_owner_leaves_it_to_the_check()

@@ -151,7 +151,7 @@ pub struct ExecutionNodeSettings {
 
 /// Who clears a node's drain (`machines.drain.clear_by`, pass 34 2.4). The
 /// box file accepts these two. The owner's row (row P0) of `owner` or
-/// `grants` reads here as `person_at_box`, since no act of his reaches the
+/// `grants` reads here as `person_at_box`, since no owner act reaches the
 /// node's own drain yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
