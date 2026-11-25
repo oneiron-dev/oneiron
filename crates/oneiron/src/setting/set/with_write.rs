@@ -16,7 +16,9 @@ impl Vault {
     /// ask and before the turn and write. The owner's presence is asked before the write opens,
     /// so `also` reads again, inside the write, what the ask may have outlived. `also` sees the
     /// change's outcome (a `Pending` change opened its check-in in this write); an `Err` from
-    /// it leaves the change out too.
+    /// it leaves the change out too. `also` runs inside the vault's one writer with the key's
+    /// write turn held, so it must not open a write, take a write turn or ask the owner's
+    /// presence.
     ///
     /// # Errors
     ///
