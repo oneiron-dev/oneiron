@@ -23,9 +23,7 @@ use oneiron_server::gpu_execution_node::wire::{
     NetworkMode, OutputDecl, ReadinessCheck, ReadinessState, ResourceRequest, ScopeKind,
     SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
-use oneiron_server::gpu_execution_node::{
-    DeviceSample, DrainClearBy, NodeKeys, parse_sample_lines,
-};
+use oneiron_server::gpu_execution_node::{DeviceSample, DrainClearBy, parse_sample_lines};
 use oneiron_server::test_doors::node_jobs::{ScriptedJobUnits, ScriptedNode, ScriptedSigner};
 
 const TEMPLATE: &str = "open-models";
