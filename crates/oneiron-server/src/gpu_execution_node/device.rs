@@ -4,7 +4,6 @@
 //! recheck, so a card is never offered from an old reading.
 
 use std::io::Read;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -71,34 +70,28 @@ pub trait GpuDeviceProbe: Send + Sync {
 }
 
 /// The shipped probe: `nvidia-smi`, one query per ask. Each query runs in
-/// its own process group, and a query past its deadline is killed with its
-/// whole group, so a helper it started cannot hold the output pipe open.
-/// While a reader of an earlier query is still blocked, the next query is
-/// refused, so a stuck driver never piles up threads or pipes.
-#[derive(Debug, Clone, Default)]
-pub struct NvidiaSmiProbe {
-    open_readers: Arc<AtomicUsize>,
-}
+/// its own process group, and its output is read on the asking thread up to
+/// the query's deadline; past it the pipe's read end is closed and the
+/// group killed, so no helper that keeps the pipe open (even one in a
+/// session of its own) holds a thread or a descriptor of this server. While
+/// a killed query of any probe in this process is still unreaped, every
+/// query is refused, so a stuck driver never piles up waiting threads.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NvidiaSmiProbe;
 
 impl GpuDeviceProbe for NvidiaSmiProbe {
     fn devices(&self) -> Result<Vec<GpuDevice>, GpuProbeError> {
-        parse_device_lines(&query(
-            &self.open_readers,
-            &[
-                "--query-gpu=uuid,name,memory.total",
-                "--format=csv,noheader,nounits",
-            ],
-        )?)
+        parse_device_lines(&query(&[
+            "--query-gpu=uuid,name,memory.total",
+            "--format=csv,noheader,nounits",
+        ])?)
     }
 
     fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError> {
-        parse_compute_process_lines(&query(
-            &self.open_readers,
-            &[
-                "--query-compute-apps=gpu_uuid,pid",
-                "--format=csv,noheader,nounits",
-            ],
-        )?)
+        parse_compute_process_lines(&query(&[
+            "--query-compute-apps=gpu_uuid,pid",
+            "--format=csv,noheader,nounits",
+        ])?)
     }
 }
 
@@ -106,7 +99,7 @@ impl GpuDeviceProbe for NvidiaSmiProbe {
 /// driver is absent or fails, as on a machine with no NVIDIA GPU.
 #[must_use]
 pub fn recorded_gpu_devices() -> Vec<GpuDevice> {
-    NvidiaSmiProbe::default().devices().unwrap_or_default()
+    NvidiaSmiProbe.devices().unwrap_or_default()
 }
 
 /// Reads `nvidia-smi --query-gpu=uuid,name,memory.total
@@ -173,32 +166,21 @@ fn plain_device_id(id: &str) -> Option<String> {
         .then(|| id.to_owned())
 }
 
-/// Counts a reader thread as open until it ends.
-struct OpenReader(Arc<AtomicUsize>);
-
-impl OpenReader {
-    fn open(count: &Arc<AtomicUsize>) -> Self {
-        count.fetch_add(1, Ordering::AcqRel);
-        Self(Arc::clone(count))
-    }
-}
-
-impl Drop for OpenReader {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
+/// Driver queries killed past their deadline and not yet reaped, in this
+/// whole process: every probe's queries refuse while there is one.
+static UNREAPED_QUERIES: AtomicUsize = AtomicUsize::new(0);
 
 /// Runs one driver query and answers its output, within
-/// [`GPU_QUERY_TIMEOUT`]: its exit and the end of its output both wait no
-/// longer, and a query past it is killed with its process group and reaped
-/// off the caller's path. `open_readers` counts the readers of earlier
-/// queries that are still blocked; while there is one, this query refuses.
-fn query(open_readers: &Arc<AtomicUsize>, args: &[&str]) -> Result<String, GpuProbeError> {
+/// [`GPU_QUERY_TIMEOUT`]. The output is read without blocking on this
+/// thread while the query runs, so a long answer never fills the pipe. At
+/// the deadline the pipe's read end is closed, the query is killed with its
+/// process group and reaped off the caller's path; no thread waits on the
+/// pipe, whoever holds its write end.
+fn query(args: &[&str]) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
-    if open_readers.load(Ordering::Acquire) > 0 {
+    if UNREAPED_QUERIES.load(Ordering::Acquire) > 0 {
         return Err(unavailable(format!(
-            "an earlier {NVIDIA_SMI} query still holds its output open"
+            "an earlier {NVIDIA_SMI} query was killed and has not ended yet"
         )));
     }
     let mut command = oneiron_spawn::command(NVIDIA_SMI);
@@ -213,50 +195,79 @@ fn query(open_readers: &Arc<AtomicUsize>, args: &[&str]) -> Result<String, GpuPr
     let mut child = command
         .spawn()
         .map_err(|error| unavailable(format!("{NVIDIA_SMI} did not start: {error}")))?;
-    let group = child.id();
     let Some(mut stdout) = child.stdout.take() else {
         abandon(child);
         return Err(unavailable(format!("{NVIDIA_SMI} gave no output pipe")));
     };
-    // Read while it runs, so a long answer never fills the pipe and stalls it.
-    let (sender, output) = std::sync::mpsc::channel();
-    let reader = OpenReader::open(open_readers);
-    std::thread::spawn(move || {
-        let _reader = reader;
-        let mut text = String::new();
-        let read = stdout.read_to_string(&mut text).map(|_| text);
-        // An abandoned query has no receiver left; its output is dropped.
-        sender.send(read).ok();
-    });
+    #[cfg(unix)]
+    if let Err(error) = rustix::io::ioctl_fionbio(&stdout, true) {
+        abandon(child);
+        return Err(unavailable(format!(
+            "{NVIDIA_SMI}'s output pipe could not be read without blocking: {error}"
+        )));
+    }
+    #[cfg(not(unix))]
+    {
+        abandon(child);
+        return Err(unavailable(format!("{NVIDIA_SMI} is queried on Unix only")));
+    }
     let deadline = Instant::now() + GPU_QUERY_TIMEOUT;
-    let late = || {
-        unavailable(format!(
-            "{NVIDIA_SMI} did not answer within {} s",
-            GPU_QUERY_TIMEOUT.as_secs()
-        ))
-    };
+    let mut output = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let mut ended = false;
+    let mut exited = None;
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(QUERY_POLL),
-            Ok(None) => {
-                abandon(child);
-                return Err(late());
-            }
-            Err(error) => {
-                abandon(child);
-                return Err(unavailable(format!(
-                    "{NVIDIA_SMI} could not be waited on: {error}"
-                )));
+        let mut moved = false;
+        if !ended {
+            match stdout.read(&mut chunk) {
+                Ok(0) => ended = true,
+                Ok(n) => {
+                    output.extend_from_slice(&chunk[..n]);
+                    moved = true;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) => {}
+                Err(error) => {
+                    drop(stdout);
+                    abandon(child);
+                    return Err(unavailable(format!("{NVIDIA_SMI}'s output: {error}")));
+                }
             }
         }
+        if exited.is_none() {
+            match child.try_wait() {
+                Ok(now) => exited = now,
+                Err(error) => {
+                    drop(stdout);
+                    abandon(child);
+                    return Err(unavailable(format!(
+                        "{NVIDIA_SMI} could not be waited on: {error}"
+                    )));
+                }
+            }
+        }
+        if ended && let Some(status) = exited {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            // Closing the read end first: no write end left open, by the
+            // query or a helper it started, holds anything of this server.
+            drop(stdout);
+            abandon(child);
+            return Err(unavailable(format!(
+                "{NVIDIA_SMI} did not answer within {} s",
+                GPU_QUERY_TIMEOUT.as_secs()
+            )));
+        }
+        if !moved {
+            std::thread::sleep(QUERY_POLL);
+        }
     };
-    // The leader has exited; a helper of its group may still hold the pipe.
-    let Ok(read) = output.recv_timeout(deadline.saturating_duration_since(Instant::now())) else {
-        kill_group(group);
-        return Err(late());
-    };
-    let text = read.map_err(|error| unavailable(format!("{NVIDIA_SMI}'s output: {error}")))?;
+    let text = String::from_utf8(output)
+        .map_err(|error| unavailable(format!("{NVIDIA_SMI}'s output: {error}")))?;
     if !status.success() {
         return Err(unavailable(format!("{NVIDIA_SMI} exited with {status}")));
     }
@@ -279,15 +290,17 @@ fn kill_group(group: u32) {
 
 /// Kills a query no longer waited for, with its process group, and reaps it
 /// on its own thread, so a driver call that never returns holds that
-/// thread, not the caller.
+/// thread, not the caller. Until it is reaped, every query refuses.
 fn abandon(mut child: std::process::Child) {
     kill_group(child.id());
     if let Err(error) = child.kill() {
         tracing::debug!(%error, "the GPU driver query had already ended");
     }
+    UNREAPED_QUERIES.fetch_add(1, Ordering::AcqRel);
     std::thread::spawn(move || {
         if let Err(error) = child.wait() {
             tracing::debug!(%error, "the GPU driver query could not be reaped");
         }
+        UNREAPED_QUERIES.fetch_sub(1, Ordering::AcqRel);
     });
 }
