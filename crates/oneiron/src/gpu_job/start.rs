@@ -606,6 +606,7 @@ pub(super) fn next_chunk(
                 revision: 0,
                 orphaned_resources: Vec::new(),
                 claim: None,
+                backend: None,
             };
             (job, None::<CheckpointRef>)
         }
@@ -637,6 +638,9 @@ pub(super) fn next_chunk(
             (job, Some(checkpoint))
         }
     };
+    // The chunk runs on the backend the offer names now; the host's steps and
+    // cancel reach it through the row from here on.
+    job.backend = offer.backend().map(str::to_owned);
     let index = job.chunks.len();
     job.chunks.push(GpuChunk {
         idempotency_key: format!("{}:{index}", job.id.to_hex()),

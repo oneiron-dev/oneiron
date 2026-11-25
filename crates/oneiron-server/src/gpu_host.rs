@@ -137,6 +137,29 @@ pub(crate) fn offer_with_backend<'a>(
     Ok((offer, connector))
 }
 
+/// The backend that runs `job`'s chunks: the one its row names (a job keeps
+/// its backend, design pass 33, 8.1), so a withdrawn offer strands no job. A
+/// row with no backend, written before the row named one, is reached through
+/// its offer as this host posts it now.
+pub(crate) fn job_backend(
+    server: &SyncServer,
+    job: &GpuJob,
+) -> Result<Arc<dyn GpuJobConnector>, GpuHostError> {
+    let name = match job.backend.as_deref() {
+        Some(name) => name,
+        None => server
+            .config
+            .gpu_jobs
+            .offer(&job.offer.name)
+            .map(|offer| offer.backend.as_str())
+            .ok_or_else(|| GpuHostError::NoOffer(job.offer.name.clone()))?,
+    };
+    server
+        .gpu_jobs
+        .backend(name)
+        .ok_or_else(|| GpuHostError::NoBackend(name.to_owned()))
+}
+
 /// The connector of a door over a job with no live chunk, which calls no
 /// provider: such a job needs no offer or backend on this host. Every call
 /// answers that the provider is unavailable, so a job that turned live in
@@ -185,12 +208,18 @@ pub(crate) fn job_admission(
     offer: &GpuOffer,
     quote: &GpuJobQuote,
 ) -> RunAdmission {
+    chunk_admission(server, &offer.connector.connector, quote)
+}
+
+/// The job's own run for the chunk `quote` prices, naming the paid connector
+/// `connector`: the offer's, which the host's config names after the offer.
+fn chunk_admission(server: &SyncServer, connector: &str, quote: &GpuJobQuote) -> RunAdmission {
     let declaration = RunDeclaration::declared(BudgetLine {
         limit_units: quote.units,
         reserve_units: quote.units,
         unit: quote.unit.clone(),
     })
-    .with_connector(offer.connector.connector.clone());
+    .with_connector(connector.to_owned());
     server
         .ai
         .declared_run(
@@ -269,9 +298,10 @@ pub(crate) fn now_ms() -> u64 {
         })
 }
 
-/// One step of every live job at `now_ms`, each with its outcome. A job whose
-/// offer this host no longer posts, or whose backend is not registered, is
-/// not stepped and says why; the next pass tries again.
+/// One step of every live job at `now_ms`, each with its outcome. A job steps
+/// on its own backend whether or not this host still posts its offer; a job
+/// whose backend is not registered is not stepped and says why, and the next
+/// pass tries again.
 pub(crate) fn step_live_jobs(
     server: &SyncServer,
     now_ms: u64,
@@ -299,11 +329,21 @@ fn step_one_job(
         .map_err(GpuJobError::from)?
         .ok_or(GpuJobError::NotFound)?;
     let chunk = job.chunk().ok_or(GpuJobError::NotFound)?;
-    let (offer, connector) = offer_with_backend(server, &job.offer.name)?;
-    let admission = job_admission(server, &offer.offer, &chunk.quote);
+    let connector = job_backend(server, &job)?;
+    // The offer as posted now: its resume quote and a new permit's binding.
+    // A withdrawn offer leaves the step neither (`gpu_job_step`).
+    let offer = server
+        .config
+        .gpu_jobs
+        .offer(&job.offer.name)
+        .map(|posted| &posted.offer);
+    let admission = match offer {
+        Some(offer) => job_admission(server, offer, &chunk.quote),
+        None => chunk_admission(server, &job.offer.name, &chunk.quote),
+    };
     Ok(server.vault.gpu_job_step(
         id,
-        &offer.offer,
+        offer,
         &admission,
         server.gpu_jobs.permits(),
         connector.as_ref(),
@@ -311,16 +351,42 @@ fn step_one_job(
     )?)
 }
 
+/// Whether this server has GPU job work at its start: an offer posted, a live
+/// job, or an open work order. A vault it cannot read counts as work, so the
+/// worker starts and each pass says what it could not read.
+fn worker_has_work(server: &SyncServer) -> bool {
+    if !server.config.gpu_jobs.offers.is_empty() {
+        return true;
+    }
+    let work = server.vault.live_gpu_jobs().and_then(|live| {
+        Ok(!live.is_empty()
+            || server
+                .vault
+                .work_orders()?
+                .iter()
+                .any(|order| !order.state.is_terminal()))
+    });
+    work.unwrap_or_else(|error| {
+        tracing::warn!(
+            error = %error,
+            "GPU job worker could not read the vault's jobs or work orders, so it starts"
+        );
+        true
+    })
+}
+
 /// Starts the worker: every `step_secs`, and at each wake of the work-order
 /// loop, one pass of the loop (pass 34, section 0) and then one step of every
 /// live job, each pass admitted through `admit` as a housekeeping pass is, so
-/// a vault frozen for reap steps nothing. A server that posts no offer starts
-/// no worker.
+/// a vault frozen for reap steps nothing. It starts when this server posts an
+/// offer, or holds a live job or an open work order: a job keeps its backend
+/// after its offer is withdrawn (design pass 33, 8.1), and steps to its
+/// settle. A server with none of them starts no worker.
 pub(crate) fn spawn_gpu_job_steps(
     server: Arc<SyncServer>,
     admit: HousekeepingAdmission,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    if server.config.gpu_jobs.offers.is_empty() {
+    if !worker_has_work(&server) {
         return None;
     }
     let tick = Duration::from_secs(server.config.gpu_jobs.step_secs);

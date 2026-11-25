@@ -298,6 +298,15 @@ pub struct GpuJob {
     /// writes it with the claim's start; the take-up and the end read it.
     #[serde(default)]
     pub claim: Option<ClaimKey>,
+    /// The host backend that runs the job's chunks, by its registry name, as
+    /// the offer named it at the start or the last resume
+    /// ([`GpuOffer::backend`]). A job keeps its backend (design pass 33, 8.1):
+    /// the host's worker and cancel reach its resource through this name
+    /// whether or not the offer is still posted. `None` on a row written
+    /// before it and for an offer bound to no backend by name; the host then
+    /// reaches the job through its offer as posted.
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 impl GpuJob {
