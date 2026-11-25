@@ -381,7 +381,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) | `crates/oneiron/src/wave_orchestration.rs` | m | ARCH-0068 |
 | The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and… | `crates/oneiron/src/web_connector/mod.rs` | s | — |
 | Monthly CRDT window keys and their timestamp conversion | `crates/oneiron/src/window_key.rs` | s | — |
-| Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… | `crates/oneiron/src/work_order/mod.rs` | m | — |
+| Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… | `crates/oneiron/src/work_order/mod.rs` | L | — |
 | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) | `crates/oneiron/src/workspace_roster/mod.rs` | L | ONEIRON-ARCH-0065 |
 | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… | `crates/oneiron/src/world_keys/mod.rs` | L | — |
 | The code sandbox backends, beside core's sandbox contract (re-exported whole, so the moved code's… | `crates/oneiron-agent-runtime/src/code_sandbox/mod.rs` | L | — |

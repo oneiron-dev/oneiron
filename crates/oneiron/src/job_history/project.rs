@@ -1,17 +1,18 @@
-//! The pure projection behind `vault.jobs.history`: stored jobs, claims and periods in, the
-//! ended attempts and their totals out. It reads the claim's terminal exactly as the line's
-//! fold does, so its charged seconds are the fold's.
+//! The pure projection behind `vault.jobs.history`: stored jobs, claims, periods and work
+//! orders in, the ended attempts and their totals out. It reads the claim's terminal exactly
+//! as the line's fold does, so its charged seconds are the fold's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
 use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobState};
 use crate::gpu_line::{ClaimState, GpuLinePeriod, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal};
+use crate::work_order::{OrderAttempt, WorkOrder};
 
 use super::{
     JobHistory, JobHistoryAttempt, JobHistoryFamilySum, JobHistoryLineCharge, JobHistoryLineSum,
-    JobHistoryMachineSum, JobHistoryOfferCharge, JobHistoryPeriodSum, JobHistorySum,
-    JobHistoryTotals,
+    JobHistoryMachineSum, JobHistoryOfferCharge, JobHistoryOrder, JobHistoryPeriodSum,
+    JobHistorySum, JobHistoryTotals,
 };
 
 /// The stored rows the projection reads.
@@ -23,6 +24,8 @@ pub struct HistoryInputs<'a> {
     pub claims: &'a [UnitClaim],
     /// The minted periods the ended claims name (a period with no record shows no window).
     pub periods: &'a [GpuLinePeriod],
+    /// Every work order: each attempt entry names the job it made.
+    pub orders: &'a [WorkOrder],
 }
 
 /// Whose attempts the answer holds.
@@ -42,6 +45,7 @@ pub struct JobHistoryFilter {
     pub line: Option<EntityId>,
     pub family: Option<EntityId>,
     pub period: Option<u32>,
+    pub order: Option<EntityId>,
     pub limit: usize,
     pub after: Option<HistoryCursor>,
 }
@@ -103,6 +107,7 @@ pub fn project(
 ) -> JobHistory {
     let unit_jobs: BTreeSet<EntityId> = inputs.claims.iter().map(|claim| claim.id).collect();
     let jobs: BTreeMap<EntityId, &GpuJob> = inputs.jobs.iter().map(|job| (job.id, job)).collect();
+    let ordered = OrderIndex::of(inputs.orders);
     let mut attempts: Vec<JobHistoryAttempt> = inputs
         .claims
         .iter()
@@ -114,6 +119,10 @@ pub fn project(
                 .filter(|job| !unit_jobs.contains(&job.id))
                 .flat_map(offer_attempts),
         )
+        .map(|mut attempt| {
+            attempt.order = ordered.order_of(&attempt, viewer);
+            attempt
+        })
         .filter(|attempt| admitted(attempt, filter, viewer))
         .collect();
     attempts.sort_by_cached_key(HistoryCursor::of);
@@ -160,7 +169,86 @@ fn admitted(attempt: &JobHistoryAttempt, filter: &JobHistoryFilter, viewer: Hist
     {
         return false;
     }
+    if let Some(wanted) = hex(&filter.order)
+        && attempt.order.as_ref().is_none_or(|order| order.order != wanted)
+    {
+        return false;
+    }
     true
+}
+
+/// One attempt entry of a work order, with the entry before it.
+#[derive(Debug, Clone, Copy)]
+struct OrderedAttempt<'a> {
+    order: &'a WorkOrder,
+    attempt: &'a OrderAttempt,
+    /// The attempt before it, whose end opened the order again.
+    before: Option<&'a OrderAttempt>,
+}
+
+/// The work orders' attempt entries by the hex of the job each made.
+struct OrderIndex<'a>(BTreeMap<String, OrderedAttempt<'a>>);
+
+impl<'a> OrderIndex<'a> {
+    fn of(orders: &'a [WorkOrder]) -> Self {
+        let mut by_job = BTreeMap::new();
+        for order in orders {
+            let mut before = None;
+            for attempt in &order.attempts {
+                by_job.insert(
+                    attempt.job.to_hex(),
+                    OrderedAttempt {
+                        order,
+                        attempt,
+                        before,
+                    },
+                );
+                before = Some(attempt);
+            }
+        }
+        Self(by_job)
+    }
+
+    /// The work order `attempt` was made for, as `viewer` reads it. An order's attempt is its
+    /// job's first chunk: a later chunk is a resume, which no order makes.
+    fn order_of(
+        &self,
+        attempt: &JobHistoryAttempt,
+        viewer: HistoryViewer,
+    ) -> Option<JobHistoryOrder> {
+        if attempt.chunk != 0 {
+            return None;
+        }
+        let OrderedAttempt {
+            order,
+            attempt: made,
+            before,
+        } = *self.0.get(&attempt.job)?;
+        let queued_from_ms = match before {
+            None => Some(order.ordered_at_ms),
+            Some(before) => before.end.as_ref().map(|end| end.at_ms),
+        };
+        let own = order.id.to_hex();
+        let mut ranked = made.ranked.clone();
+        // The orders runnable in that pass may be other callers': an agent sees only its own.
+        if matches!(viewer, HistoryViewer::Requester(_)) {
+            ranked.options.retain(|option| *option == own);
+        }
+        Some(JobHistoryOrder {
+            order: own,
+            attempt: made.n,
+            ordered_by: order.ordered_by.clone(),
+            class: order.class,
+            ordered_at_ms: order.ordered_at_ms,
+            made_at_ms: made.made_at_ms,
+            queued_ms: queued_from_ms.map(|from| made.made_at_ms.saturating_sub(from)),
+            started_at_ms: made.started_at_ms,
+            machine: made.machine.map(|machine| machine.to_hex()),
+            ranked,
+            placed: made.placed.clone(),
+            end: made.end.clone(),
+        })
+    }
 }
 
 /// A line unit's attempt, from its claim's terminal; `None` while the claim is open.
@@ -218,6 +306,7 @@ fn unit_attempt(claim: &UnitClaim, job: Option<&GpuJob>) -> Option<JobHistoryAtt
         end_reason,
         node_end: terminal.node_end.clone(),
         continues: None,
+        order: None,
     })
 }
 
@@ -371,6 +460,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                 continues: index
                     .checked_sub(1)
                     .map(|before| job.chunks[before].idempotency_key.clone()),
+                order: None,
             })
         })
         .collect()
@@ -398,6 +488,10 @@ fn add(sum: &mut JobHistorySum, attempt: &JobHistoryAttempt) {
         .returned_secs
         .saturating_add(attempt.returned_secs.unwrap_or(0));
     sum.lost_secs = sum.lost_secs.saturating_add(attempt.lost_secs);
+    if let Some(queued) = attempt.order.as_ref().and_then(|order| order.queued_ms) {
+        sum.queued_ms = sum.queued_ms.saturating_add(queued);
+        sum.queued_attempts = sum.queued_attempts.saturating_add(1);
+    }
 }
 
 fn totals(attempts: &[JobHistoryAttempt], periods: &[GpuLinePeriod]) -> JobHistoryTotals {

@@ -16,6 +16,11 @@
 //! line units it reserved and the first chunks of the offer jobs it started, and totals over
 //! those. The caller is judged in the snapshot the answer is read from.
 //!
+//! An attempt a work order made (pass 34, 1.1) names its order: the order's attempt `n` is the
+//! job [`crate::work_order::attempt_job_id`] fixes, so the join is by the job's id, read in the
+//! same snapshot. It shows the attempt's number, who ordered, how long the order waited for the
+//! attempt, and what the RANK, PLACE and AFTER slots decided, as the order's row keeps them.
+//!
 //! What the rows do not keep, history does not invent: a plain offer chunk has no end time and
 //! no machine of its own, a resumed chunk's starter is not stored (the job's starter or the
 //! owner), and an occupancy is known only where a machine measured it or a provider reported a
@@ -32,6 +37,7 @@ use crate::entity_id::EntityId;
 use crate::gpu_line::{UnitClaim, claims_in_txn, stored_period_in_txn};
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
+use crate::work_order::{AttemptEnd, OrderClass, OrderedBy, SlotDecision};
 
 mod project;
 
@@ -63,6 +69,9 @@ pub struct JobHistoryRequest {
     /// Only line units of this period of their line.
     #[serde(default)]
     pub period: Option<u32>,
+    /// Only the attempts of this work order (its id, hex).
+    #[serde(default)]
+    pub order: Option<String>,
     /// The most attempts to list, newest end first: 100 when absent, at most 1,000.
     #[serde(default)]
     pub limit: Option<u32>,
@@ -100,6 +109,7 @@ impl JobHistoryRequest {
             line: id("line", &self.line)?,
             family: id("family", &self.family)?,
             period: self.period,
+            order: id("order", &self.order)?,
             limit,
             after: self
                 .after
@@ -185,6 +195,8 @@ pub struct JobHistoryAttempt {
     pub node_end: Option<String>,
     /// The key of the attempt this one resumes (the chunk before, from its checkpoint).
     pub continues: Option<String>,
+    /// The work order the attempt was made for, where one was.
+    pub order: Option<JobHistoryOrder>,
 }
 
 /// A line unit's charge.
@@ -209,6 +221,38 @@ pub struct JobHistoryOfferCharge {
     pub provider: String,
 }
 
+/// The work order an attempt was made for (pass 34, 1.1), as the order's row keeps the attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobHistoryOrder {
+    /// The order (hex) and the attempt's number in it, from 1.
+    pub order: String,
+    pub attempt: u16,
+    /// Who ordered: the authority the attempt ran under.
+    pub ordered_by: OrderedBy,
+    pub class: OrderClass,
+    pub ordered_at_ms: u64,
+    /// When the attempt was made, on the vault's clock.
+    pub made_at_ms: u64,
+    /// How long the order waited for this attempt: from its order time for the first attempt,
+    /// from the end of the attempt before for a later one, to when it was made. Absent when the
+    /// attempt before has no recorded end.
+    pub queued_ms: Option<u64>,
+    /// When the loop first saw the machine's word that the workload ran; absent when no pass
+    /// saw it run.
+    pub started_at_ms: Option<u64>,
+    /// The machine the PLACE rule chose (hex); the attempt's own `machine` is the one that
+    /// answered for the run, where a row names it.
+    pub machine: Option<String>,
+    /// Why the order went first among the runnable ones (RANK) and why on that machine
+    /// (PLACE). The RANK options are the orders runnable in that pass: an agent sees only its
+    /// own order among them, as `vault.jobs.orders.get` shows it.
+    pub ranked: SlotDecision,
+    pub placed: SlotDecision,
+    /// The end the loop settled for the attempt and the AFTER rule's decision on it; absent
+    /// until a pass has read the job's end.
+    pub end: Option<AttemptEnd>,
+}
+
 /// The seconds of a set of ended attempts. Sums count the known figures; `occupied_unknown`
 /// counts the attempts whose occupancy no row knows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,6 +265,10 @@ pub struct JobHistorySum {
     pub charged_secs: u64,
     pub returned_secs: u64,
     pub lost_secs: u64,
+    /// The milliseconds the work orders waited for their attempts, summed over the
+    /// `queued_attempts` attempts whose wait the order's row keeps.
+    pub queued_ms: u64,
+    pub queued_attempts: u32,
 }
 
 /// Totals of one machine; `machine` absent for the attempts no row places.
@@ -305,8 +353,9 @@ pub fn job_history_embedded(
     job_history_as(memory, owner.as_ref(), input)
 }
 
-/// Reads the rows history projects, the jobs, the claims and their periods, in one snapshot (a
-/// claim's terminal and its job's terminal row are one write), and projects them.
+/// Reads the rows history projects, the jobs, the claims, their periods and the work orders, in
+/// one snapshot (a claim's terminal and its job's terminal row are one write, and an order's
+/// attempt entry is written with its job), and projects them.
 ///
 /// # Errors
 ///
@@ -329,6 +378,7 @@ fn read_job_history_in_txn(
 ) -> crate::Result<JobHistory> {
     let jobs = vault.gpu_jobs_in_txn(txn)?;
     let claims = claims_in_txn(vault, txn)?;
+    let orders = vault.work_orders_in_txn(txn)?;
     let windows: BTreeSet<(EntityId, u32)> = claims
         .iter()
         .filter(|claim| !claim.is_open())
@@ -345,6 +395,7 @@ fn read_job_history_in_txn(
             jobs: &jobs,
             claims: &claims,
             periods: &periods,
+            orders: &orders,
         },
         filter,
         viewer,
