@@ -18,6 +18,7 @@ pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
+mod preset;
 mod store;
 pub(crate) mod tables;
 mod wire;
@@ -41,6 +42,7 @@ pub use mint::{
     economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
     pools, posterior_sampling,
 };
+pub use preset::{LinePresetDocument, LinePresetRef, check_document, lay_over, resolve_policy};
 pub(crate) use store::erase_line_actor_in_txn;
 pub(crate) use store::period_row_seals_seed;
 pub use store::{
@@ -48,7 +50,8 @@ pub use store::{
     settled_tallies_in_txn, stored_period_in_txn,
 };
 pub use wire::{
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,
+    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest,
+    GpuLineSetWire, GpuLineView,
 };
 
 pub use fold::{
