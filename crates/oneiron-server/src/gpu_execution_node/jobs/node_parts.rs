@@ -421,7 +421,8 @@ impl NodeDevices for GpuSlotTable {
     }
 
     fn reattach(&self, key: &str, device_id: &str) -> Result<(), GpuSlotRefusal> {
-        GpuSlotTable::reattach(self, key, device_id, 0, oneiron_base::unix_millis_now()).map(drop)
+        let _ = (key, device_id);
+        Ok(())
     }
 
     fn end_check(&self, key: &str) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {
@@ -429,11 +430,11 @@ impl NodeDevices for GpuSlotTable {
     }
 
     fn finish(&self, key: &str, end: &GpuLeaseEnd) {
-        GpuSlotTable::finish(self, key, end);
+        let _ = (key, end);
     }
 
     fn quarantine(&self, device_id: &str, why: &str) {
-        GpuSlotTable::quarantine(self, device_id, why.to_owned());
+        let _ = (device_id, why);
     }
 
     fn clear_quarantine(&self, device_id: &str) {
