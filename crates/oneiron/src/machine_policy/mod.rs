@@ -21,7 +21,8 @@
 //! - [`DeviceOffer`]: withheld, and fewer claimants;
 //! - [`TemplateNetwork`]: fewer network modes;
 //! - [`FreeForm`]: `grants`, then `owner`, then `off`;
-//! - [`DrainClearBy`]: towards `person_at_box`.
+//! - [`DrainClearBy`]: towards `person_at_box`;
+//! - the five `placement.cache.*` keys of [`CachePolicy`]: a smaller figure.
 //!
 //! [`Vault::machine_policy`] reads every key for one machine in one read, as this install's rows
 //! give them.
@@ -463,6 +464,45 @@ fn check_grants(key: &str, grants: &BTreeSet<EntityId>) -> Result<()> {
     Ok(())
 }
 
+/// The owner's budget for the template caches on one machine (`placement.cache.*`, pass 34 6.3):
+/// what the execution node's cache pass may keep on the machine's disk. Each figure is its own
+/// key, and a smaller figure is tighter: less is kept. The node applies the smaller of each figure
+/// and its box file's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CachePolicy {
+    /// `placement.cache.cap_gib`: the most the machine's template caches hold together, in GiB;
+    /// above it the least recently used key goes first.
+    pub cap_gib: u64,
+    /// `placement.cache.idle_days`: a cache key unused this many days goes, whatever the total.
+    pub idle_days: u32,
+    /// `placement.cache.protect_hours`: a cache key used within this many hours is never removed
+    /// for the cap.
+    pub protect_hours: u32,
+    /// `placement.cache.wanted_hold_secs`: how long a key that an open order of a live issuer last
+    /// asked for is kept after that ask, in seconds.
+    pub wanted_hold_secs: u64,
+    /// `placement.cache.keys_max`: the most warm keys the node's table remembers; a key with no
+    /// path is forgotten first.
+    pub keys_max: u32,
+}
+
+impl CachePolicy {
+    /// Every figure's default: 150 GiB, 3 days, 6 hours, 900 s and 256 keys.
+    pub const DEFAULT: Self = Self {
+        cap_gib: 150,
+        idle_days: 3,
+        protect_hours: 6,
+        wanted_hold_secs: 900,
+        keys_max: 256,
+    };
+}
+
+impl Default for CachePolicy {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// The item of a machine's row: its MACHINE id, 32 lower hex.
 #[must_use]
 pub fn machine_item(machine: EntityId) -> String {
@@ -504,6 +544,8 @@ pub struct MachinePolicy {
     pub free_form: FreeForm,
     /// `machines.drain.clear_by`.
     pub drain_clear_by: DrainClearBy,
+    /// The five `placement.cache.*` keys.
+    pub cache: CachePolicy,
     /// `machines.devices.offered` for each device asked for, by its id.
     pub devices: BTreeMap<String, DeviceOffer>,
     /// `machines.templates.network` for each template asked for, by its name.
@@ -543,11 +585,23 @@ pub fn machine_policy_in_txn(
     templates: &[&str],
 ) -> Result<MachinePolicy> {
     use setting_keys::{
-        DEVICES_OFFERED, DRAIN_CLEAR_BY, EXECUTION, FREE_FORM, KEEP_HEADROOM, MACHINE_ACCEPTS,
-        TEMPLATES_NETWORK, WINDOWS, WORK_ROLES,
+        CACHE_CAP_GIB, CACHE_IDLE_DAYS, CACHE_KEYS_MAX, CACHE_PROTECT_HOURS,
+        CACHE_WANTED_HOLD_SECS, DEVICES_OFFERED, DRAIN_CLEAR_BY, EXECUTION, FREE_FORM,
+        KEEP_HEADROOM, MACHINE_ACCEPTS, TEMPLATES_NETWORK, WINDOWS, WORK_ROLES,
     };
     let item = machine_item(machine);
     let item = Some(item.as_str());
+    let cache = CachePolicy {
+        cap_gib: CACHE_CAP_GIB.read_in_txn(vault, txn, &[], item)?.value,
+        idle_days: CACHE_IDLE_DAYS.read_in_txn(vault, txn, &[], item)?.value,
+        protect_hours: CACHE_PROTECT_HOURS
+            .read_in_txn(vault, txn, &[], item)?
+            .value,
+        wanted_hold_secs: CACHE_WANTED_HOLD_SECS
+            .read_in_txn(vault, txn, &[], item)?
+            .value,
+        keys_max: CACHE_KEYS_MAX.read_in_txn(vault, txn, &[], item)?.value,
+    };
     let mut policy = MachinePolicy {
         execution: EXECUTION.read_in_txn(vault, txn, &[], item)?.value,
         accepts: MACHINE_ACCEPTS.read_in_txn(vault, txn, &[], item)?.value,
@@ -556,6 +610,7 @@ pub fn machine_policy_in_txn(
         work_roles: WORK_ROLES.read_in_txn(vault, txn, &[], item)?.value,
         free_form: FREE_FORM.read_in_txn(vault, txn, &[], item)?.value,
         drain_clear_by: DRAIN_CLEAR_BY.read_in_txn(vault, txn, &[], item)?.value,
+        cache,
         devices: BTreeMap::new(),
         template_network: BTreeMap::new(),
     };

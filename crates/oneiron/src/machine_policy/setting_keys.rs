@@ -1,10 +1,10 @@
-//! The machine policy keys (pass 34 DESIGN 2.4): one row per machine (the item is its MACHINE
-//! id), or per machine and device, or per machine and template (`<machine>/<name>`). An item-less
-//! row holds for every machine that has no row of its own. Each is the owner's, travels with the
-//! vault as his signed act, and states what tighter is.
+//! The machine policy keys (pass 34 DESIGN 2.4, and the cache budget of 6.3, `placement.cache.*`):
+//! one row per machine (the item is its MACHINE id), or per machine and device, or per machine and
+//! template (`<machine>/<name>`). An item-less row holds for every machine that has no row of its
+//! own. Each is the owner's, travels with the vault as his signed act, and states what tighter is.
 
 use super::{
-    DeviceOffer, DrainClearBy, ExecutionState, FreeForm, KeepHeadroom, MachineAccepts,
+    CachePolicy, DeviceOffer, DrainClearBy, ExecutionState, FreeForm, KeepHeadroom, MachineAccepts,
     MachineExecution, MachineWindows, TemplateNetwork, WorkRoles, admits_machine,
     admits_machine_part, drain_clear_by_no_wider, free_form_no_wider,
 };
@@ -61,6 +61,26 @@ fn device_withheld() -> DeviceOffer {
 
 fn no_network() -> TemplateNetwork {
     TemplateNetwork::default()
+}
+
+fn cache_cap_gib() -> u64 {
+    CachePolicy::DEFAULT.cap_gib
+}
+
+fn cache_idle_days() -> u32 {
+    CachePolicy::DEFAULT.idle_days
+}
+
+fn cache_protect_hours() -> u32 {
+    CachePolicy::DEFAULT.protect_hours
+}
+
+fn cache_wanted_hold_secs() -> u64 {
+    CachePolicy::DEFAULT.wanted_hold_secs
+}
+
+fn cache_keys_max() -> u32 {
+    CachePolicy::DEFAULT.keys_max
 }
 
 crate::setting::setting_keys! {
@@ -135,6 +155,37 @@ crate::setting::setting_keys! {
         kind: Kind::new(clear_after_readiness_check)
             .strictest(clear_by_person_at_box)
             .custom(drain_clear_by_no_wider),
+        item: Some(MACHINES),
+    };
+    /// The most the template caches on the machine hold together, in GiB; above it the least
+    /// recently used cache key goes first. Default 150. Smaller is tighter: an agent you gave
+    /// this key may lower it at once, and needs you to raise it.
+    pub(crate) CACHE_CAP_GIB: u64 = "placement.cache.cap_gib" {
+        kind: Kind::new(cache_cap_gib).lower(),
+        item: Some(MACHINES),
+    };
+    /// After how many days unused a cache key on the machine goes, whatever the total. Default 3.
+    /// Fewer days are tighter.
+    pub(crate) CACHE_IDLE_DAYS: u32 = "placement.cache.idle_days" {
+        kind: Kind::new(cache_idle_days).lower(),
+        item: Some(MACHINES),
+    };
+    /// For how many hours after its last use a cache key on the machine is never removed for the
+    /// cap. Default 6. Fewer hours are tighter.
+    pub(crate) CACHE_PROTECT_HOURS: u32 = "placement.cache.protect_hours" {
+        kind: Kind::new(cache_protect_hours).lower(),
+        item: Some(MACHINES),
+    };
+    /// For how many seconds a cache key that an open order of a live issuer last asked for is
+    /// kept after that ask. Default 900. Fewer seconds are tighter.
+    pub(crate) CACHE_WANTED_HOLD_SECS: u64 = "placement.cache.wanted_hold_secs" {
+        kind: Kind::new(cache_wanted_hold_secs).lower(),
+        item: Some(MACHINES),
+    };
+    /// The most warm keys the machine's execution node remembers; a key with no path is
+    /// forgotten first. Default 256. Fewer keys are tighter.
+    pub(crate) CACHE_KEYS_MAX: u32 = "placement.cache.keys_max" {
+        kind: Kind::new(cache_keys_max).lower(),
         item: Some(MACHINES),
     };
 }

@@ -24,7 +24,7 @@ use oneiron::authority::ActSurface;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::job_workload::BoundRequirement;
 use oneiron::job_workload::{DeviceKind, DeviceLease, DevicePlacement, Sharing};
-use oneiron::machine_policy::{ExecutionState, machine_item, machine_part_item};
+use oneiron::machine_policy::{CachePolicy, ExecutionState, machine_item, machine_part_item};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
 use oneiron::test_doors::setting::set_setting_as_engine;
 use oneiron::verbs::{
@@ -239,6 +239,16 @@ impl Rig {
             .state)
     }
 
+    /// The cache budget for N as N's own vault reads it.
+    fn node_cache(&self) -> TestResult<CachePolicy> {
+        Ok(self
+            .device
+            .vault
+            .machine_policy(self.device.machine, &[], &[])
+            .map_err(at("N's read of its cache budget"))?
+            .cache)
+    }
+
     /// The pin of `probe` as the node holds it now, asking `network`.
     fn pin(&self, network: NetworkMode) -> TestResult<WorkloadPin> {
         let digest = self
@@ -441,6 +451,18 @@ fn the_node_applies_the_stricter_of_box_ceiling_and_owner_policy() -> TestResult
     assert_eq!(
         node.admit_placement(&none, &on_gpu(4 * 1_024), 0),
         Err(format!("device_withheld: {GPU}"))
+    );
+
+    // The cache budget: N's own read gives the owner's figure and every other at its default
+    // (the node's cache pass, row P2, applies the smaller of each figure and the box's).
+    assert_eq!(rig.node_cache()?, CachePolicy::DEFAULT);
+    rig.owner_sets("placement.cache.cap_gib", None, json!(40))?;
+    assert_eq!(
+        rig.node_cache()?,
+        CachePolicy {
+            cap_gib: 40,
+            ..CachePolicy::DEFAULT
+        }
     );
     Ok(())
 }
