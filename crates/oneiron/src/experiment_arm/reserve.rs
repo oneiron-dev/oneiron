@@ -1,6 +1,7 @@
-//! `vault.arms.units.reserve` and `vault.arms.units.cancel` (design pass 32 r2, sections 3.4,
-//! 3.5 and 5.2): one unit claim on an open arm's rung, checked and written in one write
-//! transaction, so two reserves never both take the last room.
+//! `vault.arms.units.reserve` (design pass 32 r2, sections 3.4, 3.5 and 5.2): one unit claim
+//! on an open arm's rung, checked and written in one write transaction, so two reserves never
+//! both take the last room. The cancel is [`super::unit_cancel`]; both answer a
+//! [`super::unit_view::UnitView`].
 //!
 //! The intent key names the call; the logical key (arm, rung, unit key, attempt) names the
 //! claim. The same logical key with the same ask answers the stored claim under any intent
@@ -21,27 +22,23 @@ use crate::consent::AuthenticatedOwner;
 use crate::gpu_line::claim::release_claim_in_txn;
 use crate::gpu_line::doors_caller::{self, LineCaller};
 use crate::gpu_line::{
-    Bucket, ClaimAdmissionRefused, ClaimKey, ClaimState, Draw, DrawAsk, DrawPurpose, IntentAsk,
+    Bucket, ClaimAdmissionRefused, ClaimKey, ClaimState, DrawAsk, DrawPurpose, IntentAsk,
     IntentStand, LineRefusal, LineRole, PeriodRoom, Track, UnitClaim, UnitEnd, UnitPurpose,
     UnitTerminal, claim_in_txn, claims_at_rung_in_txn, custody_lapsed_in_txn, gpu_seconds,
-    line_in_txn, mint_first_in_txn, open_claim_in_txn, plan_draws, record_line_refusal_in_txn,
+    mint_first_in_txn, open_claim_in_txn, plan_draws, record_line_refusal_in_txn,
 };
 use crate::job_workload::{WorkloadStartAsk, WorkloadStarter};
 use crate::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 use crate::{EntityId, Vault};
 
+use super::unit_view::UnitView;
 use super::{ExperimentArm, RungState};
 
 /// The verb that reserves one unit of an arm's rung.
 pub const ARMS_UNITS_RESERVE_VERB: &str = "vault.arms.units.reserve";
-/// The verb that withdraws a unit whose job has not started.
-pub const ARMS_UNITS_CANCEL_VERB: &str = "vault.arms.units.cancel";
-
-/// The release reason of a unit its lead or the owner withdrew before its job started.
-const WITHDRAWN: &str = "withdrawn";
 /// The release reason of a unit whose job did not start within its custody.
 const CUSTODY_LAPSED: &str = "custody_lapsed";
 /// The longest unit key, in bytes.
@@ -141,79 +138,6 @@ impl UnitReserveRequest {
             ));
         }
         Ok(())
-    }
-}
-
-/// `vault.arms.units.cancel`: the unit to withdraw, by its logical key.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UnitCancelRequest {
-    /// The lane project the line is set on.
-    pub line: EntityId,
-    pub arm: EntityId,
-    pub rung: u8,
-    pub unit_key: String,
-    pub attempt: u16,
-}
-
-/// One unit claim as the doors answer it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UnitView {
-    /// The claim's id, fixed at the reservation: also its GPU job's id.
-    pub job: EntityId,
-    pub arm: EntityId,
-    pub rung: u8,
-    pub unit_key: String,
-    pub attempt: u16,
-    pub purpose: UnitPurpose,
-    /// `claimed` (no job yet), `started` or `ended`.
-    pub state: String,
-    /// How it ended: `settled`, `released: <reason>`, `box_lost` or `written_off`; `None`
-    /// while it is open.
-    pub end: Option<String>,
-    /// The machine's limit for the unit's job: its reserved seconds.
-    pub maximum_secs: u64,
-    /// Where its seconds come from, in draw order.
-    pub draws: Vec<Draw>,
-    /// The seconds the period's allocation has left with this claim in it; `None` when this
-    /// call wrote no new claim.
-    pub room_left_secs: Option<u64>,
-    /// True when the door answered a claim it had already written.
-    #[serde(default)]
-    pub replayed: bool,
-}
-
-impl UnitView {
-    fn of(claim: &UnitClaim, room_left_secs: Option<u64>, replayed: bool) -> Self {
-        let (state, end) = match &claim.state {
-            ClaimState::Claimed => ("claimed", None),
-            ClaimState::Started => ("started", None),
-            ClaimState::Ended(terminal) => ("ended", Some(end_named(&terminal.end))),
-        };
-        Self {
-            job: claim.id,
-            arm: claim.arm,
-            rung: claim.rung,
-            unit_key: claim.unit_key.clone(),
-            attempt: claim.attempt,
-            purpose: claim.purpose,
-            state: state.to_owned(),
-            end,
-            maximum_secs: claim.reserved_secs,
-            draws: claim.draws.clone(),
-            room_left_secs,
-            replayed,
-        }
-    }
-}
-
-fn end_named(end: &UnitEnd) -> String {
-    match end {
-        UnitEnd::Settled => "settled".to_owned(),
-        UnitEnd::Released(reason) => format!("released: {reason}"),
-        UnitEnd::BoxLost => "box_lost".to_owned(),
-        UnitEnd::WrittenOff { .. } => "written_off".to_owned(),
     }
 }
 
@@ -623,7 +547,7 @@ fn answer_again(
 }
 
 /// The role a unit's purpose needs on the line.
-fn role_for(purpose: UnitPurpose) -> LineRole {
+pub(super) fn role_for(purpose: UnitPurpose) -> LineRole {
     match purpose {
         UnitPurpose::Work => LineRole::Lead,
         UnitPurpose::ReviewCheck => LineRole::Reviewer,
@@ -785,86 +709,7 @@ fn refused_for_budget(
     Ok(Err(short.refusal))
 }
 
-/// `vault.arms.units.cancel` as `memory`'s caller, with the owner's own proof when its
-/// credential is owner-grade: withdraws the unit the request names while its job has not
-/// started, ending its claim `Released("withdrawn")` and returning its draws. The owner may
-/// cancel any unit; an agent only one it reserved, under the role it reserved it with.
-///
-/// # Errors
-///
-/// `bad_request` for a malformed ask; `forbidden` for a caller whose Grant does not reach the
-/// line, holds no lead (reviewer) role on it, or did not reserve the unit
-/// (`not_the_reserver`); `not_found` for an unknown line or unit; `invalid_state` for a unit
-/// whose job has started (`unit_started`) or that ended otherwise (`claim_ended`); a store
-/// failure. A repeat of a cancel answers the withdrawn claim, `replayed`.
-pub fn unit_cancel_as(
-    memory: &Memory<'_>,
-    owner: Option<&AuthenticatedOwner>,
-    request: &UnitCancelRequest,
-    now_ms: u64,
-) -> MemoryResult<UnitView> {
-    check_unit_shape(request.rung, &request.unit_key, request.attempt)?;
-    let vault = memory.vault();
-    vault.try_with_write_txn_grouped(|wtxn| {
-        cancel_in_txn(vault, wtxn, memory, owner, request, now_ms)
-    })
-}
-
-fn cancel_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    memory: &Memory<'_>,
-    owner: Option<&AuthenticatedOwner>,
-    request: &UnitCancelRequest,
-    now_ms: u64,
-) -> MemoryResult<UnitView> {
-    let caller =
-        doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_UNITS_CANCEL_VERB, request.line)?;
-    let line = line_in_txn(vault, wtxn, &request.line)?
-        .ok_or_else(|| not_found("no GPU line is set for this project"))?;
-    let key = ClaimKey::of(
-        request.arm,
-        request.rung,
-        &request.unit_key,
-        request.attempt,
-    );
-    let claim = claim_in_txn(vault, wtxn, &key)?
-        .filter(|claim| claim.line == request.line)
-        .ok_or_else(|| {
-            not_found("no unit claim of this line has this arm, rung, unit key and attempt")
-        })?;
-    if let LineCaller::Agent { .. } = caller {
-        caller.require_role(&line, &[role_for(claim.purpose)], ARMS_UNITS_CANCEL_VERB)?;
-        if claim.reserved_by != Some(memory.actor()) {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "vault.arms.units.cancel: not_the_reserver: only the caller who reserved this unit, or the owner, cancels it",
-                &["Ask the unit's reserver or the owner to cancel it."],
-            ));
-        }
-    }
-    match &claim.state {
-        ClaimState::Claimed => {
-            let ended =
-                release_claim_in_txn(vault, wtxn, &claim, WITHDRAWN, now_ms)?.ok_or_else(|| {
-                    invalid_state("the claim changed under this cancel; read it and ask again")
-                })?;
-            Ok(UnitView::of(&ended, None, false))
-        }
-        ClaimState::Started => Err(invalid_state(
-            "unit_started: the unit's job has started; this door withdraws only a unit whose job has not started",
-        )),
-        ClaimState::Ended(UnitTerminal {
-            end: UnitEnd::Released(reason),
-            ..
-        }) if reason == WITHDRAWN => Ok(UnitView::of(&claim, None, true)),
-        ClaimState::Ended(_) => Err(invalid_state(
-            "claim_ended: the unit has already ended; its terminal stands",
-        )),
-    }
-}
-
-fn check_unit_shape(rung: u8, unit_key: &str, attempt: u16) -> MemoryResult<()> {
+pub(super) fn check_unit_shape(rung: u8, unit_key: &str, attempt: u16) -> MemoryResult<()> {
     if rung == 0 {
         return Err(bad_request("rung: 1 is the first rung"));
     }
@@ -894,7 +739,7 @@ fn bad_request(why: &str) -> MemoryError {
     )
 }
 
-fn not_found(why: &str) -> MemoryError {
+pub(super) fn not_found(why: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_NOT_FOUND,
         why,
@@ -902,7 +747,7 @@ fn not_found(why: &str) -> MemoryError {
     )
 }
 
-fn invalid_state(why: &str) -> MemoryError {
+pub(super) fn invalid_state(why: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         why,
