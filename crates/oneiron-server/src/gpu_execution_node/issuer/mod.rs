@@ -7,6 +7,7 @@
 //! - [`reconcile`]: the reconcile of a node before the first dispatch to it.
 //! - [`clock`]: the wall and boot clocks the dispatch and the bracket read.
 //! - [`register`]: where the backend may exist, and the one-issuer check of the start gate.
+//! - [`machine_execution`]: the asks behind `vault.machines.execution.get`.
 //!
 //! The rows it writes are oneiron's `job_dispatch` tables. The quote names the machine
 //! (`inputs.machine`), so the job row fixes the target before any network call.
@@ -14,6 +15,7 @@
 pub mod billing;
 pub mod clock;
 pub mod connector;
+pub mod machine_execution;
 pub mod node_client;
 pub mod reconcile;
 pub mod register;
@@ -23,6 +25,9 @@ use oneiron::job_workload::WorkloadStartRefusal;
 
 pub use clock::{IssuerClock, SystemIssuerClock};
 pub use connector::{VaultMachineConnector, VaultMachineParts};
+pub use machine_execution::{
+    MACHINE_EXECUTION_KEY_PAGES_MAX, machine_execution_client, read_machine_execution,
+};
 #[cfg(feature = "mesh")]
 pub use node_client::MeshJobNodeClient;
 pub use node_client::{JobNodeClient, NodeCallError};
