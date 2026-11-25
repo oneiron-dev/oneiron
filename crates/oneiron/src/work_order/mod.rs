@@ -13,6 +13,7 @@
 
 pub mod after;
 pub mod blocker;
+pub mod decider;
 mod doors;
 pub mod fit;
 pub mod pass;

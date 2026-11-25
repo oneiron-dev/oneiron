@@ -443,13 +443,15 @@ pub enum BudgetDenied {
     /// The owner pinned `resident`'s share of the allocation, and the call
     /// does not fit it (FIX 7767). `needed_units` is the share, in the
     /// allocation's unit, the call needed: what the resident had used and
-    /// held, plus the call's reservation. An owner's share write that gives
-    /// the resident that share frees it.
+    /// held, plus the call's reservation. `unit` is the allocation's: an
+    /// owner's share write in that unit that gives the resident that share
+    /// frees it.
     #[error(
-        "the owner's pinned share for this resident is spent: the call needs a share of {needed_units} units"
+        "the owner's pinned share for this resident is spent: the call needs a share of {needed_units} {unit}"
     )]
     ResidentShareSpent {
         resident: oneiron_contracts::EntityId,
+        unit: String,
         needed_units: u64,
     },
 }
