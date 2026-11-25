@@ -92,6 +92,8 @@ pub(crate) struct Device {
     identity: MeshBindingIdentity,
     /// The pairing slip H minted for the device's mesh binding.
     mesh_pairing: [u8; 32],
+    /// The device's keystore, installed again when its vault opens again.
+    keystore: Arc<oneiron_keystore::MemoryKeystore>,
 }
 
 impl Home {
@@ -129,7 +131,8 @@ impl Home {
                     .map_err(at("the home's authority history"))?,
             )
             .map_err(at("the device takes the home's authority history"))?;
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+        vault.install_device_keystore(keystore.clone());
         // The install's identity is minted with its machine encryption key,
         // as its enrolment request mints it; its mesh identity is read from
         // that identity.
@@ -159,6 +162,7 @@ impl Home {
             machine,
             identity,
             mesh_pairing: pairing_slip_id,
+            keystore,
         })
     }
 
@@ -282,6 +286,37 @@ impl Home {
 }
 
 impl Device {
+    /// This device after its vault was closed for `closed` and opened again
+    /// on the same directory with the same keystore, as a device that was
+    /// shut down. Its authority clock stops while the vault is closed and
+    /// resumes from its floor, so it reads about `closed` behind H's
+    /// afterwards.
+    pub(crate) fn reopened_after(self, closed: Duration) -> TestResult<Device> {
+        let Device {
+            _dir: dir,
+            vault,
+            machine,
+            identity,
+            mesh_pairing,
+            keystore,
+        } = self;
+        let open = Arc::try_unwrap(vault)
+            .map_err(|_| "FIXTURE: another handle holds the device's vault open")?;
+        drop(open);
+        std::thread::sleep(closed);
+        let vault = Vault::open(dir.path(), VaultConfig::device())
+            .map_err(at("open the device's vault again"))?;
+        vault.install_device_keystore(keystore.clone());
+        Ok(Device {
+            _dir: dir,
+            vault: Arc::new(vault),
+            machine,
+            identity,
+            mesh_pairing,
+            keystore,
+        })
+    }
+
     /// This vault binds `peer`'s endpoint at the loopback addresses its
     /// running listener bound (`listening`), on the pairing H minted for it.
     /// The listeners and dialers read the roster and the grants live, so a

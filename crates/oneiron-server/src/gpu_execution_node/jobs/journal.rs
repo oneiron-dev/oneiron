@@ -84,6 +84,14 @@ pub enum JournalEvent {
     },
     /// The declared outputs were hashed, after the release.
     Hashed { outputs: OutputsState },
+    /// The issuer holds every returnable output it wants (`Ack`, design
+    /// 7.1): the node keeps the payload for the keep time from here, and
+    /// then may clean it. Never written for a key whose outputs a launch
+    /// left unhashed.
+    Acknowledged,
+    /// The key's payload directory was removed, after its acknowledgement
+    /// and the keep time: its outputs can no longer be fetched.
+    Cleaned,
 }
 
 impl JournalEvent {
@@ -99,6 +107,8 @@ impl JournalEvent {
             Self::Released { .. } => "released",
             Self::Quarantined { .. } => "quarantined",
             Self::Hashed { .. } => "hashed",
+            Self::Acknowledged => "acknowledged",
+            Self::Cleaned => "cleaned",
         }
     }
 }
@@ -176,6 +186,10 @@ pub struct NodeKey {
     pub release: DeviceRelease,
     pub outputs: OutputsState,
     pub other_compute_pids: Vec<u32>,
+    /// When the issuer acknowledged custody of the key's outputs (`Ack`).
+    pub acknowledged_at_ms: Option<u64>,
+    /// Whether the key's payload directory was removed.
+    pub cleaned: bool,
     /// The sequence of the key's newest record.
     pub seq: u64,
     /// The boot of the key's newest record.
@@ -200,6 +214,8 @@ impl NodeKey {
             release: DeviceRelease::NotHeld,
             outputs: OutputsState::Pending,
             other_compute_pids: Vec::new(),
+            acknowledged_at_ms: None,
+            cleaned: false,
             seq: record.seq,
             boot_id: record.boot_id.clone(),
             updated_at_ms: record.at_ms,
@@ -223,20 +239,34 @@ impl NodeKey {
 
     /// The disk the key keeps booked on the payload disk, in MiB: a live key
     /// its request, an ended key whose workload may have started its
-    /// request too (its outputs stay until the issuer acknowledges them),
-    /// and an ended key whose workload never started nothing: one that never
-    /// launched, or one whose launch the unit's prepare step refused.
+    /// request too until the issuer acknowledges its outputs (design 7.6
+    /// step 5: an output nobody acknowledged keeps its space), and an ended
+    /// key whose workload never started nothing: one that never launched,
+    /// or one whose launch the unit's prepare step refused. After the
+    /// acknowledgement the payload's own bytes count in the disk's free
+    /// space until the cleaning removes them.
     #[must_use]
     pub fn booked_disk_mib(&self) -> u64 {
         let request = self
             .reserve
             .as_ref()
             .map_or(0, |reserve| reserve.pin.request.disk_mib);
-        if self.state != JobState::Ended || self.started() {
+        let keeps_payload = self.started() && self.acknowledged_at_ms.is_none();
+        if self.state != JobState::Ended || keeps_payload {
             request
         } else {
             0
         }
+    }
+
+    /// Whether the issuer may acknowledge the key's outputs now: it ended,
+    /// and a key whose workload may have started has its outputs hashed (or
+    /// failed to), so a payload is never cleaned before the receipt names
+    /// what it held. A key whose workload never started has nothing to wait
+    /// for.
+    #[must_use]
+    pub fn acknowledgeable(&self) -> bool {
+        self.state == JobState::Ended && (!self.started() || self.outputs != OutputsState::Pending)
     }
 
     /// Whether the key is past every change but the release check, the
@@ -450,6 +480,16 @@ impl KeyTable {
                     && next.outputs == OutputsState::Pending =>
             {
                 next.outputs = outputs.clone();
+            }
+            (JournalEvent::Acknowledged, Some(JobState::Ended))
+                if next.acknowledged_at_ms.is_none() && next.acknowledgeable() =>
+            {
+                next.acknowledged_at_ms = Some(record.at_ms);
+            }
+            (JournalEvent::Cleaned, Some(JobState::Ended))
+                if next.acknowledged_at_ms.is_some() && !next.cleaned =>
+            {
+                next.cleaned = true;
             }
             _ => return Err(refuse()),
         }
