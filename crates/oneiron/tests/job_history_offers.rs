@@ -92,6 +92,11 @@ impl GpuJobConnector for FakeGpu {
     fn terminate(&self, _resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
         Ok(self.state().termination.unwrap_or(GpuTermination::Pending))
     }
+
+    /// The provider closes the chunk for good: the owner's write-off (door 10) may proceed.
+    fn write_off(&self, _job: &GpuJob, _now_ms: u64) -> Result<(), GpuConnectorError> {
+        Ok(())
+    }
 }
 
 /// A rooted vault, its owner, one offer at 2 credit-micros a second (startup 10, teardown 5,
@@ -332,6 +337,37 @@ fn a_cancel_before_any_status_leaves_the_occupancy_unknown() {
         "no status reported the run time the cancel ended"
     );
     assert_eq!(history.totals.all.occupied_secs, 0);
+    assert_eq!(history.totals.all.occupied_unknown, 1);
+}
+
+#[test]
+fn a_written_off_chunk_settles_zero_and_leaves_the_occupancy_unknown() {
+    let rig = rig();
+    let quote = rig.quote(100, None);
+    let admission = admission(&quote.job, quote.units);
+    let job = rig.start(&quote, &admission);
+    rig.running(&job.id, &admission, 30, "");
+    let written = rig
+        .vault
+        .write_off_gpu_job(&rig.owner, &job.id, &rig.permits, &rig.gpu, NOW)
+        .expect("the owner writes the job off");
+    assert_eq!(
+        written.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Unconfirmed
+        }
+    );
+
+    let history = rig.history();
+    let attempt = only(&history);
+    assert_eq!(attempt.end, "written_off");
+    assert_eq!(attempt.billed_secs, None, "no end was confirmed");
+    assert_eq!(attempt.settled_units, Some(0));
+    assert_eq!(attempt.charged_secs, Some(0), "this host held the permit");
+    assert_eq!(attempt.returned_secs, Some(quote.quantity));
+    assert_eq!(attempt.occupied_secs, None, "the last reported run time is a sample");
+    assert_eq!(attempt.lost_secs, 0);
+    assert_eq!(history.totals.all.charged_secs, 0);
     assert_eq!(history.totals.all.occupied_unknown, 1);
 }
 

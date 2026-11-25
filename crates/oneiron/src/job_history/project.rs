@@ -237,6 +237,9 @@ enum OfferEnd {
     AtMaximum,
     Cancelled,
     Gone,
+    /// The owner wrote the job off (door 10): its end was never confirmed, and its chunk
+    /// settled zero where this host held the chunk's permit.
+    WrittenOff,
     /// Refused before any resource existed: nothing ran and nothing was charged.
     Held(String),
 }
@@ -248,6 +251,7 @@ impl OfferEnd {
             GpuEndReason::AtMaximum => Self::AtMaximum,
             GpuEndReason::Cancelled => Self::Cancelled,
             GpuEndReason::Gone => Self::Gone,
+            GpuEndReason::Unconfirmed => Self::WrittenOff,
         }
     }
 
@@ -271,6 +275,7 @@ impl OfferEnd {
             Self::AtMaximum => "at_maximum",
             Self::Cancelled => "cancelled",
             Self::Gone => "gone",
+            Self::WrittenOff => "written_off",
             Self::Held(reason) => return ("held".to_owned(), Some(reason.clone())),
         };
         (end.to_owned(), None)
@@ -287,7 +292,9 @@ impl OfferEnd {
 /// final only for an exit, which the provider reports with it; a stop or a cancel terminates
 /// after the last report, so its occupancy is unknown, and a lost resource's is a lower bound,
 /// shown as lost. A chunk held before any resource existed ran for nothing and charged nothing,
-/// and its whole quote went back.
+/// and its whole quote went back. A chunk the owner wrote off has no confirmed end: its
+/// occupancy is unknown, and it charged what its settlement says (zero, where this host held
+/// its permit).
 fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
     let last = job.chunks.len().saturating_sub(1);
     job.chunks
@@ -312,7 +319,10 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
             let occupied_secs = match end {
                 OfferEnd::Exited => Some(chunk.used_secs),
                 OfferEnd::Held(_) => Some(0),
-                OfferEnd::AtMaximum | OfferEnd::Cancelled | OfferEnd::Gone => None,
+                OfferEnd::AtMaximum
+                | OfferEnd::Cancelled
+                | OfferEnd::Gone
+                | OfferEnd::WrittenOff => None,
             };
             let lost_secs = if end == OfferEnd::Gone {
                 chunk.used_secs

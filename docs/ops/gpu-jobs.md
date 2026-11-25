@@ -79,9 +79,11 @@ every quote refuses and no worker starts.
   where a machine measured it or a provider reported a chunk's final run time
   (its exit); a stop, a cancel and a lost machine or resource show it as
   unknown, never as zero. A chunk the provider refused before anything ran
-  charged nothing and returned its whole quote. A stopped job that the
-  customer cancels keeps its last chunk's end at its maximum. The reply is
-  never kept for a same-id retry, which reads again.
+  charged nothing and returned its whole quote. A chunk the owner wrote off
+  (door 10) shows `written_off`: its occupancy is unknown, and it settled
+  zero. A stopped job that the customer cancels keeps its last chunk's end at
+  its maximum. The reply is never kept for a same-id retry, which reads
+  again.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
 verb. History admits the same callers, judged in the snapshot it reads; an
