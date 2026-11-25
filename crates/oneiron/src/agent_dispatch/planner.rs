@@ -587,6 +587,7 @@ fn plan_from_quotes(
     let receipt = SpawnPlanReceipt {
         asked: need.clone(),
         owner_choices: Vec::new(),
+        call_knobs: crate::team::spawn_need::SpawnCallKnobs::of(need),
         plan,
         alternatives,
         why,

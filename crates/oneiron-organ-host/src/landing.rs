@@ -102,18 +102,20 @@ impl OrganOutcome {
     /// call that made several files names them `<run_ref>/<n>`.
     ///
     /// A report the JSON writer cannot represent (a map key that is not a
-    /// string, boolean, integer or finite float) keeps the baseline
-    /// whole-report null, as the previous reader did when its conversion
-    /// failed; only the depth of representable reports is fixed here
-    /// (FIX 12431).
+    /// string, boolean, integer or finite float) is null, as the previous
+    /// reader kept it when its conversion failed; only the depth of
+    /// representable reports is fixed here (FIX 12431). The receipt is
+    /// written apart from it, so such a report never takes the receipt, and
+    /// the serving machine's signature in it, with it (round-2 blind-review
+    /// P1 on #10409).
     #[must_use]
     pub fn native_outputs(&self, run_ref: &str, made_by: Option<&MadeBy>) -> Vec<NativeOutput> {
         let receipt = to_value(&self.receipt).unwrap_or_default();
-        let both = Value::Map(vec![
-            (Value::from("report"), self.report.clone()),
-            (Value::from("receipt"), receipt),
-        ]);
-        let report = report_json_text(&both).unwrap_or_else(|| "null".to_owned());
+        let report = format!(
+            r#"{{"report":{},"receipt":{}}}"#,
+            report_json_text(&self.report).unwrap_or_else(|| "null".to_owned()),
+            report_json_text(&receipt).unwrap_or_else(|| "null".to_owned()),
+        );
         let several = self.outputs.len() > 1;
         self.outputs
             .iter()

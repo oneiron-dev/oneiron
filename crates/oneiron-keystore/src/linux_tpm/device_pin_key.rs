@@ -28,10 +28,10 @@ impl AuthBoundSecretStore for LinuxTpmKeystore {
         check_auth_value(auth)?;
         let sealed = self.seal(&DEVICE_PIN_KEY, auth, secret)?;
         let stem = SealedBytesName::DevicePinKey.name();
-        let (tmp, written) = self.write_temp(&stem, &sealed);
-        let renamed = written.and_then(|()| fs::rename(&tmp, self.device_pin_key_path()));
+        let (tmp, written) = self.files.write_temp(&stem, &sealed);
+        let renamed = written.and_then(|()| fs::rename(&tmp.path, self.device_pin_key_path()));
         if renamed.is_err() {
-            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp.path);
         }
         renamed.map_err(io)?;
         self.sync_dir()

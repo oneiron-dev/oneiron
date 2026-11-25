@@ -5639,6 +5639,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_signatures.rs",
+     "purpose": "The vault's [`MachineSignatures`]: this install signs as its machine with its machine key, and a peer…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -5725,7 +5733,7 @@
      "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "re-export": 3,
       "struct": 1
@@ -51425,6 +51433,188 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WorkloadNodeAnswer",
+      "WorkloadStartAsk",
+      "WorkloadStartRefusal",
+      "WorkloadStarter"
+     ],
+     "path": "src/job_workload/check.rs",
+     "purpose": "The workload-approval check (pass 33, door 7; Engine ruling LM-8 = A): the one function the start gate in…",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeviceClaim",
+      "DeviceClosure",
+      "DeviceFacts",
+      "DeviceIdSource",
+      "DeviceKind",
+      "DeviceLease",
+      "DeviceMemory",
+      "DevicePlacement",
+      "DevicePlacementError",
+      "DeviceState",
+      "HeldDevice",
+      "Sharing"
+     ],
+     "path": "src/job_workload/device.rs",
+     "purpose": "Devices in a resource request (pass 34, `34-compute-general/DESIGN.md` section 2.1): what a run claims…",
+     "surface": {
+      "const": 1,
+      "enum": 7,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorkloadAgent",
+      "WorkloadCaller",
+      "WorkloadError",
+      "WorkloadVerb"
+     ],
+     "path": "src/job_workload/doors.rs",
+     "purpose": "The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5)",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 11,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/job_workload/mod.rs",
+     "purpose": "Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the…",
+     "surface": {
+      "crate-vis": 2,
+      "mod": 4,
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NetworkMode",
+      "OutputDecl",
+      "ResourceRequest",
+      "ScopeKind",
+      "WorkloadPin"
+     ],
+     "path": "src/job_workload/pin.rs",
+     "purpose": "The workload pin (pass 33, `33-exec-node/DESIGN.md` section 5.1): the exact thing the owner allows to run on…",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/job_workload/pin_shape.rs",
+     "purpose": "The pin door's shape check (pass 33, door 2's refusals): what a pin must look like before it is hashed and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/job_workload/protocol.rs",
+     "purpose": "The two mesh protocols a job crosses between the issuer and the node (pass 33, EM-1 = A)",
+     "surface": {
+      "const": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "JobWorkload",
+      "WorkloadApproval",
+      "WorkloadApprovedBy",
+      "WorkloadRevocation"
+     ],
+     "path": "src/job_workload/record.rs",
+     "purpose": "The stored workload (pass 33, 5.1): one `JOB_WORKLOAD` row per pin, keyed by the pin's digest",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BoundReport",
+      "BoundRequirement",
+      "BoundStrength",
+      "ScopeBound",
+      "ScopeCapabilities",
+      "UnknownScopeBound"
+     ],
+     "path": "src/job_workload/scope_bounds.rs",
+     "purpose": "What a launch scope can enforce (pass 34, `34-compute-general/DESIGN.md` section 2.2): each bound…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/job_workload/tables.rs",
+     "purpose": "The side table `job_workload` keeps: its row declares it, and the crate's build script places it in…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkloadApprovalView",
+      "WorkloadApproveRequest",
+      "WorkloadChange",
+      "WorkloadList",
+      "WorkloadListRequest",
+      "WorkloadPinRequest",
+      "WorkloadRef",
+      "WorkloadStanding",
+      "WorkloadView"
+     ],
+     "path": "src/job_workload/wire.rs",
+     "purpose": "The `vault.jobs.workloads.*` verbs' inputs and answers: plain fields the SDK spells (ids and digests in…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LearningCell"
      ],
      "path": "src/learning/cell.rs",
@@ -52294,7 +52484,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 227,
+      "mod": 229,
       "re-export": 106
      }
     },
@@ -54451,6 +54641,7 @@
       "AllocationCommit",
       "AllocationStoreError",
       "DurableAllocationRead",
+      "ReservationParties",
       "VaultAllocationLedger"
      ],
      "path": "src/llm/run_admission/allocation/mod.rs",
@@ -54459,7 +54650,7 @@
       "crate-vis": 1,
       "enum": 1,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -54515,16 +54706,17 @@
       "OfferBinding",
       "OfferRoute",
       "PaidConnector",
-      "PayerPerson"
+      "PayerPerson",
+      "SelectedAllocation"
      ],
      "path": "src/llm/run_admission/host.rs",
      "purpose": "What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -54583,7 +54775,7 @@
      "path": "src/llm/run_admission/permit.rs",
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 1
      }
@@ -54625,12 +54817,15 @@
      "kind": "src",
      "notable": [
       "ResidentLedger",
+      "ResidentShareScope",
       "ResidentStanding"
      ],
      "path": "src/llm/run_admission/resident.rs",
      "purpose": "Each resident's share of the vault's host-paid allocation (ARCH-0011 `#budget-lease`, FIX 7767)",
      "surface": {
       "crate-vis": 6,
+      "enum": 1,
+      "fn": 1,
       "re-export": 1,
       "struct": 1,
       "trait": 1
@@ -54643,7 +54838,7 @@
      "path": "src/llm/run_admission/resident_doors.rs",
      "purpose": "Typed owner doors over the resident shares (FIX 11310): set one resident's share of the host-paid…",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "re-export": 1
      }
     },
@@ -54661,6 +54856,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/slot.rs",
+     "purpose": "Which selected allocation a host-paid call holds on (row M2-I, allocations by wallet)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -55348,6 +55553,21 @@
      "path": "src/machine_names/tables.rs",
      "purpose": "The side table `machine_names` keeps: each row declares one, and the crate's build script places it in…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MachineSignatureError",
+      "MachineSignatures"
+     ],
+     "path": "src/machine_signature.rs",
+     "purpose": "A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "trait": 1
+     }
     },
     {
      "bucket": "m",
@@ -59982,7 +60202,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/authority.rs",
      "purpose": "Actor-authority and witness-pinning security regressions (review batch #471)",
@@ -59990,7 +60210,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/consolidation_outbound.rs",
      "purpose": "BRIDGE-03 wiring regressions: Dreamer queue round-trip, seed-claim receipts, outbound schedule and dedupe",
@@ -59998,7 +60218,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/mod.rs",
      "purpose": "Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor…",
@@ -60006,7 +60226,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/outbound_actor_scope.rs",
      "purpose": "ONE-1876 actor-scoped outbound dedupe index regressions",
@@ -60014,7 +60234,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/bounds_execution.rs",
      "purpose": "—",
@@ -60022,7 +60242,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/call_mode.rs",
      "purpose": "—",
@@ -60030,7 +60250,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/clock_consistency.rs",
      "purpose": "—",
@@ -60038,7 +60258,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/control_kinds.rs",
      "purpose": "—",
@@ -60046,7 +60266,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/device_local_order.rs",
      "purpose": "—",
@@ -60054,7 +60274,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/mod.rs",
      "purpose": "BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits",
@@ -60062,7 +60282,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/pack_scope.rs",
      "purpose": "—",
@@ -60070,7 +60290,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/paid_rerank.rs",
      "purpose": "—",
@@ -60078,7 +60298,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/paid_rerank_egress.rs",
      "purpose": "—",
@@ -60086,7 +60306,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/read_grants.rs",
      "purpose": "—",
@@ -60094,7 +60314,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/temporal.rs",
      "purpose": "—",
@@ -60102,7 +60322,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/turn_custody.rs",
      "purpose": "—",
@@ -60110,7 +60330,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/turn_disclosure.rs",
      "purpose": "—",
@@ -60118,7 +60338,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/turn_fold.rs",
      "purpose": "—",
@@ -60126,7 +60346,7 @@
     },
     {
      "bucket": "m",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/turn_text_revision.rs",
      "purpose": "—",
@@ -60134,7 +60354,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall_revision.rs",
      "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
@@ -60142,7 +60362,7 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
+     "kind": "test",
      "notable": [],
      "path": "src/memory/tests_regressions/recall_security.rs",
      "purpose": "Recall must not be a broader read side channel than point reads or BM25",
@@ -95849,6 +96069,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/team/door_reads/plan_projection.rs",
+     "purpose": "A spawn's selected plan as the owner's reads project it: what the plan resolved, and beside it each knob as…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -95856,6 +96086,7 @@
       "PlanObservation",
       "PlannedSpawnObservation",
       "ResolvedTeam",
+      "SpawnAskObservation",
       "TeamBindingView",
       "TeamReceiptView"
      ],
@@ -95865,7 +96096,7 @@
       "const": 1,
       "fn": 3,
       "re-export": 3,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -96069,6 +96300,7 @@
      "kind": "src",
      "notable": [
       "CareLevel",
+      "SpawnCallKnobs",
       "SpawnNeed"
      ],
      "path": "src/team/spawn_need.rs",
@@ -96076,8 +96308,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
-      "struct": 1
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -107541,7 +107773,7 @@
      "path": "src/workspace_roster/rooms/offer_settle.rs",
      "purpose": "Answering an offer card (OF-530): join or not now, from the room's host",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -107558,7 +107790,7 @@
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3,
       "re-export": 2,
       "struct": 3
@@ -109608,6 +109840,14 @@
      "notable": [],
      "path": "tests/agent_wake_hold.rs",
      "purpose": "The wake hold of a sleeping resident (AGM-4 = C; agent-mind-design-v1 §1.6 #inbox-wake, ARCH-0067…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/allocation_ledger_by_wallet.rs",
+     "purpose": "Row M2-I on the durable allocation ledger ([`VaultAllocationLedger`]): one selection per slot (a unit and…",
      "surface": {}
     },
     {
@@ -113956,6 +114196,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/host_account_allocations_by_wallet.rs",
+     "purpose": "Row M2-I (allocations by wallet): one host account selects one live allocation per slot, a slot being a unit…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/host_compact_skip_refused.rs",
      "purpose": "FIX [HOST-COMPACT-PREHOOK-SKIP-UNPROVEN-AT-DOOR]: a `host.compact` pre-hook may not Skip",
      "surface": {}
@@ -115422,6 +115670,14 @@
      "notable": [],
      "path": "tests/job_kind_rows.rs",
      "purpose": "UC-09 K pins (PLAN-UC-09 \"The K-proof\"): the queue rows each Dreamer enqueue door stores, before and after a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_resource_request.rs",
+     "purpose": "The general resource request (pass 34 row G1, `34-compute-general/DESIGN.md` sections 2.1, 2.2 and 10): a…",
      "surface": {}
     },
     {
@@ -121045,7 +121301,7 @@
     },
     "authority": {
      "entry": "crates/oneiron/src/authority/mod.rs",
-     "files": 346,
+     "files": 347,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -122159,6 +122415,15 @@
       "OF-365"
      ]
     },
+    "job_workload": {
+     "entry": "crates/oneiron/src/job_workload/mod.rs",
+     "files": 11,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the…",
+     "spec_ids": []
+    },
     "learning": {
      "entry": "crates/oneiron/src/learning/mod.rs",
      "files": 18,
@@ -122256,7 +122521,7 @@
     },
     "llm": {
      "entry": "crates/oneiron/src/llm/mod.rs",
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -122300,6 +122565,17 @@
      "layout": "dir",
      "purpose": "The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16…",
      "spec_ids": []
+    },
+    "machine_signature": {
+     "entry": "crates/oneiron/src/machine_signature.rs",
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and…",
+     "spec_ids": [
+      "OF-575"
+     ]
     },
     "mail_pack": {
      "entry": "crates/oneiron/src/mail_pack/mod.rs",
@@ -123163,7 +123439,7 @@
     },
     "team": {
      "entry": "crates/oneiron/src/team/mod.rs",
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -123442,8 +123718,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8538,
-   "test_files": 2274
+   "source_files": 8532,
+   "test_files": 2298
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -140542,9 +140818,9 @@
       "LocalFileKeystore"
      ],
      "path": "src/file.rs",
-     "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own",
+     "purpose": "Unix: one 0600 file per slot in a 0700 directory of its own",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -140566,7 +140842,7 @@
      "surface": {
       "const": 1,
       "enum": 5,
-      "fn": 8,
+      "fn": 9,
       "re-export": 12,
       "struct": 1,
       "trait": 1,
@@ -140739,6 +141015,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/file_tier_access_control.rs",
+     "purpose": "The file tier on Apple (MACOS-UNSIGNED-FILE-KEYSTORE): macOS keeps a file's access control list apart from…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -140821,7 +141105,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own",
+     "purpose": "Unix: one 0600 file per slot in a 0700 directory of its own",
      "spec_ids": []
     },
     "linux_tpm": {
@@ -140895,7 +141179,7 @@
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
    "source_files": 20,
-   "test_files": 3
+   "test_files": 4
   },
   "oneiron-lens-wire": {
    "files": [
@@ -142545,11 +142829,21 @@
      "surface": {
       "enum": 1,
       "fn": 2,
-      "mod": 4,
+      "mod": 5,
       "re-export": 3,
       "struct": 5,
       "trait": 8,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/message.rs",
+     "purpose": "One message each way per stream, in the organ protocol's codec: the exchange organ calls ride (OF-575)…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -142628,6 +142922,17 @@
      "purpose": "Private iroh data plane",
      "spec_ids": []
     },
+    "message": {
+     "entry": "crates/oneiron-mesh-transport/src/message.rs",
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One message each way per stream, in the organ protocol's codec: the exchange organ calls ride (OF-575)…",
+     "spec_ids": [
+      "OF-575"
+     ]
+    },
     "sync_dialer": {
      "entry": "crates/oneiron-mesh-transport/src/sync_dialer.rs",
      "files": 1,
@@ -142651,7 +142956,7 @@
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 3
   },
   "oneiron-model": {
@@ -144346,8 +144651,8 @@
      "path": "src/host/shutdown.rs",
      "purpose": "The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756)",
      "surface": {
-      "crate-vis": 11,
-      "fn": 8,
+      "crate-vis": 13,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -144557,15 +144862,18 @@
       "FetchTarget",
       "ReceiptInput",
       "ReceiptOutput",
+      "ReceiptSignature",
       "SignedReceipt",
       "Unanswered"
      ],
      "path": "src/receipt.rs",
      "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them…",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "struct": 6
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -144938,7 +145246,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/mesh_ask_carried.rs",
@@ -166616,7 +166924,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 216
+      "crate-vis": 217
      }
     },
     {
@@ -166667,6 +166975,16 @@
      "purpose": "The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2): `vault.gpu.jobs.quote`, `.start`…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_doors/job_workloads.rs",
+     "purpose": "The pinned workload doors (pass 33, section 6 rows 2-5): `vault.jobs.workloads.pin`, `.approve`, `.revoke`…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -176759,6 +177077,73 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gpu_execution_node/mod.rs",
+     "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
+     "surface": {
+      "mod": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "JobService",
+      "JobStatusService"
+     ],
+     "path": "src/gpu_execution_node/service.rs",
+     "purpose": "The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeviceRelease",
+      "HoldRef",
+      "JobAnswer",
+      "JobEnd",
+      "JobReceipt",
+      "JobRefusal",
+      "JobRequest",
+      "JobReserve",
+      "JobState",
+      "JobStatusAnswer",
+      "JobStatusRequest",
+      "JobSubmit",
+      "KeyEntry",
+      "KeyPage",
+      "NodeAnswer",
+      "Occupied",
+      "OutputDigest",
+      "OutputsState",
+      "ScopeClass",
+      "ScopeFacts",
+      "ScopeReport",
+      "SignedJobReceipt",
+      "SignedJobSubmit",
+      "SlotSelector",
+      "Starter",
+      "TemplateOffer"
+     ],
+     "path": "src/gpu_execution_node/wire.rs",
+     "purpose": "The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1)",
+     "surface": {
+      "const": 4,
+      "enum": 11,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gpu_host.rs",
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)",
      "surface": {
@@ -177454,7 +177839,7 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "mod": 28,
+      "mod": 29,
       "re-export": 2
      }
     },
@@ -185051,7 +185436,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 87
+      "mod": 88
      }
     },
     {
@@ -185102,6 +185487,16 @@
      "purpose": "Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/organ_mesh.rs",
+     "purpose": "Doors for the two-server organ call test (OF-575; pass 33 row R0, `tests/organ_mesh_two_server_e2e.rs`): the…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -187660,6 +188055,30 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_protocol_grant.rs",
+     "purpose": "The job protocols' grant is the gate, for each protocol id on its own (pass 33 row R0…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_service_streams.rs",
+     "purpose": "The job service answers each stream of a connection on its own (review round 1 of #10407): a stream whose…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_workloads.rs",
+     "purpose": "Pinned workloads (pass 33 row R2; tests T10, T11, T12, T12b of section 11): the owner approves each exact…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -188105,6 +188524,14 @@
      "notable": [],
      "path": "tests/openapi_off_record_rooms.rs",
      "purpose": "The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/organ_mesh_two_server_e2e.rs",
+     "purpose": "OF-575 between two of the owner's servers over the real mesh (pass 33 row R0…",
      "surface": {}
     },
     {
@@ -188838,6 +189265,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/support/mesh_machines.rs",
+     "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -188923,6 +189360,14 @@
      "notable": [],
      "path": "tests/timeline_shell_projection_recheck.rs",
      "purpose": "[TIMELINE-SHELL-TWO-SNAPSHOT-CAP]: the core memory timeline route (`GET /v1/core/memory/{id}/timeline`)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/token_agent_file_keystore.rs",
+     "purpose": "`[keystore] backend = \"file\"` (MACOS-UNSIGNED-FILE-KEYSTORE): the owner's explicit file tier lets a build…",
      "surface": {}
     },
     {
@@ -189519,7 +189964,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 845,
+     "files": 846,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -189884,6 +190329,15 @@
      "spec_ids": [
       "OF-554"
      ]
+    },
+    "gpu_execution_node": {
+     "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
+     "spec_ids": []
     },
     "gpu_host": {
      "entry": "crates/oneiron-server/src/gpu_host.rs",
@@ -190316,7 +190770,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron-server/src/test_doors/mod.rs",
-     "files": 90,
+     "files": 91,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -190417,8 +190871,8 @@
    },
    "over_bar": 66,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2115,
-   "test_files": 577
+   "source_files": 2120,
+   "test_files": 583
   },
   "oneiron-setting-contract": {
    "files": [

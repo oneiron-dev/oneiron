@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use oneiron::consent::AuthenticatedOwner;
@@ -153,6 +153,12 @@ pub(crate) struct Call {
     pub(crate) bytes: Vec<u8>,
 }
 
+pub(crate) struct HeldCall {
+    kind: &'static str,
+    entered: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+}
+
 #[derive(Default)]
 pub(crate) struct NodeState {
     pub(crate) journal: BTreeMap<String, SignedJobReceipt>,
@@ -161,6 +167,9 @@ pub(crate) struct NodeState {
     pub(crate) calls: Vec<Call>,
     pub(crate) unreachable: bool,
     pub(crate) drop_next: Option<&'static str>,
+    pub(crate) hold_next: Option<HeldCall>,
+    lose_next_answer: Option<&'static str>,
+    repeat_key_cursor: u32,
     pub(crate) refuse_submits: Option<String>,
     /// The outputs the issuer may fetch, by key and name.
     pub(crate) outputs: BTreeMap<(String, String), Vec<u8>>,
@@ -229,6 +238,52 @@ impl ScriptedNode {
 
     pub(crate) fn drop_next(&self, kind: &'static str) {
         self.state().drop_next = Some(kind);
+    }
+
+    pub(crate) fn hold_next(&self, kind: &'static str) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered, wait_for_entry) = mpsc::channel();
+        let (release_call, release) = mpsc::channel();
+        self.state().hold_next = Some(HeldCall {
+            kind,
+            entered,
+            release,
+        });
+        (wait_for_entry, release_call)
+    }
+
+    pub(crate) fn lose_next_answer(&self, kind: &'static str) {
+        self.state().lose_next_answer = Some(kind);
+    }
+
+    pub(crate) fn repeat_key_cursor(&self, pages: u32) {
+        self.state().repeat_key_cursor = pages;
+    }
+
+    fn enter_call(
+        &self,
+        machine: EntityId,
+        kind: &'static str,
+        key: Option<&str>,
+        request: &impl Serialize,
+    ) -> Result<(MutexGuard<'_, NodeState>, bool), NodeCallError> {
+        let mut node = self.state();
+        node.record(machine, kind, key, request)?;
+        let lose_answer = node.lose_next_answer == Some(kind);
+        if lose_answer {
+            node.lose_next_answer = None;
+        }
+        if node
+            .hold_next
+            .as_ref()
+            .is_some_and(|hold| hold.kind == kind)
+        {
+            let hold = node.hold_next.take().expect("the matching call is held");
+            drop(node);
+            hold.entered.send(()).expect("the test waits for entry");
+            hold.release.recv().expect("the test releases the call");
+            node = self.state();
+        }
+        Ok((node, lose_answer))
     }
 
     pub(crate) fn refuse_submits(&self, reason: Option<&str>) {
@@ -371,15 +426,14 @@ impl ScriptedNode {
 
 impl JobNodeClient for ScriptedNode {
     fn job(&self, machine: EntityId, request: &JobRequest) -> Result<JobAnswer, NodeCallError> {
-        let mut node = self.state();
         let (kind, key) = match request {
             JobRequest::Node => ("node", None),
             JobRequest::Reserve(req) => ("reserve", Some(req.key.as_str())),
             JobRequest::Release { key } => ("release", Some(key.as_str())),
             JobRequest::Submit(req) => ("submit", Some(req.submit.key.as_str())),
         };
-        node.record(machine, kind, key, request)?;
-        Ok(match request {
+        let (mut node, lose_answer) = self.enter_call(machine, kind, key, request)?;
+        let answer = (|| match request {
             JobRequest::Node => JobAnswer::Node(NodeAnswer {
                 enabled: true,
                 paused: None,
@@ -390,7 +444,9 @@ impl JobNodeClient for ScriptedNode {
                     scopes: vec![ScopeClass::Host],
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
+                    require: Vec::new(),
                 }],
+                scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,
                 disk_reserved_bytes: 0,
                 disk_reserve_bytes: 0,
@@ -401,7 +457,7 @@ impl JobNodeClient for ScriptedNode {
             }),
             JobRequest::Reserve(req) => {
                 if let Some(receipt) = node.journal.get(&req.key) {
-                    return Ok(JobAnswer::Receipt(receipt.clone()));
+                    return JobAnswer::Receipt(receipt.clone());
                 }
                 let mut receipt = self.blank(&req.key);
                 receipt.starter = Some(req.starter);
@@ -415,15 +471,15 @@ impl JobNodeClient for ScriptedNode {
             },
             JobRequest::Submit(signed) => {
                 if signed.verify(self.signer.as_ref()).is_err() {
-                    return Ok(JobAnswer::Refused(JobRefusal::SubmitSignatureInvalid));
+                    return JobAnswer::Refused(JobRefusal::SubmitSignatureInvalid);
                 }
                 let submit = &signed.submit;
                 if submit.issuer != self.issuer {
-                    return Ok(JobAnswer::Refused(JobRefusal::NotIssuer));
+                    return JobAnswer::Refused(JobRefusal::NotIssuer);
                 }
                 let (mut receipt, refusal) = match node.journal.get(&submit.key) {
                     Some(known) if known.receipt.state != JobState::Held => {
-                        return Ok(JobAnswer::Receipt(known.clone()));
+                        return JobAnswer::Receipt(known.clone());
                     }
                     Some(known) => (known.receipt.clone(), node.refuse_submits.clone()),
                     None => {
@@ -443,7 +499,12 @@ impl JobNodeClient for ScriptedNode {
                 }
                 JobAnswer::Receipt(self.publish(&mut node, receipt))
             }
-        })
+        })();
+        if lose_answer {
+            Err(NodeCallError::Timeout)
+        } else {
+            Ok(answer)
+        }
     }
 
     fn job_status(
@@ -451,7 +512,6 @@ impl JobNodeClient for ScriptedNode {
         machine: EntityId,
         request: &JobStatusRequest,
     ) -> Result<JobStatusAnswer, NodeCallError> {
-        let mut node = self.state();
         let (kind, key) = match request {
             JobStatusRequest::Find { key } => ("find", Some(key.as_str())),
             JobStatusRequest::Status { key } => ("status", Some(key.as_str())),
@@ -461,12 +521,19 @@ impl JobNodeClient for ScriptedNode {
             JobStatusRequest::Fetch { key, .. } => ("fetch", Some(key.as_str())),
             JobStatusRequest::Ack { key } => ("ack", Some(key.as_str())),
         };
-        node.record(machine, kind, key, request)?;
-        Ok(match request {
+        let (mut node, lose_answer) = self.enter_call(machine, kind, key, request)?;
+        let answer = match request {
             JobStatusRequest::Find { key } | JobStatusRequest::Status { key } => {
                 node.known_or_absent(key)
             }
             JobStatusRequest::Stop { key } => JobStatusAnswer::Known(self.stop(&mut node, key)),
+            JobStatusRequest::Keys { .. } if node.repeat_key_cursor > 0 => {
+                node.repeat_key_cursor -= 1;
+                JobStatusAnswer::Keys(KeyPage {
+                    entries: Vec::new(),
+                    next: Some("cursor-r".to_owned()),
+                })
+            }
             JobStatusRequest::Keys { after } => JobStatusAnswer::Keys(KeyPage {
                 entries: node
                     .journal
@@ -492,7 +559,12 @@ impl JobNodeClient for ScriptedNode {
                     None => JobStatusAnswer::Refused(JobRefusal::NotEnabled),
                 }
             }
-        })
+        };
+        if lose_answer {
+            Err(NodeCallError::Timeout)
+        } else {
+            Ok(answer)
+        }
     }
 }
 
@@ -654,8 +726,17 @@ impl Rig {
                 "entry": "fixture/run.py",
                 "args": ["--case", tag],
                 "request": {
-                    "gpus": 1, "vram_mib": 22_528, "memory_mib": 22_528,
-                    "disk_mib": 2_048, "maximum_secs": MAXIMUM_SECS,
+                    "cpu_threads": 0,
+                    "memory_mib": 22_528,
+                    "disk_mib": 2_048,
+                    "devices": [{
+                        "kind": "gpu",
+                        "count": 1,
+                        "memory_mib": 22_528,
+                        "features": ["cuda"],
+                        "sharing": "exclusive",
+                    }],
+                    "maximum_secs": MAXIMUM_SECS,
                 },
                 "scope": "host",
                 "network": "none",

@@ -81,10 +81,18 @@ class SpecIdTest(unittest.TestCase):
 
 class TestPathTest(unittest.TestCase):
     def test_test_paths_match_the_ratchet(self):
-        for rel in ("src/tests.rs", "src/a/b_tests.rs", "src/a/tests_saver.rs", "tests/x.rs", "src/tests/x.rs"):
+        for rel in (
+            "src/tests.rs",
+            "src/a/b_tests.rs",
+            "src/a/tests_saver.rs",
+            "tests/x.rs",
+            "src/tests/x.rs",
+            "src/tests_x/mod_x.rs",
+            "src/memory/tests_regressions/recall/pack_scope.rs",
+        ):
             with self.subTest(rel):
                 self.assertTrue(codemap.is_test_path(rel))
-        for rel in ("src/lib.rs", "src/contests.rs", "src/attests_x.rs", "src/tests_x/mod_x.rs"):
+        for rel in ("src/lib.rs", "src/contests.rs", "src/attests_x.rs", "src/attests_x/mod.rs", "src/contests/x.rs"):
             with self.subTest(rel):
                 self.assertFalse(codemap.is_test_path(rel))
 
@@ -100,6 +108,23 @@ class TestPathTest(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             self.assertNotIn("ARCH-0052", (root / codemap.SPEC_PATH).read_text())
             self.assertIn("| `src/tests_saver.rs` | test |", (root / codemap.DIR_PATH / "demo.md").read_text())
+
+    def test_spec_index_skips_a_file_in_a_tests_prefixed_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            src = root / "crates" / "demo" / "src"
+            (src / "lib.rs").write_text(
+                "//! Demo crate root.\n\npub mod relay;\n#[cfg(test)]\nmod tests_regressions;\n"
+            )
+            (src / "tests_regressions").mkdir()
+            (src / "tests_regressions" / "mod.rs").write_text("//! Regression tests.\n\nmod recall;\n")
+            (src / "tests_regressions" / "recall.rs").write_text("//! Recall regressions (ARCH-0053).\n")
+            rc, out = run(root)
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("ARCH-0053", (root / codemap.SPEC_PATH).read_text())
+            page = (root / codemap.DIR_PATH / "demo.md").read_text()
+            self.assertIn("| `src/tests_regressions/recall.rs` | test |", page)
+            self.assertIn("| `src/tests_regressions/mod.rs` | test |", page)
 
 
 class AliasPathTest(unittest.TestCase):

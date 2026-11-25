@@ -2,11 +2,11 @@
 //! `vault.jobs.workloads.pin`, `.approve`, `.revoke`, `.get` and `.list`.
 //! The engine decides (`oneiron::job_workload`); a door admits the caller and
 //! calls it. Every door takes the owner's own proof or an agent's own Grant
-//! that names the verb. Approve and revoke take an agent only while the
-//! owner's Setting `jobs.workloads.agent_may_approve` is on (off by default:
-//! EN-1 A), and the owner's approve asks the owner's presence at `Important`.
+//! that names the verb, but approve and revoke are the owner's own acts
+//! (EN-1 A), and the owner's approve asks the owner's presence at `Important`.
 //! Workloads live in a side table, which holds no entity row: the doors list
-//! none.
+//! none, and the two reads keep no reply for a same-id retry
+//! (`invocations::UNKEPT_REPLY_VERBS`), so visibility is judged at each read.
 
 use std::sync::Arc;
 
@@ -124,8 +124,7 @@ pub(crate) async fn vault_jobs_workloads_pin(
     .await
 }
 
-/// `vault.jobs.workloads.approve`: the owner, or an agent while
-/// `jobs.workloads.agent_may_approve` is on, approves one pinned workload on
+/// `vault.jobs.workloads.approve`: the owner approves one pinned workload on
 /// the machines it may run on, for the Grants that may start it, until its
 /// expiry. The owner's presence is asked at `Important` first.
 pub(crate) async fn vault_jobs_workloads_approve(
@@ -146,8 +145,7 @@ pub(crate) async fn vault_jobs_workloads_approve(
     .await
 }
 
-/// `vault.jobs.workloads.revoke`: the owner, or an agent while
-/// `jobs.workloads.agent_may_approve` is on, revokes one workload. No later
+/// `vault.jobs.workloads.revoke`: the owner revokes one workload. No later
 /// start passes the gate, and the issuer stops its running jobs.
 pub(crate) async fn vault_jobs_workloads_revoke(
     server: &Arc<SyncServer>,

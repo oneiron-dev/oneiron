@@ -1413,7 +1413,14 @@ fn an_unsettled_permit_settles_when_dropped() {
     let run = Run::start(declaration(), Some(account.clone()));
     let gated = run.admission.gate(provider.clone(), &host_offer(SMALL));
     let allocation = || {
-        let read = account.live().0.expect("live allocation").meter.read();
+        let read = account
+            .selected()
+            .0
+            .into_iter()
+            .next()
+            .expect("live allocation")
+            .meter
+            .read();
         (read.used_units, read.reserved_units)
     };
     // Dropped before it starts: both reservations come back.

@@ -13,7 +13,7 @@ mod mesh_machines;
 #[path = "support/vault_machine_rig.rs"]
 mod vault_machine_rig;
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
@@ -21,7 +21,7 @@ use oneiron::gpu_job::{
     GpuJobSignal, GpuJobSpec, GpuJobState, GpuResourceRef, GpuResourceStatus, GpuTermination,
     MeterVerdict,
 };
-use oneiron::job_dispatch::{DispatchClose, DispatchPhase};
+use oneiron::job_dispatch::{DispatchClose, DispatchPhase, JobObservation};
 use oneiron::job_workload::{WorkloadCaller, WorkloadRef, WorkloadStartRefusal};
 use oneiron::{EntityId, Vault};
 use oneiron_server::config::SyncServerConfig;
@@ -328,7 +328,7 @@ fn billed_seconds_never_pass_the_issuers_bracket_and_a_job_between_two_polls_is_
 }
 
 #[test]
-fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
+fn a_job_that_never_started_settles_nothing_and_its_dispatch_keeps_the_nodes_reason() {
     with_rig(|rig| {
         let workload = rig.approve("never-started", FAR_EXPIRY_MS);
         rig.node.refuse_submits(Some("no_device"));
@@ -336,9 +336,9 @@ fn a_job_that_never_started_settles_nothing_and_shows_the_nodes_reason() {
         assert_eq!(
             refused.job.state,
             GpuJobState::Held {
-                reason: "no_device".to_owned()
+                reason: "not_available_to_this_caller".to_owned()
             },
-            "create preserves the node's refusal",
+            "the job's reason does not disclose what the machine said (section 6; review round 1 of #10414)",
         );
         assert_eq!(
             refused.settled(),
@@ -659,4 +659,145 @@ fn a_vault_machine_offer_states_at_maximum_stop() {
     let renew = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
         .expect_err("renew comes with row W1");
     assert!(format!("{renew:#}").contains("renew"), "{renew:#}");
+}
+
+#[test]
+fn a_terminate_during_a_create_sends_no_submit_after_its_stop() {
+    with_rig(|rig| {
+        let workload = rig.approve("terminate-during-create", FAR_EXPIRY_MS);
+        let (entered, release) = rig.node.hold_next("reserve");
+        // An unanswered Stop leaves the late Reserve free to return Held. A scripted
+        // Stop that journals a withdrawal for an unknown key would mask the race.
+        rig.node.drop_next("stop");
+
+        let run = std::thread::scope(|scope| {
+            let release = release;
+            let create = scope.spawn(|| {
+                let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    rig.start_job(&workload)
+                }));
+                // Wake the receiver if create never got as far as Reserve.
+                drop(rig.node.state().hold_next.take());
+                match started {
+                    Ok(run) => run,
+                    Err(panic) => std::panic::resume_unwind(panic),
+                }
+            });
+            entered.recv().expect("create sent Reserve");
+            let key = rig
+                .node
+                .calls()
+                .into_iter()
+                .find(|call| call.kind == "reserve")
+                .and_then(|call| call.key)
+                .expect("Reserve names the key");
+            let resource = GpuResourceRef(format!("{}#{key}", rig.node.machine.to_hex()));
+            let (terminating, begin_terminate) = mpsc::channel();
+            let terminate = scope.spawn(move || {
+                terminating.send(()).expect("the test waits for terminate");
+                rig.connector.terminate(&resource)
+            });
+            begin_terminate.recv().expect("terminate thread started");
+            // A release before terminate reaches the key can pass on old and new code alike.
+            release.send(()).expect("release the held Reserve");
+            let run = create.join().expect("create thread panicked");
+            let _ = terminate.join().expect("terminate thread panicked");
+            run
+        });
+
+        let calls = rig.node.calls();
+        let first_stop = calls
+            .iter()
+            .position(|call| call.kind == "stop" && call.key.as_deref() == Some(run.key()))
+            .expect("terminate sent Stop for the key");
+        assert!(
+            calls[first_stop + 1..]
+                .iter()
+                .all(|call| call.kind != "submit" || call.key.as_deref() != Some(run.key())),
+            "no Submit for the key may follow its first Stop: {calls:?}",
+        );
+        assert!(matches!(
+            rig.dispatch(&run).phase,
+            DispatchPhase::Closing | DispatchPhase::Closed
+        ));
+    });
+}
+
+#[test]
+fn an_absent_key_after_a_stored_receipt_is_history_lost_even_with_no_held_mark() {
+    with_rig(|rig| {
+        let workload = rig.approve("lost-journal-after-observation", FAR_EXPIRY_MS);
+        rig.node.lose_next_answer("reserve");
+        let run = rig.start_job(&workload);
+        assert_eq!(
+            run.job.state,
+            GpuJobState::Running,
+            "find recovered the key"
+        );
+        let signed = rig
+            .node
+            .state()
+            .journal
+            .get(run.key())
+            .expect("the node journaled the unanswered Reserve")
+            .clone();
+        assert_eq!(signed.receipt.state, JobState::Held);
+        rig.vault()
+            .put_job_observation(&JobObservation {
+                key: run.key().to_owned(),
+                machine: signed.receipt.machine,
+                device_id: signed.receipt.device_id.clone(),
+                receipt: oneiron_organ_protocol::to_vec(&signed).expect("encode the Held receipt"),
+                epoch: signed.receipt.epoch.clone(),
+                seq: signed.receipt.seq,
+                last_measured_secs: None,
+                observed_at_ms: rig.clock.now_ms(),
+                end_seen: None,
+                meter: None,
+                terminal: None,
+            })
+            .expect("write the observation without the dispatch's Held mark");
+        let row = rig.dispatch(&run);
+        assert!(row.held.is_none());
+        assert_eq!(row.phase, DispatchPhase::Reserving);
+
+        rig.node.forget_journal();
+        let reserve_calls = || {
+            rig.node
+                .calls()
+                .iter()
+                .filter(|call| call.kind == "reserve" && call.key.as_deref() == Some(run.key()))
+                .count()
+        };
+        let before = reserve_calls();
+        let _ = rig.step(&run);
+        assert_eq!(
+            reserve_calls(),
+            before,
+            "the issuer did not send Reserve again",
+        );
+        assert!(rig.dispatch(&run).history_lost_at_ms.is_some());
+    });
+}
+
+#[test]
+fn a_node_that_repeats_its_key_cursor_is_not_reconciled_and_gets_no_reserve() {
+    with_rig(|rig| {
+        let workload = rig.approve("repeated-key-cursor", FAR_EXPIRY_MS);
+        rig.node.repeat_key_cursor(10);
+        let run = rig.start_job(&workload);
+        let _ = rig.step(&run);
+
+        let calls = rig.node.calls();
+        assert!(
+            calls.iter().all(|call| call.kind != "reserve"),
+            "the issuer must not reserve before reconciliation: {calls:?}",
+        );
+        assert_eq!(
+            calls.iter().filter(|call| call.kind == "keys").count(),
+            4,
+            "create and step each stop reconciliation on their second page",
+        );
+        assert_eq!(rig.dispatch(&run).phase, DispatchPhase::Reserving);
+    });
 }
