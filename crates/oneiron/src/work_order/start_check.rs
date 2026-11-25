@@ -181,9 +181,6 @@ impl Vault {
         let Some(starter) = self.order_authority_in_txn(txn, &order)? else {
             return Ok(Err(AttemptRefused::Blocked(Blocker::GrantNotLive)));
         };
-        if let Some(blocker) = self.attempt_conditions_in_txn(txn, &order)? {
-            return Ok(Err(AttemptRefused::Blocked(blocker)));
-        }
         if let (Some(machine), Some(workload_starter)) =
             (attempt.machine, order.ordered_by.starter())
         {
