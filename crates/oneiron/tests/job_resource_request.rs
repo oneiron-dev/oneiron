@@ -2,8 +2,9 @@
 //! sections 2.1, 2.2 and 10): a run asks for threads, memory, disk and zero or
 //! more device claims; a device is matched by kind, features and memory,
 //! never by a vendor name; on unified memory the host request and the device
-//! claim are one pool; every holder of a device counts; and a launch scope
-//! reports each bound as kernel, supervised or none.
+//! claim are one pool, and a pool with no value in MiB is refused; every
+//! holder of a device counts; and a launch scope reports each bound as
+//! kernel, supervised or none.
 //!
 //! Run with: `cargo test --locked -p oneiron --all-features --test
 //! job_resource_request`.
@@ -232,6 +233,31 @@ fn on_unified_memory_the_host_request_and_the_device_claim_are_leased_as_their_s
     assert_eq!(
         placement.host_memory_mib, HOST_MIB,
         "the device's own memory is not the host's"
+    );
+}
+
+/// Review round 1 of #10431: the sum was saturated, so a request for
+/// `u64::MAX` MiB with a 1 MiB claim on a unified device was placed with
+/// `u64::MAX` MiB, one MiB short of what it asked.
+#[test]
+fn a_unified_pool_with_no_value_in_mib_is_refused_not_saturated() {
+    let unified = device(
+        "soc-gpu",
+        DeviceKind::Gpu,
+        DeviceMemory::Unified { mib: 65_536 },
+        &["metal"],
+    );
+    let mut whole_range = request(vec![claim(
+        DeviceKind::Gpu,
+        1,
+        &["metal"],
+        Sharing::Exclusive,
+    )]);
+    whole_range.memory_mib = u64::MAX;
+    assert_eq!(
+        whole_range.place_devices(&[free(unified)]),
+        Err(DevicePlacementError::HostMemoryOverflow { claim: 0 }),
+        "u64::MAX MiB plus 1 MiB is no amount a machine can lease",
     );
 }
 
