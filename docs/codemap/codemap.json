@@ -142890,7 +142890,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -142911,6 +142911,16 @@
      "purpose": "Fair dispatch of authenticated inbound admissions (FIX 8620), and the one receipt each leaves however it…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/iroh_transport/connection.rs",
+     "purpose": "An admitted connection and its streams",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -143045,9 +143055,9 @@
     },
     "iroh_transport": {
      "entry": "crates/oneiron-mesh-transport/src/iroh_transport.rs",
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Private iroh data plane",
      "spec_ids": []
@@ -143084,9 +143094,9 @@
      "spec_ids": []
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 9,
+   "source_files": 10,
    "test_files": 3
   },
   "oneiron-model": {
