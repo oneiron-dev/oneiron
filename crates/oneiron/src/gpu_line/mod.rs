@@ -40,7 +40,8 @@ pub use mint::{
     economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
     pools, posterior_sampling,
 };
-pub(crate) use store::{erase_line_actor_in_txn, period_row_seals_seed};
+pub(crate) use store::erase_line_actor_in_txn;
+pub(crate) use store::period_row_seals_seed;
 pub use store::{
     MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,
     settled_tallies_in_txn, stored_period_in_txn,
