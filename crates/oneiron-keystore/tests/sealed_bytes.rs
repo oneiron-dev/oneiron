@@ -400,8 +400,9 @@ mod windows_tier {
             .expect("the Windows tier has a home for sealed bytes");
         each_name_keeps_its_own_value(home);
         a_value_out_of_bounds_is_refused(home);
-        assert!(
-            file_names(&dir).is_empty(),
+        assert_eq!(
+            file_names(&dir),
+            ["temp-writers.lock"],
             "the home left a file behind after every value was removed"
         );
 
@@ -412,7 +413,7 @@ mod windows_tier {
             .expect("the device PIN key is replaced");
         assert_eq!(
             file_names(&dir),
-            ["device-pin-key.sealed"],
+            ["device-pin-key.sealed", "temp-writers.lock"],
             "a put left a temporary file, or named its file otherwise"
         );
         let on_disk = fs::read(sealed_file(&dir, &device)).expect("the sealed file reads");
@@ -449,7 +450,8 @@ mod windows_tier {
             file_names(&dir),
             [
                 format!("{}.dpapi", slot.name()),
-                format!("{}.sealed", slot.name())
+                format!("{}.sealed", slot.name()),
+                "temp-writers.lock".to_owned()
             ]
         );
 

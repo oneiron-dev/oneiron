@@ -18,6 +18,20 @@ pub(crate) fn enrolment_alpn() -> Option<&'static [u8]> {
     Some(oneiron_mesh_transport::SYNC_ALPN)
 }
 
+/// The protocols an enrolled machine's binding may be granted later: every
+/// protocol this engine serves (MESH-PAIRING-CEILING = A). Each grant stays
+/// the owner's own act.
+#[cfg(feature = "mesh")]
+pub(crate) fn enrolment_ceiling() -> &'static [&'static [u8]] {
+    &crate::handler::mesh::SERVED_MESH_ALPNS
+}
+
+/// A build without the `mesh` feature serves no protocol.
+#[cfg(not(feature = "mesh"))]
+pub(crate) fn enrolment_ceiling() -> &'static [&'static [u8]] {
+    &[]
+}
+
 /// A build without the `mesh` feature runs no listener and binds nothing.
 #[cfg(not(feature = "mesh"))]
 pub(crate) fn enrolment_alpn() -> Option<&'static [u8]> {
@@ -83,7 +97,10 @@ impl From<MeshBindRefusal> for MeshRefusedReason {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum MeshBindReceipt {
     /// The endpoint is bound and holds the ALPN: on a fresh pairing slip,
-    /// named here, or on the binding an earlier pairing made.
+    /// named here, or on the binding an earlier pairing made. A re-enrolment
+    /// that moved that binding to a new pairing names the new slip here, for
+    /// the owner to bind the machine on in each other replica that bound it
+    /// (`vault.mesh.bind_machine`).
     Bound {
         machine: String,
         endpoint_key: String,
@@ -108,11 +125,13 @@ impl MeshBindReceipt {
             MeshEnrolment::Regranted {
                 machine,
                 endpoint_key,
+                re_paired,
             }
             | MeshEnrolment::AlreadyGranted {
                 machine,
                 endpoint_key,
-            } => Self::granted(*machine, endpoint_key, None, alpn),
+                re_paired,
+            } => Self::granted(*machine, endpoint_key, re_paired.as_ref(), alpn),
             MeshEnrolment::Refused(refusal) => Self::Refused {
                 reason: (*refusal).into(),
             },

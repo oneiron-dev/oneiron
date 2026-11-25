@@ -143,6 +143,7 @@ pub fn job_refusal_code(refusal: &JobRefusal) -> &'static str {
         JobRefusal::KeyConflict => "key_conflict",
         JobRefusal::NotTheKeysIssuer => "not_the_keys_issuer",
         JobRefusal::SubmitSignatureInvalid => "submit_signature_invalid",
+        JobRefusal::DevicesUnreadable { .. } => "devices_unreadable",
     }
 }
 
@@ -151,6 +152,7 @@ pub fn job_refusal_code(refusal: &JobRefusal) -> &'static str {
 pub fn job_answer_kind(answer: &JobAnswer) -> &'static str {
     match answer {
         JobAnswer::Node(_) => "node",
+        JobAnswer::Availability(_) => "availability",
         JobAnswer::Receipt(_) => "receipt",
         JobAnswer::Busy { .. } => "busy",
         JobAnswer::Refused(_) => "refused",

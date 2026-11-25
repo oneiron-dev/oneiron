@@ -418,7 +418,11 @@ fn redeem_with_mesh(
             &pairing_key.sign(&transcript).to_bytes(),
             request,
             None,
-            (identity, MESH_ALPN),
+            oneiron::authority::MeshEnrolmentAsk {
+                identity,
+                granted: MESH_ALPN,
+                ceiling: &[MESH_ALPN],
+            },
         )
         .expect("the peer redeems with its mesh identity")
 }

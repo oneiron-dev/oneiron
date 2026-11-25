@@ -2543,7 +2543,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | OF-535 | `crates/oneiron/src/verbs/mesh.rs` | s |
 | OF-535 | `crates/oneiron-mesh-transport/src/files_search.rs` | s |
 | OF-535 | `crates/oneiron-mesh-transport/src/sync_dialer.rs` | s |
-| OF-535 | `crates/oneiron-server/src/handler/mesh.rs` | m |
+| OF-535 | `crates/oneiron-server/src/handler/mesh.rs` | L |
 | OF-536 | `crates/oneiron/examples/write_mix_bench.rs` | m |
 | OF-536 | `crates/oneiron/src/session_lifecycle.rs` | L |
 | OF-536 | `crates/oneiron/src/store/group_commit.rs` | L |

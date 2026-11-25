@@ -428,6 +428,7 @@ impl JobNodeClient for ScriptedNode {
     fn job(&self, machine: EntityId, request: &JobRequest) -> Result<JobAnswer, NodeCallError> {
         let (kind, key) = match request {
             JobRequest::Node => ("node", None),
+            JobRequest::Availability => ("availability", None),
             JobRequest::Reserve(req) => ("reserve", Some(req.key.as_str())),
             JobRequest::Release { key } => ("release", Some(key.as_str())),
             JobRequest::Submit(req) => ("submit", Some(req.submit.key.as_str())),
@@ -454,6 +455,10 @@ impl JobNodeClient for ScriptedNode {
                 swept: true,
                 boot_id: "node-boot".to_owned(),
                 engine_version: "scripted".to_owned(),
+            }),
+            // The connector never asks for a GPU reading; the script has none.
+            JobRequest::Availability => JobAnswer::Refused(JobRefusal::DevicesUnreadable {
+                why: "the scripted node has no GPUs".to_owned(),
             }),
             JobRequest::Reserve(req) => {
                 if let Some(receipt) = node.journal.get(&req.key) {
