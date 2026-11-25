@@ -17,6 +17,8 @@ use crate::gpu_execution_node::node::{
 };
 use crate::gpu_execution_node::{ExecutionNodeSettings, NodeControls};
 
+mod measure_path;
+
 /// The journal's file in the state directory (design 5.2; row R3a's
 /// `JOURNAL_FILE_NAME`).
 const JOURNAL_FILE_NAME: &str = "journal";
@@ -37,6 +39,7 @@ const LOST_HISTORY_PREFIX: &str = "lost-history-";
 /// condition that would refuse a job.
 pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
     match command {
+        ExecutionNodeCommand::MeasurePath(args) => measure_path::measure_path(args),
         ExecutionNodeCommand::Check(args) => check(&args),
         ExecutionNodeCommand::Enable(args) => {
             remove_marker(&marker(&args, DISABLED_MARKER_EXTENSION))?;
