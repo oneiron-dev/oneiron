@@ -233,6 +233,9 @@ EOF
   fi
 }
 
+# A 64 MiB request: the unit's own steps count against its cap, so it gets the 256 MiB floor (FIX
+# EXEC-UNIT-STEPS-IN-MEMORY-CAP; q3 at 062b3440 saw a 64 MiB cap OOM-kill the unit before the gate's record). The
+# workload holds 400 MiB, over the floor.
 a_job_over_its_memory_request_ends_as_memory_limit() {
   launch t18 qual 120 64 "" <<'EOF'
 head -c 400M /dev/zero | tail -n 1 > /dev/null
@@ -240,10 +243,33 @@ exit 0
 EOF
   start
   wait_ended 60 || { result "$FUNCNAME" FAIL "no end record in 60 s"; return; }
-  if [ "$(ended .service_result)" = oom-kill ] && [ "$(ended .workload_started)" = true ] && gone; then
-    result "$FUNCNAME" PASS "MemoryMax 64 MiB; service result oom-kill; cgroup empty"
+  local cap; cap=$(jq -r '.properties[] | select(startswith("MemoryMax="))' "$C/prepared.json")
+  if [ "$cap" = "MemoryMax=$((256 << 20))" ] && [ "$(ended .service_result)" = oom-kill ] && [ "$(ended .workload_started)" = true ] && gone; then
+    result "$FUNCNAME" PASS "64 MiB request, $cap (the floor); the workload started; service result oom-kill; cgroup empty"
   else
-    result "$FUNCNAME" FAIL "$(cat "$C/ended.json" | tr -d '\n')"
+    local scope=absent; [ -f "$C/scope.json" ] && scope=present
+    result "$FUNCNAME" FAIL "${cap:-no MemoryMax in prepared.json}; scope.json $scope; $(tr -d '\n' < "$C/ended.json")"
+  fi
+}
+
+# A workload that ends at once is recorded as started: the gate judges the exec by job-exec's exec mark on the report
+# pipe, never by the process after the pipe closed (FIX EXEC-UNIT-GATE-EXEC-RACE). Three runs.
+a_workload_that_ends_at_once_is_recorded_as_started() {
+  local run why=
+  for run in 1 2 3; do
+    launch t17c qual 120 256 "" <<'EOF'
+exit 3
+EOF
+    start
+    wait_ended 60 || { why="run $run: no end record in 60 s"; break; }
+    if [ "$(ended .workload_started)" != true ] || [ "$(ended .exit_code)" != exited ] || [ "$(ended .exit_status)" != 3 ]; then
+      why="run $run: $(tr -d '\n' < "$C/ended.json")"; break
+    fi
+  done
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "3 workloads that exit 3 at once: each recorded started, exit 3"
+  else
+    result "$FUNCNAME" FAIL "$why"
   fi
 }
 
@@ -501,6 +527,7 @@ for test in \
   the_engines_account_starts_only_job_units_and_only_through_the_control_socket \
   a_child_that_left_its_session_dies_when_the_leader_exits \
   a_job_over_its_memory_request_ends_as_memory_limit \
+  a_workload_that_ends_at_once_is_recorded_as_started \
   a_job_cannot_open_the_vault_store_the_keystore_or_the_control_files \
   a_job_writes_only_its_out_tmp_log_and_its_templates_write_paths \
   a_fast_writer_is_stopped_within_its_request_plus_the_rate_times_five_seconds \

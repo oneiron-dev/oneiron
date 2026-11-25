@@ -12,9 +12,10 @@
 //! inner file wall (Landlock); prove the wall, the protected paths, the
 //! network, the hidden processes and the cgroup limits; report (one line,
 //! the pipe kept open); wait for the go; close every descriptor above 2 at
-//! the exec; `execve`. The report pipe closes with a successful exec; a
-//! failed one writes why on it first, so the gate records that the workload
-//! never started (review r2 R2-02).
+//! the exec; write the exec mark; `execve`. The report pipe closes with a
+//! successful exec; a failed one writes why on it after the mark, so the
+//! gate records that the workload never started (review r2 R2-02; the mark:
+//! FIX EXEC-UNIT-GATE-EXEC-RACE).
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -29,8 +30,8 @@ use super::records::{
     enforced_by_kernel, first_unmet, not_enforced,
 };
 use super::{
-    EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END, REPORT_PIPE_NAME,
-    exec_status, is_job_instance,
+    EXCHANGE_ROOT, EXEC_FILE_NAME, EXEC_MARK, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END,
+    REPORT_PIPE_NAME, exec_status, is_job_instance,
 };
 
 /// How long `job-exec` waits for the gate's read end, and then for its go.
@@ -379,11 +380,13 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
 }
 
 /// Marks every descriptor above 2 close-on-exec, enters the payload
-/// directory and becomes the workload's program. The report pipe closes with
-/// the exec; when the exec fails, why goes on the pipe first
+/// directory and becomes the workload's program. Just before the exec it
+/// writes [`EXEC_MARK`] on the report pipe, and the pipe closes with the
+/// exec; when the exec fails, why goes on the pipe after the mark
 /// ([`exec_failed`]). Returns only when the exec failed.
 fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
     use std::os::unix::process::CommandExt as _;
+    let mut report = std::fs::File::from(report_pipe);
     // SAFETY: CLOSE_RANGE_CLOEXEC marks descriptors 3 and up close-on-exec;
     // it closes nothing this process still reads before the exec.
     let marked = unsafe {
@@ -396,7 +399,7 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
     };
     if marked != 0 {
         return exec_failed(
-            report_pipe,
+            &mut report,
             &format!(
                 "descriptors above 2 could not be closed: {}",
                 io::Error::last_os_error()
@@ -404,23 +407,30 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
         );
     }
     let Some((program, args)) = exec.argv.split_first() else {
-        return exec_failed(report_pipe, "exec.json names no program");
+        return exec_failed(&mut report, "exec.json names no program");
     };
+    // Without the mark the gate records that the workload never started, so
+    // no exec follows a mark that did not reach it.
+    if let Err(error) = report.write_all(EXEC_MARK) {
+        return exec_failed(
+            &mut report,
+            &format!("the exec mark did not reach the gate: {error}"),
+        );
+    }
     let error = std::process::Command::new(program)
         .args(args)
         .env_clear()
         .envs(&exec.env)
         .current_dir(&exec.cwd)
         .exec();
-    exec_failed(report_pipe, &format!("{program}: {error}"))
+    exec_failed(&mut report, &format!("{program}: {error}"))
 }
 
 /// Tells the gate on the report pipe why the workload's exec failed, as one
 /// line, and returns the status for it.
-fn exec_failed(report_pipe: OwnedFd, why: &str) -> i32 {
+fn exec_failed(report: &mut std::fs::File, why: &str) -> i32 {
     journal_line!("job-exec: {why}");
-    let mut file = std::fs::File::from(report_pipe);
-    if let Err(error) = writeln!(file, "{}", why.replace('\n', " ")) {
+    if let Err(error) = writeln!(report, "{}", why.replace('\n', " ")) {
         journal_line!("job-exec: the gate was not told: {error}");
     }
     exec_status::EXEC_FAILED
