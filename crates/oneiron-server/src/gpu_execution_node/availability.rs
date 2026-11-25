@@ -5,9 +5,10 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use oneiron::job_workload::{DeviceFacts, DeviceState, HeldDevice, Sharing};
 use serde::{Deserialize, Serialize};
 
-use super::device::GpuDevice;
+use super::device::{GpuDevice, gpu_device_facts};
 use super::slots::{GpuSlotRefusal, GpuSlotRequest};
 
 /// How many jobs in a row must finish failed before the machine is drained.
@@ -174,6 +175,50 @@ pub struct GpuDeviceAvailability {
     pub state: GpuDeviceState,
 }
 
+impl GpuDeviceAvailability {
+    /// This GPU as placement reads it (pass 34, 2.1), for
+    /// [`oneiron::job_workload::ResourceRequest::place_devices`]. A free GPU
+    /// is offered. A GPU that runs another's compute process, that another
+    /// booker holds or that this machine does not offer is withheld: no
+    /// claim takes it now. A GPU leased, launched or quarantined under a key
+    /// has that key as its one exclusive holder.
+    #[must_use]
+    pub fn held(&self) -> HeldDevice {
+        let (state, holder) = match &self.state {
+            GpuDeviceState::Free => (DeviceState::Offered, None),
+            GpuDeviceState::Busy { .. } | GpuDeviceState::Withheld | GpuDeviceState::NotOffered => {
+                (DeviceState::Withheld, None)
+            }
+            GpuDeviceState::Leased { key } | GpuDeviceState::Launched { key } => (
+                DeviceState::Leased {
+                    keys: vec![key.clone()],
+                },
+                Some(Sharing::Exclusive),
+            ),
+            GpuDeviceState::Quarantined { why, key } => (
+                DeviceState::Quarantined { why: why.clone() },
+                key.as_ref().map(|_| Sharing::Exclusive),
+            ),
+        };
+        HeldDevice {
+            facts: gpu_device_facts(&self.device, state),
+            holders: holder.into_iter().collect(),
+        }
+    }
+
+    /// What this GPU is and does, as [`Self::held`] reads it.
+    #[must_use]
+    pub fn facts(&self) -> DeviceFacts {
+        self.held().facts
+    }
+}
+
+/// Whether `request` may take `device`, a GPU the driver listed, whatever it
+/// is doing now.
+pub(super) fn admits_gpu(request: &GpuSlotRequest, device: &GpuDevice) -> bool {
+    request.admits(&gpu_device_facts(device, DeviceState::Offered))
+}
+
 /// What this machine's GPUs are doing, read from the driver when it was
 /// asked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +238,17 @@ pub struct GpuAvailability {
 }
 
 impl GpuAvailability {
+    /// Every GPU of the answer as placement reads it
+    /// ([`GpuDeviceAvailability::held`]). While the machine is paused or
+    /// drained, a caller places nothing on it.
+    #[must_use]
+    pub fn held_devices(&self) -> Vec<HeldDevice> {
+        self.devices
+            .iter()
+            .map(GpuDeviceAvailability::held)
+            .collect()
+    }
+
     /// The free GPUs that meet `request`. There are none while the machine is
     /// paused, drained or while its disk has no room for the request's bytes.
     pub fn free_matching<'a>(
@@ -205,7 +261,7 @@ impl GpuAvailability {
         self.devices
             .iter()
             .filter(move |device| {
-                open && device.state == GpuDeviceState::Free && request.admits(&device.device)
+                open && device.state == GpuDeviceState::Free && admits_gpu(request, &device.device)
             })
             .map(|device| &device.device)
     }

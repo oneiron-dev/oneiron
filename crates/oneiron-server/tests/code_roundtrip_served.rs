@@ -572,6 +572,8 @@ impl Fixture {
                 }),
                 intent_key: None,
                 brief: None,
+                one_liner: None,
+                lens_refs: Vec::new(),
                 ttl: None,
                 parent_ref: None,
                 due_at: None,

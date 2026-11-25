@@ -23,14 +23,11 @@
 //! service holds the node.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use oneiron::EntityId;
-use oneiron::job_workload::{
-    BoundRequirement, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory,
-    DevicePlacement, DeviceState, HeldDevice, Sharing,
-};
+use oneiron::job_workload::{BoundRequirement, DevicePlacement, HeldDevice};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron_organ_host::MachineFloor;
 
@@ -43,7 +40,8 @@ pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, ScopeReport, SignedJobSubmit, WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
+    ScopeReport, SignedJobSubmit, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -70,6 +68,10 @@ pub struct NodeJobSettings {
     /// `jobs.drain.fast_exit_secs`: an end this soon after the launch counts
     /// against the machine's drain guard. Default 5.
     pub fast_exit_secs: u64,
+    /// `jobs.receipts.keep_days`: how long an acknowledged key's payload
+    /// stays on the node before the cleaning removes it (design 7.6 step 5).
+    /// Default 30, longer than an allocation period.
+    pub receipt_keep_days: u64,
 }
 
 impl Default for NodeJobSettings {
@@ -80,6 +82,7 @@ impl Default for NodeJobSettings {
             output_hash_limit_secs: 60,
             returnable_max_bytes: FETCH_MAX_BYTES,
             fast_exit_secs: 5,
+            receipt_keep_days: 30,
         }
     }
 }
@@ -158,6 +161,14 @@ pub trait NodeAdmission: Send + Sync {
 
     /// The node's `jobs.*` settings now.
     fn job_settings(&self) -> NodeJobSettings;
+
+    /// The operating-system signal the template delivers as a checkpoint
+    /// notice (design 7.1 `Signal`); `None`, the default: the notice is a
+    /// no-op for this template.
+    fn template_signal(&self, template: &str) -> Option<String> {
+        let _ = template;
+        None
+    }
 }
 
 /// The machine's devices, as the job service places and leases them. The
@@ -261,6 +272,15 @@ pub trait Stager: Send + Sync {
     ///
     /// [`StageFailure`]: the key does not launch.
     fn stage(&self, order: &StageOrder, closed: &dyn Fn() -> bool) -> Result<(), StageFailure>;
+
+    /// Removes what [`Stager::stage`] left in `payload_dir` for `key` when
+    /// the key does not launch after it (a stop, the staging limit, a stale
+    /// authority, a launch refusal, or a restart that ended the key), and at
+    /// the release check of a key that launched. The recovery at each start
+    /// calls it again for every key that ended before its launch, so it
+    /// makes nothing and may find nothing to remove. The default has nothing
+    /// to remove.
+    fn unstage(&self, _key: &str, _payload_dir: &Path) {}
 }
 
 /// The stager until row R3c lands: it stages nothing and refuses every
@@ -355,8 +375,13 @@ impl NodeAdmission for ExecutionNode {
     fn job_settings(&self) -> NodeJobSettings {
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
+            receipt_keep_days: ExecutionNode::receipt_keep_days(self),
             ..NodeJobSettings::default()
         }
+    }
+
+    fn template_signal(&self, template: &str) -> Option<String> {
+        ExecutionNode::template_signal(self, template)
     }
 }
 
@@ -366,58 +391,15 @@ impl AuthorityPosition for ExecutionNode {
     }
 }
 
-/// One GPU of the slot table as placement reads it (pass 34, 2.1), until
-/// OPUS-LE-FLEET's table reports `DeviceFacts` itself: a GPU with its own
-/// memory and no named features, which its job opens alone, one claim at a
-/// time. A compute process of another account does not show here: the
-/// lease's confirmation refuses it inside the launch commit.
-fn held_gpu(slot: &crate::gpu_execution_node::availability::GpuDeviceAvailability) -> HeldDevice {
-    use crate::gpu_execution_node::availability::GpuDeviceState;
-    let (state, holder) = match &slot.state {
-        GpuDeviceState::Free | GpuDeviceState::Busy { .. } => (DeviceState::Offered, None),
-        GpuDeviceState::Leased { key } | GpuDeviceState::Launched { key } => (
-            DeviceState::Leased {
-                keys: vec![key.clone()],
-            },
-            Some(Sharing::Exclusive),
-        ),
-        GpuDeviceState::Quarantined { why, key } => (
-            DeviceState::Quarantined { why: why.clone() },
-            key.as_ref().map(|_| Sharing::Exclusive),
-        ),
-        GpuDeviceState::Withheld | GpuDeviceState::NotOffered => (DeviceState::Withheld, None),
-    };
-    HeldDevice {
-        facts: DeviceFacts {
-            id: slot.device.device_id.clone(),
-            id_source: DeviceIdSource::VendorUuid,
-            kind: DeviceKind::Gpu,
-            vendor: String::new(),
-            model: slot.device.model.clone(),
-            memory: DeviceMemory::Dedicated {
-                mib: slot.device.memory_total_mib,
-            },
-            features: Vec::new(),
-            closure: DeviceClosure::Closed,
-            state,
-            max_claimants: 1,
-        },
-        holders: holder.into_iter().collect(),
-    }
-}
-
 impl NodeDevices for GpuSlotTable {
     fn devices(&self) -> Result<Vec<HeldDevice>, String> {
-        let availability = self
-            .availability(oneiron_base::unix_millis_now())
-            .map_err(|error| format!("devices_unreadable: {error}"))?;
-        if let Some(why) = &availability.paused {
-            return Err(format!("node_paused: {why}"));
-        }
-        if let Some(why) = &availability.drained {
-            return Err(format!("node_drained: {why}"));
-        }
-        Ok(availability.devices.iter().map(held_gpu).collect())
+        self.held_devices(oneiron_base::unix_millis_now())
+            .map_err(|refusal| match refusal {
+                GpuSlotRefusal::Paused { reason } => format!("node_paused: {reason}"),
+                GpuSlotRefusal::Drained { reason } => format!("node_drained: {reason}"),
+                GpuSlotRefusal::Unmeasured { reason } => format!("devices_unreadable: {reason}"),
+                other => format!("devices_unreadable: {other}"),
+            })
     }
 
     fn lease_for_launch(
@@ -490,6 +472,10 @@ fn not_enabled() -> JobAnswer {
     JobAnswer::Refused(JobRefusal::NotEnabled)
 }
 
+fn status_not_enabled() -> JobStatusAnswer {
+    JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+}
+
 impl NodeKeys for NodeJobsAttachment {
     fn reserve(&self, peer: EntityId, reserve: JobReserve) -> JobAnswer {
         self.service()
@@ -540,6 +526,41 @@ impl NodeKeys for NodeJobsAttachment {
 
     fn scopes(&self) -> Vec<ScopeReport> {
         self.service().map(|jobs| jobs.scopes()).unwrap_or_default()
+    }
+
+    fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.find(peer, key))
+    }
+
+    fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.stop(peer, key))
+    }
+
+    fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.keys_page(peer, after))
+    }
+
+    fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.signal(peer, key, signal))
+    }
+
+    fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.fetch(peer, key, name))
+    }
+
+    fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
+    }
+
+    fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.tail(peer, request))
     }
 }
 
