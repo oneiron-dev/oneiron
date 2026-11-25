@@ -527,6 +527,7 @@ impl JobNodeClient for ScriptedNode {
             JobStatusRequest::Keys { .. } => ("keys", None),
             JobStatusRequest::Fetch { key, .. } => ("fetch", Some(key.as_str())),
             JobStatusRequest::Ack { key } => ("ack", Some(key.as_str())),
+            JobStatusRequest::Tail(tail) => ("tail", Some(tail.key.as_str())),
         };
         let (mut node, lose_answer) = self.enter_call(machine, kind, key, request)?;
         let answer = match request {
@@ -563,9 +564,15 @@ impl JobNodeClient for ScriptedNode {
                     Some(bytes) => JobStatusAnswer::Output {
                         bytes: bytes.clone(),
                     },
-                    None => JobStatusAnswer::Refused(JobRefusal::NotEnabled),
+                    None => JobStatusAnswer::Refused(JobRefusal::OutputNotFetchable {
+                        why: "the test put no such output".to_owned(),
+                    }),
                 }
             }
+            // The scripted node keeps no log.
+            JobStatusRequest::Tail(_) => JobStatusAnswer::Refused(JobRefusal::LogNotReadable {
+                why: "the scripted node keeps no log".to_owned(),
+            }),
         };
         if lose_answer {
             Err(NodeCallError::Timeout)
