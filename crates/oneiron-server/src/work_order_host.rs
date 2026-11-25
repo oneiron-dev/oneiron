@@ -8,6 +8,7 @@
 //! The pass runs on the built job worker (`gpu_host.rs`, OPUS-LE-FLEET's file), on its tick and
 //! on each wake: one worker.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
@@ -24,7 +25,7 @@ use oneiron::work_order::{
 use crate::gpu_execution_node::issuer::guard::observe_node_readiness;
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
+    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer, NodeReadiness,
 };
 use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
 use crate::server::SyncServer;
@@ -117,6 +118,9 @@ pub(crate) struct ServerOrderHost<'a> {
     server: &'a SyncServer,
     nodes: &'a dyn JobNodeClient,
     now_ms: u64,
+    /// Whether this host is the job worker's own pass, which acts on each `Node` answer's
+    /// readiness fact; a placement preview (`vault.machines.place`) only reads.
+    observe: bool,
 }
 
 impl<'a> ServerOrderHost<'a> {
@@ -125,6 +129,15 @@ impl<'a> ServerOrderHost<'a> {
             server,
             nodes,
             now_ms,
+            observe: false,
+        }
+    }
+
+    /// This host as the job worker's pass: it acts on the readiness facts it reads.
+    pub(crate) fn observing(self) -> Self {
+        Self {
+            observe: true,
+            ..self
         }
     }
 
@@ -162,18 +175,26 @@ impl OrderHost for ServerOrderHost<'_> {
         }
     }
 
-    /// Each machine's `Node` answer, as the pass's facts. The answer's readiness fact is read
-    /// first ([`observe_node_readiness`]): a passed check clears the issuer's drain before the
-    /// pass places, and a run of failed checks reaches the owner (CG-2 row 9).
+    /// Each machine's `Node` answer, as the pass's facts. On the worker's pass the answer's
+    /// readiness fact is acted on first ([`OrderLoop::observe_readiness`]): a passed check clears
+    /// the issuer's drain before the pass places, and a run of failed checks reaches the owner
+    /// (CG-2 row 9).
     fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
         machines
             .iter()
             .map(|machine| {
                 let answer = self.nodes.job(*machine, &JobRequest::Node).ok();
-                if let Some(JobAnswer::Node(node)) = &answer
+                if self.observe
+                    && let Some(JobAnswer::Node(node)) = &answer
                     && let Some(readiness) = &node.readiness
                 {
-                    observe_node_readiness(&self.server.vault, *machine, readiness, self.now_ms);
+                    self.server.gpu_jobs.orders().observe_readiness(
+                        &self.server.vault,
+                        *machine,
+                        node.drained.as_deref(),
+                        readiness,
+                        self.now_ms,
+                    );
                 }
                 facts_of_answer(*machine, answer.as_ref(), self.now_ms)
             })
@@ -428,9 +449,10 @@ pub(crate) fn order_pass(
     nodes: &dyn JobNodeClient,
     now_ms: u64,
 ) -> oneiron::Result<PassReport> {
-    server
-        .vault
-        .work_order_pass(&ServerOrderHost::new(server, nodes, now_ms), now_ms)
+    server.vault.work_order_pass(
+        &ServerOrderHost::new(server, nodes, now_ms).observing(),
+        now_ms,
+    )
 }
 
 /// The loop's state on this server: the wake its events send, the one-pass-at-a-time lock, and
@@ -443,6 +465,10 @@ pub(crate) struct OrderLoop {
     /// The slot deciders' asks this hour (row P1): the ceiling `policy.slots.max_asks_per_hour`
     /// counts them here, so an issuer that restarts opens a new window.
     asks: Mutex<SlotAskWindow>,
+    /// The readiness sample each machine last showed a pass: its check's time, its failed
+    /// checks in a row and whether its own drain stood. An answer that repeats it is not acted on
+    /// again (CG-2 row 9).
+    readiness_seen: Mutex<HashMap<EntityId, (Option<u64>, u32, bool)>>,
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -452,6 +478,36 @@ impl std::fmt::Debug for OrderLoop {
 }
 
 impl OrderLoop {
+    /// The worker pass's reading of `machine`'s readiness fact, with the node's own drain from the
+    /// same answer ([`observe_node_readiness`]), once per sample: an answer that repeats the
+    /// sample this loop last read changes nothing and takes no write. A sample whose write failed
+    /// waits for the machine's next check.
+    pub(crate) fn observe_readiness(
+        &self,
+        vault: &oneiron::Vault,
+        machine: EntityId,
+        node_drained: Option<&str>,
+        readiness: &NodeReadiness,
+        now_ms: u64,
+    ) {
+        let sample = (
+            readiness.checked_at_ms,
+            readiness.failed_in_a_row,
+            node_drained.is_some(),
+        );
+        {
+            let mut seen = self
+                .readiness_seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if seen.get(&machine) == Some(&sample) {
+                return;
+            }
+            seen.insert(machine, sample);
+        }
+        observe_node_readiness(vault, machine, node_drained, readiness, now_ms);
+    }
+
     /// Wakes the worker for a pass now: a new order, a cancel, an end.
     pub(crate) fn wake(&self) {
         self.wake.notify_one();

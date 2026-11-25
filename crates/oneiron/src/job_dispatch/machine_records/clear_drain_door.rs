@@ -3,8 +3,8 @@
 //! `machines.drain.clear_by` for that machine (declared in `machine_policy`), judged at each
 //! call:
 //! - `after_readiness_check` (the default): the owner, and a passed readiness check of row Q4
-//!   that ran after the drain clears it by itself, on the issuer's next read of the machine's
-//!   `Node` answer (`Vault::clear_machine_job_drain_after_check`);
+//!   that ran after the drain clears it by itself, when the issuer's job worker next reads the
+//!   machine's `Node` answer on a work-order pass (`Vault::clear_machine_job_drain_after_check`);
 //! - `owner`: the vault owner under their own proof;
 //! - `grants [...]`: the owner, or an agent whose own live Grant is listed there and names the
 //!   verb;

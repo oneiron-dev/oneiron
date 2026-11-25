@@ -20,7 +20,9 @@ use oneiron::machine_readiness::ReadinessEscalation;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultConfig};
-use oneiron_server::gpu_execution_node::issuer::guard::observe_node_readiness;
+use oneiron_server::gpu_execution_node::issuer::guard::{
+    READINESS_CLEAR_SKEW_MS, observe_node_readiness,
+};
 use oneiron_server::gpu_execution_node::wire::{
     NodeReadiness, ReadinessCheck, ReadinessResult, ReadinessState,
 };
@@ -111,20 +113,25 @@ fn failing(since_ms: u64, failed: u32) -> NodeReadiness {
     }
 }
 
-/// Under the default `after_readiness_check`, only a passed check that ran after the drain
-/// clears the issuer's drain and its count, once. A check that ran before it, or at the same
-/// millisecond, changes nothing.
+/// Under the default `after_readiness_check`, only a passed check that ran after the drain, by
+/// more than the two clocks may differ, and in an answer that shows the node's own drain cleared,
+/// clears the issuer's drain and its count, once. A check before the drain, at it or within the
+/// skew, or one the node still stands drained beside, changes nothing.
 #[test]
 fn a_passed_check_after_the_drain_clears_the_issuers_drain_under_the_default() {
     let (_dir, vault) = open();
     let machine = EntityId::now();
     let was = drain(&vault, machine);
 
-    for before in [DRAINED_AT_MS - PERIOD_MS, DRAINED_AT_MS] {
-        let observed = observe_node_readiness(&vault, machine, &passed(before), READ_AT_MS);
+    for before in [
+        DRAINED_AT_MS - PERIOD_MS,
+        DRAINED_AT_MS,
+        DRAINED_AT_MS + READINESS_CLEAR_SKEW_MS,
+    ] {
+        let observed = observe_node_readiness(&vault, machine, None, &passed(before), READ_AT_MS);
         assert_eq!(
             observed.cleared, None,
-            "a check at {before} ran before the drain"
+            "a check at {before} may have run before the drain"
         );
         assert_eq!(
             drained(&vault, machine),
@@ -133,9 +140,23 @@ fn a_passed_check_after_the_drain_clears_the_issuers_drain_under_the_default() {
         );
     }
 
+    let node_still_drained = observe_node_readiness(
+        &vault,
+        machine,
+        Some("readiness devices: driver not answering"),
+        &passed(DRAINED_AT_MS + PERIOD_MS),
+        READ_AT_MS,
+    );
+    assert_eq!(
+        node_still_drained.cleared, None,
+        "the node's own drain still stands in the same answer"
+    );
+    assert_eq!(drained(&vault, machine), Some(was.clone()));
+
     let observed = observe_node_readiness(
         &vault,
         machine,
+        None,
         &passed(DRAINED_AT_MS + PERIOD_MS),
         READ_AT_MS,
     );
@@ -164,14 +185,16 @@ fn a_passed_check_after_the_drain_clears_the_issuers_drain_under_the_default() {
     let again = observe_node_readiness(
         &vault,
         machine,
+        None,
         &passed(DRAINED_AT_MS + 2 * PERIOD_MS),
         READ_AT_MS + PERIOD_MS,
     );
     assert_eq!(again.cleared, None, "nothing is left to clear");
 }
 
-/// `machines.drain.clear_by` other than `after_readiness_check` keeps the drain for door 12 or
-/// the box: a passed check clears nothing.
+/// Any `machines.drain.clear_by` but `after_readiness_check` keeps the issuer's drain: under
+/// `owner` for door 12, under `person_at_box` for no verb at all (`resume` at the box clears only
+/// the node's own drain). A passed check clears nothing.
 #[test]
 fn a_passed_check_clears_nothing_under_any_other_clear_by() {
     let (_dir, vault) = open();
@@ -195,6 +218,7 @@ fn a_passed_check_clears_nothing_under_any_other_clear_by() {
         let observed = observe_node_readiness(
             &vault,
             machine,
+            None,
             &passed(DRAINED_AT_MS + PERIOD_MS),
             READ_AT_MS,
         );
@@ -217,7 +241,8 @@ fn a_run_of_failed_checks_raises_one_ask_at_escalate_after() {
     let since = DRAINED_AT_MS + PERIOD_MS;
 
     for failed in [1, 2] {
-        let observed = observe_node_readiness(&vault, machine, &failing(since, failed), READ_AT_MS);
+        let observed =
+            observe_node_readiness(&vault, machine, None, &failing(since, failed), READ_AT_MS);
         assert_eq!(
             observed.escalation,
             Some(ReadinessEscalation::BelowThreshold { escalate_after: 3 }),
@@ -226,7 +251,7 @@ fn a_run_of_failed_checks_raises_one_ask_at_escalate_after() {
         assert_eq!(observed.cleared, None);
     }
 
-    let third = observe_node_readiness(&vault, machine, &failing(since, 3), READ_AT_MS);
+    let third = observe_node_readiness(&vault, machine, None, &failing(since, 3), READ_AT_MS);
     let Some(ReadinessEscalation::Asked {
         seq,
         queued_now: true,
@@ -239,6 +264,7 @@ fn a_run_of_failed_checks_raises_one_ask_at_escalate_after() {
         let later = observe_node_readiness(
             &vault,
             machine,
+            None,
             &failing(since, failed),
             READ_AT_MS + PERIOD_MS,
         );

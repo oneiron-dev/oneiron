@@ -10,10 +10,11 @@
 //! under `after_readiness_check` (the default) so does a passed readiness check that ran after
 //! the drain ([`observe_node_readiness`], CG-2 row 9).
 //!
-//! [`observe_node_readiness`] is the issuer's reading of a node's readiness fact on its scheduled
-//! read of the `Node` answer (the work-order pass): a passed check clears the issuer's drain, and
-//! a run of failed checks reaches the owner as one ask per run once it is long enough (pass 34,
-//! 7.3 and 16, practice 6; row Q4).
+//! [`observe_node_readiness`] is the issuer's reading of a node's readiness fact on its worker's
+//! scheduled read of the `Node` answer (the work-order pass; a placement preview reads only): a
+//! passed check clears the issuer's drain, and a run of failed checks reaches the owner as one ask
+//! per run once it is long enough (pass 34, 7.3 and 16, practice 6; row Q4). The node's own drain
+//! is the node's: `resume` at the box clears only that one.
 
 use oneiron::gpu_job::MeterVerdict;
 use oneiron::job_dispatch::machine_records::{MachineDrain, MachineJobOutcome};
@@ -88,6 +89,11 @@ pub fn machine_job_guard_refusal(vault: &Vault, machine: EntityId) -> Option<Str
     }
 }
 
+/// How far two machines' clocks may differ: `jobs.submit.skew_secs`'s default (pass 33), the bound
+/// the node holds a reserve's `issued_at_ms` to. A check the node dates within it of the issuer's
+/// drain may have run before the drain, so it clears nothing; the machine's next check does.
+pub const READINESS_CLEAR_SKEW_MS: u64 = 120_000;
+
 /// What the issuer did with one reading of a machine's readiness fact.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReadinessObserved {
@@ -97,29 +103,30 @@ pub struct ReadinessObserved {
     pub escalation: Option<ReadinessEscalation>,
 }
 
-/// The issuer's reading of `machine`'s readiness fact, from the `Node` answer it read at
-/// `now_ms`:
+/// The issuer's reading of `machine`'s readiness fact, from one `Node` answer it read at
+/// `now_ms`, with the node's own drain in the same answer (`node_drained`):
 /// - a passed check clears the issuer's drain of the machine when `machines.drain.clear_by` is
-///   `after_readiness_check` and the check ran after the drain
-///   (`Vault::clear_machine_job_drain_after_check`); the node clears its own drain on the same
-///   check;
+///   `after_readiness_check`, the same answer shows the node's own drain cleared, and the check
+///   ran after the drain beyond [`READINESS_CLEAR_SKEW_MS`] (the check is dated by the machine's
+///   clock, the drain by the issuer's; `Vault::clear_machine_job_drain_after_check`);
 /// - a run of failed checks raises the owner's one ask for the run once it reaches
 ///   `machines.readiness.escalate_after` (`Vault::raise_machine_readiness_ask`); a later read of
 ///   the same run raises nothing more.
 ///
-/// The check's time is the machine's clock and the drain's the issuer's. A store failure is
-/// logged and changes nothing: the next read tries again.
+/// A store failure is logged and changes nothing: the machine's next check is read again.
 pub fn observe_node_readiness(
     vault: &Vault,
     machine: EntityId,
+    node_drained: Option<&str>,
     readiness: &NodeReadiness,
     now_ms: u64,
 ) -> ReadinessObserved {
     let mut observed = ReadinessObserved::default();
-    if let (ReadinessState::Ready, Some(checked_at_ms)) =
-        (&readiness.state, readiness.checked_at_ms)
+    if let (ReadinessState::Ready, Some(checked_at_ms), None) =
+        (&readiness.state, readiness.checked_at_ms, node_drained)
     {
-        match vault.clear_machine_job_drain_after_check(machine, checked_at_ms, now_ms) {
+        let ran_after_ms = checked_at_ms.saturating_sub(READINESS_CLEAR_SKEW_MS);
+        match vault.clear_machine_job_drain_after_check(machine, ran_after_ms, now_ms) {
             Ok(Some(drain)) => {
                 tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
                 observed.cleared = Some(drain);

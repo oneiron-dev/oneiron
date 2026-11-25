@@ -304,10 +304,11 @@ impl Vault {
     /// The readiness check's clear of the issuer's drain (pass 34 row Q4, CG-2 row 9: "a drained
     /// machine clears itself once its readiness check passes"). Under
     /// `machines.drain.clear_by = after_readiness_check` for `machine`, read in the same write, a
-    /// passed check that ran at `checked_at_ms` (the machine's clock), after the drain's `at_ms`,
-    /// clears the drain and its count, in one durable write. Under any other `clear_by`, for a
-    /// machine the issuer has not drained, and for a check that ran before the drain, nothing
-    /// changes. Answers the drain it cleared.
+    /// passed check known to have run after `check_ran_after_ms` on this install's clock (the
+    /// caller allows for the two machines' clocks) clears the drain and its count, in one durable
+    /// write, when that time is later than the drain's `at_ms`. Under any other `clear_by`, for a
+    /// machine the issuer has not drained, and for a check that may have run before the drain,
+    /// nothing changes. Answers the drain it cleared.
     ///
     /// # Errors
     ///
@@ -315,7 +316,7 @@ impl Vault {
     pub fn clear_machine_job_drain_after_check(
         &self,
         machine: EntityId,
-        checked_at_ms: u64,
+        check_ran_after_ms: u64,
         now_ms: u64,
     ) -> crate::Result<Option<MachineDrain>> {
         let row_key = machine.to_hex();
@@ -329,7 +330,10 @@ impl Vault {
             let Some(mut guard) = MACHINE_JOB_GUARDS.get(&self.store, txn, &row_key)? else {
                 return Ok(None);
             };
-            let Some(drain) = guard.drained.take_if(|drain| checked_at_ms > drain.at_ms) else {
+            let Some(drain) = guard
+                .drained
+                .take_if(|drain| check_ran_after_ms > drain.at_ms)
+            else {
                 return Ok(None);
             };
             guard.failures_in_a_row = 0;
