@@ -2,8 +2,9 @@
 # oneiron-keystore's manifest promises that its Windows adapters check for a
 # Windows target from any host: no dependency may need an SDK, a linker or a C
 # toolchain at build time. This runs that check: the library, its examples and
-# the sealed-bytes test target (whose Windows cases only a Windows box runs),
-# every feature, for one Windows target (`cargo check` never links).
+# the sealed-bytes and Windows key-directory test targets (whose Windows cases
+# only a Windows box runs), every feature, for one Windows target (`cargo
+# check` never links).
 #
 # It adds the target's standard library through rustup when it is missing, so
 # it needs the network once per toolchain.
@@ -14,4 +15,5 @@ set -euo pipefail
 target="${1:-x86_64-pc-windows-msvc}"
 cd "$(dirname "$0")/../.."
 rustup target add "${target}"
-cargo check --locked -p oneiron-keystore --all-features --lib --examples --test sealed_bytes --target "${target}"
+cargo check --locked -p oneiron-keystore --all-features --lib --examples --test sealed_bytes \
+  --test windows_tier_key_dir --target "${target}"
