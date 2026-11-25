@@ -77,6 +77,9 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
             );
             reset_history(&node_file(&args.node))
         }
+        ExecutionNodeCommand::Install(args) => install(&args),
+        ExecutionNodeCommand::UnitName(args) => unit_name(&args.key),
+        ExecutionNodeCommand::UnitControl(args) => unit_control(&args.verb, &args.key),
     }
 }
 
@@ -215,6 +218,16 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
             Err(error) => refusals.push(format!("{name} {}: {error}", dir.display())),
         }
     }
+    // The job unit (row R3b): each bound's strength, proved in a probe unit
+    // when run as root.
+    #[cfg(target_os = "linux")]
+    refusals.extend(
+        crate::gpu_execution_node::scope_systemd::probe_unit::check_scope(&file, &settings),
+    );
+    #[cfg(not(target_os = "linux"))]
+    refusals.push(
+        "this platform has no job scope yet (pass 34: the systemd scope is Linux's)".to_owned(),
+    );
     if refusals.is_empty() {
         println!(
             "would refuse a job: nothing here (the issuer's grants are checked at each request)"
@@ -256,4 +269,61 @@ fn reset_history(file: &Path) -> anyhow::Result<()> {
         aside.display()
     );
     Ok(())
+}
+
+/// `execution-node install` (row R3b): the job unit on Linux with systemd.
+#[cfg(target_os = "linux")]
+fn install(args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
+    use crate::gpu_execution_node::scope_systemd::install::{
+        InstallRequest, install as install_job_unit,
+    };
+    install_job_unit(&InstallRequest {
+        node_file: node_file(&args.node),
+        engine_account: args.engine_account.clone(),
+        protect: args.protect.clone(),
+        dry_run: args.dry_run,
+    })
+    .map_err(|why| anyhow::anyhow!("install: {why}"))
+}
+
+/// `execution-node install` has a job unit on Linux with systemd only.
+#[cfg(not(target_os = "linux"))]
+fn install(_args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
+    anyhow::bail!("install: the job unit needs Linux with systemd (pass 33, EM-4)")
+}
+
+/// `execution-node unit-name`: the job unit of a key.
+#[cfg(unix)]
+fn unit_name(key: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        crate::gpu_execution_node::jobs::JobKeyId::for_key(key).unit_name()
+    )?;
+    Ok(())
+}
+
+/// `execution-node unit-control`: the engine's own start or stop of a key's
+/// job unit, through the job control socket.
+#[cfg(target_os = "linux")]
+fn unit_control(verb: &str, key: &str) -> anyhow::Result<()> {
+    use crate::gpu_execution_node::scope_systemd::control::{self, ControlVerb};
+    let verb = ControlVerb::from_word(verb)
+        .ok_or_else(|| anyhow::anyhow!("unit-control: the verb is start or stop, not {verb:?}"))?;
+    let id = crate::gpu_execution_node::jobs::JobKeyId::for_key(key);
+    control::request(verb, &id)
+        .map_err(|why| anyhow::anyhow!("unit-control {} {id}: {why}", verb.word()))
+}
+
+/// Job units exist on Linux only.
+#[cfg(not(target_os = "linux"))]
+fn unit_control(_verb: &str, _key: &str) -> anyhow::Result<()> {
+    anyhow::bail!("unit-control: the job unit needs Linux with systemd (pass 33, EM-4)")
+}
+
+/// Job units exist on Linux only.
+#[cfg(not(unix))]
+fn unit_name(_key: &str) -> anyhow::Result<()> {
+    anyhow::bail!("unit-name: the job unit needs Linux with systemd (pass 33, EM-4)")
 }
