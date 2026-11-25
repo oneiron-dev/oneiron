@@ -423,17 +423,17 @@ impl NodeAdmission for ExecutionNode {
     }
 
     fn job_settings(&self) -> NodeJobSettings {
-        let file = ExecutionNode::settings(self).ok().flatten();
         let defaults = NodeJobSettings::default();
+        // One read of the box file for all four keys; with none, or one that
+        // does not parse, every key keeps its default.
+        let Some(file) = ExecutionNode::settings(self).ok().flatten() else {
+            return defaults;
+        };
         NodeJobSettings {
-            staging_limit_secs: ExecutionNode::staging_limit_secs(self),
-            receipt_keep_days: ExecutionNode::receipt_keep_days(self),
-            readiness_every_secs: file.as_ref().map_or(defaults.readiness_every_secs, |file| {
-                file.readiness_every_secs
-            }),
-            drain_clear_by: file
-                .as_ref()
-                .map_or(defaults.drain_clear_by, |file| file.drain_clear_by),
+            staging_limit_secs: file.staging_limit_secs,
+            receipt_keep_days: u64::from(file.receipt_keep_days),
+            readiness_every_secs: file.readiness_every_secs,
+            drain_clear_by: file.drain_clear_by,
             ..defaults
         }
     }

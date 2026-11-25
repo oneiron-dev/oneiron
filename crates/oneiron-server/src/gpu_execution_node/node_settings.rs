@@ -93,7 +93,9 @@ struct ExecutionNodeFile {
     execution_node: ExecutionNodeSettings,
 }
 
-/// The node's `[execution_node]` table.
+/// The node's `[execution_node]` table. An engine refuses a file with a key
+/// it does not know (`deny_unknown_fields`): set `readiness_every_secs` or
+/// `drain_clear_by` only on a machine whose engine has pass 34 row Q4.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionNodeSettings {

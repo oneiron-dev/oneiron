@@ -439,8 +439,7 @@ impl NodeJobs {
                 other_compute_pids: Vec::new(),
             };
             Self::record_end_step(journal, known, now, event)?;
-            self.quarantine_device(known, why);
-            self.quarantine_incidents(known, why);
+            self.quarantine_with_incident(known, why);
         }
         Ok(())
     }
@@ -451,17 +450,6 @@ impl NodeJobs {
     pub(super) fn quarantine_device(&self, known: &NodeKey, why: &str) {
         for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
             self.parts().devices.quarantine(&lease.device_id, why);
-        }
-    }
-
-    /// One incident for each device a fresh quarantine put out (recovery's
-    /// replay of a quarantine writes none).
-    fn quarantine_incidents(&self, known: &NodeKey, why: &str) {
-        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
-            self.record_incident(super::IncidentKind::DeviceQuarantined {
-                device: lease.device_id.clone(),
-                why: why.to_owned(),
-            });
         }
     }
 
@@ -604,10 +592,7 @@ impl NodeJobs {
                 other_compute_pids: pids,
             };
             match journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event) {
-                Ok(_) => {
-                    self.quarantine_device(known, &why);
-                    self.quarantine_incidents(known, &why);
-                }
+                Ok(_) => self.quarantine_with_incident(known, &why),
                 Err(error) => log_write_error(&known.key, &error),
             }
         };
