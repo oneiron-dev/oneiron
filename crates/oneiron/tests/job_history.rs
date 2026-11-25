@@ -364,6 +364,7 @@ fn history_totals_equal_the_settled_holds_of_the_same_period() {
         periods: &fixture.periods,
         orders: &[],
         observations: &[],
+        unattributed: &[],
     };
     let filter = request().filter().expect("a valid request");
     let history = project(&inputs, &filter, HistoryViewer::Owner);
@@ -436,6 +437,7 @@ fn an_agent_reads_only_the_attempts_it_reserved_and_their_totals() {
         periods: &fixture.periods,
         orders: &[],
         observations: &[],
+        unattributed: &[],
     };
     let filter = request().filter().expect("a valid request");
     let own = project(&inputs, &filter, HistoryViewer::Requester(other_agent()));
@@ -518,6 +520,7 @@ fn a_line_unit_shows_the_meter_its_issuer_judged_and_keeps_its_claim_terminal() 
         periods: &fixture.periods,
         orders: &[],
         observations: &observations,
+        unattributed: &[],
     };
     let filter = request().filter().expect("a valid request");
     let history = project(&inputs, &filter, HistoryViewer::Owner);

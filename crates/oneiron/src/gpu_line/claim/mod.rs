@@ -35,7 +35,8 @@ pub(crate) mod tables;
 pub(crate) use allocation::start_claim_in_txn;
 pub use allocation::{
     AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob,
-    allocation_standing_in_txn, claim_hold_in_txn, open_claim_in_txn, record_node_answer_in_txn,
+    UnattributedRecord, allocation_standing_in_txn, claim_hold_in_txn, open_claim_in_txn,
+    record_node_answer_in_txn, unattributed_in_txn,
 };
 
 /// Domain of a unit key's digest in a claim's row key.

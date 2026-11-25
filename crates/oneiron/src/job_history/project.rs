@@ -1,12 +1,15 @@
-//! The pure projection behind `vault.jobs.history`: stored jobs, claims, periods, work orders
-//! and the issuer's observations in, the ended attempts and their totals out. It reads the
-//! claim's terminal exactly as the line's fold does, so its charged seconds are the fold's.
+//! The pure projection behind `vault.jobs.history`: stored jobs, claims, periods, work orders,
+//! the issuer's observations and the allocation's unattributed records in, the ended attempts
+//! and their totals out. It reads the claim's terminal exactly as the line's fold does, so its
+//! charged seconds are the fold's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
 use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobEnd, GpuJobState, MeterVerdict};
-use crate::gpu_line::{ClaimState, GpuLinePeriod, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal};
+use crate::gpu_line::{
+    ClaimState, GpuLinePeriod, UnattributedRecord, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal,
+};
 use crate::job_dispatch::JobObservation;
 use crate::work_order::{OrderAttempt, WorkOrder};
 
@@ -30,6 +33,9 @@ pub struct HistoryInputs<'a> {
     /// The issuer's observation of each attempt key a vault machine answered for
     /// (`JOB_OBSERVATION`, pass 33 5.1), in any order.
     pub observations: &'a [JobObservation],
+    /// Every machine's answer that lists jobs no row of the vault names (`GPU_ALLOCATION_NODE`,
+    /// pass 33 8.5, EM-15), in any order.
+    pub unattributed: &'a [UnattributedRecord],
 }
 
 /// Whose attempts the answer holds.
@@ -138,7 +144,8 @@ pub fn project(
         .filter(|attempt| admitted(attempt, filter, viewer))
         .collect();
     attempts.sort_by_cached_key(HistoryCursor::of);
-    let totals = totals(&attempts, inputs.periods);
+    let unattributed = unattributed_of(inputs.unattributed, filter, viewer);
+    let totals = totals(&attempts, &unattributed, inputs.periods);
     let start = filter.after.as_ref().map_or(0, |after| {
         attempts.partition_point(|attempt| HistoryCursor::of(attempt) <= *after)
     });
@@ -569,7 +576,70 @@ fn add(sum: &mut JobHistorySum, attempt: &JobHistoryAttempt) {
     }
 }
 
-fn totals(attempts: &[JobHistoryAttempt], periods: &[GpuLinePeriod]) -> JobHistoryTotals {
+/// One unattributed job, as the totals place it.
+struct Unattributed {
+    machine: String,
+    /// The line and the period, for a line's generation.
+    place: Option<(String, u32)>,
+    secs: u64,
+    ended: bool,
+}
+
+/// The unattributed jobs (pass 33 8.5, EM-15) `filter` admits, for the owner only: no row names
+/// who started them, and the design gives them to the owner. They belong to no family and to no
+/// work order, so a family or an order filter admits none, and a line or a period filter admits
+/// only a line's generation it names.
+fn unattributed_of(
+    records: &[UnattributedRecord],
+    filter: &JobHistoryFilter,
+    viewer: HistoryViewer,
+) -> Vec<Unattributed> {
+    if viewer != HistoryViewer::Owner || filter.family.is_some() || filter.order.is_some() {
+        return Vec::new();
+    }
+    let mut admitted = Vec::new();
+    for record in records {
+        if let Some(machine) = filter.machine
+            && machine != record.machine
+        {
+            continue;
+        }
+        let place = record.line_period();
+        if let Some(line) = filter.line
+            && place.is_none_or(|(at, _)| at != line)
+        {
+            continue;
+        }
+        if let Some(period) = filter.period
+            && place.is_none_or(|(_, at)| at != period)
+        {
+            continue;
+        }
+        let place = place.map(|(line, period)| (line.to_hex(), period));
+        for job in &record.jobs {
+            admitted.push(Unattributed {
+                machine: record.machine.to_hex(),
+                place: place.clone(),
+                secs: job.secs,
+                ended: job.ended,
+            });
+        }
+    }
+    admitted
+}
+
+fn add_unattributed(sum: &mut JobHistorySum, job: &Unattributed) {
+    sum.unattributed_secs = sum.unattributed_secs.saturating_add(job.secs);
+    if !job.ended {
+        sum.unattributed_running = sum.unattributed_running.saturating_add(1);
+    }
+}
+
+fn totals(
+    attempts: &[JobHistoryAttempt],
+    unattributed: &[Unattributed],
+    periods: &[GpuLinePeriod],
+) -> JobHistoryTotals {
     let mut all = JobHistorySum::default();
     let mut by_machine: BTreeMap<Option<String>, JobHistorySum> = BTreeMap::new();
     let mut by_line: BTreeMap<String, JobHistorySum> = BTreeMap::new();
@@ -595,6 +665,17 @@ fn totals(attempts: &[JobHistoryAttempt], periods: &[GpuLinePeriod]) -> JobHisto
                     .or_default(),
                 attempt,
             );
+        }
+    }
+    for job in unattributed {
+        add_unattributed(&mut all, job);
+        add_unattributed(
+            by_machine.entry(Some(job.machine.clone())).or_default(),
+            job,
+        );
+        if let Some((line, period)) = &job.place {
+            add_unattributed(by_line.entry(line.clone()).or_default(), job);
+            add_unattributed(by_period.entry((line.clone(), *period)).or_default(), job);
         }
     }
     let window: BTreeMap<(String, u32), (u64, u64)> = periods
