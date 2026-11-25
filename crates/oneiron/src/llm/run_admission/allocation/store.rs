@@ -245,6 +245,7 @@ impl VaultAllocationLedger {
                             txn,
                             resident,
                             &chosen.allocation.reference,
+                            &chosen.allocation.unit,
                             chosen.allocation.units,
                             ResidentShareScope::of_wallet(chosen.allocation.wallet.as_ref()),
                         )?;
@@ -372,6 +373,7 @@ impl VaultAllocationLedger {
                     txn,
                     resident,
                     &hold.allocation,
+                    &allocation.allocation.unit,
                     terminal.units,
                     terminal.units.saturating_sub(room),
                 )?;
