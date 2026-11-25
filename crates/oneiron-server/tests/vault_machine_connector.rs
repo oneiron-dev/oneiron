@@ -825,3 +825,127 @@ fn a_node_that_repeats_its_key_cursor_is_not_reconciled_and_gets_no_reserve() {
         assert_eq!(rig.dispatch(&run).phase, DispatchPhase::Reserving);
     });
 }
+
+/// Pass 34, 9.3 (row W1): a session's renewal on a node that offers its template as a
+/// session's is one continuing submit, on the first key's machine, pin and slot, with no
+/// reserve; once the node proves the run passed the first chunk's end, that slice confirms and
+/// bills on its own receipt and nothing stops the first key.
+#[test]
+fn a_session_renewal_sends_a_continuing_submit_and_no_reserve() {
+    use oneiron_server::gpu_execution_node::wire::SignedJobSubmit;
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        rig.clock.advance_secs(MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let job = rig.job(&run);
+        let next = job
+            .renewal
+            .as_ref()
+            .expect("the next chunk is written")
+            .idempotency_key
+            .clone();
+        let calls = rig.node.calls();
+        let for_next = |kind: &str| {
+            calls
+                .iter()
+                .filter(|call| call.kind == kind && call.key.as_deref() == Some(next.as_str()))
+                .count()
+        };
+        assert_eq!(
+            for_next("reserve"),
+            0,
+            "a session's next chunk is never reserved"
+        );
+        assert_eq!(for_next("submit"), 1);
+        let row = rig
+            .vault()
+            .job_dispatch(&next)
+            .expect("read JOB_DISPATCH")
+            .expect("the next chunk's dispatch row");
+        let first_row = rig
+            .vault()
+            .job_dispatch(&first)
+            .expect("read JOB_DISPATCH")
+            .expect("the first chunk's dispatch row");
+        assert_eq!(row.machine, first_row.machine);
+        assert_eq!(row.phase, DispatchPhase::Submitted);
+        let submit = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&row.submit)
+            .expect("the signed submit")
+            .submit;
+        let first_submit = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&first_row.submit)
+            .expect("the first signed submit")
+            .submit;
+        assert_eq!(submit.continues.as_deref(), Some(first.as_str()));
+        assert_eq!(submit.pin, first_submit.pin);
+        assert_eq!(submit.slot, first_submit.slot);
+        assert_eq!(submit.maximum_secs, MAXIMUM_SECS);
+
+        // The node's journal proves the run passed the first chunk's end.
+        rig.clock.advance_secs(300);
+        rig.node.advance(
+            &first,
+            JobState::Ended,
+            Some(MAXIMUM_SECS),
+            Some(JobEnd::Continued),
+            true,
+        );
+        rig.node
+            .advance(&next, JobState::Running, Some(5), None, true);
+        rig.step_session(&run)
+            .expect("the step moves to the next chunk");
+        let passed = rig.job(&run);
+        assert_eq!(passed.chunks.len(), 2);
+        assert_eq!(passed.state, GpuJobState::Running);
+        assert_eq!(
+            passed.chunks[0].billed_secs,
+            Some(MAXIMUM_SECS),
+            "the slice bills its own measured seconds"
+        );
+        let stops = rig
+            .node
+            .calls()
+            .iter()
+            .filter(|call| call.kind == "stop")
+            .count();
+        assert_eq!(stops, 0, "a passed slice is never stopped");
+        let terminal = rig
+            .vault()
+            .job_observation(&first)
+            .expect("read JOB_OBSERVATION")
+            .and_then(|observation| observation.terminal)
+            .expect("the first slice's terminal");
+        assert_eq!(terminal.end, GpuJobEnd::Continued);
+        // A read of the passed slice again answers from its terminal, with no stop.
+        let again = rig
+            .connector
+            .status(&GpuResourceRef(format!(
+                "{}#{first}",
+                rig.node.machine.to_hex()
+            )))
+            .expect("status of the passed slice");
+        assert!(
+            matches!(again, GpuResourceStatus::Continued { .. }),
+            "{again:?}"
+        );
+        assert_eq!(
+            rig.node
+                .calls()
+                .iter()
+                .filter(|call| call.kind == "stop")
+                .count(),
+            0
+        );
+    });
+}
