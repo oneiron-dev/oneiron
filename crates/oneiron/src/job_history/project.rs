@@ -240,6 +240,9 @@ enum OfferEnd {
     /// The owner wrote the job off (door 10): its end was never confirmed, and its chunk
     /// settled zero where this host held the chunk's permit.
     WrittenOff,
+    /// The backend ended the chunk at its maximum seconds (pass 33, 8.6), and reported its run
+    /// time with the end, as with an exit: never `AtMaximum`, whose stop offers a resume.
+    TimeLimit,
     /// Refused before any resource existed: nothing ran and nothing was charged.
     Held(String),
 }
@@ -252,6 +255,7 @@ impl OfferEnd {
             GpuEndReason::Cancelled => Self::Cancelled,
             GpuEndReason::Gone => Self::Gone,
             GpuEndReason::Unconfirmed => Self::WrittenOff,
+            GpuEndReason::TimeLimit => Self::TimeLimit,
         }
     }
 
@@ -276,6 +280,7 @@ impl OfferEnd {
             Self::Cancelled => "cancelled",
             Self::Gone => "gone",
             Self::WrittenOff => "written_off",
+            Self::TimeLimit => "time_limit",
             Self::Held(reason) => return ("held".to_owned(), Some(reason.clone())),
         };
         (end.to_owned(), None)
@@ -289,12 +294,12 @@ impl OfferEnd {
 /// or a cancel), so none is shown, and no offer chunk names a machine: an offer's inputs are the
 /// customer's, not a placement. Only the first chunk names its starter: a resume's is not stored
 /// (an agent resumes only its own job, the owner any). The run time a chunk last reported is
-/// final only for an exit, which the provider reports with it; a stop or a cancel terminates
-/// after the last report, so its occupancy is unknown, and a lost resource's is a lower bound,
-/// shown as lost. A chunk held before any resource existed ran for nothing and charged nothing,
-/// and its whole quote went back. A chunk the owner wrote off has no confirmed end: its
-/// occupancy is unknown, and it charged what its settlement says (zero, where this host held
-/// its permit).
+/// final only for an exit or a time limit, which the provider reports with it; a stop or a
+/// cancel terminates after the last report, so its occupancy is unknown, and a lost resource's
+/// is a lower bound, shown as lost. A chunk held before any resource existed ran for nothing
+/// and charged nothing, and its whole quote went back. A chunk the owner wrote off has no
+/// confirmed end: its occupancy is unknown, and it charged what its settlement says (zero,
+/// where this host held its permit).
 fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
     let last = job.chunks.len().saturating_sub(1);
     job.chunks
@@ -317,7 +322,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                     .map(|(units, cost)| units / cost)
             };
             let occupied_secs = match end {
-                OfferEnd::Exited => Some(chunk.used_secs),
+                OfferEnd::Exited | OfferEnd::TimeLimit => Some(chunk.used_secs),
                 OfferEnd::Held(_) => Some(0),
                 OfferEnd::AtMaximum
                 | OfferEnd::Cancelled

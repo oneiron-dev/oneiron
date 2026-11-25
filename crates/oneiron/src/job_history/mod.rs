@@ -174,9 +174,10 @@ pub struct JobHistoryAttempt {
     pub settled_units: Option<u64>,
     pub unit: Option<String>,
     /// How it ended: `settled`, `released`, `box_lost` or `written_off` for a line unit;
-    /// `exited`, `at_maximum`, `cancelled`, `gone`, `written_off` or `held` for an offer chunk
-    /// (a chunk that stopped at its maximum stays `at_maximum` when the customer cancels the
-    /// stopped job).
+    /// `exited`, `time_limit`, `at_maximum`, `cancelled`, `gone`, `written_off` or `held` for an
+    /// offer chunk (a chunk that stopped at its maximum stays `at_maximum` when the customer
+    /// cancels the stopped job; `time_limit` is a backend's hard stop at the maximum, with no
+    /// resume).
     pub end: String,
     /// Why it was released or held, where a row says.
     pub end_reason: Option<String>,
