@@ -50,16 +50,30 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// git with an empty environment but `PATH` (no inherited `GIT_DIR` or `GIT_WORK_TREE`), no
+/// system or global configuration, and a fixed author, as `node_job_staging` runs it.
 fn git_ok(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
+    let mut command = Command::new("git");
+    command.env_clear();
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let output = command
         .current_dir(dir)
+        .env("LC_ALL", "C")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-        .env("GIT_COMMITTER_NAME", "test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+        .args([
+            "-c",
+            "user.name=Oneiron Test",
+            "-c",
+            "user.email=test@oneiron.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
         .output()
         .expect("git runs");
     assert!(
@@ -67,7 +81,10 @@ fn git_ok(dir: &Path, args: &[&str]) -> String {
         "git {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    String::from_utf8(output.stdout)
+        .expect("git prints text")
+        .trim()
+        .to_owned()
 }
 
 /// A bare mirror of one commit that holds the contract and the entry; its id.
@@ -233,8 +250,7 @@ caches = ["target:a", "target:b", "target:c"]
         for name in names {
             let entry = cache_dir.join(name);
             std::fs::create_dir_all(&entry).expect("cache entry");
-            let bytes = vec![7_u8; usize::try_from(mib * MIB).expect("a small size")];
-            std::fs::write(entry.join("blob.bin"), bytes).expect("cache blob");
+            std::fs::write(entry.join("blob.bin"), noise(mib * MIB)).expect("cache blob");
         }
         cache_dir
     }
@@ -333,6 +349,19 @@ fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> Node
         // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// `len` bytes no file system compresses: a cache entry then takes the disk its size says.
+fn noise(len: u64) -> Vec<u8> {
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()[0]
+        })
+        .collect()
 }
 
 fn fact<'a>(facts: &'a [WarmKeyFact], key: &str) -> &'a WarmKeyFact {

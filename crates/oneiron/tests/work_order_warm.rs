@@ -162,7 +162,7 @@ fn a_warm_key_list_is_refused_when_malformed_repeated_or_over_its_bound() {
     }
     let long = format!("dataset:{}", "a".repeat(128));
     assert!(matches!(
-        check_warm_keys(&keys(&[&long]), 2),
+        check_warm_keys(&keys(&[long.as_str()]), 2),
         Err(WarmKeyInvalid::Form(_))
     ));
     assert_eq!(
