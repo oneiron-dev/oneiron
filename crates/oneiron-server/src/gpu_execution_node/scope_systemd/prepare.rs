@@ -578,7 +578,9 @@ fn set_properties(unit: &str, properties: &[String]) -> Result<(), String> {
 /// margin. The engine's account may not stop it. A session's timer
 /// (`renewable`) names its stop time, so once a renewal armed a later one it
 /// stops nothing (row W1); a job's names none, and its cutoff stops the unit
-/// before it reads anything.
+/// before it reads anything. A session's timer is armed only once the
+/// service manager runs it (`systemd-run` waits for its start), since a
+/// renewal stops the timer it replaces.
 ///
 /// # Errors
 ///
@@ -600,8 +602,11 @@ pub(super) fn arm_cutoff(
     let binary = binary.display().to_string();
     let node_file = context.args.node_file.display().to_string();
     let stop_at = stop_at_boot_ns.to_string();
-    let mut args: Vec<&str> = vec![
-        "--no-block",
+    let mut args: Vec<&str> = Vec::new();
+    if !renewable {
+        args.push("--no-block");
+    }
+    args.extend([
         "--collect",
         "--quiet",
         unit_flag.as_str(),
@@ -614,7 +619,7 @@ pub(super) fn arm_cutoff(
         node_file.as_str(),
         "--engine-account",
         context.args.engine_account.as_str(),
-    ];
+    ]);
     if renewable {
         args.extend(["--stop-at", stop_at.as_str()]);
     }

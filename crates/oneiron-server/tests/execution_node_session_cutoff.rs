@@ -180,9 +180,10 @@ fn the_root_renewal_moves_a_sessions_cutoff_only_forward_and_within_its_longest_
 
 /// Root takes a renewal only while its handoff can finish before the old
 /// timer fires (EM-22, R3B's review of #10502): 30 s before the current
-/// stop time is too late, 32 s is in time. A control handler written
-/// before sessions takes no renewal, so a session's launch is refused at
-/// its prepare step instead of at its first renewal.
+/// stop time is too late, 32 s is in time, also for a renewal asked again.
+/// A control handler written before sessions takes no renewal, so a
+/// session's launch is refused at its prepare step instead of at its first
+/// renewal.
 #[test]
 fn a_renewal_needs_the_whole_handoff_before_the_old_timer_fires() {
     let instance = JobKeyId::for_key("session-0").as_str().to_owned();
@@ -192,10 +193,22 @@ fn a_renewal_needs_the_whole_handoff_before_the_old_timer_fires() {
         renewed_cutoff_plan(&session, secs(1_200), stop_at - 30 * NANOS_PER_SEC),
         Err("cutoff_passed: the current cutoff is already stopping the run".to_owned())
     );
-    assert!(matches!(
-        renewed_cutoff_plan(&session, secs(1_200), stop_at - 32 * NANOS_PER_SEC),
-        Ok(Some(_))
-    ));
+    let plan = renewed_cutoff_plan(&session, secs(1_200), stop_at - 32 * NANOS_PER_SEC)
+        .expect("32 s before the stop is in time")
+        .expect("a moved cutoff");
+    // Asked again once the renewed timer may be firing, the renewal is not
+    // answered as taken either (Sol review r3, finding 8).
+    let renewed_stop_at = plan.stop_at_boot_ns;
+    let mut renewed = session.clone();
+    renewed.cutoff = Some(plan);
+    assert_eq!(
+        renewed_cutoff_plan(&renewed, secs(1_200), renewed_stop_at - 30 * NANOS_PER_SEC),
+        Err("cutoff_passed: the current cutoff is already stopping the run".to_owned())
+    );
+    assert_eq!(
+        renewed_cutoff_plan(&renewed, secs(1_200), renewed_stop_at - 32 * NANOS_PER_SEC),
+        Ok(None)
+    );
 
     let before_sessions = "[Service]\n\
         ExecStart=/usr/bin/oneiron job-control --engine-account oneiron\n\

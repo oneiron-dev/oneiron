@@ -67,6 +67,18 @@ fn cutoff_fired(context: &StepContext) -> bool {
     )
 }
 
+/// `Ok` while the cutoff timer `timer` (a `.timer` unit) is armed: the
+/// service manager runs it and it has not elapsed.
+fn timer_armed(timer: &str) -> Result<(), String> {
+    let found = show(timer, &["ActiveState"])?;
+    let state = found.get("ActiveState").map_or("", String::as_str);
+    if state == "active" {
+        Ok(())
+    } else {
+        Err(format!("cutoff_not_armed: the timer {timer} is {state:?}"))
+    }
+}
+
 /// The cutoff plan a renewal to `cutoff_boot_ns` makes of `prepared`'s, at
 /// boot-clock time `now_boot_ns`: `Ok(None)` when the record already holds
 /// that cutoff, so a renewal asked twice changes nothing. The timer stops the
@@ -92,6 +104,11 @@ pub fn renewed_cutoff_plan(
     if cutoff_boot_ns > until {
         return Err("session_max_reached".to_owned());
     }
+    // The deadline comes first: a renewal asked again once the timer it
+    // armed may be firing is not answered as taken either.
+    if now_boot_ns.saturating_add(RENEW_BEFORE_STOP_NS) >= current.stop_at_boot_ns {
+        return Err("cutoff_passed: the current cutoff is already stopping the run".to_owned());
+    }
     let stop_at_boot_ns =
         cutoff_boot_ns.saturating_sub(current.stop_grace_secs.saturating_mul(NANOS_PER_SEC));
     if stop_at_boot_ns == current.stop_at_boot_ns {
@@ -99,9 +116,6 @@ pub fn renewed_cutoff_plan(
     }
     if stop_at_boot_ns < current.stop_at_boot_ns {
         return Err("cutoff_not_forward: a cutoff only moves forward".to_owned());
-    }
-    if now_boot_ns.saturating_add(RENEW_BEFORE_STOP_NS) >= current.stop_at_boot_ns {
-        return Err("cutoff_passed: the current cutoff is already stopping the run".to_owned());
     }
     Ok(Some(CutoffPlan {
         unit: format!(
@@ -121,8 +135,9 @@ pub fn renewed_cutoff_plan(
 /// The refusal, in words: the step could not open, the record is missing or
 /// not this instance's, the unit is not running, [`renewed_cutoff_plan`]
 /// refused, another renewal of the key is running (`renew_busy`), the
-/// service manager did not take the new timer or the record was not
-/// written, or the old cutoff fired meanwhile (`cutoff_passed`).
+/// service manager did not arm the new timer (`cutoff_not_armed`) or the
+/// record was not written, or the old cutoff fired meanwhile
+/// (`cutoff_passed`).
 pub fn renew_cutoff(
     node_file: &Path,
     engine_account: &str,
@@ -158,8 +173,11 @@ pub fn renew_cutoff(
         .ok_or("not_prepared: no prepared record of this instance")?;
     running(id)?;
     let Some(plan) = renewed_cutoff_plan(&prepared, cutoff_boot_ns, boot_ns())? else {
-        // Asked again for the cutoff the record holds: taken, unless the
-        // cutoff fired meanwhile.
+        // Asked again for the cutoff the record holds: taken while its timer
+        // is armed and the cutoff has not fired.
+        if let Some(recorded) = prepared.cutoff.as_ref() {
+            timer_armed(&recorded.unit)?;
+        }
         return if cutoff_fired(&context) {
             Err("cutoff_passed: the cutoff stopped the run".to_owned())
         } else {
@@ -181,8 +199,12 @@ pub fn renew_cutoff(
     }
     let base = prepared.cutoff.clone();
     let previous = prepared.cutoff.replace(plan.clone());
-    let timer = plan.unit.trim_end_matches(".timer");
-    arm_cutoff(&context, timer, plan.stop_at_boot_ns, true)?;
+    // A timer of this plan that an earlier ask armed (its record write
+    // failed) is taken as it is: its name holds the instance and the stop.
+    if timer_armed(&plan.unit).is_err() {
+        let timer = plan.unit.trim_end_matches(".timer");
+        arm_cutoff(&context, timer, plan.stop_at_boot_ns, true)?;
+    }
     // Record the new plan only while the unit still runs and no other
     // renewal moved the record meanwhile: else the new timer goes, and the
     // engine asks again.
@@ -204,6 +226,10 @@ pub fn renew_cutoff(
         );
         return Err(why);
     }
+    // A write that fails leaves the new timer armed: before the rename the
+    // record still names the old timer, which stops the run at its paid end,
+    // and the engine's next ask takes this timer up; after it, the record
+    // names this one.
     context.write_record(PREPARED_FILE_NAME, &prepared)?;
     // The old timer fires after the write (the module doc); should it have
     // fired anyway, the renewal is not answered as taken. The new timer

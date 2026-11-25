@@ -11,7 +11,8 @@
 //! and stops nothing. Only a record that reads within
 //! [`RECORD_READ_DEADLINE`], is root's and names a later stop skips the
 //! stop: anything else stops the unit. Only a session's timer names a stop
-//! time; a job's reads nothing before its stop.
+//! time; a job's reads nothing before its stop. A stop the service manager
+//! does not take is asked for again, a few times.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -25,6 +26,12 @@ use super::{CUTOFF_FILE_NAME, PREPARED_FILE_NAME, is_job_instance};
 /// How long a session's cutoff waits for its record before it stops the
 /// unit anyway: a stalled state disk holds the stop no longer than this.
 pub const RECORD_READ_DEADLINE: Duration = Duration::from_secs(2);
+
+/// How often the cutoff asks the service manager to stop the unit when it
+/// does not take the stop, and the pause between two asks: the unit's own
+/// `RuntimeMaxSec` backstop may be days away.
+const STOP_ASKS: u32 = 4;
+const STOP_ASK_PAUSE: Duration = Duration::from_secs(1);
 
 /// Whether a cutoff timer armed for `own_stop_at_boot_ns` was superseded by
 /// a renewal: root's record names a later stop time. A timer that names no
@@ -90,11 +97,23 @@ pub fn run(args: StepArgs) -> i32 {
     // disk) may hold it back. The end step also counts the cutoff by the time
     // the unit ended, so a mark that lands late or never still ends the run
     // as its time limit.
-    let stopped = run_tool(
+    let mut stopped = run_tool(
         "systemctl",
         &["stop", "--no-block", &unit],
         SYSTEMCTL_TIMEOUT,
     );
+    for _ in 1..STOP_ASKS {
+        let Err(why) = &stopped else {
+            break;
+        };
+        journal_line!("job-cutoff: {unit} did not take the stop ({why}); asking again");
+        std::thread::sleep(STOP_ASK_PAUSE);
+        stopped = run_tool(
+            "systemctl",
+            &["stop", "--no-block", &unit],
+            SYSTEMCTL_TIMEOUT,
+        );
+    }
     let mark = CutoffMark {
         instance: args.instance.clone(),
         fired_boot_ns,
