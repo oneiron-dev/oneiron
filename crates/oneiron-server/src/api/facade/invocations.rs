@@ -299,10 +299,10 @@ pub(crate) enum DoorClaim {
 /// again, role first; its intent key then replays the seat already made and
 /// writes nothing.
 /// An experiment arm's writes (`vault.arms.admit`, `.forecast`, `.verdict`,
-/// `.review`) answer the arm too, and each door judges the caller's role on
-/// the arm's stored line before its intent replay, as the seat's does: a
-/// same-id retry runs the door again, role first, and its intent key or the
-/// ask's logical key then replays the write already made.
+/// `.review`) answer the arm, and each door judges the caller's role on the
+/// arm's line before its intent replay, as the seat's does: a same-id retry
+/// runs the door again, role first, and its intent key or the ask's logical
+/// key then replays the write already made (review round 2 of #10400).
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
