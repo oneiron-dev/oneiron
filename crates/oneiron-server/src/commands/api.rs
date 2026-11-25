@@ -33,13 +33,20 @@ use oneiron_vault_contract::BINDING_HEADER;
 
 use crate::cli::{ApiArgs, ApiCommand};
 
+mod transport;
+
+pub(crate) use transport::{CurlTransport, curl_transport};
+
 /// `--silent` drops the progress meter, `--show-error` keeps the diagnostic,
 /// and `--fail-with-body` is what makes a 4xx or 5xx both VISIBLE and
 /// non-zero: the server's error body still reaches stdout, and the process
 /// still fails. It says nothing about a 3xx — no `--location` is passed here,
 /// so a redirect arrives as its own response and exits zero — and it needs
-/// curl 7.76 or newer, the release that added the flag.
-pub(crate) const CURL_FLAGS: [&str; 3] = ["--silent", "--show-error", "--fail-with-body"];
+/// curl 7.76 or newer, the release that added the flag. `--globoff` keeps
+/// curl from reading `{a,b}` or `[1-9]` in a URL as a pattern of several
+/// transfers: one call is one request, and `--max-time` bounds all of it.
+pub(crate) const CURL_FLAGS: [&str; 4] =
+    ["--silent", "--show-error", "--fail-with-body", "--globoff"];
 
 /// curl reads the host's own config (`$CURL_HOME/.curlrc`, the XDG location,
 /// or `~/.curlrc`) BEFORE the flags above, and it reads it EVEN WHEN
@@ -47,7 +54,7 @@ pub(crate) const CURL_FLAGS: [&str; 3] = ["--silent", "--show-error", "--fail-wi
 /// host, which would then be handed the credential this process puts on the
 /// config channel. `-q` refuses that file, and curl honours it only as the
 /// FIRST argument — which is why it is a separate constant applied before
-/// [`CURL_FLAGS`] rather than a fourth entry inside it.
+/// [`CURL_FLAGS`] rather than one more entry inside it.
 pub(crate) const CURL_DISABLE_HOST_CONFIG: &str = "-q";
 
 /// curl also routes by the environment: an `http_proxy`, `https_proxy` or
@@ -98,6 +105,9 @@ pub(crate) struct CurlCredential<'a> {
 }
 
 pub async fn api(args: ApiArgs) -> anyhow::Result<()> {
+    // Checked before anything is read, so a refused pin or deadline never
+    // consumes a body from stdin.
+    let transport = curl_transport(&args.base_url, &args.resolve_address, args.max_time)?;
     let secret_env = &args.secret_env;
     // An ABSENT credential is a request without one, not an error: the server
     // serves public routes (`/api/health`) and can be configured to allow
@@ -126,6 +136,7 @@ pub async fn api(args: ApiArgs) -> anyhow::Result<()> {
             binding: binding.as_deref(),
             env: &[args.secret_env.clone(), args.binding_key_env.clone()],
         },
+        &transport,
     )
 }
 
@@ -294,6 +305,7 @@ pub(crate) fn create_pairing_link(
         OsStr::new(CURL_PROGRAM),
         &request,
         credential,
+        &CurlTransport::default(),
         Stdio::piped(),
         Stdio::inherit(),
     )?;
@@ -311,11 +323,13 @@ pub(crate) fn create_pairing_link(
 pub(crate) fn run_curl(
     request: &CurlRequest,
     credential: CurlCredential<'_>,
+    transport: &CurlTransport,
 ) -> anyhow::Result<()> {
     let output = run_curl_output_inner(
         OsStr::new(CURL_PROGRAM),
         request,
         credential,
+        transport,
         Stdio::inherit(),
         Stdio::inherit(),
     )?;
@@ -332,11 +346,31 @@ pub(crate) fn run_curl_output(
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
+    run_curl_output_with_transport(
+        program,
+        request,
+        secret,
+        &CurlTransport::default(),
+        stdout,
+        stderr,
+    )
+}
+
+/// [`run_curl_output`] with a pin or a deadline: what the transport tests drive.
+#[cfg(test)]
+pub(crate) fn run_curl_output_with_transport(
+    program: &OsStr,
+    request: &CurlRequest,
+    secret: Option<&str>,
+    transport: &CurlTransport,
+    stdout: Stdio,
+    stderr: Stdio,
+) -> anyhow::Result<Output> {
     let credential = CurlCredential {
         secret,
         ..CurlCredential::default()
     };
-    run_curl_output_inner(program, request, credential, stdout, stderr)
+    run_curl_output_inner(program, request, credential, transport, stdout, stderr)
 }
 
 /// The one execution path, parameterized only by where the child's streams go.
@@ -354,6 +388,7 @@ fn run_curl_output_inner(
     program: &OsStr,
     request: &CurlRequest,
     credential: CurlCredential<'_>,
+    transport: &CurlTransport,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
@@ -370,6 +405,7 @@ fn run_curl_output_inner(
         request,
         config.as_deref(),
         credential.env,
+        transport,
         stdout,
         stderr,
     )?;
@@ -393,6 +429,7 @@ pub(crate) fn run_curl_capture(
         request,
         Some(config),
         env,
+        &CurlTransport::default(),
         Stdio::piped(),
         Stdio::inherit(),
     )?;
@@ -417,12 +454,13 @@ pub(crate) fn curl_header_line(name: &str, value: &str) -> anyhow::Result<String
 /// and the staged body file it reads, which must outlive it. The child
 /// inherits none of `env` (the variables the credential came from), nor any
 /// of [`CREDENTIAL_ENV`], and no proxy setting routes it anywhere but the
-/// selected server.
+/// selected server; `transport` pins its connect and bounds its transfer.
 fn spawn_curl(
     program: &OsStr,
     request: &CurlRequest,
     config: Option<&str>,
     env: &[String],
+    transport: &CurlTransport,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<(Child, Option<TempBody>)> {
@@ -436,6 +474,12 @@ fn spawn_curl(
     command.arg(CURL_DISABLE_HOST_CONFIG);
     command.args(CURL_FLAGS);
     command.args(CURL_NO_PROXY);
+    if let Some(resolve) = transport.resolve.as_deref() {
+        command.arg("--resolve").arg(resolve);
+    }
+    if let Some(secs) = transport.max_time_secs {
+        command.arg("--max-time").arg(secs.to_string());
+    }
     command.arg("--request").arg(&request.method);
     if let Some(content_type) = request.content_type.as_deref() {
         command

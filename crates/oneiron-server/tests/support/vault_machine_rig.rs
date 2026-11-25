@@ -385,6 +385,7 @@ impl ScriptedNode {
             seq: 0,
             boot_id: "node-boot".to_owned(),
             reported_at_ms: 0,
+            slice: None,
         }
     }
 
@@ -448,6 +449,7 @@ impl JobNodeClient for ScriptedNode {
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
                     require: Vec::new(),
+                    kind: Default::default(),
                 }],
                 scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,
@@ -731,6 +733,17 @@ impl Rig {
     }
 
     pub(crate) fn approve(&self, tag: &str, expires_at_ms: u64) -> String {
+        self.approve_for_starters(tag, expires_at_ms, Vec::new())
+    }
+
+    /// [`Self::approve`] for the Grants (hex ids) in `starters`; with none, the owner alone
+    /// starts it, since the owner pins it under no Grant.
+    pub(crate) fn approve_for_starters(
+        &self,
+        tag: &str,
+        expires_at_ms: u64,
+        starters: Vec<String>,
+    ) -> String {
         let request: WorkloadPinRequest = serde_json::from_value(json!({
             "pin": {
                 "template": TEMPLATE,
@@ -776,7 +789,7 @@ impl Rig {
                 &WorkloadApproveRequest {
                     workload: digest.clone(),
                     machines: vec![self.node.machine.to_hex()],
-                    starters: Vec::new(),
+                    starters,
                     expires_at_ms,
                 },
                 now,
@@ -798,6 +811,17 @@ impl Rig {
     /// [`Self::start_job_with`] on a quote whose inputs are `inputs`.
     pub(crate) fn start_job_with_inputs(
         &self,
+        workload: &str,
+        inputs: serde_json::Value,
+        connector: &dyn GpuJobConnector,
+    ) -> JobRun {
+        self.start_job_as(GpuJobActor::Owner(&self.owner), workload, inputs, connector)
+    }
+
+    /// [`Self::start_job_with_inputs`] started by `actor`.
+    pub(crate) fn start_job_as(
+        &self,
+        actor: GpuJobActor<'_>,
         workload: &str,
         inputs: serde_json::Value,
         connector: &dyn GpuJobConnector,
@@ -834,7 +858,7 @@ impl Rig {
             .vault()
             .start_gpu_job(
                 GpuJobStart {
-                    actor: GpuJobActor::Owner(&self.owner),
+                    actor,
                     offer: &self.offer,
                     quote: &quote,
                     resume: None,
@@ -844,7 +868,7 @@ impl Rig {
                 connector,
                 now,
             )
-            .expect("start the quoted workload as owner");
+            .expect("start the quoted workload");
         JobRun {
             job,
             admission,

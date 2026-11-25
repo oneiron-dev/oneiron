@@ -74,13 +74,7 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     protected.extend(request.protect.iter().cloned());
     protected.sort();
     protected.dedup();
-    let runtime_max_secs = settings
-        .templates
-        .values()
-        .map(|template| template.max_secs)
-        .max()
-        .unwrap_or(0)
-        .max(1);
+    let runtime_max_secs = unit_runtime_max_secs(&settings);
     let inputs = UnitInputs {
         binary,
         node_file: request.node_file.clone(),
@@ -311,6 +305,25 @@ fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
         .map_err(|error| format!("{}: {error}", staging.display()))?;
     std::fs::rename(&staging, path).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(true)
+}
+
+/// The job unit template's `RuntimeMaxSec`, a backstop behind each run's
+/// cutoff timer: the longest run any template allows, which for a session
+/// template is its `session_max_secs` across renewals (pass 34, 2.5; row
+/// W1), so the backstop never ends a paid session at one chunk's maximum.
+#[must_use]
+pub fn unit_runtime_max_secs(settings: &ExecutionNodeSettings) -> u64 {
+    settings
+        .templates
+        .values()
+        .map(|template| {
+            template
+                .session_max_secs()
+                .map_or(template.max_secs, |longest| longest.max(template.max_secs))
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1)
 }
 
 #[cfg(test)]

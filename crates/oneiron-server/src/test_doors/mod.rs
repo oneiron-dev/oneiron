@@ -87,6 +87,7 @@ pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod root_project_signing;
 pub mod run_brief_people;
 pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]

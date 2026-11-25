@@ -196,6 +196,17 @@ impl AuthorityFold {
             .collect()
     }
 
+    /// Every machine's newest home candidacy with the machine that declared
+    /// it, judged as [`Self::home_candidacies`] judges each: the machines an
+    /// agent run may be placed on and their sync node ids (row P4,
+    /// `agent_dispatch::run_placement`).
+    pub(crate) fn home_candidacies_by_machine(&self) -> Vec<(EntityId, JudgedHomeCandidacy)> {
+        self.home_candidacy
+            .keys()
+            .filter_map(|machine| Some((*machine, self.judged_home_candidacy(*machine)?)))
+            .collect()
+    }
+
     /// `machine`'s newest home candidacy, judged as [`Self::home_candidacies`]
     /// judges each; `None` when it declared none. The standby order of a
     /// down home's peers reads it (FIX 4748).
@@ -278,6 +289,19 @@ pub(crate) fn home_candidacies_in_txn(
         return Err(invalid_authority());
     }
     Ok(fold.home_candidacies())
+}
+
+/// [`home_candidacies_in_txn`] with the machine that declared each, as
+/// [`AuthorityFold::home_candidacies_by_machine`] reads them.
+pub(crate) fn home_candidacies_by_machine_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, JudgedHomeCandidacy)>> {
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    if fold.vault_root_is_conflicted() {
+        return Err(invalid_authority());
+    }
+    Ok(fold.home_candidacies_by_machine())
 }
 
 impl Vault {

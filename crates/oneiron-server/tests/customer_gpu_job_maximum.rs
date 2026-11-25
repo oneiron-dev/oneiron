@@ -806,6 +806,149 @@ fn an_agent_starts_only_within_the_maximum_the_owner_set_beside_its_grant() {
     });
 }
 
+/// #10517 review round 2 P1-4: an agent's job binds a result only to rows the credential it
+/// presented reads, a slip's records list included. The agent's Grant reads the owner's
+/// artifact and task, but the agent narrows its own slip to records that name the task alone:
+/// its start on a quote whose `inputs.result` binds both is refused `result_binding_unreadable`
+/// before any reservation, and nothing is created. The same agent's start on its unnarrowed
+/// slip, with the same binding, goes ahead.
+#[test]
+fn an_agent_start_binds_a_result_only_to_rows_its_own_credential_reads() {
+    run_on_engine_stack("gpu-job-agent-result-binding", || async {
+        let fixture = setup(SECTION);
+        let agent = pair_agent(&fixture, "gpu-job-binding-agent", [0x63; 32]).await;
+        let (status, minted) = as_owner(
+            &fixture,
+            "vault.agents.grants.mint",
+            json!({
+                "agent": agent.principal.to_hex(),
+                "authority_scope": {
+                    "worlds": {"kind": "all"},
+                    "facets": {"kind": "all"},
+                    "bands": {"kind": "all"},
+                    "audience": {"kind": "all"},
+                    "verbs": {"kind": "some", "values": [
+                        "read",
+                        "vault.gpu.jobs.quote",
+                        "vault.gpu.jobs.status",
+                        "vault.gpu.jobs.start",
+                    ]},
+                    "sensitivity": {"kind": "at_most", "value": "restricted"},
+                },
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner mints the agent's Grant: {minted}"
+        );
+        let grant = minted["grant"]["grant_ref"]
+            .as_str()
+            .expect("the Grant's id")
+            .to_owned();
+        let (status, allowed) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.allow",
+            json!({"grant": grant, "maximum_secs": 1000}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner sets the maximum: {allowed}"
+        );
+
+        let owner = oneiron::test_doors::steward::owner(&fixture.vault)
+            .expect("the owner's proof")
+            .revalidate(&fixture.vault)
+            .expect("the owner on this vault");
+        let human = fixture.vault.memory(owner, oneiron::EdgeActorClass::Human);
+        let task = human
+            .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("Read the GPU verdict"),
+                None,
+                None,
+                None,
+            ))
+            .expect("the owner creates a task")
+            .task_ref
+            .expect("a landed task");
+        let artifact = human
+            .artifacts_create(&oneiron::blob_artifact::ArtifactCreateRequest {
+                name: "verdict.txt".to_owned(),
+                media_type: "text/plain".to_owned(),
+                content_base64: base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    b"no verdict yet",
+                ),
+                run_ref: None,
+                made_by: None,
+            })
+            .expect("the owner uploads the artifact")
+            .expect("the artifact's view")
+            .artifact_id;
+        let mut bound = quote_input("h100-test", 100, None);
+        bound["inputs"]["result"] = json!({"artifact": artifact.to_hex(), "task": task.to_hex()});
+
+        let mut slip = agent.slip.clone();
+        slip.attenuate(
+            oneiron::authority::SlipCaveat {
+                records: Some(BTreeSet::from([task.to_hex()])),
+                ..oneiron::authority::SlipCaveat::default()
+            },
+            &agent.holder,
+        )
+        .expect("the agent narrows its slip to the task");
+        let narrowed = Agent {
+            principal: agent.principal,
+            holder: agent.holder.clone(),
+            token: slip.to_token().expect("the narrowed slip's token"),
+            slip,
+        };
+        let (status, quote) =
+            as_agent(&fixture, &narrowed, "vault.gpu.jobs.quote", bound.clone()).await;
+        assert_eq!(status, StatusCode::OK, "the narrowed slip quotes: {quote}");
+        let (status, body) = as_agent(
+            &fixture,
+            &narrowed,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a binding outside the slip's records is refused: {body}"
+        );
+        assert!(
+            refusal(&body).contains("result_binding_unreadable"),
+            "{body}"
+        );
+        assert_eq!(fixture.gpu.called("create"), 0, "nothing was created");
+        assert!(
+            fixture.vault.gpu_jobs().expect("list the jobs").is_empty(),
+            "no job was written"
+        );
+
+        let (status, quote) = as_agent(&fixture, &agent, "vault.gpu.jobs.quote", bound).await;
+        assert_eq!(status, StatusCode::OK, "the agent quotes: {quote}");
+        let (status, started) = as_agent(
+            &fixture,
+            &agent,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the agent's own unnarrowed slip reads both rows: {started}"
+        );
+        assert_eq!(fixture.gpu.called("create"), 1);
+    });
+}
+
 #[test]
 fn an_offer_without_a_backend_refuses_before_any_reservation() {
     run_on_engine_stack("gpu-job-no-backend", || async {

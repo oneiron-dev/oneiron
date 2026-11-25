@@ -402,7 +402,8 @@ pub use history_fetch::{
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
-    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
+    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_by_machine_in_txn,
+    home_candidacies_in_txn,
 };
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
@@ -440,7 +441,8 @@ pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
-    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshEnrolmentAsk,
+    MESH_AUTHORITY_PAGE_MAX, MeshAlpnGrant, MeshAuthorityImport, MeshAuthorityPage,
+    MeshAuthorityRow, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshEnrolmentAsk,
     MeshMachineAddress, MeshMachineAddressEnvelope, MeshMachineBinding,
 };
 pub use restored_join::RestoredEnrolmentStanding;

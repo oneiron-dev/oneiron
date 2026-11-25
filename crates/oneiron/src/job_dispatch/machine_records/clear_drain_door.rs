@@ -2,8 +2,10 @@
 //! the issuer's drain of one machine, so it takes new jobs again. Who may is the owner's setting
 //! `machines.drain.clear_by` for that machine (declared in `machine_policy`), judged at each
 //! call:
-//! - `after_readiness_check` (the default): the owner, and the machine's readiness check of row
-//!   Q4 clears it by itself;
+//! - `after_readiness_check` (the default): the owner. A passed readiness check of row Q4 also
+//!   clears the drain by itself, when the node ran it after the issuer read the drain; the
+//!   issuer's job worker sees it in the machine's `Node` answer on a work-order pass
+//!   (`Vault::clear_machine_job_drain_after_check`);
 //! - `owner`: the vault owner under their own proof;
 //! - `grants [...]`: the owner, or an agent whose own live Grant is listed there and names the
 //!   verb;

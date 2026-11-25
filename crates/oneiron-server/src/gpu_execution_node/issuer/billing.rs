@@ -137,6 +137,10 @@ fn job_end(end: JobEnd, last_seen_secs: u64) -> GpuJobEnd {
         JobEnd::Exited { code } => GpuJobEnd::Exited { code },
         JobEnd::Signalled { signal } => GpuJobEnd::Signalled { signal },
         JobEnd::TimeLimit => GpuJobEnd::TimeLimit,
+        // A session's slice that ran to its paid end while the run went on
+        // (row W1): this chunk ended at its maximum. The issuer's step that
+        // renews sessions gives it a terminal of its own.
+        JobEnd::Continued => GpuJobEnd::TimeLimit,
         JobEnd::MemoryLimit => GpuJobEnd::MemoryLimit,
         JobEnd::DiskLimit => GpuJobEnd::DiskLimit,
         JobEnd::Stopped => GpuJobEnd::Stopped,

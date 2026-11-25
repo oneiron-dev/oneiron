@@ -232,8 +232,7 @@ fn chunk_admission(server: &SyncServer, connector: &str, quote: &GpuJobQuote) ->
 }
 
 /// The refusal of `[gpu_jobs.host_allocation]` on a managed server.
-const MANAGED_HOST_ALLOCATION: &str =
-    "gpu_jobs.host_allocation is refused on a managed server: its supervisor funds its host account";
+const MANAGED_HOST_ALLOCATION: &str = "gpu_jobs.host_allocation is refused on a managed server: its supervisor funds its host account";
 
 /// Grants `server`'s host account the allocation `[gpu_jobs.host_allocation]` names, walletless,
 /// before any job is started or taken up again (R6-VAULT-MACHINE-FUNDING = A; Engine 23:46). The

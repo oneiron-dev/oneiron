@@ -30,6 +30,34 @@ pub(crate) async fn vault_mesh_identity(
     .await
 }
 
+/// The refusal a mesh write gets on an install that holds no host issuer for
+/// the vault. A binding and a grant are this host's own signed rows, so
+/// without one it signs neither. `with_issuer` alone would answer an
+/// unexplained 401 (REVIEW-10531 P1).
+fn require_host_issuer(server: &SyncServer) -> Result<(), oneiron::memory::MemoryError> {
+    if server.host_issuer().is_some() {
+        return Ok(());
+    }
+    Err(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_INVALID_STATE,
+        "this install holds no host issuer for the vault, so it signs no mesh binding or grant \
+         here",
+        &[
+            "Bind and grant on an install that already holds the vault's live host issuer, such as the home. A replica that joined its home holds none, and a restart gives it none (FIX-LIST 10770): only a restore of the vault's protected custody carries the issuer seed.",
+        ],
+    ))
+}
+
+/// Whether `error` is [`oneiron::Vault::PAIR_SELF_UNANSWERED`]: this
+/// install's own MACHINE has no answered profile yet.
+fn unanswered_home(error: &oneiron::Error) -> bool {
+    matches!(
+        error,
+        oneiron::Error::Record(oneiron::error::RecordError::AuthorityRefused(reason))
+            if *reason == oneiron::Vault::PAIR_SELF_UNANSWERED
+    )
+}
+
 /// The same host issuer pairing uses; the caller's proof reaches the writer.
 pub(crate) async fn vault_mesh_bind_machine(
     server: &Arc<SyncServer>,
@@ -41,6 +69,7 @@ pub(crate) async fn vault_mesh_bind_machine(
         auth,
         "vault.mesh.bind_machine",
         move |server, owner| {
+            require_host_issuer(server)?;
             let bound = MeshMachineBound {
                 machine: input.machine,
                 endpoint_key: input.address.endpoint_key,
@@ -58,6 +87,60 @@ pub(crate) async fn vault_mesh_bind_machine(
     .await
 }
 
+/// This install's own MACHINE paired as a machine of its vault, for the owner
+/// to bind on each other replica (`vault.mesh.bind_machine` there). The home
+/// never redeems a link of its own, so nothing else pairs it, and no node
+/// could prove a home that issues jobs (PLAN-HOME-ISSUER-MESH-PROOF, R6 1.5).
+/// The pairing's ceiling is every protocol this engine serves
+/// (MESH-PAIRING-CEILING = A). The answer carries this home's mesh address
+/// while its listener runs. It binds and grants nothing here.
+pub(crate) async fn vault_mesh_pair_self(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<MeshMachineBinding> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.mesh.pair_self",
+        |server, owner| {
+            require_host_issuer(server)?;
+            // An unanswered home's refusal is taken here, before the pairing
+            // door's mapping answers it as an unnamed 401 (REVIEW-10531
+            // round 2 P1).
+            let paired = crate::api::pairing::with_issuer(server, |issuer| {
+                match server.vault().pair_own_mesh_machine_as_owner(
+                    issuer,
+                    owner,
+                    crate::device_sync::enrolment::home_bind::enrolment_ceiling(),
+                ) {
+                    Err(error) if unanswered_home(&error) => Ok(None),
+                    paired => paired.map(Some),
+                }
+            })
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            let mut binding = paired.ok_or_else(|| {
+                oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_INVALID_STATE,
+                    oneiron::Vault::PAIR_SELF_UNANSWERED,
+                    &[
+                        "As the owner, answer this install's MACHINE \"yours\" (POST /v1/owner/machines/answer), then call vault.mesh.pair_self again.",
+                    ],
+                )
+            })?;
+            if let Some(address) =
+                crate::device_sync::enrolment::home_bind::home_mesh_address(server)
+                    .filter(|address| address.endpoint_key == binding.address.endpoint_key)
+            {
+                binding.address = address;
+            }
+            Ok(binding)
+        },
+        |binding| vec![binding.machine],
+    )
+    .await
+}
+
 /// Both allowing and revoking the exact key/ALPN, through one engine operation.
 pub(crate) async fn vault_mesh_set_alpn_grant(
     server: &Arc<SyncServer>,
@@ -69,6 +152,7 @@ pub(crate) async fn vault_mesh_set_alpn_grant(
         auth,
         "vault.mesh.set_alpn_grant",
         move |server, owner| {
+            require_host_issuer(server)?;
             crate::api::pairing::with_issuer(server, |issuer| {
                 server
                     .vault()

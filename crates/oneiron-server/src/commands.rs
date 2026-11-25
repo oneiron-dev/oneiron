@@ -24,7 +24,6 @@ use crate::cli::{
 use crate::config::ServeConfig;
 use crate::config::{ServeArgs, SyncServerConfig, resolve_serve_config};
 use crate::managed;
-use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
 /// `oneiron api …`: the bash-native lane. It is curl-backed rather than a
@@ -171,8 +170,8 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 pub(crate) use self::serve::{
-    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, sign_root_project,
-    start_desktop_workers,
+    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, construct_sync_server,
+    joined_store_awaits_home, sign_root_project, start_desktop_workers,
 };
 pub use self::serve::{OpenedServedVault, open_served_vault};
 mod dreamer;
@@ -1082,7 +1081,9 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
             ),
             e => anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()),
         })?;
-    let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
+    // A joined store before its first sync boots with no host issuer here
+    // too, so an offline revoke roots nothing (REVIEW-10532 round 2).
+    let server = construct_sync_server(Arc::new(vault), &config, config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
 
     let revoked = server
