@@ -26,9 +26,7 @@ fn lane_economy_decl(table: &str) -> crate::Result<&'static SideTableDecl> {
     ]
     .into_iter()
     .find(|decl| decl.name == table)
-    .ok_or_else(|| {
-        crate::Error::InvalidConfig(format!("{table} is not a lane-economy side table"))
-    })
+    .ok_or_else(|| crate::Error::InvalidConfig(format!("{table} is not a lane-economy side table")))
 }
 
 /// The live rows of `table`, as (stored key after the declared prefix, value) in key order.

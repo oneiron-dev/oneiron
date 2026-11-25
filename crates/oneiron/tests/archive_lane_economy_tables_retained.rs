@@ -327,8 +327,9 @@ fn the_export_carries_each_lane_economy_table_and_holds_a_sealed_period_home() {
         assert!(!live.is_empty(), "{table} holds a live row");
         let carried = exported(&fixture.vault, table);
         if table == "GPU_LINE_PERIOD" {
-            let (sealed, open): (Vec<_>, Vec<_>) =
-                live.into_iter().partition(|(key, _)| of_lane(key, &two_rule));
+            let (sealed, open): (Vec<_>, Vec<_>) = live
+                .into_iter()
+                .partition(|(key, _)| of_lane(key, &two_rule));
             assert_eq!(sealed.len(), 1, "the two-rule lane's period 0");
             assert!(
                 open.iter().any(|(key, _)| of_lane(key, &lane)),
@@ -339,7 +340,10 @@ fn the_export_carries_each_lane_economy_table_and_holds_a_sealed_period_home() {
                 "the export carries the one-rule period whole and holds the sealed one home"
             );
         } else {
-            assert_eq!(carried, live, "the export carries every {table} row byte for byte");
+            assert_eq!(
+                carried, live,
+                "the export carries every {table} row byte for byte"
+            );
         }
     }
 
