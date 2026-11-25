@@ -11,19 +11,23 @@
 //! ([`ExperimentArm::hold_ended_at`]); the fold then charges its pools only
 //! what the arm's units took. A re-run of an experiment (the same contract
 //! sha256 as a closed arm it supersedes) gets no hold and keeps its
-//! predecessor's cohort. A precondition refusal discards the whole write:
-//! no arm, no intent, no period record. A budget refusal (`budget_denied`)
-//! writes one `GPU_LINE_REFUSAL` row (design pass 32 r2, 3.5 and 5.2), with
-//! the period record a first touch minted, and nothing else.
+//! predecessor's cohort. With two rules in force (section 4.4) every other
+//! admission takes the next position of its period and track before its
+//! hold is planned, and the hold's market part is drawn in that cohort's
+//! table only. A precondition refusal discards the whole write: no arm, no
+//! intent, no period record. A budget refusal (`budget_denied`) writes one
+//! `GPU_LINE_REFUSAL` row (design pass 32 r2, 3.5 and 5.2) naming the
+//! cohort, and keeps its position, with the period record a first touch
+//! minted, and nothing else.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::consent::AuthenticatedOwner;
 use crate::gpu_line::doors_caller;
 use crate::gpu_line::{
-    AllowanceHold, BudgetDenied, DrawAsk, DrawPurpose, GpuLinePeriod, IntentAsk, IntentStand,
-    LineRefusal, LineRole, PeriodRoom, SpendRow, claims_at_rung_in_txn, mint_first_in_txn,
-    plan_draws, record_line_refusal_in_txn,
+    AllowanceHold, BudgetDenied, CohortAssignment, DrawAsk, DrawPurpose, GpuLinePeriod, IntentAsk,
+    IntentStand, LineRefusal, LineRole, PeriodRoom, SpendRow, claims_at_rung_in_txn,
+    mint_first_in_txn, next_cohort_assignment_in_txn, plan_draws, record_line_refusal_in_txn,
 };
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE,
@@ -274,55 +278,71 @@ fn admit_in_txn(
         contract_note_matches(vault, wtxn, note, &request.contract.sha256)?;
     }
     let id = EntityId::now();
-    let (first_allowance, cohort) = match &target {
-        // A re-run gets no hold and keeps its predecessor's cohort (3.3, 4.4).
-        Some(target) if rerun => (None, target.cohort),
-        _ => {
-            let rows = vault.spend_rows_in_txn(wtxn, &request.line, &period, now_ms)?;
-            let room = PeriodRoom::fold(&period, &line.families, &rows);
-            let units = period.policy.first_rung_secs();
-            let draws = match plan_draws(
-                &room,
-                &DrawAsk {
-                    arm: id,
-                    family: request.family,
-                    track: seat.track,
-                    purpose: DrawPurpose::FirstAllowanceHold,
-                    units,
-                },
-            ) {
-                Ok(draws) => draws,
-                Err(denied) => {
-                    // Unmet demand (3.5): one row, at admission, with no arm.
-                    record_line_refusal_in_txn(
-                        vault,
-                        wtxn,
-                        request.line,
-                        period.index,
-                        &LineRefusal {
-                            family: request.family,
-                            arm: None,
-                            rung: 1,
-                            cohort: None,
-                            asked_secs: units,
-                            short: denied.short,
-                            room: denied.fits,
-                            reason: "budget_denied".to_owned(),
-                            by: Some(asker),
-                            at_ms: now_ms,
-                        },
-                    )?;
-                    return Ok(Err(budget_denied(units, &denied)));
-                }
-            };
-            let hold = AllowanceHold {
-                period: period.index,
+    // The cohort is fixed before anything is planned (4.4): a re-run keeps
+    // its predecessor's and takes no position; any other arm, a re-run of an
+    // experiment that never had one included, takes the next position of
+    // its period and track. A new idea, or one rule in force, takes none.
+    let inherited = target
+        .as_ref()
+        .filter(|_| rerun)
+        .and_then(|target| target.cohort);
+    let assignment = match inherited {
+        Some(_) => None,
+        None => next_cohort_assignment_in_txn(vault, wtxn, &request.line, &period, seat.track)?,
+    };
+    let cohort = inherited.or(assignment.as_ref().map(CohortAssignment::rule));
+    // A re-run gets no hold (3.3).
+    let first_allowance = if rerun {
+        None
+    } else {
+        let rows = vault.spend_rows_in_txn(wtxn, &request.line, &period, now_ms)?;
+        let room = PeriodRoom::fold(&period, &line.families, &rows);
+        let units = period.policy.first_rung_secs();
+        let draws = match plan_draws(
+            &room,
+            &DrawAsk {
+                arm: id,
+                family: request.family,
+                track: seat.track,
+                cohort,
+                purpose: DrawPurpose::FirstAllowanceHold,
                 units,
-                draws,
-            };
-            // The comparison's cohort (two rules in force) is row M2-G's.
-            (Some(hold), None)
-        }
+            },
+        ) {
+            Ok(draws) => draws,
+            Err(denied) => {
+                // Unmet demand (3.5): one row, at admission, with no arm.
+                // The ask keeps its position, so no later arm's cohort
+                // depends on this refusal.
+                if let Some(assignment) = &assignment {
+                    assignment.record_in_txn(vault, wtxn, request.family, None, now_ms)?;
+                }
+                record_line_refusal_in_txn(
+                    vault,
+                    wtxn,
+                    request.line,
+                    period.index,
+                    &LineRefusal {
+                        family: request.family,
+                        arm: None,
+                        rung: 1,
+                        cohort,
+                        asked_secs: units,
+                        short: denied.short,
+                        room: denied.fits,
+                        reason: "budget_denied".to_owned(),
+                        by: Some(asker),
+                        at_ms: now_ms,
+                    },
+                )?;
+                return Ok(Err(budget_denied(units, &denied)));
+            }
+        };
+        Some(AllowanceHold {
+            period: period.index,
+            units,
+            draws,
+        })
     };
     let arm = ExperimentArm {
         id,
@@ -342,7 +362,7 @@ fn admit_in_txn(
         runner: request.runner.clone(),
         supersedes: request.supersedes,
         cohort,
-        cohort_block: None,
+        cohort_block: assignment.as_ref().map(CohortAssignment::block),
         card_digest: request.card_digest.clone(),
         first_allowance,
         hold_end: None,
@@ -353,6 +373,9 @@ fn admit_in_txn(
         admitted_at_ms: now_ms,
         revision: 1,
     };
+    if let Some(assignment) = &assignment {
+        assignment.record_in_txn(vault, wtxn, request.family, Some(id), now_ms)?;
+    }
     EXPERIMENT_ARMS.put(&vault.store, wtxn, &id, &arm)?;
     intent.keep_in_txn(vault, wtxn, id.as_bytes().to_vec(), now_ms)?;
     Ok(Ok(ArmView::of(arm, false)))

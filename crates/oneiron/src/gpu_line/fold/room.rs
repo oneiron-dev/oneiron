@@ -332,31 +332,22 @@ impl PeriodRoom {
         self.arm_rule.get(arm).copied()
     }
 
-    /// The rule a new market draw of `arm` takes: the rule the arm already
-    /// drew this period; else the only rule in force; else the rule at the
-    /// low bits of `blake3(line, period, arm)` modulo the rules in force.
-    /// The pick never looks at room. `None` when no rule is in force.
+    /// The rule whose table a market draw of an arm in `cohort` takes: the
+    /// only rule in force; with two rules in force, the arm's own cohort when
+    /// this period has a table of it (section 4.4: the cohort is the arm's
+    /// for life, and its market draws never take the other half, even when
+    /// that half has room). `None`, so the draw takes no market: no rule is
+    /// in force, or the arm has no cohort in a comparison (a family that
+    /// graduated waits for the next mint) or a cohort this period has no
+    /// table of. The pick reads no room.
     #[must_use]
-    pub fn market_rule(&self, arm: &EntityId) -> Option<RuleRef> {
-        if let Some(rule) = self.arm_rule(arm) {
-            return Some(rule);
-        }
-        let rules: Vec<RuleRef> = self.period.tables.iter().map(|table| table.rule).collect();
-        match rules.len() {
-            0 => None,
-            1 => Some(rules[0]),
-            count => {
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(b"oneiron.gpu_line.market_rule:v1");
-                hasher.update(self.period.project.as_bytes());
-                hasher.update(&self.period.index.to_le_bytes());
-                hasher.update(arm.as_bytes());
-                let digest = hasher.finalize();
-                let mut low = [0u8; 8];
-                low.copy_from_slice(&digest.as_bytes()[..8]);
-                let pick = (u64::from_le_bytes(low) % count as u64) as usize;
-                Some(rules[pick])
+    pub fn market_rule(&self, cohort: Option<RuleRef>) -> Option<RuleRef> {
+        match self.period.tables.as_slice() {
+            [only] => Some(only.rule),
+            [_, _] => {
+                cohort.filter(|rule| self.period.tables.iter().any(|table| table.rule == *rule))
             }
+            _ => None,
         }
     }
 }

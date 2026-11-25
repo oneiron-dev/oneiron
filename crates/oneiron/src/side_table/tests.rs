@@ -477,6 +477,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GMAIL_MAILBOX_CURSOR",
         "GPU_ALLOCATION_NODE",
         "GPU_LINE",
+        "GPU_LINE_COHORT_POSITION",
         "GPU_LINE_PERIOD",
         "GPU_LINE_REFUSAL",
         "HOOKS_TASK_TICK_HOLD",

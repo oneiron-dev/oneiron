@@ -430,6 +430,7 @@ fn reserve_in_txn(
             arm: arm.id,
             family: arm.family,
             track: seat.track,
+            cohort: arm.cohort,
             purpose: DrawPurpose::Unit { rung: request.rung },
             units: request.secs,
         },

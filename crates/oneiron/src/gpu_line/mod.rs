@@ -30,7 +30,11 @@ pub use claim::{
     claim_in_txn, claims_at_rung_in_txn, custody_lapsed_in_txn, open_claim_in_txn,
     record_node_answer_in_txn, settle_unit_in_txn,
 };
-pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
+pub use cohort::{
+    COHORT_BLOCK_ARMS, CohortPosition, CohortPositionKey, cohort_positions_in_txn, cohort_rule,
+    cohort_seed_commit, cohort_track_tag,
+};
+pub(crate) use cohort::{CohortAssignment, next_cohort_assignment_in_txn};
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };

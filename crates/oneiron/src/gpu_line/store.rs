@@ -174,7 +174,8 @@ pub struct MintedLine {
 
 /// Mints first (section 4.1): reads `project`'s line and the record of its
 /// period that holds `now_ms`, minting that record at this first write and
-/// marking the new-idea seats it no longer funds as lapsed. Every write door
+/// marking the new-idea seats it no longer funds as lapsed and, at a two-rule
+/// mint, giving the line's open arms with no cohort theirs. Every write door
 /// of the lane economy calls it before anything else, so a record always
 /// reads the line as it stood when its period began, and no edit reaches a
 /// period that has begun. `Ok(Ok(None))` when no line is set.
@@ -235,6 +236,11 @@ pub fn mint_first_in_txn(
     if lapsed {
         line.revision += 1;
         put_line_in_txn(vault, wtxn, &line)?;
+    }
+    // An arm still open when the comparison turns on, or of a family that
+    // graduated, takes its cohort now (section 4.4).
+    if record.tables.len() == 2 {
+        crate::experiment_arm::assign_open_arms_in_txn(vault, wtxn, &line, &record, now_ms)?;
     }
     Ok(Ok(Some(MintedLine {
         line,

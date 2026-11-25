@@ -28,6 +28,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 mod admit;
+mod cohort_assignment;
 mod read;
 mod reserve;
 pub(crate) mod tables;
@@ -36,6 +37,7 @@ mod unit_view;
 mod wire;
 
 pub use admit::{ARMS_ADMIT_VERB, ArmAdmitRequest, ArmContractAsk, arm_admit_as};
+pub(crate) use cohort_assignment::assign_open_arms_in_txn;
 pub use read::{ARMS_GET_VERB, ARMS_LIST_VERB, arm_get_as, arm_list_as};
 pub use reserve::{ARMS_UNITS_RESERVE_VERB, UnitReserveRequest, unit_reserve_as};
 pub use unit_cancel::{ARMS_UNITS_CANCEL_VERB, UnitCancelRequest, unit_cancel_as};

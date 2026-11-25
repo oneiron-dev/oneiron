@@ -196,6 +196,7 @@ fn ask(arm: EntityId, family: EntityId, track: Track, purpose: DrawPurpose, unit
         arm,
         family,
         track,
+        cohort: None,
         purpose,
         units,
     }

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::room::{Bucket, Draw, DrawSource, PeriodRoom};
-use super::types::{DrawStep, Track};
+use super::types::{DrawStep, RuleRef, Track};
 use crate::EntityId;
 
 /// What a draw is for.
@@ -23,6 +23,9 @@ pub struct DrawAsk {
     pub family: EntityId,
     /// The family's seat track now.
     pub track: Track,
+    /// The arm's cohort (section 4.4): with two rules in force its market
+    /// draws take this rule's table only.
+    pub cohort: Option<RuleRef>,
     pub purpose: DrawPurpose,
     pub units: u64,
 }
@@ -67,7 +70,7 @@ pub fn draw_order(room: &PeriodRoom, ask: &DrawAsk) -> Vec<Bucket> {
                 .then_some(Bucket::FirstAllowance { arm: ask.arm }),
             DrawStep::Floor => Some(Bucket::Floor { family: ask.family }),
             DrawStep::Pinned => (ask.track == policy.pinned_track).then_some(Bucket::Pinned),
-            DrawStep::Market => room.market_rule(&ask.arm).map(|rule| Bucket::Market {
+            DrawStep::Market => room.market_rule(ask.cohort).map(|rule| Bucket::Market {
                 family: ask.family,
                 rule,
             }),

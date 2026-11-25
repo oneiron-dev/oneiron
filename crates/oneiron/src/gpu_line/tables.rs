@@ -17,6 +17,14 @@ crate::side_table::side_tables! {
         // Restore class: A period's record is what units drew against: a restore never mints
         // it again from other inputs.
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One position of a GPU line's comparison (design pass 32 r2, section 4.4): who took that
+    /// place of (period, track) in admission order, an arm or an admission refused for budget,
+    /// and the rule the period's seed gave it. Written once. Key: id16 (lane project) + u32be
+    /// (period index) + u8 (track: 0 demand, 1 interest) + u32be (position).
+    GPU_LINE_COHORT_POSITION: VaultMeta b"gpu_line_cohort_position:v1:" Named
+        // Restore class: A cohort is the arm's for life: a restore keeps the positions it
+        // holds and never assigns one again.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One ask a GPU line's budget could not meet (design pass 32, section 3.5): a reserve
     /// refused `over_rung_cap` or `budget_denied`, with its family, arm, rung, the seconds
     /// asked, the bucket short and the room left. Key: id16 (lane project) + u32be (period

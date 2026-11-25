@@ -853,6 +853,7 @@ fn a_lead_seats_a_new_idea() {
             arm: EntityId::now(),
             family: first,
             track: Track::NewIdea,
+            cohort: None,
             purpose: DrawPurpose::Unit { rung: 1 },
             units: 1_800,
         },
