@@ -122,7 +122,10 @@ impl ArmVerdictRequest {
             ));
         }
         check_verdict_text(&self.numbers, &self.text)?;
-        check_digests(self.result.iter().chain(&self.evidence), self.evidence.len())?;
+        check_digests(
+            self.result.iter().chain(&self.evidence),
+            self.evidence.len(),
+        )?;
         check_ledger_row(self.ledger_row.as_ref())
     }
 

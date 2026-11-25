@@ -323,7 +323,10 @@ pub(crate) fn record_arm_receipt_in_txn(
             "an experiment arm's receipt is named arm:<arm hex>:r<rung>",
         ));
     }
-    if receipt.outcome.as_ref().map(|outcome| outcome.receipt.as_str())
+    if receipt
+        .outcome
+        .as_ref()
+        .map(|outcome| outcome.receipt.as_str())
         != Some(receipt.team_ref.as_str())
     {
         return Err(Error::InvalidClaimBody(

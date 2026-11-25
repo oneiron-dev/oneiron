@@ -54,7 +54,9 @@ use oneiron::gpu_line::{
     GpuLineSetRequest, Track, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal, gpu_seconds,
 };
 use oneiron::llm::run_admission::AllocationRef;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use oneiron::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult,
+};
 use oneiron::receipt::task_type_ref::TypeRef;
 use oneiron::store::GateDecisionId;
 use oneiron::team::{TeamOutcome, payoff_table, settle_team_outcome, team_receipt};
@@ -541,10 +543,16 @@ fn a_kill_moves_the_payoff_row_at_once() {
     let arm = fixture.admit(lane, family, 1, "killed");
     let result = digest("result.json", 0xa1);
     let unit = fixture.settle(&arm, 1, "check/shard-0", None, vec![result.clone()]);
-    assert_eq!(fixture.payoff_of(family), None, "no receipt before the verdict");
+    assert_eq!(
+        fixture.payoff_of(family),
+        None,
+        "no receipt before the verdict"
+    );
 
     let ask = verdict_ask("kill", &arm, ArmDecision::Kill, &[unit.id], Some(&result));
-    let killed = fixture.verdict(None, &ask).expect("the lead kills the rung");
+    let killed = fixture
+        .verdict(None, &ask)
+        .expect("the lead kills the rung");
     assert!(!killed.replayed);
     assert_eq!(killed.arm.revision, arm.revision + 1);
     assert_eq!(killed.arm.state, ArmState::Killed);
@@ -591,19 +599,25 @@ fn a_kill_moves_the_payoff_row_at_once() {
     );
 
     let again = fixture
-        .verdict(None, &ArmVerdictRequest {
-            intent_key: "kill-again".to_owned(),
-            ..ask.clone()
-        })
+        .verdict(
+            None,
+            &ArmVerdictRequest {
+                intent_key: "kill-again".to_owned(),
+                ..ask.clone()
+            },
+        )
         .expect("the same verdict under a new key");
     assert!(again.replayed);
     assert_eq!(again.arm, killed.arm, "a replay writes nothing");
     let other = fixture
-        .verdict(None, &ArmVerdictRequest {
-            intent_key: "kill-other".to_owned(),
-            text: "another reading".to_owned(),
-            ..ask
-        })
+        .verdict(
+            None,
+            &ArmVerdictRequest {
+                intent_key: "kill-other".to_owned(),
+                text: "another reading".to_owned(),
+                ..ask
+            },
+        )
         .expect_err("another verdict at the read revision");
     refused_as(&other, MEMORY_CODE_INVALID_STATE, "verdict_set");
 }
@@ -1026,10 +1040,13 @@ fn a_second_hold_is_refused() {
         .expect_err("a second hold");
     refused_as(&again, MEMORY_CODE_INVALID_STATE, "hold_once");
     let retry = fixture
-        .verdict(None, &ArmVerdictRequest {
-            intent_key: "hold-retry".to_owned(),
-            ..ask
-        })
+        .verdict(
+            None,
+            &ArmVerdictRequest {
+                intent_key: "hold-retry".to_owned(),
+                ..ask
+            },
+        )
         .expect("the first hold, asked again under a new key");
     assert!(retry.replayed);
     assert_eq!(retry.arm.revision, held.arm.revision);

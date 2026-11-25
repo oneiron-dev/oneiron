@@ -266,13 +266,17 @@ fn review_in_txn(
         ));
     }
     let claims = RungClaims::read_in_txn(vault, wtxn, &arm, request.rung)?;
-    let leads_the_line = vault
-        .agent_grants_in_txn(wtxn)?
-        .iter()
-        .any(|standing| {
-            standing.grant.member_ref == reviewer && line.holds_role(&standing.id, LineRole::Lead)
-        });
-    check_independent(&arm, verdict.by, &claims, leads_the_line, reviewer, &request.model)?;
+    let leads_the_line = vault.agent_grants_in_txn(wtxn)?.iter().any(|standing| {
+        standing.grant.member_ref == reviewer && line.holds_role(&standing.id, LineRole::Lead)
+    });
+    check_independent(
+        &arm,
+        verdict.by,
+        &claims,
+        leads_the_line,
+        reviewer,
+        &request.model,
+    )?;
     let scores = matches!(
         request.verdict,
         ArmReviewVerdict::Confirmed
