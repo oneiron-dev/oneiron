@@ -5746,7 +5746,7 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 8,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -5788,6 +5788,23 @@
       "enum": 2,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshAuthorityImport",
+      "MeshAuthorityPage",
+      "MeshAuthorityRow"
+     ],
+     "path": "src/authority/mesh_machine/replication.rs",
+     "purpose": "The home's host-signed mesh bindings carried to the owner's other machines (MESH-AUTHORITY-REPLICATION, R6…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -7404,7 +7421,7 @@
      "path": "src/authority/tests/machine_identity.rs",
      "purpose": "World privacy P1 acceptance: a machine is the owner's only by the owner's own answer at enrolment (\"yours…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -7413,6 +7430,14 @@
      "notable": [],
      "path": "src/authority/tests/machine_write.rs",
      "purpose": "Signed MACHINE claims bind an enrolled software key to exact bytes and vault",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/mesh_authority_replication.rs",
+     "purpose": "MESH-AUTHORITY-REPLICATION (R6 P0, Engine 26 Nov 02:16): a replica that joined its home proves the machines…",
      "surface": {}
     },
     {
@@ -89881,8 +89906,18 @@
      "path": "src/sync/client/residence/authority.rs",
      "purpose": "Authority history from the home for a machine that syncs what it opened (OF-469)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/authority/mesh.rs",
+     "purpose": "The home's host-signed mesh bindings, read each sync round whatever this machine's residence…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -92163,7 +92198,7 @@
       "const": 2,
       "crate-vis": 30,
       "fn": 9,
-      "re-export": 35
+      "re-export": 36
      }
     },
     {
@@ -92634,6 +92669,16 @@
      "notable": [],
      "path": "src/sync/residence/machine_names.rs",
      "purpose": "`residence.machine_names.exchange` at the home (FIX [DEVICE-DISPLAY-NAME]; Engine RULING…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/mesh_authority.rs",
+     "purpose": "The home's host-signed mesh bindings, served beside its authority catch-up to a proven machine of the…",
      "surface": {
       "fn": 1
      }
@@ -122697,7 +122742,7 @@
     },
     "authority": {
      "entry": "crates/oneiron/src/authority/mod.rs",
-     "files": 348,
+     "files": 350,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -124825,7 +124870,7 @@
     },
     "sync": {
      "entry": "crates/oneiron/src/sync/mod.rs",
-     "files": 452,
+     "files": 454,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125177,8 +125222,8 @@
    },
    "over_bar": 277,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8611,
-   "test_files": 2319
+   "source_files": 8614,
+   "test_files": 2320
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -180776,7 +180821,7 @@
      "path": "src/livequery/residence/authority.rs",
      "purpose": "The authority log over residence: its tail, range, checkpoint and append, and an entry past one frame in…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
