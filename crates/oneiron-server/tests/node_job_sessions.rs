@@ -473,6 +473,70 @@ fn a_renewal_after_the_chunk_ended_is_refused_at_zero_seconds() {
     );
 }
 
+/// A renewal the scope never took holds the next one back only while the
+/// run lives (blind review round 1 of #10501): once the run ended at its old
+/// cutoff, the next renewal is the chunk key's `Refused` end, not a `Busy`
+/// that no tick ever clears.
+#[test]
+fn a_renewal_after_an_untaken_renewal_and_the_runs_end_is_refused() {
+    let f = fixture();
+    let jobs = f.node.open();
+    f.launch(&jobs, "session-0");
+    f.advance_secs(60);
+    f.node.units.set_renewing(false);
+    let chunk = receipt(jobs.submit(f.issuer, f.renewal("session-1", 1, "session-0")));
+    assert_eq!(chunk.state, JobState::Accepted, "the renewal is journaled");
+    assert_eq!(f.node.units.renewed_cutoff("session-0"), None);
+    assert!(
+        matches!(
+            jobs.submit(f.issuer, f.renewal("session-2", 2, "session-0")),
+            JobAnswer::Busy { .. }
+        ),
+        "while the run lives, the next renewal waits for the scope"
+    );
+
+    f.advance_secs(CHUNK_SECS - 60);
+    f.node.units.cut_off("session-0");
+    jobs.tick();
+    let ended = wait_for(&jobs, "session-0", |entry| entry.state == JobState::Ended);
+    assert_eq!(ended.end, Some(JobEnd::TimeLimit));
+    let late = receipt(jobs.submit(f.issuer, f.renewal("session-2", 2, "session-0")));
+    assert_eq!(late.state, JobState::Ended);
+    assert_eq!(late.end, refused("continues_ended"));
+    assert!(!late.started);
+    assert_eq!(late.measured_secs, None);
+}
+
+/// The node journals no renewal that the scope's handoff could not take
+/// before the old cutoff timer fires (EM-22, R3B's review of #10502): 20 s
+/// before the run's stop time is too late, 50 s is in time.
+#[test]
+fn a_renewal_closer_to_the_stop_than_the_scopes_handoff_is_refused() {
+    let grace_secs = 10;
+    let f = fixture();
+    let jobs = f.node.open();
+    let launched = f.launch(&jobs, "session-0");
+    f.advance_secs(CHUNK_SECS - grace_secs - 20);
+    let late = receipt(jobs.submit(f.issuer, f.renewal("session-1", 1, "session-0")));
+    assert_eq!(late.end, refused("continues_ended"));
+    assert_eq!(
+        cutoff(&jobs, "session-0"),
+        launched + CHUNK_SECS * NANOS_PER_SEC
+    );
+    assert_eq!(f.node.units.renewed_cutoff("session-0"), None);
+
+    let g = fixture();
+    let jobs = g.node.open();
+    let launched = g.launch(&jobs, "other-0");
+    g.advance_secs(CHUNK_SECS - grace_secs - 50);
+    let in_time = receipt(jobs.submit(g.issuer, g.renewal("other-1", 1, "other-0")));
+    assert_eq!(in_time.state, JobState::Accepted);
+    assert_eq!(
+        g.node.units.renewed_cutoff("other-0"),
+        Some(launched + 2 * CHUNK_SECS * NANOS_PER_SEC)
+    );
+}
+
 /// A renewal sent twice moves the cutoff once and answers its first
 /// receipt; the same chunk key naming another run is a key conflict.
 #[test]
