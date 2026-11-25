@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 const SECRET: &str = "only-the-offline-issuer-key-not-a-bearer";
-const ORIGIN: &str = "http://127.0.0.1:3000";
+const ORIGIN: &str = "http://127.0.0.1";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
