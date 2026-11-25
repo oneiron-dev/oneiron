@@ -209,9 +209,14 @@ pub(crate) fn notify_unit_end_in_txn(
                 terminal.lost_secs
             ),
         ),
+        // A write-off has no machine answer, so it names the machine the claim was pinned to,
+        // as its `unit_unconfirmed` notice did.
         UnitEnd::WrittenOff { .. } => (
             LineNoticeKind::UnitWrittenOff,
-            format!("{unit} machine={}", machine_words(terminal.machine)),
+            format!(
+                "{unit} machine={}",
+                machine_words(terminal.machine.or(claim.machine))
+            ),
         ),
     };
     notify_line_in_txn(
@@ -330,7 +335,8 @@ pub(crate) fn raise_due_line_notices_in_txn(
 /// Tells the leads of each line with a unit lost on `machine` that it answers again under boot
 /// `boot_id`, in the caller's write (section 6, `machine_returned`). A line counts when one of
 /// its claims ended `BoxLost` on the machine within the line's `machine_returned_window_secs`
-/// before `now_ms`, or is started on it (its pinned machine) and unconfirmed. Keyed by machine
+/// before `now_ms`, or is started on it (its pinned machine) and unconfirmed now, whatever its
+/// age: a claim unconfirmed now was unconfirmed within the window. Keyed by machine
 /// and boot: one notice per outage and recipient. The issuer's guard calls it on the machine's
 /// unreachable-to-answering transition (pass 33, section 7). Returns the notices it wrote.
 ///
@@ -352,7 +358,9 @@ pub fn notify_machine_returned_in_txn(
         if told.contains(&claim.line) {
             continue;
         }
-        let lost_at_ms = match &claim.state {
+        // The last moment the claim stood lost on the machine: a box-lost end's time, or now for
+        // a started claim that is unconfirmed now.
+        let last_lost_ms = match &claim.state {
             ClaimState::Ended(terminal)
                 if terminal.end == UnitEnd::BoxLost && terminal.machine == Some(*machine) =>
             {
@@ -360,11 +368,11 @@ pub fn notify_machine_returned_in_txn(
             }
             ClaimState::Started if claim.machine == Some(*machine) => {
                 let since = unconfirmed_from_in_txn(vault, wtxn, &claim)?;
-                (since <= now_ms).then_some(since)
+                (since <= now_ms).then_some(now_ms)
             }
             _ => None,
         };
-        let Some(lost_at_ms) = lost_at_ms else {
+        let Some(last_lost_ms) = last_lost_ms else {
             continue;
         };
         let Some(line) = line_in_txn(vault, wtxn, &claim.line)? else {
@@ -374,7 +382,7 @@ pub fn notify_machine_returned_in_txn(
             .budget
             .machine_returned_window_secs
             .saturating_mul(1_000);
-        if lost_at_ms.saturating_add(window_ms) < now_ms {
+        if last_lost_ms.saturating_add(window_ms) < now_ms {
             continue;
         }
         told.insert(claim.line);
