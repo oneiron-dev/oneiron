@@ -397,6 +397,40 @@ pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
 
 /// One account's entry in the account database.
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// The id of the group `name`, as the system's name service names it.
+///
+/// # Errors
+///
+/// No such group (`NotFound`), or the lookup failed.
+pub fn group_id(name: &str) -> io::Result<u32> {
+    let c =
+        CString::new(name).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let mut entry = std::mem::MaybeUninit::<libc::group>::uninit();
+    let mut buffer = vec![0_u8; 16 * 1024];
+    let mut found: *mut libc::group = std::ptr::null_mut();
+    // SAFETY: every pointer is valid for the call; buffer outlives it.
+    let answer = unsafe {
+        libc::getgrnam_r(
+            c.as_ptr(),
+            entry.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &raw mut found,
+        )
+    };
+    if answer != 0 {
+        return Err(io::Error::from_raw_os_error(answer));
+    }
+    if found.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no group named {name}"),
+        ));
+    }
+    // SAFETY: getgrnam_r found the entry and filled it.
+    Ok(unsafe { entry.assume_init() }.gr_gid)
+}
+
 pub struct AccountEntry {
     pub uid: u32,
     pub gid: u32,

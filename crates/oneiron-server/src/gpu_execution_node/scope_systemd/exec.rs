@@ -95,7 +95,7 @@ pub fn run(args: &[String]) -> i32 {
             return exec_status::EXEC_FILE;
         }
     };
-    if let Err(why) = take_job_identity(exec.identity) {
+    if let Err(why) = take_job_identity(exec.identity, exec.device_gid) {
         journal_line!("job-exec: the job's ids were not taken: {why}");
         return exec_status::JOB_IDENTITY;
     }
@@ -223,20 +223,22 @@ fn read_exec_file(exchange: &Path, instance: &str) -> Result<ExecFile, String> {
     Ok(exec)
 }
 
-/// Takes the job's own ids: no supplementary group, then every group id and
+/// Takes the job's own ids: no supplementary group but the job device group
+/// when the launch leases a device (`device_gid`), then every group id and
 /// every user id the job's. The unit starts this step as root, and the
 /// kernel clears every capability once no user id is 0 any more. The step
 /// then checks that the kernel shows exactly that ([`identity_held`]) and
 /// makes itself undumpable again.
-fn take_job_identity(identity: JobIdentity) -> Result<(), String> {
-    if identity.uid == 0 || identity.gid == 0 {
+fn take_job_identity(identity: JobIdentity, device_gid: Option<u32>) -> Result<(), String> {
+    if identity.uid == 0 || identity.gid == 0 || device_gid == Some(0) {
         return Err(format!(
-            "uid {} gid {} is root's",
+            "uid {} gid {} device group {device_gid:?} is root's",
             identity.uid, identity.gid
         ));
     }
-    // SAFETY: a count of 0 reads no pointer.
-    if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
+    let groups: Vec<libc::gid_t> = device_gid.into_iter().collect();
+    // SAFETY: groups holds groups.len() ids for the whole call.
+    if unsafe { libc::setgroups(groups.len(), groups.as_ptr()) } != 0 {
         return Err(format!("setgroups: {}", io::Error::last_os_error()));
     }
     // SAFETY: plain id arguments.
@@ -257,14 +259,19 @@ fn take_job_identity(identity: JobIdentity) -> Result<(), String> {
     }
     let status = std::fs::read_to_string("/proc/self/status")
         .map_err(|error| format!("/proc/self/status: {error}"))?;
-    identity_held(&status, identity)
+    identity_held(&status, identity, device_gid)
 }
 
 /// Why `/proc/self/status` shows more than `identity` alone: a user or group
-/// id that is not the job's, a supplementary group, or a capability in the
-/// inheritable, permitted, effective or ambient set. `Ok` when it shows
-/// exactly the job's ids and no capability.
-pub(super) fn identity_held(status: &str, identity: JobIdentity) -> Result<(), String> {
+/// id that is not the job's, a supplementary group other than `device_gid`,
+/// or a capability in the inheritable, permitted, effective or ambient set.
+/// `Ok` when it shows exactly the job's ids, the device group when given,
+/// and no capability.
+pub(super) fn identity_held(
+    status: &str,
+    identity: JobIdentity,
+    device_gid: Option<u32>,
+) -> Result<(), String> {
     let field = |name: &str| {
         status
             .lines()
@@ -281,10 +288,13 @@ pub(super) fn identity_held(status: &str, identity: JobIdentity) -> Result<(), S
             return Err(format!("{name} {ids}, not {want} four times"));
         }
     }
-    if let Some(groups) = field("Groups:")
-        && !groups.is_empty()
-    {
-        return Err(format!("supplementary groups left: {groups}"));
+    let groups: Vec<&str> = field("Groups:")
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    let want: Vec<String> = device_gid.iter().map(u32::to_string).collect();
+    if groups != want.iter().map(String::as_str).collect::<Vec<_>>() {
+        return Err(format!("supplementary groups {groups:?}, not {want:?}"));
     }
     for name in ["CapInh:", "CapPrm:", "CapEff:", "CapAmb:"] {
         let Some(caps) = field(name) else {
@@ -712,10 +722,10 @@ mod tests {
     fn the_job_holds_its_ids_alone_with_no_group_and_no_capability_left() {
         let ids = "1879048192\t1879048192\t1879048192\t1879048192";
         let ok = status(ids, ids, "", "0000000000000000", Some("0000000000000000"));
-        assert_eq!(identity_held(&ok, JOB), Ok(()));
+        assert_eq!(identity_held(&ok, JOB, None), Ok(()));
         // The bounding set keeps CAP_SETUID and CAP_SETGID; no other set may.
         let no_ambient = status(ids, ids, "", "0000000000000000", None);
-        assert_eq!(identity_held(&no_ambient, JOB), Ok(()));
+        assert_eq!(identity_held(&no_ambient, JOB, None), Ok(()));
         let saved_root = status(
             "1879048192\t1879048192\t0\t1879048192",
             ids,
@@ -723,13 +733,41 @@ mod tests {
             "0000000000000000",
             None,
         );
-        assert!(identity_held(&saved_root, JOB).is_err());
-        assert!(identity_held(&status(ids, ids, "0", "0000000000000000", None), JOB).is_err());
-        assert!(identity_held(&status(ids, ids, "", "00000000000000c0", None), JOB).is_err());
+        assert!(identity_held(&saved_root, JOB, None).is_err());
+        assert!(
+            identity_held(&status(ids, ids, "0", "0000000000000000", None), JOB, None).is_err()
+        );
+        assert!(identity_held(&status(ids, ids, "", "00000000000000c0", None), JOB, None).is_err());
         assert!(
             identity_held(
                 &status(ids, ids, "", "0000000000000000", Some("0000000000000080")),
-                JOB
+                JOB,
+                None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_job_that_leases_a_device_holds_the_device_group_alone() {
+        let ids = "1879048192\t1879048192\t1879048192\t1879048192";
+        let with_group = status(ids, ids, "970", "0000000000000000", None);
+        assert_eq!(identity_held(&with_group, JOB, Some(970)), Ok(()));
+        // A job that leases no device keeps no group; one that does keeps that one alone.
+        assert!(identity_held(&with_group, JOB, None).is_err());
+        assert!(
+            identity_held(
+                &status(ids, ids, "", "0000000000000000", None),
+                JOB,
+                Some(970)
+            )
+            .is_err()
+        );
+        assert!(
+            identity_held(
+                &status(ids, ids, "970 971", "0000000000000000", None),
+                JOB,
+                Some(970)
             )
             .is_err()
         );

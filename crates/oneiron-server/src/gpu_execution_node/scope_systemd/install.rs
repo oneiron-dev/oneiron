@@ -19,7 +19,8 @@ use super::super::node_settings::ExecutionNodeSettings;
 use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
 use super::safe_fs::{
-    account, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path, require_root_owned,
+    account, borrow, facts, group_id, make_dir_beneath, open_dir_beneath, open_dir_path,
+    require_root_owned,
 };
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::unit_file::{
@@ -70,6 +71,12 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     let (engine_uid, engine_gid, engine_home) = account(&request.engine_account)
         .map_err(|error| format!("engine account {}: {error}", request.engine_account))?;
     check_job_range(&settings.job_uids(), (engine_uid, engine_gid))?;
+    let device_gid = ensure_device_group(
+        &settings.job_device_group,
+        &settings.job_uids(),
+        (engine_uid, engine_gid),
+        request.dry_run,
+    )?;
     let mut protected = vec![engine_home];
     protected.extend(request.protect.iter().cloned());
     protected.sort();
@@ -110,6 +117,13 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         stdout_line!(
             "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}"
         );
+        match device_gid {
+            Some(gid) => stdout_line!("job device group {} gid {gid}", settings.job_device_group),
+            None => stdout_line!(
+                "job device group {}: not there yet; install makes it",
+                settings.job_device_group
+            ),
+        }
         print_templates(&settings);
         return Ok(());
     }
@@ -142,12 +156,14 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
     stdout_line!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job uids {}..{}, RuntimeMaxSec {runtime_max_secs}",
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job uids {}..{}, job device group {} gid {}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),
         said(socket_changed),
         said(handler_changed),
         settings.job_uids().start,
-        settings.job_uids().end
+        settings.job_uids().end,
+        settings.job_device_group,
+        device_gid.unwrap_or_default()
     );
     print_templates(&settings);
     stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
@@ -207,6 +223,68 @@ fn check_job_range(range: &Range<u32>, engine: (u32, u32)) -> Result<(), String>
         }
     }
     Ok(())
+}
+
+/// Makes the job device group as a system group unless it exists, and checks
+/// it: not root's, outside the job range, not the engine's group, and no
+/// account in it (an account in it could open every card outside any unit).
+/// Its gid, or `None` on a dry run before the group exists.
+fn ensure_device_group(
+    name: &str,
+    range: &Range<u32>,
+    engine: (u32, u32),
+    dry_run: bool,
+) -> Result<Option<u32>, String> {
+    let gid = match group_id(name) {
+        Ok(gid) => gid,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if dry_run {
+                return Ok(None);
+            }
+            run_tool("groupadd", &["--system", name], SYSTEMCTL_TIMEOUT)?;
+            group_id(name).map_err(|error| format!("job device group {name}: {error}"))?
+        }
+        Err(error) => return Err(format!("job device group {name}: {error}")),
+    };
+    if gid == 0 || gid == engine.1 || range.contains(&gid) {
+        return Err(format!(
+            "job device group {name}: gid {gid} is root's, the engine's or inside the job range"
+        ));
+    }
+    let accounts = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+    let groups = std::fs::read_to_string("/etc/group").unwrap_or_default();
+    if let Some(member) = group_members(&accounts, &groups, name, gid).first() {
+        return Err(format!(
+            "job device group {name}: account {member} is in it, so it could open every card outside any unit"
+        ));
+    }
+    Ok(Some(gid))
+}
+
+/// The accounts in the group `name` (gid `gid`): those whose primary group it
+/// is, and those `/etc/group` lists as its members.
+fn group_members(accounts: &str, groups: &str, name: &str, gid: u32) -> Vec<String> {
+    let mut members: Vec<String> = accounts
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(':').collect();
+            (fields.get(3)?.parse::<u32>().ok()? == gid).then(|| fields[0].to_owned())
+        })
+        .collect();
+    for line in groups.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.first() == Some(&name) {
+            members.extend(
+                fields
+                    .get(3)
+                    .into_iter()
+                    .flat_map(|list| list.split(','))
+                    .filter(|member| !member.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+    }
+    members
 }
 
 /// The first line of an id file whose ids meet `range`.
@@ -336,5 +414,22 @@ mod tests {
         );
         assert!(first_overlap("big:1879000000:100000\n", IdFile::Subordinate, &range).is_some());
         assert!(check_job_range(&range, (1_879_048_192, 971)).is_err());
+    }
+
+    #[test]
+    fn an_account_in_the_job_device_group_is_found() {
+        let accounts =
+            "root:x:0:0::/root:/bin/bash\noneiron:x:970:971::/var/lib/oneiron:/bin/bash\n";
+        let groups = "oneiron-job-devices:x:960:\nvideo:x:44:lexi\n";
+        assert!(group_members(accounts, groups, "oneiron-job-devices", 960).is_empty());
+        let listed = "oneiron-job-devices:x:960:lexi,\n";
+        assert_eq!(
+            group_members(accounts, listed, "oneiron-job-devices", 960),
+            vec!["lexi"]
+        );
+        assert_eq!(
+            group_members(accounts, groups, "oneiron-job-devices", 971),
+            vec!["oneiron"]
+        );
     }
 }

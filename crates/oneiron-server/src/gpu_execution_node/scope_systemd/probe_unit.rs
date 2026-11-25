@@ -142,6 +142,7 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     let exec = ExecFile {
         key: format!("probe-{instance}"),
         identity: given.identity,
+        device_gid: None,
         instance: instance.clone(),
         probe: true,
         argv: Vec::new(),

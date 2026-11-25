@@ -59,6 +59,9 @@ pub const JOB_UID_FIRST_DEFAULT: u32 = 1_879_048_192;
 /// run at once.
 pub const JOB_UID_COUNT_DEFAULT: u32 = 65_536;
 
+/// Default of `job_device_group`.
+pub const JOB_DEVICE_GROUP_DEFAULT: &str = "oneiron-job-devices";
+
 /// The lowest `job_uid_first`: the 16-bit ids are the system's, the login
 /// accounts', `DynamicUser=`'s and `nobody`'s.
 pub const JOB_UID_FIRST_MIN: u32 = 65_536;
@@ -170,6 +173,14 @@ pub struct ExecutionNodeSettings {
     /// How many ids the range holds.
     #[serde(default = "job_uid_count_default")]
     pub job_uid_count: u32,
+    /// The system group that owns every device file a job may lease (each
+    /// card's own files and the shared control files, mode 0660, no account
+    /// in it). A job that leases a device keeps this group as its one
+    /// supplementary group; one that leases none keeps none. The unit's
+    /// device policy admits only the leased devices' files, so the group
+    /// opens no other card for the job. `install` makes the group.
+    #[serde(default = "job_device_group_default")]
+    pub job_device_group: String,
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
@@ -295,6 +306,9 @@ fn job_uid_first_default() -> u32 {
 fn job_uid_count_default() -> u32 {
     JOB_UID_COUNT_DEFAULT
 }
+fn job_device_group_default() -> String {
+    JOB_DEVICE_GROUP_DEFAULT.to_owned()
+}
 fn write_mib_per_sec_default() -> u64 {
     WRITE_MIB_PER_SEC_DEFAULT
 }
@@ -398,6 +412,17 @@ impl ExecutionNodeSettings {
         }
         if self.job_uid_count == 0 {
             return Err("execution_node.job_uid_count must be at least 1".to_owned());
+        }
+        if !(1..=32).contains(&self.job_device_group.len())
+            || !self.job_device_group.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+            })
+            || self.job_device_group.starts_with('-')
+        {
+            return Err(
+                "execution_node.job_device_group must be 1 to 32 of a-z, 0-9, '-' and '_'"
+                    .to_owned(),
+            );
         }
         if u64::from(self.job_uid_first) + u64::from(self.job_uid_count) > JOB_UID_END_MAX {
             return Err(format!(

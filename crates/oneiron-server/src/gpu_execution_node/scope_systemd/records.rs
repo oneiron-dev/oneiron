@@ -85,6 +85,10 @@ pub struct ExecFile {
     /// The uid and gid the job runs as, from the node's range ([`super::job_ids`]):
     /// `job-exec` takes them before anything the job controls runs.
     pub identity: JobIdentity,
+    /// The job's one supplementary group: the node's job device group when
+    /// the launch leases a device, else none.
+    #[serde(default)]
+    pub device_gid: Option<u32>,
     /// The unit's instance: the key's 32 hex digits.
     pub instance: String,
     /// `execution-node check`'s probe: report every bound, then exit, and

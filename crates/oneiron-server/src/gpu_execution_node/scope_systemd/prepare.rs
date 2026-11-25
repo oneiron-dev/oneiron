@@ -225,7 +225,14 @@ fn prepare(
     let identity = job_ids::allocate(settings.job_uids(), &unit, context.engine_uid)
         .map_err(|why| format!("job_uid_not_given: {why}"))?;
     *given = Some(identity);
-    record.account = format!("uid {} gid {}", identity.uid, identity.gid);
+    let device_gid = job_device_gid(settings, &allowed)?;
+    record.account = match device_gid {
+        Some(group) => format!(
+            "uid {} gid {} device group {group}",
+            identity.uid, identity.gid
+        ),
+        None => format!("uid {} gid {}", identity.uid, identity.gid),
+    };
     let payload_path = settings.work_dir.join(instance);
     let payload = prepare_payload(context, &payload_path, identity)?;
     publish_payload(instance, &payload)?;
@@ -237,7 +244,7 @@ fn prepare(
         &payload_path,
         (&allowed, &denied),
         protected,
-        identity,
+        (identity, device_gid),
     )?;
     write_exchange(&exec)?;
     record.required.clone_from(&template.require);
@@ -477,7 +484,7 @@ fn exec_file(
     payload: &Path,
     (allowed, denied): (&[PathBuf], &[PathBuf]),
     protected: Vec<PathBuf>,
-    identity: JobIdentity,
+    (identity, device_gid): (JobIdentity, Option<u32>),
 ) -> Result<ExecFile, String> {
     let checkout = payload.join("checkout");
     let mut argv = template.interpreter.clone();
@@ -536,6 +543,7 @@ fn exec_file(
     Ok(ExecFile {
         key: launch.key.clone(),
         identity,
+        device_gid,
         instance: context.args.instance.clone(),
         probe: false,
         argv,
@@ -551,6 +559,26 @@ fn exec_file(
         require: template.require.clone(),
         log_max_bytes: template.log_max_bytes(),
     })
+}
+
+/// The job's supplementary group: the node's job device group when the
+/// launch leases a device (`allowed`, the leased devices' files), else none.
+fn job_device_gid(
+    settings: &super::super::node_settings::ExecutionNodeSettings,
+    allowed: &[PathBuf],
+) -> Result<Option<u32>, String> {
+    if allowed.is_empty() {
+        return Ok(None);
+    }
+    let name = &settings.job_device_group;
+    let gid = safe_fs::group_id(name)
+        .map_err(|error| format!("job_device_group_unknown: {name}: {error}"))?;
+    if gid == 0 || settings.job_uids().contains(&gid) {
+        return Err(format!(
+            "job_device_group_not_fit: {name} has gid {gid}, root's or inside the job range"
+        ));
+    }
+    Ok(Some(gid))
 }
 
 /// Process ids owned by `uid`, at most [`HIDDEN_PIDS_MAX`].
