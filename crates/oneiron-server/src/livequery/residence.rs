@@ -36,6 +36,7 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::claim::CallerLocality;
+use oneiron::sync::residence::mesh_authority_for;
 use oneiron::sync::residence::{
     AuthorityAppendPart, AuthorityAppendProgress, AuthorityAppendStage, BundlePartRead, IndexPage,
     OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantState, RESIDENCE_PAGE_REPLY_BYTES,
@@ -438,6 +439,15 @@ struct AuthorityGrantsRequest {
     grants: Vec<String>,
 }
 
+/// A page of the home's mesh bindings: those past MACHINE `after`, a 32-hex
+/// entity id, or from the first (MESH-AUTHORITY-REPLICATION).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityMeshRequest {
+    #[serde(default)]
+    after: Option<String>,
+}
+
 /// A part of an authority entry a page named by reference (FIX 8246): the
 /// entry's hash in base64 and the byte offset the part starts at.
 #[derive(Deserialize)]
@@ -560,6 +570,7 @@ pub(super) fn run(
             "residence.authority.range" => authority_range(server, peer, request.params),
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
             "residence.authority.grants" => authority_grants(server, peer, request.params),
+            "residence.authority.mesh" => authority_mesh(server, peer, request.params),
             "residence.authority.checkpoint.roots" => {
                 checkpoint_roots::roots(server, peer, request.params)
             }

@@ -625,7 +625,7 @@ fn an_activated_archive_joins_as_a_new_machine() {
 /// The pairing ceremony for `machine`: the owner answers "yours" on the link,
 /// `pairing_key` redeems it with `request`, and the host binds the paired
 /// machine's mesh address, which replaces the MACHINE body.
-fn pair_and_bind(
+pub(super) fn pair_and_bind(
     host: &Host,
     machine: EntityId,
     request: &MachineEnrolmentRequest,

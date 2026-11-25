@@ -24,9 +24,13 @@ use crate::temporal::TimeRange;
 mod doors;
 mod endpoint_index;
 mod enrolment;
+mod replication;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
 pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
+pub use replication::{
+    MESH_AUTHORITY_PAGE_MAX, MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityRow,
+};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -99,6 +103,37 @@ fn mesh_verb(alpn: &[u8]) -> String {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     )
+}
+/// The claims of `signed`, the binding row of `machine`, when a live owner
+/// host of `fold` signed it: well formed, the vault root not conflicted, its
+/// host a live owner in the roster, and the signature that host's. A row
+/// that does not check refuses; a host that is not a live owner answers
+/// `None`. A stored row and one a home serves are judged alike
+/// (MESH-AUTHORITY-REPLICATION).
+fn verified_mesh_authority(
+    fold: &AuthorityFold,
+    machine: EntityId,
+    signed: &SignedMeshAuthority,
+) -> Result<Option<MeshAuthorityClaims>> {
+    // Every ALPN grant the host signed is read, however many (FIX 7921);
+    // each must still be a valid ALPN.
+    let claims = &signed.claims;
+    if claims.version != 1
+        || claims.machine != machine
+        || claims.alpns.keys().any(|alpn| !valid_alpn(alpn))
+    {
+        return Err(invalid_authority());
+    }
+    if fold.vault_root_is_conflicted()
+        || !roster_has_live_owner(&fold.roster, &AuthorityKey::Ed25519(claims.host_key))
+    {
+        return Ok(None);
+    }
+    let host = super::strong_ed25519_key(&claims.host_key)?;
+    let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
+    host.verify_strict(&transcript(claims)?, &sig)
+        .map_err(|_| invalid_authority())?;
+    Ok(Some(claims.clone()))
 }
 /// The claims of the pairing slip a binding stands on, when it stands for
 /// that binding at any time: minted and not revoked in `fold`, a root slip of
@@ -247,26 +282,8 @@ impl Vault {
         else {
             return Ok(None);
         };
-        // Every ALPN grant the host signed is read, however many (FIX 7921);
-        // each must still be a valid ALPN.
-        let claims = signed.claims;
-        if claims.version != 1
-            || claims.machine != machine
-            || claims.alpns.keys().any(|alpn| !valid_alpn(alpn))
-        {
-            return Err(invalid_authority());
-        }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
-        if fold.vault_root_is_conflicted()
-            || !roster_has_live_owner(&fold.roster, &AuthorityKey::Ed25519(claims.host_key))
-        {
-            return Ok(None);
-        }
-        let host = super::strong_ed25519_key(&claims.host_key)?;
-        let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
-        host.verify_strict(&transcript(&claims)?, &sig)
-            .map_err(|_| invalid_authority())?;
-        Ok(Some((fold, claims)))
+        Ok(verified_mesh_authority(&fold, machine, &signed)?.map(|claims| (fold, claims)))
     }
     /// Whether the pairing a binding stands on is live on this vault now: it
     /// stands ([`mesh_pairing_standing`]) and has not expired. Its start is

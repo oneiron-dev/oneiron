@@ -30,6 +30,14 @@
 //! carries it. Each row lands through the entity ingest, from any home, and
 //! each withdrawal replays as a tombstone, only from a home that proved
 //! itself a machine of the vault ([`admit_own_device_grants`]).
+//!
+//! Last, a round asks the home for its host-signed mesh bindings
+//! (`residence.authority.mesh`, MESH-AUTHORITY-REPLICATION), a page at a
+//! time: no window carries a binding or the MACHINE address it binds, and a
+//! joined machine holds no host issuer to sign its own. Each binding a live
+//! owner host of this machine's fold signed lands as signed
+//! ([`Vault::import_mesh_authority_rows`]), so a node here proves the peers
+//! the owner bound on the home.
 
 mod parts;
 
@@ -44,8 +52,8 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::authority::{
     AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
     AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityHistorySelection, AuthorityRepairOutcome, PeerMachine, authority_entry_hash,
-    decode_authority_log_entry_body, side_world,
+    AuthorityHistorySelection, AuthorityRepairOutcome, MESH_AUTHORITY_PAGE_MAX, MeshAuthorityRow,
+    PeerMachine, authority_entry_hash, decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -221,7 +229,95 @@ pub(crate) async fn catch_up_authority(
         Ok(admitted) => tracing::debug!(admitted, "own-device grants caught up"),
         Err(error) => tracing::warn!(%error, "own-device grants not read"),
     }
+    // The bindings the owner signed on the home, once the pairings and
+    // grants they name are folded here. A read that fails holds back
+    // nothing else.
+    match catch_up_mesh_authority(vault, &mut rpc).await {
+        Ok(0) => {}
+        Ok(written) => tracing::info!(written, "mesh bindings from the home imported"),
+        Err(error) => tracing::warn!(%error, "mesh bindings not read from the home"),
+    }
     Ok(taken)
+}
+
+/// One binding as the home serves it, each part in base64.
+#[derive(Deserialize)]
+struct MeshAuthorityRowReply {
+    machine: String,
+    authority: String,
+    address: String,
+}
+
+/// The home's answer to one mesh bindings ask.
+#[derive(Deserialize)]
+struct MeshAuthorityReply {
+    rows: Vec<MeshAuthorityRowReply>,
+    more: bool,
+}
+
+/// Asks the home for its host-signed mesh bindings, a page at a time in
+/// MACHINE id order, and imports each page ([`Vault::import_mesh_authority_rows`]).
+/// A home that serves no such method answers nothing to import. Returns how
+/// many bindings were written here.
+async fn catch_up_mesh_authority(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+) -> Result<usize, TransportError> {
+    let mut after: Option<EntityId> = None;
+    let mut written = 0;
+    for _ in 0..MAX_PAGES {
+        let reply = match rpc
+            .request(
+                "residence.authority.mesh",
+                json!({ "after": after.as_ref().map(EntityId::to_hex) }),
+            )
+            .await
+        {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(written),
+            Err(error) => return Err(error),
+        };
+        let reply: MeshAuthorityReply = serde_json::from_value(reply).map_err(|_| refused())?;
+        if reply.rows.len() > MESH_AUTHORITY_PAGE_MAX {
+            return Err(refused());
+        }
+        let decode = |encoded: &str| {
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| refused())
+        };
+        let mut rows = Vec::with_capacity(reply.rows.len());
+        for row in &reply.rows {
+            let machine = EntityId::from_hex(&row.machine).map_err(|_| refused())?;
+            // Each page names MACHINEs past the last one, in order.
+            if after.is_some_and(|after| machine <= after)
+                || rows
+                    .last()
+                    .is_some_and(|last: &MeshAuthorityRow| machine <= last.machine)
+            {
+                return Err(refused());
+            }
+            rows.push(MeshAuthorityRow {
+                machine,
+                authority: decode(&row.authority)?,
+                address: decode(&row.address)?,
+            });
+        }
+        let last = rows.last().map(|row| row.machine);
+        let import = vault.import_mesh_authority_rows(rows).map_err(storage)?;
+        if !import.refused.is_empty() {
+            tracing::warn!(
+                refused = import.refused.len(),
+                "the home served mesh bindings this machine refused"
+            );
+        }
+        written += import.written.len();
+        match (reply.more, last) {
+            (true, Some(last)) => after = Some(last),
+            _ => break,
+        }
+    }
+    Ok(written)
 }
 
 /// One own-device grant as the home serves it: its stored row while it
