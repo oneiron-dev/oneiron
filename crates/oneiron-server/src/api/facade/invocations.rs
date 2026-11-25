@@ -298,11 +298,12 @@ pub(crate) enum DoorClaim {
 /// role away, with only the verb Grant judged. A same-id retry runs the admit
 /// again, role first; its intent key then replays the seat already made and
 /// writes nothing.
-/// An experiment arm's admission (`vault.arms.admit`) answers the arm, and its
-/// door judges the caller's lead role on the arm's line before its intent
-/// replay, as the seat's does: a same-id retry runs the admit again, role
-/// first, and its intent key or the ask's logical key then replays the arm
-/// already admitted (review round 2 of #10400).
+/// An experiment arm's admission (`vault.arms.admit`) and its rung forecast
+/// (`vault.arms.forecast`) answer the arm, and each door judges the caller's
+/// lead role on the arm's line before its intent replay, as the seat's does:
+/// a same-id retry runs the door again, role first, and its intent key or the
+/// ask's logical key then replays the write already made (review round 2 of
+/// #10400).
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
@@ -313,7 +314,7 @@ pub(crate) enum DoorClaim {
 /// same-id retry with its first ask's bytes after the stream moved on,
 /// without asking the machine again (review round 1 of #10466). A same-id
 /// retry asks the machine again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 13] = [
+const UNKEPT_REPLY_VERBS: [&str; 14] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -322,6 +323,7 @@ const UNKEPT_REPLY_VERBS: [&str; 13] = [
     oneiron::experiment_arm::ARMS_GET_VERB,
     oneiron::experiment_arm::ARMS_LIST_VERB,
     oneiron::experiment_arm::ARMS_ADMIT_VERB,
+    oneiron::experiment_arm::ARMS_FORECAST_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",

@@ -28,12 +28,18 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 mod admit;
+mod forecast;
 mod read;
+mod score;
 pub(crate) mod tables;
 mod wire;
 
 pub use admit::{ARMS_ADMIT_VERB, ArmAdmitRequest, ArmContractAsk, arm_admit_as};
+pub use forecast::{ARMS_FORECAST_VERB, ArmForecastRequest, PASS_PER_MILLE_MAX, arm_forecast_as};
 pub use read::{ARMS_GET_VERB, ARMS_LIST_VERB, arm_get_as, arm_list_as};
+pub use score::{
+    CALIBRATION_BINS, CalibrationBin, ForecastScore, ForecastScoreRow, forecast_scores,
+};
 pub use wire::{ArmList, ArmListRequest, ArmRef, ArmView};
 
 const EXPERIMENT_ARMS: SideTable<EntityId, ExperimentArm, Named> =

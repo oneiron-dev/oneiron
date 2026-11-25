@@ -276,6 +276,9 @@ pub(super) fn mcp_release_error(
         retry_after: error.retry_after,
         resets_at: error.resets_at,
         reason_codes: error.reason_codes,
+        // A fixed grant word (`core:write`), naming no row: the refusal's
+        // recovery reads it.
+        required_scope: error.required_scope,
         ..McpGatewayError::new(
             error.code,
             error.kind,

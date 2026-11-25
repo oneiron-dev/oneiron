@@ -56,6 +56,15 @@ pub enum DispatchClose {
     RefusedBeforeSend { code: String },
     /// The node wrote its refusal down: the key's `Ended { Refused }` receipt, with its reason.
     NodeRefused { reason: String },
+    /// The owner wrote the job off (door 10, row R4): nothing is sent again, and a receipt that
+    /// arrives later is evidence only.
+    WrittenOff {
+        at_ms: u64,
+        /// The node's terminal receipt that arrived after the write-off, as signed: kept, never
+        /// settled.
+        #[serde(default)]
+        late_receipt: Option<Vec<u8>>,
+    },
 }
 
 /// What the issuer sent a vault machine for one chunk, and where the key stands. Written before
