@@ -643,6 +643,8 @@ impl GpuOfferFile {
                 route,
                 locality: ModelLocality::ThirdParty,
                 payer: Payer::Host,
+                // The backend's name; a job records it as the backend it keeps
+                // (`GpuOffer::backend`, design pass 33, 8.1).
                 credential_binding: Some(self.backend.clone()),
                 catalog_revision: Some(self.catalog_revision),
                 custody: KeyCustody::T0,
