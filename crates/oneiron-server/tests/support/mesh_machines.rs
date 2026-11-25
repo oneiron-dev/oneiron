@@ -97,6 +97,16 @@ pub(crate) struct Device {
 }
 
 impl Home {
+    /// H's vault: the owner's home, where his changes are his signed acts.
+    pub(crate) fn vault(&self) -> &Vault {
+        &self.vault
+    }
+
+    /// The owner's proof on H.
+    pub(crate) fn owner(&self) -> &oneiron::consent::AuthenticatedOwner {
+        &self.owner
+    }
+
     /// A device that copies H's vault and enrols on H as the owner's own
     /// machine, as `oneiron device enrol` does: H's owner makes the machine
     /// pairing link; the device redeems it with a holder key of its own
@@ -293,6 +303,8 @@ impl Device {
         let open = Arc::try_unwrap(vault)
             .map_err(|_| "FIXTURE: another handle holds the device's vault open")?;
         drop(open);
+        // The vault stays closed for `closed` of real time: its authority clock stops meanwhile.
+        // testkit-lint: allow(sleep) the closed time is the condition the caller's test sets up
         std::thread::sleep(closed);
         let vault = Vault::open(dir.path(), VaultConfig::device())
             .map_err(at("open the device's vault again"))?;

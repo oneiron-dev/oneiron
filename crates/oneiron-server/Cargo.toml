@@ -255,6 +255,10 @@ dirs = "6"
 # `net`: the EXL3 worker's native channel passes its input region's
 # descriptor with SCM_RIGHTS (models/native_exl3).
 rustix = { version = "1.1", features = ["fs", "net", "process"] }
+# A job's checkout: the `git archive` stream of the pinned commit, unpacked
+# beneath the key's payload directory (gpu_execution_node/jobs/staging.rs).
+# The version the workspace already builds.
+tar = { version = "=0.4.46", default-features = false }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }
@@ -734,6 +738,14 @@ required-features = ["oneiron/test-support", "mesh"]
 [[test]]
 name = "execution_node_gate"
 path = "tests/execution_node_gate.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
+# Pass 34 row P0: the owner's machine policy rows, signed on his home and folded by the node's own
+# vault, and the stricter of them and the box's file (tests/support/mesh_machines.rs). Each
+# device's install keys sit in a `MemoryKeystore`; the fixture needs the `mesh` feature.
+[[test]]
+name = "node_machine_policy"
+path = "tests/node_machine_policy.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
 # MESH-PAIRING-CEILING = A: an enrolled machine's binding may be granted every protocol the
