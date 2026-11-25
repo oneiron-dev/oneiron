@@ -46,6 +46,13 @@ pub const RECEIPT_FILE_NAME: &str = "receipt.msgpack";
 /// directory and its payload directory.
 pub const JOB_KEY_ID_HEX_DIGITS: usize = 32;
 
+/// How long before a run's stop time (its cutoff less the stop grace) the
+/// scope still takes a renewal (row W1). The systemd scope's handoff runs
+/// in a control handler that lives at most 30 s, and the old cutoff timer
+/// fires half a second before its stop time; a renewal this early has its
+/// record written before the old timer can fire.
+pub const RENEW_BEFORE_STOP_NS: u64 = 31_000_000_000;
+
 /// The id that names one key on this node: the first 32 hex digits of the
 /// blake3 hash of the key. The unit instance, the control directory and the
 /// payload directory all carry it, so the prepare step can check that the
@@ -199,7 +206,8 @@ pub trait JobUnit: Send + Sync {
 
     /// Moves the unit's cutoff forward to `cutoff_boot_ns`, only from a
     /// journaled renewal (pass 34, 2.5; row W1), and never back: asked again
-    /// for a cutoff it holds, it changes nothing.
+    /// for a cutoff it holds, it changes nothing. A scope takes a renewal
+    /// until [`RENEW_BEFORE_STOP_NS`] before the run's current stop time.
     ///
     /// # Errors
     ///

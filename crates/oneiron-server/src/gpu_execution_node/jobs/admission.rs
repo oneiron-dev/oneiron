@@ -22,7 +22,7 @@ use oneiron::job_workload::{
 };
 
 use super::end::end_of;
-use super::job_unit::read_end_record;
+use super::job_unit::{RENEW_BEFORE_STOP_NS, read_end_record};
 use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, NodeKey};
 use super::node_parts::{GpuSlotRequest, NodeDevices};
 use super::receipt::{ReceiptClock, chunk_receipt_of, receipt_of, sign_receipt};
@@ -36,10 +36,13 @@ const MIB: u64 = 1024 * 1024;
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
-/// How long before its cutoff timer would stop the run a renewal must be
-/// journaled: the timer's own margin (half a second) with room. A renewal
-/// later than that finds a run that is being cut off: it continues nothing.
-const RENEWAL_MARGIN_NS: u64 = NANOS_PER_SEC;
+/// How long before the run's stop time (its cutoff less the stop grace) a
+/// renewal must be journaled: the scope's own bound
+/// ([`RENEW_BEFORE_STOP_NS`]), plus 4 s for the journal write and the ask to
+/// the scope. A renewal later than that finds a run that is being cut off:
+/// it continues nothing, and the scope is never asked to take a renewal it
+/// would refuse.
+const RENEWAL_MARGIN_NS: u64 = RENEW_BEFORE_STOP_NS + 4 * NANOS_PER_SEC;
 
 /// The most devices one key leases in this slice: the GPU slot table holds
 /// one lease per key, and a receipt names one device. A bound of the
@@ -548,8 +551,9 @@ impl NodeJobs {
     /// written down as the chunk key's `Refused` end: it continues nothing
     /// and bills nothing. A renewal sent again answers the chunk's receipt.
     /// Two conditions that will pass answer `Busy` and write nothing: the
-    /// scope has not yet taken the run's last renewal, or the node's fold
-    /// does not hold the issuer's authority heads yet.
+    /// scope has not yet taken the last renewal of a run that can still
+    /// take one, or the node's fold does not hold the issuer's authority
+    /// heads yet.
     fn renew(&self, peer: EntityId, first: &str, signed: SignedJobSubmit) -> JobAnswer {
         let key = signed.submit.key.clone();
         let (answer, armed) = {
@@ -599,11 +603,16 @@ impl NodeJobs {
             {
                 return busy();
             }
+            // Only a run that can still take a renewal waits for the scope:
+            // the tick asks again only for a live run, so an ended or ending
+            // run falls through to its `Refused` end below.
             let pending = book.journal.as_ref().and_then(|journal| {
                 let holder = journal.table().get(first)?;
                 let cutoff = holder.launch.as_ref()?.cutoff_boot_ns;
-                (!holder.renewals.is_empty() && book.armed_cutoffs.get(first) != Some(&cutoff))
-                    .then_some(())
+                (holder.renewable()
+                    && !holder.renewals.is_empty()
+                    && book.armed_cutoffs.get(first) != Some(&cutoff))
+                .then_some(())
             });
             if pending.is_some() {
                 // The scope has not taken the last renewal yet: until it
