@@ -294,6 +294,8 @@ impl Vault {
                     GpuEndReason::AtMaximum => EndKind::TimeLimit,
                     GpuEndReason::Cancelled => EndKind::Stopped,
                     GpuEndReason::Gone => EndKind::Lost,
+                    // The owner wrote the job off (door 10): its end stays unknown.
+                    GpuEndReason::Unconfirmed => EndKind::WrittenOff,
                 },
             }),
             // Stopped at its maximum with a resume on offer: for the order, it ran to its

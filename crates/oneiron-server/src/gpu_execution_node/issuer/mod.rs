@@ -5,6 +5,9 @@
 //! - [`node_client`]: the calls to a node, over the mesh or by script.
 //! - [`billing`]: the bracket, the billed seconds and the typed terminal.
 //! - [`reconcile`]: the reconcile of a node before the first dispatch to it.
+//! - [`orphans`]: the keys a node holds that the issuer has no dispatch row for (row R4).
+//! - [`guard`]: the issuer's half of the drain guard (row R4).
+//! - [`view`]: the four status fields of door 8 (row R4).
 //! - [`clock`]: the wall and boot clocks the dispatch and the bracket read.
 //! - [`register`]: where the backend may exist, and the one-issuer check of the start gate.
 //!
@@ -14,9 +17,12 @@
 pub mod billing;
 pub mod clock;
 pub mod connector;
+pub mod guard;
 pub mod node_client;
+pub mod orphans;
 pub mod reconcile;
 pub mod register;
+pub mod view;
 
 use oneiron::EntityId;
 use oneiron::job_workload::WorkloadStartRefusal;
@@ -26,11 +32,11 @@ pub use connector::{VaultMachineConnector, VaultMachineParts};
 #[cfg(feature = "mesh")]
 pub use node_client::MeshJobNodeClient;
 pub use node_client::{JobNodeClient, NodeCallError};
+pub use orphans::{JobOrphanKeys, LoggedUnattributedLedger, UnattributedLedger};
 pub use reconcile::{LoggedOrphanKeys, OrphanKeys};
-#[cfg(oneiron_test_support)]
-pub use register::register_vault_machine;
 pub use register::{
-    NotTheIssuer, VaultMachineNotRegistered, issuer_machine, not_the_issuer, vault_machine_backend,
+    NotTheIssuer, VaultMachineNotRegistered, issuer_machine, not_the_issuer,
+    register_vault_machine, register_vault_machine_at_start, vault_machine_backend,
 };
 
 use crate::gpu_execution_node::wire::{JobAnswer, JobRefusal, JobStatusAnswer, SlotSelector};

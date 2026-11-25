@@ -26,6 +26,8 @@ use axum::Router;
 use crate::http_listener::ConnectionLimits;
 
 #[cfg(feature = "mesh")]
+mod execution_node;
+#[cfg(feature = "mesh")]
 mod home_pin;
 #[cfg(feature = "mesh")]
 mod pressure;
@@ -207,11 +209,10 @@ mod host {
     use tokio::task::{JoinHandle, JoinSet};
 
     use super::MeshProvedMachine;
+    use super::execution_node::{ServedNode, job_routes};
     use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
-    use crate::gpu_execution_node::wire::{JOB_ALPN, JOB_STATUS_ALPN};
-    use crate::gpu_execution_node::{ExecutionNode, JobService, JobStatusService};
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -325,6 +326,7 @@ mod host {
         limits: ConnectionLimits,
         server: &Arc<crate::server::SyncServer>,
         stop: &Arc<MeshStop>,
+        node: Option<ServedNode>,
     ) -> MeshRoutes {
         let vault = &server.vault;
         // This machine's organ host (the server's one, which the seal worker
@@ -368,55 +370,12 @@ mod host {
                 work.organs.clone(),
             ))
             .tick(server.pack_organ_tick(work.organs.clone()));
-        let routes = job_routes(routes, server);
+        let routes = job_routes(routes, node);
         debug_assert!(
             routes.within_served(),
             "a protocol mesh_routes serves is missing from SERVED_MESH_ALPNS"
         );
         routes
-    }
-
-    /// This machine's job protocols (pass 33, EM-1 = A): new work on one,
-    /// the keys it holds on the other, each its own grant. They are served
-    /// only when the machine's `[execution_node]` file enables it as the
-    /// listener starts (T3), so a machine that runs no jobs refuses both at
-    /// the handshake. With them comes the node's authority tick (EN-4 A).
-    fn job_routes(routes: MeshRoutes, server: &Arc<crate::server::SyncServer>) -> MeshRoutes {
-        let Some(file) = server.config.execution_node_file.clone() else {
-            return routes;
-        };
-        let node = ExecutionNode::new(
-            file,
-            Arc::clone(&server.vault),
-            Arc::clone(&server.gpu_slots),
-        );
-        if !node.serves() {
-            return routes;
-        }
-        routes
-            .route(JOB_ALPN, Arc::new(JobService::new(node.clone())))
-            .route(
-                JOB_STATUS_ALPN,
-                Arc::new(JobStatusService::new(node.clone())),
-            )
-            .tick(node_authority_tick(node))
-    }
-
-    /// The node's authority tick on a blocking thread: its own fold read for
-    /// its own job grant and its issuer's, and the revoke handed to its keys
-    /// (EN-4 A). It runs on the listener's tick, under its stop.
-    fn node_authority_tick(node: ExecutionNode) -> MeshTick {
-        Arc::new(move || -> Pin<Box<dyn Future<Output = ()> + Send>> {
-            let node = node.clone();
-            Box::pin(async move {
-                if tokio::task::spawn_blocking(move || node.authority_tick())
-                    .await
-                    .is_err()
-                {
-                    tracing::warn!("the execution node's authority tick did not finish");
-                }
-            })
-        })
     }
 
     /// The router a call the host itself makes takes (OF-575): this
@@ -584,15 +543,23 @@ mod host {
             })?;
         // The installed packs' organs go on the host before it is offered. A
         // sync-only device offers no organ host, so it installs none (L7-47).
-        if route_set == super::MeshRouteSet::Full {
+        // So does the execution node's job service: its journal is attached
+        // before the listener serves a job protocol (row R3a).
+        let node = if route_set == super::MeshRouteSet::Full {
             let installing = Arc::clone(&server);
             tokio::task::spawn_blocking(move || installing.install_pack_organs())
                 .await
                 .map_err(|error| anyhow::anyhow!("pack organ install: {error}"))?;
-        }
+            let opening = Arc::clone(&server);
+            tokio::task::spawn_blocking(move || ServedNode::open(&opening))
+                .await
+                .map_err(|error| anyhow::anyhow!("execution node open: {error}"))?
+        } else {
+            None
+        };
         let stopping = Arc::new(MeshStop::new());
         let routes = Arc::new(match route_set {
-            super::MeshRouteSet::Full => mesh_routes(app, limits, &server, &stopping),
+            super::MeshRouteSet::Full => mesh_routes(app, limits, &server, &stopping, node),
             super::MeshRouteSet::SyncOnly => MeshRoutes::default().route(
                 SYNC_ALPN,
                 Arc::new(sync_route(app, limits, &server, &stopping)),

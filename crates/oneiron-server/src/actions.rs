@@ -19,11 +19,18 @@ impl SharedActionExecutor {
     }
     /// The app's one table ([`ActionRegistry::app`]), built once per process:
     /// the server's buttons and its agents' calls are served from it alike.
+    /// It offers no row whose answer an invocation never keeps
+    /// (`verb_reply_is_kept`): an action would keep that answer in its record
+    /// and answer it again to the same key, unjudged
+    /// ([`ActionRegistry::retain_verb_rows`]).
     pub fn app() -> Result<&'static Self> {
         static APP: LazyLock<std::result::Result<SharedActionExecutor, String>> =
             LazyLock::new(|| {
                 ActionRegistry::app()
-                    .map(SharedActionExecutor::new)
+                    .map(|mut registry| {
+                        registry.retain_verb_rows(crate::api::verb_reply_is_kept);
+                        SharedActionExecutor::new(registry)
+                    })
                     .map_err(|error| error.to_string())
             });
         APP.as_ref()

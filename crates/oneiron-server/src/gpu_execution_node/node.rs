@@ -29,25 +29,27 @@
 //! attached, the node answers `Node` and `Availability` and refuses every
 //! request that names a key as `NotEnabled`, writing nothing.
 
-use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::authority::PeerMachine;
-use oneiron::job_workload::DevicePlacement;
+use oneiron::machine_policy::MachinePolicy;
 use oneiron::{EntityId, Vault};
 
+use super::machine_policy;
 use super::node_settings::{
     EXECUTION_NODE_FILE_DEFAULT, EXECUTION_NODE_FILE_ENV, ExecutionNodeSettings,
     STAGING_LIMIT_SECS_DEFAULT,
 };
 use super::slots::GpuSlotTable;
-use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer,
-    ScopeReport, SignedJobSubmit, TemplateOffer, WorkloadPin,
-};
+use super::wire::{JOB_ALPN, JobRefusal, NodeAnswer, ScopeReport, TemplateOffer};
 use super::{GpuAvailability, GpuDiskReading};
+
+mod keys;
+mod owner_policy;
+
+pub use keys::NodeKeys;
 
 /// Where Linux names this boot.
 const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
@@ -94,7 +96,7 @@ pub fn marker_beside(file: &Path, suffix: &str) -> PathBuf {
 pub struct NodeControls {
     /// The file enables the node and no `disable` at the box stands.
     pub enabled: bool,
-    /// Why the node takes no new work while paused at the box.
+    /// Why the node takes no new work while paused, at the box or by the owner's policy (P0).
     pub paused: Option<String>,
     /// Why the node takes no new work until a person clears its drain.
     pub drained: Option<String>,
@@ -127,6 +129,8 @@ pub struct NodeSnapshot {
     /// or validate.
     pub settings: Result<Option<ExecutionNodeSettings>, String>,
     pub controls: NodeControls,
+    /// The owner's machine policy (row P0); `None`: the file alone rules.
+    pub policy: Option<MachinePolicy>,
 }
 
 impl NodeSnapshot {
@@ -181,98 +185,6 @@ pub enum GateAsk {
     /// `Reserve` or `Submit`, after which work may follow: the node must be
     /// enabled, and its own job grant live in its own fold.
     Admit,
-}
-
-/// The node's keys: the journal, the key states, admission and the launch
-/// commit (row R3a's `NodeJobs`). The job service hands it every request
-/// that names a key, once the gate has passed; the authority tick hands it
-/// a withdrawn grant or an ended standing. Every call may block on the
-/// journal's disk.
-pub trait NodeKeys: Send + Sync {
-    /// `Reserve` from the proven issuer `peer`.
-    fn reserve(&self, peer: EntityId, reserve: JobReserve) -> JobAnswer;
-
-    /// `Release` from the proven issuer `peer`.
-    fn release(&self, peer: EntityId, key: &str) -> JobAnswer;
-
-    /// `Submit` from the proven issuer `peer`.
-    fn submit(&self, peer: EntityId, signed: SignedJobSubmit) -> JobAnswer;
-
-    /// Whether the start-up reconciliation has ended (`Node`'s `swept`).
-    fn swept(&self) -> bool;
-
-    /// The journal's epoch, lower hex; `None` while the history is lost.
-    fn epoch(&self) -> Option<String>;
-
-    /// The disk the node's live keys keep booked, in MiB.
-    fn booked_disk_mib(&self) -> u64;
-
-    /// The issuers of every key that has not ended: the tick checks each
-    /// one's standing, whatever the file names now.
-    fn live_issuers(&self) -> BTreeSet<EntityId>;
-
-    /// EN-4 A: the fold no longer authorises `issuer`'s work here (`None`:
-    /// no issuer's, as when this node's own grant was withdrawn). Every key
-    /// of that issuer that has not ended ends: a key that has not launched
-    /// closes, and a launched one is stopped as revoked with `why`.
-    fn revoke_live_keys(&self, issuer: Option<EntityId>, why: &str);
-
-    /// `disable --stop` at the box: every key that has not ended ends; a
-    /// launched one is stopped.
-    fn stop_live_keys(&self);
-
-    /// `Find` and `Status` from the proven issuer `peer` (row R4): the key's
-    /// newest receipt.
-    fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        let _ = (peer, key);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// `Stop` from `peer`: closes a key that has not launched (also one the
-    /// node never saw), ends one that has.
-    fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        let _ = (peer, key);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// `Keys` from `peer`: one page of its keys after `after`.
-    fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
-        let _ = (peer, after);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// `Signal` from `peer`: a checkpoint notice to the key's workload.
-    fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
-        let _ = (peer, key, signal);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// `Fetch` from `peer`: the bytes of one returnable output.
-    fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
-        let _ = (peer, key, name);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// `Ack` from `peer`: it holds every returnable output of the key it
-    /// wants.
-    fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
-        let _ = (peer, key);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// `Tail` from `peer`: the key's log from an offset (pass 34, 7.2).
-    fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
-        let _ = (peer, request);
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
-    }
-
-    /// The launch scopes the keys' job unit starts runs in, each with what
-    /// it can enforce now, as its probe reads them (pass 34, section 2.2):
-    /// `Node`'s `scopes`. A scope that does not meet the minimum contract is
-    /// listed and runs nothing. None until a unit probes them.
-    fn scopes(&self) -> Vec<ScopeReport> {
-        Vec::new()
-    }
 }
 
 /// `offers`, each keeping only the scope kinds a probed scope of `scopes`
@@ -384,13 +296,20 @@ impl ExecutionNode {
             Err(error) => Some(format!("drain_unreadable: {error}")),
         };
         let file_enabled = matches!(&settings, Ok(Some(settings)) if settings.enabled);
+        let (policy, owner_paused) = self.owner_controls(&settings);
         let controls = NodeControls {
             enabled: file_enabled && disabled.is_none(),
-            paused: paused.map(|line| line.unwrap_or_else(|| "paused".to_owned())),
+            paused: paused
+                .map(|line| line.unwrap_or_else(|| "paused".to_owned()))
+                .or(owner_paused),
             drained,
             stop_requested: disabled.flatten().as_deref() == Some(DISABLED_STOP_LINE),
         };
-        NodeSnapshot { settings, controls }
+        NodeSnapshot {
+            settings,
+            controls,
+            policy,
+        }
     }
 
     /// Whether the node's file enables it now: the mesh listener serves the
@@ -518,41 +437,6 @@ impl ExecutionNode {
         Ok((peer, snapshot))
     }
 
-    /// Design 7.3 reserve step 5: the pin fits a template this node holds
-    /// now, by digest, entry, scope, network, outputs, ceilings and
-    /// parameters.
-    ///
-    /// # Errors
-    ///
-    /// The refusal reason, for the key's end.
-    pub fn admit_pin(&self, pin: &WorkloadPin) -> Result<(), String> {
-        match self.settings() {
-            Ok(Some(settings)) => settings.admit_pin(pin),
-            Ok(None) => Err("node_disabled".to_owned()),
-            Err(why) => Err(format!("node_settings_unreadable: {why}")),
-        }
-    }
-
-    /// The launch commit's fit of a pin's placement on this node's devices
-    /// (pass 34, section 2.1, the sum rule): the host memory the placement
-    /// leases, the request's own and each leased unified device's claim
-    /// together, is within the template's memory ceiling.
-    ///
-    /// # Errors
-    ///
-    /// The refusal reason, for the key's end.
-    pub fn admit_placement(
-        &self,
-        pin: &WorkloadPin,
-        placement: &DevicePlacement,
-    ) -> Result<(), String> {
-        match self.settings() {
-            Ok(Some(settings)) => settings.admit_placement(pin, placement),
-            Ok(None) => Err("node_disabled".to_owned()),
-            Err(why) => Err(format!("node_settings_unreadable: {why}")),
-        }
-    }
-
     /// The digest of the template named `template` now; `None` when this
     /// node holds no such template.
     #[must_use]
@@ -577,7 +461,7 @@ impl ExecutionNode {
             .map_err(|error| format!("disk_unreadable: {error}"))?;
         let needed = mib_bytes(booked_mib)
             .saturating_add(mib_bytes(request_mib))
-            .saturating_add(settings.disk_reserve_bytes());
+            .saturating_add(self.disk_reserve_bytes(&settings)?);
         if free < needed {
             return Err("disk_full".to_owned());
         }
@@ -650,14 +534,12 @@ impl ExecutionNode {
     pub fn node_answer_from(&self, snapshot: &NodeSnapshot) -> NodeAnswer {
         let keys = self.keys();
         let scopes = keys.map(|keys| keys.scopes());
+        let policy = snapshot.policy.as_ref();
         let (templates, disk_free_bytes, disk_reserve_bytes) = match snapshot.settings() {
             Some(settings) => (
-                settings.template_offers().unwrap_or_else(|why| {
-                    tracing::warn!(%why, "a template of the execution node does not encode");
-                    Vec::new()
-                }),
+                machine_policy::offered_templates(policy, settings),
                 disk_free_bytes(&settings.work_dir).unwrap_or(0),
-                settings.disk_reserve_bytes(),
+                machine_policy::disk_reserve_bytes(settings, policy),
             ),
             None => (Vec::new(), 0, 0),
         };
@@ -677,6 +559,7 @@ impl ExecutionNode {
             swept: keys.is_some_and(|keys| keys.swept()),
             boot_id: boot_id(),
             engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+            readiness: keys.and_then(|keys| keys.readiness()),
         }
     }
 
@@ -718,12 +601,14 @@ impl ExecutionNode {
             .slots
             .availability(now_ms)
             .map_err(|error| error.to_string())?;
+        let policy = snapshot.policy.as_ref();
+        machine_policy::retain_offered(policy, &mut availability.devices);
         availability.disk = snapshot.settings().and_then(|settings| {
             disk_free_bytes(&settings.work_dir)
                 .ok()
                 .map(|free_bytes| GpuDiskReading {
                     free_bytes,
-                    reserve_bytes: settings.disk_reserve_bytes(),
+                    reserve_bytes: machine_policy::disk_reserve_bytes(settings, policy),
                     claimed_bytes: self.booked_disk_bytes(),
                 })
         });

@@ -13,6 +13,8 @@
 //! again: a grant that ended after the gate is refused as the gate refuses
 //! it, with nothing journaled.
 
+use std::collections::BTreeSet;
+
 use oneiron::EntityId;
 use oneiron::job_workload::{
     DeviceClaim, DeviceLease, DevicePlacement, DevicePlacementError, DeviceState, HeldDevice,
@@ -105,9 +107,11 @@ fn claims_devices(request: &ResourceRequest) -> bool {
 
 /// The devices the reserve's slot selector lets the key take: the one it
 /// names by id, of the model it names; every device when it names neither.
+/// It keeps every row of a chosen id, so placement still sees an id the
+/// report repeats on rows of other models, and leases none of them.
 fn selected(devices: Vec<HeldDevice>, slot: &SlotSelector) -> Vec<HeldDevice> {
-    devices
-        .into_iter()
+    let chosen: BTreeSet<String> = devices
+        .iter()
         .filter(|held| {
             slot.device_id
                 .as_ref()
@@ -117,6 +121,11 @@ fn selected(devices: Vec<HeldDevice>, slot: &SlotSelector) -> Vec<HeldDevice> {
                     .as_ref()
                     .is_none_or(|model| *model == held.facts.model)
         })
+        .map(|held| held.facts.id.clone())
+        .collect();
+    devices
+        .into_iter()
+        .filter(|held| chosen.contains(&held.facts.id))
         .collect()
 }
 
@@ -190,10 +199,9 @@ impl NodeJobs {
         now: &ReceiptClock,
     ) -> JobAnswer {
         let parts = self.parts();
-        match sign_receipt(
-            receipt_of(key, parts.machine, epoch, now),
-            parts.signer.as_ref(),
-        ) {
+        let mut receipt = receipt_of(key, parts.machine, epoch, now);
+        receipt.scope = parts.units.scope_facts(&key.id);
+        match sign_receipt(receipt, parts.signer.as_ref()) {
             Ok(signed) => JobAnswer::Receipt(signed),
             Err(error) => {
                 tracing::warn!(key = %key.key, %error, "job receipt not signed; answering busy");
