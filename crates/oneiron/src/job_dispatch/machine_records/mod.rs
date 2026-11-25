@@ -21,7 +21,7 @@ pub use clear_drain_door::{
     CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, clear_drain_as,
     clear_drain_embedded,
 };
-pub use setting_keys::{DrainClearBy, MachineJobSettings};
+pub use setting_keys::MachineJobSettings;
 
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};

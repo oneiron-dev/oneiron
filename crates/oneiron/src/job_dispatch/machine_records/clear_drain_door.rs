@@ -1,12 +1,13 @@
 //! Door 12, `vault.machines.execution.clear_drain` (pass 33 row R4, 7.9; pass 34, 2.4): clears
 //! the issuer's drain of one machine, so it takes new jobs again. Who may is the owner's setting
-//! `machines.drain.clear_by` for that machine, judged at each call:
-//! - `owner` (the default): the vault owner under their own proof;
+//! `machines.drain.clear_by` for that machine (declared in `machine_policy`), judged at each
+//! call:
+//! - `after_readiness_check` (the default): the owner, and the machine's readiness check of row
+//!   Q4 clears it by itself;
+//! - `owner`: the vault owner under their own proof;
 //! - `grants [...]`: the owner, or an agent whose own live Grant is listed there and names the
 //!   verb;
-//! - `person_at_box`: nobody through a verb;
-//! - `after_readiness_check`: the owner, until the readiness check of row Q4 clears it by
-//!   itself.
+//! - `person_at_box`: nobody through a verb.
 //!
 //! It clears only the issuer's half. The node's own drain is cleared at the box, whatever this
 //! says, and no request on the wire clears it.
@@ -14,9 +15,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::DrainClearBy;
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
+use crate::machine_policy::DrainClearBy;
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError,

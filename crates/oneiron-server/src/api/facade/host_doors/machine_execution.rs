@@ -1,7 +1,7 @@
 //! `vault.machines.execution.clear_drain` (pass 33 row R4, door 12): clears the issuer's drain
 //! of one machine. The owner under their own proof, or an agent whose own Grant lists the verb
 //! (`verb_grant_caller`); the engine's act then judges the caller against the machine's
-//! setting `machines.drain.clear_by` (`oneiron::job_dispatch::machine_records`).
+//! setting `machines.drain.clear_by` (`oneiron::machine_policy`).
 
 use std::sync::Arc;
 

@@ -743,7 +743,10 @@ fn a_drain_is_cleared_only_as_machines_drain_clear_by_allows() {
                 SettingCaller::Owner(&rig.owner),
                 SetSetting {
                     item: Some(rig.node.machine.to_hex()),
-                    ..SetSetting::vault_value("machines.drain.clear_by", json!("person_at_box"))
+                    ..SetSetting::vault_value(
+                        "machines.drain.clear_by",
+                        json!({"by": "person_at_box"}),
+                    )
                 },
             )
             .expect("the owner tightens who clears");
