@@ -18,6 +18,7 @@
 #![cfg(all(feature = "sync", oneiron_test_support))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,7 @@ use oneiron::agent_dispatch::{
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::machine_capacity::{MachineCapacity, MachinePower};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
@@ -39,7 +41,11 @@ use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::test_doors::run_placement::{placement, record_capacity_of};
 use oneiron::test_doors::turn_programs as doors;
+use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::work_order::PLACE_RULE;
+use oneiron::work_order::decider::{
+    DECIDER_VERB, DeciderReceipt, DeciderReply, SlotAsk, SlotSubject,
+};
 use oneiron::work_order::record::DecidedBy;
 use oneiron::{AttemptId, EntityId, ErrorKind, HnswConfig, Vault, VaultConfig};
 use serde_json::json;
@@ -595,5 +601,99 @@ fn a_machine_the_owner_paused_is_not_placed_on() {
         reap(&r.h, T0 + 1, true),
         (1, 0),
         "the home it was placed on takes it at once"
+    );
+}
+
+/// The owner of `vault` mints a Grant for a new decider agent, naming `read`
+/// and the decision read, and names it to decide PLACE at the vault. Its id.
+fn name_place_decider(vault: &Vault) -> EntityId {
+    let proof = owner_proof(vault);
+    let agent = vault
+        .ensure_agent_principal("place-decider")
+        .expect("FIXTURE: the decider agent");
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(
+        ["read", DECIDER_VERB]
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
+    );
+    let minted = mint_agent_grant_as(
+        vault,
+        &proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: Default::default(),
+            wallet_ref: None,
+            working_view_bounds: None,
+            check_in_ref: None,
+        },
+    )
+    .expect("FIXTURE: the decider's Grant")
+    .grant;
+    assert!(minted.confers, "FIXTURE: the decider's Grant confers");
+    let change = SetSetting {
+        item: Some("place".to_owned()),
+        ..SetSetting::vault_value("policy.slots.decider", json!(minted.grant_ref.to_hex()))
+    };
+    let outcome = vault
+        .set_setting(SettingCaller::Owner(&proof), change)
+        .expect("FIXTURE: the owner names the decider");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "FIXTURE: the decider's naming applies: {outcome:?}"
+    );
+    minted.grant_ref
+}
+
+#[test]
+fn a_named_place_decider_picks_among_the_rule_s_candidates_and_the_pick_is_kept() {
+    let r = rack();
+    tag_b_and_h(&r);
+    let grant = name_place_decider(&r.a.vault);
+    let x = dispatch_on(&r.a);
+    let (b, h) = (machine_id(&r.b).to_hex(), machine_id(&r.h).to_hex());
+    let asked = RefCell::new(Vec::new());
+    let decide = |ask: &SlotAsk| {
+        asked.borrow_mut().push((ask.subject, ask.options.clone()));
+        DeciderReply::Answered {
+            label: h.clone(),
+            receipt: DeciderReceipt::of_read(
+                "0".repeat(32),
+                vec!["big:fixture-model@1".to_owned()],
+                Some("big".to_owned()),
+                Some(0.9),
+                Some(0.002),
+            ),
+        }
+    };
+    r.a.clock.set(T0);
+    let claimed = AgentDispatcher::new(&r.a.vault)
+        .claim_agent_run_placed(x, "native-run-placement-pump", T0, &decide)
+        .expect("A's claim");
+    assert!(
+        claimed.is_none(),
+        "A leaves the run for the machine the decider picked"
+    );
+    assert_eq!(
+        asked.borrow().as_slice(),
+        &[(SlotSubject::NativeRun, vec![b, h.clone()])],
+        "one native-run ask over the rule's candidates, in the rule's order"
+    );
+    let (placed, decision) = placement(&r.a.vault, x).unwrap().expect("placed");
+    assert_eq!(
+        placed,
+        machine_id(&r.h),
+        "the decider's pick, not the rule's, is the placement"
+    );
+    assert_eq!(decision.pick, h);
+    assert!(
+        matches!(&decision.by, DecidedBy::Grant { grant: by, .. } if *by == grant),
+        "the decision names the decider: {:?}",
+        decision.by
     );
 }
