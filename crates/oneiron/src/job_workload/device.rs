@@ -282,9 +282,7 @@ impl ResourceRequest {
             let Some(unit) = unit else { continue };
             let (claim, claim_at) = units[*unit];
             if device.facts.memory.is_unified() {
-                host_memory_mib = host_memory_mib
-                    .checked_add(claim_at.memory_mib)
-                    .ok_or(DevicePlacementError::HostMemoryOverflow { claim })?;
+                host_memory_mib = host_memory_mib.saturating_add(claim_at.memory_mib);
             }
             leases.push(DeviceLease {
                 claim,
