@@ -34,10 +34,10 @@ impl Vault {
     ///
     /// [`GpuJobError::Connector`] when the provider did not answer; nothing
     /// of this step's chunk was written, and the next step asks again.
-    pub fn gpu_job_step(
+    pub fn gpu_job_step<'a>(
         &self,
         id: &EntityId,
-        offer: impl Into<Option<&GpuOffer>>,
+        offer: impl Into<Option<&'a GpuOffer>>,
         admission: &RunAdmission,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
