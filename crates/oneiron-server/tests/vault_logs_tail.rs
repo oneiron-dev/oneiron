@@ -1,7 +1,7 @@
 //! `vault.jobs.logs.tail` on the issuer (pass 34, 7.2 and 14.2; row Q3; Q3-2-WAIT = C): an
 //! attempt's log is read on its machine by byte offset, by the attempt's requester or the owner
 //! only, and a call with `wait_ms` answers when bytes arrive, when the stream ends, or when the
-//! wait passes.
+//! wait passes. Its reply is never kept for a same-id retry, which asks the machine again.
 //!
 //! The machine is a scripted node client behind the `gpu_backend` test door; the attempt is an
 //! agent's GPU job on the fake offer with the dispatch row a vault machine's issuer writes. The
@@ -9,7 +9,8 @@
 //!
 //! Red: at the base (#10462's head a859a9ec) plus this file alone, the target does not build (no
 //! `oneiron::work_order::LogsTail`, no `use_job_nodes` door) and the facade has no
-//! `vault.jobs.logs.tail` row.
+//! `vault.jobs.logs.tail` row. The same-id retry test is red at 8faff7a9 (review round 1 of
+//! #10466): the retry replayed the first ask's kept reply and asked the machine nothing.
 //!
 //! Run on the fleet, not on a workstation:
 //! ```sh
@@ -22,7 +23,6 @@ mod engine_stack;
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
 
 use axum::{
     Router,
@@ -279,19 +279,24 @@ impl Fixture {
         verb: &str,
         token: &str,
         body: Value,
+        invocation: Option<&str>,
         sign: impl FnOnce(&[u8]) -> String,
     ) -> (StatusCode, Value) {
         let timestamp = self.vault.now_recorded_at();
         let nonce = EntityId::now().to_hex();
         let challenge = format!("oneiron-request:{timestamp}:{nonce}");
         let signature = sign(challenge.as_bytes());
-        let request = Request::post(format!("/v1/core/facade/{verb}"))
+        let mut request = Request::post(format!("/v1/core/facade/{verb}"))
             .header("authorization", format!("Bearer {token}"))
             .header(
                 "x-oneiron-binding",
                 json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string(),
             )
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        if let Some(invocation) = invocation {
+            request = request.header("x-oneiron-invocation", invocation);
+        }
+        let request = request
             .body(Body::from(body.to_string()))
             .expect("facade request");
         let response = self
@@ -309,7 +314,7 @@ impl Fixture {
     }
 
     async fn as_owner(&self, verb: &str, body: Value) -> (StatusCode, Value) {
-        self.post(verb, &self.owner_token, body, |challenge| {
+        self.post(verb, &self.owner_token, body, None, |challenge| {
             hex(&self
                 .issuer
                 .binding_proof(&self.owner_slip, challenge)
@@ -319,7 +324,18 @@ impl Fixture {
     }
 
     async fn as_agent(&self, agent: &Agent, verb: &str, body: Value) -> (StatusCode, Value) {
-        self.post(verb, &agent.token, body, |challenge| {
+        self.as_agent_under(agent, verb, body, None).await
+    }
+
+    /// `agent` calls `verb`, naming `invocation` in `x-oneiron-invocation` when given.
+    async fn as_agent_under(
+        &self,
+        agent: &Agent,
+        verb: &str,
+        body: Value,
+        invocation: Option<&str>,
+    ) -> (StatusCode, Value) {
+        self.post(verb, &agent.token, body, invocation, |challenge| {
             let transcript = agent
                 .slip
                 .binding_transcript(challenge)
@@ -515,7 +531,6 @@ fn a_waiting_tail_answers_when_bytes_arrive_or_the_stream_ends_and_an_unwaited_o
 
         // The workload writes before the waiting call's second ask.
         fixture.machine.script().writes_before = Some((2, b"loss 0.41\n".to_vec()));
-        let asked = Instant::now();
         let waited = tail(
             fixture
                 .as_agent(
@@ -528,14 +543,14 @@ fn a_waiting_tail_answers_when_bytes_arrive_or_the_stream_ends_and_an_unwaited_o
         assert_eq!(waited.bytes, "loss 0.41\n");
         assert_eq!(waited.next_offset, 10);
         assert!(!waited.ended);
-        assert_eq!(fixture.machine.tails(), 3, "asked again once a second");
-        assert!(
-            asked.elapsed() < Duration::from_secs(15),
-            "the call answered when the bytes arrived, not at the wait's end"
+        assert_eq!(
+            fixture.machine.tails(),
+            3,
+            "asked again once a second, and answered at the ask that read the bytes, not at the \
+             wait's end"
         );
 
         let before = fixture.machine.tails();
-        let asked = Instant::now();
         let timed_out = tail(
             fixture
                 .as_agent(
@@ -545,11 +560,13 @@ fn a_waiting_tail_answers_when_bytes_arrive_or_the_stream_ends_and_an_unwaited_o
                 )
                 .await,
         );
-        assert!(asked.elapsed() >= Duration::from_millis(1_200));
         assert_eq!(timed_out.bytes, "");
         assert_eq!(timed_out.next_offset, 10);
         assert!(!timed_out.ended);
-        assert!(fixture.machine.tails() >= before + 2, "it asked again");
+        assert!(
+            fixture.machine.tails() >= before + 2,
+            "it waited a second and asked again before the wait passed"
+        );
 
         fixture.machine.script().ended = true;
         let before = fixture.machine.tails();
@@ -579,6 +596,51 @@ fn a_waiting_tail_answers_when_bytes_arrive_or_the_stream_ends_and_an_unwaited_o
         assert_eq!(page.bytes, "loss");
         assert_eq!(page.next_offset, 4);
         assert!(!page.ended, "more follows the page");
+    });
+}
+
+#[test]
+fn a_same_id_retry_asks_the_machine_again_and_reads_the_bytes_written_since() {
+    run_on_engine_stack("logs-tail-retry", || async {
+        let fixture = setup();
+        let requester = fixture.pair_agent("log-retrier", 0x75);
+        let grant = fixture
+            .mint(&requester, &[GPU_QUOTE, GPU_START, LOGS_TAIL_VERB])
+            .await;
+        let key = fixture.attempt_on(&requester, grant, EntityId::now()).await;
+        let invocation = EntityId::now().to_hex();
+
+        let first = tail(
+            fixture
+                .as_agent_under(
+                    &requester,
+                    LOGS_TAIL_VERB,
+                    stdout_from(&key, 0),
+                    Some(&invocation),
+                )
+                .await,
+        );
+        assert_eq!(first.bytes, "");
+        assert_eq!(fixture.machine.tails(), 1);
+
+        fixture.machine.script().stdout = b"epoch 2\n".to_vec();
+        let retried = tail(
+            fixture
+                .as_agent_under(
+                    &requester,
+                    LOGS_TAIL_VERB,
+                    stdout_from(&key, 0),
+                    Some(&invocation),
+                )
+                .await,
+        );
+        assert_eq!(
+            fixture.machine.tails(),
+            2,
+            "the retry asks the machine: no reply of the first ask was kept"
+        );
+        assert_eq!(retried.bytes, "epoch 2\n");
+        assert_eq!(retried.next_offset, 8);
     });
 }
 

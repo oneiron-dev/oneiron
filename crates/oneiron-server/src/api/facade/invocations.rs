@@ -293,7 +293,13 @@ pub(crate) enum DoorClaim {
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 9] = [
+/// An attempt's log tail (`vault.jobs.logs.tail`, pass 34 row Q3) answers
+/// bytes that stay on the attempt's machine: a kept reply would write up to
+/// a page of the log to this vault's invocation state, and would answer a
+/// same-id retry with its first ask's bytes after the stream moved on,
+/// without asking the machine again (review round 1 of #10466). A same-id
+/// retry asks the machine again and writes nothing.
+const UNKEPT_REPLY_VERBS: [&str; 10] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -303,6 +309,7 @@ const UNKEPT_REPLY_VERBS: [&str; 9] = [
     oneiron::experiment_arm::ARMS_LIST_VERB,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
+    oneiron::work_order::LOGS_TAIL_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
