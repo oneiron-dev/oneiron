@@ -276,7 +276,9 @@ impl Vault {
                         job.state,
                         GpuJobState::Stopped
                             | GpuJobState::Ended {
-                                reason: GpuEndReason::Exited | GpuEndReason::AtMaximum
+                                reason: GpuEndReason::Exited
+                                    | GpuEndReason::AtMaximum
+                                    | GpuEndReason::TimeLimit
                             }
                     )
             }
@@ -288,7 +290,7 @@ impl Vault {
                 Some(terminal) => end_of_terminal(&terminal.end, cancelled, window_passed),
                 None => match reason {
                     GpuEndReason::Exited => EndKind::Exited { code: 0 },
-                    GpuEndReason::AtMaximum => EndKind::TimeLimit,
+                    GpuEndReason::AtMaximum | GpuEndReason::TimeLimit => EndKind::TimeLimit,
                     GpuEndReason::Cancelled => EndKind::Stopped,
                     GpuEndReason::Gone => EndKind::Lost,
                     // The owner wrote the job off (door 10): its end stays unknown.

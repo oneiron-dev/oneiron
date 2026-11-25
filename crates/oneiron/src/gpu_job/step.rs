@@ -192,13 +192,10 @@ impl Vault {
                 overrun = report_overrun(&mut job, total);
             }
             GpuResourceStatus::Exited { used_secs } => {
-                let chunk = job.chunk_mut()?;
-                chunk.used_secs = chunk.used_secs.max(used_secs);
-                let total = chunk.base_used_secs.saturating_add(chunk.used_secs);
-                let _ = job.maximum.record_usage(total);
-                job.state = GpuJobState::Ending {
-                    reason: GpuEndReason::Exited,
-                };
+                ended_by_backend(&mut job, used_secs, GpuEndReason::Exited)?;
+            }
+            GpuResourceStatus::TimeLimit { used_secs } => {
+                ended_by_backend(&mut job, used_secs, GpuEndReason::TimeLimit)?;
             }
             GpuResourceStatus::Gone => {
                 job.state = GpuJobState::Ending {
@@ -427,6 +424,22 @@ impl Vault {
     }
 }
 
+/// Records the run time of a chunk its backend ended by itself, for `reason`
+/// (its process exited, or the backend stopped it at its maximum), and starts
+/// the chunk's end.
+fn ended_by_backend(
+    job: &mut GpuJob,
+    used_secs: u64,
+    reason: GpuEndReason,
+) -> Result<(), GpuJobError> {
+    let chunk = job.chunk_mut()?;
+    chunk.used_secs = chunk.used_secs.max(used_secs);
+    let total = chunk.base_used_secs.saturating_add(chunk.used_secs);
+    let _ = job.maximum.record_usage(total);
+    job.state = GpuJobState::Ending { reason };
+    Ok(())
+}
+
 /// The typed terminal of a chunk whose backend keeps none, from the step's
 /// own end, read as the work-order pass reads such an end: an exit is a clean
 /// exit, the stop at the maximum the time limit, a cancel a stop. A lost
@@ -435,7 +448,7 @@ impl Vault {
 fn generic_terminal(reason: GpuEndReason, billed_secs: u64, used_secs: u64) -> GpuJobTerminal {
     let end = match reason {
         GpuEndReason::Exited => GpuJobEnd::Exited { code: 0 },
-        GpuEndReason::AtMaximum => GpuJobEnd::TimeLimit,
+        GpuEndReason::AtMaximum | GpuEndReason::TimeLimit => GpuJobEnd::TimeLimit,
         GpuEndReason::Cancelled => GpuJobEnd::Stopped,
         // `Gone`: no other reason ends a chunk through a step.
         _ => GpuJobEnd::Lost {

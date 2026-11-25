@@ -599,6 +599,10 @@ fn receipt_status(receipt: &JobReceipt) -> GpuResourceStatus {
         JobState::Ended => match receipt.end {
             Some(JobEnd::Lost { .. }) => GpuResourceStatus::Gone,
             _ if !receipt.started => GpuResourceStatus::Exited { used_secs: 0 },
+            // The node ended the run at the job's maximum (pass 33, 8.6).
+            Some(JobEnd::TimeLimit) => GpuResourceStatus::TimeLimit {
+                used_secs: receipt.measured_secs.unwrap_or(0),
+            },
             _ => GpuResourceStatus::Exited {
                 used_secs: receipt.measured_secs.unwrap_or(0),
             },
