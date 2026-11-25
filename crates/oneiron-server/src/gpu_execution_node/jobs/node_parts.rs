@@ -436,7 +436,7 @@ impl NodeDevices for GpuSlotTable {
     }
 
     fn reattach(&self, key: &str, device_id: &str) -> Result<(), GpuSlotRefusal> {
-        GpuSlotTable::reattach(self, key, device_id, oneiron_base::unix_millis_now()).map(drop)
+        GpuSlotTable::reattach(self, key, device_id, 0, oneiron_base::unix_millis_now()).map(drop)
     }
 
     fn end_check(&self, key: &str) -> Result<GpuDeviceProcesses, GpuSlotRefusal> {

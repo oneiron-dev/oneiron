@@ -5,8 +5,8 @@ Counts every match of
 
     blake3::(hash|derive_key|keyed_hash)(    blake3::Hasher::new    Sha256::(new|digest)(
 
-in .rs files under crates/*/src, with check.sh's file rule (no `tests` directory
-component; the name is not tests.rs, *_tests.rs or tests_*.rs), outside what
+in .rs files under crates/*/src, with check.sh's file rule (no `tests` or `tests_*`
+directory component; the name is not tests.rs, *_tests.rs or tests_*.rs), outside what
 scripts/ratchet/raw_hasher_allowlist.txt lists. The count only goes down: a new hash
 goes through `oneiron_contracts::fingerprint` (a v1 purpose) or `ContentHash`, and each
 PLAN-UC-04 stage 1-7 PR lowers baseline.json's count (lead, 15 Nov 13:55,
@@ -61,7 +61,7 @@ def counted_file(relative):
     if len(parts) < 4 or parts[0] != "crates" or parts[2] != "src":
         return False
     return not (
-        "tests" in parts[:-1]
+        any(part == "tests" or part.startswith("tests_") for part in parts[:-1])
         or name == "tests.rs"
         or name.endswith("_tests.rs")
         or name.startswith("tests_")

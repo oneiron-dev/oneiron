@@ -19,6 +19,17 @@
 //! GPU whose lock another server (or another vault in this process) holds
 //! reads as withheld.
 //!
+//! A launched job keeps its GPU past its server's life: each launch
+//! confirmation writes the GPU's kept record (the job's key) beside its
+//! lock, and only the end of that slot removes it. While a record stands,
+//! no table takes the GPU's lock unless it holds the record's key, so a
+//! server that stops while its job runs leaves the GPU withheld for that
+//! job, and takes it back with [`GpuSlotTable::reattach`] after a restart.
+//! A key whose job did not survive the restart is ended with
+//! [`GpuSlotTable::release`] or [`GpuSlotTable::finish`], which also clear
+//! its record; a record no server ends keeps its GPU withheld until a person
+//! deletes it.
+//!
 //! The drain guard: once `drain_after_failures` jobs in a row finish
 //! failed, the machine takes no new GPU work until a person clears it
 //! ([`GpuSlotTable::clear_drain`], or by deleting the drain file). With a
@@ -31,7 +42,7 @@
 //! writes no quarantine file.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 pub use oneiron_organ_host::{
@@ -135,11 +146,9 @@ fn processes_on(processes: &[GpuComputeProcess], device_id: &str) -> GpuDevicePr
     on
 }
 
-/// This server's lock on `device_id` in `dir`, when no other holds it. The
-/// lock lasts as long as the open file.
-fn owner_lock(dir: &Path, device_id: &str) -> Option<std::fs::File> {
-    std::fs::create_dir_all(dir).ok()?;
-    let name: String = device_id
+/// The stem of `device_id`'s files in the owner lock directory.
+fn owner_file_stem(device_id: &str) -> String {
+    device_id
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' {
@@ -148,15 +157,47 @@ fn owner_lock(dir: &Path, device_id: &str) -> Option<std::fs::File> {
                 '_'
             }
         })
-        .collect();
+        .collect()
+}
+
+/// This server's lock on `device_id` in `dir`, when no other holds it. The
+/// lock lasts as long as the open file. The directory is the owner's shared
+/// one and is never made here: where it is missing, no lock is taken and the
+/// GPU is not offered.
+fn owner_lock(dir: &Path, device_id: &str) -> Option<std::fs::File> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
-        .open(dir.join(format!("{name}.lock")))
+        .open(dir.join(format!("{}.lock", owner_file_stem(device_id))))
         .ok()?;
     file.try_lock().ok()?;
     Some(file)
+}
+
+/// Where `device_id`'s kept record lives in `dir`: the key of the job
+/// launched on it, from its launch confirmation until its slot ends.
+fn kept_record_path(dir: &Path, device_id: &str) -> PathBuf {
+    dir.join(format!("{}.kept", owner_file_stem(device_id)))
+}
+
+/// The key `device_id`'s kept record in `dir` names, if one stands. A record
+/// that cannot be read is an error: its GPU is kept by a job no table can
+/// name.
+fn kept_key(dir: &Path, device_id: &str) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(kept_record_path(dir, device_id)) {
+        Ok(text) => Ok(Some(text.lines().next().unwrap_or_default().to_owned())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `dir`'s kept record for `device_id` names `key`.
+fn kept_for(dir: &Path, device_id: &str, key: &str) -> bool {
+    kept_key(dir, device_id)
+        .ok()
+        .flatten()
+        .is_some_and(|kept| kept == key)
 }
 
 struct Shared {
@@ -314,19 +355,24 @@ impl GpuSlotTable {
     }
 
     /// After a restart, gives a job that still runs on `device_id` its GPU
-    /// again under `key`, launched and kept. The job's own processes are on
-    /// the GPU, so no free check applies, even in quarantine. Another slot
-    /// on it refuses.
+    /// again under `key`, launched and kept, with the `disk_bytes` its
+    /// journaled booking claimed: they count on the disk again, whatever it
+    /// holds now, before any new work is admitted. The job's own processes
+    /// are on the GPU, so no free check applies, even in quarantine. A GPU
+    /// another server owns is taken back only when its kept record names
+    /// `key`. Another slot on it refuses.
     ///
     /// # Errors
     ///
     /// [`GpuSlotRefusal::UnknownDevice`], [`GpuSlotRefusal::Taken`] (another
-    /// key takes the GPU, or this key takes another GPU), or
-    /// [`GpuSlotRefusal::Unmeasured`].
+    /// key takes the GPU, or this key takes another GPU),
+    /// [`GpuSlotRefusal::Withheld`] (another server owns it and its record
+    /// names another key), or [`GpuSlotRefusal::Unmeasured`].
     pub fn reattach(
         &self,
         key: &str,
         device_id: &str,
+        disk_bytes: u64,
         now_ms: u64,
     ) -> Result<GpuSlotGrant, GpuSlotRefusal> {
         let shared = &self.shared;
@@ -349,11 +395,38 @@ impl GpuSlotTable {
             .ok_or_else(|| GpuSlotRefusal::UnknownDevice {
                 device_id: device_id.to_owned(),
             })?;
+        // A GPU another server of this machine owns is not this table's to
+        // take back, whatever runs on it, unless its kept record names this
+        // key: the job this server launched before it stopped.
+        let kept_here = shared
+            .offer
+            .owner_lock_dir
+            .as_deref()
+            .is_some_and(|dir| kept_for(dir, device_id, key));
+        if !kept_here
+            && reading
+                .owned
+                .as_ref()
+                .is_some_and(|owned| !owned.contains(device_id))
+        {
+            return Err(GpuSlotRefusal::Withheld {
+                device_id: device_id.to_owned(),
+            });
+        }
         if slot_on(&state.slots, device_id).is_some() {
             return Err(GpuSlotRefusal::Taken {
                 device_id: device_id.to_owned(),
             });
         }
+        if !kept_here && let Err(error) = shared.keep_record(device_id, key) {
+            tracing::warn!(
+                %error,
+                device_id,
+                key,
+                "the reattached GPU's kept record could not be written; the GPU stays this server's only while it runs"
+            );
+        }
+        let disk = shared.disk.as_ref().map(|disk| disk.restore(disk_bytes));
         let grant = GpuSlotGrant {
             key: key.to_owned(),
             device: device.clone(),
@@ -363,7 +436,7 @@ impl GpuSlotTable {
             grant: grant.clone(),
             stage: Stage::Launched,
             guarded: false,
-            _disk: None,
+            _disk: disk,
         });
         Ok(grant)
     }
@@ -386,7 +459,9 @@ impl GpuSlotTable {
 
     /// Ends the kept or reattached slot under `key`, recording nothing.
     /// Answers whether one ended. A GPU under a live lease is that lease's
-    /// to give back.
+    /// to give back. With no slot under `key` (a journaled job that did not
+    /// survive a restart), it clears the kept record that names `key` on a
+    /// GPU no live server holds.
     pub fn release(&self, key: &str) -> bool {
         let mut state = self.shared.lock();
         self.shared.end_unguarded(&mut state, key, None)
@@ -394,6 +469,8 @@ impl GpuSlotTable {
 
     /// Ends the kept or reattached slot under `key` and records how its job
     /// ended, as [`GpuSlotLease::finish`] does. Answers whether one ended.
+    /// With no slot under `key`, it records nothing and clears `key`'s kept
+    /// record as [`Self::release`] does.
     pub fn finish(&self, key: &str, end: &GpuLeaseEnd) -> bool {
         let mut state = self.shared.lock();
         self.shared.end_unguarded(&mut state, key, Some(end))
@@ -609,17 +686,84 @@ impl Shared {
 
     /// Takes the owner lock of every offered GPU this table does not own
     /// yet, and answers the ones it owns (`None`: it takes no lock). A lock
-    /// another server holds is asked again at the next reading.
+    /// another server holds is asked again at the next reading. A GPU whose
+    /// kept record names a key this table holds no slot on it under stays
+    /// unowned: a job a stopped server launched still runs there.
     fn own_offered(&self, state: &mut State) -> Option<BTreeSet<String>> {
         let dir = self.offer.owner_lock_dir.as_ref()?;
         for device_id in &self.offer.offered {
-            if !state.owner_locks.contains_key(device_id)
-                && let Some(lock) = owner_lock(dir, device_id)
-            {
+            if state.owner_locks.contains_key(device_id) {
+                continue;
+            }
+            let Some(lock) = owner_lock(dir, device_id) else {
+                continue;
+            };
+            let kept_for_another = match kept_key(dir, device_id) {
+                Ok(None) => false,
+                Ok(Some(key)) => {
+                    !slot_on(&state.slots, device_id).is_some_and(|slot| slot.grant.key == key)
+                }
+                Err(_) => true,
+            };
+            // Dropping the lock unasked lets the record's own server take it.
+            if !kept_for_another {
                 state.owner_locks.insert(device_id.clone(), lock);
             }
         }
         Some(state.owner_locks.keys().cloned().collect())
+    }
+
+    /// Writes `key` as `device_id`'s kept record, so the GPU stays its job's
+    /// past this server's life. With no owner lock directory there is none.
+    fn keep_record(&self, device_id: &str, key: &str) -> std::io::Result<()> {
+        let Some(dir) = &self.offer.owner_lock_dir else {
+            return Ok(());
+        };
+        let path = kept_record_path(dir, device_id);
+        let staged = path.with_extension("kept.new");
+        std::fs::write(&staged, format!("{key}\n"))?;
+        std::fs::rename(&staged, &path)
+    }
+
+    /// Removes `device_id`'s kept record when it names `key`.
+    fn forget_record(&self, device_id: &str, key: &str) {
+        let Some(dir) = &self.offer.owner_lock_dir else {
+            return;
+        };
+        if !kept_for(dir, device_id, key) {
+            return;
+        }
+        if let Err(error) = std::fs::remove_file(kept_record_path(dir, device_id))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                %error,
+                device_id,
+                key,
+                "the GPU's kept record could not be removed; the GPU stays withheld until a person deletes it"
+            );
+        }
+    }
+
+    /// Clears every kept record naming `key`, a key with no slot here, on a
+    /// GPU this table owns or can own now, so no live server's record is
+    /// touched.
+    fn forget_records_of(&self, state: &mut State, key: &str) {
+        let Some(dir) = &self.offer.owner_lock_dir else {
+            return;
+        };
+        for device_id in &self.offer.offered {
+            if !kept_for(dir, device_id, key) {
+                continue;
+            }
+            if !state.owner_locks.contains_key(device_id) {
+                let Some(lock) = owner_lock(dir, device_id) else {
+                    continue;
+                };
+                state.owner_locks.insert(device_id.clone(), lock);
+            }
+            self.forget_record(device_id, key);
+        }
     }
 
     /// The GPUs another booker holds now.
@@ -663,20 +807,29 @@ impl Shared {
         }
     }
 
-    /// Ends the unguarded slot under `key`, if there is one.
+    /// Ends the unguarded slot under `key`, if there is one; with none, clears
+    /// `key`'s kept records.
     fn end_unguarded(&self, state: &mut State, key: &str, end: Option<&GpuLeaseEnd>) -> bool {
         match state.at(key) {
             Some(at) if !state.slots[at].guarded => {
                 self.end(state, key, end);
                 true
             }
-            _ => false,
+            Some(_) => false,
+            None => {
+                self.forget_records_of(state, key);
+                false
+            }
         }
     }
 
-    /// Ends the slot under `key` and counts how its job ended.
+    /// Ends the slot under `key`, with its GPU's kept record, and counts how
+    /// its job ended.
     fn end(&self, state: &mut State, key: &str, end: Option<&GpuLeaseEnd>) {
-        state.slots.retain(|slot| slot.grant.key != key);
+        if let Some(at) = state.at(key) {
+            let slot = state.slots.remove(at);
+            self.forget_record(&slot.grant.device.device_id, key);
+        }
         match end {
             Some(GpuLeaseEnd::Succeeded) => state.failures_in_a_row = 0,
             Some(GpuLeaseEnd::Failed { reason }) => {
@@ -704,7 +857,11 @@ impl Shared {
                 "{drain}\nDelete this file to clear the drain; the machine then takes GPU jobs again.\n"
             );
             match std::fs::write(path, text) {
-                Ok(()) => return,
+                // The file now holds the drain, so deleting it clears it.
+                Ok(()) => {
+                    state.drain_in_memory = None;
+                    return;
+                }
                 Err(error) => tracing::warn!(
                     %error,
                     path = %path.display(),

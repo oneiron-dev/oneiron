@@ -580,6 +580,33 @@ pub fn team_receipts_sourced(
         .collect())
 }
 
+/// Every entity row the receipts `scan` keeps were read from, as their
+/// writers named them (FIX 7103): each receipt's facts' and, once settled,
+/// its outcome's, sorted and without repeats. A part whose writer named no
+/// sources adds none; the other part of that receipt still adds its own.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn team_receipt_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scan: ReceiptScan<'_>,
+) -> Result<Vec<EntityId>> {
+    let mut rows: Vec<EntityId> = stored_receipts_in_txn(vault, txn, scan)?
+        .into_iter()
+        .flat_map(|stored| {
+            let outcome = stored
+                .outcome_sources
+                .filter(|_| stored.receipt.outcome.is_some());
+            stored.fact_sources.into_iter().chain(outcome).flatten()
+        })
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(rows)
+}
+
 /// The stored receipts [`team_receipts_in_txn`] reads, in its order.
 fn stored_receipts_in_txn(
     vault: &Vault,

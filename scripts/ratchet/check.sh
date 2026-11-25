@@ -25,7 +25,13 @@ BASE="scripts/ratchet/baseline.json"
 # baseline.json. Adding it changes no current count -- the 18 files it newly
 # excludes hold zero #[allow( and zero print macros and none reaches 800 lines --
 # so this closes a latent hole rather than moving a number.
-GLOBS=(--glob '!**/tests/**' --glob '!**/tests.rs' --glob '!**/*_tests.rs' --glob '!**/tests_*.rs')
+# A `tests_*` directory is excluded like `tests/`: the repo also mounts a whole
+# test-module tree under that spelling (crates/oneiron/src/memory/tests_regressions/,
+# reached only through `#[cfg(test)] mod tests_regressions;`). raw_write_census.py
+# already skipped it through its cfg-mount rule while the other metrics counted
+# its 21 files as production. Adding it changes no current count: all thirteen
+# metrics read the same before and after at 53faba3753.
+GLOBS=(--glob '!**/tests/**' --glob '!**/tests_*/**' --glob '!**/tests.rs' --glob '!**/*_tests.rs' --glob '!**/tests_*.rs')
 
 die() { echo "RATCHET-ERROR: $1"; exit 1; }
 is_num() { [[ ${1:-} =~ ^[0-9]+$ ]]; }
@@ -60,7 +66,7 @@ rs_files=$(find . -type f -name '*.rs' -not -path '*/target/*' -not -path '*/ven
   | xargs -0 wc -l) || die "source file scan failed"
 [ -n "$rs_files" ] || die "source file scan produced no output"
 giants=$(printf '%s\n' "$rs_files" | grep -v ' total$' | awk '{print $1, $2}' \
-  | grep -vE '/tests/' | grep -vE '(^|/)tests\.rs$|_tests\.rs$|(^|/)tests_[^/]*\.rs$' | awk '$1 >= 800' | wc -l | tr -d ' ')
+  | grep -vE '/tests(_[^/]*)?/' | grep -vE '(^|/)tests\.rs$|_tests\.rs$|(^|/)tests_[^/]*\.rs$' | awk '$1 >= 800' | wc -l | tr -d ' ')
 is_num "$giants" || die "non-numeric giant_files count '$giants'"
 
 count_into '#\[allow\('; allows=$RG_COUNT

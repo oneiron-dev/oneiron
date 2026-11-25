@@ -29,9 +29,9 @@ counting).
 
 Non-test file: three rules, unioned.
 
-1. The same path rule `scripts/ratchet/check.sh` uses: no `tests/` path
-   component, filename is not `tests.rs`, does not end `_tests.rs` and does
-   not start `tests_`.
+1. The same path rule `scripts/ratchet/check.sh` uses: no `tests/` or
+   `tests_*/` directory component, filename is not `tests.rs`, does not end
+   `_tests.rs` and does not start `tests_`.
 2. A file reached ONLY through a `mod x;` declaration gated by a test-only
    cfg (`#[cfg(test)] mod x;`, `#[cfg(oneiron_test_support)] #[doc(hidden)]
    pub mod test_doors;`, a `#[path = "..."]` and other attributes beside the
@@ -42,7 +42,6 @@ Non-test file: three rules, unioned.
    `#[cfg(test)] mod test_util { .. }` block in `lib.rs` whose
    `pub(crate) mod source_scan;` child is a plain file name, and
    `origin/publication/publication_tests_a.rs`,
-   `memory/tests_regressions/recall.rs`,
    `booking/publication/regressions.rs` and `branch_store_oracle/**` are each
    reached only via a `#[cfg(test)]` mount (directly, or transitively through
    a parent that is itself test-only). A production `mod` that resolves to
@@ -141,10 +140,10 @@ def test_only_by_path(rel):
     parts = rel.split("/")
     name = parts[-1]
     return (
-        # T36 split a cfg(test)-only recall.rs into include!-mounted children.
-        # They inherit that test-only mount even though include! is not a mod edge.
-        rel.startswith("memory/tests_regressions/recall/")
-        or "tests" in parts[:-1]
+        # The `tests_*` directory component also covers T36's include!-mounted
+        # children of the cfg(test)-only memory/tests_regressions/recall/, which
+        # no mod edge reaches.
+        any(part == "tests" or part.startswith("tests_") for part in parts[:-1])
         or name == "tests.rs"
         or name.endswith("_tests.rs")
         or name.startswith("tests_")

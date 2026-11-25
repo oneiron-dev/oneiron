@@ -8733,8 +8733,8 @@
         "COORDINATION-02",
         "COORDINATION-08"
       ],
-      "disposition": "public flow planned",
-      "limit": null
+      "disposition": "public behavior slice; see limits",
+      "limit": "Ordinary-conversation threading only (COORDINATION-02: a thread reply never moves the trunk HEAD and keeps every record id). Unproved: the project home room, born-from and leaders talking by default; COORDINATION-08 proves the refusal dial (OF-533) and leaves its leadership-chat half unwritten."
     },
     {
       "row": "OF-523",
