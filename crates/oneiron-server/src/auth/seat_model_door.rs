@@ -278,7 +278,9 @@ fn admission_refused(denied: &RunDenied) -> Response {
         | RunDenied::ResidentShareSpent { .. } => {
             (StatusCode::TOO_MANY_REQUESTS, "budget_exhausted")
         }
-        RunDenied::NoAllocation | RunDenied::AllocationRefused { .. } => {
+        RunDenied::NoAllocation
+        | RunDenied::AllocationRefused { .. }
+        | RunDenied::AllocationAmbiguous { .. } => {
             (StatusCode::SERVICE_UNAVAILABLE, "admission_unavailable")
         }
         _ => (StatusCode::FORBIDDEN, "admission_denied"),

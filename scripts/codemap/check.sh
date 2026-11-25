@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Code-map pin: docs/CODEMAP.md, docs/codemap/<crate>.md and
-# docs/codemap/codemap.json are generated; this check regenerates them in
+# Code-map pin: docs/CODEMAP.md, docs/codemap/<crate>.md,
+# docs/codemap/codemap.json, docs/codemap/BY-SPEC.md and
+# docs/codemap/BY-CAPABILITY.md are generated; this check regenerates them in
 # memory and byte-compares. Any drift is CODEMAP-STALE (exit 1) with the
-# regenerate hint (including missing artifacts); an unreadable file or empty
-# scan is CODEMAP-ERROR (exit 1). Never a silent pass.
+# regenerate hint (including missing artifacts); a path in
+# scripts/codemap/capability_aliases.md that names no file is
+# CODEMAP-ALIAS-MISSING (exit 1); an unreadable file, a malformed alias file
+# or an empty scan is CODEMAP-ERROR (exit 1). Never a silent pass.
 #
 # Only main writes the map: .github/workflows/codemap.yml regenerates and
 # commits it after every push to main, and PRs never touch it. scripts/verify.sh

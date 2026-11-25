@@ -17,8 +17,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/apple_names.rs` | src | s | 3 crate-vis | — | The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under |
 | `src/auth_bound.rs` | src | s | 1 enum · 1 trait · 1 const · 2 crate-vis | AuthBoundError, AuthBoundSecretStore | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) |
 | `src/dpapi_names.rs` | src | s | 4 crate-vis | — | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… |
-| `src/file.rs` | src | m | 1 struct · 1 fn · 2 crate-vis | LocalFileKeystore | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
-| `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 8 fn · 1 type · 1 const · 12 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
+| `src/file.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | LocalFileKeystore | Unix: one 0600 file per slot in a 0700 directory of its own |
+| `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 9 fn · 1 type · 1 const · 12 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
 | `src/linux_tpm.rs` | src | m | 1 struct · 2 fn | LinuxTpmKeystore | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
 | `src/linux_tpm/command_client.rs` | src | m | 9 crate-vis | — | The TPM tier's own TPM 2.0 command client: one connection to the TPM, the commands the tier sends over it… |
 | `src/linux_tpm/device_pin_key.rs` | src | s | — | — | The device PIN key of the TPM tier (row OCS-OWNER-PIN): one sealed object under an auth value that the TPM… |
@@ -31,6 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/user_presence/platform_codes.rs` | src | s | 1 enum · 5 fn | WindowsScreenSession | What each platform's result codes stand for: Apple's `LAError` codes, Windows' user consent values and… |
 | `src/windows.rs` | src | m | 1 struct · 1 fn | WindowsDpapiKeystore | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
 | `src/windows_presence.rs` | src | s | 1 struct · 1 fn | WindowsUserPresence | Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row… |
+| `tests/file_tier_access_control.rs` | test | s | — | — | The file tier on Apple (MACOS-UNSIGNED-FILE-KEYSTORE): macOS keeps a file's access control list apart from… |
 | `tests/linux_tpm_auth_bound.rs` | test | L | — | — | Row OCS-OWNER-PIN, the TPM tier: the device PIN key rests in the chip under an auth value |
 | `tests/sealed_bytes.rs` | test | m | — | — | Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each name keeps its own value, a put… |
 | `tests/user_presence.rs` | test | L | — | — | Row OWNER-CONFIRM-SHEET, the keystore's presence layer: one confirm opens a 15-minute window that either… |

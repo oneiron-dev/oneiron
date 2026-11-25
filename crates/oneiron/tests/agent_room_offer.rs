@@ -375,6 +375,30 @@ fn the_owners_join_answer_records_her_check_in_decision() -> TestResult {
         }),
         "her join answer is her own add: {join:?}"
     );
+    // COORDINATION-03: the exact replay answers the same join, her
+    // check-in decision included (FIX 32642).
+    let again = host.rooms_offer_answer(&OfferAnswerRequest {
+        offer_id: card.offer_id.clone(),
+        action: OfferAnswer::Join,
+        intent_key: "offer-check-in-join".to_owned(),
+        check_in_ref: None,
+    })?;
+    assert_eq!(again.join, accepted.join, "a replay answers the first join");
+    // Under another intent key the card reads as it stands: the same join,
+    // and no check-in, which only the answer's own replay carries.
+    let other = host.rooms_offer_answer(&OfferAnswerRequest {
+        offer_id: card.offer_id.clone(),
+        action: OfferAnswer::Join,
+        intent_key: "offer-check-in-join-other".to_owned(),
+        check_in_ref: None,
+    })?;
+    let other_join = other.join.ok_or("the card still carries its join")?;
+    assert_eq!(other_join.check_in, None, "{other_join:?}");
+    assert_eq!(
+        Some(&other_join.decision),
+        accepted.join.as_ref().map(|join| &join.decision),
+        "the same join"
+    );
     Ok(())
 }
 

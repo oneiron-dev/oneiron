@@ -24,7 +24,7 @@ use crate::learning::read::read_learning_in_txn;
 use crate::receipt::task_type_ref::TypeRef;
 
 use super::pattern::{PatternSkill, TeamPattern, model_mix, pattern_cell, pattern_skill_in_txn};
-use super::receipt::{ReceiptScan, TeamReceipt, team_receipts_in_txn};
+use super::receipt::{ReceiptScan, TeamReceipt, team_receipt_sources_in_txn, team_receipts_in_txn};
 
 /// The exploration weight of the planner card's ranking, the same derivation
 /// the skill selector uses.
@@ -296,4 +296,46 @@ pub(crate) fn planner_card_in_txn(
         rows,
         patterns,
     })
+}
+
+/// The entity rows `card` ([`planner_card_in_txn`] in the same snapshot) was
+/// read from, for a host that judges the card again before it leaves this
+/// device: the sources its payoff rows' team receipts name (FIX 7103), and,
+/// for each pattern, the estimate claims and carriers of its own cell and of
+/// the cell its borrowed prior came from (FIX 5760). Sorted, without
+/// repeats. A receipt part whose writer named no sources adds none.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn planner_card_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    card: &PlannerCard,
+) -> Result<Vec<EntityId>> {
+    // Every row of one card names the one scope its receipts were scanned in.
+    let mut sources = match card.rows.first() {
+        Some(row) => team_receipt_sources_in_txn(
+            vault,
+            txn,
+            ReceiptScan::Scoped(row.project, &card.type_ref),
+        )?,
+        None => Vec::new(),
+    };
+    for entry in &card.patterns {
+        let own = pattern_cell(
+            entry.skill,
+            &card.executor_mix,
+            card.project,
+            &card.type_ref,
+        );
+        for cell in std::iter::once(&own).chain(entry.read.borrowed_from.as_ref()) {
+            let (_, read) =
+                crate::learning::project::active_heads_with_sources_in_txn(vault, txn, cell)?;
+            sources.extend(read);
+        }
+    }
+    sources.sort_unstable();
+    sources.dedup();
+    Ok(sources)
 }

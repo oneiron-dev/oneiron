@@ -16,7 +16,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/iroh_transport/admission.rs` | src | m | 6 crate-vis | — | Fair dispatch of authenticated inbound admissions (FIX 8620), and the one receipt each leaves however it… |
 | `src/iroh_transport/dial.rs` | src | m | 3 fn · 1 type · 2 crate-vis | — | The shared authenticated handshake used by a paired dial and by the owner's explicit-address admission attempt |
 | `src/iroh_transport/outbound.rs` | src | s | 1 fn | — | Paired client endpoints that expose no inbound application service |
-| `src/lib.rs` | src | s | 5 struct · 1 enum · 8 trait · 2 fn · 2 type · 4 mod · 3 re-export | AcceptPolicy, MachineGrants, MachineRoster, MeshConnection, MeshDuplex, MeshError, MeshService, MeshStream +6 | Vault-scoped mesh transport |
+| `src/lib.rs` | src | s | 5 struct · 1 enum · 8 trait · 2 fn · 2 type · 5 mod · 3 re-export | AcceptPolicy, MachineGrants, MachineRoster, MeshConnection, MeshDuplex, MeshError, MeshService, MeshStream +6 | Vault-scoped mesh transport |
+| `src/message.rs` | src | s | 3 fn | — | One message each way per stream, in the organ protocol's codec: the exchange organ calls ride (OF-575)… |
 | `src/sync_dialer.rs` | src | s | 2 struct · 5 fn · 1 type | MeshPeerDialer, MeshSyncDialer | The sync client's carrier to its home machine over the mesh (OF-535) |
 | `src/transport_key.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | TransportKey | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
 | `tests/conformance.rs` | test | m | — | — | The admission, stream and reconnect laws for the iroh transport |
