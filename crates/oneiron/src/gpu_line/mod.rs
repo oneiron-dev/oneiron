@@ -16,11 +16,15 @@ pub mod defaults;
 mod doors;
 pub(crate) mod doors_caller;
 mod fold;
+mod graduate;
 mod intent;
 mod mint;
+pub(crate) mod notice;
 mod preset;
+pub(crate) mod setting_keys;
 mod store;
 pub(crate) mod tables;
+mod tally;
 mod wire;
 
 pub use claim::{
@@ -34,6 +38,7 @@ pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
+pub use graduate::{GpuLineFamilyGraduateRequest, VAULT_GPU_LINES_FAMILIES_GRADUATE};
 pub(crate) use intent::erase_intent_asker_in_txn;
 pub(crate) use intent::intent_row_asker;
 pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
@@ -42,13 +47,15 @@ pub use mint::{
     economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
     pools, posterior_sampling,
 };
+pub use notice::{LineNoticeKind, notify_machine_returned_in_txn};
 pub use preset::{LinePresetDocument, LinePresetRef, check_document, lay_over, resolve_policy};
 pub(crate) use store::erase_line_actor_in_txn;
 pub(crate) use store::period_row_seals_seed;
 pub use store::{
     MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,
-    settled_tallies_in_txn, stored_period_in_txn,
+    stored_period_in_txn,
 };
+pub use tally::settled_tallies_in_txn;
 pub use wire::{
     GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest,
     GpuLineSetWire, GpuLineView,
