@@ -598,6 +598,8 @@ fn an_agent_sees_only_its_own_order_among_the_rank_options_of_its_attempt() {
         claims: &[],
         periods: &[],
         orders: &orders,
+        observations: &[],
+        unattributed: &[],
     };
     let filter = JobHistoryRequest::default()
         .filter()
@@ -621,6 +623,9 @@ fn an_agent_sees_only_its_own_order_among_the_rank_options_of_its_attempt() {
     assert_eq!(owner.attempts.len(), 2);
     for attempt in &owner.attempts {
         let made = attempt.order.as_ref().expect("an order's attempt");
-        assert_eq!(made.ranked.options, both, "the owner sees the whole decision");
+        assert_eq!(
+            made.ranked.options, both,
+            "the owner sees the whole decision"
+        );
     }
 }

@@ -88,6 +88,13 @@ pub enum GpuLineError {
     /// policy.
     #[error("policy_fields: {0}")]
     PolicyFields(String),
+    /// The host posts no such offer, or one whose terms a line cannot manage
+    /// (pass 34, 3.1): the host's check of the policy in force, run inside
+    /// the write ([`Memory::set_gpu_line_from_wire`]).
+    #[error(
+        "vault.gpu.lines.set: offer_not_managed: this host posts no offer {offer} at rate 1 {unit} with no overhead"
+    )]
+    OfferNotManaged { offer: String, unit: String },
 }
 
 impl From<GpuLineError> for MemoryError {
@@ -99,9 +106,10 @@ impl From<GpuLineError> for MemoryError {
             refusal => refusal,
         };
         let code = match &refusal {
-            GpuLineError::Invalid(_) | GpuLineError::NotChild | GpuLineError::PolicyFields(_) => {
-                MEMORY_CODE_BAD_REQUEST
-            }
+            GpuLineError::Invalid(_)
+            | GpuLineError::NotChild
+            | GpuLineError::PolicyFields(_)
+            | GpuLineError::OfferNotManaged { .. } => MEMORY_CODE_BAD_REQUEST,
             GpuLineError::PresetDigestMismatch { .. } => MEMORY_CODE_INVALID_STATE,
             GpuLineError::Mint(_)
             | GpuLineError::SeatTaken
@@ -248,24 +256,9 @@ fn resolve_request_in_txn(
 }
 
 impl Memory<'_> {
-    /// The policy `vault.gpu.lines.set` would set for `request`: its stated
-    /// fields over its preset's document where it names one. Writes nothing;
-    /// the door reads it again in its own write.
-    ///
-    /// # Errors
-    ///
-    /// As [`Memory::set_gpu_line_from_wire`]'s preset and policy refusals.
-    pub fn resolved_gpu_line_policy(
-        &self,
-        request: &GpuLineSetWire,
-    ) -> Result<GpuLinePolicy, GpuLineError> {
-        let vault = self.vault();
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        resolve_request_in_txn(vault, &txn, request)
-    }
-
     /// `vault.gpu.lines.set` with the policy stated whole: as
-    /// [`Memory::set_gpu_line_from_wire`] with no preset.
+    /// [`Memory::set_gpu_line_from_wire`] with no preset. An engine caller
+    /// holds no host offers, so no offer is checked here.
     ///
     /// # Errors
     ///
@@ -276,12 +269,16 @@ impl Memory<'_> {
         request: &GpuLineSetRequest,
         now_ms: u64,
     ) -> Result<GpuLineView, GpuLineError> {
-        self.set_gpu_line_from_wire(owner, &GpuLineSetWire::from(request), now_ms)
+        self.set_gpu_line_from_wire(owner, &GpuLineSetWire::from(request), &|_| Ok(()), now_ms)
     }
 
     /// `vault.gpu.lines.set`: the owner sets the policy of `request.project`'s
     /// line, stated whole or laid over a lane preset (pass 34, 3.2). The seats
-    /// stay as `families.admit` wrote them.
+    /// stay as `families.admit` wrote them. `offers_managed` is the host's
+    /// check of the offers on the policy in force: it runs inside the write,
+    /// after the intent replay and before anything is minted, so a pack
+    /// installed after any earlier read cannot carry an offer the host does
+    /// not manage past it.
     ///
     /// # Errors
     ///
@@ -289,14 +286,15 @@ impl Memory<'_> {
     /// (an agent's Grant naming the verb is refused here), a reused intent
     /// key, an unknown project, a line for another project already in the
     /// vault, a preset with no Active install or named by another digest,
-    /// fields that are not a policy, a policy that breaks a bound of
-    /// [`GpuLine::validate`] or that the seated families cannot fund, a
-    /// schedule change once a period is minted. The current period is minted
-    /// first and stays minted.
+    /// fields that are not a policy, an offer `offers_managed` refuses, a
+    /// policy that breaks a bound of [`GpuLine::validate`] or that the seated
+    /// families cannot fund, a schedule change once a period is minted. The
+    /// current period is minted first and stays minted.
     pub fn set_gpu_line_from_wire(
         &self,
         owner: Option<&AuthenticatedOwner>,
         request: &GpuLineSetWire,
+        offers_managed: &dyn Fn(&GpuLinePolicy) -> Result<(), GpuLineError>,
         now_ms: u64,
     ) -> Result<GpuLineView, GpuLineError> {
         let vault = self.vault();
@@ -356,6 +354,12 @@ impl Memory<'_> {
                 Err(GpuLineError::Vault(error)) => return Err(error),
                 Err(refusal) => return Ok(Err(refusal)),
             };
+            // The host's offers are checked on that policy, here in the write.
+            match offers_managed(&policy) {
+                Ok(()) => {}
+                Err(GpuLineError::Vault(error)) => return Err(error),
+                Err(refusal) => return Ok(Err(refusal)),
+            }
             // The current period is minted first, from the line as it stood.
             let current = match mint_first_in_txn(vault, txn, &request.project, now_ms)? {
                 Ok(minted) => minted,

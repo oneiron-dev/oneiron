@@ -199,19 +199,11 @@ impl Vault {
     ///
     /// Storage errors.
     pub fn work_orders(&self) -> crate::Result<Vec<WorkOrder>> {
-        let txn = self.store.env.read_txn()?;
-        WORK_ORDERS
-            .iter_from(&self.store, &txn, &[])?
-            .map(|row| row.map(|(_, order)| order))
-            .collect()
+        self.work_orders_in_txn(&self.store.env.read_txn()?)
     }
 
-    /// Every work order of this vault, in the caller's read transaction: for a read that joins
-    /// the orders to other rows of one snapshot (`vault.jobs.history`).
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
+    /// [`Self::work_orders`] in the caller's read transaction, for a read that joins the orders
+    /// to other rows of one snapshot (`vault.jobs.history`).
     pub(crate) fn work_orders_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

@@ -224,6 +224,24 @@ impl Vault {
         )
     }
 
+    /// Whether `starter`, as a chunk's signed submit names it, stands now: a live owner, or
+    /// that exact Grant, unexpired and standing for its agent and `vault.gpu.jobs.start`.
+    /// Another live Grant of the same agent does not count. A returned result reads it to pick
+    /// the lane it lands in (RESULT-LANDING-LAPSED-STARTER = A).
+    pub(crate) fn dispatch_starter_stands(&self, starter: WorkloadStarter) -> crate::Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        match starter {
+            WorkloadStarter::Owner(owner) => is_live_vault_owner_in_txn(self, &txn, &owner),
+            WorkloadStarter::Grant(grant) => {
+                let now_secs = self.instant_in_txn(&txn)?.secs();
+                Ok(matches!(
+                    self.start_grant_standing_in_txn(&txn, grant, now_secs)?,
+                    GrantStanding::Stands { .. }
+                ))
+            }
+        }
+    }
+
     /// Where the Grant `grant` stands for its agent and `vault.gpu.jobs.start` at `now_secs`.
     /// A Grant another live Grant of the same agent outranks still stands: the standing rule
     /// is asked for this Grant first.

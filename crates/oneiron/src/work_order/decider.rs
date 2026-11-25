@@ -42,8 +42,9 @@ use super::rank::{RANK_OPTIONS_MAX, RANK_RULE, rank_decision};
 use super::record::{DecidedBy, EndKind, OrderCharge, SlotDecision, SlotName, WaitRule, WorkOrder};
 
 pub use setting_keys::{
-    DeciderGrant, PLACE_WAIT_REASK_MS_DEFAULT, PLACE_WAIT_REASK_MS_MAX, SLOT_DEADLINE_MS_DEFAULT,
-    SLOT_DEADLINE_MS_MAX, SLOT_MAX_ASKS_PER_HOUR_DEFAULT,
+    DeciderGrant, PLACE_GRACE_MS_DEFAULT, PLACE_GRACE_MS_MAX, PLACE_WAIT_REASK_MS_DEFAULT,
+    PLACE_WAIT_REASK_MS_MAX, SLOT_DEADLINE_MS_DEFAULT, SLOT_DEADLINE_MS_MAX,
+    SLOT_MAX_ASKS_PER_HOUR_DEFAULT,
 };
 
 /// The verb a decider's Grant names: each answer is one typed model read.
@@ -149,6 +150,8 @@ fn micros(amount: f64) -> u64 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlotAsk {
     pub slot: SlotName,
+    /// What the ask is about: a work order, or an agent run at its first claim.
+    pub subject: SlotSubject,
     /// The Grant the owner named.
     pub grant: EntityId,
     /// The Grant's agent: the read's principal, whose own line meters it.
@@ -166,18 +169,30 @@ impl SlotAsk {
     /// The question the slot puts to its decider.
     #[must_use]
     pub const fn question(&self) -> &'static str {
-        match self.slot {
-            SlotName::Rank => {
+        match (self.slot, self.subject) {
+            (SlotName::Place, SlotSubject::NativeRun) => {
+                "Which machine should this agent run run on? Each option is a candidate machine id; the state lists each candidate's facts from the vault (its GPUs, the agents it can run, the open runs placed on it, whether it is the home), the run's agent and world, and the rule's pick."
+            }
+            (SlotName::Rank, _) => {
                 "Which of these runnable work orders should be dispatched first? Each option is an order id; the state lists each one's class, charge, age, attempts and running family count, and the rule's pick."
             }
-            SlotName::Place => {
+            (SlotName::Place, SlotSubject::WorkOrder) => {
                 "Which machine should this work order's next attempt run on, or should it wait for a better one? Each option is a candidate machine id, or wait; the state lists each candidate's reported facts, the order's request and wishes, and the rule's pick."
             }
-            SlotName::After => {
+            (SlotName::After, _) => {
                 "What should follow this work order's ended attempt? The options are the steps its end allows; the state lists the end, the attempts so far and the rule's pick."
             }
         }
     }
+}
+
+/// What a slot's ask is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotSubject {
+    /// A work order of the issuer's loop.
+    WorkOrder,
+    /// An agent run at its first claim, which PLACE puts on a machine (row P4).
+    NativeRun,
 }
 
 /// What the host got for one ask.
@@ -246,8 +261,9 @@ impl SlotAskWindow {
 /// out, the later slots keep the rule's pick, as past the hourly ceiling
 /// ([`DeciderMiss::Ceiling`]). So a pass, and a `vault.jobs.order` call that runs one, waits
 /// about one slot deadline on its deciders, however many slots name one.
-pub(super) struct PassAsks<'h> {
-    host: &'h dyn OrderHost,
+pub(crate) struct PassAsks<'h> {
+    /// The host's decision ladder: it asks the decider and waits for its answer.
+    decide: Box<dyn Fn(&SlotAsk) -> DeciderReply + 'h>,
     /// When the budget runs out; none before the pass's first ask.
     closes_at: Cell<Option<Instant>>,
 }
@@ -255,8 +271,14 @@ pub(super) struct PassAsks<'h> {
 impl<'h> PassAsks<'h> {
     /// A pass's asks through `host`, with its budget not yet opened.
     pub(super) fn new(host: &'h dyn OrderHost) -> Self {
+        Self::through(move |ask| host.decide(ask))
+    }
+
+    /// Asks through `decide`, the host's decision ladder, with the budget not yet opened: one
+    /// agent run's placement is one such budget.
+    pub(crate) fn through(decide: impl Fn(&SlotAsk) -> DeciderReply + 'h) -> Self {
         Self {
-            host,
+            decide: Box::new(decide),
             closes_at: Cell::new(None),
         }
     }
@@ -317,14 +339,25 @@ impl SlotDecision {
     }
 }
 
+/// Whose rows of the slot keys hold for a question.
+#[derive(Clone, Copy)]
+pub(crate) enum SlotScope<'o> {
+    /// The vault's.
+    Vault,
+    /// The order's line's project's, or the vault's for an offer's order.
+    Order(&'o WorkOrder),
+    /// The project's, or the vault's for none: an agent run's own project.
+    Project(Option<EntityId>),
+}
+
 /// A slot's question to its decider.
-struct SlotQuestion<'o> {
-    slot: SlotName,
-    /// The order whose line's project holds the slot's rows; none reads the vault's.
-    order: Option<&'o WorkOrder>,
-    options: Vec<String>,
+pub(crate) struct SlotQuestion<'o> {
+    pub(crate) slot: SlotName,
+    pub(crate) subject: SlotSubject,
+    pub(crate) scope: SlotScope<'o>,
+    pub(crate) options: Vec<String>,
     /// The facts the decider reads, made only when it is asked.
-    facts: Box<dyn FnOnce() -> Value + 'o>,
+    pub(crate) facts: Box<dyn FnOnce() -> Value + 'o>,
 }
 
 /// `value` as JSON, or null when it does not encode.
@@ -333,7 +366,7 @@ fn fact<T: Serialize>(value: &T) -> Value {
 }
 
 /// The rule's own decision, as a decider reads it.
-fn rule_fact(rule: &SlotDecision) -> Value {
+pub(crate) fn rule_fact(rule: &SlotDecision) -> Value {
     json!({ "pick": rule.pick, "why": rule.why, "by": fact(&rule.by) })
 }
 
@@ -387,7 +420,7 @@ impl Vault {
 
     /// `rule`, or the named decider's pick among `question.options` when it answers one of them
     /// inside the slot's deadline, cut to what is left of the pass's ask budget (1.2, I9).
-    fn decide_slot(
+    pub(crate) fn decide_slot(
         &self,
         asks: &PassAsks<'_>,
         question: SlotQuestion<'_>,
@@ -398,9 +431,10 @@ impl Vault {
         }
         let (policy, grant, stands) = {
             let txn = self.store.env.read_txn()?;
-            let project = match question.order {
-                Some(order) => self.order_project_in_txn(&txn, order)?,
-                None => None,
+            let project = match question.scope {
+                SlotScope::Vault => None,
+                SlotScope::Order(order) => self.order_project_in_txn(&txn, order)?,
+                SlotScope::Project(project) => project,
             };
             let policy = setting_keys::slot_policy_in_txn(self, &txn, question.slot, project)?;
             let Some(grant) = policy.decider else {
@@ -417,6 +451,7 @@ impl Vault {
         };
         let ask = SlotAsk {
             slot: question.slot,
+            subject: question.subject,
             grant,
             agent,
             class,
@@ -426,7 +461,7 @@ impl Vault {
             max_asks_per_hour: policy.max_asks_per_hour,
         };
         let started = Instant::now();
-        let reply = asks.host.decide(&ask);
+        let reply = (asks.decide)(&ask);
         let in_time = started.elapsed() <= Duration::from_millis(deadline_ms);
         Ok(match reply {
             DeciderReply::Answered { receipt, .. } if !in_time => {
@@ -497,7 +532,8 @@ impl Vault {
         };
         let question = SlotQuestion {
             slot: SlotName::Rank,
-            order: None,
+            subject: SlotSubject::WorkOrder,
+            scope: SlotScope::Vault,
             options: rule.options.clone(),
             facts: Box::new(facts),
         };
@@ -559,7 +595,8 @@ impl Vault {
         };
         let question = SlotQuestion {
             slot: SlotName::Place,
-            order: Some(order),
+            subject: SlotSubject::WorkOrder,
+            scope: SlotScope::Order(order),
             options,
             facts: Box::new(facts),
         };
@@ -632,7 +669,8 @@ impl Vault {
         };
         let question = SlotQuestion {
             slot: SlotName::After,
-            order: Some(order),
+            subject: SlotSubject::WorkOrder,
+            scope: SlotScope::Order(order),
             options: decision.options.clone(),
             facts: Box::new(facts),
         };

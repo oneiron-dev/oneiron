@@ -358,6 +358,7 @@ pub mod roster_slot_reservation;
 pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
+pub mod run_placement;
 pub mod schedule;
 pub mod scope_summary;
 pub mod scoped_read_liveness;

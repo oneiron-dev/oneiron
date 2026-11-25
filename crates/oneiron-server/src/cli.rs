@@ -752,6 +752,20 @@ pub struct ApiArgs {
     #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
     pub binding_key_env: String,
 
+    /// Connect to this address for the base URL's host, never to one a name
+    /// lookup returns (curl `--resolve`); repeat it for several. Each must
+    /// be an IP address, and the base URL's host a name: a caller that
+    /// already checked where the host leads holds the request to that check.
+    #[arg(long, value_name = "IP")]
+    pub resolve_address: Vec<String>,
+
+    /// Give the request up after this many seconds (curl `--max-time`), so a
+    /// server that takes it and never answers ends the call. Unset, the call
+    /// has no deadline of its own, so a long `raw` transfer or wait is never
+    /// cut: callers that must never hang (agents, harnesses) set it.
+    #[arg(long, env = "ONEIRON_API_MAX_TIME", value_name = "SECS")]
+    pub max_time: Option<u64>,
+
     #[command(subcommand)]
     pub command: ApiCommand,
 }
