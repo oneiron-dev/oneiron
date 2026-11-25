@@ -103,6 +103,7 @@ fn capacity() -> MachineCapacity {
         memory_reserve_bytes: 4 << 30,
         memory_available_bytes: 40 << 30,
         gpu_memory_mib: vec![24_576],
+        gpus: Vec::new(),
         disk_total_bytes: 2 << 40,
         disk_free_bytes: 1 << 40,
         power: MachinePower::Mains,

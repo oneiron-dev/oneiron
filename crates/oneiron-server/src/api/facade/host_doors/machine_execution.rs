@@ -1,7 +1,8 @@
 //! `vault.machines.execution.get` (pass 33 door 11): what each machine the vault holds a job
 //! grant for offers its GPU jobs now, asked of the machine itself by the vault's issuer. Its row
 //! proves `verb_grant_caller`: the owner under their own proof, or an agent whose own live Grant
-//! lists the verb, judged again by the engine's read. It writes nothing; it lists no row.
+//! lists the verb, judged again by the engine's read. It writes nothing; it lists no row; its
+//! reply is never kept for a same-id retry (`invocations::UNKEPT_REPLY_VERBS`).
 
 use std::sync::Arc;
 

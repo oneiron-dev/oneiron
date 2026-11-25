@@ -291,7 +291,13 @@ pub(crate) enum DoorClaim {
 /// answers now, and a kept reply would write that answer to this vault's
 /// invocation state and replay it after the node went offline. A same-id
 /// retry reads, and on `refresh` asks the nodes, again.
-const UNKEPT_REPLY_VERBS: [&str; 8] = [
+/// The machines' execution read (pass 33 door 11, review round 1 of
+/// #10458) is the same kind of live read: it holds what each machine's node
+/// answers now (its offer, its devices and its live keys), and a kept reply
+/// would write those answers to this vault's invocation state and replay
+/// them after the node went offline or changed its offer. A same-id retry
+/// asks the machines again.
+const UNKEPT_REPLY_VERBS: [&str; 9] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -300,6 +306,7 @@ const UNKEPT_REPLY_VERBS: [&str; 8] = [
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
     oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
+    oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
