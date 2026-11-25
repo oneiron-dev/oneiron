@@ -9,7 +9,9 @@
 //! - A line none of whose lead Grants stands tells its owners.
 //! - T58: a returning machine writes one notice per outage, keyed by the
 //!   machine and its boot id. A machine with no unit lost on it, or one lost
-//!   before the line's window, tells nothing.
+//!   before the line's window, tells nothing. A unit started on it and
+//!   unconfirmed now counts whatever its age; its write-off names the
+//!   machine it was pinned to.
 //! - The clock's notices, as the `lines.notices` job raises them: a promote
 //!   that waited the line's review bound is told overdue once, to the leads
 //!   and the owners; a started unit past its maximum plus one hour is told
@@ -628,7 +630,33 @@ fn a_returning_machine_writes_one_notice_per_outage() {
     let inside = machine_returned(&fixture.vault, &aged, "boot-1", SETTLED_MS + window_ms)
         .expect("the return's write");
     assert_eq!(inside.len(), 1, "at the window's edge it still counts");
-    assert_eq!(fixture.notices(LineNoticeKind::MachineReturned).len(), 3);
+
+    // A unit started on the machine and unconfirmed now counts whatever its
+    // age: it is unconfirmed within the window because it is unconfirmed now.
+    let pinned = EntityId::now();
+    let stale = fixture.put(&arm, "work/2", ClaimState::Started, Some(pinned), None);
+    let unconfirmed_ms = NOW_MS + RUNG_SECS * 1_000 + HOUR_MS;
+    let long_after = machine_returned(
+        &fixture.vault,
+        &pinned,
+        "boot-1",
+        unconfirmed_ms + window_ms + HOUR_MS,
+    )
+    .expect("the return's write");
+    assert_eq!(long_after.len(), 1, "unconfirmed now: {long_after:?}");
+    assert_eq!(fixture.notices(LineNoticeKind::MachineReturned).len(), 4);
+
+    // The owner's write-off names the machine the unit was pinned to.
+    let owner = EntityId::now();
+    let write_off = UnitEndReport::WrittenOff { by: owner };
+    assert!(!fixture.settle(&stale, &write_off), "a fresh end");
+    let written_off = fixture.notices(LineNoticeKind::UnitWrittenOff);
+    assert_eq!(recipients(&written_off), hex(&[lead]), "{written_off:?}");
+    let detail = written_off[0].source.detail.clone().expect("its facts");
+    assert!(
+        detail.contains(&format!("machine={}", pinned.to_hex())),
+        "{detail}"
+    );
 }
 
 /// A promote that waits the line's review bound is told overdue once, to the
