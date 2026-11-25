@@ -7,8 +7,14 @@
 //! - T59: the reviewer's separate bound and the family's cost.
 //! - T62 (reserve half): a new-idea arm reserves only at rung 1.
 //! - Budget-refusal rows and cancellation, including authorization and replay.
+//! - T13, T14 (start half), T46, T47 (start half): the one start gate. A unit's job starts only
+//!   through its claim; a refused start returns the hold once; a plain start or resume on a
+//!   line-managed offer is refused; a released claim cannot start; a started unit's job is
+//!   cancelled through the unit door only.
 //!
-//! The start test door changes only the claim; these tests do not start a GPU job or call a node.
+//! The earlier tests change the claim through the start test door and start no GPU job. The
+//! start-gate tests call `Vault::start_claimed_gpu_job` with an in-memory connector that counts
+//! its creates and terminations; no test calls a node or the network.
 #![cfg(oneiron_test_support)]
 
 use std::sync::{Arc, Barrier};
@@ -1096,4 +1102,729 @@ fn a_new_idea_arm_reserves_at_rung_one_only() {
     assert_eq!(only_claim(&claims).id, reserved.job);
     assert!(fixture.claims(&arm, 2).is_empty());
     assert!(fixture.refusals(&arm, 0).is_empty());
+}
+
+// The claimed-start tests use the same door as the server, not Fixture::start's claim-only hook.
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use oneiron::gpu_job::{
+    GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError,
+    GpuJobPermits, GpuJobQuote, GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuJobState,
+    GpuJobVerb, GpuOffer, GpuResourceRef, GpuResourceStatus, GpuTermination, LineStartRefused,
+    PriceShape, UnitJobStart,
+};
+use oneiron::gpu_line::{allocation_standing_in_txn, stored_period_in_txn};
+use oneiron::llm::ModelLocality;
+use oneiron::llm::run_admission::{
+    BudgetLine, CheckpointRef, DeclaredMaximum, JobMaximum, KeyCustody, LeaseUnit, MaximumShown,
+    MemoryReceipts, OfferRoute, PaidConnector, Payer, RunAdmission, RunDeclaration,
+};
+
+#[derive(Default)]
+struct UnitJobConnector {
+    create_refusal: Option<&'static str>,
+    creates: AtomicUsize,
+    terminations: AtomicUsize,
+}
+
+impl GpuJobConnector for UnitJobConnector {
+    fn create(&self, key: &str, _spec: &GpuJobSpec) -> Result<GpuResourceRef, GpuConnectorError> {
+        self.creates.fetch_add(1, Ordering::Relaxed);
+        if let Some(reason) = self.create_refusal {
+            return Err(GpuConnectorError::Refused {
+                reason: reason.to_owned(),
+            });
+        }
+        Ok(GpuResourceRef(format!("resource-{key}")))
+    }
+
+    fn find(&self, key: &str) -> Result<Option<GpuResourceRef>, GpuConnectorError> {
+        panic!("unexpected find for {key}");
+    }
+
+    fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
+        panic!("unexpected status for {resource:?}");
+    }
+
+    fn signal(
+        &self,
+        resource: &GpuResourceRef,
+        signal: GpuJobSignal,
+    ) -> Result<(), GpuConnectorError> {
+        panic!("unexpected {signal:?} for {resource:?}");
+    }
+
+    fn terminate(&self, _resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
+        self.terminations.fetch_add(1, Ordering::Relaxed);
+        Ok(GpuTermination::Confirmed { billed_secs: 0 })
+    }
+}
+
+struct UnitJobs {
+    offer: GpuOffer,
+    permits: GpuJobPermits,
+    connector: UnitJobConnector,
+}
+
+impl UnitJobs {
+    fn new(create_refusal: Option<&'static str>) -> Self {
+        Self {
+            offer: GpuOffer {
+                name: OFFER.to_owned(),
+                class: "fixture-class".to_owned(),
+                provider: "fixture-provider".to_owned(),
+                region: "fixture-region".to_owned(),
+                connector: PaidConnector {
+                    connector: OFFER.to_owned(),
+                    route: OfferRoute::new(OFFER, "https://gpu.example.invalid").expect("route"),
+                    locality: ModelLocality::ThirdParty,
+                    payer: Payer::Local,
+                    credential_binding: None,
+                    catalog_revision: None,
+                    custody: KeyCustody::T0,
+                    unit_cost: 1,
+                    cost_unit: gpu_seconds(),
+                    rates: Vec::new(),
+                },
+                price_shape: PriceShape::AtOneironList,
+                list_cost_per_second: None,
+                startup_secs: 0,
+                teardown_secs: 0,
+                rounding_secs: 0,
+            },
+            permits: GpuJobPermits::new(),
+            connector: UnitJobConnector {
+                create_refusal,
+                ..UnitJobConnector::default()
+            },
+        }
+    }
+
+    fn creates(&self) -> usize {
+        self.connector.creates.load(Ordering::Relaxed)
+    }
+
+    fn quote(
+        &self,
+        fixture: &Fixture,
+        ask: &UnitReserveRequest,
+        view: &UnitView,
+        at_ms: u64,
+    ) -> (ClaimKey, GpuJobQuote) {
+        let (key, request) = fixture.unit_request(ask, view, at_ms);
+        let quote = self
+            .offer
+            .quote_for(view.job, &request, ask.secs, at_ms)
+            .expect("quote the claim's job");
+        (key, quote)
+    }
+
+    fn start(
+        &self,
+        fixture: &Fixture,
+        lead: Agent,
+        key: &ClaimKey,
+        quote: &GpuJobQuote,
+        at_ms: u64,
+    ) -> Result<GpuJob, GpuJobError> {
+        let (memory, _) = fixture.caller(Some(lead));
+        let agent = memory.gpu_job_agent();
+        fixture.vault.start_claimed_gpu_job(
+            UnitJobStart {
+                actor: GpuJobActor::Agent(&agent),
+                offer: &self.offer,
+                quote,
+            },
+            key,
+            &self.permits,
+            &self.connector,
+            at_ms,
+        )
+    }
+}
+
+impl Fixture {
+    fn lead_arm(&self, lead: Agent, occupied_secs: u64) -> ExperimentArm {
+        let arm = self.lane(
+            Roles {
+                leads: vec![lead.grant],
+                ..Roles::default()
+            },
+            Track::Demand,
+            1,
+        );
+        self.answer(&arm, NOW_MS, occupied_secs);
+        arm
+    }
+
+    fn unit_request(
+        &self,
+        ask: &UnitReserveRequest,
+        view: &UnitView,
+        at_ms: u64,
+    ) -> (ClaimKey, GpuJobRequest) {
+        assert_eq!(view.state, "claimed");
+        let key = ClaimKey::of(ask.arm, ask.rung, &ask.unit_key, ask.attempt);
+        let request = self
+            .vault
+            .unit_job_request(&key, at_ms)
+            .expect("read job request")
+            .expect("the claim has not started");
+        assert_eq!(request.job_type, "pinned_workload");
+        assert_eq!(request.image, ask.workload);
+        assert_eq!(request.maximum_secs, Some(ask.secs));
+        assert_eq!(
+            request.inputs["machine"].as_str(),
+            Some(self.machine.to_hex().as_str())
+        );
+        (key, request)
+    }
+
+    fn allocation_room(&self, claim: &UnitClaim) -> u64 {
+        let txn = read_txn(&self.vault).expect("read snapshot");
+        let period = stored_period_in_txn(&self.vault, &txn, &claim.line, claim.period)
+            .expect("read period")
+            .expect("the claim's period");
+        allocation_standing_in_txn(
+            &self.vault,
+            &txn,
+            &period.allocation.allocation(gpu_seconds()),
+            &[self.machine],
+        )
+        .expect("read allocation standing")
+        .room()
+    }
+
+    fn lead_with_gpu_cancel(&self) -> Agent {
+        let actor = self
+            .vault
+            .ensure_agent_principal("gpu-cancel-lead")
+            .expect("named agent principal");
+        let mut authority_scope = Scope::top();
+        authority_scope.verbs = ScopeAxis::Some(
+            [
+                "read",
+                ARMS_UNITS_RESERVE_VERB,
+                ARMS_UNITS_CANCEL_VERB,
+                GpuJobVerb::Cancel.name(),
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        );
+        let minted = mint_agent_grant_as(
+            &self.vault,
+            &self.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent: actor,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: Default::default(),
+                wallet_ref: None,
+                working_view_bounds: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("mint the lead's Grant with generic GPU cancel");
+        assert!(minted.grant.confers);
+        Agent {
+            actor,
+            grant: minted.grant.grant_ref,
+        }
+    }
+}
+
+fn assert_released(claim: &UnitClaim, reason: &str, at_ms: u64) {
+    let ClaimState::Ended(terminal) = &claim.state else {
+        panic!("expected released claim: {claim:?}");
+    };
+    assert_eq!(terminal.end, UnitEnd::Released(reason.to_owned()));
+    assert_eq!(terminal.charged_secs, 0);
+    assert_eq!(terminal.ended_at_ms, at_ms);
+}
+
+/// T13: both a provider refusal and a start-gate refusal return the hold once.
+#[test]
+fn a_refused_start_returns_its_draws_once() {
+    {
+        let fixture = fixture();
+        let lead = fixture.agent("lead");
+        let arm = fixture.lead_arm(lead, OCCUPIED_SECS);
+        let ask = fixture.ask(&arm, "provider-refusal", LAST_UNIT_SECS, Some(lead));
+        let first = fixture
+            .reserve(Some(lead), &ask, NOW_MS)
+            .expect("claim the last room");
+        assert_eq!(first.room_left_secs, Some(0));
+        let reason = "fixture provider refused create";
+        let jobs = UnitJobs::new(Some(reason));
+        let (key, quote) = jobs.quote(&fixture, &ask, &first, NOW_MS);
+
+        let held = jobs
+            .start(&fixture, lead, &key, &quote, NOW_MS)
+            .expect("provider refusal returns a held job");
+        assert_eq!(held.id, first.job);
+        assert_eq!(held.claim, Some(key));
+        assert_eq!(
+            held.state,
+            GpuJobState::Held {
+                reason: reason.to_owned()
+            }
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .gpu_job(&first.job)
+                .expect("read held job")
+                .as_ref(),
+            Some(&held)
+        );
+        let rows = fixture.claims(&arm, 1);
+        let ended = only_claim(&rows);
+        assert_eq!(ended.key(), key);
+        assert_released(ended, reason, NOW_MS);
+        assert_eq!(fixture.allocation_room(ended), ask.secs);
+
+        let next = UnitReserveRequest {
+            intent_key: "provider-refusal-attempt-two".to_owned(),
+            attempt: 2,
+            ..ask
+        };
+        let replacement = fixture
+            .reserve(Some(lead), &next, NOW_MS)
+            .expect("the full ask fits again");
+        assert_eq!(replacement.state, "claimed");
+        assert_ne!(replacement.job, first.job);
+        assert_eq!(replacement.room_left_secs, first.room_left_secs);
+        assert_eq!(replacement.draws, first.draws);
+
+        let before_replay = fixture.claims(&arm, 1);
+        let report = UnitEndReport::Refused {
+            reason: reason.to_owned(),
+        };
+        let replay = fixture
+            .vault
+            .with_write_txn(|txn| {
+                settle_unit_in_txn(&fixture.vault, txn, &key, &first.job, &report, NOW_MS + 1)
+            })
+            .expect("settlement transaction")
+            .expect("same refusal replays");
+        assert!(replay.replayed);
+        assert_eq!(&replay.claim, ended);
+        assert_eq!(fixture.claims(&arm, 1), before_replay);
+        assert_eq!(
+            Some(fixture.allocation_room(ended)),
+            replacement.room_left_secs
+        );
+        assert_eq!(jobs.creates(), 1);
+    }
+
+    {
+        let fixture = fixture();
+        let lead = fixture.agent("lead");
+        let arm = fixture.lead_arm(lead, OCCUPIED_SECS);
+        let ask = fixture.ask(&arm, "gate-refusal", LAST_UNIT_SECS, Some(lead));
+        let view = fixture
+            .reserve(Some(lead), &ask, NOW_MS)
+            .expect("claim the last room");
+        assert_eq!(view.room_left_secs, Some(0));
+        let jobs = UnitJobs::new(None);
+        let (key, mut request) = fixture.unit_request(&ask, &view, NOW_MS);
+        request.maximum_secs = Some(ask.secs - 1);
+        let quote = jobs
+            .offer
+            .quote_for(view.job, &request, ask.secs, NOW_MS)
+            .expect("quote with a smaller maximum");
+
+        let refused = jobs.start(&fixture, lead, &key, &quote, NOW_MS);
+        assert!(
+            matches!(
+                refused,
+                Err(GpuJobError::LineManaged(LineStartRefused::ClaimMismatch(_)))
+            ),
+            "{refused:?}"
+        );
+        let rows = fixture.claims(&arm, 1);
+        let ended = only_claim(&rows);
+        assert_eq!(ended.key(), key);
+        assert_released(ended, "claim_mismatch", NOW_MS);
+        assert_eq!(fixture.allocation_room(ended), ask.secs);
+        let repeated = jobs.start(&fixture, lead, &key, &quote, NOW_MS + 1);
+        assert!(
+            matches!(
+                repeated,
+                Err(GpuJobError::LineManaged(LineStartRefused::ClaimNotClaimed))
+            ),
+            "{repeated:?}"
+        );
+        assert_eq!(fixture.claims(&arm, 1), rows);
+        assert_eq!(fixture.allocation_room(ended), ask.secs);
+        assert!(
+            fixture
+                .vault
+                .gpu_job(&view.job)
+                .expect("read job row")
+                .is_none()
+        );
+        assert_eq!(jobs.creates(), 0);
+    }
+}
+
+/// T14: retrying the logical attempt cannot start its job a second time.
+#[test]
+fn a_reserve_retried_after_a_lost_answer_starts_one_job() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let ask = fixture.ask(&arm, "same-started-attempt", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("first reserve");
+    assert!(!view.replayed);
+    let jobs = UnitJobs::new(None);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("first start");
+    let stored = fixture
+        .vault
+        .gpu_job(&view.job)
+        .expect("read job row")
+        .expect("start writes its job row");
+    assert_eq!(stored, job);
+    assert_eq!(stored.state, GpuJobState::Running);
+    assert_eq!(stored.claim, Some(key));
+    assert_eq!(stored.started_by, Some(lead.actor));
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    assert_eq!(claim.key(), key);
+    assert_eq!(claim.id, view.job);
+    assert_eq!(claim.state, ClaimState::Started);
+    assert_eq!(jobs.creates(), 1);
+
+    let retry = UnitReserveRequest {
+        intent_key: "new-intent-after-started-answer-lost".to_owned(),
+        ..ask
+    };
+    let again = fixture
+        .reserve(Some(lead), &retry, NOW_MS)
+        .expect("same logical attempt replays");
+    assert!(again.replayed);
+    assert_eq!(again.job, view.job);
+    assert_eq!(again.state, "started");
+    let repeated = jobs.start(&fixture, lead, &key, &quote, NOW_MS);
+    assert!(
+        matches!(
+            repeated,
+            Err(GpuJobError::LineManaged(LineStartRefused::ClaimNotClaimed))
+        ),
+        "{repeated:?}"
+    );
+    assert_eq!(fixture.claims(&arm, 1), rows);
+    assert_eq!(
+        fixture.vault.gpu_jobs().expect("read GPU jobs"),
+        vec![stored]
+    );
+    assert_eq!(jobs.creates(), 1);
+}
+
+/// T46: even the owner needs the unit door to start on a line-managed offer.
+#[test]
+fn a_start_on_a_line_managed_offer_without_a_claim_is_refused() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let jobs = UnitJobs::new(None);
+    let request = GpuJobRequest {
+        job_type: "fine-tune".to_owned(),
+        image: "fixture-image".to_owned(),
+        maximum_secs: Some(60),
+        inputs: serde_json::Value::Null,
+    };
+    let quote = jobs
+        .offer
+        .quote(&request, None, 60, NOW_MS)
+        .expect("plain quote");
+    let receipts = Arc::new(MemoryReceipts::default());
+    let declaration = RunDeclaration::declared(BudgetLine {
+        limit_units: quote.units,
+        reserve_units: quote.units,
+        unit: quote.unit.clone(),
+    })
+    .with_connector(OFFER.to_owned());
+    let admission = RunAdmission::new(
+        GpuJob::admission_ref_of(&quote.job),
+        declaration,
+        None,
+        receipts.clone(),
+    );
+    let plain = GpuJobStart {
+        actor: GpuJobActor::Owner(&fixture.owner_proof),
+        offer: &jobs.offer,
+        quote: &quote,
+        resume: None,
+        admission: &admission,
+    };
+    let refused = fixture
+        .vault
+        .start_gpu_job(plain, &jobs.permits, &jobs.connector, NOW_MS);
+    assert!(
+        matches!(
+            refused,
+            Err(GpuJobError::LineManaged(LineStartRefused::OfferLineManaged))
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        fixture
+            .vault
+            .gpu_job(&quote.job)
+            .expect("read job row")
+            .is_none()
+    );
+    assert_eq!(jobs.creates(), 0);
+
+    // Make a resume offer in memory: no stored GPU job, provider call, or real stop.
+    let mut maximum = JobMaximum::start(
+        quote.job.to_hex(),
+        DeclaredMaximum {
+            units: quote.maximum_secs,
+            unit: LeaseUnit::new("seconds").expect("unit"),
+        },
+        Some(MaximumShown { at_ms: NOW_MS }),
+    )
+    .expect("shown maximum");
+    let _ = maximum.record_usage(quote.maximum_secs);
+    assert!(maximum.confirm_warning());
+    maximum.checkpoint(CheckpointRef("fixture-checkpoint".to_owned()));
+    let resume = maximum.stop_at_maximum().expect("in-memory stop").resume;
+    let refused = fixture.vault.start_gpu_job(
+        GpuJobStart {
+            resume: Some(&resume),
+            ..plain
+        },
+        &jobs.permits,
+        &jobs.connector,
+        NOW_MS,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(GpuJobError::LineManaged(
+                LineStartRefused::ResumeLineManaged
+            ))
+        ),
+        "{refused:?}"
+    );
+    assert!(fixture.vault.gpu_jobs().expect("read GPU jobs").is_empty());
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert!(
+        receipts.rows().is_empty(),
+        "the plain starts never reached paid admission"
+    );
+    assert_eq!(jobs.creates(), 0);
+
+    let (memory, _) = fixture.caller(Some(lead));
+    let denied = memory
+        .gpu_job_admits(None, GpuJobVerb::Start)
+        .expect_err("the lead has no generic start Grant");
+    assert_eq!(denied.code, MEMORY_CODE_FORBIDDEN);
+    let ask = fixture.ask(&arm, "start-through-claim", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("the lead can reserve its unit");
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("the claim admits the lead's job");
+    assert_eq!(job.state, GpuJobState::Running);
+    assert_eq!(job.claim, Some(key));
+    let rows = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&rows).id, job.id);
+    assert_eq!(only_claim(&rows).state, ClaimState::Started);
+    assert_eq!(jobs.creates(), 1);
+}
+
+/// T47: custody can beat start, but cannot release a job that already started.
+#[test]
+fn a_released_claim_can_no_longer_start() {
+    let after_custody = NOW_MS + BudgetPolicy::default().claim_custody_secs * 1_000 + 1;
+    {
+        let fixture = fixture();
+        let lead = fixture.agent("lead");
+        let arm = fixture.lead_arm(lead, 0);
+        let ask = fixture.ask(&arm, "custody-wins", 60, Some(lead));
+        let view = fixture
+            .reserve(Some(lead), &ask, NOW_MS)
+            .expect("reserve before custody lapses");
+        let jobs = UnitJobs::new(None);
+        let (key, quote) = jobs.quote(&fixture, &ask, &view, after_custody);
+        let refused = jobs.start(&fixture, lead, &key, &quote, after_custody);
+        assert!(
+            matches!(
+                refused,
+                Err(GpuJobError::LineManaged(LineStartRefused::ClaimReleased))
+            ),
+            "{refused:?}"
+        );
+        let rows = fixture.claims(&arm, 1);
+        let claim = only_claim(&rows);
+        assert_eq!(claim.key(), key);
+        assert_released(claim, "custody_lapsed", after_custody);
+        assert!(
+            fixture
+                .vault
+                .gpu_job(&view.job)
+                .expect("read job row")
+                .is_none()
+        );
+        assert_eq!(jobs.creates(), 0);
+    }
+
+    {
+        let fixture = fixture();
+        let lead = fixture.agent("lead");
+        let arm = fixture.lead_arm(lead, 0);
+        let ask = fixture.ask(&arm, "start-wins", 60, Some(lead));
+        let view = fixture
+            .reserve(Some(lead), &ask, NOW_MS)
+            .expect("first attempt");
+        let jobs = UnitJobs::new(None);
+        let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+        let job = jobs
+            .start(&fixture, lead, &key, &quote, NOW_MS)
+            .expect("start before custody lapses");
+        assert_eq!(job.state, GpuJobState::Running);
+        let started = fixture.claims(&arm, 1);
+        assert_eq!(only_claim(&started).state, ClaimState::Started);
+        let next = UnitReserveRequest {
+            intent_key: "started-attempt-two".to_owned(),
+            attempt: 2,
+            ..ask
+        };
+        refused_as(
+            fixture.reserve(Some(lead), &next, after_custody),
+            MEMORY_CODE_INVALID_STATE,
+            "attempt_open:",
+        );
+        assert_eq!(fixture.claims(&arm, 1), started);
+        assert_eq!(jobs.creates(), 1);
+
+        let ask = fixture.ask(&arm, "withdrawn-before-start", 60, Some(lead));
+        let view = fixture
+            .reserve(Some(lead), &ask, after_custody)
+            .expect("reserve another unit");
+        let (key, quote) = jobs.quote(&fixture, &ask, &view, after_custody);
+        let UnitCancel::Withdrawn(withdrawn) = fixture
+            .cancel_outcome(Some(lead), &ask, after_custody)
+            .expect("withdraw the unstarted claim")
+        else {
+            panic!("an unstarted unit must withdraw");
+        };
+        assert_eq!(withdrawn.job, view.job);
+        let rows = fixture.claims(&arm, 1);
+        let claim = rows
+            .iter()
+            .find(|claim| claim.key() == key)
+            .expect("withdrawn claim row");
+        assert_released(claim, "withdrawn", after_custody);
+        let refused = jobs.start(&fixture, lead, &key, &quote, after_custody);
+        assert!(
+            matches!(
+                refused,
+                Err(GpuJobError::LineManaged(LineStartRefused::ClaimNotClaimed))
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(fixture.claims(&arm, 1), rows);
+        assert!(
+            fixture
+                .vault
+                .gpu_job(&view.job)
+                .expect("read job row")
+                .is_none()
+        );
+        assert_eq!(jobs.creates(), 1);
+    }
+}
+
+#[test]
+fn a_started_units_cancel_ends_its_job_through_the_unit_door() {
+    let fixture = fixture();
+    let lead = fixture.lead_with_gpu_cancel();
+    let arm = fixture.lead_arm(lead, 0);
+    let ask = fixture.ask(&arm, "cancel-started-unit", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve unit");
+    let jobs = UnitJobs::new(None);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let live = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("start unit");
+    assert_eq!(live.state, GpuJobState::Running);
+    let rows = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&rows).state, ClaimState::Started);
+
+    let (memory, _) = fixture.caller(Some(lead));
+    memory
+        .gpu_job_admits(None, GpuJobVerb::Cancel)
+        .expect("the lead has a generic cancel Grant");
+    let agent = memory.gpu_job_agent();
+    let refused = fixture.vault.cancel_gpu_job(
+        GpuJobActor::Agent(&agent),
+        &view.job,
+        &jobs.permits,
+        &jobs.connector,
+        NOW_MS,
+    );
+    let Err(GpuJobError::Caller(error)) = refused else {
+        panic!("generic cancel of a unit's job must be refused: {refused:?}");
+    };
+    assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
+    assert!(error.message.contains(ARMS_UNITS_CANCEL_VERB), "{error:?}");
+    assert_eq!(
+        fixture
+            .vault
+            .gpu_job(&view.job)
+            .expect("read live job")
+            .as_ref(),
+        Some(&live)
+    );
+    assert_eq!(fixture.claims(&arm, 1), rows);
+    assert_eq!(jobs.connector.terminations.load(Ordering::Relaxed), 0);
+
+    let UnitCancel::JobStarted(token) = fixture
+        .cancel_outcome(Some(lead), &ask, NOW_MS)
+        .expect("the scoped unit cancel admits its reserver")
+    else {
+        panic!("expected a started unit's cancel token");
+    };
+    assert_eq!(token.job(), view.job);
+    assert_eq!(token.view().state, "started");
+    let ended = fixture
+        .vault
+        .cancel_unit_gpu_job(token, &jobs.permits, &jobs.connector, NOW_MS)
+        .expect("the unit door ends the job");
+    assert_eq!(ended.id, view.job);
+    assert_eq!(ended.claim, Some(key));
+    assert_eq!(
+        ended.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Cancelled
+        }
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .gpu_job(&view.job)
+            .expect("read ended job")
+            .as_ref(),
+        Some(&ended)
+    );
+    let rows = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&rows).key(), key);
+    assert_eq!(jobs.connector.terminations.load(Ordering::Relaxed), 1);
+    assert_eq!(jobs.creates(), 1);
 }
