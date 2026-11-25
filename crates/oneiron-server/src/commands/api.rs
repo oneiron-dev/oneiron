@@ -24,7 +24,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,6 +32,10 @@ use oneiron::task_verb::sdk::AgentVerb;
 use oneiron_vault_contract::BINDING_HEADER;
 
 use crate::cli::{ApiArgs, ApiCommand};
+
+mod transport;
+
+pub(crate) use transport::{CurlTransport, curl_transport};
 
 /// `--silent` drops the progress meter, `--show-error` keeps the diagnostic,
 /// and `--fail-with-body` is what makes a 4xx or 5xx both VISIBLE and
@@ -96,78 +99,6 @@ pub(crate) struct CurlCredential<'a> {
     pub(crate) binding: Option<&'a str>,
     /// The variables the bearer and its binding seed came from.
     pub(crate) env: &'a [String],
-}
-
-/// How curl reaches the server for one call, beyond the request itself. The
-/// default is curl's own: a name lookup for the host, and no deadline.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct CurlTransport {
-    /// One curl `--resolve` value, `host:port:addr[,addr]...`, built by
-    /// [`curl_transport`] from the base URL, so it names no other host or port.
-    pub(crate) resolve: Option<String>,
-    /// curl's `--max-time`: whole seconds, at least one.
-    pub(crate) max_time_secs: Option<u64>,
-}
-
-/// The transport `--resolve-address` and `--max-time` ask for, checked against
-/// the base URL. The pin is for the base URL's own host and port (the scheme's
-/// default when it names none), so the host must be a name, without user info;
-/// each address must be an IP address. A deadline of zero seconds is refused:
-/// it would read as "no deadline" to curl.
-pub(crate) fn curl_transport(
-    base_url: &str,
-    addresses: &[String],
-    max_time_secs: Option<u64>,
-) -> anyhow::Result<CurlTransport> {
-    anyhow::ensure!(
-        max_time_secs != Some(0),
-        "--max-time must be at least 1 second; nothing was sent"
-    );
-    if addresses.is_empty() {
-        return Ok(CurlTransport {
-            resolve: None,
-            max_time_secs,
-        });
-    }
-    let base = normalized_base(base_url)?;
-    let (scheme, authority) = base.split_once("://").unwrap_or_default();
-    anyhow::ensure!(
-        !authority.contains('@'),
-        "--resolve-address needs a base URL without user info: {base_url:?}"
-    );
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) if !authority.starts_with('[') => (host, port),
-        _ => (authority, if scheme == "https" { "443" } else { "80" }),
-    };
-    anyhow::ensure!(
-        !host.is_empty()
-            && host.parse::<IpAddr>().is_err()
-            && host
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.'),
-        "--resolve-address needs a host name in the base URL, not an address: {base_url:?}"
-    );
-    anyhow::ensure!(
-        port.parse::<u16>().is_ok_and(|port| port != 0),
-        "base URL port must be a number from 1 to 65535: {base_url:?}"
-    );
-    let mut pinned: Vec<String> = Vec::new();
-    for address in addresses {
-        let address: IpAddr = address
-            .parse()
-            .map_err(|_| anyhow::anyhow!("--resolve-address must be an IP address: {address:?}"))?;
-        let address = match address {
-            IpAddr::V4(v4) => v4.to_string(),
-            IpAddr::V6(v6) => format!("[{v6}]"),
-        };
-        if !pinned.contains(&address) {
-            pinned.push(address);
-        }
-    }
-    Ok(CurlTransport {
-        resolve: Some(format!("{host}:{port}:{}", pinned.join(","))),
-        max_time_secs,
-    })
 }
 
 pub async fn api(args: ApiArgs) -> anyhow::Result<()> {

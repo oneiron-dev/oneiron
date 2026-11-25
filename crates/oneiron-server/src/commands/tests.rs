@@ -973,9 +973,11 @@ fn api_pins_the_connect_to_the_checked_addresses_and_bounds_the_transfer() {
     );
 }
 
-/// A pin is for the base URL's own host name, so a base URL that already
-/// names an address, or carries user info, takes none; a pin that is not an
-/// IP address, and a deadline of zero, are refused before anything is sent.
+/// A pin is for the base URL's own host name, so a base URL whose host is an
+/// address in any spelling curl reads as one, or that carries user info,
+/// takes none; a pin that is not an IP address, and a deadline of zero or past
+/// curl's range, are refused before anything is read or sent. No refusal
+/// quotes the base URL: its user info can hold a password.
 #[test]
 fn api_refuses_a_pin_or_deadline_it_cannot_hold_to_the_base_url() {
     let refusal = |base: &str, address: &str| {
@@ -994,17 +996,25 @@ fn api_refuses_a_pin_or_deadline_it_cannot_hold_to_the_base_url() {
             "{address}"
         );
     }
-    for base in [
-        "https://192.0.2.7",
-        "https://[2001:db8::7]:8443",
-        "https://[2001:db8::7]",
+    // Dotted, shortened, octal, hex, one number, a trailing dot, bracketed
+    // IPv6: curl connects to each as an address, so a pin would never apply.
+    for host in [
+        "192.0.2.7",
+        "127.1",
+        "0177.0.0.1",
+        "0x7f.1",
+        "0X7F.0.0.1",
+        "2130706433",
+        "192.0.2.7.",
+        "[::1]",
+        "[::1]:8443",
     ] {
+        let base = format!("https://{host}");
         assert!(
-            refusal(base, "192.0.2.7").contains("needs a host name"),
+            refusal(&base, "192.0.2.7").contains("needs a host name"),
             "{base}"
         );
     }
-    assert!(refusal("https://owen@vault.example", "192.0.2.7").contains("without user info"));
     for base in [
         "https://vault.example:0",
         "https://vault.example:65536",
@@ -1012,24 +1022,51 @@ fn api_refuses_a_pin_or_deadline_it_cannot_hold_to_the_base_url() {
     ] {
         assert!(refusal(base, "192.0.2.7").contains("port"), "{base}");
     }
-    assert!(refusal("https://vault.example/prefix", "192.0.2.7").contains("without a path"));
+    for base in [
+        "https://owen:placeholder-password@vault.example",
+        "https://owen:placeholder-password@vault.example/prefix",
+    ] {
+        let refused = refusal(base, "192.0.2.7");
+        assert!(
+            !refused.contains("placeholder-password") && !refused.contains("owen"),
+            "a refusal must not quote the base URL's user info: {refused}"
+        );
+    }
     assert!(
-        api::curl_transport("https://vault.example", &[], Some(0))
-            .unwrap_err()
-            .to_string()
-            .contains("at least 1 second")
+        refusal(
+            "https://owen:placeholder-password@vault.example",
+            "192.0.2.7"
+        )
+        .contains("without user info")
+    );
+    assert!(refusal("https://vault.example/prefix", "192.0.2.7").contains("plain http(s) origin"));
+    for secs in [0, 2_147_484, u64::MAX] {
+        assert!(
+            api::curl_transport("https://vault.example", &[], Some(secs))
+                .unwrap_err()
+                .to_string()
+                .contains("--max-time must be from 1 to 2147483 seconds"),
+            "{secs}"
+        );
+    }
+    assert_eq!(
+        api::curl_transport("https://vault.example", &[], Some(2_147_483))
+            .unwrap()
+            .max_time_secs,
+        Some(2_147_483)
     );
 }
 
 /// With the host's real curl (skipped where there is none, as the proxy row
 /// is): the pin is where the request goes, though the host name never
-/// resolves, and the deadline ends a call whose server never answers.
+/// resolves, and the deadline ends a call whose server never answers (it
+/// holds the connection until curl closes it).
 #[test]
 #[cfg(unix)]
 fn api_with_the_hosts_curl_connects_to_the_pin_and_gives_up_at_the_deadline() {
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let probe = std::process::Command::new("curl").arg("--version").output();
     if !probe.is_ok_and(|probe| probe.status.success()) {
@@ -1088,9 +1125,10 @@ fn api_with_the_hosts_curl_connects_to_the_pin_and_gives_up_at_the_deadline() {
     let silent = TcpListener::bind("127.0.0.1:0").unwrap();
     let silent_base = format!("http://{}", silent.local_addr().unwrap());
     std::thread::spawn(move || {
-        let (socket, _) = silent.accept().unwrap();
-        std::thread::sleep(Duration::from_secs(30));
-        drop(socket);
+        let (mut socket, _) = silent.accept().unwrap();
+        // Hold the connection open, answering nothing, until curl gives up and closes it.
+        let _ = socket.set_read_timeout(Some(Duration::from_secs(30)));
+        let _ = socket.read_to_end(&mut Vec::new());
     });
     let bounded = api::curl_transport(&silent_base, &[], Some(1)).unwrap();
     let request = api::request_for_command(
@@ -1101,7 +1139,6 @@ fn api_with_the_hosts_curl_connects_to_the_pin_and_gives_up_at_the_deadline() {
         },
     )
     .unwrap();
-    let started = Instant::now();
     let output = api::run_curl_output_with_transport(
         curl,
         &request,
@@ -1111,14 +1148,13 @@ fn api_with_the_hosts_curl_connects_to_the_pin_and_gives_up_at_the_deadline() {
         std::process::Stdio::piped(),
     )
     .unwrap();
-    let took = started.elapsed();
+    // 28 is curl's "operation timed out": its own deadline ended the call, not the server.
     assert_eq!(
         output.status.code(),
         Some(28),
         "curl's own timeout ends the call: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(took < Duration::from_secs(15), "the call took {took:?}");
 }
 
 #[test]
