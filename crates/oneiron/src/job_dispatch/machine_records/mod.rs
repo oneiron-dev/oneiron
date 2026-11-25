@@ -25,7 +25,7 @@ pub use clear_drain_door::{
     clear_drain_embedded,
 };
 pub use job_return::{JobReturn, ReturnRefusal};
-pub use setting_keys::{DrainClearBy, MachineJobSettings};
+pub use setting_keys::MachineJobSettings;
 
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};

@@ -14,6 +14,7 @@ pub mod device;
 pub mod issuer;
 #[cfg(unix)]
 pub mod jobs;
+pub mod machine_policy;
 pub mod node;
 pub mod node_settings;
 pub mod selection;
@@ -21,6 +22,11 @@ pub mod selection;
 pub mod service;
 pub mod slots;
 pub mod wire;
+
+/// The path measurement between an issuer and a node, before the first job
+/// (pass 33 section 12, R6 step 2).
+#[cfg(feature = "mesh")]
+pub mod path_measure;
 
 pub use availability::{
     GPU_DRAIN_AFTER_FAILURES, GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer,
