@@ -48,6 +48,11 @@ pub const RECEIPT_KEEP_DAYS_DEFAULT: u32 = 30;
 /// launch.
 pub const STAGING_LIMIT_SECS_DEFAULT: u64 = 600;
 
+/// Default of `readiness_every_secs` (`jobs.readiness.every_secs`, pass 34
+/// 6.3): how often a node with no attempt running checks itself. The owner's
+/// key has the same default.
+pub const READINESS_EVERY_SECS_DEFAULT: u64 = oneiron::machine_policy::READINESS_EVERY_SECS_DEFAULT;
+
 /// Default of `job_account`.
 pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
 
@@ -58,6 +63,35 @@ pub const WRITE_MIB_PER_SEC_DEFAULT: u64 = 200;
 /// Default of a template's `max_devices`: the devices one pin may claim,
 /// of every kind together.
 pub const MAX_DEVICES_DEFAULT: u32 = 1;
+
+/// Default of `stop_grace_secs`: the job unit's stop grace (TERM, then KILL
+/// after it), inside each maximum (section 7.6).
+pub const STOP_GRACE_SECS_DEFAULT: u64 = 10;
+
+/// Default of `unit_start_timeout_secs`: the longest a job unit's start (the
+/// prepare step, the proofs from inside, the gate) may take.
+pub const UNIT_START_TIMEOUT_SECS_DEFAULT: u64 = 60;
+
+/// Default of `disk_check_secs`: how often the engine compares each running
+/// key's payload directory with its disk request (section 7.9).
+pub const DISK_CHECK_SECS_DEFAULT: u64 = 5;
+
+/// Default of a template's `tasks_max`: the job unit's task ceiling.
+pub const TASKS_MAX_DEFAULT: u64 = 4_096;
+
+/// The least a template's `tasks_max` may say. The unit's own processes
+/// count against the ceiling: as the workload starts, `job-exec`, the root
+/// gate, the log writer and the writer's parent, which leaves at once, are
+/// four tasks, and the log writer then holds one for the whole run (review
+/// r6 R6-02). The workload has the rest.
+pub const TASKS_MAX_FLOOR: u64 = 4;
+
+/// Default of a template's `log_max_mib`: each of a run's two log files
+/// (stdout, stderr) keeps at most this many MiB (pass 34, 7.2).
+pub const LOG_MAX_MIB_DEFAULT: u32 = 64;
+
+/// The most a template's `log_max_mib` may say.
+pub const LOG_MAX_MIB_CEILING: u32 = 4_096;
 
 /// Default of a template's `cpu_threads`: the threads a run may use at once,
 /// which a request's 0 takes and no request exceeds.
@@ -118,9 +152,58 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
+    /// `jobs.readiness.every_secs`: how often the node checks itself while
+    /// no attempt runs (pass 34, 7.3). The owner's row may shorten it (row
+    /// P0).
+    #[serde(default = "readiness_every_secs_default")]
+    pub readiness_every_secs: u64,
+    /// `machines.drain.clear_by`: who clears the node's drain (pass 34,
+    /// 2.4). The owner's row may keep the drain for the box (row P0).
+    #[serde(default)]
+    pub drain_clear_by: DrainClearBy,
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
+    #[serde(default = "stop_grace_secs_default")]
+    pub stop_grace_secs: u64,
+    #[serde(default = "unit_start_timeout_secs_default")]
+    pub unit_start_timeout_secs: u64,
+    #[serde(default = "disk_check_secs_default")]
+    pub disk_check_secs: u64,
+    /// The files of each device a job may lease, by the device's id: the
+    /// job unit's device policy opens these and no others. A card the NVIDIA
+    /// driver lists needs no entry (its node and the driver's control nodes
+    /// are found by its UUID).
+    #[serde(default)]
+    pub device_files: BTreeMap<String, Vec<PathBuf>>,
+    /// Whether the node obeys the owner's machine policy rows (pass 34 2.4, row P0) as well as
+    /// this file, the stricter of the two applying. Default true; false keeps the node to this
+    /// file alone.
+    #[serde(default = "owner_policy_default")]
+    pub owner_policy: bool,
+    /// The most memory the node's jobs hold at once, in GiB. Absent: the machine's total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_memory_gib: Option<u64>,
+    /// The most threads one job uses, a ceiling over every template's `cpu_threads`. Absent: the
+    /// machine's cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_threads: Option<u32>,
+}
+
+/// Who clears a node's drain (`machines.drain.clear_by`, pass 34 2.4). The
+/// box file accepts these two. The owner's row (row P0) of `owner` or
+/// `grants` reads here as `person_at_box`, since no owner act reaches the
+/// node's own drain yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DrainClearBy {
+    /// The machine itself, once its readiness check passes (the default;
+    /// CG-2 row 9).
+    #[default]
+    AfterReadinessCheck,
+    /// A person at the box (`oneiron execution-node resume`), as pass 33
+    /// had it.
+    PersonAtBox,
 }
 
 /// One `[execution_node.templates.<name>]`: what a pin of it may run, and
@@ -175,12 +258,22 @@ pub struct NodeTemplate {
     /// The devices one pin may claim, the counts of all its claims together.
     #[serde(default = "max_devices_default")]
     pub max_devices: u32,
+    /// The job unit's task ceiling, at least [`TASKS_MAX_FLOOR`]: the
+    /// workload's tasks and the unit's own log writer count against it.
+    #[serde(default = "tasks_max_default")]
+    pub tasks_max: u64,
     /// The operating-system signal a checkpoint notice delivers to the
     /// workload (design 7.1 `Signal`), one of [`CHECKPOINT_SIGNALS`]. None:
     /// the notice is a no-op. Absent from the digest when unset, so a
     /// template without it keeps its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_signal: Option<String>,
+    /// The MiB each of a run's log files keeps (pass 34, 7.2): past it, the
+    /// first half of the cap and the newest bytes. None:
+    /// [`LOG_MAX_MIB_DEFAULT`]. Absent from the digest when unset, so a
+    /// template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_max_mib: Option<u32>,
     /// The threads a run may use at once: a request's 0 takes this many, and
     /// no request asks more.
     #[serde(default = "cpu_threads_default")]
@@ -203,6 +296,9 @@ fn receipt_keep_days_default() -> u32 {
 fn staging_limit_secs_default() -> u64 {
     STAGING_LIMIT_SECS_DEFAULT
 }
+fn readiness_every_secs_default() -> u64 {
+    READINESS_EVERY_SECS_DEFAULT
+}
 fn job_account_default() -> String {
     JOB_ACCOUNT_DEFAULT.to_owned()
 }
@@ -217,6 +313,21 @@ fn require_default() -> Vec<BoundRequirement> {
 }
 fn cpu_threads_default() -> u32 {
     CPU_THREADS_DEFAULT
+}
+fn stop_grace_secs_default() -> u64 {
+    STOP_GRACE_SECS_DEFAULT
+}
+fn unit_start_timeout_secs_default() -> u64 {
+    UNIT_START_TIMEOUT_SECS_DEFAULT
+}
+fn disk_check_secs_default() -> u64 {
+    DISK_CHECK_SECS_DEFAULT
+}
+fn tasks_max_default() -> u64 {
+    TASKS_MAX_DEFAULT
+}
+fn owner_policy_default() -> bool {
+    true
 }
 fn host_scope() -> Vec<ScopeClass> {
     vec![ScopeClass::Host]
@@ -272,6 +383,12 @@ impl ExecutionNodeSettings {
         }
         if self.scopes.is_empty() {
             return Err("execution_node.scopes must permit at least one scope kind".to_owned());
+        }
+        if self.job_memory_gib == Some(0) {
+            return Err("execution_node.job_memory_gib must be at least 1 when set".to_owned());
+        }
+        if self.job_threads == Some(0) {
+            return Err("execution_node.job_threads must be at least 1 when set".to_owned());
         }
         if self.job_account.trim().is_empty() {
             return Err("execution_node.job_account must name an OS account".to_owned());
@@ -340,9 +457,15 @@ impl ExecutionNodeSettings {
     /// equals the pin's; the entry is relative, has no `..` and matches one
     /// of the template's entries; the scope kind and the network mode are
     /// ones the template and this machine permit; every returnable output is
-    /// on the template's list; the request fits the template's ceilings; and
+    /// on the template's list; the request fits the template's ceilings;
     /// when the template declares `params`, every argument is `name=value`
-    /// with a declared name and a value its pattern matches.
+    /// with a declared name and a value its pattern matches; and last, the
+    /// pin has the shape the issuer's pin door checks
+    /// ([`WorkloadPin::check_shape`]: lower-hex digests, relative paths,
+    /// bounded arguments and outputs, and at most `REQUEST_DEVICE_CLAIMS_MAX`
+    /// device claims, each of at least one device), since the node places
+    /// what its issuer sent. Both the reserve and the job unit's root prepare
+    /// step run this one check.
     ///
     /// # Errors
     ///
@@ -358,7 +481,12 @@ impl ExecutionNodeSettings {
         if !template.scopes.contains(&scope) || !self.scopes.contains(&scope) {
             return Err("scope_not_permitted".to_owned());
         }
-        template.admit_pin(pin)
+        template.admit_pin(pin)?;
+        // Last, so each refusal the template judges keeps its own reason; a
+        // claim of no device adds nothing to the template's devices ceiling,
+        // and only the shape bounds the claims a pin carries.
+        pin.check_shape()
+            .map_err(|why| format!("pin_shape_invalid: {why}"))
     }
 
     /// The launch commit's fit of `pin`'s placement (pass 34, section 2.1,
@@ -399,6 +527,12 @@ impl NodeTemplate {
         Ok(ContentHash::of(&bytes).to_hex())
     }
 
+    /// The bytes each of a run's log files keeps.
+    #[must_use]
+    pub fn log_max_bytes(&self) -> u64 {
+        u64::from(self.log_max_mib.unwrap_or(LOG_MAX_MIB_DEFAULT)) << 20
+    }
+
     fn validate(&self) -> Result<(), String> {
         if !self.repo.is_absolute() {
             return Err("repo must be an absolute path".to_owned());
@@ -429,6 +563,12 @@ impl NodeTemplate {
         if self.cpu_threads == 0 {
             return Err("cpu_threads must be at least 1".to_owned());
         }
+        if self.tasks_max < TASKS_MAX_FLOOR {
+            return Err(format!(
+                "tasks_max {} must be at least {TASKS_MAX_FLOOR}: the job unit's own processes count against it",
+                self.tasks_max
+            ));
+        }
         if self.scopes.is_empty() {
             return Err("scopes must permit at least one scope kind".to_owned());
         }
@@ -442,6 +582,13 @@ impl NodeTemplate {
         {
             return Err(format!(
                 "checkpoint_signal {signal:?} must be one of {CHECKPOINT_SIGNALS:?}"
+            ));
+        }
+        if let Some(mib) = self.log_max_mib
+            && !(1..=LOG_MAX_MIB_CEILING).contains(&mib)
+        {
+            return Err(format!(
+                "log_max_mib {mib} must be 1 to {LOG_MAX_MIB_CEILING}"
             ));
         }
         for (name, pattern) in self.params.iter().flatten() {

@@ -1,5 +1,6 @@
 //! The scripted GPU slot table: its devices, their leases, quarantines and
-//! drains, and a device probe a test can fail.
+//! drains, a device probe a test can fail, and the device samples a
+//! breadcrumb line carries.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -12,6 +13,7 @@ use oneiron::machine_capacity::GpuDevice;
 use oneiron_organ_host::GpuSlotGrant;
 
 use super::locked;
+use crate::gpu_execution_node::device::DeviceSample;
 use crate::gpu_execution_node::jobs::NodeDevices;
 use crate::gpu_execution_node::jobs::node_parts::{
     GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotRefusal, GpuSlotRequest,
@@ -61,8 +63,16 @@ struct DevicesState {
     quarantined: BTreeMap<String, String>,
     leases: u32,
     probe_fails: bool,
+    /// Why the readiness check's device probe fails, while it does.
+    idle_probe_failure: Option<String>,
     finished: Vec<(String, GpuLeaseEnd)>,
     drains: Vec<String>,
+    /// The drain that stands.
+    drained: Option<String>,
+    /// How many times the drain was cleared.
+    drain_clears: u32,
+    /// Each device's sample, by id.
+    samples: BTreeMap<String, DeviceSample>,
 }
 
 /// The machine's GPUs, scripted: each taken by at most one key.
@@ -159,6 +169,25 @@ impl ScriptedDevices {
         }
     }
 
+    /// Why the readiness check's device probe fails (`None`: it answers).
+    /// The end check's probe is [`Self::set_probe_fails`].
+    pub fn set_idle_probe_failure(&self, failure: Option<&str>) {
+        locked(&self.state).idle_probe_failure = failure.map(str::to_owned);
+    }
+
+    /// The sample the probe gives for its device, from now on.
+    pub fn set_sample(&self, sample: DeviceSample) {
+        locked(&self.state)
+            .samples
+            .insert(sample.device_id.clone(), sample);
+    }
+
+    /// How many times the drain was cleared.
+    #[must_use]
+    pub fn drain_clears(&self) -> u32 {
+        locked(&self.state).drain_clears
+    }
+
     /// Whether the device probe fails.
     pub fn set_probe_fails(&self, fails: bool) {
         locked(&self.state).probe_fails = fails;
@@ -201,7 +230,7 @@ impl ScriptedDevices {
     /// The drain that stands, as the slot table answers it.
     #[must_use]
     pub fn drained(&self) -> Option<String> {
-        locked(&self.state).drains.last().cloned()
+        locked(&self.state).drained.clone()
     }
 
     /// Every finish the job service recorded, by key.
@@ -375,7 +404,31 @@ impl NodeDevices for ScriptedDevices {
     }
 
     fn drain(&self, why: &str) {
-        locked(&self.state).drains.push(why.to_owned());
+        let mut state = locked(&self.state);
+        state.drains.push(why.to_owned());
+        state.drained = Some(why.to_owned());
+    }
+
+    fn clear_drain(&self) -> Result<(), String> {
+        let mut state = locked(&self.state);
+        state.drained = None;
+        state.drain_clears = state.drain_clears.saturating_add(1);
+        Ok(())
+    }
+
+    fn probe(&self) -> Result<(), String> {
+        locked(&self.state)
+            .idle_probe_failure
+            .clone()
+            .map_or(Ok(()), Err)
+    }
+
+    fn samples(&self, device_ids: &[String]) -> Vec<DeviceSample> {
+        let state = locked(&self.state);
+        device_ids
+            .iter()
+            .filter_map(|id| state.samples.get(id).cloned())
+            .collect()
     }
 
     fn quarantine(&self, device_id: &str, why: &str) {

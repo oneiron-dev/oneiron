@@ -17,6 +17,7 @@ use crate::gpu_execution_node::jobs::{
     AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeJobSettings, StageFailure,
     StageOrder, Stager,
 };
+use crate::gpu_execution_node::node_settings::DrainClearBy;
 use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,10 @@ struct AdmissionState {
     /// Each template's checkpoint signal, when it names one.
     signals: BTreeMap<String, String>,
     receipt_keep_days: u64,
+    readiness_every_secs: u64,
+    drain_clear_by: DrainClearBy,
+    /// Each template's mirror, by template name.
+    mirrors: BTreeMap<String, PathBuf>,
 }
 
 /// The node's configuration and fold, scripted: enabled, one template, room
@@ -76,6 +81,9 @@ impl ScriptedAdmission {
                 staging_limit_secs: 600,
                 signals: BTreeMap::new(),
                 receipt_keep_days: 30,
+                readiness_every_secs: NodeJobSettings::default().readiness_every_secs,
+                drain_clear_by: DrainClearBy::default(),
+                mirrors: BTreeMap::new(),
             }),
         })
     }
@@ -144,6 +152,23 @@ impl ScriptedAdmission {
     pub fn set_receipt_keep_days(&self, days: u64) {
         locked(&self.state).receipt_keep_days = days;
     }
+
+    /// Sets `jobs.readiness.every_secs`.
+    pub fn set_readiness_every_secs(&self, secs: u64) {
+        locked(&self.state).readiness_every_secs = secs;
+    }
+
+    /// Sets `machines.drain.clear_by`.
+    pub fn set_drain_clear_by(&self, clear_by: DrainClearBy) {
+        locked(&self.state).drain_clear_by = clear_by;
+    }
+
+    /// Names `mirror` as `template`'s mirror, for the readiness check.
+    pub fn set_template_mirror(&self, template: &str, mirror: PathBuf) {
+        locked(&self.state)
+            .mirrors
+            .insert(template.to_owned(), mirror);
+    }
 }
 
 impl NodeAdmission for ScriptedAdmission {
@@ -185,6 +210,7 @@ impl NodeAdmission for ScriptedAdmission {
         &self,
         _pin: &WorkloadPin,
         placement: &DevicePlacement,
+        _held_mib: u64,
     ) -> Result<(), String> {
         match locked(&self.state).memory_ceiling_mib {
             Some(ceiling) if placement.host_memory_mib > ceiling => {
@@ -217,12 +243,22 @@ impl NodeAdmission for ScriptedAdmission {
         NodeJobSettings {
             staging_limit_secs: state.staging_limit_secs,
             receipt_keep_days: state.receipt_keep_days,
+            readiness_every_secs: state.readiness_every_secs,
+            drain_clear_by: state.drain_clear_by,
             ..NodeJobSettings::default()
         }
     }
 
     fn template_signal(&self, template: &str) -> Option<String> {
         locked(&self.state).signals.get(template).cloned()
+    }
+
+    fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
+        locked(&self.state)
+            .mirrors
+            .iter()
+            .map(|(template, mirror)| (template.clone(), mirror.clone()))
+            .collect()
     }
 }
 

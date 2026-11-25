@@ -31,6 +31,11 @@ pub fn register_gpu_backend(server: &SyncServer, name: &str, connector: Arc<dyn 
     server.gpu_jobs.register_backend(name, connector);
 }
 
+/// Whether `server` has a GPU backend registered as `name`.
+pub fn gpu_backend_registered(server: &SyncServer, name: &str) -> bool {
+    server.gpu_jobs.backend(name).is_some()
+}
+
 /// Takes the GPU backend `name` off `server`, as a restart that no longer
 /// registers it does.
 pub fn unregister_gpu_backend(server: &SyncServer, name: &str) {

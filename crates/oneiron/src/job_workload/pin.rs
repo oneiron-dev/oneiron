@@ -92,7 +92,9 @@ pub enum ScopeKind {
 }
 
 /// The network the workload sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
     /// No network: its own empty namespace.
