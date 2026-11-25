@@ -226,13 +226,34 @@ impl TeamReceipt {
     }
 }
 
+/// The team reference prefix of an experiment arm's rung receipts:
+/// `arm:<arm hex>:r<rung>` (design pass 32 r2, sections 3.6 and 4.5). The
+/// arm's verdict or review writes such a receipt once, as the copy of the
+/// rung's scored outcome, in that outcome's own transaction. The generic
+/// receipt writer and the generic outcome setter refuse the prefix, as a
+/// team reference and as the receipt an outcome rests on, so no generic door
+/// creates an arm's receipt or replaces its outcome.
+pub const ARM_RECEIPT_PREFIX: &str = "arm:";
+
+/// Refuses a reference in the experiment arms' reserved namespace
+/// ([`ARM_RECEIPT_PREFIX`]) on a generic receipt or outcome write.
+fn refuse_arm_reference(reference: &str) -> Result<()> {
+    if reference.starts_with(ARM_RECEIPT_PREFIX) {
+        return Err(Error::InvalidClaimBody(
+            "the prefix arm: is reserved for experiment arm receipts",
+        ));
+    }
+    Ok(())
+}
+
 /// Records one team receipt. A receipt is written once; settling its outcome
 /// is [`settle_team_outcome`].
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] for a malformed receipt or one that already
-/// exists; storage errors.
+/// [`Error::InvalidClaimBody`] for a malformed receipt, one that already
+/// exists, or a team reference or outcome receipt in the experiment arms'
+/// namespace ([`ARM_RECEIPT_PREFIX`]); storage errors.
 pub fn record_team_receipt(vault: &Vault, receipt: &TeamReceipt) -> Result<()> {
     record_team_receipt_sourced(vault, receipt, None, None)
 }
@@ -252,6 +273,10 @@ pub fn record_team_receipt_sourced(
     fact_sources: Option<Vec<EntityId>>,
     outcome_sources: Option<Vec<EntityId>>,
 ) -> Result<()> {
+    refuse_arm_reference(&receipt.team_ref)?;
+    if let Some(outcome) = &receipt.outcome {
+        refuse_arm_reference(&outcome.receipt)?;
+    }
     receipt.validate()?;
     // The stamp names a node of the tree in force for its project, at that
     // tree's version: an unknown node is invalid, never untyped.
@@ -276,10 +301,13 @@ pub fn record_team_receipt_sourced(
 /// Settles a team run's anchored outcome and feeds its pattern skill's
 /// payoff. Settling again with the same receipt replaces the outcome. The
 /// outcome names and scores the critics of the team's bound deliverables
-/// (FIX 12106).
+/// (FIX 12106). An experiment arm's receipt is never settled here: its
+/// outcome is the rung's, written once by the arm's verdict or review.
 ///
 /// # Errors
 ///
+/// [`Error::InvalidClaimBody`] for a team reference or outcome receipt in
+/// the experiment arms' namespace ([`ARM_RECEIPT_PREFIX`]), before any read;
 /// [`Error::EntityNotFound`] for an unknown team; the evidence door's errors
 /// (an unanchored source is refused there by name); storage errors.
 pub fn settle_team_outcome(
@@ -369,6 +397,10 @@ pub(crate) fn settle_team_outcome_sourced_in_txn(
     outcome: &TeamOutcome,
     outcome_sources: Option<Vec<EntityId>>,
 ) -> Result<TeamReceipt> {
+    // Every generic settle path ends here (the public setter, the work and
+    // owner-verdict settlers), so the reserved namespace is refused once.
+    refuse_arm_reference(team_ref)?;
+    refuse_arm_reference(&outcome.receipt)?;
     bounded(
         &outcome.receipt,
         "an outcome receipt is 1..=256 bytes without NUL",
