@@ -253,7 +253,7 @@ pub fn drain_cleared_at_ms(
     policy: Option<&MachinePolicy>,
 ) -> Option<u64> {
     let policy = policy?;
-    let cleared = policy.drain_cleared?;
+    let cleared = policy.panel_drain_clear?;
     let clear_from_the_panel = matches!(
         policy.drain_clear_by,
         oneiron::machine_policy::DrainClearBy::Owner

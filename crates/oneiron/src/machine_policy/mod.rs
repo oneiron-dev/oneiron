@@ -22,7 +22,7 @@
 //! - [`TemplateNetwork`]: fewer network modes;
 //! - [`FreeForm`]: `grants`, then `owner`, then `off`;
 //! - [`DrainClearBy`]: towards `person_at_box`;
-//! - `machines.drain.cleared_at`: an earlier time ([`DrainCleared`]);
+//! - `machines.drain.cleared_at`: an earlier time ([`PanelDrainClear`]);
 //! - the five `placement.cache.*` keys of [`CachePolicy`]: a smaller figure;
 //! - `jobs.readiness.every_secs`: a shorter period.
 //!
@@ -497,7 +497,7 @@ impl DrainClearer {
 /// `machines.drain.cleared_at` where the machine's own row decides it: the time of the last
 /// clear of the machine's drain from the panel, and who wrote that row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DrainCleared {
+pub struct PanelDrainClear {
     /// The clear's time, in Unix milliseconds.
     pub at_ms: u64,
     /// Who wrote the row.
@@ -607,7 +607,7 @@ pub struct MachinePolicy {
     /// `machines.drain.cleared_at`, with its row's writer; `None` while it reads 0 or the
     /// machine's own row does not decide it (a row for every machine, a pin or a carried row that
     /// reads earlier clears no drain).
-    pub drain_cleared: Option<DrainCleared>,
+    pub panel_drain_clear: Option<PanelDrainClear>,
     /// The five `placement.cache.*` keys.
     pub cache: CachePolicy,
     /// `jobs.readiness.every_secs`.
@@ -657,10 +657,10 @@ pub fn machine_policy_in_txn(
         WINDOWS, WORK_ROLES,
     };
     let item = machine_item(machine);
-    let drain_cleared = DRAIN_CLEARED_AT
+    let panel_drain_clear = DRAIN_CLEARED_AT
         .item_row_deciding_in_txn(vault, txn, &item)?
         .filter(|(at_ms, _)| *at_ms != 0)
-        .map(|(at_ms, setter)| DrainCleared {
+        .map(|(at_ms, setter)| PanelDrainClear {
             at_ms,
             by: DrainClearer::of(setter),
         });
@@ -684,7 +684,7 @@ pub fn machine_policy_in_txn(
         work_roles: WORK_ROLES.read_in_txn(vault, txn, &[], item)?.value,
         free_form: FREE_FORM.read_in_txn(vault, txn, &[], item)?.value,
         drain_clear_by: DRAIN_CLEAR_BY.read_in_txn(vault, txn, &[], item)?.value,
-        drain_cleared,
+        panel_drain_clear,
         cache,
         readiness_every_secs: READINESS_EVERY_SECS
             .read_in_txn(vault, txn, &[], item)?
