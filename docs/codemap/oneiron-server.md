@@ -505,7 +505,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/mail_pack_doors.rs` | src | s | 5 crate-vis | — | `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and… |
 | `src/api/facade/merge_queue_checker_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the owner's merge queue checker doors (FIX 6868) |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
-| `src/api/facade/mesh_doors.rs` | src | s | 5 crate-vis | — | Owner-bound mesh setup and a real admission-only dial |
+| `src/api/facade/mesh_doors.rs` | src | s | 6 crate-vis | — | Owner-bound mesh setup and a real admission-only dial |
 | `src/api/facade/model_catalog_doors.rs` | src | m | 15 crate-vis | — | The model catalog is evidence |
 | `src/api/facade/model_manifest_doors.rs` | src | m | 6 crate-vis | — | Typed owner doors over the existing manifest, route and provider seams |
 | `src/api/facade/model_pack_doors.rs` | src | s | 2 crate-vis | — | Typed owner doors over the vault's model pack setting read (FIX 5367) and the pack change revert (FIX 5369) |
@@ -1112,7 +1112,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_consent_host/desktop.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held desktop act (FIX 11499): [`browser`]'s twin for the desktop… |
 | `src/commands.rs` | src | L | 1 struct · 15 fn · 1 const · 33 re-export · 19 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/account.rs` | src | s | 1 fn | — | `oneiron account`: the owner's cloud registration on a stopped vault (G7) |
-| `src/commands/api.rs` | src | m | 1 fn · 21 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
+| `src/commands/api.rs` | src | m | 1 fn · 23 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
+| `src/commands/api/transport.rs` | src | s | 2 crate-vis | — | How curl reaches the server for one `oneiron api` call beyond the request itself: the connect pin… |
 | `src/commands/credential_file.rs` | src | m | 15 crate-vis | — | A file holding a credential, readable by its owner alone |
 | `src/commands/credential_file/network_fs.rs` | src | m | 12 crate-vis | — | Who a credential file on a network file system lets in beyond its mode (FIX… |
 | `src/commands/credential_helper.rs` | src | s | 1 fn | — | `oneiron credential-helper` (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim): the git credential… |
@@ -1195,7 +1196,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
 | `src/commands/registry.rs` | src | s | 1 fn | — | `oneiron registry`: print the engine-owned kind/family/zone registry as JSON |
 | `src/commands/seat.rs` | src | s | 7 fn | — | `oneiron seat …`: the owner's official-seat sign-in surface (OF-375) |
-| `src/commands/serve.rs` | src | m | 1 re-export · 13 crate-vis | — | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
+| `src/commands/serve.rs` | src | m | 1 re-export · 15 crate-vis | — | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
 | `src/commands/serve/hooks.rs` | src | s | 3 crate-vis | — | The vault's one hook sandbox and the fact-hook runner that runs on it, for plain and managed serve |
 | `src/commands/serve/page_seal.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | OpenedServedVault | The vault serve opens before it builds its server, plain or sealed (OF-570 maximum tier), for plain serve… |
 | `src/commands/serve/sleep_release.rs` | src | s | 1 crate-vis | — | Releases this machine's executor leases before it sleeps and takes them up again when it wakes (L8-28) |
@@ -1442,7 +1443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/issuer/clock.rs` | src | s | 1 struct · 1 trait · 2 fn | IssuerClock, SystemIssuerClock | The issuer's clocks (pass 33 section 8.4): the wall clock its job rows use, and the boot clock its billing… |
 | `src/gpu_execution_node/issuer/connector.rs` | src | m | 2 struct · 2 fn | VaultMachineConnector, VaultMachineParts | [`VaultMachineConnector`]: the GPU job backend `vault_machine`, which runs a chunk of a job on one of the… |
 | `src/gpu_execution_node/issuer/connector/receipts.rs` | src | s | 4 crate-vis | — | The receipts of a key on the issuer: each one is checked, then judged against the stored rows and written in… |
-| `src/gpu_execution_node/issuer/connector/sends.rs` | src | s | 6 crate-vis | — | What the connector sends a node for a key, and how `status` steps it: the reserve and the submit, the gate… |
+| `src/gpu_execution_node/issuer/connector/sends.rs` | src | s | 7 crate-vis | — | What the connector sends a node for a key, and how `status` steps it: the reserve and the submit, the gate… |
 | `src/gpu_execution_node/issuer/guard.rs` | src | s | 3 fn | — | The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the… |
 | `src/gpu_execution_node/issuer/machine_execution.rs` | src | s | 1 fn · 1 const | — | The issuer's half of `vault.machines.execution.get` (pass 33 door 11): the issuer asks each machine the… |
 | `src/gpu_execution_node/issuer/mod.rs` | src | s | 1 struct · 6 fn · 2 const · 12 mod · 9 re-export | VaultMachineInputs | The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a job's chunk on… |
@@ -1451,7 +1452,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/issuer/orphans.rs` | src | s | 2 struct · 1 trait · 1 fn | JobOrphanKeys, LoggedUnattributedLedger, UnattributedLedger | What the issuer does with a key a node holds that it has no dispatch row for (pass 33 row R4, 8.5)… |
 | `src/gpu_execution_node/issuer/reconcile.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 1 const | LoggedOrphanKeys, OrphanKeys, ReconcileError, Reconciled | The reconcile before dispatch (pass 33 section 8.5) |
 | `src/gpu_execution_node/issuer/register.rs` | src | s | 1 struct · 1 enum · 6 fn | NotTheIssuer, VaultMachineNotRegistered | Where the `vault_machine` backend may exist (pass 33, 8.1 and 8.7) |
-| `src/gpu_execution_node/issuer/returns.rs` | src | s | 1 struct · 3 fn | ResultReturns | The returned result (pass 33 row R4; EM-12 = A): what the issuer does with an ended key's outputs |
+| `src/gpu_execution_node/issuer/returns.rs` | src | m | 1 struct · 3 fn | ResultReturns | The returned result (pass 33 row R4; EM-12 = A): what the issuer does with an ended key's outputs |
 | `src/gpu_execution_node/issuer/view.rs` | src | s | 1 fn | — | The four status fields of door 8 for a job the `vault_machine` backend runs (pass 33 row R4): built from the… |
 | `src/gpu_execution_node/jobs/admission.rs` | src | L | 6 fn · 15 crate-vis | — | Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`… |
 | `src/gpu_execution_node/jobs/breadcrumb.rs` | src | s | 1 const · 4 crate-vis | — | Breadcrumb lines (pass 34, `34-compute-general/DESIGN.md` section 7.3, row Q4): while a key runs, every tick… |
@@ -2134,7 +2135,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/connector_sends.rs` | src | s | 4 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
 | `src/server/core.rs` | src | L | 1 struct · 19 fn · 1 re-export · 42 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
-| `src/server/core/construction.rs` | src | m | 1 fn · 1 crate-vis | — | Construction of the core sync server from an opened vault |
+| `src/server/core/construction.rs` | src | m | 1 fn · 2 crate-vis | — | Construction of the core sync server from an opened vault |
 | `src/server/core/mcp.rs` | src | s | 1 fn · 2 crate-vis | — | The server's MCP code host: the builder that binds it and the accessors the gateway reads it through |
 | `src/server/core/pattern_workflow.rs` | src | m | 2 fn · 8 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
 | `src/server/core/usage.rs` | src | s | 2 fn · 4 crate-vis | — | The usage meter the trusted host binds to this vault before work starts |
@@ -2283,7 +2284,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/memory_owner_commit.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX… |
 | `src/test_doors/memory_timeline_projection.rs` | src | s | 1 fn | — | Door for `tests/timeline_shell_projection_recheck.rs` (FIX TIMELINE-SHELL-TWO-SNAPSHOT-CAP): the projection… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 91 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 92 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/node_jobs/devices.rs` | src | m | 1 struct · 17 fn | ScriptedDevices | The scripted GPU slot table: its devices, their leases, quarantines and drains, a device probe a test can… |
@@ -2308,6 +2309,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/residence.rs` | src | s | 1 struct · 3 fn | SlipProof | Doors for `tests/residence_media_vectors_server_test.rs` and `tests/residence_board_seeds_server_test.rs`… |
 | `src/test_doors/residence_connection.rs` | src | s | 1 fn | — | Registers a machine's sync connection with the `vault.residence.*` rows, as the device sync loop registers… |
 | `src/test_doors/resident_pump.rs` | src | s | 1 fn | — | Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`… |
+| `src/test_doors/root_project_signing.rs` | src | s | 5 fn | — | A serve start's root-project signing (`commands::sign_root_project`) and server construction… |
 | `src/test_doors/run_brief_people.rs` | src | s | 2 fn | — | Door for `tests/run_brief_roster_off_device.rs` and `tests/run_brief_route_aware_roster.rs`: the PEOPLE… |
 | `src/test_doors/run_self_brief_port.rs` | src | s | 1 fn | — | Door for `tests/run_brief_prefix_recheck.rs` ([BRIEF-PREFIX-STALE-PAST-REVOKE]): the self-brief port a… |
 | `src/test_doors/sandbox_vendor.rs` | src | s | 5 fn | — | Doors for `tests/sandbox_vendor_daytona.rs`, `tests/sandbox_vendor_e2b.rs`, `tests/sandbox_vendor_modal.rs`… |
@@ -2527,6 +2529,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/history_import_review_id_same_second.rs` | test | s | — | — | [HISTORY-IMPORT-REVIEW-ID-SAME-SECOND]: the review id of a history import is keyed by the second it ran, so… |
 | `tests/history_import_slack.rs` | test | m | — | — | L2-18 PR 2: `oneiron import slack <zip \| folder> --members <map.json>`, through the shipped binary… |
 | `tests/home_clearance_read_doors.rs` | test | L | — | — | Home clearance on the read doors (L5-02 PR 3, RULING SECREAD-HOME-READ-DOORS = B) |
+| `tests/home_issuer_mesh_proof.rs` | test | s | — | — | PLAN-HOME-ISSUER-MESH-PROOF (R6 1.5, Engine P0 26 Nov 01:31): a home that is also the vault's job issuer… |
 | `tests/hook_codex_fork_binding.rs` | test | m | — | — | `oneiron hook --host codex session-start` for a Codex fork (FIX-LIST HOOK-HAND-OVER-CODEX-FORK-PARENT-TURNS… |
 | `tests/hook_hosted_hand_over.rs` | test | XL | — | — | `oneiron hook --host <host> hand-over` with a hosted vault selected (H41, ARCH-0028 `#plugin-first-run` step… |
 | `tests/hook_transcript_import_served.rs` | test | XL | — | — | `vault.imports.hook_transcript` lands a Claude Code session a CLI on another machine sends (census L10-17… |
@@ -2586,6 +2589,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/job_service_streams.rs` | test | m | — | — | The job service answers each stream of a connection on its own (review round 1 of #10407): a stream whose… |
 | `tests/job_workload_check_in.rs` | test | L | — | — | The check-in of an agent's pin (pass 34, `34-compute-general/DESIGN.md` section 6.5; NOTE PASS-34-R2-SHAPE… |
 | `tests/job_workloads.rs` | test | L | — | — | Pinned workloads (pass 33 row R2; tests T10, T11, T12, T12b of section 11): the owner approves each exact… |
+| `tests/joined_store_roots_nothing.rs` | test | s | — | — | R6 1.5 (Engine P0 26 Nov 01:48, Sol claim iii): mel's first serve start, with an `auth_secret`, rooted the… |
 | `tests/kit_passkey_unlock_existing.rs` | test | m | — | — | The synced passkey counts as one of the data-key kit's two pieces on a vault already on this host, as it… |
 | `tests/ladder_caller_census.rs` | test | m | — | — | Every file of this crate that reaches a fallback ladder, and where the world of the call it sends comes from… |
 | `tests/lens_frame_state_door.rs` | test | m | — | — | GENUI-STATE-PERSIST at the served door: a card's `$state` lasts for the card's life on the server that holds… |
@@ -2750,7 +2754,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/support/owner_skip_hook.rs` | test | s | 1 crate-vis | — | The owner's pre hook that skips every call of the verbs it names, for the served tests that show a door… |
 | `tests/support/question_head_fixture.rs` | test | m | 11 crate-vis | — | The fixture of `tests/question_head_host.rs` (FIX 23586, 23587): a vault holding a scored question run whose… |
 | `tests/support/role_training_fixture.rs` | test | m | 23 crate-vis | — | Shared fixture for the role-training run door tests (ROLE-TRAINING-RUN): a rooted vault served over the real… |
-| `tests/support/vault_machine_rig.rs` | test | L | 59 crate-vis | — | The scripted node and the issuer rig of pass 33's `vault_machine` tests (rows R5 and R4): two machines on… |
+| `tests/support/vault_machine_rig.rs` | test | L | 61 crate-vis | — | The scripted node and the issuer rig of pass 33's `vault_machine` tests (rows R5 and R4): two machines on… |
 | `tests/system_one_broker_budget.rs` | test | s | — | — | L9-19 (ARCH-0036 #decision-deadline part 4), #7827 review round 2: a System One seat whose key is a vault… |
 | `tests/systemone_pack_run_no_cancel.rs` | test | s | — | — | [SYSTEMONE-PACK-RUN-NO-CANCEL] (FIX-LIST l26281): a caller-run pack decide whose work is cancelled while the… |
 | `tests/t0i_token_revoke_log_on_stdout.rs` | test | s | — | — | `oneiron token revoke` (and `oneiron revoke`) print their JSON answer on stdout, with the log lines on… |
@@ -2785,7 +2789,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_logs_tail.rs` | test | m | — | — | `vault.jobs.logs.tail` on the issuer (pass 34, 7.2 and 14.2; row Q3; Q3-2-WAIT = C): an attempt's log is… |
 | `tests/vault_machine_connector.rs` | test | L | — | — | DESIGN 33 tests T34–T36f for the vault machine connector (except T36c) |
 | `tests/vault_machine_registration.rs` | test | s | — | — | R6 runbook B2: server start registers the `vault_machine` backend only where pass 33 (8.1 and 8.7) lets it… |
-| `tests/vault_machine_status.rs` | test | L | — | — | DESIGN 33 tests T26-T33c, the issuer's halves (row R4): the four status fields of a job on one of the… |
+| `tests/vault_machine_status.rs` | test | XL | — | — | DESIGN 33 tests T26-T33c, the issuer's halves (row R4): the four status fields of a job on one of the… |
 | `tests/vault_mail_doors.rs` | test | XL | — | — | The mail doors (`vault.mail.*`, ARCH-0063 #mail-pack), entered as the SDK enters them: HTTP `POST… |
 | `tests/vault_members_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the… |
 | `tests/vault_mesh_doors.rs` | test | m | — | — | The `vault.mesh.*` rows at the public door: each test proves one canon promise of paired-machine mesh… |

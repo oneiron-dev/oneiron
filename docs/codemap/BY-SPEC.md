@@ -523,10 +523,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0046 | `crates/oneiron/src/compaction.rs` | m |
 | ARCH-0046 | `crates/oneiron/src/edit_distance/publisher/delivery_outcome.rs` | s |
 | ARCH-0046 | `crates/oneiron/src/gate/bundle/agent_settle.rs` | m |
+| ARCH-0046 | `crates/oneiron/src/gpu_job/result_landing.rs` | m |
 | ARCH-0046 | `crates/oneiron-driver/src/lib.rs` | s |
 | ARCH-0046 | `crates/oneiron-driver/src/tick/mod.rs` | s |
 | ARCH-0046 | `crates/oneiron-server/src/calendar_host.rs` | m |
 | ARCH-0046 | `crates/oneiron-server/src/calendar_host/ics.rs` | s |
+| ARCH-0046 | `crates/oneiron-server/src/gpu_execution_node/issuer/returns.rs` | m |
 | ARCH-0048 | `crates/oneiron/src/genui/shape_plan.rs` | s |
 | ARCH-0048 | `crates/oneiron-lens-wire/src/lens/generated_ui/genui_app_catalog.rs` | m |
 | ARCH-0048 | `crates/oneiron-lens-wire/src/lens/generated_ui/genui_expr.rs` | m |
@@ -1075,6 +1077,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0075 | `crates/oneiron/src/edit_settle/carry.rs` | L |
 | ARCH-0075 | `crates/oneiron/src/edit_settle/mod.rs` | s |
 | ARCH-0075 | `crates/oneiron/src/entity_doc/office.rs` | s |
+| ARCH-0075 | `crates/oneiron/src/gpu_job/result_landing.rs` | m |
 | ARCH-0075 | `crates/oneiron/src/office_body/consent.rs` | L |
 | ARCH-0075 | `crates/oneiron/src/office_body/mod.rs` | s |
 | ARCH-0075 | `crates/oneiron/src/office_body/precision.rs` | s |
@@ -1095,6 +1098,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0075 | `crates/oneiron-organ-host/src/seal/evidence.rs` | L |
 | ARCH-0075 | `crates/oneiron-organ-protocol/src/lib.rs` | s |
 | ARCH-0075 | `crates/oneiron-seal/src/organ.rs` | L |
+| ARCH-0075 | `crates/oneiron-server/src/gpu_execution_node/issuer/returns.rs` | m |
 | ARCH-0075 | `crates/oneiron-server/src/server/organs.rs` | m |
 | ARCH-0075 | `crates/oneiron-server/src/xlsx_recalc.rs` | m |
 | ARCH-0075 | `crates/oneiron-store/src/blob_artifact/esign/sealer.rs` | s |
