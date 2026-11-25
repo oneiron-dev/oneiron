@@ -686,7 +686,11 @@ fn three_machine_failures_in_a_row_drain_the_node_until_a_person_clears_it() {
             Some(0),
         );
         let drained = guard().drained.expect("the third failure drains");
-        assert_eq!(drained.why, "lost: node_reset");
+        assert_eq!(
+            drained.why,
+            "drained after 3 failed jobs in a row; the last: lost: node_reset"
+        );
+        assert_eq!(guard().last_failure.as_deref(), Some("lost: node_reset"));
 
         let before = rig.node.calls().len();
         let refused = rig.start_job(&workload);
