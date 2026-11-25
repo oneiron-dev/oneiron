@@ -358,7 +358,6 @@ fn review_in_txn(
         ArmReviewVerdict::Unresolved => {}
     }
     arm.rungs[index].review = Some(request.review(reviewer, grant, now_ms));
-    // Row M2-H writes the notice to the line's leads here, in this write.
     arm.revision += 1;
     EXPERIMENT_ARMS.put(&vault.store, wtxn, &arm.id, &arm)?;
     intent.keep_in_txn(vault, wtxn, arm.id.as_bytes().to_vec(), now_ms)?;

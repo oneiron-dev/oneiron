@@ -102,8 +102,8 @@ pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
     )
 }
 
-/// Takes the hard-erased actor out of every Finding notice that names them,
-/// in its own writer: out of its subjects (FIX 5269) and its seen and
+/// Takes the hard-erased actor out of every Finding notice and every line
+/// notice (`LineNotice`) that names them, in its own writer: out of its subjects (FIX 5269) and its seen and
 /// acknowledged marks, and, where they were its recipient or a segment of its
 /// event key, replaced there by one fresh opaque id this erase mints (FIX
 /// 14749). The recipient never becomes `None`, which would deliver the
@@ -144,9 +144,14 @@ pub(crate) fn scrub_finding_notification_actor_in_txn(
         let Ok(mut body) = decode_notification_body(&body) else {
             continue;
         };
-        if body.kind != NotificationKind::Finding
-            || body.source.producer != NOTIFICATION_PRODUCER_FINDING
-        {
+        let scrubbed = match body.kind {
+            NotificationKind::Finding => body.source.producer == NOTIFICATION_PRODUCER_FINDING,
+            // A line notice's recipient and the last segment of its event
+            // key are the lead agent it was told to.
+            NotificationKind::LineNotice => true,
+            _ => false,
+        };
+        if !scrubbed {
             continue;
         }
         let before = body.subject_refs.len();
@@ -275,7 +280,7 @@ impl Vault {
 
     /// [`Self::record_notification_in_txn`], also saying whether this call
     /// wrote the row.
-    fn stage_notification_in_txn(
+    pub(crate) fn stage_notification_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         event: &NotificationEvent,

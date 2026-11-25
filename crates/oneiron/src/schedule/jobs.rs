@@ -6,7 +6,8 @@ use super::JobSpec;
 /// five of them, the pending check-ins' due transitions, the outage parks' timed resumes, the
 /// model seats' resets, the agent waits' `until`, the watcher TASKs' ticks and the actors' timer
 /// turn programs (stage 5b), the held sends' releases, the paced verb line and the remote task
-/// polls (stage 5c) and the tests' jobs; the other host loops join in stage 5c.
+/// polls (stage 5c), the lane-economy line notices the clock makes due, and the tests' jobs; the
+/// other host loops join in stage 5c.
 static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::SECRET_LEASE_EXPIRY_JOB,
     &crate::housekeeping::jobs::CRITICAL_CONFIRM_EXPIRY_JOB,
@@ -43,6 +44,7 @@ static JOBS: &[&JobSpec] = &[
     &crate::outbound::UNDO_SEND_RELEASE_JOB,
     &crate::runtime_hooks::verb::PACED_VERB_LINE_JOB,
     &crate::outbound_intent_ledger::REMOTE_TASK_POLL_JOB,
+    &crate::gpu_line::notice::LINE_NOTICES_JOB,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_COUNT,
     #[cfg(oneiron_test_support)]

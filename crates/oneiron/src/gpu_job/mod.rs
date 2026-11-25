@@ -352,6 +352,15 @@ impl Vault {
         GPU_JOBS.get(&self.store, &self.store.env.read_txn()?, id)
     }
 
+    /// One GPU job's record, in the caller's snapshot.
+    pub(crate) fn gpu_job_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> crate::Result<Option<GpuJob>> {
+        GPU_JOBS.get(&self.store, txn, id)
+    }
+
     /// Every GPU job of this vault.
     pub fn gpu_jobs(&self) -> crate::Result<Vec<GpuJob>> {
         let txn = self.store.env.read_txn()?;

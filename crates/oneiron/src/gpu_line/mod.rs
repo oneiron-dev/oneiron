@@ -18,6 +18,8 @@ mod fold;
 mod graduate;
 mod intent;
 mod mint;
+pub(crate) mod notice;
+pub(crate) mod setting_keys;
 mod store;
 pub(crate) mod tables;
 mod tally;
@@ -38,6 +40,7 @@ pub use mint::{
     BUILT_RULES, GPU_SECONDS, LineInvalid, MintError, PAYOFF_WEIGHT_SHIFT, Pools, SettledTally,
     economic_digest, line_allocation_id, mint_period, payoff_share, period_balances, pools,
 };
+pub use notice::{LineNoticeKind, notify_machine_returned_in_txn};
 pub(crate) use store::erase_line_actor_in_txn;
 pub use store::{
     MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,

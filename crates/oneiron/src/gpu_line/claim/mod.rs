@@ -419,8 +419,9 @@ impl UnitClaim {
 
 /// Settles the unit whose claim is `key` and whose job is `job`, in the caller's write
 /// transaction: the one the job's terminal row is written in (section 7.2 point 6). It writes
-/// the claim's terminal once; the pools' release follows from it, since the fold reads claims.
-/// A repeat with the same end writes nothing and answers `replayed`.
+/// the claim's terminal once, and with it the end's notice to the line's leads (section 6); the
+/// pools' release follows from it, since the fold reads claims. A repeat with the same end
+/// writes nothing and answers `replayed`.
 ///
 /// # Errors
 ///
@@ -450,6 +451,7 @@ pub fn settle_unit_in_txn(
         },
         Ok(Some(ended)) => {
             CLAIMS.put(&vault.store, txn, key, &ended)?;
+            super::notice::notify_unit_end_in_txn(vault, txn, &ended)?;
             UnitSettlement {
                 claim: ended,
                 replayed: false,
@@ -471,6 +473,22 @@ pub fn claim_in_txn(
     key: &ClaimKey,
 ) -> crate::Result<Option<UnitClaim>> {
     CLAIMS.get(&vault.store, txn, key)
+}
+
+/// Every claim of the vault, in key order.
+///
+/// # Errors
+///
+/// A store failure.
+pub(crate) fn claims_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<UnitClaim>> {
+    Ok(CLAIMS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, claim)| claim)
+        .collect())
 }
 
 /// Every claim of arm `arm` at rung `rung`, over every unit and attempt, in key order.
