@@ -4,7 +4,7 @@
     "device_name": "Intel(R) Data Center GPU Max 1100",
     "device_state": "normal",
     "device_stepping": "B4",
-    "device_type": "GPU",
+    "device_type": "Discrete GPU",
     "driver_version": "I915_24.3.24_PSB_240513.24",
     "drm_device": "/dev/dri/card1",
     "gfx_data_firmware_name": "GFX_DATA",

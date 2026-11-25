@@ -26,17 +26,17 @@ pub use amdgpu_sysfs::AmdgpuSysfsProbe;
 pub use apple_system_profiler::{SystemProfilerProbe, parse_system_profiler_devices};
 pub use xpu_smi::{XpuSmiProbe, parse_xpu_smi_device_detail, parse_xpu_smi_device_list};
 
-/// What a probe can say about the processes computing on its devices.
+/// What a probe can say about the processes computing on one device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComputeProcesses {
-    /// Every compute process on each device the probe lists as
-    /// [`oneiron::job_workload::DeviceClosure::Closed`], read now. An empty
-    /// list means none runs.
+    /// Every compute process on the device, read now: an empty list means
+    /// none runs. Only a device the probe lists as
+    /// [`oneiron::job_workload::DeviceClosure::Closed`] answers this.
     Listed(Vec<GpuComputeProcess>),
-    /// This probe can never list every process on its devices (an Apple
-    /// GPU; an Intel GPU, whose process list shows another user's processes
-    /// only to a privileged caller), a fact of the probe and not a failed
-    /// read: each device it lists is
+    /// The probe can never list every process on this device (an Apple GPU;
+    /// an Intel GPU, whose process list shows another user's processes only
+    /// to a privileged caller; an AMD GPU without KFD), a fact of the probe
+    /// and not a failed read: the device is listed
     /// [`oneiron::job_workload::DeviceClosure::Admitted`], and its lease is
     /// a count of the claimants this machine let in.
     NeverListed,
@@ -55,13 +55,15 @@ pub trait DeviceProbe: Send + Sync {
     /// this probe cannot read.
     fn list(&self) -> Result<Vec<DeviceFacts>, GpuProbeError>;
 
-    /// What computes on this probe's devices now. A failed read is an
+    /// What computes on `device_id`, a device [`DeviceProbe::list`] gave,
+    /// now. A device this read cannot find, or a read that fails, is an
     /// error, never an empty list: the device then counts as busy.
     ///
     /// # Errors
     ///
-    /// As [`DeviceProbe::list`].
-    fn processes(&self) -> Result<ComputeProcesses, GpuProbeError>;
+    /// As [`DeviceProbe::list`], and [`GpuProbeError::Unavailable`] when
+    /// this read does not find `device_id`.
+    fn processes_on(&self, device_id: &str) -> Result<ComputeProcesses, GpuProbeError>;
 }
 
 impl DeviceProbe for NvidiaSmiProbe {
@@ -73,8 +75,28 @@ impl DeviceProbe for NvidiaSmiProbe {
             .collect())
     }
 
-    fn processes(&self) -> Result<ComputeProcesses, GpuProbeError> {
-        self.compute_processes().map(ComputeProcesses::Listed)
+    fn processes_on(&self, device_id: &str) -> Result<ComputeProcesses, GpuProbeError> {
+        if !self
+            .devices()?
+            .iter()
+            .any(|device| device.device_id == device_id)
+        {
+            return Err(not_found(device_id));
+        }
+        Ok(ComputeProcesses::Listed(
+            GpuDeviceProbe::compute_processes(self)?
+                .into_iter()
+                .filter(|process| process.device_id == device_id)
+                .collect(),
+        ))
+    }
+}
+
+/// The answer for a device a probe's read does not find: it may have gone,
+/// or the read missed it, so nothing is known of what runs there.
+fn not_found(device_id: &str) -> GpuProbeError {
+    GpuProbeError::Unavailable {
+        reason: format!("device {device_id} is not in this reading"),
     }
 }
 

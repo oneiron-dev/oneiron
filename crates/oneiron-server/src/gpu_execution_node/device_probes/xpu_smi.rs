@@ -1,7 +1,14 @@
 //! Intel GPUs, read through `xpu-smi`, the command-line tool of Intel's XPU
 //! Manager: `xpu-smi discovery -j` lists the devices and `xpu-smi discovery
-//! -d <device> -j` describes one (key names and types from xpumanager
-//! `ial/cmn/cmd_discovery.cpp`).
+//! -d <device> -j` describes one (key names, JSON types and the
+//! `device_type` values from xpumanager `ial/cmn/cmd_discovery.cpp`).
+//!
+//! Only a device the tool reached through Level Zero, the oneAPI compute
+//! runtime, is listed: its `device_type` is `Discrete GPU` or `Integrated
+//! GPU`. A device the tool found only through its management interface
+//! (`device_type` empty, as when Level Zero cannot start on it) cannot take
+//! oneAPI work. An integrated GPU computes in the machine's own memory, so
+//! it is [`DeviceMemory::Unified`].
 //!
 //! The process list the tool can give (`xpu-smi ps`) reads `/proc/<pid>/fdinfo`,
 //! which shows another user's processes only to a caller with ptrace rights
@@ -31,6 +38,12 @@ const ONEAPI: &str = "oneapi";
 /// firmware recovery, no work.
 const SURVIVABILITY: &str = "survivability mode";
 
+/// The `device_type` of a discrete GPU Level Zero reached.
+const DISCRETE_GPU: &str = "Discrete GPU";
+
+/// The `device_type` of an integrated GPU Level Zero reached.
+const INTEGRATED_GPU: &str = "Integrated GPU";
+
 /// The probe of this machine's Intel GPUs.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct XpuSmiProbe;
@@ -45,14 +58,15 @@ impl DeviceProbe for XpuSmiProbe {
         Ok(devices)
     }
 
-    fn processes(&self) -> Result<ComputeProcesses, GpuProbeError> {
+    fn processes_on(&self, _device_id: &str) -> Result<ComputeProcesses, GpuProbeError> {
         Ok(ComputeProcesses::NeverListed)
     }
 }
 
-/// Reads `xpu-smi discovery -j`: the device number of each device in its
-/// `device_list` (`null` when there is none), in the tool's order, leaving
-/// out a device in survivability mode.
+/// Reads `xpu-smi discovery -j`: the device number of each GPU in its
+/// `device_list` (`null` when there is none) that Level Zero reached, in
+/// the tool's order. A device in survivability mode or found only through
+/// the management interface is left out.
 ///
 /// # Errors
 ///
@@ -78,17 +92,25 @@ pub fn parse_xpu_smi_device_list(text: &str) -> Result<Vec<u32>, GpuProbeError> 
             let index = count(entry, "device_id")
                 .and_then(|index| u32::try_from(index).ok())
                 .ok_or_else(|| unreadable(format!("{XPU_SMI} discovery -j: entry {entry:?}")))?;
-            Ok((text_field(entry, "device_state") != Some(SURVIVABILITY)).then_some(index))
+            let computes = text_field(entry, "device_state") != Some(SURVIVABILITY)
+                && matches!(
+                    text_field(entry, "device_type"),
+                    Some(DISCRETE_GPU | INTEGRATED_GPU)
+                );
+            Ok(computes.then_some(index))
         })
         .filter_map(Result::transpose)
         .collect()
 }
 
-/// Reads `xpu-smi discovery -d <device> -j`: the device found by its serial
-/// number, else by the UUID oneAPI gives it, with its physical memory as its
-/// own. `None` for a device that gives neither: it has no id that survives a
-/// reboot. A serial of `unknown`, or of `N/A ...` (the tool may need root to
-/// read it), is none.
+/// Reads `xpu-smi discovery -d <device> -j`: the device found by the UUID
+/// Level Zero gives it, else by its serial number, with its physical memory:
+/// its own on a discrete GPU, the machine's on an integrated one. `None` for
+/// a device that gives neither id, which has none that survives a reboot,
+/// or that Level Zero did not reach. A serial of `unknown`, or of `N/A ...`
+/// (the tool may need root to read it), is none. The UUID comes first: every
+/// account reads the same one, so the id does not change with the server's
+/// account.
 ///
 /// # Errors
 ///
@@ -106,10 +128,15 @@ pub fn parse_xpu_smi_device_detail(text: &str) -> Result<Option<DeviceFacts>, Gp
     let uuid = text_field(&detail, "uuid")
         .map(str::trim)
         .filter(|uuid| !uuid.is_empty());
-    let (id, id_source) = match (serial, uuid) {
-        (Some(serial), _) => (serial, DeviceIdSource::Serial),
-        (None, Some(uuid)) => (uuid, DeviceIdSource::VendorUuid),
+    let (id, id_source) = match (uuid, serial) {
+        (Some(uuid), _) => (uuid, DeviceIdSource::VendorUuid),
+        (None, Some(serial)) => (serial, DeviceIdSource::Serial),
         (None, None) => return Ok(None),
+    };
+    let integrated = match text_field(&detail, "device_type") {
+        Some(DISCRETE_GPU) => false,
+        Some(INTEGRATED_GPU) => true,
+        _ => return Ok(None),
     };
     let id = plain_device_id(id)
         .ok_or_else(|| unreadable(format!("{XPU_SMI} discovery -d: device id {id:?}")))?;
@@ -129,8 +156,14 @@ pub fn parse_xpu_smi_device_detail(text: &str) -> Result<Option<DeviceFacts>, Gp
             .filter(|name| !name.is_empty())
             .unwrap_or("Intel GPU")
             .to_owned(),
-        memory: DeviceMemory::Dedicated {
-            mib: bytes_to_mib(memory_bytes),
+        memory: if integrated {
+            DeviceMemory::Unified {
+                mib: bytes_to_mib(memory_bytes),
+            }
+        } else {
+            DeviceMemory::Dedicated {
+                mib: bytes_to_mib(memory_bytes),
+            }
         },
         features: vec![ONEAPI.to_owned()],
         closure: DeviceClosure::Admitted,

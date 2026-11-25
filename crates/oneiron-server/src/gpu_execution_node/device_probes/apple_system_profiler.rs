@@ -54,23 +54,23 @@ impl DeviceProbe for SystemProfilerProbe {
         )?)
     }
 
-    fn processes(&self) -> Result<ComputeProcesses, GpuProbeError> {
+    fn processes_on(&self, _device_id: &str) -> Result<ComputeProcesses, GpuProbeError> {
         Ok(ComputeProcesses::NeverListed)
     }
 }
 
-/// Reads `system_profiler -json SPDisplaysDataType SPHardwareDataType`:
-/// one device per Apple GPU row, in the report's order, found by the
-/// machine's `platform_UUID` and its place among those rows (`<uuid>-gpu0`),
-/// with the machine's `physical_memory` as unified memory. A report with no
-/// Apple GPU row lists none; a machine with no platform UUID offers none,
-/// since its GPU has no id that survives a reboot.
+/// Reads `system_profiler -json SPDisplaysDataType SPHardwareDataType`: the
+/// Mac's one built-in Apple GPU, found by the machine's `platform_UUID`
+/// (`<uuid>-gpu0`), with the machine's `physical_memory` as unified memory.
+/// A report with no Apple GPU row lists none; a machine with no platform
+/// UUID offers none, since its GPU has no id that survives a reboot.
 ///
 /// # Errors
 ///
 /// [`GpuProbeError::Unreadable`] for output that is not the JSON report, a
-/// report without the displays section, or, beside an Apple GPU row, no
-/// hardware section or a physical memory figure this reader cannot read.
+/// report without the displays section or with more than one Apple GPU row
+/// (no id would tell them apart), or, beside an Apple GPU row, no hardware
+/// section or a physical memory figure this reader cannot read.
 pub fn parse_system_profiler_devices(text: &str) -> Result<Vec<DeviceFacts>, GpuProbeError> {
     let unreadable = |line: String| GpuProbeError::Unreadable { line };
     let report: Value = serde_json::from_str(text)
@@ -87,9 +87,16 @@ pub fn parse_system_profiler_devices(text: &str) -> Result<Vec<DeviceFacts>, Gpu
                 && text_field(row, "spdisplays_vendor") == Some(APPLE_VENDOR)
         })
         .collect();
-    if apple_gpus.is_empty() {
-        return Ok(Vec::new());
-    }
+    let gpu = match apple_gpus.as_slice() {
+        [] => return Ok(Vec::new()),
+        [gpu] => *gpu,
+        _ => {
+            return Err(unreadable(format!(
+                "{SYSTEM_PROFILER} -json: {} Apple GPU rows",
+                apple_gpus.len()
+            )));
+        }
+    };
     let machine = report
         .get(HARDWARE)
         .and_then(Value::as_array)
@@ -102,25 +109,21 @@ pub fn parse_system_profiler_devices(text: &str) -> Result<Vec<DeviceFacts>, Gpu
     let memory_text = text_field(machine, "physical_memory").unwrap_or_default();
     let memory_mib = memory_mib(memory_text)
         .ok_or_else(|| unreadable(format!("{HARDWARE}.physical_memory: {memory_text}")))?;
-    Ok(apple_gpus
-        .into_iter()
-        .enumerate()
-        .map(|(place, row)| DeviceFacts {
-            id: format!("{platform_id}-gpu{place}"),
-            id_source: DeviceIdSource::PlatformRegistry,
-            kind: DeviceKind::Gpu,
-            vendor: APPLE.to_owned(),
-            model: text_field(row, "sppci_model")
-                .or_else(|| text_field(row, "_name"))
-                .unwrap_or("Apple GPU")
-                .to_owned(),
-            memory: DeviceMemory::Unified { mib: memory_mib },
-            features: vec![METAL.to_owned()],
-            closure: DeviceClosure::Admitted,
-            state: DeviceState::Offered,
-            max_claimants: 1,
-        })
-        .collect())
+    Ok(vec![DeviceFacts {
+        id: format!("{platform_id}-gpu0"),
+        id_source: DeviceIdSource::PlatformRegistry,
+        kind: DeviceKind::Gpu,
+        vendor: APPLE.to_owned(),
+        model: text_field(gpu, "sppci_model")
+            .or_else(|| text_field(gpu, "_name"))
+            .unwrap_or("Apple GPU")
+            .to_owned(),
+        memory: DeviceMemory::Unified { mib: memory_mib },
+        features: vec![METAL.to_owned()],
+        closure: DeviceClosure::Admitted,
+        state: DeviceState::Offered,
+        max_claimants: 1,
+    }])
 }
 
 /// A field of a report row that holds text.
