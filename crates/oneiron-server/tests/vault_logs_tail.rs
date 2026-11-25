@@ -68,6 +68,9 @@ backend = "fake"
 price_per_second = 2
 cost_unit = "credit-micros"
 catalog_revision = "gpu-prices-1"
+startup_secs = 0
+teardown_secs = 0
+rounding_secs = 1
 "#;
 
 /// The offer's provider: it starts every job and never ends one.
