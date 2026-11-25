@@ -178,6 +178,7 @@ impl Evidence {
                     disclosure_version: None,
                     consent: true,
                     intent: EsignSigningIntent::Direct,
+                    check_in: None,
                 },
                 items: result.state.document.items.clone(),
             }

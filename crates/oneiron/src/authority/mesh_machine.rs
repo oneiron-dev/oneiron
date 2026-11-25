@@ -268,6 +268,14 @@ impl Vault {
             .map_err(|_| invalid_authority())?;
         Ok(Some((fold, claims)))
     }
+    /// Whether the pairing a binding stands on is live on this vault now: it
+    /// stands ([`mesh_pairing_standing`]) and has not expired. Its start is
+    /// its presence in the home's signed fold, not a reading of this vault's
+    /// clock. The home mints a pairing on its own authority clock, and a
+    /// replica's clock stops while its vault is closed or its host sleeps, so
+    /// a replica behind the home would read a fresh pairing as not yet begun
+    /// and refuse every bind on it until its own clock caught up
+    /// (MESH-PAIRING-REPLICA-CLOCK = A, Engine 25 Nov 11:55).
     fn mesh_pairing_live(
         &self,
         fold: &AuthorityFold,
@@ -275,8 +283,7 @@ impl Vault {
         claims: &MeshAuthorityClaims,
     ) -> Result<bool> {
         let now = self.instant_in_txn(txn)?.secs();
-        Ok(mesh_pairing_standing(fold, claims)
-            .is_some_and(|pair| now >= pair.issued_at && now < pair.expires_at))
+        Ok(mesh_pairing_standing(fold, claims).is_some_and(|pair| now < pair.expires_at))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(

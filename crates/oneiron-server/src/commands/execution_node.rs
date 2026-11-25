@@ -5,6 +5,7 @@
 //! aside. The running engine reads each of them fresh: a marker counts at
 //! the next admission and on the next authority tick.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -38,12 +39,17 @@ const LOST_HISTORY_PREFIX: &str = "lost-history-";
 /// A marker or file that could not be written or removed; for `check`, any
 /// condition that would refuse a job.
 pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
+    let mut output = std::io::stdout().lock();
     match command {
-        ExecutionNodeCommand::MeasurePath(args) => measure_path::measure_path(args),
-        ExecutionNodeCommand::Check(args) => check(&args),
+        ExecutionNodeCommand::MeasurePath(args) => {
+            // The measurement writes each report line itself, as it is taken.
+            drop(output);
+            measure_path::measure_path(args)
+        }
+        ExecutionNodeCommand::Check(args) => check(&args, &mut output),
         ExecutionNodeCommand::Enable(args) => {
             remove_marker(&marker(&args, DISABLED_MARKER_EXTENSION))?;
-            println!("enabled: the node takes new work again");
+            writeln!(output, "enabled: the node takes new work again")?;
             Ok(())
         }
         ExecutionNodeCommand::Disable(args) => {
@@ -54,9 +60,12 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
             };
             write_marker(&marker(&args.node, DISABLED_MARKER_EXTENSION), line)?;
             if args.stop {
-                println!("disabled: no new work; every job the node runs stops on the next tick");
+                writeln!(
+                    output,
+                    "disabled: no new work; every job the node runs stops on the next tick"
+                )?;
             } else {
-                println!("disabled: no new work; running jobs go on");
+                writeln!(output, "disabled: no new work; running jobs go on")?;
             }
             Ok(())
         }
@@ -64,21 +73,21 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
             let why = args.why.trim();
             anyhow::ensure!(!why.is_empty(), "pause needs a reason");
             write_marker(&marker(&args.node, PAUSED_MARKER_EXTENSION), why)?;
-            println!("paused: no new work; running jobs go on ({why})");
+            writeln!(output, "paused: no new work; running jobs go on ({why})")?;
             Ok(())
         }
         ExecutionNodeCommand::Unpause(args) => {
             remove_marker(&marker(&args, PAUSED_MARKER_EXTENSION))?;
-            println!("unpaused: the node takes new work again");
+            writeln!(output, "unpaused: the node takes new work again")?;
             Ok(())
         }
-        ExecutionNodeCommand::Resume(args) => resume(&args),
+        ExecutionNodeCommand::Resume(args) => resume(&args, &mut output),
         ExecutionNodeCommand::ResetHistory(args) => {
             anyhow::ensure!(
                 args.engine_stopped,
                 "reset-history sets the journal aside: stop the engine on this machine, then run it again with --engine-stopped"
             );
-            reset_history(&node_file(&args.node))
+            reset_history(&node_file(&args.node), &mut output)
         }
     }
 }
@@ -124,23 +133,29 @@ fn first_line(path: &Path) -> Option<String> {
     )
 }
 
-fn resume(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
+fn resume(args: &ExecutionNodeServeArgs, output: &mut impl Write) -> anyhow::Result<()> {
     let Some(drain) = drain_file(args)? else {
-        println!(
+        writeln!(
+            output,
             "this machine names no [gpu_jobs.devices] drain_file: a drain lives in the engine's memory only, and a restart of the engine clears it"
-        );
+        )?;
         return Ok(());
     };
     match std::fs::remove_file(&drain) {
         Ok(()) => {
-            println!("resumed: the drain at {} is cleared", drain.display());
+            writeln!(
+                output,
+                "resumed: the drain at {} is cleared",
+                drain.display()
+            )?;
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            println!(
+            writeln!(
+                output,
                 "no drain file at {}: the node is not drained on disk. A drain the engine could not write is kept in its memory, and a restart of the engine clears it",
                 drain.display()
-            );
+            )?;
             Ok(())
         }
         Err(error) => Err(error).with_context(|| format!("remove the drain {}", drain.display())),
@@ -148,9 +163,9 @@ fn resume(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
 }
 
 /// `check`: what would refuse a job here now.
-fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
+fn check(args: &ExecutionNodeServeArgs, output: &mut impl Write) -> anyhow::Result<()> {
     let file = node_file(&args.node);
-    println!("file: {}", file.display());
+    writeln!(output, "file: {}", file.display())?;
     let settings = match ExecutionNodeSettings::read(&file) {
         Ok(Some(settings)) => settings,
         Ok(None) => anyhow::bail!("no node file: this machine runs no jobs"),
@@ -165,11 +180,12 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
         stop_requested: disabled.as_deref() == Some(DISABLED_STOP_LINE),
     };
     let mut refusals: Vec<String> = controls.refusal().into_iter().collect();
-    println!("enabled in the file: {}", settings.enabled);
+    writeln!(output, "enabled in the file: {}", settings.enabled)?;
     if let Some(line) = &disabled {
-        println!("disabled at the box: {line}");
+        writeln!(output, "disabled at the box: {line}")?;
     }
-    println!(
+    writeln!(
+        output,
         "issuers: {}",
         settings
             .issuers
@@ -177,16 +193,17 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
             .map(|issuer| issuer.to_hex())
             .collect::<Vec<_>>()
             .join(", ")
-    );
-    println!("scopes: {:?}", settings.scopes);
+    )?;
+    writeln!(output, "scopes: {:?}", settings.scopes)?;
     match settings.template_offers() {
         Ok(offers) if offers.is_empty() => refusals.push("no template".to_owned()),
         Ok(offers) => {
             for offer in offers {
-                println!(
+                writeln!(
+                    output,
                     "template {}: digest {} scopes {:?} network {:?} returnable {:?}",
                     offer.name, offer.digest, offer.scopes, offer.network, offer.returnable
-                );
+                )?;
             }
         }
         Err(why) => refusals.push(why),
@@ -205,12 +222,13 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
     ] {
         match disk_free_bytes(dir) {
             Ok(free) => {
-                println!(
+                writeln!(
+                    output,
                     "{name}: {} free {} MiB, keeps {} MiB",
                     dir.display(),
                     free >> 20,
                     floor_bytes >> 20
-                );
+                )?;
                 if free < floor_bytes {
                     refusals.push(format!("{name} below its floor"));
                 }
@@ -219,9 +237,10 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
         }
     }
     if refusals.is_empty() {
-        println!(
+        writeln!(
+            output,
             "would refuse a job: nothing here (the issuer's grants are checked at each request)"
-        );
+        )?;
         Ok(())
     } else {
         anyhow::bail!("would refuse a job: {}", refusals.join("; "))
@@ -230,7 +249,7 @@ fn check(args: &ExecutionNodeServeArgs) -> anyhow::Result<()> {
 
 /// `reset-history`: moves the journal and its epoch into a new
 /// `lost-history-<ms>` directory of the state directory.
-fn reset_history(file: &Path) -> anyhow::Result<()> {
+fn reset_history(file: &Path, output: &mut impl Write) -> anyhow::Result<()> {
     let settings = match ExecutionNodeSettings::read(file) {
         Ok(Some(settings)) => settings,
         Ok(None) => anyhow::bail!("no node file at {}", file.display()),
@@ -242,7 +261,11 @@ fn reset_history(file: &Path) -> anyhow::Result<()> {
         .filter(|name| state.join(name).exists())
         .collect();
     if present.is_empty() {
-        println!("no journal in {}: nothing to reset", state.display());
+        writeln!(
+            output,
+            "no journal in {}: nothing to reset",
+            state.display()
+        )?;
         return Ok(());
     }
     let at_ms = SystemTime::now()
@@ -254,9 +277,10 @@ fn reset_history(file: &Path) -> anyhow::Result<()> {
         std::fs::rename(state.join(name), aside.join(name))
             .with_context(|| format!("set {name} aside into {}", aside.display()))?;
     }
-    println!(
+    writeln!(
+        output,
         "the old journal is in {}: the engine's next start opens a new journal under a new epoch",
         aside.display()
-    );
+    )?;
     Ok(())
 }
