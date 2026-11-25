@@ -1,6 +1,6 @@
 {
   "name": "vault.jobs.workloads.pin",
-  "description": "Pins one exact workload to run on the vault's own machines: template and its digest, code revision, contract, entry, arguments, limits. Pinning approves nothing. The owner calls it, or an agent whose Grant names it.",
+  "description": "Pins one exact workload to run on the vault's own machines, and the pin checks in: it goes inside the family's compute.pin grant or on a sure screen, else it waits on a check-in. The owner, or an agent whose Grant names it.",
   "input": "crate::job_workload::WorkloadPinRequest",
   "output": "crate::job_workload::WorkloadChange",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.pin\", &input)?",

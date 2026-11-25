@@ -106,6 +106,41 @@ registered refuses with `gpu_jobs.no_backend` before any reservation. A
 backend implements `oneiron::gpu_job::GpuJobConnector`: `create`, `find`,
 `status`, `signal` and `terminate`, all blocking.
 
+## The `vault_machine` backend
+
+The `vault_machine` backend runs a pinned workload on one of the vault's own
+machines over the mesh job protocol (pass 33, section 8).
+
+```toml
+[gpu_jobs.vault_machine]
+enabled = true                # default false: the backend is not built
+issuer = "<MACHINE id, hex>"  # the one install that issues these jobs
+# paused = false              # true: no new dispatch; nothing running is cancelled
+# submit_window_secs = 300    # a signed reserve and submit expire after this
+# recheck_horizon_secs = 900  # nothing the live recheck reads may end sooner
+# call_timeout_secs = 10      # one job protocol call, the dial included
+
+[gpu_jobs.offers.own-a6000]
+backend = "vault_machine"
+at_maximum = "stop"           # required for this backend
+# class, provider, region, price and seconds as for any offer
+```
+
+- It registers only on the install whose MACHINE is `issuer`, and never on a
+  managed server. A start on any other install refuses with
+  `not_the_issuer` before any reservation. The node's own `issuers` list
+  stays the hard check.
+- A quote names the machine in `inputs.machine` (required) and may name a
+  device in `inputs.device_id`.
+- `at_maximum = "stop"`: the node ends the run at the job's maximum, with or
+  without a checkpoint, and the end reason says the maximum was reached
+  (pass 34, 9.2). An offer of any other backend leaves `at_maximum` out and
+  follows C2 at the maximum. `serve` refuses a `vault_machine` offer without
+  it and any other offer with it.
+- A job is billed the occupied time of the attempt's leases, as the node
+  measured it, and never more than the issuer's own bracket or the quote's
+  maximum. A key that never started bills zero.
+
 ## Pinned workloads (the vault's own machines)
 
 A job on one of the vault's own machines runs a pinned workload: one exact

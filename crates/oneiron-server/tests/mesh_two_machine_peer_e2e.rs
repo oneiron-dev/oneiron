@@ -273,7 +273,11 @@ impl Home {
                 &holder.sign(&transcript).to_bytes(),
                 &request,
                 Some(&possession),
-                (&identity, SYNC_ALPN),
+                oneiron::authority::MeshEnrolmentAsk {
+                    identity: &identity,
+                    granted: SYNC_ALPN,
+                    ceiling: &oneiron_server::SERVED_MESH_ALPNS,
+                },
             )
             .map_err(at("the home redeems the device's enrolment"))?;
         let pairing_slip_id = match redeemed.mesh {

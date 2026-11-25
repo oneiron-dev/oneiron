@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.orders.cancel",
+  "description": "Cancels one work order: a waiting order at once and never dispatched, a running one by stopping its attempt. The owner cancels any order; an agent whose Grant names it cancels only orders it made.",
+  "input": "crate::work_order::WorkOrderRef",
+  "output": "crate::work_order::WorkOrderView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.orders.cancel\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

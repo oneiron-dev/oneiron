@@ -247,6 +247,15 @@ pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// A machine's readiness check keeps failing (pass 34 row Q4, practice 6): clear its drain,
+/// keep it drained, or take the machine out. Asked of the owner once per run of failed
+/// checks, keyed by the machine and the run's first failed check.
+pub const MACHINE_READINESS: QuestionFamily = QuestionFamily {
+    name: "machines.readiness",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Whether one held automated sign act lands (ARCH-0064 D6): allow or decline. Asked of
 /// the vault owner role alone. Keyed by the document, the recipient and the hold.
 pub const ESIGN_HELD_SIGNING: QuestionFamily = QuestionFamily {
@@ -572,6 +581,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
     WIRE_HEALTH,
+    MACHINE_READINESS,
     ESIGN_HELD_SIGNING,
     CONNECTOR_SLATE_DRAFT,
     IMPORT_AUDIENCE_SENSITIVE,
