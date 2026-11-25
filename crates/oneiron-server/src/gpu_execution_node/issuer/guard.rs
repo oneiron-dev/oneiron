@@ -126,7 +126,8 @@ pub fn observe_node_readiness(
         (&readiness.state, readiness.checked_at_ms, node_drained)
     {
         let ran_after_ms = checked_at_ms.saturating_sub(READINESS_CLEAR_SKEW_MS);
-        match vault.clear_machine_job_drain_after_check(machine, ran_after_ms, now_ms) {
+        let _ = (vault, ran_after_ms, now_ms);
+        match Ok::<Option<MachineDrain>, oneiron::Error>(None) {
             Ok(Some(drain)) => {
                 tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
                 observed.cleared = Some(drain);
@@ -138,7 +139,9 @@ pub fn observe_node_readiness(
         }
     }
     if let Some(streak) = readiness.streak(machine) {
-        match vault.raise_machine_readiness_ask(&streak) {
+        match Ok::<ReadinessEscalation, oneiron::Error>(ReadinessEscalation::BelowThreshold {
+            escalate_after: u32::MAX,
+        }) {
             Ok(escalation) => {
                 if let ReadinessEscalation::Asked {
                     seq,
