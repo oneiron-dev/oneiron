@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use super::availability::GpuAvailability;
 use super::device::DeviceSample;
+use super::node_settings::TemplateKind;
 
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
@@ -349,6 +350,11 @@ pub struct TemplateOffer {
     /// lacks one does not fit. Every bound not listed that the scope does
     /// not enforce is recorded on the run as unproven.
     pub require: Vec<BoundRequirement>,
+    /// What a run of the template is (pass 34, 2.5; row W1): only a
+    /// `session`'s run takes a renewal. Absent for a job, as before, so an
+    /// issuer reads a node that predates sessions as offering jobs alone.
+    #[serde(default, skip_serializing_if = "TemplateKind::is_job")]
+    pub kind: TemplateKind,
 }
 
 /// One launch scope a node starts runs in, and what it can enforce now.

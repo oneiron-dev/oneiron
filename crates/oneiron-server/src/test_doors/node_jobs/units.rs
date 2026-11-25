@@ -321,7 +321,12 @@ impl JobUnit for ScriptedJobUnits {
     /// root handoff does.
     fn renew(&self, unit: &JobKeyId, cutoff_boot_ns: u64) -> Result<(), RenewRefusal> {
         let mut state = locked(&self.state);
-        if !state.answering || !state.renewing {
+        let running = state
+            .units
+            .get(unit)
+            .is_some_and(|scripted| scripted.phase == JobUnitPhase::Active);
+        // As root's handoff: only a running unit's cutoff moves.
+        if !state.answering || !state.renewing || !running {
             return Err(RenewRefusal::Unit(Self::unavailable(unit)));
         }
         let held = state.cutoffs.entry(unit.clone()).or_insert(cutoff_boot_ns);

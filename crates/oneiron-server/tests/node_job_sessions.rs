@@ -17,8 +17,8 @@ use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron_server::gpu_execution_node::jobs::{JobKeyId, NodeClock, NodeJobs, NodeKey};
 use oneiron_server::gpu_execution_node::wire::{
     HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState, JobStatusAnswer,
-    JobSubmit, NetworkMode, OutputDecl, ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector,
-    Starter, WorkloadPin,
+    JobSubmit, NetworkMode, OutputDecl, OutputsState, ResourceRequest, ScopeKind, SignedJobSubmit,
+    SlotSelector, Starter, WorkloadPin,
 };
 use oneiron_server::test_doors::node_jobs::{ScriptedNode, ScriptedSigner};
 
@@ -322,8 +322,16 @@ fn every_second_of_a_renewed_session_is_billed_to_exactly_one_chunk() {
         f.node.units.renewed_cutoff("session-0"),
         Some(launched + 3 * CHUNK_SECS * NANOS_PER_SEC)
     );
-    // Now 1,300 s after the launch: inside the third chunk.
+    // Now 1,300 s after the launch: inside the third chunk. A slice passes
+    // only once the node saw the run alive past its end: before the next
+    // tick the second chunk is still the current one.
     f.advance_secs(400);
+    assert_eq!(
+        known(jobs.find(f.issuer, "session-1")).state,
+        JobState::Running,
+        "no tick has seen the run past 1,200 s yet"
+    );
+    jobs.tick();
     let live: Vec<JobReceipt> = ["session-0", "session-1", "session-2"]
         .iter()
         .map(|key| known(jobs.find(f.issuer, key)))
@@ -399,6 +407,12 @@ fn every_second_of_a_renewed_session_is_billed_to_exactly_one_chunk() {
     assert_eq!(current.measured_secs, Some(300));
     assert_eq!(never_began.state, JobState::Ended);
     assert!(!never_began.started, "the renewed slice never began");
+    assert_eq!(never_began.end, Some(JobEnd::Withdrawn));
+    assert_eq!(
+        never_began.outputs,
+        OutputsState::Pending,
+        "the run's outputs are its last slice's alone"
+    );
     assert_eq!(never_began.measured_secs, None);
     assert_eq!(
         current.slice.map(|slice| slice.from_boot_ns),
@@ -430,6 +444,20 @@ fn a_renewal_after_the_chunk_ended_is_refused_at_zero_seconds() {
     let again = receipt(jobs.submit(f.issuer, signed));
     assert_eq!(again.seq, late.seq, "nothing more was journaled");
     assert_eq!(again.end, late.end);
+
+    // A run whose workload exited before any tick read its end takes no
+    // renewal either: the node reads the end first.
+    let g = fixture();
+    let raced_jobs = g.node.open();
+    g.launch(&raced_jobs, "quick-0");
+    g.advance_secs(30);
+    g.node.units.exit("quick-0", 0);
+    let raced = receipt(raced_jobs.submit(g.issuer, g.renewal("quick-1", 1, "quick-0")));
+    assert_eq!(raced.end, refused("continues_ended"));
+    assert_eq!(
+        entry(&raced_jobs, "quick-0").map(|entry| entry.state),
+        Some(JobState::Ended)
+    );
 
     let unknown = receipt(jobs.submit(f.issuer, f.renewal("stray-1", 1, "no-such-run")));
     assert_eq!(unknown.end, refused("continues_unknown"));

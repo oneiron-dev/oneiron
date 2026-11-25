@@ -449,6 +449,7 @@ impl JobNodeClient for ScriptedNode {
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
                     require: Vec::new(),
+                    kind: Default::default(),
                 }],
                 scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,
