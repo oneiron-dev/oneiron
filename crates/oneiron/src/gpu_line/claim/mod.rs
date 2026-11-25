@@ -169,13 +169,19 @@ pub struct UnitTerminal {
 }
 
 impl UnitTerminal {
-    /// Whether `other` is the same end: every field but the time it was written.
+    /// Whether `other` is the same end: every field but the time it was written. A stored
+    /// write-off whose writer was erased since (`by` is `None`) matches a write-off by anyone,
+    /// so the same report again is a replay; the erased id is never written back.
     #[must_use]
     pub fn same_end(&self, other: &Self) -> bool {
-        Self {
-            ended_at_ms: other.ended_at_ms,
-            ..self.clone()
-        } == *other
+        let mut other = other.clone();
+        other.ended_at_ms = self.ended_at_ms;
+        if let (UnitEnd::WrittenOff { by: None }, UnitEnd::WrittenOff { by }) =
+            (&self.end, &mut other.end)
+        {
+            *by = None;
+        }
+        *self == other
     }
 }
 

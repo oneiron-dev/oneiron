@@ -125,6 +125,7 @@ pub mod web_client;
 mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
+pub mod work_order_host;
 mod xlsx_recalc;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.

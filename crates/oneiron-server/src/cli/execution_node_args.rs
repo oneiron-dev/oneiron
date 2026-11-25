@@ -3,7 +3,8 @@
 //! command edits the node's root-owned `[execution_node]` file's markers, or
 //! the drain and the state directory beside them; no remote party can, and
 //! no verb does. The engine reads them fresh at each admission and on each
-//! authority tick. `install` is row R3b's.
+//! authority tick. `install`, `unit-name` and `unit-control` are row R3b's
+//! (Linux with systemd).
 
 use std::path::PathBuf;
 
@@ -36,6 +37,53 @@ pub enum ExecutionNodeCommand {
     /// from a copy: set the old journal and its epoch aside, so the engine's
     /// next start opens a new journal under a new epoch.
     ResetHistory(ExecutionNodeResetHistoryArgs),
+    /// As root, once: make the job account, write the root-owned job unit
+    /// template and the job control socket through which the engine's
+    /// account starts and stops its instances and nothing else. Run it again
+    /// after a template's maximum grows.
+    Install(ExecutionNodeInstallArgs),
+    /// Print the job unit of a job key (`oneiron-job@<id>.service`), for
+    /// `systemctl` and `journalctl`.
+    UnitName(ExecutionNodeUnitNameArgs),
+    /// Start or stop the job unit of a job key, or send it a checkpoint
+    /// notice, through the job control socket, as the engine does: as the
+    /// engine's account or root.
+    UnitControl(ExecutionNodeUnitControlArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ExecutionNodeInstallArgs {
+    #[command(flatten)]
+    pub node: ExecutionNodeFileArgs,
+    /// The account `oneiron serve` runs as: it may start and stop job units.
+    #[arg(long)]
+    pub engine_account: String,
+    /// A path no job may open, besides the state directory and the engine
+    /// account's home: the vault's trees or the keystore when they live
+    /// elsewhere. Repeat for each.
+    #[arg(long)]
+    pub protect: Vec<PathBuf>,
+    /// Print the unit template and the control socket's units, and write
+    /// nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ExecutionNodeUnitNameArgs {
+    /// The job key.
+    pub key: String,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ExecutionNodeUnitControlArgs {
+    /// `start`, `stop` or `signal`.
+    pub verb: String,
+    /// The job key.
+    pub key: String,
+    /// For `signal`: the checkpoint signal's name (HUP, INT, USR1, USR2 or
+    /// WINCH).
+    pub signal: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

@@ -54,7 +54,7 @@ pub use oneiron_organ_host::{
 use super::availability::{
     GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer, GpuDeviceState, GpuJobDisk, admits_gpu,
 };
-use super::device::{GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
+use super::device::{DeviceSample, GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
 
 mod drain;
 mod lease;
@@ -208,6 +208,17 @@ impl GpuSlotTable {
     #[must_use]
     pub fn offer(&self) -> &GpuDeviceOffer {
         &self.shared.offer
+    }
+
+    /// Each device's temperature, power draw and memory in use now, where
+    /// the probe gives them: a reading for the breadcrumb lines (pass 34,
+    /// 7.3), not a hold.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver cannot be read.
+    pub fn samples(&self) -> Result<Vec<DeviceSample>, GpuProbeError> {
+        self.shared.probe.samples()
     }
 
     /// What each GPU is doing now, from a fresh driver reading, whether the

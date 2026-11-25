@@ -282,16 +282,25 @@ pub(crate) enum DoorClaim {
 /// state, for any later request naming the invocation to read again. A
 /// same-id retry mints again: a fresh link and token, beside the first link,
 /// which the owner's list shows and revokes as any other.
+/// An experiment arm's reads (`vault.arms.get`, `vault.arms.list`; design
+/// pass 32 section 5) answer only the arms of lines the caller's Grant
+/// reaches when the read runs. An arm is a side-table row, so a waiter's
+/// release has no entity row to judge again, and the row's door proof
+/// judges only the verb Grant: a kept reply would answer a same-id retry
+/// after the line left the Grant's reach. A same-id retry runs the read
+/// again, line cover included (FIX ARM-READS-REPLAY-SKIPS-LINE-GRANT).
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 7] = [
+const UNKEPT_REPLY_VERBS: [&str; 9] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
     "vault.members.inquiry_edge.attach",
     "vault.booking.personal_link.mint",
+    oneiron::experiment_arm::ARMS_GET_VERB,
+    oneiron::experiment_arm::ARMS_LIST_VERB,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
 ];
