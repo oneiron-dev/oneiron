@@ -14,6 +14,8 @@ use oneiron_contracts::fingerprint::ContentHash;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::device::DeviceClaim;
+
 /// The most arguments one pin passes (argv, no shell).
 pub const PIN_ARGS_MAX: usize = 64;
 /// The most bytes a pin's arguments hold together.
@@ -50,20 +52,27 @@ pub struct WorkloadPin {
     pub outputs: Vec<OutputDecl>,
 }
 
-/// What one run of the workload asks of the serving machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// What one run of the workload asks of the serving machine (pass 34,
+/// section 2.1): threads, memory and disk, and zero or more device claims.
+/// A run with no device claim is a CPU-only run: the same attempt, cutoff,
+/// meter and receipt, with no device lease. Devices are matched by kind,
+/// features and memory ([`DeviceClaim`]), never by a vendor name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceRequest {
-    /// GPUs per run: 1 in the first slice.
-    pub gpus: u32,
-    /// The least GPU memory the run needs, in MiB.
-    pub vram_mib: u64,
-    /// Host memory, in MiB: the job unit's memory limit.
+    /// Threads the scope may use at once; 0 takes the template's default.
+    pub cpu_threads: u32,
+    /// Host memory, in MiB: the scope's memory limit. On a device that
+    /// shares the host's memory, the claim's memory is leased beside it
+    /// ([`super::DevicePlacement::host_memory_mib`]).
     pub memory_mib: u64,
     /// Disk the run writes on the node (checkout, outputs, scratch), in MiB.
     pub disk_mib: u64,
-    /// The longest the run may occupy its device, in seconds: the node's
-    /// cutoff. Never 0.
+    /// Empty for a CPU-only run; at most
+    /// [`super::REQUEST_DEVICE_CLAIMS_MAX`] claims.
+    pub devices: Vec<DeviceClaim>,
+    /// The longest the run may occupy its leases, in seconds: the node's
+    /// cutoff. It comes from the quote, never from the engine. Never 0.
     pub maximum_secs: u64,
 }
 

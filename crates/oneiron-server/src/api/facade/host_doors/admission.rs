@@ -282,7 +282,7 @@ pub(in crate::api::facade) fn door_admits(
         // verb; `allow` is the owner's act alone, and start and cancel judge the agent again in their write.
         Proof::GpuJobCaller => super::gpu_jobs::gpu_job_caller_admits(server, auth, verb),
         // The pinned workload rows (pass 33): the owner's own proof, or an agent's own Grant naming the verb;
-        // approve and revoke take an agent only while the owner's key jobs.workloads.agent_may_approve is on.
+        // approve and revoke are the owner's own acts.
         Proof::JobWorkloadCaller => {
             super::job_workloads::job_workload_caller_admits(server, auth, verb)
         }

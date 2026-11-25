@@ -680,8 +680,9 @@ fn three_machine_failures_in_a_row_drain_the_node_until_a_person_clears_it() {
         assert_eq!(
             refused.job.state,
             GpuJobState::Held {
-                reason: "machine_drained: lost: node_reset".to_owned()
+                reason: "machine_drained".to_owned()
             },
+            "the job's reason is the code alone; the cause stays in the machine's guard",
         );
         assert_eq!(refused.settled(), vec![0], "the hold settles at zero");
         assert_eq!(

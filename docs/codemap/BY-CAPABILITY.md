@@ -248,6 +248,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Ingest source registry and source-local normalization | `crates/oneiron/src/ingest/mod.rs` | m | — |
 | Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner… | `crates/oneiron/src/inquiry/mod.rs` | m | ARCH-0082 |
 | Interlocutor resolution substrate (OF-365 ILD-1) | `crates/oneiron/src/interlocutor.rs` | L | OF-365 |
+| Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron/src/job_workload/mod.rs` | m | — |
 | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… | `crates/oneiron/src/learning/mod.rs` | m | ARCH-0003, ARCH-0079 |
 | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… | `crates/oneiron/src/learning_setting.rs` | m | ARCH-0003 |
 | The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's… | `crates/oneiron/src/learning_setting_choice.rs` | m | ARCH-0003, ARCH-0079 |
@@ -262,6 +263,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: "Capacity is measured | `crates/oneiron/src/machine_capacity.rs` | m | CROSS-ARCH-0024 |
 | Machine destinations and folded read-location values | `crates/oneiron/src/machine_destination.rs` | s | — |
 | The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16… | `crates/oneiron/src/machine_names/mod.rs` | m | — |
+| A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and… | `crates/oneiron/src/machine_signature.rs` | s | OF-575 |
 | The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and… | `crates/oneiron/src/mail_pack/mod.rs` | XL | ARCH-0027, ARCH-0060, ARCH-0063 |
 | — | `crates/oneiron/src/maintain/mod.rs` | m | — |
 | BRIDGE-01 (ONE-1454): transport-agnostic memory facade | `crates/oneiron/src/memory/mod.rs` | L | — |
@@ -632,7 +634,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The Apple tiers' names: the keychain account each slot's item and each sealed value's item is filed under | `crates/oneiron-keystore/src/apple_names.rs` | s | OF-168 |
 | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) | `crates/oneiron-keystore/src/auth_bound.rs` | s | — |
 | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… | `crates/oneiron-keystore/src/dpapi_names.rs` | s | OF-168 |
-| Unix (not Apple): one 0600 file per slot in a 0700 directory of its own | `crates/oneiron-keystore/src/file.rs` | m | — |
+| Unix: one 0600 file per slot in a 0700 directory of its own | `crates/oneiron-keystore/src/file.rs` | m | — |
 | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) | `crates/oneiron-keystore/src/linux_tpm.rs` | m | OF-168 |
 | macOS: the device's own unlock sheet, and the window server's word on the screen lock (row… | `crates/oneiron-keystore/src/macos_presence.rs` | s | — |
 | Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its… | `crates/oneiron-keystore/src/memory.rs` | s | — |
@@ -658,6 +660,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and… | `crates/oneiron-mail-pack/src/mail_pack/mod.rs` | s | ARCH-0027, ARCH-0060, ARCH-0063 |
 | Cross-device Files search over the mesh (ARCH-0027 #files-world: "Cross-device search over the iroh mesh… | `crates/oneiron-mesh-transport/src/files_search.rs` | s | ARCH-0027, OF-535 |
 | Private iroh data plane | `crates/oneiron-mesh-transport/src/iroh_transport.rs` | m | — |
+| One message each way per stream, in the organ protocol's codec: the exchange organ calls ride (OF-575)… | `crates/oneiron-mesh-transport/src/message.rs` | s | OF-575 |
 | The sync client's carrier to its home machine over the mesh (OF-535) | `crates/oneiron-mesh-transport/src/sync_dialer.rs` | s | OF-535 |
 | Pairing derives a distinct transport signer; only the public endpoint key is recorded | `crates/oneiron-mesh-transport/src/transport_key.rs` | s | — |
 | Extraction-quality evaluation facade | `crates/oneiron-model/src/extraction_eval.rs` | m | — |
@@ -907,6 +910,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Deployment-selected feedback transport | `crates/oneiron-server/src/feedback_delivery.rs` | m | — |
 | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… | `crates/oneiron-server/src/feedback_redaction.rs` | s | OF-420 |
 | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… | `crates/oneiron-server/src/files_intake/mod.rs` | m | OF-554 |
+| A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | m | — |
 | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | s | CROSS-ARCH-0023 |
 | WebSocket upgrade handler and connection lifecycle | `crates/oneiron-server/src/handler/mod.rs` | L | ARCH-0023 |
 | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… | `crates/oneiron-server/src/home_candidacy.rs` | s | ARCH-0026 |

@@ -208,4 +208,34 @@ impl Vault {
     pub fn put_job_observation(&self, row: &JobObservation) -> crate::Result<()> {
         self.with_write_txn(|txn| JOB_OBSERVATIONS.put(&self.store, txn, &row.key, row))
     }
+
+    /// Changes the dispatch row of `key` and its observation in one durable write. `change`
+    /// gets the row and the stored observation as they stand inside the write, changes the
+    /// row, and answers the observation to write (`None` keeps the stored one) beside its own
+    /// verdict. A receipt judged here is judged against the newest rows, so a slower call never
+    /// writes over a newer receipt, and the row's `Held` mark lands in the same write as the
+    /// receipt that proves it. `None` when there is no row.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub fn update_job_dispatch_and_observation<T>(
+        &self,
+        key: &str,
+        change: impl FnOnce(&mut JobDispatch, Option<JobObservation>) -> (Option<JobObservation>, T),
+    ) -> crate::Result<Option<(JobDispatch, T)>> {
+        let key = key.to_owned();
+        self.with_write_txn(|txn| {
+            let Some(mut row) = JOB_DISPATCHES.get(&self.store, txn, &key)? else {
+                return Ok(None);
+            };
+            let stored = JOB_OBSERVATIONS.get(&self.store, txn, &key)?;
+            let (observation, verdict) = change(&mut row, stored);
+            JOB_DISPATCHES.put(&self.store, txn, &key, &row)?;
+            if let Some(observation) = observation {
+                JOB_OBSERVATIONS.put(&self.store, txn, &key, &observation)?;
+            }
+            Ok(Some((row, verdict)))
+        })
+    }
 }

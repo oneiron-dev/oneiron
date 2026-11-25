@@ -5,8 +5,9 @@
 //!   the starter still stands (the owner is a live owner; the agent's Grant still names
 //!   `vault.gpu.jobs.start` and keeps its allowance), the workload's approval holds through
 //!   row R2's check, and this vault grants the node both job protocols. None of these may end
-//!   within the horizon (the submit window plus the staging limit). The node's own vault holds
-//!   the issuer's grant, and the node checks that one at each request.
+//!   within the horizon (the submit window plus the staging limit). Only the owner approves a
+//!   workload (row R2), so no Grant stands behind an approval. The node's own vault holds the
+//!   issuer's grant, and the node checks that one at each request.
 //! - The revoke check, at every step: a revoke of the starter's Grant, the approval or the
 //!   workload stops the job; an expiry does not, since the job started within its terms
 //!   (EN-4, recommended option A).

@@ -4,8 +4,10 @@
 //! wrote off, which goes to the hook as evidence. A key without one is an orphan: it goes to one
 //! hook, which row R4 fills with `JOB_ORPHAN` and its stop (`super::orphans`), and the hook
 //! hears when the node's whole listing was read. A reconcile that got no answer, or ended
-//! before its last page, leaves the node unmarked, and no reserve or submit goes to it.
-use std::collections::BTreeSet;
+//! before its last page, leaves the node unmarked, and no reserve or submit goes to it. A node
+//! that names a cursor it named before, or more than [`RECONCILE_MAX_PAGES`] pages, is not
+//! reconciled either: each call has its timeout, and these bound the whole reconcile.
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Mutex;
 
 use oneiron::job_dispatch::{DispatchClose, JobDispatch};
@@ -13,6 +15,10 @@ use oneiron::{EntityId, Vault};
 
 use super::node_client::{JobNodeClient, NodeCallError};
 use crate::gpu_execution_node::wire::{JobStatusAnswer, JobStatusRequest, KeyEntry};
+
+/// The most pages of keys one reconcile reads from a node: a wire bound, like a page's own size
+/// limit, so a node that never ends its list cannot hold a dispatch or the worker's step.
+pub const RECONCILE_MAX_PAGES: usize = 4096;
 
 /// What the issuer does with a key a node holds for it that it has no dispatch row for.
 pub trait OrphanKeys: Send + Sync {
@@ -57,6 +63,12 @@ pub enum ReconcileError {
     NotListed { answer: String },
     #[error("the issuer's store could not be read: {0}")]
     Store(String),
+    /// The node named, as the next page, a cursor it had named before.
+    #[error("the machine repeated a cursor of its key list")]
+    CursorRepeated,
+    /// The node's list ran past [`RECONCILE_MAX_PAGES`] pages.
+    #[error("the machine's key list ran past {RECONCILE_MAX_PAGES} pages")]
+    TooManyPages,
 }
 
 /// The nodes reconciled since this issuer started. It lives as long as the connector, so a
@@ -93,7 +105,8 @@ impl Reconciled {
             return Ok(());
         }
         let mut after = None;
-        loop {
+        let mut cursors = HashSet::new();
+        for _ in 0..RECONCILE_MAX_PAGES {
             let page = match client.job_status(node, &JobStatusRequest::Keys { after })? {
                 JobStatusAnswer::Keys(page) => page,
                 other => {
@@ -116,15 +129,20 @@ impl Reconciled {
                 }
             }
             match page.next {
+                Some(next) if !cursors.insert(next.clone()) => {
+                    return Err(ReconcileError::CursorRepeated);
+                }
                 Some(next) => after = Some(next),
-                None => break,
+                None => {
+                    orphans.listing_complete(node);
+                    self.nodes
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(node);
+                    return Ok(());
+                }
             }
         }
-        orphans.listing_complete(node);
-        self.nodes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(node);
-        Ok(())
+        Err(ReconcileError::TooManyPages)
     }
 }
