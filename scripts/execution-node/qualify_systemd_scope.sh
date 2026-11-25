@@ -189,9 +189,10 @@ setup() {
   printf 'keystore-secret\n' > "$KEYSTORE/key"; chmod 0644 "$KEYSTORE/key"
   mkdir -p /srv/git/qual.git
   node_file ""
-  # A binary from before the uid per job refuses the range's fields: it gets the job account instead.
+  # A binary from before the uid per job refuses the range's fields: it gets the job account instead. The toml reader
+  # takes a table's keys in sorted order, so it names job_uid_count first.
   if "$BIN" execution-node install --file "$NODE_FILE" --engine-account "$ENGINE" --protect "$KEYSTORE" --dry-run 2>&1 \
-      | grep -q 'unknown field `job_uid_first`'; then
+      | grep -qE 'unknown field `job_uid_(count|first)`'; then
     IDS_MODE=account
     node_file ""
   fi
