@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 
 use crate::gpu_job::{GpuEndReason, GpuJobEnd, GpuJobState};
-use crate::gpu_line::claim::release_claim_in_txn;
+use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn};
 use crate::gpu_line::{ClaimState, UnitEnd, claim_in_txn, custody_lapsed_in_txn};
 use crate::job_dispatch::DispatchClose;
 use crate::job_workload::{JobWorkload, WorkloadPin, WorkloadStartAsk};
@@ -122,9 +122,6 @@ enum AttemptStanding {
     Ended(EndKind),
 }
 
-/// The release reason of a line unit's claim whose job did not start within its custody (as
-/// the reserve's and the claimed start's).
-const LINE_CLAIM_CUSTODY_LAPSED: &str = "custody_lapsed";
 /// The release reason of a line unit's claim a cancel of its order reached before its job.
 const LINE_CLAIM_ORDER_CANCELLED: &str = "order_cancelled";
 
@@ -361,7 +358,7 @@ impl Vault {
                     let reason = if cancelled {
                         LINE_CLAIM_ORDER_CANCELLED
                     } else {
-                        LINE_CLAIM_CUSTODY_LAPSED
+                        CUSTODY_LAPSED
                     };
                     Ok(release_claim_in_txn(self, txn, &claim, reason, now_ms)?.is_some())
                 })?;

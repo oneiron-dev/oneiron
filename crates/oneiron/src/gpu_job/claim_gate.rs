@@ -12,7 +12,7 @@
 //! own claim ends that claim `Released(<code>)` in the same write, so its draws return once.
 
 use crate::experiment_arm::StartedUnitCancel;
-use crate::gpu_line::claim::{release_claim_in_txn, start_claim_in_txn};
+use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn, start_claim_in_txn};
 use crate::gpu_line::{
     ClaimKey, ClaimState, UnitClaim, claim_in_txn, custody_lapsed_in_txn, line_in_txn,
     offer_line_managed_in_txn,
@@ -27,8 +27,6 @@ use super::{
     GpuJobRequest, GpuOffer,
 };
 
-/// The release reason of a claim whose custody lapsed before its start (as the reserve's).
-const CUSTODY_LAPSED: &str = "custody_lapsed";
 /// The job type of a unit's job (design pass 32 r2, 3.6; pass 33, 5.1).
 pub const UNIT_JOB_TYPE: &str = "pinned_workload";
 

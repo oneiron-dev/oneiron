@@ -23,7 +23,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::gpu_line::claim::release_claim_in_txn;
+use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn};
 use crate::gpu_line::doors_caller::{self, LineCaller};
 use crate::gpu_line::{
     Bucket, ClaimAdmissionRefused, ClaimKey, ClaimState, DrawAsk, DrawPurpose, GpuLine, IntentAsk,
@@ -44,8 +44,6 @@ use super::{ExperimentArm, RungState};
 
 /// The verb that reserves one unit of an arm's rung.
 pub const ARMS_UNITS_RESERVE_VERB: &str = "vault.arms.units.reserve";
-/// The release reason of a unit whose job did not start within its custody.
-const CUSTODY_LAPSED: &str = "custody_lapsed";
 /// The length of an intent row's written key when a waiting unit's work order holds it: the
 /// order's id (a claim key is longer: the arm, the rung, the unit key and the attempt).
 pub(super) const ORDER_ID_BYTES: usize = 16;

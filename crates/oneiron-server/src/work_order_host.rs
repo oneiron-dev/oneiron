@@ -165,7 +165,7 @@ impl<'a> ServerOrderHost<'a> {
             // A store failure: the order waits and the next pass asks again.
             Err(error) => {
                 return AttemptOutcome::Refused(vec![Blocker::LineNotReady {
-                    reason: error.to_string(),
+                    reason: format!("store_failure: {error}"),
                 }]);
             }
         }
