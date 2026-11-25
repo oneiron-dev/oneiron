@@ -1015,6 +1015,84 @@ fn a_box_that_keeps_the_clear_for_the_person_keeps_the_drain_after_the_owners_cl
     Ok(())
 }
 
+/// The same row: a box file that does not read now (an edit half written, or the file moved
+/// away) keeps the node's drain. Who clears it falls to the person at the box, and the owner's
+/// clear from the panel does not reach the node, whatever the owner's rows say; the box may have
+/// kept the clear for the person, and the node cannot tell.
+#[test]
+fn a_box_file_that_does_not_read_keeps_the_drain_from_the_check_and_the_panel() -> TestResult {
+    let rig = Rig::new("")?;
+    rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
+    rig.owner_sets(DRAIN_CLEARED_AT, None, json!(NOW_MS))?;
+    let clear = |rig: &Rig| {
+        let settings = NodeAdmission::job_settings(&rig.node);
+        (settings.drain_clear_by, settings.drain_cleared_at_ms)
+    };
+    assert_eq!(
+        clear(&rig),
+        (DrainClearBy::PersonAtBox, Some(NOW_MS)),
+        "a file that reads: the check keeps the drain and the owner's clear reaches the node"
+    );
+
+    std::fs::write(&rig.file, "[execution_node]\nenabled = tru")?;
+    assert_eq!(
+        clear(&rig),
+        (DrainClearBy::PersonAtBox, None),
+        "a file half written keeps the drain from the panel"
+    );
+    rig.owner_sets(
+        DRAIN_CLEAR_BY,
+        None,
+        json!({ "by": "after_readiness_check" }),
+    )?;
+    assert_eq!(
+        clear(&rig),
+        (DrainClearBy::PersonAtBox, None),
+        "and from the check, though the owner leaves the clear to it"
+    );
+
+    std::fs::remove_file(&rig.file)?;
+    assert_eq!(
+        clear(&rig),
+        (DrainClearBy::PersonAtBox, None),
+        "a file moved away keeps the drain too"
+    );
+
+    rig.box_writes("")?;
+    assert_eq!(
+        clear(&rig),
+        (DrainClearBy::AfterReadinessCheck, None),
+        "the file back: the owner's rule decides again"
+    );
+    Ok(())
+}
+
+/// The same row (OPUS-LE-FLEET's EM-22 finding): a clear dated later than the node's clock (the
+/// panel's clock ahead, or a mistyped year) clears nothing until the node's clock reaches it.
+/// Until then it would clear each drain as it began.
+#[test]
+fn a_clear_dated_after_the_nodes_clock_waits_for_that_time() -> TestResult {
+    let rig = Rig::new("")?;
+    rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
+    let node = rig.drained_node()?;
+    rig.owner_sets(DRAIN_CLEARED_AT, None, json!(NOW_MS + 60_000))?;
+    node.tick_after(1_000);
+    assert_eq!(
+        node.drained().as_deref(),
+        Some(DRAIN_WHY),
+        "a clear dated a minute after the node's clock waits"
+    );
+
+    node.tick_after(60_000);
+    assert_eq!(
+        node.drained(),
+        None,
+        "the clear applies once the node's clock reaches its time"
+    );
+    assert!(node.owner_cleared(), "the incident names the owner's clear");
+    Ok(())
+}
+
 /// The same row, item 4 of the ANSWER: the node acts on the row only when its writer is one
 /// `clear_by` names, as door 12 judges its caller. Under `owner`, a row an agent wrote keeps the
 /// drain; under `grants`, a row an agent wrote through a Grant the owner did not list keeps it,

@@ -459,24 +459,23 @@ impl NodeAdmission for ExecutionNode {
 
     fn job_settings(&self) -> NodeJobSettings {
         // One read of the box file for every key; with none, or one that
-        // does not parse, each key keeps its default.
-        let file = ExecutionNode::settings(self).ok().flatten();
+        // does not parse, each key keeps its default, except who clears the
+        // drain: the box may have kept that for the person at the box, so a
+        // file that does not read now (an edit half written, or moved away)
+        // keeps the drain from a passing check and from the owner's panel.
         let defaults = NodeJobSettings::default();
-        let (readiness_every_secs, drain_clear_by, drain_cleared_at_ms) = file.as_ref().map_or(
-            (
-                defaults.readiness_every_secs,
-                defaults.drain_clear_by,
-                defaults.drain_cleared_at_ms,
-            ),
-            |file| ExecutionNode::readiness_settings(self, file),
-        );
+        let Some(file) = ExecutionNode::settings(self).ok().flatten() else {
+            return NodeJobSettings {
+                drain_clear_by: DrainClearBy::PersonAtBox,
+                drain_cleared_at_ms: None,
+                ..defaults
+            };
+        };
+        let (readiness_every_secs, drain_clear_by, drain_cleared_at_ms) =
+            ExecutionNode::readiness_settings(self, &file);
         NodeJobSettings {
-            staging_limit_secs: file
-                .as_ref()
-                .map_or(defaults.staging_limit_secs, |file| file.staging_limit_secs),
-            receipt_keep_days: file.as_ref().map_or(defaults.receipt_keep_days, |file| {
-                u64::from(file.receipt_keep_days)
-            }),
+            staging_limit_secs: file.staging_limit_secs,
+            receipt_keep_days: u64::from(file.receipt_keep_days),
             readiness_every_secs,
             drain_clear_by,
             drain_cleared_at_ms,
