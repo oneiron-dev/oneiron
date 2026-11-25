@@ -38,6 +38,8 @@ crates/oneiron/src/authority/step_up/webauthn.rs sha256  # WebAuthn clientDataJS
 crates/oneiron/src/batch/secret_scan/shapes.rs sha256  # BIP-39 mnemonic checksum
 crates/oneiron/src/build_cache/reapi.rs sha256  # REAPI v2 CAS digest
 crates/oneiron/src/code_sandbox/egress/quic/crypto.rs sha256  # QUIC Initial keys: HMAC-SHA256 and HKDF-Expand-Label (RFC 9001)
+crates/oneiron/src/experiment_arm/admit.rs sha256  # an arm's contract pin: the plain SHA-256 of the contract text that the lane's own tools compute (design pass 32 r2, 3.3)
+crates/oneiron/src/gpu_line/cohort.rs sha256  # a period's cohort seed commit: the plain SHA-256 of the 32 seed bytes, which a reader checks against the revealed seed (design pass 32 r2, 4.4)
 crates/oneiron/src/code_sandbox/foreign.rs sha256  # foreign QuickJS component pin minted by components/code-run-quickjs/build.py
 crates/oneiron/src/dispatch_byoa/official_seats.rs sha256  # PKCE S256 for vendor OAuth logins (RFC 7636)
 crates/oneiron/src/ingest/meeting_audio/provenance.rs sha256  # pcm_sha256 that scripts/meeting-audio-native.py recomputes

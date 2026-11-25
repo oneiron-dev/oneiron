@@ -12,6 +12,7 @@
 //! or of a family that graduated, takes its position at the mint
 //! (`experiment_arm::assign_open_arms_in_txn`). A re-run keeps its
 //! predecessor's cohort and takes no position; a new idea takes none.
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -37,8 +38,9 @@ const BLOCK_ARRANGEMENTS: [[usize; 4]; 6] = [
     [1, 1, 0, 0],
 ];
 
-/// The commit a period record stores for its cohort seed: its sha256, lower
-/// hex.
+/// The commit a period record stores for its cohort seed: its plain sha256,
+/// lower hex, so a reader checks the seed `vault.gpu.lines.get` shows once
+/// the period ended with any SHA-256 tool.
 #[must_use]
 pub fn cohort_seed_commit(seed: &[u8; 32]) -> String {
     bytes_to_hex_lower(&Sha256::digest(seed))
@@ -60,14 +62,11 @@ pub fn cohort_rule(period: &GpuLinePeriod, track: Track, position: u32) -> Optio
         Track::NewIdea => return None,
     };
     let block = position / COHORT_BLOCK_ARMS;
-    let mut hasher = blake3::Hasher::new_keyed(seed);
-    hasher.update(b"oneiron.gpu_line.cohort_block:v1");
-    hasher.update(tag);
-    hasher.update(&block.to_le_bytes());
-    let digest = hasher.finalize();
-    let mut low = [0u8; 8];
-    low.copy_from_slice(&digest.as_bytes()[..8]);
-    let pick = (u64::from_le_bytes(low) % 6) as usize;
+    let digest = Fingerprint::of_parts(
+        purposes::gpu_line::COHORT_BLOCK,
+        &[seed.as_slice(), tag, &block.to_le_bytes()],
+    );
+    let pick = (u64::from_le_bytes(digest.prefix::<8>()) % 6) as usize;
     let arrangement = BLOCK_ARRANGEMENTS.get(pick)?;
     let entry = arrangement.get((position % COHORT_BLOCK_ARMS) as usize)?;
     period.tables.get(*entry).map(|table| table.rule)
