@@ -9,13 +9,15 @@
 //!
 //! Orders live on the issuer; the doors are `vault.jobs.order`, `vault.jobs.orders.get`,
 //! `.list`, `.cancel` and `.wait` ([`wait`]: in code mode it parks the run until the order's
-//! writer settles it), and the read `vault.machines.place`.
+//! writer settles it), the read `vault.machines.place`, and `vault.jobs.logs.tail` (an
+//! attempt's log, read on its machine: [`logs_tail`] says who may read it and where).
 
 pub mod after;
 pub mod blocker;
 pub mod decider;
 mod doors;
 pub mod fit;
+pub mod logs_tail;
 pub mod pass;
 pub mod place;
 pub mod rank;
@@ -35,6 +37,10 @@ pub use doors::{
 pub use fit::{
     DeviceFact, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact, fit,
     scope_allowed, scope_kind_name,
+};
+pub use logs_tail::{
+    LOGS_TAIL_WAIT_MAX_MS, LogsTail, LogsTailRequest, LogsTailStream, LogsTailTarget,
+    LogsTailTruncation, logs_tail_target_as,
 };
 pub use pass::{AttemptOutcome, AttemptToMake, OrderHost, PassReport, allowed_machines};
 pub use place::{PLACE_RULE, place};
@@ -66,6 +72,8 @@ pub const ORDERS_CANCEL_VERB: &str = "vault.jobs.orders.cancel";
 pub const ORDERS_WAIT_VERB: &str = "vault.jobs.orders.wait";
 /// `vault.machines.place`.
 pub const MACHINES_PLACE_VERB: &str = "vault.machines.place";
+/// `vault.jobs.logs.tail`.
+pub const LOGS_TAIL_VERB: &str = "vault.jobs.logs.tail";
 
 /// Takes the erased actor out of every order they made or cancelled (the side table's actor
 /// scrub). An order whose requester is erased has no authority left: the loop cancels it at its
