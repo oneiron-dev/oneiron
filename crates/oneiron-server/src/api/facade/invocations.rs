@@ -292,11 +292,17 @@ pub(crate) enum DoorClaim {
 /// A GPU line's read (`vault.gpu.lines.get`) answers only a caller whose
 /// Grant holds a role on the line when the read runs, for the same reason: a
 /// same-id retry runs the read again, role included.
+/// A family's seat (`vault.gpu.lines.families.admit`) answers the line too,
+/// and its door judges the caller's role on the stored line before its intent
+/// replay: a kept reply would answer a same-id retry after the owner took the
+/// role away, with only the verb Grant judged. A same-id retry runs the admit
+/// again, role first; its intent key then replays the seat already made and
+/// writes nothing.
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 10] = [
+const UNKEPT_REPLY_VERBS: [&str; 11] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -305,6 +311,7 @@ const UNKEPT_REPLY_VERBS: [&str; 10] = [
     oneiron::experiment_arm::ARMS_GET_VERB,
     oneiron::experiment_arm::ARMS_LIST_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
+    oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
 ];
