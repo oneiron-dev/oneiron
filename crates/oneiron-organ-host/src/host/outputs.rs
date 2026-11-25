@@ -125,6 +125,9 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
         asks,
         overcommit_bytes: grown.overcommit,
         room_wait_us: u64::try_from(grown.waited.as_micros()).unwrap_or(u64::MAX),
+        // A call another node of the owner's asked is signed by the serving
+        // node's mesh service, once the receipt is final.
+        signed_by: None,
     };
     Ok(OrganOutcome {
         body: proposal.body,
