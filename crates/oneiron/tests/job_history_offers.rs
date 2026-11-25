@@ -18,9 +18,10 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector, GpuJobEnd, GpuJobPermits,
-    GpuJobQuote, GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuJobState, GpuJobTerminal,
-    GpuOffer, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict, PriceShape,
+    GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector, GpuJobEnd,
+    GpuJobPermits, GpuJobQuote, GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuJobState,
+    GpuJobTerminal, GpuOffer, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
+    PriceShape,
 };
 use oneiron::job_dispatch::{BootMark, JobObservation};
 use oneiron::job_history::{
@@ -567,7 +568,10 @@ fn a_lost_vault_machine_chunk_shows_its_last_seen_run_time_as_lost() {
         attempt.lost_secs, 34,
         "the newest run time any receipt carried"
     );
-    assert_eq!(attempt.occupied_secs, None, "no machine measured a lost key");
+    assert_eq!(
+        attempt.occupied_secs, None,
+        "no machine measured a lost key"
+    );
     assert_eq!(attempt.billed_secs, Some(0));
     assert_eq!(attempt.meter.as_deref(), Some("unknown"));
     assert_eq!(attempt.ended_at_ms, Some(ENDED_AT));
