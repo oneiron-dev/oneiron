@@ -98,16 +98,20 @@ launch() {
   launch_file "$KEY" "$template" "$digest" "units/$t.sh" "$max" "$mem" "$dev" "$(boot_ns)" | as_engine tee "$C/launch.json" > /dev/null
 }
 
-# launch_file <key> <template> <digest> <entry> <maximum> <memory_mib> <device_id> <launch_boot_ns>: R3a's LaunchFile.
+# launch_file <key> <template> <digest> <entry> <maximum> <memory_mib> <device_id> <launch_boot_ns>: R3a's LaunchFile
+# on G1's general request: one exclusive device claim and its lease when <device_id> is given, none when it is empty.
 launch_file() {
   jq -n --arg key "$1" --arg template "$2" --arg digest "$3" --arg entry "$4" --argjson max "$5" --argjson mem "$6" \
     --arg dev "$7" --argjson at "$8" --arg boot "$(cat /proc/sys/kernel/random/boot_id)" '{
     key: $key,
     pin: { template: $template, template_digest: $digest, commit: ("0" * 40), contract_sha256: ("0" * 64),
            contract_path: "units/contract.json", entry: $entry, args: [],
-           request: { gpus: (if $dev == "" then 0 else 1 end), vram_mib: 0, memory_mib: $mem, disk_mib: 512, maximum_secs: $max },
+           request: { cpu_threads: 0, memory_mib: $mem, disk_mib: 512, maximum_secs: $max,
+                      devices: (if $dev == "" then [] else
+                        [{ kind: "gpu", count: 1, memory_mib: 0, features: [], sharing: "exclusive" }] end) },
            scope: "host", network: "none", outputs: [] },
-    device_id: $dev, maximum_secs: $max, boot_id: $boot, launch_boot_ns: $at }'
+    devices: (if $dev == "" then [] else [{ claim: 0, device_id: $dev, sharing: "exclusive" }] end),
+    host_memory_mib: $mem, maximum_secs: $max, boot_id: $boot, launch_boot_ns: $at }'
 }
 
 start() { as_engine systemctl start --no-block "$UNIT"; }
@@ -195,18 +199,25 @@ EOF
 a_job_is_ended_at_its_maximum_with_the_engine_and_the_issuer_stopped() {
   launch t18b qual "$MAXIMUM" 256 "" <<'EOF'
 trap '' TERM
+echo started > "$ONEIRON_JOB_OUT/started"
 bash -c 'trap "" TERM; while :; do sleep 1; done' &
 while :; do sleep 1; done
 EOF
   local at; at=$(jq -r .launch_boot_ns "$C/launch.json")
   start
   wait_ended $((MAXIMUM + 120)) || { result "$FUNCNAME" FAIL "no end record by the maximum + 120 s"; return; }
-  local end ran
-  end=$(ended .end_boot_ns); ran=$(( (end - at) / 1000000000 ))
-  if [ "$(ended .cutoff_fired)" = true ] && gone && [ "$ran" -le $((MAXIMUM + 2)) ] && [ "$ran" -ge $((MAXIMUM - 15)) ]; then
-    result "$FUNCNAME" PASS "maximum ${MAXIMUM} s: the cutoff fired, the TERM-ignoring tree was empty ${ran} s after the launch; no engine or issuer ran"
+  # Full precision (review r2 R2-15). The tree must be gone by the maximum; the end record is taken after the stop,
+  # so up to MEASURE_NS later. The cutoff stops it at the maximum less the stop grace and kills it at the maximum,
+  # 500 ms early, so it cannot be gone more than 2 s before the maximum either.
+  local end ran_ns max_ns=$((MAXIMUM * 1000000000)) MEASURE_NS=1000000000
+  end=$(ended .end_boot_ns); ran_ns=$((end - at))
+  local ran_ms=$((ran_ns / 1000000))
+  if [ ! -e "$P/out/started" ] || [ "$(ended .workload_started)" != true ]; then
+    result "$FUNCNAME" FAIL "the workload never started: $(ended .refusal)"
+  elif [ "$(ended .cutoff_fired)" = true ] && gone && [ "$ran_ns" -le $((max_ns + MEASURE_NS)) ] && [ "$ran_ns" -ge $((max_ns - 2000000000)) ]; then
+    result "$FUNCNAME" PASS "maximum ${MAXIMUM} s: the workload started (its own mark), the cutoff fired, and the TERM-ignoring tree was empty when the end record was taken ${ran_ms} ms after the launch; no engine or issuer ran"
   else
-    result "$FUNCNAME" FAIL "ran ${ran} s of ${MAXIMUM}; $(cat "$C/ended.json" | tr -d '\n')"
+    result "$FUNCNAME" FAIL "the end record was taken ${ran_ms} ms after the launch, maximum ${MAXIMUM} s; $(cat "$C/ended.json" | tr -d '\n')"
   fi
 }
 
@@ -368,7 +379,7 @@ a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unprov
 
 a_workload_cannot_write_or_replace_its_end_record() {
   launch t23b qual 120 256 "" <<EOF
-for path in "$STATE/control/\$(basename "\$(dirname "\$ONEIRON_JOB_OUT")")/ended.json" "$STATE/control/x" /run/oneiron-jobs/x /run/oneiron-job-x; do
+for path in "$STATE/control/\$(basename "\$(dirname "\$ONEIRON_JOB_OUT")")/ended.json" "$STATE/control/x" /run/oneiron-jobs/x /run/oneiron-job-x /run/oneiron-payloads/x; do
   { echo '{"key":"forged"}' > "\$path"; } 2> /dev/null && echo "WROTE \$path" || echo "refused \$path"
 done > "\$ONEIRON_JOB_OUT/results"
 exit 7
