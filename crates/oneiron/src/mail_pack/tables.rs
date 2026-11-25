@@ -90,6 +90,13 @@ crate::side_table::side_tables! {
     /// provider id.
     MAIL_PACK_OCCURRENCE_ROW: VaultMeta b"mail_pack:occurrence_row:v1:" Named
         [restore: content] [family: structure] [tier: canonical];
+    /// "Owners can export members' mail", off when absent (fix list row 15416): on, a
+    /// person-owned shared vault's whole-vault export carries members' personal mailboxes.
+    /// Key: ().
+    MAIL_PACK_OWNERS_EXPORT_MEMBER_MAIL: VaultMeta b"mail_pack:owners_export_member_mail:v1" Named
+        // Restore class: A restore never turns "Owners can export members' mail" on again once
+        // it was turned off (fix list row 15416).
+        [restore: live] [family: unclassified] [tier: canonical];
     /// A drafted Gmail, Microsoft 365 or IMAP reply's retained message (fix list row 17645): the
     /// exact RFC 5322 bytes its current revision sends, written once at draft and sealed under that
     /// revision's own erasable ConnectorResume key, after the revision (u64be). Key: id16(draft).
