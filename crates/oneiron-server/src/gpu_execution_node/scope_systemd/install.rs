@@ -519,7 +519,7 @@ mod tests {
         );
         // useradd's subordinate ranges sit far below the default range.
         assert_eq!(
-            first_overlap("lexi:100000:65536\n", IdFile::Subordinate, &range),
+            first_overlap("owen:100000:65536\n", IdFile::Subordinate, &range),
             None
         );
         assert!(first_overlap("big:1879000000:100000\n", IdFile::Subordinate, &range).is_some());
@@ -530,13 +530,13 @@ mod tests {
     fn an_account_in_the_job_device_group_is_found() {
         let accounts =
             "root:x:0:0::/root:/bin/bash\noneiron:x:970:971::/var/lib/oneiron:/bin/bash\n";
-        let groups = "oneiron-job-devices:x:960:\nvideo:x:44:lexi\n";
+        let groups = "oneiron-job-devices:x:960:\nvideo:x:44:owen\n";
         assert!(group_members(accounts, groups, 960).is_empty());
         assert!(is_local_group(groups, "oneiron-job-devices", 960));
         assert!(!is_local_group(groups, "oneiron-job-devices", 961));
         assert!(!is_local_group(groups, "devices", 960));
-        let listed = "oneiron-job-devices:x:960:lexi,\n";
-        assert_eq!(group_members(accounts, listed, 960), vec!["lexi"]);
+        let listed = "oneiron-job-devices:x:960:owen,\n";
+        assert_eq!(group_members(accounts, listed, 960), vec!["owen"]);
         // Another name of the same gid counts too.
         let alias = "oneiron-job-devices:x:960:\ncards:x:960:tool\n";
         assert_eq!(group_members(accounts, alias, 960), vec!["tool"]);
