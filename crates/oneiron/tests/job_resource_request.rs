@@ -2,8 +2,10 @@
 //! sections 2.1, 2.2 and 10): a run asks for threads, memory, disk and zero or
 //! more device claims; a device is matched by kind, features and memory,
 //! never by a vendor name; on unified memory the host request and the device
-//! claim are one pool; every holder of a device counts; and a launch scope
-//! reports each bound as kernel, supervised or none.
+//! claim are one pool, and a pool with no value in MiB is refused; every
+//! holder of a device counts; a device id that a report repeats is never
+//! leased; and a launch scope reports each bound as kernel, supervised or
+//! none.
 //!
 //! Run with: `cargo test --locked -p oneiron --all-features --test
 //! job_resource_request`.
@@ -235,6 +237,31 @@ fn on_unified_memory_the_host_request_and_the_device_claim_are_leased_as_their_s
     );
 }
 
+/// Review round 1 of #10431: the sum was saturated, so a request for
+/// `u64::MAX` MiB with a 1 MiB claim on a unified device was placed with
+/// `u64::MAX` MiB, one MiB short of what it asked.
+#[test]
+fn a_unified_pool_with_no_value_in_mib_is_refused_not_saturated() {
+    let unified = device(
+        "soc-gpu",
+        DeviceKind::Gpu,
+        DeviceMemory::Unified { mib: 65_536 },
+        &["metal"],
+    );
+    let mut whole_range = request(vec![claim(
+        DeviceKind::Gpu,
+        1,
+        &["metal"],
+        Sharing::Exclusive,
+    )]);
+    whole_range.memory_mib = u64::MAX;
+    assert_eq!(
+        whole_range.place_devices(&[free(unified)]),
+        Err(DevicePlacementError::HostMemoryOverflow { claim: 0 }),
+        "u64::MAX MiB plus 1 MiB is no amount a machine can lease",
+    );
+}
+
 #[test]
 fn an_exclusive_and_a_shared_claim_never_hold_one_device_together() {
     let mut sharing_gpu = dedicated_gpu("gpu-0", &["cuda"]);
@@ -330,6 +357,56 @@ fn a_claim_for_more_devices_than_the_machine_has_is_no_device() {
         request(vec![many]).place_devices(&[free(dedicated_gpu("gpu-0", &["cuda"]))]),
         Err(DevicePlacementError::NoDevice { claim: 0, .. }),
     ));
+}
+
+/// FIX G1-PLACEMENT-DUPLICATE-DEVICE-ID (review round 1 of #10431):
+/// placement matched report rows, not device ids, so two rows of one id were
+/// leased twice in one placement, and the free row of an id was leased while
+/// a key held the id on its other row.
+#[test]
+fn a_device_id_on_two_rows_of_a_report_is_never_leased() {
+    let mut two = gpu_claim(&["cuda"]);
+    two.count = 2;
+    let one_device_twice = [
+        free(dedicated_gpu("gpu-0", &["cuda"])),
+        free(dedicated_gpu("gpu-0", &["cuda"])),
+    ];
+    assert!(
+        matches!(
+            request(vec![two]).place_devices(&one_device_twice),
+            Err(DevicePlacementError::NoDevice { claim: 0, .. }),
+        ),
+        "one device under two rows is not two devices",
+    );
+
+    let held_and_free = [
+        held(dedicated_gpu("gpu-0", &["cuda"]), vec![Sharing::Exclusive]),
+        free(dedicated_gpu("gpu-0", &["cuda"])),
+    ];
+    assert!(
+        matches!(
+            request(vec![gpu_claim(&["cuda"])]).place_devices(&held_and_free),
+            Err(DevicePlacementError::NoDevice { claim: 0, .. }),
+        ),
+        "a key holds gpu-0 on one row: its other row is not a free device",
+    );
+}
+
+#[test]
+fn a_repeated_id_is_skipped_and_a_device_whose_id_is_its_own_is_leased() {
+    let placement = request(vec![gpu_claim(&["cuda"])])
+        .place_devices(&[
+            free(dedicated_gpu("gpu-0", &["cuda"])),
+            free(dedicated_gpu("gpu-0", &["cuda"])),
+            free(dedicated_gpu("gpu-1", &["cuda"])),
+        ])
+        .expect("gpu-1 takes the claim");
+    let leased: Vec<&str> = placement
+        .devices
+        .iter()
+        .map(|lease| lease.device_id.as_str())
+        .collect();
+    assert_eq!(leased, vec!["gpu-1"]);
 }
 
 #[test]

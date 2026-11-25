@@ -100,6 +100,7 @@ fn admit_connector(vault: &Vault, actor: EntityId) -> (EntityId, EntityId) {
         read_only: true,
         idempotent: true,
         price: None,
+        http: None,
     }];
     let prior = vault
         .store_connector_slate(

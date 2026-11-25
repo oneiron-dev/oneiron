@@ -480,6 +480,7 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
         SelfCall::MemorySearch(_)
         | SelfCall::TasksWait(_)
         | SelfCall::TasksWaitSet(_)
+        | SelfCall::JobsOrdersWait(_)
         | SelfCall::InferenceDefaultsRead
         | SelfCall::Context(_)
         // Advice and a pattern load start no work and write no memory.

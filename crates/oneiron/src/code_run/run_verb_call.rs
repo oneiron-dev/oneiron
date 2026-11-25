@@ -229,6 +229,8 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
         RunVerb::ConnectorAnswer => SelfCall::ConnectorAnswer(decode(input)?),
         // FIX 4480: the run's agent asks to change a world's settings.
         RunVerb::VaultWorldsPrivacySet => SelfCall::WorldPrivacySet(decode(input)?),
+        // Pass 34 row Q1: a wait on one work order, parked until it is met.
+        RunVerb::VaultJobsOrdersWait => SelfCall::JobsOrdersWait(decode(input)?),
         // FIX 5316: the run's agent binds a TASK to a saved workflow's run;
         // the closed input names no parent, actor, payer or scope.
         RunVerb::SelfWorkflowsDispatchBound => SelfCall::WorkflowDispatch(Box::new(decode(input)?)),

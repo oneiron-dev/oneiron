@@ -18,6 +18,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth_bound.rs` | src | s | 1 enum · 1 trait · 1 const · 2 crate-vis | AuthBoundError, AuthBoundSecretStore | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) |
 | `src/dpapi_names.rs` | src | s | 4 crate-vis | — | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… |
 | `src/file.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | LocalFileKeystore | Unix: one 0600 file per slot in a 0700 directory of its own |
+| `src/key_dir.rs` | src | m | 7 crate-vis | — | The key directory of the two tiers that keep one file per slot: the Unix file tier (`LocalFileKeystore`… |
+| `src/key_dir/tests.rs` | test | m | — | — | — |
 | `src/lib.rs` | src | m | 1 struct · 5 enum · 1 trait · 9 fn · 1 type · 1 const · 12 re-export | DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, KitPieceSlot, SlotKind | This-device-only key slots for one install |
 | `src/linux_tpm.rs` | src | m | 1 struct · 2 fn | LinuxTpmKeystore | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) |
 | `src/linux_tpm/command_client.rs` | src | m | 9 crate-vis | — | The TPM tier's own TPM 2.0 command client: one connection to the TPM, the commands the tier sends over it… |
@@ -35,3 +37,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/linux_tpm_auth_bound.rs` | test | L | — | — | Row OCS-OWNER-PIN, the TPM tier: the device PIN key rests in the chip under an auth value |
 | `tests/sealed_bytes.rs` | test | m | — | — | Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each name keeps its own value, a put… |
 | `tests/user_presence.rs` | test | L | — | — | Row OWNER-CONFIRM-SHEET, the keystore's presence layer: one confirm opens a 15-minute window that either… |
+| `tests/windows_tier_key_dir.rs` | test | s | — | — | The Windows DPAPI tier's key directory: a directory inside a vault directory is refused before it is made… |
