@@ -86,6 +86,15 @@ DEFAULTS: dict[str, Any] = {
         "rack_client_keys_dir": "",
         "owner_devices": [],
         "sshd_units": ["sshd.service"],
+        # Each rack machine's connection as this box's sshd sees it: `addr=<address>`, then
+        # host=, laddr=, lport= or rdomain= when sshd_config matches on them. The readback
+        # asks `sshd -T -C user=<account>,<connection>` for root and every login account.
+        "rack_connections": [],
+        "sshd_program": "sshd",
+        # AuthorizedKeysCommand lines (exactly as `sshd -T` prints them) whose answer the readback
+        # reads by running the command itself, as root, for each account (%u %U %h %% only);
+        # sshd taking keys from any other command is no proof. The default is Arch's userdb drop-in.
+        "authorized_keys_commands": ["/usr/bin/userdbctl ssh-authorized-keys %u"],
         "freeze_unix": 0,
         "journal_since_unix": 0,
     },

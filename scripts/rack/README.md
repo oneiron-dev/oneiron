@@ -67,8 +67,22 @@ process and root's authorized_keys need the Orchestrator's privileged run):
   account, or one the password database does not know, fails. The sshd journal must reach back to the freeze:
   `keys.journal_since_unix` later than `keys.freeze_unix` fails, and so does an sshd journal (`keys.sshd_units`) with
   no record from before the freeze. Every running sshd listener must run in one of `keys.sshd_units` (by its
-  cgroup): a listener in another unit, none found, or a process table not read in full fails. The readback takes
-  sshd's accepts as logged at its default LogLevel (INFO); `sshd -T` is not read.
+  cgroup): a listener in another unit, none found, or a process table not read in full fails. sshd must run as the
+  readback reads it: with each listener's own `-f` (absolute) and `-o` options, for root and every login account,
+  from every connection of `keys.rack_connections` (each rack machine's `addr=`, with `host=`, `laddr=`, `lport=` or
+  `rdomain=` when sshd_config matches on them, since `sshd -T -C` applies only the Match blocks whose fields it is
+  given), `sshd -T` must log an accepted key (LogLevel INFO or more), read no AuthorizedKeysFile outside
+  `keys.authorized_keys_file_patterns`, take keys from no AuthorizedKeysCommand but one of
+  `keys.authorized_keys_commands` run as root (default: Arch's `/usr/bin/userdbctl ssh-authorized-keys %u`; the
+  readback runs it for each account as sshd runs it, only when the program and its directories are root's alone,
+  from / with PATH and root's USER, LOGNAME and HOME, and counts its keys as authorized), and trust no
+  TrustedUserCAKeys. Read after those settings, the files `sshd -T -dd` names, their directories, the Include
+  directories and every symbolic link on the way must not have changed since the listener started (a reload keeps
+  the start: restart sshd), and the listener must have started before the freeze. The program run is
+  `keys.sshd_program`, never a path read from a process; a reason names a listener by its pid. A listener title
+  with options (it hides where arguments end), -q, -e, -E, -d, a relative -f, an unread configuration file, an
+  authorized_keys path that is not a regular file, or an sshd that does not print its settings (it needs root)
+  fails.
 
 Canaries through Oneiron alone, each answering for the box it runs on:
 

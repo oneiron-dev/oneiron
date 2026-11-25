@@ -1,7 +1,7 @@
 """A stand-in box for the rack harness tests (scripts/rack): stub programs, a fake /proc, a config.
 
 Each read-only program the harness calls (findmnt, ss, systemctl, journalctl,
-getent, oneiron) is a small shell stub first on PATH. It prints the file
+getent, sshd, oneiron) is a small shell stub first on PATH. It prints the file
 `out/<program>.<key>` and exits with `out/<program>.<key>.rc` when that file
 exists, where the key is picked from its arguments; it writes the names of
 its environment to `out/<program>.<key>.env` and its arguments, one a line,
@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +29,10 @@ ENTRY = ROOT / "scripts/rack/workflow_check.py"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 HOST = "testhost"
+# The key readback's freeze: two hours from now, so a listener of the fake /proc (it starts one
+# hour from now) started after every file a test writes and before the freeze. Tests name times
+# relative to it.
+FREEZE = int(time.time()) + 7200
 
 _STUBS = {
     "findmnt": """case " $* " in
@@ -46,6 +51,67 @@ esac""",
 esac""",
     "getent": 'key="$1-$2"',
 }
+
+# A stand-in sshd. `sshd -T [-f <dir>/<file>] ... -C user=<name>,...` prints on stdout the most specific
+# of out/sshd.T-<file>-<name>, T-<file>, T-<name> and T that exists; `sshd -T -dd ...` prints on stderr
+# the same pick of out/sshd.files*, the configuration files sshd says it read. Each exits with the
+# pick's .rc file. Every call's arguments are appended, one call a line, to out/sshd.calls. When
+# out/sshd.edit-on-settings names a path, each settings call (`-C`) dates that entry (not what it
+# links to) a day ahead: a change to the configuration while the readback probes it.
+_SSHD_STUB = """import pathlib, sys
+out = pathlib.Path(@OUT@)
+args = sys.argv[1:]
+with open(out / "sshd.calls", "a") as log:
+    log.write(" ".join(args) + "\\n")
+cfg = spec = ""
+for prev, arg in zip(args, args[1:]):
+    if prev == "-f":
+        cfg = pathlib.Path(arg).name
+    if prev == "-C":
+        spec = arg
+user = spec[len("user="):].split(",", 1)[0] if spec.startswith("user=") else ""
+kind = "files" if "-dd" in args else "T"
+edit = out / "sshd.edit-on-settings"
+if kind == "T" and edit.exists():
+    import os, time
+    ahead = time.time() + 86400
+    os.utime(edit.read_text().strip(), (ahead, ahead), follow_symlinks=False)
+key = kind
+for k in (kind + "-" + user, kind + "-" + cfg, kind + "-" + cfg + "-" + user):
+    if (out / ("sshd." + k)).exists():
+        key = k
+picked = out / ("sshd." + key)
+text = picked.read_text() if picked.exists() else ""
+(sys.stderr if kind == "files" else sys.stdout).write(text)
+rc = out / ("sshd." + key + ".rc")
+sys.exit(int(rc.read_text()) if rc.exists() else 0)
+"""
+
+
+def sshd_settings(**changed: str) -> str:
+    """`sshd -T` output for one login: sshd's defaults, with `changed` keywords replaced."""
+    settings = {
+        "loglevel": "INFO",
+        "authorizedkeysfile": ".ssh/authorized_keys .ssh/authorized_keys2",
+        "authorizedkeyscommand": "none",
+        "authorizedkeyscommanduser": "none",
+        "trustedusercakeys": "none",
+        **changed,
+    }
+    return "port 22\n" + "".join(f"{name} {value}\n" for name, value in settings.items()) + "pubkeyauthentication yes\n"
+
+
+def sshd_files(etc: Path, *extra: str) -> str:
+    """`sshd -T -dd` stderr naming the files read: etc/sshd_config, its Include and etc/sshd_config.d/*.conf."""
+    lines = [
+        "debug1: sshd version OpenSSH_10.6, OpenSSL 3.6.5",
+        f"debug2: load_server_config: filename {etc}/sshd_config",
+        f"debug2: load_server_config: done config len = 29",
+        f"debug2: {etc}/sshd_config line 1: new include {etc}/sshd_config.d/*.conf",
+    ]
+    lines += [f"debug2: load_server_config: filename {path}" for path in sorted((etc / "sshd_config.d").glob("*.conf"))]
+    return "\n".join([*lines, *extra]) + "\n"
+
 
 TCP_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
 UNIX_HEADER = "Num       RefCount Protocol Flags    Type St Inode Path"
@@ -111,11 +177,24 @@ class Box:
             directory.mkdir(parents=True, exist_ok=True)
         for program, pick in _STUBS.items():
             self.stub(program, pick)
+        sshd = self.bin / "sshd"
+        sshd.write_text(f"#!{sys.executable}\n" + _SSHD_STUB.replace("@OUT@", repr(str(self.out))))
+        sshd.chmod(0o755)
+        # sshd as the readback reads it, for every login from every rack connection.
+        self.output("sshd", "T", sshd_settings())
+        # The configuration files sshd reads: sshd_config, which Includes sshd_config.d/*.conf.
+        self.sshd_etc = tmp / "etc-sshd"
+        (self.sshd_etc / "sshd_config.d").mkdir(parents=True)
+        (self.sshd_etc / "sshd_config").write_text("Include sshd_config.d/*.conf\n")
+        (self.sshd_etc / "sshd_config.d" / "10-rack.conf").write_text("LogLevel INFO\n")
+        self.output("sshd", "files", sshd_files(self.sshd_etc))
         self.output("findmnt", "fstype", "ext4\n")
-        # The sshd journal reaches back before the fixtures' freeze (1000).
-        self.output("journalctl", "coverage", "500.000000 box sshd[600]: Server listening on :: port 22.\n")
-        # The fake /proc is a proc mount that hides no process.
+        # The sshd journal reaches back before the fixtures' freeze.
+        self.output("journalctl", "coverage", f"{FREEZE - 500}.000000 box sshd[600]: Server listening on :: port 22.\n")
+        # The fake /proc is a proc mount that hides no process; every process in it started an hour
+        # from now (boot time plus a starttime of 0), after any file a test writes.
         self.proc_mount("rw")
+        self.booted(3600)
         # sshd's listener, in the unit its journal is read from.
         self.process(600, ["sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"], name="sshd", cgroup="0::/system.slice/sshd.service\n")
         # The password database: root, and owen, the rack's login account here.
@@ -142,7 +221,8 @@ class Box:
                 "client_key_globs": [str(self.home / ".ssh/*.pub")],
                 "rack_client_keys_dir": str(self.rack_keys),
                 "owner_devices": ["mac"],
-                "freeze_unix": 1000,
+                "rack_connections": ["addr=192.0.2.40,host=kel"],
+                "freeze_unix": FREEZE,
             },
         }
 
@@ -205,6 +285,10 @@ class Box:
             f"25 22 0:21 / {point} rw,nosuid,nodev,noexec,relatime shared:12 - proc proc {super_options}\n"
         )
 
+    def booted(self, from_now_secs: int) -> None:
+        """The fake /proc/stat's boot time, `from_now_secs` from now: each process starts then."""
+        (self.proc / "stat").write_text(f"cpu  0 0 0 0\nbtime {int(time.time()) + from_now_secs}\nprocesses 1\n")
+
     def account(self, name: str, uid: int, home: Path) -> None:
         """A password database entry `getent passwd <name>` prints."""
         self.output("getent", f"passwd-{name}", f"{name}:x:{uid}:{uid}::{home}:/bin/sh\n")
@@ -246,6 +330,8 @@ class Box:
         entry.mkdir()
         (entry / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
         (entry / "status").write_text(f"Name:\t{name or Path(argv[0]).name}\nPPid:\t{ppid}\n")
+        # /proc/<pid>/stat: starttime (field 22) is 0 ticks after boot.
+        (entry / "stat").write_text(f"{pid} ({name or Path(argv[0]).name}) S {ppid} " + "0 " * 17 + "0 0 0\n")
         (entry / "cgroup").write_text(cgroup)
         net = entry / "net"
         net.mkdir()
