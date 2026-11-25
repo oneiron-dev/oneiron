@@ -301,6 +301,18 @@ impl KeyTable {
         self.keys.values().map(NodeKey::booked_disk_mib).sum()
     }
 
+    /// The host memory the launched keys hold now, in MiB: each from its launch commit until its
+    /// release check passes (row P0's memory room).
+    #[must_use]
+    pub fn held_host_memory_mib(&self) -> u64 {
+        self.keys
+            .values()
+            .filter(|key| key.holds_device())
+            .filter_map(|key| key.launch.as_ref())
+            .map(|launch| launch.host_memory_mib)
+            .sum()
+    }
+
     /// Applies one record, checking it against the rules first.
     ///
     /// # Errors

@@ -36,8 +36,10 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::authority::PeerMachine;
 use oneiron::job_workload::DevicePlacement;
+use oneiron::machine_policy::MachinePolicy;
 use oneiron::{EntityId, Vault};
 
+use super::machine_policy;
 use super::node_settings::{
     EXECUTION_NODE_FILE_DEFAULT, EXECUTION_NODE_FILE_ENV, ExecutionNodeSettings,
     STAGING_LIMIT_SECS_DEFAULT,
@@ -94,7 +96,9 @@ pub fn marker_beside(file: &Path, suffix: &str) -> PathBuf {
 pub struct NodeControls {
     /// The file enables the node and no `disable` at the box stands.
     pub enabled: bool,
-    /// Why the node takes no new work while paused at the box.
+    /// Why the node takes no new work while paused: at the box, or by the owner's machine
+    /// policy (row P0: paused or draining, outside the machine's hours, not on mains power, or
+    /// rows that do not read).
     pub paused: Option<String>,
     /// Why the node takes no new work until a person clears its drain.
     pub drained: Option<String>,
@@ -127,6 +131,9 @@ pub struct NodeSnapshot {
     /// or validate.
     pub settings: Result<Option<ExecutionNodeSettings>, String>,
     pub controls: NodeControls,
+    /// The owner's machine policy (row P0), when the file reads, accepts it and the rows read:
+    /// the stricter of it and the file applies. `None`: the file alone rules.
+    pub policy: Option<MachinePolicy>,
 }
 
 impl NodeSnapshot {
@@ -339,13 +346,52 @@ impl ExecutionNode {
             Err(error) => Some(format!("drain_unreadable: {error}")),
         };
         let file_enabled = matches!(&settings, Ok(Some(settings)) if settings.enabled);
+        let (policy, owner_paused) = match &settings {
+            Ok(Some(settings)) => match self.owner_policy(settings) {
+                Ok(policy) => {
+                    let why = policy.as_ref().and_then(|policy| {
+                        machine_policy::work_refusal(
+                            policy,
+                            wall_ms(),
+                            machine_policy::on_mains_power(),
+                        )
+                    });
+                    (policy, why)
+                }
+                Err(why) => (None, Some(why)),
+            },
+            Ok(None) | Err(_) => (None, None),
+        };
         let controls = NodeControls {
             enabled: file_enabled && disabled.is_none(),
-            paused: paused.map(|line| line.unwrap_or_else(|| "paused".to_owned())),
+            paused: paused
+                .map(|line| line.unwrap_or_else(|| "paused".to_owned()))
+                .or(owner_paused),
             drained,
             stop_requested: disabled.flatten().as_deref() == Some(DISABLED_STOP_LINE),
         };
-        NodeSnapshot { settings, controls }
+        NodeSnapshot {
+            settings,
+            controls,
+            policy,
+        }
+    }
+
+    /// The owner's machine policy for this node now (row P0), read from the node's own vault for
+    /// the devices the box offers and every template the file holds: `None` when the file does
+    /// not accept it or the machine has no MACHINE id yet. Every read of the owner's rows goes
+    /// through here.
+    ///
+    /// # Errors
+    ///
+    /// `owner_policy_unreadable` and why the rows do not read: the node then takes no new work.
+    fn owner_policy(
+        &self,
+        settings: &ExecutionNodeSettings,
+    ) -> Result<Option<MachinePolicy>, String> {
+        let devices: Vec<String> = self.shared.slots.offer().offered.iter().cloned().collect();
+        machine_policy::owner_policy(&self.shared.vault, self.own_machine(), settings, &devices)
+            .map_err(|why| format!("owner_policy_unreadable: {why}"))
     }
 
     /// Whether the node's file enables it now: the mesh listener serves the
@@ -482,7 +528,13 @@ impl ExecutionNode {
     /// The refusal reason, for the key's end.
     pub fn admit_pin(&self, pin: &WorkloadPin) -> Result<(), String> {
         match self.settings() {
-            Ok(Some(settings)) => settings.admit_pin(pin),
+            Ok(Some(settings)) => {
+                settings.admit_pin(pin)?;
+                match self.owner_policy(&settings)? {
+                    Some(policy) => machine_policy::admit_pin(&policy, pin),
+                    None => Ok(()),
+                }
+            }
             Ok(None) => Err("node_disabled".to_owned()),
             Err(why) => Err(format!("node_settings_unreadable: {why}")),
         }
@@ -491,7 +543,10 @@ impl ExecutionNode {
     /// The launch commit's fit of a pin's placement on this node's devices
     /// (pass 34, section 2.1, the sum rule): the host memory the placement
     /// leases, the request's own and each leased unified device's claim
-    /// together, is within the template's memory ceiling.
+    /// together, is within the template's memory ceiling. Then both layers
+    /// (row P0): every placed device is one the owner offers, the memory with
+    /// `held_mib` that the node's launched keys hold fits the memory work may
+    /// hold, and the run's threads fit the threads one run may use.
     ///
     /// # Errors
     ///
@@ -500,9 +555,24 @@ impl ExecutionNode {
         &self,
         pin: &WorkloadPin,
         placement: &DevicePlacement,
+        held_mib: u64,
     ) -> Result<(), String> {
         match self.settings() {
-            Ok(Some(settings)) => settings.admit_placement(pin, placement),
+            Ok(Some(settings)) => {
+                settings.admit_placement(pin, placement)?;
+                let policy = self.owner_policy(&settings)?;
+                let total_mib =
+                    oneiron::host_memory::memory_bytes().map_or(u64::MAX, |bytes| bytes >> 20);
+                let cores = u32::try_from(crate::machine::cores()).unwrap_or(u32::MAX);
+                machine_policy::admit_placement(
+                    &settings,
+                    policy.as_ref(),
+                    pin,
+                    placement,
+                    held_mib,
+                    (total_mib, cores),
+                )
+            }
             Ok(None) => Err("node_disabled".to_owned()),
             Err(why) => Err(format!("node_settings_unreadable: {why}")),
         }
@@ -530,9 +600,13 @@ impl ExecutionNode {
         };
         let free = disk_free_bytes(&settings.work_dir)
             .map_err(|error| format!("disk_unreadable: {error}"))?;
+        let policy = self.owner_policy(&settings)?;
         let needed = mib_bytes(booked_mib)
             .saturating_add(mib_bytes(request_mib))
-            .saturating_add(settings.disk_reserve_bytes());
+            .saturating_add(machine_policy::disk_reserve_bytes(
+                &settings,
+                policy.as_ref(),
+            ));
         if free < needed {
             return Err("disk_full".to_owned());
         }
@@ -582,14 +656,24 @@ impl ExecutionNode {
     pub fn node_answer_from(&self, snapshot: &NodeSnapshot) -> NodeAnswer {
         let keys = self.keys();
         let scopes = keys.map(|keys| keys.scopes());
+        let policy = snapshot.policy.as_ref();
         let (templates, disk_free_bytes, disk_reserve_bytes) = match snapshot.settings() {
             Some(settings) => (
-                settings.template_offers().unwrap_or_else(|why| {
-                    tracing::warn!(%why, "a template of the execution node does not encode");
-                    Vec::new()
-                }),
+                settings
+                    .template_offers()
+                    .unwrap_or_else(|why| {
+                        tracing::warn!(%why, "a template of the execution node does not encode");
+                        Vec::new()
+                    })
+                    .into_iter()
+                    .map(|mut offer| {
+                        offer.network =
+                            machine_policy::offered_network(policy, &offer.name, &offer.network);
+                        offer
+                    })
+                    .collect(),
                 disk_free_bytes(&settings.work_dir).unwrap_or(0),
-                settings.disk_reserve_bytes(),
+                machine_policy::disk_reserve_bytes(settings, policy),
             ),
             None => (Vec::new(), 0, 0),
         };
@@ -650,12 +734,16 @@ impl ExecutionNode {
             .slots
             .availability(now_ms)
             .map_err(|error| error.to_string())?;
+        let policy = snapshot.policy.as_ref();
+        availability
+            .devices
+            .retain(|device| machine_policy::device_offered(policy, &device.device.device_id));
         availability.disk = snapshot.settings().and_then(|settings| {
             disk_free_bytes(&settings.work_dir)
                 .ok()
                 .map(|free_bytes| GpuDiskReading {
                     free_bytes,
-                    reserve_bytes: settings.disk_reserve_bytes(),
+                    reserve_bytes: machine_policy::disk_reserve_bytes(settings, policy),
                     claimed_bytes: self.booked_disk_bytes(),
                 })
         });
@@ -752,6 +840,15 @@ fn read_marker(path: &Path) -> Option<Option<String>> {
 /// `mib` MiB in bytes.
 fn mib_bytes(mib: u64) -> u64 {
     mib.saturating_mul(1 << 20)
+}
+
+/// The wall clock, in Unix milliseconds: the owner's hours are hours of the week.
+fn wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// The bytes an unprivileged writer may still write on the filesystem that
