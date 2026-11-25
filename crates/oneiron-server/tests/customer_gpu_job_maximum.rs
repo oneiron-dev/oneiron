@@ -52,15 +52,15 @@ use oneiron::authority::{
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
-    GpuResourceStatus, GpuTermination,
+    GpuConnectorError, GpuEndReason, GpuJob, GpuJobConnector, GpuJobSignal, GpuJobSpec,
+    GpuJobState, GpuResourceRef, GpuResourceStatus, GpuTermination,
 };
 use oneiron::llm::run_admission::CheckpointRef;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::test_doors::gpu_backend::{
-    gpu_jobs_section, grant_gpu_allocation, register_gpu_backend, step_gpu_jobs,
-    unregister_gpu_backend,
+    gpu_job_worker_starts, gpu_jobs_section, grant_gpu_allocation, register_gpu_backend,
+    step_gpu_jobs, unregister_gpu_backend,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
@@ -907,6 +907,257 @@ fn a_stopped_job_cancels_with_no_backend() {
             fixture.gpu.state().calls.len(),
             calls,
             "no provider was called"
+        );
+    });
+}
+
+const NO_OFFER: &str = "default_maximum_secs = 3600\nstep_secs = 30\n";
+
+fn server_without_offers(vault: Arc<Vault>) -> Arc<SyncServer> {
+    Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some("customer-gpu-job-maximum".into()),
+                gpu_jobs: gpu_jobs_section(NO_OFFER).expect("[gpu_jobs] without offers"),
+                ..Default::default()
+            },
+        )
+        .expect("create server without offers"),
+    )
+}
+
+fn restart_without_offers(fixture: &Fixture) -> (Arc<SyncServer>, Router) {
+    let server = server_without_offers(Arc::clone(&fixture.vault));
+    register_gpu_backend(
+        &server,
+        "fake",
+        Arc::clone(&fixture.gpu) as Arc<dyn GpuJobConnector>,
+    );
+    let app = build_app(Arc::clone(&server));
+    (server, app)
+}
+
+async fn as_owner_on(
+    fixture: &Fixture,
+    app: &Router,
+    verb: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let request = Request::post(format!("/v1/core/facade/{verb}"))
+        .header("authorization", format!("Bearer {}", fixture.owner_token))
+        .header("x-oneiron-binding", owner_binding(fixture))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("facade request");
+    let response = app.clone().oneshot(request).await.expect("facade response");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("facade response body");
+    let body = serde_json::from_slice(&bytes).expect("facade response JSON");
+    (status, body)
+}
+
+async fn start_owner_gpu_job(fixture: &Fixture) -> EntityId {
+    let quote = owner_quote(fixture, "h100-test", None).await;
+    let (status, started) = as_owner(
+        fixture,
+        "vault.gpu.jobs.start",
+        json!({"quote": quote, "resume": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owner start: {started}");
+    assert_eq!(started["state"].as_str(), Some("running"), "{started}");
+    EntityId::from_hex(started["job"].as_str().expect("job id")).expect("hex job id")
+}
+
+fn gpu_job_row(fixture: &Fixture, job: &EntityId) -> GpuJob {
+    fixture
+        .vault
+        .gpu_job(job)
+        .expect("read GPU job")
+        .expect("GPU job row")
+}
+
+fn step_gpu_job_on(server: &SyncServer) {
+    for (stepped, outcome) in step_gpu_jobs(server) {
+        assert!(outcome.is_ok(), "step of {}: {outcome:?}", stepped.to_hex());
+    }
+}
+
+fn step_gpu_job_to_settle(
+    fixture: &Fixture,
+    server: &SyncServer,
+    job: &EntityId,
+    max_passes: usize,
+) -> GpuJob {
+    let mut row = gpu_job_row(fixture, job);
+    for _ in 0..max_passes {
+        if !row.state.is_live() {
+            break;
+        }
+        step_gpu_job_on(server);
+        row = gpu_job_row(fixture, job);
+    }
+    row
+}
+
+fn report_gpu_exit(gpu: &FakeGpu, used_secs: u64) {
+    let mut state = gpu.state();
+    state.status = Some(GpuResourceStatus::Exited { used_secs });
+    state.termination = Some(GpuTermination::Confirmed {
+        billed_secs: used_secs,
+    });
+}
+
+fn stop_at_maximum_after_first_checkpoint(
+    fixture: &Fixture,
+    server: &SyncServer,
+    job: &EntityId,
+) -> GpuJob {
+    for (used, checkpoint) in [(80, None), (95, None), (97, Some("ck-1"))] {
+        fixture.gpu.report(used, checkpoint);
+        step_gpu_job_on(server);
+    }
+    fixture.gpu.state().termination = Some(GpuTermination::Confirmed { billed_secs: 100 });
+    fixture.gpu.report(100, Some("ck-1"));
+    let stopped = step_gpu_job_to_settle(fixture, server, job, 3);
+    assert_eq!(stopped.state, GpuJobState::Stopped);
+    assert!(
+        stopped.stop.is_some(),
+        "the stop at the maximum is recorded"
+    );
+    stopped
+}
+
+#[test]
+fn a_job_steps_to_its_settle_after_its_offer_is_withdrawn() {
+    run_on_engine_stack("gpu-job-withdrawn-exit", || async {
+        let fixture = setup(SECTION);
+        let job = start_owner_gpu_job(&fixture).await;
+        step_at(&fixture, &job.to_hex(), 10, None).await;
+        assert!(!gpu_job_row(&fixture, &job).chunks[0].admission_lost);
+        let (restarted, _) = restart_without_offers(&fixture);
+        let terminates_before_exit = fixture.gpu.called("terminate");
+
+        fixture.gpu.report(20, None);
+        step_gpu_job_on(&restarted);
+        let running = gpu_job_row(&fixture, &job);
+        assert_eq!(running.state, GpuJobState::Running);
+        assert!(
+            running.chunks[0].admission_lost,
+            "no offer binds a new permit"
+        );
+
+        report_gpu_exit(&fixture.gpu, 20);
+        let ended = step_gpu_job_to_settle(&fixture, &restarted, &job, 3);
+        assert_eq!(
+            ended.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Exited
+            }
+        );
+        assert_eq!(ended.chunks[0].billed_secs, Some(20));
+        assert!(fixture.gpu.called("terminate") > terminates_before_exit);
+    });
+}
+
+#[test]
+fn a_job_with_its_offer_withdrawn_stops_at_its_maximum_with_no_resume_quote() {
+    run_on_engine_stack("gpu-job-withdrawn-maximum", || async {
+        {
+            let fixture = setup(SECTION);
+            let job = start_owner_gpu_job(&fixture).await;
+            step_at(&fixture, &job.to_hex(), 50, None).await;
+            let stopped = stop_at_maximum_after_first_checkpoint(&fixture, &fixture.server, &job);
+            assert!(
+                stopped.resume_quote.is_some(),
+                "the posted offer quotes a resume"
+            );
+        }
+
+        let fixture = setup(SECTION);
+        let job = start_owner_gpu_job(&fixture).await;
+        step_at(&fixture, &job.to_hex(), 50, None).await;
+        let (restarted, _) = restart_without_offers(&fixture);
+        let stopped = stop_at_maximum_after_first_checkpoint(&fixture, &restarted, &job);
+        assert!(
+            stopped.resume_quote.is_none(),
+            "the withdrawn offer quotes no resume"
+        );
+    });
+}
+
+#[test]
+fn a_cancel_reaches_a_live_job_whose_offer_is_withdrawn() {
+    run_on_engine_stack("gpu-job-withdrawn-cancel", || async {
+        let fixture = setup(SECTION);
+        let job = start_owner_gpu_job(&fixture).await;
+        let job_hex = job.to_hex();
+        step_at(&fixture, &job_hex, 10, None).await;
+        let (restarted, app) = restart_without_offers(&fixture);
+        let terminates_before_cancel = fixture.gpu.called("terminate");
+        fixture.gpu.state().termination = Some(GpuTermination::Confirmed { billed_secs: 10 });
+
+        let (status, body) = as_owner_on(
+            &fixture,
+            &app,
+            "vault.gpu.jobs.cancel",
+            json!({"job": job_hex}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner cancel after withdrawal: {body}"
+        );
+        assert!(fixture.gpu.called("terminate") > terminates_before_cancel);
+
+        let ended = step_gpu_job_to_settle(&fixture, &restarted, &job, 2);
+        assert_eq!(
+            ended.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Cancelled
+            }
+        );
+    });
+}
+
+#[test]
+fn the_worker_starts_while_a_job_is_live_with_no_offer_posted() {
+    run_on_engine_stack("gpu-job-withdrawn-worker", || async {
+        let fixture = setup(SECTION);
+        {
+            let dir = tempfile::tempdir().expect("empty vault directory");
+            let vault =
+                Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open empty vault"));
+            vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+            let empty = server_without_offers(vault);
+            assert!(!gpu_job_worker_starts(&empty), "no offer or work");
+        }
+
+        let job = start_owner_gpu_job(&fixture).await;
+        step_at(&fixture, &job.to_hex(), 10, None).await;
+        let (restarted, _) = restart_without_offers(&fixture);
+        // Leave the status running for the start probe, which may step once.
+        assert!(
+            gpu_job_worker_starts(&restarted),
+            "a live job needs the worker"
+        );
+
+        report_gpu_exit(&fixture.gpu, 20);
+        let ended = step_gpu_job_to_settle(&fixture, &restarted, &job, 3);
+        assert_eq!(
+            ended.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Exited
+            }
+        );
+        let (settled, _) = restart_without_offers(&fixture);
+        assert!(
+            !gpu_job_worker_starts(&settled),
+            "the ended job no longer needs the worker"
         );
     });
 }
