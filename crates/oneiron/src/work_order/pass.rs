@@ -405,9 +405,7 @@ impl Vault {
                 blocker: Blocker::RetryNotBefore { ms: at_ms },
             }]));
         }
-        if let Some(held) = self.order_conditions_in_txn(&txn, order, running)? {
-            return Ok(held);
-        }
+        let _ = running;
         let Some(row) = self.job_workload_in_txn(&txn, &order.workload)? else {
             return Ok(OrderFit::Blocked(vec![BlockedOn {
                 machine: None,
