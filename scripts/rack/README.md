@@ -74,12 +74,15 @@ process and root's authorized_keys need the Orchestrator's privileged run):
   given), `sshd -T` must log an accepted key (LogLevel INFO or more), read no AuthorizedKeysFile outside
   `keys.authorized_keys_file_patterns`, take keys from no AuthorizedKeysCommand but one of
   `keys.authorized_keys_commands` run as root (default: Arch's `/usr/bin/userdbctl ssh-authorized-keys %u`; the
-  readback runs it for each account and counts its keys as authorized), and trust no TrustedUserCAKeys. The files
-  `sshd -T -dd` names, their directories and the Include directories must not have changed since the listener
-  started (a reload keeps the start: restart sshd). The program run is `keys.sshd_program`, never a path read from a
-  process; a reason names a listener by its pid. A listener title with options (it hides where arguments end), -q,
-  -e, -E, -d, a relative -f, an unread configuration file, or an sshd that does not print its settings (it needs
-  root) fails.
+  readback runs it for each account as sshd runs it, only when the program and its directories are root's alone,
+  from / with PATH and root's USER, LOGNAME and HOME, and counts its keys as authorized), and trust no
+  TrustedUserCAKeys. Read after those settings, the files `sshd -T -dd` names, their directories, the Include
+  directories and every symbolic link on the way must not have changed since the listener started (a reload keeps
+  the start: restart sshd), and the listener must have started before the freeze. The program run is
+  `keys.sshd_program`, never a path read from a process; a reason names a listener by its pid. A listener title
+  with options (it hides where arguments end), -q, -e, -E, -d, a relative -f, an unread configuration file, an
+  authorized_keys path that is not a regular file, or an sshd that does not print its settings (it needs root)
+  fails.
 
 Canaries through Oneiron alone, each answering for the box it runs on:
 

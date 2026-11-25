@@ -29,6 +29,10 @@ ENTRY = ROOT / "scripts/rack/workflow_check.py"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 HOST = "testhost"
+# The key readback's freeze: two hours from now, so a listener of the fake /proc (it starts one
+# hour from now) started after every file a test writes and before the freeze. Tests name times
+# relative to it.
+FREEZE = int(time.time()) + 7200
 
 _STUBS = {
     "findmnt": """case " $* " in
@@ -51,7 +55,9 @@ esac""",
 # A stand-in sshd. `sshd -T [-f <dir>/<file>] ... -C user=<name>,...` prints on stdout the most specific
 # of out/sshd.T-<file>-<name>, T-<file>, T-<name> and T that exists; `sshd -T -dd ...` prints on stderr
 # the same pick of out/sshd.files*, the configuration files sshd says it read. Each exits with the
-# pick's .rc file. Every call's arguments are appended, one call a line, to out/sshd.calls.
+# pick's .rc file. Every call's arguments are appended, one call a line, to out/sshd.calls. When
+# out/sshd.edit-on-settings names a path, each settings call (`-C`) dates that entry (not what it
+# links to) a day ahead: a change to the configuration while the readback probes it.
 _SSHD_STUB = """import pathlib, sys
 out = pathlib.Path(@OUT@)
 args = sys.argv[1:]
@@ -65,6 +71,11 @@ for prev, arg in zip(args, args[1:]):
         spec = arg
 user = spec[len("user="):].split(",", 1)[0] if spec.startswith("user=") else ""
 kind = "files" if "-dd" in args else "T"
+edit = out / "sshd.edit-on-settings"
+if kind == "T" and edit.exists():
+    import os, time
+    ahead = time.time() + 86400
+    os.utime(edit.read_text().strip(), (ahead, ahead), follow_symlinks=False)
 key = kind
 for k in (kind + "-" + user, kind + "-" + cfg, kind + "-" + cfg + "-" + user):
     if (out / ("sshd." + k)).exists():
@@ -178,8 +189,8 @@ class Box:
         (self.sshd_etc / "sshd_config.d" / "10-rack.conf").write_text("LogLevel INFO\n")
         self.output("sshd", "files", sshd_files(self.sshd_etc))
         self.output("findmnt", "fstype", "ext4\n")
-        # The sshd journal reaches back before the fixtures' freeze (1000).
-        self.output("journalctl", "coverage", "500.000000 box sshd[600]: Server listening on :: port 22.\n")
+        # The sshd journal reaches back before the fixtures' freeze.
+        self.output("journalctl", "coverage", f"{FREEZE - 500}.000000 box sshd[600]: Server listening on :: port 22.\n")
         # The fake /proc is a proc mount that hides no process; every process in it started an hour
         # from now (boot time plus a starttime of 0), after any file a test writes.
         self.proc_mount("rw")
@@ -211,7 +222,7 @@ class Box:
                 "rack_client_keys_dir": str(self.rack_keys),
                 "owner_devices": ["mac"],
                 "rack_connections": ["addr=192.0.2.40,host=kel"],
-                "freeze_unix": 1000,
+                "freeze_unix": FREEZE,
             },
         }
 

@@ -38,20 +38,26 @@ AuthorizedKeysFile outside `keys.authorized_keys_file_patterns` (a run of
 words of that line is read too, since a pattern holding a space prints as
 words), take keys from no AuthorizedKeysCommand but one of
 `keys.authorized_keys_commands` run as root (the readback runs it for each
-account and reads its answer as an authorized_keys file), and trust no
-TrustedUserCAKeys authority. `sshd -T -dd` names the files sshd reads: none
-of them, their directories or the Include directories may have changed
-after the listener started (a reload re-executes it in place, keeping its
-start), since sshd -T reads what it would load now. The program run is
+account as sshd does: only when the program and every directory above it
+are root's alone, from /, with PATH and root's USER, LOGNAME and HOME; its
+answer counts as an authorized_keys file), and trust no TrustedUserCAKeys
+authority. After those reads, `sshd -T -dd` names the files sshd reads:
+none of them, their directories, the Include directories or a symbolic link
+on the way to any of them may have changed after the listener started (a
+reload re-executes it in place, keeping its start), since sshd -T reads
+what it would load now. A listener that started after the freeze is no
+proof: the one it replaced may have logged nothing. The program run is
 `keys.sshd_program`, never a path read from a process, and a reason names a
-listener by its pid, never by its option values.
+listener by its pid, never by its option values. An authorized_keys file is
+opened without blocking and read only when it is a regular file.
 
 No proof: no rack connection or one sshd's test cannot take; a listener
 whose title hides where its arguments end (only flags are read back from
-one), or whose command line has -q, -e, -E, -d, a relative -f, an operand
-or an option sshd's listener does not take; a configuration file sshd does
-not name, or names by a relative path; an sshd that does not print its
-settings (a run that is not root).
+one, and a title holding `[listener]` before sshd's own suffix is not read),
+or whose command line has -q, -e, -E, -d, a relative -f, an operand or an
+option sshd's listener does not take; a configuration file sshd does not
+name, or names by a relative path; an sshd that does not print its settings
+(a run that is not root).
 """
 
 from __future__ import annotations
@@ -63,6 +69,7 @@ import glob
 import hashlib
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -101,6 +108,11 @@ SSHD_KEPT_FLAGS = frozenset("46D")
 LOADED_FILE = re.compile(r"^debug2: load_server_config: filename (?P<path>.+)$")
 NEW_INCLUDE = re.compile(r"^debug2: .* line \d+: new include (?P<pattern>.+)$")
 GLOB_CHARS = frozenset("*?[")
+# The title sshd gives a listener (sshd.c): its argv joined by spaces, then this suffix.
+LISTENER_TITLE = re.compile(r"^sshd: (?P<argv>.+) \[listener\] \d+ of \d+-\d+ startups$")
+# The environment sshd gives an AuthorizedKeysCommand (misc.c subprocess): _PATH_STDPATH and the
+# run-as user's USER, LOGNAME and HOME; it is run from /.
+COMMAND_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
 @dataclass
@@ -458,16 +470,17 @@ def sshd_test_options(words: list[str]) -> tuple[list[str], str]:
 def listener_options(proc: Process) -> tuple[list[str], str]:
     """A listener's -f and -o options, and why they cannot be known ("" when they can).
 
-    sshd retitles a listener `sshd: <argv joined by spaces> [listener] ...`, which loses where an
-    argument ends: from a title only flags that take no argument are read back.
+    sshd retitles a listener `sshd: <argv joined by spaces> [listener] N of B-M startups`, which
+    loses where an argument ends: from a title only flags that take no argument are read back,
+    and a title whose argv holds the marker itself is not read at all.
     """
     if len(proc.argv) == 1 and proc.argv[0].startswith("sshd: "):
-        title, listener, _ = proc.argv[0][len("sshd: ") :].partition(" [listener]")
-        words = title.split()
+        title = LISTENER_TITLE.match(proc.argv[0])
+        words = title["argv"].split() if title else []
         flags_only = all(
             word.startswith("-") and len(word) > 1 and set(word[1:]) <= SSHD_KEPT_FLAGS for word in words[1:]
         )
-        if not listener or not words or not flags_only:
+        if not title or "[listener]" in title["argv"] or not words or not flags_only:
             return [], "its title hides where its arguments end"
         return [], ""
     return sshd_test_options(proc.argv)
@@ -511,23 +524,87 @@ def process_started(proc_root: Path, pid: int) -> float | None:
         return None
 
 
-def stale_configuration(proc_root: Path, pid: int, paths: list[Path]) -> list[str]:
-    """Why listener `pid` may not run the configuration on disk: a file or directory changed after it started.
+def lookup_chain(path: Path) -> list[tuple[Path, bool]]:
+    """Each entry the kernel reads to resolve absolute `path`, in order, with whether it is a symbolic
+    link; the last is the file reached. OSError when an entry is missing or links nest past 40."""
+    chain: list[tuple[Path, bool]] = []
+    pending = list(path.parts[1:])
+    current = Path("/")
+    hops = 0
+    while pending:
+        part = pending.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            continue
+        entry = current / part
+        if stat.S_ISLNK(os.lstat(entry).st_mode):
+            chain.append((entry, True))
+            hops += 1
+            if hops > 40:
+                raise OSError("symbolic links nest past 40")
+            target = Path(os.readlink(entry))
+            if target.is_absolute():
+                current = Path("/")
+                pending = list(target.parts[1:]) + pending
+            else:
+                pending = list(target.parts) + pending
+            continue
+        chain.append((entry, False))
+        current = entry
+    return chain
 
-    A listener loads its configuration when it starts (a reload re-executes it in place, keeping its
-    start), so a change after that start may not be in force: sshd -T reads what it would load now.
+
+def listener_problems(proc_root: Path, pid: int, paths: list[Path], freeze: int) -> list[str]:
+    """Why listener `pid` may not have run, since the freeze, the configuration sshd -T read.
+
+    A listener loads its configuration when it starts (a reload re-executes it in place, keeping
+    its start). A configuration file, its directory or an Include directory changed after that
+    start may not be in force. Each is followed as the kernel resolves it, and every symbolic
+    link on the way counts too, since re-pointing a link changes the link and not the files it
+    leads to. A listener that started after the freeze replaced one whose logging is not known,
+    so a login before it may have left no record.
     """
     started = process_started(proc_root, pid)
     if started is None:
         return [f"the start of sshd listener {pid} is not read"]
+    problems = []
+    if freeze and started > freeze:
+        problems.append(f"sshd listener {pid} started after the freeze, so how sshd logged before it is not known")
     for path in paths:
         try:
-            info = path.stat()
-        except OSError:
-            return [f"a configuration file of sshd listener {pid} cannot be checked"]
-        if max(info.st_ctime, info.st_mtime) > started:
-            return [f"sshd listener {pid} started before its configuration last changed, so it may not run it (restart sshd)"]
-    return []
+            chain = lookup_chain(path)
+            reached = chain[-1][0]
+            checked = [entry for entry, is_link in chain if is_link] + [reached, reached.parent]
+            changed = max(max(os.lstat(entry).st_ctime, os.lstat(entry).st_mtime) for entry in checked)
+        except (OSError, IndexError):
+            problems.append(f"a configuration path of sshd listener {pid} cannot be resolved")
+            break
+        if changed > started:
+            problems.append(
+                f"sshd listener {pid} started before its configuration last changed, so it may not run it (restart sshd)"
+            )
+            break
+    return problems
+
+
+def unsafe_program(path: str) -> bool:
+    """Whether sshd would refuse to run `path` (auth_secure_path): the file and every directory up to /
+    must be owned by root and writable by no group or other user. A run that is not root also takes
+    its own user as owner; such a run is no proof anyway, since sshd -T needs root."""
+    owners = {0, os.geteuid()}
+    try:
+        real = Path(os.path.realpath(path))
+        if not stat.S_ISREG(real.stat().st_mode):
+            return True
+        for part in (real, *real.parents):
+            info = part.stat()
+            if info.st_uid not in owners or info.st_mode & 0o022:
+                return True
+    except OSError:
+        return True
+    return False
 
 
 def spanned_files(value: str, account: Account) -> list[Path]:
@@ -572,7 +649,11 @@ def command_argv(command: str, account: Account) -> list[str] | None:
 def read_sshd(
     section: dict, accounts: list[Account], listeners: list[Process], proc_root: Path, timeout: int
 ) -> SshdReading:
-    """sshd's settings for each listener's options, account and rack connection, and the key sources they name."""
+    """sshd's settings for each listener's options, account and rack connection, and the key sources they name.
+
+    The files the configuration is read from are named and checked after every settings probe, so
+    a change during the probes is a change after the listener started and fails.
+    """
     out = SshdReading(problems=rack_connection_problems(section["rack_connections"]))
     if out.problems:
         return out
@@ -584,19 +665,8 @@ def read_sshd(
             out.problems.append(f"sshd listener {proc.pid}: {why}, so the settings it runs are not known")
             continue
         option_sets.setdefault(tuple(options), []).append(proc.pid)
-    for options, pids in option_sets.items():
-        try:
-            _, stderr = read_streams([program, "-T", "-dd", *options], timeout)
-        except CommandError:
-            out.unread.append("sshd effective configuration")
-            return out
-        paths, why = configuration_paths(stderr)
-        if why:
-            out.problems.append(f"sshd listener {pids[0]}: {why}")
-            continue
-        for pid in pids:
-            out.problems += stale_configuration(proc_root, pid, paths)
     allowed = section["authorized_keys_commands"]
+    root = next((account for account in accounts if account.name == "root"), None)
     for account in accounts:
         if not ACCOUNT_NAME.match(account.name):
             out.problems.append("a login account name sshd's connection test cannot carry (keys.login_accounts)")
@@ -614,19 +684,47 @@ def read_sshd(
                 command = settings.get("authorizedkeyscommand", "").strip()
                 if command in allowed and settings.get("authorizedkeyscommanduser", "").strip() == "root":
                     label = f"AuthorizedKeysCommand {allowed.index(command) + 1} for {account.name}"
-                    if label in out.command_keys:
-                        continue
-                    run = command_argv(command, account)
-                    if run is None:
-                        out.problems.append("an allowed AuthorizedKeysCommand needs the offered key, so its keys cannot be listed")
-                        continue
-                    try:
-                        out.command_keys[label] = parse_authorized_keys(read_output(run, timeout))
-                    except CommandError:
-                        out.unread.append("an AuthorizedKeysCommand")
+                    if label not in out.command_keys:
+                        read_command_keys(out, label, command, account, root, timeout)
+    for options, pids in option_sets.items():
+        try:
+            _, stderr = read_streams([program, "-T", "-dd", *options], timeout)
+        except CommandError:
+            out.unread.append("sshd effective configuration")
+            return out
+        paths, why = configuration_paths(stderr)
+        if why:
+            out.problems.append(f"sshd listener {pids[0]}: {why}")
+            continue
+        for pid in pids:
+            out.problems += listener_problems(proc_root, pid, paths, section["freeze_unix"])
     out.problems = sorted(set(out.problems))
     out.unread = sorted(set(out.unread))
     return out
+
+
+def read_command_keys(
+    out: SshdReading, label: str, command: str, account: Account, root: Account | None, timeout: int
+) -> None:
+    """Run one allowed AuthorizedKeysCommand for `account` as sshd runs it, and keep its keys under `label`."""
+    run = command_argv(command, account)
+    if run is None:
+        out.problems.append("an allowed AuthorizedKeysCommand needs the offered key, so its keys cannot be listed")
+        return
+    if unsafe_program(run[0]):
+        out.problems.append(
+            "an allowed AuthorizedKeysCommand program is not root's alone (owner, or a group or other "
+            "user that can write it or a directory above it), so sshd refuses it and the readback does not run it"
+        )
+        return
+    if root is None:
+        out.unread.append("an AuthorizedKeysCommand")
+        return
+    env = {"PATH": COMMAND_PATH, "USER": "root", "LOGNAME": "root", "HOME": str(root.home)}
+    try:
+        out.command_keys[label] = parse_authorized_keys(read_output(run, timeout, env=env, cwd="/"))
+    except CommandError:
+        out.unread.append("an AuthorizedKeysCommand")
 
 
 def cgroup_unit(text: str) -> str | None:
@@ -670,13 +768,29 @@ def sshd_listener_units(processes: list[Process], proc_root: Path) -> tuple[list
 
 
 def read_authorized_file(reading: KeyReading, path: Path) -> None:
-    """One authorized_keys file into `reading`: its keys, none when it does not exist, or unread."""
+    """One authorized_keys file into `reading`: its keys, none when it does not exist, or unread.
+
+    It is opened without blocking and read only when it is a regular file, so a FIFO or a device
+    on a guessed path cannot hold the readback.
+    """
     try:
-        reading.authorized[str(path)] = parse_authorized_keys(path.read_text(encoding="utf-8"))
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
     except FileNotFoundError:
         reading.authorized[str(path)] = []
+        return
     except OSError:
         reading.unread_files.append(str(path))
+        return
+    with os.fdopen(fd, "rb") as handle:
+        try:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                reading.unread_files.append(str(path))
+                return
+            text = handle.read().decode("utf-8", errors="replace")
+        except OSError:
+            reading.unread_files.append(str(path))
+            return
+    reading.authorized[str(path)] = parse_authorized_keys(text)
 
 
 def read_keys(section: dict, proc_root: Path, timeout: int, privileged: bool | None = None) -> KeyReading:

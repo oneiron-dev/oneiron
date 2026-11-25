@@ -41,9 +41,12 @@ def read_output(
     timeout: int,
     ok_codes: tuple[int, ...] = (0,),
     extra_env: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> str:
-    """The stdout of `argv`, or CommandError. `extra_env` adds to the minimal environment."""
-    return read_streams(argv, timeout, ok_codes, extra_env)[0]
+    """The stdout of `argv`, or CommandError. `extra_env` adds to the minimal environment; `env`
+    replaces it whole (for a program that must see another process's environment)."""
+    return read_streams(argv, timeout, ok_codes, extra_env, env, cwd)[0]
 
 
 def read_streams(
@@ -51,6 +54,8 @@ def read_streams(
     timeout: int,
     ok_codes: tuple[int, ...] = (0,),
     extra_env: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> tuple[str, str]:
     """(stdout, stderr) of `argv`, or CommandError, as `read_output` runs it."""
     try:
@@ -59,7 +64,8 @@ def read_streams(
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=minimal_env(extra_env),
+            env=minimal_env(extra_env) if env is None else env,
+            cwd=cwd,
             stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
