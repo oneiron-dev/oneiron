@@ -193,6 +193,25 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
     )
 }
 
+/// Why an installed template cannot run a job as its own ids, if it cannot:
+/// a template written before the uid per job names one job account
+/// (`User=`, `Group=`) or leaves `job-exec` no capability to take the job's
+/// ids (review r8 R8-09). `install` writes it again.
+#[must_use]
+pub fn template_outdated(unit_text: &str) -> Option<&'static str> {
+    let mut lines = unit_text.lines().map(str::trim);
+    if lines
+        .clone()
+        .any(|line| line.starts_with("User=") || line.starts_with("Group="))
+    {
+        return Some("the installed template names one job account (User=, Group=)");
+    }
+    if !lines.any(|line| line == "CapabilityBoundingSet=CAP_SETUID CAP_SETGID") {
+        return Some("the installed template's bounding set is not CAP_SETUID CAP_SETGID");
+    }
+    None
+}
+
 /// The value of `RuntimeMaxSec=` in an installed template, if it has one.
 #[must_use]
 pub fn installed_runtime_max_secs(unit_text: &str) -> Option<u64> {
@@ -273,6 +292,22 @@ mod tests {
         assert!(text.contains("BindPaths=-/run/oneiron-payloads/%i:/data/oneiron-jobs/%i\n"));
         assert!(text.contains("BindReadOnlyPaths=-/run/oneiron-jobs/%i\n"));
         assert_eq!(installed_runtime_max_secs(&text), Some(172_800));
+        assert_eq!(template_outdated(&text), None);
+    }
+
+    #[test]
+    fn a_template_from_before_the_uid_per_job_is_outdated() {
+        let text = render_job_unit(&inputs());
+        let one_account = text.replace(
+            "[Service]\n",
+            "[Service]\nUser=oneiron-job\nGroup=oneiron-job\n",
+        );
+        assert!(template_outdated(&one_account).is_some_and(|why| why.contains("User=")));
+        let no_capabilities = text.replace(
+            "CapabilityBoundingSet=CAP_SETUID CAP_SETGID\n",
+            "CapabilityBoundingSet=\n",
+        );
+        assert!(template_outdated(&no_capabilities).is_some_and(|why| why.contains("bounding")));
     }
 
     #[test]

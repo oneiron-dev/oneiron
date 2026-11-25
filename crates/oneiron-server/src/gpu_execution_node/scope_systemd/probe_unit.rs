@@ -23,6 +23,7 @@ use super::job_ids::{self, JobIdentity};
 use super::records::{ExecFile, ScopeBound, ScopeReport};
 use super::safe_fs::{self, boot_id, borrow, make_dir_beneath, open_dir_path};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show_within, tool_path};
+use super::unit_file::template_outdated;
 use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, UNIT_TEMPLATE_PATH};
 
 /// How long the probe unit may run.
@@ -112,6 +113,11 @@ pub fn check_scope(node_file: &Path, settings: &ExecutionNodeSettings) -> Vec<St
 fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<CheckReport, String> {
     let unit_text = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
         .map_err(|error| format!("{UNIT_TEMPLATE_PATH}: {error}"))?;
+    if let Some(why) = template_outdated(&unit_text) {
+        return Err(format!(
+            "{UNIT_TEMPLATE_PATH}: {why}: run `oneiron execution-node install` again"
+        ));
+    }
     let binary = std::env::current_exe().map_err(|error| error.to_string())?;
     let at_ms = wall_ms();
     let id = JobKeyId::for_key(&format!("execution-node-check-probe-{}-{at_ms}", boot_id()));
@@ -318,7 +324,7 @@ impl ProbeIdentity {
 
 impl Drop for ProbeIdentity {
     fn drop(&mut self) {
-        if let Err(why) = job_ids::release(self.identity, &self.unit) {
+        if let Err(why) = job_ids::release(self.identity, &self.unit, job_ids::LOCK_WAIT) {
             journal_line!(
                 "execution-node check: probe uid {} not given back: {why}",
                 self.identity.uid

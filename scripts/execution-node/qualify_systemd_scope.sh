@@ -874,6 +874,7 @@ EOF
   for ((i = 0; i < 150; i++)); do [ -e "$a_p/out/ready" ] && break; sleep 0.2; done
   if [ ! -e "$a_p/out/ready" ]; then
     as_engine "$BIN" execution-node unit-control stop "$a_key" > /dev/null 2>&1
+    rm -f /dev/shm/qual-a-shm
     result "$FUNCNAME" FAIL "job A was not ready in 30 s: $(jq -c '{refusal}' "$a_c/prepared.json" 2>&1)"; return
   fi
   a_pid=$(cat "$a_p/out/pid"); a_uid=$(cat "$a_p/out/uid")
@@ -893,6 +894,8 @@ EOF
   as_engine "$BIN" execution-node unit-control stop "$a_key" > /dev/null 2>&1
   UNIT=$a_unit KEY=$a_key P=$a_p C=$a_c
   wait_ended 60 || why+="job A: no end record in 60 s after its stop; "
+  # On red A's file is in the host's /dev/shm (review r8 R8-10); on green it went with A's own.
+  rm -f /dev/shm/qual-a-shm
   [ -n "$a_uid" ] && [ "$a_uid" = "$b_uid" ] && why+="both jobs ran as uid $a_uid; "
   if [ "$IDS_MODE" = range ]; then
     # A job that leases no device keeps no supplementary group.

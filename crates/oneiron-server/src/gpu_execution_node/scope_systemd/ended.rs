@@ -41,6 +41,9 @@ const REAP_WAIT: Duration = Duration::from_secs(2);
 /// whole run fits in its own timeout, the stop grace (review r3 R3-06).
 const QUERY_WAIT: Duration = Duration::from_secs(1);
 
+/// The least wait for the id table's lock when the job's id goes back.
+const RELEASE_WAIT_MIN: Duration = Duration::from_millis(200);
+
 /// The end record's file, R3a's `END_RECORD_FILE_NAME`.
 const END_RECORD: &str = super::super::jobs::job_unit::END_RECORD_FILE_NAME;
 
@@ -76,6 +79,12 @@ pub fn run(args: StepArgs) -> i32 {
     .is_ok_and(|found| found.is_some())
     {
         journal_line!("job-ended: {} has its end record already", context.unit());
+        // A later run's id and files still go back.
+        if let Some(identity) = job_identity(&context) {
+            let (cgroup_empty, _) =
+                settle_cgroup(&context.unit(), context.settings.stop_grace_secs);
+            give_back(&context, identity, cgroup_empty, began);
+        }
         disarm(&context);
         return 0;
     }
@@ -184,8 +193,15 @@ fn end_record(context: &StepContext) -> EndRecord {
     }
 }
 
-/// The ids the prepare step gave this unit's job, from root's `exec.json`.
+/// The ids the prepare step gave this unit's job: from root's `exec.json`,
+/// or from the id table when the prepare step refused before it wrote that
+/// file (review r8 R8-04: the job's directories are handed over even then).
 fn job_identity(context: &StepContext) -> Option<JobIdentity> {
+    exchange_identity(context).or_else(|| job_ids::identity_of(&context.unit()))
+}
+
+/// The ids root's `exec.json` names for this unit's instance.
+fn exchange_identity(context: &StepContext) -> Option<JobIdentity> {
     let exchange = open_dir_path(&context.exchange_path()).ok()?;
     let bytes =
         read_beneath(borrow(&exchange), EXEC_FILE_NAME, RECORD_MAX_BYTES, Some(0)).ok()??;
@@ -194,9 +210,11 @@ fn job_identity(context: &StepContext) -> Option<JobIdentity> {
 }
 
 /// Hands the job's files to the engine's account and gives its uid back,
-/// once no process of the unit is left; within five sixths of the stop
-/// grace from the step's start (the settling of the group takes at most two
-/// thirds), so the record is still written within the step's timeout.
+/// once no process of the unit is left. The settling of the group takes at
+/// most two thirds of the stop grace from the step's start; the hand-over
+/// ends by four fifths and the wait for the id table's lock by five sixths
+/// (review r8 R8-03), so the record is still written within the step's
+/// timeout. An id not given back in time stays taken until it is taken back.
 fn give_back(context: &StepContext, identity: JobIdentity, cgroup_empty: bool, began: Instant) {
     let unit = context.unit();
     if !cgroup_empty {
@@ -206,11 +224,8 @@ fn give_back(context: &StepContext, identity: JobIdentity, cgroup_empty: bool, b
         );
         return;
     }
-    let wait = Duration::from_secs(context.settings.stop_grace_secs)
-        .saturating_mul(5)
-        .checked_div(6)
-        .unwrap_or_default()
-        .saturating_sub(began.elapsed());
+    let grace = Duration::from_secs(context.settings.stop_grace_secs);
+    let wait = share_of(grace, 4, 5).saturating_sub(began.elapsed());
     let payload = open_dir_path(&context.settings.work_dir).and_then(|work| {
         open_dir_beneath(borrow(&work), std::ffi::OsStr::new(&context.args.instance))
     });
@@ -242,10 +257,21 @@ fn give_back(context: &StepContext, identity: JobIdentity, cgroup_empty: bool, b
         );
         return;
     }
-    match job_ids::release(identity, &unit) {
+    let lock_wait = share_of(grace, 5, 6)
+        .saturating_sub(began.elapsed())
+        .max(RELEASE_WAIT_MIN);
+    match job_ids::release(identity, &unit, lock_wait) {
         Ok(_) => {}
         Err(why) => journal_line!("job-ended: uid {} not given back: {why}", identity.uid),
     }
+}
+
+/// `parts` of `whole` shares of `grace`.
+fn share_of(grace: Duration, parts: u32, whole: u32) -> Duration {
+    grace
+        .saturating_mul(parts)
+        .checked_div(whole)
+        .unwrap_or_default()
 }
 
 /// The key `launch.json` names, when it hashes to this unit's instance.

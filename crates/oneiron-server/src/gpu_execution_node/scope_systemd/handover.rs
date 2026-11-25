@@ -12,6 +12,12 @@
 //! target's), crosses no mount, and stops at [`HANDOVER_DEPTH_MAX`],
 //! [`HANDOVER_ENTRIES_MAX`] or its deadline: then the hand-over is
 //! incomplete, and the end step keeps the job's id taken.
+//!
+//! The engine's account may still rename or remove entries while the walk
+//! runs, and a name it renamed after the walk listed it is found under its
+//! new name only by a later pass. So the walk is repeated until one pass
+//! changes nothing and finds every name it listed, at most
+//! [`HANDOVER_PASSES_MAX`] times.
 
 use std::ffi::{CStr, CString};
 use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
@@ -24,8 +30,15 @@ use super::job_ids::JobIdentity;
 /// The deepest directory the walk descends to.
 pub const HANDOVER_DEPTH_MAX: usize = 256;
 
-/// The most entries one hand-over looks at.
+/// The most entries one pass of the hand-over looks at.
 pub const HANDOVER_ENTRIES_MAX: u64 = 1_000_000;
+
+/// The most passes one hand-over makes: one that changes the job's entries,
+/// one that finds none left, and two for names the engine moved meanwhile.
+pub const HANDOVER_PASSES_MAX: u32 = 4;
+
+/// How many names the walk reads or looks at between two looks at the clock.
+const NAMES_PER_CLOCK_READ: usize = 64;
 
 /// How the walk opens each directory: no symbolic link followed.
 const DIR_FLAGS: OFlags = OFlags::RDONLY
@@ -38,7 +51,7 @@ const DIR_FLAGS: OFlags = OFlags::RDONLY
 pub struct HandOver {
     /// Entries whose owner or group changed.
     pub changed: u64,
-    /// Entries looked at.
+    /// Entries looked at, in every pass.
     pub seen: u64,
     /// Why the walk stopped before the end; `None` when every entry beneath
     /// the payload was looked at.
@@ -60,7 +73,8 @@ pub fn new_ids(
 }
 
 /// Hands every entry beneath `payload` (the open payload directory, itself
-/// the engine's) that `job` owns to `engine` (uid, gid), within `wait`.
+/// the engine's) that `job` owns to `engine` (uid, gid), within `wait`: passes
+/// of the walk until one changes nothing and finds every name it listed.
 #[must_use]
 pub fn hand_over(
     payload: BorrowedFd<'_>,
@@ -68,14 +82,55 @@ pub fn hand_over(
     engine: (u32, u32),
     wait: Duration,
 ) -> HandOver {
+    let until = Instant::now() + wait;
+    let mut outcome = HandOver {
+        changed: 0,
+        seen: 0,
+        incomplete: None,
+    };
+    for _ in 0..HANDOVER_PASSES_MAX {
+        let pass = walk_once(payload, job, engine, until);
+        outcome.changed += pass.changed;
+        outcome.seen += pass.seen;
+        if let Some(why) = pass.incomplete {
+            outcome.incomplete = Some(why);
+            return outcome;
+        }
+        if pass.changed == 0 && pass.vanished == 0 {
+            return outcome;
+        }
+    }
+    outcome.incomplete = Some(format!(
+        "entries still changed or moved after {HANDOVER_PASSES_MAX} passes"
+    ));
+    outcome
+}
+
+/// What one pass of the walk did.
+struct Pass {
+    changed: u64,
+    seen: u64,
+    /// Names the pass listed and then did not find: moved or removed.
+    vanished: u64,
+    incomplete: Option<String>,
+}
+
+/// One pass of the walk over `payload`, until `until`.
+fn walk_once(
+    payload: BorrowedFd<'_>,
+    job: JobIdentity,
+    engine: (u32, u32),
+    until: Instant,
+) -> Pass {
     let mut walk = Walk {
         device: 0,
         job,
         engine,
-        until: Instant::now() + wait,
-        outcome: HandOver {
+        until,
+        pass: Pass {
             changed: 0,
             seen: 0,
+            vanished: 0,
             incomplete: None,
         },
         pending: Vec::new(),
@@ -87,26 +142,26 @@ pub fn hand_over(
     match top {
         Ok(top) => walk.pending.push((top, 0)),
         Err(error) => {
-            walk.outcome.incomplete = Some(format!("payload: {error}"));
-            return walk.outcome;
+            walk.pass.incomplete = Some(format!("payload: {error}"));
+            return walk.pass;
         }
     }
     while let Some((dir, depth)) = walk.pending.pop() {
         if let Err(why) = walk.dir(dir.as_fd(), depth) {
-            walk.outcome.incomplete = Some(why);
+            walk.pass.incomplete = Some(why);
             break;
         }
     }
-    walk.outcome
+    walk.pass
 }
 
-/// One hand-over's walk: what it changes and the directories left to read.
+/// One pass's walk: what it changes and the directories left to read.
 struct Walk {
     device: rustix::fs::Dev,
     job: JobIdentity,
     engine: (u32, u32),
     until: Instant,
-    outcome: HandOver,
+    pass: Pass,
     pending: Vec<(OwnedFd, usize)>,
 }
 
@@ -122,19 +177,30 @@ impl Walk {
             if name != c"." && name != c".." {
                 names.push(name.to_owned());
             }
-        }
-        for name in &names {
-            self.outcome.seen += 1;
-            if self.outcome.seen > HANDOVER_ENTRIES_MAX {
+            if names.len().is_multiple_of(NAMES_PER_CLOCK_READ) {
+                self.within_deadline()?;
+            }
+            if self.pass.seen + u64::try_from(names.len()).unwrap_or(u64::MAX)
+                > HANDOVER_ENTRIES_MAX
+            {
                 return Err(format!("more than {HANDOVER_ENTRIES_MAX} entries"));
             }
-            if self.outcome.seen % 256 == 0 && Instant::now() >= self.until {
-                return Err(format!(
-                    "the deadline came after {} entries",
-                    self.outcome.seen
-                ));
-            }
+        }
+        for name in &names {
+            self.pass.seen += 1;
+            self.within_deadline()?;
             self.entry(dir, name, depth)?;
+        }
+        Ok(())
+    }
+
+    /// An error once the deadline has come.
+    fn within_deadline(&self) -> Result<(), String> {
+        if Instant::now() >= self.until {
+            return Err(format!(
+                "the deadline came after {} entries",
+                self.pass.seen
+            ));
         }
         Ok(())
     }
@@ -143,8 +209,11 @@ impl Walk {
         let found = match rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(found) => found,
             // Nothing of the job's runs any more, so only the engine could
-            // have removed it: there is nothing to hand over.
-            Err(rustix::io::Errno::NOENT) => return Ok(()),
+            // have moved or removed it: a later pass finds it if it moved.
+            Err(rustix::io::Errno::NOENT) => {
+                self.pass.vanished += 1;
+                return Ok(());
+            }
             Err(error) => return Err(format!("{}: {error}", name.to_string_lossy())),
         };
         if found.st_dev != self.device {
@@ -153,7 +222,7 @@ impl Walk {
         let (uid, gid) = new_ids((found.st_uid, found.st_gid), self.job, self.engine);
         if uid.is_some() || gid.is_some() {
             change_ids(dir, name, uid, gid)?;
-            self.outcome.changed += 1;
+            self.pass.changed += 1;
         }
         if FileType::from_raw_mode(found.st_mode) != FileType::Directory {
             return Ok(());
@@ -174,6 +243,8 @@ impl Walk {
             Ok(inner) => self.pending.push((inner, depth + 1)),
             // A mount at it: what is beneath is another file system's.
             Err(rustix::io::Errno::XDEV) => {}
+            // Moved or removed since it was looked at.
+            Err(rustix::io::Errno::NOENT) => self.pass.vanished += 1,
             Err(error) => return Err(format!("{}: {error}", name.to_string_lossy())),
         }
         Ok(())

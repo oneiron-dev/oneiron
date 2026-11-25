@@ -9,7 +9,8 @@
 //! its own uid from the node's range ([`super::job_ids`]; FIX
 //! EXEC-UNIT-CROSS-JOB-SAME-UID) and writes `exec.json` where only root and
 //! that job can read it. Any no fails the unit before a workload process
-//! exists, and gives a given id back. The gate is [`super::gate`].
+//! exists; an id given before it stays taken until the end step has handed
+//! the job's directories to the engine. The gate is [`super::gate`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -31,7 +32,7 @@ use super::safe_fs::{
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::unit_file::installed_runtime_max_secs;
+use super::unit_file::{installed_runtime_max_secs, template_outdated};
 use super::{
     AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
     UNIT_TEMPLATE_PATH,
@@ -107,17 +108,13 @@ pub fn run(args: StepArgs) -> i32 {
         required: Vec::new(),
         fence: Vec::new(),
     };
-    let mut given = None;
-    let outcome = prepare(&context, &mut record, &mut given);
+    // An id given before a refusal stays taken: the end step hands the
+    // directories made for it to the engine and then gives it back (review
+    // r8 R8-04).
+    let outcome = prepare(&context, &mut record);
     if let Err(why) = &outcome {
         record.refusal = Some(why.clone());
         journal_line!("job-prepare: refused {}: {why}", context.unit());
-        // No job-exec runs after a refusal: the id goes back at once.
-        if let Some(identity) = given
-            && let Err(why) = job_ids::release(identity, &context.unit())
-        {
-            journal_line!("job-prepare: uid {} not given back: {why}", identity.uid);
-        }
     }
     if let Err(why) = context.write_record(PREPARED_FILE_NAME, &record) {
         journal_line!("job-prepare: {why}");
@@ -126,11 +123,7 @@ pub fn run(args: StepArgs) -> i32 {
     i32::from(outcome.is_err())
 }
 
-fn prepare(
-    context: &StepContext,
-    record: &mut PreparedRecord,
-    given: &mut Option<JobIdentity>,
-) -> Result<(), String> {
+fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), String> {
     if let Some(why) = &context.args.host_namespace_error {
         return Err(format!("host_mount_namespace_not_entered: {why}"));
     }
@@ -185,6 +178,11 @@ fn prepare(
             "unit_runtime_max_below_maximum: run `oneiron execution-node install` again".to_owned(),
         );
     }
+    if let Some(why) = template_outdated(&unit_text) {
+        return Err(format!(
+            "unit_template_old: {why}: run `oneiron execution-node install` again"
+        ));
+    }
     let unit = context.unit();
     effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
@@ -224,7 +222,6 @@ fn prepare(
 
     let identity = job_ids::allocate(settings.job_uids(), &unit, context.engine_uid)
         .map_err(|why| format!("job_uid_not_given: {why}"))?;
-    *given = Some(identity);
     let device_gid = job_device_gid(settings, &allowed)?;
     record.account = match device_gid {
         Some(group) => format!(

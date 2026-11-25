@@ -15,11 +15,14 @@
 //! The table is `JOB_IDS_ROOT`, root's alone: one file per id in use, named by
 //! the id and holding the unit's name. The prepare step takes the lowest id
 //! with no file, no account or group of that number, and no process holding
-//! it in any of its real, effective, saved or file-system ids. A file is
-//! taken back only when its unit is no longer running and no process holds
-//! the id. The end step removes the file once the unit's group is empty and
-//! the job's files are the engine's ([`super::handover`]). Every change is
-//! made under one lock on the table.
+//! it in any of its real, effective, saved or file-system ids or as a
+//! supplementary group. A file is taken back only when its unit is no longer
+//! running and no process holds the id. The end step removes the file once
+//! the unit's group is empty and the job's files are the engine's
+//! ([`super::handover`]). Every change is made under one lock on the table;
+//! the slow questions (the units' states, the name service) are asked before
+//! the lock is taken, so a step holds it only to read the table and
+//! `/proc` and to write one file.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CString;
@@ -27,13 +30,14 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use super::exchange::root_dir;
 use super::safe_fs::{borrow, read_beneath, remove_beneath, write_beneath};
-use super::systemd_unit::show_within;
+use super::systemd_unit::{parse_show_units, run_tool};
 use super::{PROBE_UNIT_PREFIX, is_job_instance};
 
 /// The table of the ids in use.
@@ -42,15 +46,22 @@ pub const JOB_IDS_ROOT: &str = "/run/oneiron-job-ids";
 /// The table's lock file.
 const LOCK_NAME: &str = ".lock";
 
-/// The longest a step waits for the table's lock.
-const LOCK_WAIT: Duration = Duration::from_secs(10);
+/// The longest the prepare step and the probe wait for the table's lock.
+pub const LOCK_WAIT: Duration = Duration::from_secs(10);
+
+/// The suffix of a file `write_beneath` stages before it renames it; one the
+/// lock holder finds is a write that did not complete.
+const STAGING_SUFFIX: &str = ".new";
 
 /// The largest entry the table holds: one unit name.
 const ENTRY_MAX_BYTES: u64 = 256;
 
-/// The longest the prepare step waits for the service manager to say whether
-/// the unit of a taken id still runs.
+/// The longest the prepare step waits, in all, for the service manager to
+/// say which units of the table still run.
 const UNIT_STATE_WAIT: Duration = Duration::from_secs(2);
+
+/// The most units one `systemctl show` names.
+const UNITS_PER_QUERY: usize = 256;
 
 /// The uid and gid one job unit runs as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,31 +127,73 @@ pub(super) fn choose(
     Choice::Exhausted
 }
 
+/// The name service's answers for the ids one allocation tries, kept so that
+/// the choice made under the lock asks again only for an id the first choice
+/// did not try.
+#[derive(Default)]
+struct NameAnswers {
+    named: BTreeMap<u32, bool>,
+    failures: u32,
+}
+
+impl NameAnswers {
+    /// Whether `uid` is an account's or a group's; a lookup that fails counts
+    /// as named.
+    fn named(&mut self, uid: u32) -> bool {
+        if let Some(named) = self.named.get(&uid) {
+            return *named;
+        }
+        let named = id_is_named(uid).unwrap_or_else(|_| {
+            self.failures += 1;
+            true
+        });
+        self.named.insert(uid, named);
+        named
+    }
+}
+
 /// Gives `unit` an id of `range` and records it in the table.
+///
+/// The units' states and the name service are asked first, without the lock:
+/// one choice made then names the ids to ask about. The choice is then made
+/// again under the lock, on the table and `/proc` as they are then, and with
+/// those answers: a unit the first read did not name counts as running.
 ///
 /// # Errors
 ///
 /// The table could not be locked, read or written, the processes could not
 /// be read, or every id is in use.
 pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIdentity, String> {
-    let table = Table::lock()?;
+    let before = entries_in(&open_table()?)?;
+    let owners: BTreeSet<String> = before
+        .values()
+        .map(String::as_str)
+        .filter(|owner| *owner != unit && is_table_unit(owner))
+        .map(unit_id)
+        .collect();
+    let ended = units_ended(&owners);
+    let mut owner_ended = |owner: &str| !is_table_unit(owner) || ended.contains(&unit_id(owner));
+    let mut names = NameAnswers::default();
+    let _ = choose(
+        range.clone(),
+        unit,
+        engine_uid,
+        &before,
+        &ids_held_by_processes()?,
+        &mut owner_ended,
+        &mut |uid| names.named(uid),
+    );
+    let table = Table::lock(LOCK_WAIT)?;
     let taken = table.entries()?;
     let held = ids_held_by_processes()?;
-    let mut lookup_failures = 0_u32;
     let choice = choose(
         range.clone(),
         unit,
         engine_uid,
         &taken,
         &held,
-        &mut unit_ended,
-        &mut |uid| match id_is_named(uid) {
-            Ok(named) => named,
-            Err(_) => {
-                lookup_failures += 1;
-                true
-            }
-        },
+        &mut owner_ended,
+        &mut |uid| names.named(uid),
     );
     let uid = match choice {
         Choice::Own(uid) => return Ok(JobIdentity::of(uid)),
@@ -151,10 +204,11 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
         }
         Choice::Exhausted => {
             return Err(format!(
-                "job_uids_exhausted: no id of {}..{} is free ({} taken, {lookup_failures} account lookups failed)",
+                "job_uids_exhausted: no id of {}..{} is free ({} taken, {} account lookups failed)",
                 range.start,
                 range.end,
-                taken.len()
+                taken.len(),
+                names.failures
             ));
         }
     };
@@ -162,20 +216,64 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
     Ok(JobIdentity::of(uid))
 }
 
-/// Removes `identity`'s file when it names `unit`. Returns whether it did.
+/// Removes `identity`'s file when it names `unit`, waiting at most `wait` for
+/// the table's lock. Returns whether it did.
 ///
 /// # Errors
 ///
 /// The table could not be locked, read or written.
-pub fn release(identity: JobIdentity, unit: &str) -> Result<bool, String> {
-    let table = Table::lock()?;
-    match table.entries()?.get(&identity.uid) {
-        Some(owner) if owner == unit => {
-            table.remove(identity.uid)?;
-            Ok(true)
-        }
-        _ => Ok(false),
+pub fn release(identity: JobIdentity, unit: &str, wait: Duration) -> Result<bool, String> {
+    let table = Table::lock(wait)?;
+    if table.owner(identity.uid).as_deref() == Some(unit) {
+        table.remove(identity.uid)?;
+        return Ok(true);
     }
+    Ok(false)
+}
+
+/// The identity the table gives `unit`, read without the lock: the end step's
+/// answer when the job's exchange file was never written.
+#[must_use]
+pub fn identity_of(unit: &str) -> Option<JobIdentity> {
+    let dir = open_table().ok()?;
+    entries_in(&dir)
+        .ok()?
+        .into_iter()
+        .find(|(_, owner)| owner == unit)
+        .map(|(uid, _)| JobIdentity::of(uid))
+}
+
+/// The table's directory, made root's alone when it is missing.
+fn open_table() -> Result<OwnedFd, String> {
+    root_dir(JOB_IDS_ROOT, 0o700).map_err(|why| format!("job_ids_table: {why}"))
+}
+
+/// Every id the table `dir` names, with its unit; an entry that does not read
+/// is an id taken by a unit no one knows.
+fn entries_in(dir: &OwnedFd) -> Result<BTreeMap<u32, String>, String> {
+    let listing =
+        std::fs::read_dir(JOB_IDS_ROOT).map_err(|error| format!("job_ids_table: {error}"))?;
+    let mut taken = BTreeMap::new();
+    for entry in listing.flatten() {
+        let Some(uid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        taken.insert(uid, owner_in(dir, uid).unwrap_or_default());
+    }
+    Ok(taken)
+}
+
+/// The unit the entry of `uid` names, if it reads.
+fn owner_in(dir: &OwnedFd, uid: u32) -> Option<String> {
+    read_beneath(borrow(dir), &uid.to_string(), ENTRY_MAX_BYTES, Some(0))
+        .ok()
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|text| text.trim().to_owned())
 }
 
 /// The table, open and locked until it is dropped.
@@ -185,8 +283,8 @@ struct Table {
 }
 
 impl Table {
-    fn lock() -> Result<Self, String> {
-        let dir = root_dir(JOB_IDS_ROOT, 0o700).map_err(|why| format!("job_ids_table: {why}"))?;
+    fn lock(wait: Duration) -> Result<Self, String> {
+        let dir = open_table()?;
         let name = CString::new(LOCK_NAME).map_err(|error| error.to_string())?;
         // SAFETY: name is NUL terminated; O_NOFOLLOW refuses a link.
         let raw = unsafe {
@@ -205,7 +303,7 @@ impl Table {
         }
         // SAFETY: openat returned a new descriptor this call owns.
         let lock = unsafe { OwnedFd::from_raw_fd(raw) };
-        let until = Instant::now() + LOCK_WAIT;
+        let until = Instant::now() + wait;
         loop {
             // SAFETY: lock is an open descriptor; flock takes no pointer.
             if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
@@ -220,34 +318,27 @@ impl Table {
         Ok(Self { dir, _lock: lock })
     }
 
-    /// Every id the table names, with its unit; an entry that does not read
-    /// is an id taken by a unit no one knows.
+    /// Every id the table names, with its unit. A staged file the lock holder
+    /// finds is a write that did not complete, so it is removed.
     fn entries(&self) -> Result<BTreeMap<u32, String>, String> {
         let listing =
             std::fs::read_dir(JOB_IDS_ROOT).map_err(|error| format!("job_ids_table: {error}"))?;
-        let mut taken = BTreeMap::new();
         for entry in listing.flatten() {
-            let Some(uid) = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.parse().ok())
-            else {
-                continue;
-            };
-            let owner = read_beneath(
-                borrow(&self.dir),
-                &uid.to_string(),
-                ENTRY_MAX_BYTES,
-                Some(0),
-            )
-            .ok()
-            .flatten()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .map(|text| text.trim().to_owned())
-            .unwrap_or_default();
-            taken.insert(uid, owner);
+            let name = entry.file_name();
+            if let Some(name) = name.to_str()
+                && name
+                    .strip_suffix(STAGING_SUFFIX)
+                    .is_some_and(|uid| uid.parse::<u32>().is_ok())
+            {
+                remove_beneath(borrow(&self.dir), name)
+                    .map_err(|error| format!("job_ids_table: {name}: {error}"))?;
+            }
         }
-        Ok(taken)
+        entries_in(&self.dir)
+    }
+
+    fn owner(&self, uid: u32) -> Option<String> {
+        owner_in(&self.dir, uid)
     }
 
     fn write(&self, uid: u32, unit: &str) -> Result<(), String> {
@@ -267,22 +358,55 @@ impl Table {
     }
 }
 
-/// Whether a unit the table names no longer runs: the service manager knows
-/// it as inactive, failed or not found. An entry that names no job or probe
-/// unit is a write that did not complete. A unit whose state does not come
-/// within [`UNIT_STATE_WAIT`] still runs.
-fn unit_ended(owner: &str) -> bool {
-    if !is_table_unit(owner) {
-        return true;
+/// The unit's full name, as `systemctl show` gives it in `Id`: a probe unit's
+/// entry names it without the `.service` suffix.
+fn unit_id(owner: &str) -> String {
+    if owner.ends_with(".service") {
+        owner.to_owned()
+    } else {
+        format!("{owner}.service")
     }
-    show_within(owner, &["ActiveState", "LoadState"], UNIT_STATE_WAIT).is_ok_and(|found| {
-        found
-            .get("LoadState")
-            .is_some_and(|state| state == "not-found")
-            || found
-                .get("ActiveState")
-                .is_some_and(|state| state == "inactive" || state == "failed")
-    })
+}
+
+/// Which of `units` no longer run, from `systemctl show` naming at most
+/// [`UNITS_PER_QUERY`] at once, within [`UNIT_STATE_WAIT`] in all. A unit
+/// whose state does not come in time still runs.
+fn units_ended(units: &BTreeSet<String>) -> BTreeSet<String> {
+    let until = Instant::now() + UNIT_STATE_WAIT;
+    let names: Vec<&str> = units.iter().map(String::as_str).collect();
+    let mut ended = BTreeSet::new();
+    for chunk in names.chunks(UNITS_PER_QUERY) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        let mut args = vec!["show", "--property=Id,ActiveState,LoadState"];
+        args.extend(chunk.iter().copied());
+        match run_tool("systemctl", &args, left) {
+            Ok(text) => ended.extend(ended_in_show(&text, chunk)),
+            Err(_) => break,
+        }
+    }
+    ended
+}
+
+/// The units of `units` one `systemctl show` answer says no longer run: the
+/// service manager knows them as inactive, failed or not found. A unit the
+/// answer leaves out still runs.
+pub(super) fn ended_in_show(text: &str, units: &[&str]) -> Vec<String> {
+    parse_show_units(text)
+        .into_iter()
+        .filter(|found| {
+            found
+                .get("LoadState")
+                .is_some_and(|state| state == "not-found")
+                || found
+                    .get("ActiveState")
+                    .is_some_and(|state| state == "inactive" || state == "failed")
+        })
+        .filter_map(|found| found.get("Id").cloned())
+        .filter(|id| units.contains(&id.as_str()))
+        .collect()
 }
 
 /// Whether `name` is a unit the table may hold: a job unit or a probe unit.
@@ -298,7 +422,7 @@ pub(super) fn is_table_unit(name: &str) -> bool {
 }
 
 /// Every uid and gid some process holds, as `/proc/<pid>/status` lists them
-/// (real, effective, saved and file-system ids).
+/// (real, effective, saved and file-system ids, and supplementary groups).
 ///
 /// # Errors
 ///
@@ -314,7 +438,7 @@ pub(super) fn ids_held_by_processes() -> Result<BTreeSet<u32>, String> {
         {
             continue;
         }
-        let path = std::path::Path::new("/proc").join(&name).join("status");
+        let path = Path::new("/proc").join(&name).join("status");
         // A process that ended while the list was read holds nothing.
         if let Ok(text) = std::fs::read_to_string(path) {
             held.extend(ids_in_status(&text));
@@ -323,12 +447,14 @@ pub(super) fn ids_held_by_processes() -> Result<BTreeSet<u32>, String> {
     Ok(held)
 }
 
-/// The ids on the `Uid:` and `Gid:` lines of a `/proc/<pid>/status` text.
+/// The ids on the `Uid:`, `Gid:` and `Groups:` lines of a
+/// `/proc/<pid>/status` text.
 pub(super) fn ids_in_status(text: &str) -> Vec<u32> {
     text.lines()
         .filter_map(|line| {
             line.strip_prefix("Uid:")
                 .or_else(|| line.strip_prefix("Gid:"))
+                .or_else(|| line.strip_prefix("Groups:"))
         })
         .flat_map(|ids| {
             ids.split_whitespace()
@@ -444,12 +570,40 @@ mod tests {
     }
 
     #[test]
-    fn the_status_ids_are_the_real_effective_saved_and_file_system_ids() {
-        let text = "Name:\tsleep\nUid:\t1879048192\t1879048192\t0\t1879048193\nGid:\t5\t6\t7\t8\nGroups:\t9\n";
+    fn one_show_answer_names_the_ended_units_and_a_unit_it_leaves_out_still_runs() {
+        let probe = format!("{PROBE_UNIT_PREFIX}00000000000000000000000000000000.service");
+        let text = format!(
+            "Id={UNIT_A}\nActiveState=inactive\nLoadState=loaded\n\n\
+             Id={UNIT_B}\nActiveState=deactivating\nLoadState=loaded\n\n\
+             Id={probe}\nActiveState=inactive\nLoadState=not-found\n\n\
+             Id=sshd.service\nActiveState=failed\nLoadState=loaded\n"
+        );
+        let left_out = "oneiron-job@11111111111111111111111111111111.service";
+        let ended = ended_in_show(&text, &[UNIT_A, UNIT_B, probe.as_str(), left_out]);
+        assert_eq!(ended, vec![UNIT_A.to_owned(), probe.clone()]);
+        assert_eq!(unit_id(probe.trim_end_matches(".service")), probe);
+        assert_eq!(unit_id(UNIT_A), UNIT_A);
+    }
+
+    #[test]
+    fn the_status_ids_are_every_user_and_group_id_and_the_supplementary_groups() {
+        let text = "Name:\tsleep\nUid:\t1879048192\t1879048192\t0\t1879048193\nGid:\t5\t6\t7\t8\nGroups:\t9 10 \nNgid:\t0\n";
         assert_eq!(
             ids_in_status(text),
-            vec![1_879_048_192, 1_879_048_192, 0, 1_879_048_193, 5, 6, 7, 8]
+            vec![
+                1_879_048_192,
+                1_879_048_192,
+                0,
+                1_879_048_193,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10
+            ]
         );
+        assert!(ids_in_status("Groups:\t\n").is_empty());
     }
 
     #[test]
