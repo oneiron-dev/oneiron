@@ -512,7 +512,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/mesh_machine.rs` | src | m | 1 struct · 7 fn · 1 const · 3 re-export · 2 crate-vis | MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 8 fn · 1 re-export · 2 crate-vis | — | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
 | `src/authority/mesh_machine/endpoint_index.rs` | src | s | 8 crate-vis | — | The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census L3-28B) |
-| `src/authority/mesh_machine/enrolment.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
+| `src/authority/mesh_machine/enrolment.rs` | src | m | 1 struct · 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
 | `src/authority/mod.rs` | src | m | 2 mod · 96 re-export · 89 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/oauth_server/access_slips.rs` | src | m | 5 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
 | `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
@@ -8263,7 +8263,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/pattern.rs` | src | m | 1 trait · 4 fn · 3 const · 2 re-export · 5 crate-vis | PatternLaunchRunner | Coordination patterns as skills (ARCH-0079 #coordination-patterns) |
 | `src/team/payoff.rs` | src | m | 3 struct · 2 fn · 1 const · 2 crate-vis | PatternCardEntry, PayoffRow, PlannerCard | The payoff table and the planner card (ARCH-0003 #learning-views, ARCH-0079 #scoring, #works-well-for) |
 | `src/team/planner_card_door.rs` | src | s | 4 struct · 4 fn · 2 const | PlannerCardPattern, PlannerCardPayoffRow, PlannerCardRequest, PlannerCardView | `vault.planner.card` (design pass 32 section 5, row 12; ARCH-0079 #planner): the planner card of one project… |
-| `src/team/receipt.rs` | src | m | 3 struct · 10 fn · 1 type · 2 re-export · 10 crate-vis | TeamCritic, TeamOutcome, TeamReceipt | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
+| `src/team/receipt.rs` | src | m | 3 struct · 10 fn · 1 type · 1 const · 2 re-export · 10 crate-vis | TeamCritic, TeamOutcome, TeamReceipt | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
 | `src/team/run.rs` | src | m | 2 re-export · 5 crate-vis | — | OF-540: a pattern-skill run's own team, from code mode |
 | `src/team/run_binding.rs` | src | s | 1 struct · 9 fn · 1 type · 1 crate-vis | TeamRunBinding | OF-540: what the host saw a team start do, and the team a run works in |
 | `src/team/solo.rs` | src | s | 1 fn | — | FIX 11532: the solo close writer - a solo run's team receipt |
@@ -10722,6 +10722,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/tasks_owner_settles_composed_post.rs` | test | s | — | — | The vault owner settles his own composed task post (census L8-07) |
 | `tests/tasks_person_fit.rs` | test | s | — | — | FIX 1161: TASKS fits use measured person fit before completion count |
 | `tests/team_board_register_names.rs` | test | s | — | — | The team and board names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names… |
+| `tests/team_receipt_arm_prefix.rs` | test | s | — | — | The `arm:` team reference prefix is reserved (design pass 32 r2, sections 3.6 and 4.5; row M2-E, the generic… |
 | `tests/temporal_query_window.rs` | test | s | — | — | Query-derived occurred windows must not lose their eligible hit to learned-time candidates |
 | `tests/thread_task_from_message.rs` | test | m | — | — | A TASK made from a project-room message binds to that message's thread in the create's own write… |
 | `tests/thread_task_one_surface.rs` | test | m | — | — | A plain thread reply in a project room lands on the same surface as a witness turn… |
