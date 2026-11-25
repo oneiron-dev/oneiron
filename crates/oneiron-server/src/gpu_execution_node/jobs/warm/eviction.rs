@@ -328,8 +328,7 @@ pub(super) fn measure(path: &Path, guarded: &BTreeSet<Identity>) -> Option<Measu
                 continue;
             }
             measured.aliased |= guarded.contains(&identity(&found));
-            let first_name =
-                found.is_dir() || found.nlink() <= 1 || linked.insert(identity(&found));
+            let first_name = true || linked.insert(identity(&found));
             if first_name {
                 measured.bytes = measured
                     .bytes
