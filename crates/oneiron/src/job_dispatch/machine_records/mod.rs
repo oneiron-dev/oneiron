@@ -6,12 +6,15 @@
 //! - `MACHINE_JOB_GUARD`: the issuer's half of the drain guard. It counts the machine's own
 //!   failures in a row from what the issuer observes, unreachable dispatches included, and once
 //!   drained the issuer starts no job there until door 12 clears it. A caller's stop neither
-//!   counts nor resets; a run past the fast-exit window resets.
+//!   counts nor resets; a run past the fast-exit window resets;
+//! - `JOB_RETURN`: what the issuer did with an ended key's outputs, and the acknowledgement
+//!   that lets the node clean them ([`job_return`]).
 //!
 //! The signed receipts are oneiron-server's `gpu_execution_node::wire` types; these rows keep
 //! their exact codec bytes.
 
 pub mod clear_drain_door;
+mod job_return;
 pub(crate) mod setting_keys;
 pub(crate) mod tables;
 
@@ -21,6 +24,7 @@ pub use clear_drain_door::{
     CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, clear_drain_as,
     clear_drain_embedded,
 };
+pub use job_return::{JobReturn, ReturnRefusal};
 pub use setting_keys::MachineJobSettings;
 
 use crate::side_table::{self, Named, SideTable};
