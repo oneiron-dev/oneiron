@@ -330,7 +330,8 @@ fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> Node
             "key {key} did not reach the state: {:?}",
             entry(jobs, key)
         );
-        std::thread::sleep(Duration::from_millis(20));
+        // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 

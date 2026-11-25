@@ -19,7 +19,7 @@ use oneiron::work_order::{
 
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
+    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer, WarmWanted,
 };
 use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
 use crate::server::SyncServer;
@@ -66,6 +66,7 @@ pub fn facts_of_answer(machine: EntityId, answer: Option<&JobAnswer>, now_ms: u6
         keep_headroom_pct: None,
         roles: Vec::new(),
         warm: Vec::new(),
+        warm_absent: Vec::new(),
     };
     match answer {
         Some(JobAnswer::Node(node)) => fill_from_node(&mut facts, node, now_ms),
@@ -101,6 +102,20 @@ fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
         .saturating_sub(node.disk_reserved_bytes)
         .saturating_sub(node.disk_reserve_bytes);
     facts.room.disk_free_mib = Some(free / MIB);
+    // Row P2: a key is warm here when its path is present, or, with no path, when an attempt
+    // here used it (a hint); a mapped input that is not there blocks an order that lists it.
+    facts.warm = node
+        .warm
+        .iter()
+        .filter(|fact| fact.present || (!fact.mapped && fact.uses > 0))
+        .map(|fact| fact.key.clone())
+        .collect();
+    facts.warm_absent = node
+        .warm
+        .iter()
+        .filter(|fact| fact.mapped && !fact.cache && !fact.present)
+        .map(|fact| fact.key.clone())
+        .collect();
 }
 
 /// The loop's host on this server: the node calls through `nodes`, the offers and backends of
@@ -164,6 +179,16 @@ impl OrderHost for ServerOrderHost<'_> {
             .collect()
     }
 
+    fn machine_facts_wanting(&self, asks: &[(EntityId, Vec<String>)]) -> Vec<MachineFacts> {
+        asks.iter()
+            .map(|(machine, keys)| {
+                let request = JobRequest::NodeWanting(WarmWanted { keys: keys.clone() });
+                let answer = self.nodes.job(*machine, &request).ok();
+                facts_of_answer(*machine, answer.as_ref(), self.now_ms)
+            })
+            .collect()
+    }
+
     fn make_attempt(&self, attempt: &AttemptToMake<'_>) -> AttemptOutcome {
         let OrderCharge::Offer { name } = &attempt.order.charge else {
             // A line unit's attempt is the line's reserve (hunk H3), never a bare start.
@@ -183,6 +208,9 @@ impl OrderHost for ServerOrderHost<'_> {
         let mut inputs = serde_json::json!({ "machine": attempt.machine.to_hex() });
         if let [device] = attempt.devices.as_slice() {
             inputs["device_id"] = serde_json::Value::String(device.clone());
+        }
+        if !attempt.order.wishes.warm.is_empty() {
+            inputs["warm"] = serde_json::json!(attempt.order.wishes.warm);
         }
         if let Some(result) = attempt.order.result {
             inputs["result"] = serde_json::json!({

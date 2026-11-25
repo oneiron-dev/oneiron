@@ -13,7 +13,7 @@
 //! The issuer's host supplies what the engine cannot store: the machines' reported facts and
 //! the built quote and start ([`OrderHost`]). What the start checks in its own write is
 //! [`super::start_check`].
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gpu_job::{GpuEndReason, GpuJobEnd, GpuJobState};
 use crate::job_dispatch::DispatchClose;
@@ -33,8 +33,10 @@ use super::setting_keys::retry_policy_in_txn;
 use super::start_check::OrderAttemptRef;
 
 /// The node refusals inside a launch that clear by trying again (4.7): a busy device, an
-/// authority fold that had not caught up. Any other launch refusal is a changed pin.
-pub const RETRYABLE_LAUNCH_REASONS: [&str; 2] = ["device_busy", "authority_stale"];
+/// authority fold that had not caught up, a warm input gone since the facts (row P2: fit then
+/// keeps the order off that machine). Any other launch refusal is a changed pin.
+pub const RETRYABLE_LAUNCH_REASONS: [&str; 3] =
+    ["device_busy", "authority_stale", "warm_key_missing"];
 
 /// What the issuer's host gives a pass.
 pub trait OrderHost {
@@ -47,6 +49,12 @@ pub trait OrderHost {
     /// The facts of `machines`, read once per pass. A machine the host cannot reach is
     /// reported as unreachable, never left out.
     fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts>;
+
+    /// [`Self::machine_facts`], each machine asked with the warm keys of the open orders that
+    /// may run there (row P2), which its cache budget keeps. The default asks without them.
+    fn machine_facts_wanting(&self, asks: &[(EntityId, Vec<String>)]) -> Vec<MachineFacts> {
+        self.machine_facts(&asks.iter().map(|(machine, _)| *machine).collect::<Vec<_>>())
+    }
 
     /// Makes `attempt` through the built quote and start, under the job id the order and the
     /// attempt number fix ([`attempt_job_id`]). The start's own write checks the order again
@@ -182,6 +190,7 @@ fn unknown_machine(machine: EntityId) -> MachineFacts {
         keep_headroom_pct: None,
         roles: Vec::new(),
         warm: Vec::new(),
+        warm_absent: Vec::new(),
     }
 }
 
@@ -569,7 +578,8 @@ impl Vault {
             .into_iter()
             .filter(|order| host.holds(order))
             .collect();
-        let mut wanted: Vec<EntityId> = Vec::new();
+        // Each machine an open order may run on, with the warm keys those orders list.
+        let mut wanted: BTreeMap<EntityId, BTreeSet<String>> = BTreeMap::new();
         {
             let txn = self.store.env.read_txn()?;
             for order in orders
@@ -577,16 +587,24 @@ impl Vault {
                 .filter(|order| matches!(order.state, OrderState::Open { .. }))
             {
                 if let Some(row) = self.job_workload_in_txn(&txn, &order.workload)? {
-                    wanted.extend(allowed_machines(&order.limits, &row));
+                    for machine in allowed_machines(&order.limits, &row) {
+                        wanted
+                            .entry(machine)
+                            .or_default()
+                            .extend(order.wishes.warm.iter().cloned());
+                    }
                 }
             }
         }
-        wanted.sort();
-        wanted.dedup();
-        let mut machines = if wanted.is_empty() {
+        let bound = crate::warm_key::WANTED_WARM_KEYS_MAX;
+        let asks: Vec<(EntityId, Vec<String>)> = wanted
+            .into_iter()
+            .map(|(machine, keys)| (machine, keys.into_iter().take(bound).collect()))
+            .collect();
+        let mut machines = if asks.is_empty() {
             Vec::new()
         } else {
-            host.machine_facts(&wanted)
+            host.machine_facts_wanting(&asks)
         };
         let mut running: BTreeMap<String, u32> = BTreeMap::new();
         for order in &orders {

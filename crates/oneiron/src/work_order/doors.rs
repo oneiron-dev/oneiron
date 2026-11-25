@@ -181,6 +181,12 @@ pub fn order_work_as(
                 Err(refused) => return Ok(Err(refused)),
             };
             let by = ordered_by(memory, caller);
+            let warm_keys_max = super::setting_keys::order_warm_keys_max_in_txn(vault, txn)?;
+            if let Err(invalid) =
+                crate::warm_key::check_warm_keys(&input.wishes.warm, warm_keys_max)
+            {
+                return Ok(Err(bad_request(&format!("wishes.warm: {invalid}"))));
+            }
             if let Some(key) = &input.intent_key {
                 let earlier = WORK_ORDERS
                     .scan(&vault.store, txn)?
