@@ -6,10 +6,13 @@
 //!
 //! The report is one line, and `job-exec` keeps the pipe open after it
 //! (close-on-exec) until it becomes the workload (review r2 R2-02). A
-//! successful `execve` closes the pipe with nothing more said; a failed one
-//! writes why before `job-exec` exits. The gate waits for one or the other
-//! after its go, and records a failure as the record's `exec_failed`, so the
-//! end record says the workload never started.
+//! successful `execve` closes the pipe with nothing more said, while the
+//! process lives on; a failed one writes why before `job-exec` exits. The
+//! gate unlinks both pipes' names before its go, so the workload cannot open
+//! them again (review r3 R3-04), and then waits for one end or the other. A
+//! go that did not reach `job-exec`, a `job-exec` that ended before its
+//! exec, or no exec in time is recorded as the record's `exec_failed` (r3
+//! R3-02), so the end record says the workload never started.
 
 use std::io::{self, Write as _};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -18,7 +21,7 @@ use std::time::{Duration, Instant};
 use super::records::{
     BoundRequirement, ExecFile, PROVED_INSIDE, ScopeRecord, ScopeReport, first_unmet,
 };
-use super::safe_fs::{self, boot_ns, borrow, open_dir_path, read_beneath};
+use super::safe_fs::{self, boot_ns, borrow, open_dir_path, read_beneath, remove_beneath};
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::{
     EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END, REPORT_PIPE_NAME, SCOPE_FILE_NAME,
@@ -61,7 +64,7 @@ pub fn run(args: StepArgs) -> i32 {
         Err(why) => (None, Some(why), None),
     };
     let go = if refusal.is_none() {
-        match open_go(&context) {
+        match open_go(&context).and_then(|go| unlink_pipes(&context).map(|()| go)) {
             Ok(go) => Some(go),
             Err(why) => return finish(&context, report, Some(why), None, None),
         }
@@ -71,6 +74,42 @@ pub fn run(args: StepArgs) -> i32 {
     finish(&context, report, refusal, go, pipe)
 }
 
+/// Unlinks the two pipes' names once the gate holds both pipes: after the go,
+/// nothing may open them again.
+fn unlink_pipes(context: &StepContext) -> Result<(), String> {
+    let exchange = open_dir_path(&context.exchange_path())
+        .map_err(|error| format!("exchange_dir: {error}"))?;
+    for name in [REPORT_PIPE_NAME, GO_PIPE_NAME] {
+        remove_beneath(borrow(&exchange), name)
+            .map_err(|error| format!("pipes_not_unlinked: {name}: {error}"))?;
+    }
+    Ok(())
+}
+
+/// A pidfd of the unit's main process, `job-exec`: the service manager
+/// names it in `MAINPID` for `ExecStartPost=`. `None` when it does not.
+fn main_process() -> Option<OwnedFd> {
+    let pid: libc::pid_t = std::env::var("MAINPID").ok()?.trim().parse().ok()?;
+    // SAFETY: pidfd_open takes a process id and no flags, and returns a new
+    // descriptor or -1.
+    let opened = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0_u32) };
+    let fd = libc::c_int::try_from(opened).ok().filter(|fd| *fd >= 0)?;
+    // SAFETY: fd is the descriptor pidfd_open just returned.
+    Some(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Whether the process a pidfd holds has ended: its pidfd reads ready.
+fn has_ended(pidfd: &OwnedFd) -> bool {
+    let mut poll = libc::pollfd {
+        fd: pidfd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid pollfd; a zero timeout only looks.
+    let ready = unsafe { libc::poll(&raw mut poll, 1, 0) };
+    ready > 0 && poll.revents & libc::POLLIN != 0
+}
+
 fn finish(
     context: &StepContext,
     report: Option<ScopeReport>,
@@ -78,6 +117,8 @@ fn finish(
     go: Option<OwnedFd>,
     pipe: Option<OwnedFd>,
 ) -> i32 {
+    // Held before the go, so the process it names is `job-exec` itself.
+    let main = go.as_ref().and_then(|_| main_process());
     let released = refusal.is_none() && go.is_some();
     let mut record = ScopeRecord {
         instance: context.args.instance.clone(),
@@ -102,24 +143,16 @@ fn finish(
         return 1;
     };
     let mut file = std::fs::File::from(go);
-    if let Err(error) = file.write_all(GATE_GO) {
-        eprintln!("job-prepare --after-exec: the go did not reach job-exec: {error}");
-        return 1;
-    }
-    drop(file);
-    let Some(pipe) = pipe else {
-        return 0;
+    let outcome = match file.write_all(GATE_GO) {
+        Err(error) => AfterGo::Failed(format!("go_not_delivered: {error}")),
+        Ok(()) => match &pipe {
+            Some(pipe) => after_go(pipe, EXEC_WAIT, main.as_ref()),
+            None => AfterGo::Became,
+        },
     };
-    match after_go(&pipe, EXEC_WAIT) {
+    drop(file);
+    match outcome {
         AfterGo::Became => 0,
-        AfterGo::Late => {
-            eprintln!(
-                "job-prepare --after-exec: {}: job-exec neither became the workload nor failed within {} s; the release stands",
-                context.unit(),
-                EXEC_WAIT.as_secs()
-            );
-            0
-        }
         AfterGo::Failed(why) => {
             eprintln!(
                 "job-prepare --after-exec: {}: the workload's exec failed: {why}",
@@ -136,16 +169,18 @@ fn finish(
 
 /// What came on the report pipe after the go.
 enum AfterGo {
-    /// The pipe closed with nothing said: `job-exec` became the workload (or
-    /// ended with no word, which counts the same).
+    /// The pipe closed with nothing said while `job-exec`'s process lives
+    /// on: it became the workload.
     Became,
-    /// `job-exec`'s words on why the workload's exec failed.
+    /// Why the workload never started: `job-exec`'s words on its exec, its
+    /// end before the exec, or no exec in time.
     Failed(String),
-    /// Neither within the wait.
-    Late,
 }
 
-fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
+/// Waits for `job-exec`'s exec. `main` is `job-exec`'s pidfd: a pipe that
+/// closes when the process has ended was closed by its exit, not its exec.
+/// Without it, a quiet close counts as the exec.
+fn after_go(pipe: &OwnedFd, wait: Duration, main: Option<&OwnedFd>) -> AfterGo {
     let started = Instant::now();
     let mut said = Vec::new();
     let mut buffer = [0_u8; 512];
@@ -157,7 +192,7 @@ fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
         let left = wait.saturating_sub(started.elapsed());
         if left.is_zero() {
             return if said.is_empty() {
-                AfterGo::Late
+                AfterGo::Failed(format!("no_exec_in_time: {} s", wait.as_secs()))
             } else {
                 failed(said.as_slice())
             };
@@ -168,10 +203,12 @@ fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
                 said.extend_from_slice(&buffer[..count.min(room)]);
             }
             Ok(PipeRead::End) => {
-                return if said.is_empty() {
-                    AfterGo::Became
-                } else {
+                return if !said.is_empty() {
                     failed(said.as_slice())
+                } else if main.is_some_and(has_ended) {
+                    AfterGo::Failed("job-exec ended before the workload's exec".to_owned())
+                } else {
+                    AfterGo::Became
                 };
             }
             Ok(PipeRead::Nothing) => {}

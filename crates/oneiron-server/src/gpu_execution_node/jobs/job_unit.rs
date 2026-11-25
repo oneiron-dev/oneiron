@@ -385,8 +385,15 @@ pub fn read_end_record(control_dir: &Path, key: &str) -> io::Result<Option<EndRe
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let record: EndRecord = serde_json::from_slice(&bytes)
+    let mut record: EndRecord = serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    // The end step names no key it could not check: a launch file that named
+    // another key than the unit's instance is refused before any workload,
+    // and its record carries no key. In the key's own control directory such
+    // a refusal is this key's (R3b review r3 R3-09).
+    if record.key.is_empty() && !record.workload_started {
+        record.key = key.to_owned();
+    }
     if record.key != key {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

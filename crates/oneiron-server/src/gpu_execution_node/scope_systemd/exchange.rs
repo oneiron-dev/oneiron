@@ -32,7 +32,7 @@ pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), Stri
     let root = root_dir(EXCHANGE_ROOT, 0o755).map_err(|why| format!("exchange_root: {why}"))?;
     let name = exec.instance.as_str();
     if let Ok(stale) = open_dir_beneath(borrow(&root), OsStr::new(name)) {
-        for file in [EXEC_FILE_NAME, REPORT_PIPE_NAME, GO_PIPE_NAME] {
+        for file in EXCHANGE_FILES {
             remove_beneath(borrow(&stale), file).map_err(|error| error.to_string())?;
         }
         drop(stale);
@@ -63,22 +63,51 @@ pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), Stri
     Ok(())
 }
 
+/// Every name the exchange directory may hold, with `exec.json`'s staging
+/// name (review r3 R3-10).
+const EXCHANGE_FILES: [&str; 4] = [
+    EXEC_FILE_NAME,
+    EXEC_STAGING_NAME,
+    REPORT_PIPE_NAME,
+    GO_PIPE_NAME,
+];
+
+/// `exec.json` while [`write_beneath`] writes it.
+const EXEC_STAGING_NAME: &str = "exec.json.new";
+
 /// A root directory under `/run` ([`EXCHANGE_ROOT`] or [`PAYLOAD_ROOT`]),
-/// made root's with `mode` when absent, and then opened.
+/// made when absent (a second maker at once is no error), opened, and given
+/// `mode` on the opened directory every time, so a root that was there
+/// before with a wider mode is narrowed (review r3 R3-07).
 ///
 /// # Errors
 ///
 /// It could not be made, it is not root's alone, or it does not open.
 pub fn root_dir(path: &str, mode: u32) -> Result<OwnedFd, String> {
-    let path = Path::new(path);
-    if !path.exists() {
-        std::fs::create_dir(path).map_err(|error| error.to_string())?;
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-            .map_err(|error| error.to_string())?;
+    let c = CString::new(path).map_err(|error| error.to_string())?;
+    // SAFETY: c is NUL terminated; the umask can only narrow the mode.
+    if unsafe { libc::mkdir(c.as_ptr(), mode as libc::mode_t) } != 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::AlreadyExists {
+            return Err(format!("{path}: {error}"));
+        }
     }
+    let path = Path::new(path);
     safe_fs::require_root_owned(path)?;
-    open_dir_path(path).map_err(|error| error.to_string())
+    let dir = open_dir_path(path).map_err(|error| error.to_string())?;
+    let found = safe_fs::facts(borrow(&dir)).map_err(|error| error.to_string())?;
+    if found.uid != 0 {
+        return Err(format!("{}: not root's", path.display()));
+    }
+    // SAFETY: dir is the root-owned directory this call opened.
+    if unsafe { libc::fchmod(dir.as_raw_fd(), mode as libc::mode_t) } != 0 {
+        return Err(format!(
+            "{}: {}",
+            path.display(),
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(dir)
 }
 
 /// Publishes `payload`, the payload directory the prepare step opened and
@@ -139,10 +168,16 @@ pub fn withdraw(instance: &str) {
     let _ = std::fs::remove_dir(&target);
     let exchange = Path::new(EXCHANGE_ROOT).join(instance);
     if let Ok(dir) = open_dir_path(&exchange) {
-        for name in [EXEC_FILE_NAME, REPORT_PIPE_NAME, GO_PIPE_NAME] {
-            let _ = remove_beneath(borrow(&dir), name);
+        for name in EXCHANGE_FILES {
+            if let Err(error) = remove_beneath(borrow(&dir), name) {
+                eprintln!("{}/{name}: not removed: {error}", exchange.display());
+            }
         }
         drop(dir);
-        let _ = std::fs::remove_dir(&exchange);
+        if let Err(error) = std::fs::remove_dir(&exchange)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            eprintln!("{}: not removed: {error}", exchange.display());
+        }
     }
 }

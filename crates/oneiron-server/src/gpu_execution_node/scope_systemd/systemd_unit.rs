@@ -127,13 +127,26 @@ pub fn parse_show(text: &str) -> BTreeMap<String, String> {
 ///
 /// `systemctl` did not answer.
 pub fn show(unit: &str, names: &[&str]) -> Result<BTreeMap<String, String>, String> {
+    show_within(unit, names, SYSTEMCTL_TIMEOUT)
+}
+
+/// [`show`], waiting at most `timeout` for the service manager.
+///
+/// # Errors
+///
+/// As [`show`].
+pub fn show_within(
+    unit: &str,
+    names: &[&str],
+    timeout: Duration,
+) -> Result<BTreeMap<String, String>, String> {
     let mut args = vec!["show", unit];
     let flags: Vec<String> = names
         .iter()
         .map(|name| format!("--property={name}"))
         .collect();
     args.extend(flags.iter().map(String::as_str));
-    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|text| parse_show(&text))
+    run_tool("systemctl", &args, timeout).map(|text| parse_show(&text))
 }
 
 /// The phase a unit's `ActiveState` means.

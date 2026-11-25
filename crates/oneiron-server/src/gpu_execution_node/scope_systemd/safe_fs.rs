@@ -278,6 +278,17 @@ pub fn make_dir_beneath(
     // SAFETY: c is NUL terminated.
     check(unsafe { libc::mkdirat(dir.as_raw_fd(), c.as_ptr(), 0o700) })?;
     let made = open_dir_beneath(dir, OsStr::new(name))?;
+    // The name could be replaced between the make and the open (review r3
+    // R3-08): the directory opened must be this process's with no group or
+    // other bits, as the one it made is (mode 0700, the umask only narrows),
+    // before it is given an owner and a mode.
+    let found = facts(borrow(&made))?;
+    // SAFETY: geteuid has no failure.
+    if found.uid != unsafe { libc::geteuid() } || found.mode & 0o077 != 0 {
+        return Err(io::Error::other(format!(
+            "{name}: replaced between its make and its open"
+        )));
+    }
     // SAFETY: made is the directory this call created and opened.
     check(unsafe { libc::fchown(made.as_raw_fd(), owner.0, owner.1) })?;
     // SAFETY: as above.

@@ -7,6 +7,7 @@
 //! this step once the stop grace is over. The workload cannot write any of
 //! it.
 
+use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -16,20 +17,18 @@ use super::prepare::CUTOFF_MARGIN_MS;
 use super::records::{CutoffMark, PreparedRecord, ScopeRecord};
 use super::safe_fs::{self, boot_id, boot_ns, borrow, read_beneath};
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
+use super::systemd_unit::{run_tool, show, show_within};
 use super::{
-    CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, SCOPE_FILE_NAME,
+    CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, SCOPE_FILE_NAME, is_job_instance,
     refusal_of_exit_status,
 };
 
-/// The least the step waits for processes that were killed to be reaped
-/// before it records the cgroup as not empty.
+/// How long the step, run by hand, looks for the unit's group to empty.
 const REAP_WAIT: Duration = Duration::from_secs(2);
 
-/// The step leaves this much of its own timeout (the stop grace, which the
-/// service manager gives `ExecStopPost=` too) unused, so it always ends in
-/// time to write the record.
-const STOP_POST_MARGIN: Duration = Duration::from_secs(3);
+/// The longest the step waits for one answer of the service manager: its
+/// whole run fits in its own timeout, the stop grace (review r3 R3-06).
+const QUERY_WAIT: Duration = Duration::from_secs(1);
 
 /// The end record's file, R3a's `END_RECORD_FILE_NAME`.
 const END_RECORD: &str = super::super::jobs::job_unit::END_RECORD_FILE_NAME;
@@ -42,10 +41,16 @@ pub fn run(args: StepArgs) -> i32 {
         // directory is not one of its binds.
         eprintln!("job-ended: process 1's mount namespace not entered: {why}");
     }
+    let instance = args.instance.clone();
     let context = match StepContext::open(args) {
         Ok(context) => context,
         Err(why) => {
             eprintln!("job-ended: no end record: {why}");
+            // The runtime paths go even so (review r3 R3-05): they are named
+            // by the instance alone, once it is a job's.
+            if is_job_instance(&instance) {
+                disarm_instance(&instance);
+            }
             return 1;
         }
     };
@@ -134,14 +139,20 @@ fn end_record(context: &StepContext) -> EndRecord {
     // at or past the time the cutoff timer fires (the mark is written after
     // the stop, so it may come later than this step). The service manager's
     // `timeout` alone says nothing: it is also a stop grace that ran out.
-    let end_boot_ns = boot_ns();
+    // That time is this step's start: the step may wait for the unit's other
+    // processes after it.
+    let step_boot_ns = boot_ns();
     let cutoff_time_reached = prepared
         .as_ref()
         .and_then(|record| record.cutoff.as_ref())
         .is_some_and(|plan| {
-            end_boot_ns.saturating_add(CUTOFF_MARGIN_MS.saturating_mul(1_000_000))
+            step_boot_ns.saturating_add(CUTOFF_MARGIN_MS.saturating_mul(1_000_000))
                 >= plan.stop_at_boot_ns
         });
+    // The end time is when the group was seen empty, or when the step gave up
+    // on it (review r3 R3-03).
+    let (cgroup_empty, end_boot_ns) =
+        settle_cgroup(&context.unit(), context.settings.stop_grace_secs);
     EndRecord {
         key,
         service_result,
@@ -151,7 +162,7 @@ fn end_record(context: &StepContext) -> EndRecord {
         end_boot_ns,
         cutoff_fired: cutoff.is_some() || (workload_started && cutoff_time_reached),
         workload_started,
-        cgroup_empty: cgroup_empty_but_self(&context.unit(), context.settings.stop_grace_secs),
+        cgroup_empty,
         refusal,
     }
 }
@@ -170,64 +181,153 @@ fn launch_key(context: &StepContext) -> Option<String> {
 }
 
 /// Whether the unit's cgroup, and every group below it, holds no process
-/// but this step and its own threads, once the stop grace is over
-/// ([`emptiness_wait`]). A group that cannot be read counts as not empty.
-fn cgroup_empty_but_self(unit: &str, stop_grace_secs: u64) -> bool {
-    let Ok(found) = show(
-        unit,
-        &[
-            "ControlGroup",
-            "ActiveState",
-            "ActiveExitTimestampMonotonic",
-        ],
-    ) else {
-        return false;
-    };
-    let group = found.get("ControlGroup").cloned().unwrap_or_default();
-    if group.is_empty() {
-        return true;
-    }
-    let wait = emptiness_wait(&found, stop_grace_secs);
-    let root = Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+/// but this step, and the boot-clock time it was first seen so (or the time
+/// the step gave up on it). A group that cannot be read counts as not empty.
+///
+/// Run as the unit's `ExecStopPost=` (the step is in the unit's own group),
+/// the unit is stopping, and the service manager may have started this step
+/// as soon as the main process exited, while others still run their TERM
+/// handlers, and sends its final TERM and KILL only after this step (review
+/// r2 R2-08, r3 R3-01). So the step waits until the stop grace, counted from
+/// when the unit left `active`, is over, then kills what is left itself and
+/// watches the group empty: a kill that the group does not confirm is the
+/// unconfirmed kill the end record names. Everything fits in two thirds of
+/// the stop grace, the step's own timeout (r3 R3-06). Run by hand, the step
+/// kills nothing and looks for [`REAP_WAIT`].
+fn settle_cgroup(unit: &str, stop_grace_secs: u64) -> (bool, u64) {
+    let began = Instant::now();
     let me = std::process::id();
-    let started = Instant::now();
+    let own = own_cgroup();
+    let in_unit = own
+        .as_deref()
+        .is_some_and(|group| group.rsplit('/').next() == Some(unit));
+    let group = if in_unit {
+        own.unwrap_or_default()
+    } else {
+        match show(unit, &["ControlGroup"]) {
+            Ok(found) => found.get("ControlGroup").cloned().unwrap_or_default(),
+            Err(_) => return (false, boot_ns()),
+        }
+    };
+    if group.is_empty() {
+        return (true, boot_ns());
+    }
+    let root = Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+    if !in_unit {
+        return watch_empty(&root, me, began + REAP_WAIT);
+    }
+    let budget = Duration::from_secs(stop_grace_secs).saturating_mul(2) / 3;
+    let reap = budget / 3;
+    let grace_left = show_within(unit, &["ActiveExitTimestampMonotonic"], QUERY_WAIT)
+        .ok()
+        .and_then(|found| {
+            found
+                .get("ActiveExitTimestampMonotonic")?
+                .parse::<u64>()
+                .ok()
+        })
+        .filter(|since| *since > 0)
+        .map(|since_us| {
+            let grace_end_us = since_us.saturating_add(stop_grace_secs.saturating_mul(1_000_000));
+            Duration::from_micros(grace_end_us.saturating_sub(monotonic_us()))
+        });
+    // When the stop's start is unknown, the leftover processes get half of
+    // what is left before the kill.
+    let kill_after = grace_left
+        .unwrap_or(budget / 2)
+        .min(budget.saturating_sub(reap));
+    let watched = watch_empty(&root, me, began + kill_after);
+    if watched.0 {
+        return watched;
+    }
+    kill_others(&root, &group, me);
+    watch_empty(&root, me, began + budget)
+}
+
+/// Watches the group at `root` until it holds no process but `me`, or
+/// `until`: whether it emptied, and the boot-clock time it was seen empty or
+/// the watch ended.
+fn watch_empty(root: &Path, me: u32, until: Instant) -> (bool, u64) {
     loop {
-        match others_in(&root, me) {
-            Some(0) => return true,
-            Some(_) if started.elapsed() < wait => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            _ => return false,
+        match pids_in(root) {
+            Some(pids) if pids.iter().all(|pid| *pid == me) => return (true, boot_ns()),
+            Some(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+            _ => return (false, boot_ns()),
         }
     }
 }
 
-/// How long the unit's other processes may take to be gone (review r2
-/// R2-08). The service manager runs this step as soon as the main process
-/// exits, even while the others still run their TERM handlers inside the
-/// stop grace. So a unit that is stopping gets the rest of its stop grace,
-/// counted from when it left `active`, at most the grace less
-/// [`STOP_POST_MARGIN`] and at least [`REAP_WAIT`]. A unit that is not
-/// stopping (this step run by hand) gets [`REAP_WAIT`].
-fn emptiness_wait(
-    found: &std::collections::BTreeMap<String, String>,
-    stop_grace_secs: u64,
-) -> Duration {
-    let stopping_since_us = found
-        .get("ActiveExitTimestampMonotonic")
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|since| *since > 0);
-    let (Some("deactivating"), Some(since_us)) = (
-        found.get("ActiveState").map(String::as_str),
-        stopping_since_us,
-    ) else {
-        return REAP_WAIT;
+/// The processes of the group at `dir` and of every group below it; `None`
+/// when one cannot be read.
+fn pids_in(dir: &Path) -> Option<Vec<u32>> {
+    let procs = match std::fs::read_to_string(dir.join("cgroup.procs")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
+        Err(_) => return None,
     };
-    let grace = Duration::from_secs(stop_grace_secs);
-    let ceiling = grace.saturating_sub(STOP_POST_MARGIN).max(REAP_WAIT);
-    let grace_end_us =
-        since_us.saturating_add(u64::try_from(grace.as_micros()).unwrap_or(u64::MAX));
-    Duration::from_micros(grace_end_us.saturating_sub(monotonic_us())).clamp(REAP_WAIT, ceiling)
+    let mut pids: Vec<u32> = procs
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        if entry.file_type().ok()?.is_dir() {
+            pids.extend(pids_in(&entry.path())?);
+        }
+    }
+    Some(pids)
+}
+
+/// Sends KILL to every process of the group at `root` (named `group` below
+/// the cgroup root) but `me`. Each process is held by a pidfd first and then
+/// checked to be in the group, so a process id that was reused in between
+/// is never signalled.
+fn kill_others(root: &Path, group: &str, me: u32) {
+    let Some(pids) = pids_in(root) else {
+        return;
+    };
+    let below = format!("{group}/");
+    for pid in pids.into_iter().filter(|pid| *pid != me) {
+        let Ok(raw_pid) = libc::pid_t::try_from(pid) else {
+            continue;
+        };
+        // SAFETY: pidfd_open takes a process id and no flags, and returns a
+        // new descriptor or -1.
+        let opened = unsafe { libc::syscall(libc::SYS_pidfd_open, raw_pid, 0_u32) };
+        let Ok(fd) = libc::c_int::try_from(opened) else {
+            continue;
+        };
+        if fd < 0 {
+            continue;
+        }
+        // SAFETY: fd is the descriptor pidfd_open just returned.
+        let pidfd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let in_group = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).is_ok_and(|text| {
+            text.lines()
+                .filter_map(|line| line.strip_prefix("0::"))
+                .any(|path| path.trim() == group || path.trim().starts_with(&below))
+        });
+        if in_group {
+            // SAFETY: pidfd is open; a null info and no flags send a plain
+            // KILL to the very process it holds, or fail if that one is gone.
+            let _ = unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    pidfd.as_raw_fd(),
+                    libc::SIGKILL,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0_u32,
+                )
+            };
+        }
+    }
+}
+
+/// This process's cgroup v2 group, as `/proc/self/cgroup` names it.
+fn own_cgroup() -> Option<String> {
+    let text = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .map(|path| path.trim().to_owned())
 }
 
 /// `CLOCK_MONOTONIC` in microseconds: the clock of the service manager's
@@ -245,35 +345,15 @@ fn monotonic_us() -> u64 {
         .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0) / 1_000)
 }
 
-/// How many processes other than `me` the group at `dir` and its children
-/// hold; `None` when one cannot be read.
-fn others_in(dir: &Path, me: u32) -> Option<usize> {
-    let procs = match std::fs::read_to_string(dir.join("cgroup.procs")) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(0),
-        Err(_) => return None,
-    };
-    let mut count = procs
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .filter(|pid| *pid != me)
-        .count();
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        if entry.file_type().ok()?.is_dir() {
-            count += others_in(&entry.path(), me)?;
-        }
-    }
-    Some(count)
-}
-
 /// Stops the cutoff timer of a unit that ended before it, and takes away
 /// the job's payload bind source and exchange directory.
 fn disarm(context: &StepContext) {
-    let timer = format!("{CUTOFF_UNIT_PREFIX}{}.timer", context.args.instance);
-    let _ = run_tool(
-        "systemctl",
-        &["stop", "--no-block", &timer],
-        SYSTEMCTL_TIMEOUT,
-    );
-    exchange::withdraw(&context.args.instance);
+    disarm_instance(&context.args.instance);
+}
+
+/// [`disarm`] by a checked job instance alone.
+fn disarm_instance(instance: &str) {
+    let timer = format!("{CUTOFF_UNIT_PREFIX}{instance}.timer");
+    let _ = run_tool("systemctl", &["stop", "--no-block", &timer], QUERY_WAIT);
+    exchange::withdraw(instance);
 }

@@ -44,7 +44,9 @@ result() { # <name> <PASS|FAIL|UNPROVEN> <why>
 }
 wanted() { [ ${#ONLY[@]} -eq 0 ] && return 0; local t; for t in "${ONLY[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
 as_engine() { runuser -u "$ENGINE" -- "$@"; }
-boot_ns() { awk '{ printf "%d", $1 * 1000000000 }' /proc/uptime; }
+# The boot clock in nanoseconds, in bash's 64-bit arithmetic (review r3 R3-11: mawk's %d clamps at 2^31); /proc/uptime
+# has two decimals, so the value is good to 10 ms.
+boot_ns() { local up; read -r up _ < /proc/uptime; echo $(( ${up%.*} * 1000000000 + 10#${up#*.} * 10000000 )); }
 
 node_file() { # [device_files toml lines]
   mkdir -p /etc/oneiron && chmod 0755 /etc/oneiron
