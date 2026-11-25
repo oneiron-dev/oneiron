@@ -47,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-linkedin-policy](codemap/oneiron-linkedin-policy.md) | LinkedIn seat policy values consumed by outbound admission | 2 | 1 | 0 |
 | [oneiron-llm](codemap/oneiron-llm.md) | Text model wire adapters for Oneiron's [`oneiron::LlmBackend`] seam, one module per wire protocol (ARCH-0036… | 44 | 9 | 0 |
 | [oneiron-mail-pack](codemap/oneiron-mail-pack.md) | `oneiron-mail-pack`: the lifted half of `oneiron::mail_pack` (core split; plan… | 5 | 0 | 0 |
-| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 9 | 3 | 1 |
+| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 10 | 3 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 54 | 11 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 28 | 2 | 2 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 56 | 10 | 3 |
@@ -777,7 +777,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `files_search` | file | 1 | s | Cross-device Files search over the mesh (ARCH-0027 #files-world: "Cross-device search over the iroh mesh… |
-| `iroh_transport` | file+dir | 4 | L | Private iroh data plane |
+| `iroh_transport` | file+dir | 5 | m | Private iroh data plane |
 | `message` | file | 1 | s | One message each way per stream, in the organ protocol's codec: the exchange organ calls ride (OF-575)… |
 | `sync_dialer` | file | 1 | s | The sync client's carrier to its home machine over the mesh (OF-535) |
 | `transport_key` | file | 1 | s | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
