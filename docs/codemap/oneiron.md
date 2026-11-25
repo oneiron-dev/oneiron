@@ -4412,7 +4412,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interlocutor/tests.rs` | test | m | — | — | — |
 | `src/job_dispatch/machine_records/clear_drain_door.rs` | src | s | 2 struct · 2 fn · 1 const | MachineDrainClearRequest, MachineDrainCleared | Door 12, `vault.machines.execution.clear_drain` (pass 33 row R4, 7.9; pass 34, 2.4): clears the issuer's… |
 | `src/job_dispatch/machine_records/job_return.rs` | src | s | 2 struct · 4 fn | JobReturn, ReturnRefusal | `JOB_RETURN` (pass 33 row R4; EM-12 = A): what the issuer did with one ended key's outputs |
-| `src/job_dispatch/machine_records/mod.rs` | src | m | 4 struct · 2 enum · 9 fn · 1 mod · 3 re-export · 2 crate-vis | ClearDrainRefusal, JobOrphan, MachineDrain, MachineJobGuard, MachineJobOutcome, UnattributedSeconds | The issuer's records of a vault machine's jobs that no dispatch row holds (pass 33 row R4; 5.1, 7.9 and… |
+| `src/job_dispatch/machine_records/mod.rs` | src | m | 4 struct · 2 enum · 10 fn · 1 mod · 3 re-export · 2 crate-vis | ClearDrainRefusal, JobOrphan, MachineDrain, MachineJobGuard, MachineJobOutcome, UnattributedSeconds | The issuer's records of a vault machine's jobs that no dispatch row holds (pass 33 row R4; 5.1, 7.9 and… |
 | `src/job_dispatch/machine_records/setting_keys.rs` | src | s | 1 struct · 1 fn | MachineJobSettings | The issuer's status-side Setting keys (pass 33 row R4; pass 34 sections 2.4 and 6.3; the lead's POLICY AS… |
 | `src/job_dispatch/machine_records/tables.rs` | src | s | — | — | The side tables `machine_records` keeps: each row declares one, and the crate's build script places it in… |
 | `src/job_dispatch/mod.rs` | src | s | 1 mod · 2 re-export · 1 crate-vis | — | The issuer's side of a job that one of the vault's machines runs (pass 33 section 8, the `vault_machine`… |
@@ -8733,7 +8733,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/wake_envelope_ack.rs` | src | s | 1 fn | — | Doors for `tests/wake_ack.rs` (census L8-18, RC99): a failed TASK's wake routed as the own-task producer… |
 | `src/test_doors/weave_arc_rederive.rs` | src | s | 1 fn | — | Door for `tests/weave_arc_rederive.rs`: runs the Arc gate's due sweep, the one the Nightly recipe and the… |
 | `src/test_doors/witness_project.rs` | src | s | 1 fn | — | The PROJECT a witness row is stamped under, for integration tests |
-| `src/test_doors/work_order.rs` | src | s | 4 fn | — | Doors for the work order tests (pass 34, row Q1) |
+| `src/test_doors/work_order.rs` | src | s | 5 fn | — | Doors for the work order tests (pass 34, rows Q1 and Q5) |
 | `src/test_doors/work_talk_replay.rs` | src | s | 1 fn | — | A replicated-shape CONVERSATION put for the work-talk tests (L7-05 Astra T3) |
 | `src/test_doors/workaround_skills.rs` | src | s | 1 struct · 4 fn · 1 const | StoredFinding | Doors for the workaround-skills tests (CLIF-STEALS 2): a leased `coach.skill_distill` attempt (the Coach… |
 | `src/test_doors/workspace_onboarding_halt.rs` | src | s | 1 fn | — | A workspace onboarding stopped after a named step, for the test that resumes it once the one-vault setting… |
@@ -9194,19 +9194,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 re-export · 1 crate-vis | — | Monthly CRDT window keys and their timestamp conversion |
 | `src/work_order/after.rs` | src | s | 2 struct · 1 enum · 1 fn · 2 const | AfterPick, RetryPolicy, RetryRule | The AFTER slot's default rule, `typed_retry@1` (pass 34, 4.7): what follows an attempt's end |
 | `src/work_order/blocker.rs` | src | m | 1 struct · 2 enum · 5 fn | BlockedOn, Blocker, Clearing | One vocabulary of reasons (pass 34, section 1.3; Engine ruling EM-19 = A) |
+| `src/work_order/caps.rs` | src | s | 1 struct · 7 fn · 3 const · 1 crate-vis | RunningCaps | Named running caps (pass 34, 1.1 and section 13; row Q5): one mechanism for a seat, a family and an array |
+| `src/work_order/conditions.rs` | src | s | 3 crate-vis | — | Row Q5's conditions on an open order, looked at before any machine is fitted (pass 34, 1.1): the order its… |
 | `src/work_order/decider.rs` | src | m | 3 struct · 3 enum · 4 fn · 2 const · 1 re-export · 11 crate-vis | DeciderMiss, DeciderReceipt, DeciderReply, SlotAsk, SlotAskWindow, SlotSubject | Slot deciders (pass 34, `34-compute-general/DESIGN.md` sections 1.2, 4.4, 4.5 and 4.7; row P1): the Grant… |
 | `src/work_order/decider/setting_keys.rs` | src | s | 1 struct · 7 const · 4 crate-vis | DeciderGrant | The slot deciders' Setting keys (pass 34, 1.2 and 6.3; row P1): per slot (the item: `rank`, `place` or… |
 | `src/work_order/doors.rs` | src | m | 1 enum · 9 fn · 1 const · 3 crate-vis | CancelRefused | The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and… |
 | `src/work_order/fit.rs` | src | m | 7 struct · 1 enum · 10 fn | DeviceFact, DeviceNeed, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact | `fit` (pass 34, 1.3 and 4.2): whether an order can run on a machine now, from the facts the machine… |
+| `src/work_order/group.rs` | src | s | 2 struct · 2 fn · 5 crate-vis | GroupRequest, WorkOrderGroup | Array groups (pass 34, 1.1; row Q5): orders that share a group id are the members of one array, and one… |
 | `src/work_order/logs_tail.rs` | src | s | 4 struct · 1 enum · 2 fn · 1 const | LogsTail, LogsTailRequest, LogsTailStream, LogsTailTarget, LogsTailTruncation | `vault.jobs.logs.tail` (pass 34, 7.2 and 14.2; row Q3): an attempt's stdout or stderr from a byte offset… |
-| `src/work_order/mod.rs` | src | s | 7 const · 11 mod · 12 re-export · 3 crate-vis | — | Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… |
-| `src/work_order/pass.rs` | src | m | 2 struct · 1 enum · 1 trait · 5 fn · 1 const · 5 crate-vis | AttemptOutcome, AttemptToMake, OrderHost, PassReport | The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job… |
+| `src/work_order/mod.rs` | src | s | 7 const · 13 mod · 15 re-export · 3 crate-vis | — | Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… |
+| `src/work_order/pass.rs` | src | L | 2 struct · 1 enum · 1 trait · 5 fn · 1 const · 6 crate-vis | AttemptOutcome, AttemptToMake, OrderHost, PassReport | The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job… |
 | `src/work_order/place.rs` | src | s | 2 fn · 2 const | — | The PLACE slot's default rule, `role_warm_waste_headroom@1` (pass 34, 4.3): among the machines that fit now… |
 | `src/work_order/rank.rs` | src | s | 2 fn · 2 const | — | The RANK slot's default rule, `class_then_fewest_running_then_oldest@1` (pass 34, 4.5): who is dispatched… |
-| `src/work_order/record.rs` | src | m | 8 struct · 10 enum · 13 fn · 1 const · 1 crate-vis | AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy, OrderAttempt, OrderCharge +10 | The stored work order (pass 34, section 1.1; Engine ruling EM-18 = A): one `WORK_ORDER` row per order, above… |
-| `src/work_order/setting_keys.rs` | src | s | 1 crate-vis | — | The work orders' Setting key (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov 00:04): how many… |
+| `src/work_order/record.rs` | src | m | 10 struct · 11 enum · 14 fn · 1 const · 1 crate-vis | AfterCondition, AfterOn, AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy +13 | The stored work order (pass 34, section 1.1; Engine ruling EM-18 = A): one `WORK_ORDER` row per order, above… |
+| `src/work_order/setting_keys.rs` | src | s | 2 crate-vis | — | The work orders' Setting keys (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov 00:04): how many… |
 | `src/work_order/start_check.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 crate-vis | AttemptRefused, OrderAttemptRef, OrderStarter | What the built start and cancel check of an order's attempt in their own read and write (pass 34, 1.1; hunk… |
-| `src/work_order/tables.rs` | src | s | — | — | The side table `work_order` keeps: its row declares it, and the crate's build script places it in… |
+| `src/work_order/tables.rs` | src | s | — | — | The side tables `work_order` keeps: each row declares one, and the crate's build script places each in… |
+| `src/work_order/upstream.rs` | src | s | 1 fn · 4 crate-vis | — | An order that runs only after another (pass 34, 1.1; row Q5): the field `after` is looked at before any… |
 | `src/work_order/wait.rs` | src | s | 4 fn · 3 crate-vis | — | `vault.jobs.orders.wait` (pass 34, 14.2; row Q1): wait on one order until its first started attempt or until… |
 | `src/work_order/wire.rs` | src | s | 10 struct · 1 enum | AttemptReceipt, MachinesPlaceRequest, MachinesPlaceView, WaitUntil, WorkOrderList, WorkOrderListRequest, WorkOrderRef, WorkOrderRequest +3 | The work order verbs' inputs and answers (pass 34, 1.1 and 14.2) |
 | `src/workspace_roster/codec.rs` | src | L | 51 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
@@ -10917,7 +10921,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/witness_turn_no_project_position.rs` | test | m | — | — | FIX WITNESS-TURN-NO-PROJECT-POSITION: a turn witnessed through `vault.witness` keeps the default project… |
 | `tests/witness_turn_wire_project.rs` | test | s | — | — | FIX WITNESS-TURN-NO-PROJECT-POSITION, the wire half: a turn witnessed through `vault.witness` names an… |
 | `tests/word_bound_nonprojected_door.rs` | test | s | — | — | A TURN's non-projected children narrow nothing: on an unbound branch, a TURN whose shown words are a MESSAGE… |
-| `tests/work_order.rs` | test | L | — | — | Work orders and their loop (pass 34, `34-compute-general/DESIGN.md` sections 0, 1.1-1.3, 4.3, 4.5, 4.7; row… |
+| `tests/work_order.rs` | test | XL | — | — | Work orders and their loop (pass 34, `34-compute-general/DESIGN.md` sections 0, 1.1-1.3, 4.3, 4.5, 4.7; row… |
 | `tests/work_order_deciders.rs` | test | L | — | — | Slot deciders (pass 34, `34-compute-general/DESIGN.md` sections 1.2, 4.4, 4.5, 4.7 and 10; row P1): the… |
 | `tests/workspace_connector_routes.rs` | test | s | — | — | The workspace connector core (L3-17, PR 1): `google.sheets` is one module on it, and keeps its four tools… |
 | `tests/workspace_one_vault_mode.rs` | test | m | — | — | One-vault mode reads and the joining notice through public engine doors, and one test door that stops an… |

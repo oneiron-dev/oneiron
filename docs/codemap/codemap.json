@@ -51920,7 +51920,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "mod": 1,
       "re-export": 3,
       "struct": 4
@@ -101655,9 +101655,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/work_order.rs",
-     "purpose": "Doors for the work order tests (pass 34, row Q1)",
+     "purpose": "Doors for the work order tests (pass 34, rows Q1 and Q5)",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -107373,6 +107373,31 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunningCaps"
+     ],
+     "path": "src/work_order/caps.rs",
+     "purpose": "Named running caps (pass 34, 1.1 and section 13; row Q5): one mechanism for a seat, a family and an array",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/work_order/conditions.rs",
+     "purpose": "Row Q5's conditions on an open order, looked at before any machine is fitted (pass 34, 1.1): the order its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -107448,6 +107473,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "GroupRequest",
+      "WorkOrderGroup"
+     ],
+     "path": "src/work_order/group.rs",
+     "purpose": "Array groups (pass 34, 1.1; row Q5): orders that share a group id are the members of one array, and one…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LogsTail",
       "LogsTailRequest",
       "LogsTailStream",
@@ -107472,12 +107512,12 @@
      "surface": {
       "const": 7,
       "crate-vis": 3,
-      "mod": 11,
-      "re-export": 12
+      "mod": 13,
+      "re-export": 15
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AttemptOutcome",
@@ -107489,7 +107529,7 @@
      "purpose": "The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 5,
       "struct": 2,
@@ -107522,12 +107562,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AfterCondition",
+      "AfterOn",
       "AttemptEnd",
       "CancelAsk",
       "CancelWhy",
       "DecidedBy",
       "EndKind",
       "GiveUpWhy",
+      "GroupMember",
       "OrderAttempt",
       "OrderCharge",
       "OrderClass",
@@ -107546,9 +107589,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 10,
-      "fn": 13,
-      "struct": 8
+      "enum": 11,
+      "fn": 14,
+      "struct": 10
      }
     },
     {
@@ -107556,9 +107599,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/work_order/setting_keys.rs",
-     "purpose": "The work orders' Setting key (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov 00:04): how many…",
+     "purpose": "The work orders' Setting keys (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov 00:04): how many…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -107583,8 +107626,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/work_order/tables.rs",
-     "purpose": "The side table `work_order` keeps: its row declares it, and the crate's build script places it in…",
+     "purpose": "The side tables `work_order` keeps: each row declares one, and the crate's build script places each in…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/work_order/upstream.rs",
+     "purpose": "An order that runs only after another (pass 34, 1.1; row Q5): the field `after` is looked at before any…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -122375,7 +122429,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/work_order.rs",
@@ -125093,9 +125147,9 @@
     },
     "work_order": {
      "entry": "crates/oneiron/src/work_order/mod.rs",
-     "files": 17,
+     "files": 21,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22…",
      "spec_ids": []
@@ -125121,9 +125175,9 @@
      "spec_ids": []
     }
    },
-   "over_bar": 276,
+   "over_bar": 277,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8607,
+   "source_files": 8611,
    "test_files": 2319
   },
   "oneiron-agent-runtime": {
@@ -178855,13 +178909,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ReadinessObserved",
+      "ReadinessReads"
+     ],
      "path": "src/gpu_execution_node/issuer/guard.rs",
      "purpose": "The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the…",
      "surface": {
-      "fn": 3
+      "const": 1,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -188594,7 +188653,7 @@
      "path": "src/test_doors/work_order_host.rs",
      "purpose": "Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call through the node…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -189370,7 +189429,7 @@
      "path": "src/work_order_host.rs",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "fn": 2
      }
     },
@@ -190640,6 +190699,14 @@
      "notable": [],
      "path": "tests/inquiry_federation.rs",
      "purpose": "INQUIRE-1 PR 5 (federation.md #inquiry; Engine ruling INQUIRE-SHAPE Q2, Q4, Q7 = A): the inquiry verbs and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/issuer_readiness_drain.rs",
+     "purpose": "CG-2 row 9 (owner COMPUTE-CG = AA, 25 Nov 22:56): \"A drained machine clears itself once its readiness check…",
      "surface": {}
     },
     {
@@ -193893,7 +193960,7 @@
    "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2211,
-   "test_files": 616
+   "test_files": 617
   },
   "oneiron-setting-contract": {
    "files": [
