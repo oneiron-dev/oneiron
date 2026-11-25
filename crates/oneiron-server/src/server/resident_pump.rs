@@ -89,6 +89,7 @@ use oneiron::llm::{
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::self_heal::audit::AttemptConfession;
 use oneiron::task_type::TaskTypeRef;
+use oneiron::work_order::decider::{DeciderReply, SlotAsk};
 use oneiron::{
     DreamerRunnerStore, EntityId, LlmError, ModelId, RetryableLlmError, Vault, WriteActor,
 };
@@ -606,7 +607,16 @@ impl SyncServer {
             return false;
         };
         let vault = self.vault();
-        let claimed = match claim(vault, id, of, self.ai.confession_instruction()) {
+        // A root run's first claim is placed first (row P4); the PLACE slot's named decider is
+        // asked through this host's decision ladder, on this blocking thread.
+        let decide = |ask: &SlotAsk| {
+            crate::work_order_host::decide_slot_ask(
+                self,
+                ask,
+                unix_seconds_now().saturating_mul(1_000),
+            )
+        };
+        let claimed = match claim(vault, id, of, self.ai.confession_instruction(), &decide) {
             Ok(Some(claimed)) => claimed,
             Ok(None) => return false,
             Err(error) => {
@@ -660,12 +670,15 @@ impl SyncServer {
 }
 
 /// Claims the run by id through its pump's door, with the task it runs,
-/// asked for its confession in the host's `confession` wording.
+/// asked for its confession in the host's `confession` wording. An agent
+/// run's first claim is placed first, with `decide` asking the PLACE slot's
+/// named decider (row P4).
 fn claim(
     vault: &Vault,
     id: AttemptId,
     of: RunOf,
     confession: &str,
+    decide: &dyn Fn(&SlotAsk) -> DeciderReply,
 ) -> oneiron::Result<Option<Claimed>> {
     let dispatcher = AgentDispatcher::new(vault);
     let claimed = match of {
@@ -685,7 +698,7 @@ fn claim(
                 (claimed, briefing)
             }),
         RunOf::Agent(agent) => dispatcher
-            .claim_agent_run(id, LEASE_OWNER, unix_seconds_now())?
+            .claim_agent_run_placed(id, LEASE_OWNER, unix_seconds_now(), decide)?
             .map(
                 |AgentRun {
                      status,
