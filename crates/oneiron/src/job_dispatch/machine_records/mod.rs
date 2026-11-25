@@ -337,9 +337,6 @@ impl Vault {
             let Some(mut guard) = MACHINE_JOB_GUARDS.get(&self.store, txn, &row_key)? else {
                 return Ok(None);
             };
-            if guard != *read_before {
-                return Ok(None);
-            }
             let Some(drain) = guard.drained.take() else {
                 return Ok(None);
             };
