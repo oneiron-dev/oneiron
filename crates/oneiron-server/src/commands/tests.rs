@@ -917,6 +917,210 @@ fn api_keeps_an_ambient_proxy_from_receiving_the_credential() {
 /// to own the path BEFORE the first write: otherwise a write error returns
 /// past the guard's construction and the partial body — request bytes, maybe
 /// private ones — stays in the temp directory for the rest of the boot.
+/// `--resolve-address` and `--max-time` reach curl as one `--resolve` for the
+/// base URL's own host and port and one `--max-time`; with neither, curl is
+/// handed neither word.
+#[test]
+#[cfg(unix)]
+fn api_pins_the_connect_to_the_checked_addresses_and_bounds_the_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("response.bin"), b"{}").unwrap();
+    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 0));
+    let argv_of = |transport: &api::CurlTransport| {
+        let request =
+            api::request_for_command("https://vault.example", ApiCommand::Discover).unwrap();
+        api::run_curl_output_with_transport(
+            program.as_os_str(),
+            &request,
+            None,
+            transport,
+            std::process::Stdio::piped(),
+            std::process::Stdio::piped(),
+        )
+        .unwrap();
+        std::fs::read_to_string(dir.path().join("argv.txt")).unwrap()
+    };
+
+    let addresses = ["192.0.2.7", "2001:db8::7", "192.0.2.7"].map(str::to_owned);
+    let pinned = api::curl_transport("https://vault.example", &addresses, Some(30)).unwrap();
+    assert_eq!(
+        pinned.resolve.as_deref(),
+        Some("vault.example:443:192.0.2.7,[2001:db8::7]"),
+        "the scheme's port, each address once, IPv6 in brackets"
+    );
+    let argv = argv_of(&pinned);
+    assert!(
+        argv.contains("--resolve\nvault.example:443:192.0.2.7,[2001:db8::7]\n"),
+        "{argv}"
+    );
+    assert!(argv.contains("--max-time\n30\n"), "{argv}");
+
+    assert_eq!(
+        api::curl_transport("http://vault.example:8080/", &addresses[..1], None).unwrap(),
+        api::CurlTransport {
+            resolve: Some("vault.example:8080:192.0.2.7".to_owned()),
+            max_time_secs: None,
+        },
+        "an explicit port is the one pinned"
+    );
+
+    let plain = api::curl_transport("https://vault.example", &[], None).unwrap();
+    assert_eq!(plain, api::CurlTransport::default());
+    let argv = argv_of(&plain);
+    assert!(
+        !argv.contains("--resolve") && !argv.contains("--max-time"),
+        "{argv}"
+    );
+}
+
+/// A pin is for the base URL's own host name, so a base URL that already
+/// names an address, or carries user info, takes none; a pin that is not an
+/// IP address, and a deadline of zero, are refused before anything is sent.
+#[test]
+fn api_refuses_a_pin_or_deadline_it_cannot_hold_to_the_base_url() {
+    let refusal = |base: &str, address: &str| {
+        api::curl_transport(base, &[address.to_owned()], None)
+            .unwrap_err()
+            .to_string()
+    };
+    for address in [
+        "vault.example",
+        "fe80::1%eth0",
+        "[2001:db8::7]",
+        "192.0.2.7:443",
+    ] {
+        assert!(
+            refusal("https://vault.example", address).contains("must be an IP address"),
+            "{address}"
+        );
+    }
+    for base in [
+        "https://192.0.2.7",
+        "https://[2001:db8::7]:8443",
+        "https://[2001:db8::7]",
+    ] {
+        assert!(
+            refusal(base, "192.0.2.7").contains("needs a host name"),
+            "{base}"
+        );
+    }
+    assert!(refusal("https://owen@vault.example", "192.0.2.7").contains("without user info"));
+    for base in [
+        "https://vault.example:0",
+        "https://vault.example:65536",
+        "https://vault.example:",
+    ] {
+        assert!(refusal(base, "192.0.2.7").contains("port"), "{base}");
+    }
+    assert!(refusal("https://vault.example/prefix", "192.0.2.7").contains("without a path"));
+    assert!(
+        api::curl_transport("https://vault.example", &[], Some(0))
+            .unwrap_err()
+            .to_string()
+            .contains("at least 1 second")
+    );
+}
+
+/// With the host's real curl (skipped where there is none, as the proxy row
+/// is): the pin is where the request goes, though the host name never
+/// resolves, and the deadline ends a call whose server never answers.
+#[test]
+#[cfg(unix)]
+fn api_with_the_hosts_curl_connects_to_the_pin_and_gives_up_at_the_deadline() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let probe = std::process::Command::new("curl").arg("--version").output();
+    if !probe.is_ok_and(|probe| probe.status.success()) {
+        return;
+    }
+    let curl = std::ffi::OsStr::new("curl");
+
+    // `.invalid` never resolves (RFC 6761): only the pin reaches the listener.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = format!("http://pinned.invalid:{port}");
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut head = Vec::new();
+        let mut buf = [0; 4096];
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            match socket.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => head.extend_from_slice(&buf[..n]),
+            }
+        }
+        let _ = write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\npinned"
+        );
+        String::from_utf8_lossy(&head).into_owned()
+    });
+    let pinned = api::curl_transport(&base, &["127.0.0.1".to_owned()], Some(20)).unwrap();
+    let request = api::request_for_command(&base, ApiCommand::Discover).unwrap();
+    let output = api::run_curl_output_with_transport(
+        curl,
+        &request,
+        None,
+        &pinned,
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"pinned");
+    let head = server.join().unwrap();
+    assert!(
+        head.starts_with("GET /api/core/discover ")
+            && head.contains(&format!("pinned.invalid:{port}")),
+        "{head}"
+    );
+
+    // A server that takes the request, body and all, and never answers.
+    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+    let silent_base = format!("http://{}", silent.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (socket, _) = silent.accept().unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+        drop(socket);
+    });
+    let bounded = api::curl_transport(&silent_base, &[], Some(1)).unwrap();
+    let request = api::request_for_command(
+        &silent_base,
+        ApiCommand::Call {
+            verb: "board.append".to_owned(),
+            data: "{\"claim\":\"placeholder\"}".to_owned(),
+        },
+    )
+    .unwrap();
+    let started = Instant::now();
+    let output = api::run_curl_output_with_transport(
+        curl,
+        &request,
+        None,
+        &bounded,
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+    let took = started.elapsed();
+    assert_eq!(
+        output.status.code(),
+        Some(28),
+        "curl's own timeout ends the call: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(took < Duration::from_secs(15), "the call took {took:?}");
+}
+
 #[test]
 fn api_a_failed_body_staging_leaves_nothing_behind() {
     struct RefusingSink;

@@ -24,6 +24,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -97,7 +98,82 @@ pub(crate) struct CurlCredential<'a> {
     pub(crate) env: &'a [String],
 }
 
+/// How curl reaches the server for one call, beyond the request itself. The
+/// default is curl's own: a name lookup for the host, and no deadline.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CurlTransport {
+    /// One curl `--resolve` value, `host:port:addr[,addr]...`, built by
+    /// [`curl_transport`] from the base URL, so it names no other host or port.
+    pub(crate) resolve: Option<String>,
+    /// curl's `--max-time`: whole seconds, at least one.
+    pub(crate) max_time_secs: Option<u64>,
+}
+
+/// The transport `--resolve-address` and `--max-time` ask for, checked against
+/// the base URL. The pin is for the base URL's own host and port (the scheme's
+/// default when it names none), so the host must be a name, without user info;
+/// each address must be an IP address. A deadline of zero seconds is refused:
+/// it would read as "no deadline" to curl.
+pub(crate) fn curl_transport(
+    base_url: &str,
+    addresses: &[String],
+    max_time_secs: Option<u64>,
+) -> anyhow::Result<CurlTransport> {
+    anyhow::ensure!(
+        max_time_secs != Some(0),
+        "--max-time must be at least 1 second; nothing was sent"
+    );
+    if addresses.is_empty() {
+        return Ok(CurlTransport {
+            resolve: None,
+            max_time_secs,
+        });
+    }
+    let base = normalized_base(base_url)?;
+    let (scheme, authority) = base.split_once("://").unwrap_or_default();
+    anyhow::ensure!(
+        !authority.contains('@'),
+        "--resolve-address needs a base URL without user info: {base_url:?}"
+    );
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !authority.starts_with('[') => (host, port),
+        _ => (authority, if scheme == "https" { "443" } else { "80" }),
+    };
+    anyhow::ensure!(
+        !host.is_empty()
+            && host.parse::<IpAddr>().is_err()
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.'),
+        "--resolve-address needs a host name in the base URL, not an address: {base_url:?}"
+    );
+    anyhow::ensure!(
+        port.parse::<u16>().is_ok_and(|port| port != 0),
+        "base URL port must be a number from 1 to 65535: {base_url:?}"
+    );
+    let mut pinned: Vec<String> = Vec::new();
+    for address in addresses {
+        let address: IpAddr = address
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--resolve-address must be an IP address: {address:?}"))?;
+        let address = match address {
+            IpAddr::V4(v4) => v4.to_string(),
+            IpAddr::V6(v6) => format!("[{v6}]"),
+        };
+        if !pinned.contains(&address) {
+            pinned.push(address);
+        }
+    }
+    Ok(CurlTransport {
+        resolve: Some(format!("{host}:{port}:{}", pinned.join(","))),
+        max_time_secs,
+    })
+}
+
 pub async fn api(args: ApiArgs) -> anyhow::Result<()> {
+    // Checked before anything is read, so a refused pin or deadline never
+    // consumes a body from stdin.
+    let transport = curl_transport(&args.base_url, &args.resolve_address, args.max_time)?;
     let secret_env = &args.secret_env;
     // An ABSENT credential is a request without one, not an error: the server
     // serves public routes (`/api/health`) and can be configured to allow
@@ -126,6 +202,7 @@ pub async fn api(args: ApiArgs) -> anyhow::Result<()> {
             binding: binding.as_deref(),
             env: &[args.secret_env.clone(), args.binding_key_env.clone()],
         },
+        &transport,
     )
 }
 
@@ -294,6 +371,7 @@ pub(crate) fn create_pairing_link(
         OsStr::new(CURL_PROGRAM),
         &request,
         credential,
+        &CurlTransport::default(),
         Stdio::piped(),
         Stdio::inherit(),
     )?;
@@ -311,11 +389,13 @@ pub(crate) fn create_pairing_link(
 pub(crate) fn run_curl(
     request: &CurlRequest,
     credential: CurlCredential<'_>,
+    transport: &CurlTransport,
 ) -> anyhow::Result<()> {
     let output = run_curl_output_inner(
         OsStr::new(CURL_PROGRAM),
         request,
         credential,
+        transport,
         Stdio::inherit(),
         Stdio::inherit(),
     )?;
@@ -332,11 +412,31 @@ pub(crate) fn run_curl_output(
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
+    run_curl_output_with_transport(
+        program,
+        request,
+        secret,
+        &CurlTransport::default(),
+        stdout,
+        stderr,
+    )
+}
+
+/// [`run_curl_output`] with a pin or a deadline: what the transport tests drive.
+#[cfg(test)]
+pub(crate) fn run_curl_output_with_transport(
+    program: &OsStr,
+    request: &CurlRequest,
+    secret: Option<&str>,
+    transport: &CurlTransport,
+    stdout: Stdio,
+    stderr: Stdio,
+) -> anyhow::Result<Output> {
     let credential = CurlCredential {
         secret,
         ..CurlCredential::default()
     };
-    run_curl_output_inner(program, request, credential, stdout, stderr)
+    run_curl_output_inner(program, request, credential, transport, stdout, stderr)
 }
 
 /// The one execution path, parameterized only by where the child's streams go.
@@ -354,6 +454,7 @@ fn run_curl_output_inner(
     program: &OsStr,
     request: &CurlRequest,
     credential: CurlCredential<'_>,
+    transport: &CurlTransport,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
@@ -370,6 +471,7 @@ fn run_curl_output_inner(
         request,
         config.as_deref(),
         credential.env,
+        transport,
         stdout,
         stderr,
     )?;
@@ -393,6 +495,7 @@ pub(crate) fn run_curl_capture(
         request,
         Some(config),
         env,
+        &CurlTransport::default(),
         Stdio::piped(),
         Stdio::inherit(),
     )?;
@@ -417,12 +520,13 @@ pub(crate) fn curl_header_line(name: &str, value: &str) -> anyhow::Result<String
 /// and the staged body file it reads, which must outlive it. The child
 /// inherits none of `env` (the variables the credential came from), nor any
 /// of [`CREDENTIAL_ENV`], and no proxy setting routes it anywhere but the
-/// selected server.
+/// selected server; `transport` pins its connect and bounds its transfer.
 fn spawn_curl(
     program: &OsStr,
     request: &CurlRequest,
     config: Option<&str>,
     env: &[String],
+    transport: &CurlTransport,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<(Child, Option<TempBody>)> {
@@ -436,6 +540,12 @@ fn spawn_curl(
     command.arg(CURL_DISABLE_HOST_CONFIG);
     command.args(CURL_FLAGS);
     command.args(CURL_NO_PROXY);
+    if let Some(resolve) = transport.resolve.as_deref() {
+        command.arg("--resolve").arg(resolve);
+    }
+    if let Some(secs) = transport.max_time_secs {
+        command.arg("--max-time").arg(secs.to_string());
+    }
     command.arg("--request").arg(&request.method);
     if let Some(content_type) = request.content_type.as_deref() {
         command
