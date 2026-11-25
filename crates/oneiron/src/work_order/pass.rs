@@ -146,7 +146,9 @@ fn end_of_terminal(end: &GpuJobEnd, cancelled: bool, window_passed: bool) -> End
         GpuJobEnd::Signalled { signal } => EndKind::Exited {
             code: 128_i32.saturating_add(*signal),
         },
-        GpuJobEnd::TimeLimit => EndKind::TimeLimit,
+        // A session's slice that ran to its paid end (row W1). An ended job's chunk is the one
+        // its run ended in, so this names a run that reached the end of what was paid.
+        GpuJobEnd::TimeLimit | GpuJobEnd::Continued => EndKind::TimeLimit,
         GpuJobEnd::MemoryLimit => EndKind::MemoryLimit,
         GpuJobEnd::DiskLimit => EndKind::DiskLimit,
         GpuJobEnd::Stopped => EndKind::Stopped,

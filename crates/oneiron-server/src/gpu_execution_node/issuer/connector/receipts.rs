@@ -7,7 +7,7 @@ use oneiron::job_dispatch::{BootMark, DispatchClose, DispatchPhase, JobDispatch,
 
 use super::{VaultMachineConnector, decode, encode, store, unavailable};
 use crate::gpu_execution_node::issuer::billing::{billing, bracket, terminal};
-use crate::gpu_execution_node::wire::{JobReceipt, JobState, JobSubmit, SignedJobReceipt};
+use crate::gpu_execution_node::wire::{JobEnd, JobReceipt, JobState, JobSubmit, SignedJobReceipt};
 
 /// What the judgement of one receipt found.
 enum Judged {
@@ -85,7 +85,9 @@ impl VaultMachineConnector {
     }
 
     /// Confirms the key's end on its terminal receipt: bills it, stores the meter and the typed
-    /// terminal beside the receipt, and closes the dispatch for good, in one write.
+    /// terminal beside the receipt, and closes the dispatch for good, in one write. A session's
+    /// slice that the run passed (row W1) confirms as [`GpuTermination::Continued`]: its run goes
+    /// on under the next chunk's key.
     pub(super) fn confirm(
         &self,
         key: &str,
@@ -127,6 +129,9 @@ impl VaultMachineConnector {
         // write that closed the dispatch; a later confirm of the closed key counts nothing.
         if closes_now {
             self.count_machine_end(row.machine, ended, &meter);
+        }
+        if ended.end == Some(JobEnd::Continued) {
+            return Ok(GpuTermination::Continued { billed_secs });
         }
         Ok(GpuTermination::Confirmed { billed_secs })
     }

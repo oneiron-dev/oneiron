@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobRequest, GpuJobStart,
-    GpuJobState, GpuJobStepReport, GpuOffer, PriceShape,
+    AtMaximum, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobRequest,
+    GpuJobStart, GpuJobState, GpuJobStepReport, GpuOffer, PriceShape,
 };
 use oneiron::job_dispatch::{BootMark, JobDispatch, JobObservation};
 use oneiron::job_workload::{
@@ -693,6 +693,7 @@ pub(crate) fn offer() -> GpuOffer {
         startup_secs: 0,
         teardown_secs: 0,
         rounding_secs: 0,
+        at_maximum: AtMaximum::Stop,
     }
 }
 

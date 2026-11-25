@@ -645,7 +645,7 @@ fn a_vault_machine_offer_states_at_maximum_stop() {
     let unstated = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("at_maximum = \"stop\"\n", ""))
         .expect_err("a vault_machine offer that states no at_maximum");
     assert!(
-        format!("{unstated:#}").contains("at_maximum must be \"stop\""),
+        format!("{unstated:#}").contains("at_maximum must be \"stop\" or \"renew\""),
         "{unstated:#}"
     );
     let provisioned = gpu_jobs_section(
@@ -656,9 +656,32 @@ fn a_vault_machine_offer_states_at_maximum_stop() {
         format!("{provisioned:#}").contains("vault_machine backend only"),
         "{provisioned:#}"
     );
-    let renew = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
-        .expect_err("renew comes with row W1");
-    assert!(format!("{renew:#}").contains("renew"), "{renew:#}");
+    let provisioned_renew = gpu_jobs_section(
+        &OWN_MACHINE_SECTION
+            .replace("backend = \"vault_machine\"", "backend = \"skypilot\"")
+            .replace("\"stop\"", "\"renew\""),
+    )
+    .expect_err("renew on a provisioned offer");
+    assert!(
+        format!("{provisioned_renew:#}").contains("vault_machine backend only"),
+        "{provisioned_renew:#}"
+    );
+}
+
+/// Pass 34, 9.3 (row W1): a `vault_machine` offer may state `at_maximum = "renew"`, a session,
+/// and the offer carries it into every quote; a stop leaves the quote's terms as before.
+#[test]
+fn a_vault_machine_offer_may_state_at_maximum_renew() {
+    let settings = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
+        .expect("an own-machine offer that renews");
+    let offer = settings.offer("own-a6000").expect("the offer");
+    assert_eq!(offer.at_maximum, Some(AtMaximum::Renew));
+    assert_eq!(offer.offer.at_maximum, AtMaximum::Renew);
+    let stops = gpu_jobs_section(OWN_MACHINE_SECTION).expect("an own-machine offer that stops");
+    assert_eq!(
+        stops.offer("own-a6000").map(|offer| offer.offer.at_maximum),
+        Some(AtMaximum::Stop),
+    );
 }
 
 #[test]

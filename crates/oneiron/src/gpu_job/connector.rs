@@ -41,6 +41,10 @@ pub enum GpuResourceStatus {
     Exited { used_secs: u64 },
     /// The provider no longer knows the resource.
     Gone,
+    /// A session's chunk (row W1): the one run passed this chunk's paid end and goes on under
+    /// the next paid chunk. The provider confirmed the slice and bills it `billed_secs`; nothing
+    /// is terminated.
+    Continued { used_secs: u64, billed_secs: u64 },
 }
 
 /// What the engine tells a running job.
@@ -65,6 +69,12 @@ pub enum GpuTermination {
     },
     /// Asked, not confirmed yet: the step asks again.
     Pending,
+    /// A session's chunk whose slice the run had already passed (row W1): the termination
+    /// stopped nothing, since the run goes on under the next paid chunk, which the step
+    /// terminates next. The slice bills `billed_secs`.
+    Continued {
+        billed_secs: u64,
+    },
 }
 
 /// How a job ended, as its machine established it (design pass 33 section 5.3, the receipt's
@@ -95,6 +105,9 @@ pub enum GpuJobEnd {
     /// The machine attests the job lost (a host reset, or a launch that left no trace).
     /// `last_seen_secs` is the run time the engine last saw, a lower bound.
     Lost { reason: String, last_seen_secs: u64 },
+    /// A session's chunk (row W1): its slice ran to its paid end and the run went on under the
+    /// next paid chunk. Not an end of the run.
+    Continued,
 }
 
 impl GpuJobEnd {
@@ -122,6 +135,7 @@ impl GpuJobEnd {
             Self::Refused { reason } => format!("refused({reason})"),
             Self::LaunchRefused { reason } => format!("launch_refused({reason})"),
             Self::Lost { reason, .. } => format!("lost({reason})"),
+            Self::Continued => "continued".to_owned(),
         }
     }
 }
@@ -204,6 +218,29 @@ pub trait GpuJobConnector: Send + Sync {
     /// Asks for termination, and answers whether the provider confirmed it.
     /// Asked again until it does (`#gpu-uncertain` 02).
     fn terminate(&self, resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError>;
+
+    /// Sends the session chunk under `key` (row W1): the paid continuation of the run the chunk
+    /// under `continues` started, `spec.maximum_secs` past that run's current cutoff. It starts
+    /// no process and holds no resource of its own: the provider bills the slice of the one run
+    /// that falls in it, and answers its [`GpuResourceRef`], which `status` and `terminate`
+    /// read. The same key never sends a second continuation; [`Self::find`] answers it after a
+    /// call that did not answer. The default refuses: only a backend that runs sessions renews.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuConnectorError::Refused`] when it took no effect; a timeout or an unavailable
+    /// provider when it may have.
+    fn renew(
+        &self,
+        key: &str,
+        continues: &str,
+        spec: &GpuJobSpec,
+    ) -> Result<GpuResourceRef, GpuConnectorError> {
+        let _ = (key, continues, spec);
+        Err(GpuConnectorError::Refused {
+            reason: "renew_not_offered".to_owned(),
+        })
+    }
 
     /// The four status fields of `job` for a backend that runs on one of the vault's own
     /// machines (pass 33 row R4, door 8), at `now_ms`, with the host's job step of `step_ms`

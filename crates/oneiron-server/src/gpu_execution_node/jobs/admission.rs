@@ -42,7 +42,7 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 /// the scope. A renewal later than that finds a run that is being cut off:
 /// it continues nothing, and the scope is never asked to take a renewal it
 /// would refuse.
-const RENEWAL_MARGIN_NS: u64 = RENEW_BEFORE_STOP_NS + 4 * NANOS_PER_SEC;
+pub(crate) const RENEWAL_MARGIN_NS: u64 = RENEW_BEFORE_STOP_NS + 4 * NANOS_PER_SEC;
 
 /// A renewal's refusals that no wait undoes (row W1): the run is gone or
 /// can no longer take a renewal, the signed submit expired, or the run

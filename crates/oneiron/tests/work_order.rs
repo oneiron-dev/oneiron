@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits,
+    AtMaximum, GpuConnectorError, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits,
     GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuOffer, GpuResourceRef,
     GpuResourceStatus, GpuTermination, PriceShape,
 };
@@ -127,6 +127,7 @@ fn offer() -> GpuOffer {
         startup_secs: 0,
         teardown_secs: 0,
         rounding_secs: 0,
+        at_maximum: AtMaximum::Stop,
     }
 }
 

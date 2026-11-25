@@ -2,15 +2,16 @@
 //! submit, the gate before either goes out again, the stop, and the two steps of the 8.2 table.
 //! Every reserve and submit reads the dispatch row again before it goes out, and sends nothing
 //! once the issuer closed the key or found its history lost.
-use oneiron::gpu_job::{GpuConnectorError, GpuResourceStatus};
+use oneiron::gpu_job::{GpuConnectorError, GpuResourceStatus, GpuTermination};
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase, JobDispatch};
 
 use super::{
-    Gate, Sent, VaultMachineConnector, call_error, job_answer_label, receipt_status, unavailable,
+    Gate, Sent, VaultMachineConnector, call_error, decode, job_answer_label, receipt_status,
+    unavailable,
 };
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobReceipt, JobRequest, JobReserve, JobState, JobStatusAnswer, JobStatusRequest,
-    JobSubmit, SignedJobSubmit,
+    JobAnswer, JobEnd, JobReceipt, JobRequest, JobReserve, JobState, JobStatusAnswer,
+    JobStatusRequest, JobSubmit, SignedJobSubmit,
 };
 
 impl VaultMachineConnector {
@@ -117,8 +118,33 @@ impl VaultMachineConnector {
         row: &JobDispatch,
     ) -> Result<GpuResourceStatus, GpuConnectorError> {
         Ok(match self.stop(row)? {
-            Some(receipt) => receipt_status(&receipt),
+            Some(receipt) => {
+                let signed = decode::<SignedJobSubmit>(&row.submit)?;
+                self.ended_or_status(row, &signed.submit, &receipt)?
+            }
             None => GpuResourceStatus::Pending,
+        })
+    }
+
+    /// What `receipt` says to the engine; a session's slice that the run passed (row W1) is
+    /// confirmed and billed here, so the engine settles it with no stop of the run.
+    pub(super) fn ended_or_status(
+        &self,
+        row: &JobDispatch,
+        submit: &JobSubmit,
+        receipt: &JobReceipt,
+    ) -> Result<GpuResourceStatus, GpuConnectorError> {
+        if receipt.state != JobState::Ended || receipt.end != Some(JobEnd::Continued) {
+            return Ok(receipt_status(receipt));
+        }
+        let billed_secs = match self.confirm(&row.key, submit, receipt)? {
+            GpuTermination::Confirmed { billed_secs }
+            | GpuTermination::Continued { billed_secs } => billed_secs,
+            GpuTermination::Pending => return Ok(GpuResourceStatus::Pending),
+        };
+        Ok(GpuResourceStatus::Continued {
+            used_secs: receipt.measured_secs.unwrap_or(0),
+            billed_secs,
         })
     }
 
@@ -159,6 +185,9 @@ impl VaultMachineConnector {
             self.mark_history_lost(&row.key)?;
             return Err(unavailable("history_lost"));
         }
+        if signed.submit.continues.is_some() {
+            return self.renewal_absent(row, signed);
+        }
         if self.now_ms() >= row.not_after_ms {
             // Row R4, 7.9: the machine's journal never took the reserve in its whole window.
             super::super::guard::count_outcome(
@@ -177,6 +206,32 @@ impl VaultMachineConnector {
         }
         Ok(match self.send_reserve(row, &signed.submit)? {
             Sent::Receipt(receipt) if receipt.state == JobState::Ended => receipt_status(&receipt),
+            Sent::Receipt(_) | Sent::NoReceipt(_) | Sent::NoAnswer(_) | Sent::Withheld => {
+                GpuResourceStatus::Pending
+            }
+        })
+    }
+
+    /// `status` of a session's next chunk the node does not hold (row W1): it holds no disk or
+    /// device of its own, so no reserve ever goes out for it. Inside its window the same submit is
+    /// sent again under the gate; after it, the key closes with no stop, since the node takes no
+    /// submit past its window, and a renewal that missed its window is not the machine's failure.
+    fn renewal_absent(
+        &self,
+        row: &JobDispatch,
+        signed: &SignedJobSubmit,
+    ) -> Result<GpuResourceStatus, GpuConnectorError> {
+        if self.now_ms() >= row.not_after_ms {
+            self.close(&row.key, DispatchClose::StartWindowPassed)?;
+            return Ok(GpuResourceStatus::Pending);
+        }
+        if let Gate::Answer(status) = self.gate(row, &signed.submit)? {
+            return Ok(status);
+        }
+        Ok(match self.send_submit(row, signed)? {
+            Sent::Receipt(receipt) if receipt.state == JobState::Ended => {
+                self.ended_or_status(row, &signed.submit, &receipt)?
+            }
             Sent::Receipt(_) | Sent::NoReceipt(_) | Sent::NoAnswer(_) | Sent::Withheld => {
                 GpuResourceStatus::Pending
             }
@@ -218,7 +273,8 @@ impl VaultMachineConnector {
                 }
                 Ok(GpuResourceStatus::Pending)
             }
-            JobState::Running | JobState::Ending | JobState::Ended => Ok(receipt_status(receipt)),
+            JobState::Running | JobState::Ending => Ok(receipt_status(receipt)),
+            JobState::Ended => self.ended_or_status(row, &signed.submit, receipt),
         }
     }
 }

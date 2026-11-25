@@ -66,6 +66,18 @@ impl Vault {
             if paid {
                 chunk.settled_units = Some(0);
             }
+            // A session's open next chunk is written off with it: the connector closed its
+            // dispatch too, and it settles zero.
+            if let Some(next) = job
+                .renewal
+                .as_mut()
+                .filter(|next| next.billed_secs.is_none())
+            {
+                next.billed_secs = Some(0);
+                if permits.holds_chunk(id, &next.idempotency_key) {
+                    next.settled_units = Some(0);
+                }
+            }
             job.stop = None;
             job.resume_quote = None;
             job.state = GpuJobState::Ended {
@@ -77,10 +89,10 @@ impl Vault {
             Ok(Ok(job))
         })??;
         // Settled after the write, as an end settles: a settled chunk is never admitted again.
-        if let Some(chunk) = written.chunk()
-            && let Some(permit) = permits.take_for_chunk(&written.id, &chunk.idempotency_key)
-        {
-            let _ = permit.settle(CallOutcome::Used(0));
+        for chunk in written.chunk().into_iter().chain(written.renewal.as_ref()) {
+            if let Some(permit) = permits.take_for_chunk(&written.id, &chunk.idempotency_key) {
+                let _ = permit.settle(CallOutcome::Used(0));
+            }
         }
         Ok(written)
     }

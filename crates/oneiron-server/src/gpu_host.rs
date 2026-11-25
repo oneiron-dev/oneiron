@@ -20,8 +20,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use oneiron::EntityId;
 use oneiron::gpu_job::{
     GpuConnectorError, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
-    GpuJobSignal, GpuJobSpec, GpuJobStepReport, GpuOffer, GpuResourceRef, GpuResourceStatus,
-    GpuTermination,
+    GpuJobRenewal, GpuJobSignal, GpuJobSpec, GpuJobStepReport, GpuOffer, GpuResourceRef,
+    GpuResourceStatus, GpuTermination,
 };
 use oneiron::llm::run_admission::{BudgetLine, RunAdmission, RunDeclaration};
 
@@ -231,14 +231,33 @@ fn step_one_job(
     let chunk = job.chunk().ok_or(GpuJobError::NotFound)?;
     let (offer, connector) = offer_with_backend(server, &job.offer.name)?;
     let admission = job_admission(server, &offer.offer, &chunk.quote);
-    Ok(server.vault.gpu_job_step(
+    // Each chunk of a session is admitted under its own quote's line (row W1).
+    let admission_of = |quote: &GpuJobQuote| job_admission(server, &offer.offer, quote);
+    let renewal = GpuJobRenewal {
+        lead_floor_ms: session_renew_lead_floor_ms(&server.config.gpu_jobs),
+        admission: &admission_of,
+    };
+    Ok(server.vault.gpu_job_step_with_renewal(
         id,
         &offer.offer,
         &admission,
         server.gpu_jobs.permits(),
         connector.as_ref(),
+        Some(&renewal),
         now_ms,
     )?)
+}
+
+/// The least renewal lead a session's step may take (row W1): one step of the worker, one
+/// bounded send to the node, the node's renewal margin before the chunk's cutoff, and a second.
+/// A `jobs.sessions.renew_lead_secs` at or below it renews nothing.
+fn session_renew_lead_floor_ms(settings: &crate::config::gpu_jobs::GpuJobsSettings) -> u64 {
+    settings
+        .step_secs
+        .saturating_add(settings.vault_machine.call_timeout_secs)
+        .saturating_add(1)
+        .saturating_mul(1_000)
+        .saturating_add(crate::gpu_execution_node::jobs::RENEWAL_MARGIN_NS / 1_000_000)
 }
 
 /// Starts the worker: every `step_secs`, and at each wake of the work-order
