@@ -74,6 +74,13 @@ pub const DISK_CHECK_SECS_DEFAULT: u64 = 5;
 /// Default of a template's `tasks_max`: the job unit's task ceiling.
 pub const TASKS_MAX_DEFAULT: u64 = 4_096;
 
+/// The least a template's `tasks_max` may say. The unit's own processes
+/// count against the ceiling: as the workload starts, `job-exec`, the root
+/// gate, the log writer and the writer's parent, which leaves at once, are
+/// four tasks, and the log writer then holds one for the whole run (review
+/// r6 R6-02). The workload has the rest.
+pub const TASKS_MAX_FLOOR: u64 = 4;
+
 /// Default of a template's `log_max_mib`: each of a run's two log files
 /// (stdout, stderr) keeps at most this many MiB (pass 34, 7.2).
 pub const LOG_MAX_MIB_DEFAULT: u32 = 64;
@@ -221,7 +228,8 @@ pub struct NodeTemplate {
     /// The devices one pin may claim, the counts of all its claims together.
     #[serde(default = "max_devices_default")]
     pub max_devices: u32,
-    /// The job unit's task ceiling.
+    /// The job unit's task ceiling, at least [`TASKS_MAX_FLOOR`]: the
+    /// workload's tasks and the unit's own log writer count against it.
     #[serde(default = "tasks_max_default")]
     pub tasks_max: u64,
     /// The operating-system signal a checkpoint notice delivers to the
@@ -510,6 +518,12 @@ impl NodeTemplate {
         }
         if self.cpu_threads == 0 {
             return Err("cpu_threads must be at least 1".to_owned());
+        }
+        if self.tasks_max < TASKS_MAX_FLOOR {
+            return Err(format!(
+                "tasks_max {} must be at least {TASKS_MAX_FLOOR}: the job unit's own processes count against it",
+                self.tasks_max
+            ));
         }
         if self.scopes.is_empty() {
             return Err("scopes must permit at least one scope kind".to_owned());

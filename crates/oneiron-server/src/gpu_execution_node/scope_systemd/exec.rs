@@ -21,10 +21,12 @@
 //! the pipe without the mark: the workload never started either.
 //!
 //! The checkpoint signals (design 7.1 `Signal`; the template's
-//! `checkpoint_signal`) reach the unit's main process, which is `job-exec`
-//! until its exec. It catches them with a handler that does nothing, and the
-//! exec resets that handler, so a notice that comes before the workload
-//! exists is lost, as a notice may be, and does not end the job.
+//! `checkpoint_signal`) reach the unit's main process. The control handler
+//! sends one only once the unit is active, after the workload's exec
+//! (review r6 R6-06). As a second guard `job-exec` catches them, from its
+//! first statement, with a handler that does nothing, and the exec resets
+//! that handler, so a notice that reaches `job-exec` anyway is lost, as a
+//! notice may be, and does not end the job.
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -134,7 +136,7 @@ pub fn run(args: &[String]) -> i32 {
         Ok(streams) => streams,
         Err(why) => {
             let mut report = std::fs::File::from(report_pipe);
-            return exec_failed(&mut report, &format!("log_writer_not_started: {why}"));
+            return exec_failed(&mut report, None, &format!("log_writer_not_started: {why}"));
         }
     };
     become_workload(&exec, report_pipe, streams)
@@ -445,12 +447,26 @@ fn wait_for_go(go: &OwnedFd) -> Result<(), String> {
 fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStreams) -> i32 {
     use std::os::unix::process::CommandExt as _;
     let mut report = std::fs::File::from(report_pipe);
+    // Descriptor 2 becomes the workload's log pipe below, so a failure says
+    // why on this close-on-exec copy of the journal (review r6 R6-04).
+    // SAFETY: descriptor 2 is open; F_DUPFD_CLOEXEC returns a new one.
+    let journal = unsafe { libc::fcntl(2, libc::F_DUPFD_CLOEXEC, 3) };
+    if journal < 0 {
+        return exec_failed(
+            &mut report,
+            None,
+            &format!("the journal's descriptor: {}", io::Error::last_os_error()),
+        );
+    }
+    // SAFETY: fcntl returned a new descriptor that nothing else owns.
+    let mut journal = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(journal) });
     for (stream, target) in [(&streams.stdout, 1), (&streams.stderr, 2)] {
         // SAFETY: both descriptors are open; dup2 makes `target` a copy of
         // the pipe's write end, without close-on-exec.
         if unsafe { libc::dup2(stream.as_raw_fd(), target) } != target {
             return exec_failed(
                 &mut report,
+                Some(&mut journal),
                 &format!(
                     "log pipe on descriptor {target}: {}",
                     io::Error::last_os_error()
@@ -472,6 +488,7 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStrea
     if marked != 0 {
         return exec_failed(
             &mut report,
+            Some(&mut journal),
             &format!(
                 "descriptors above 2 could not be closed: {}",
                 io::Error::last_os_error()
@@ -479,7 +496,11 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStrea
         );
     }
     let Some((program, args)) = exec.argv.split_first() else {
-        return exec_failed(&mut report, "exec.json names no program");
+        return exec_failed(
+            &mut report,
+            Some(&mut journal),
+            "exec.json names no program",
+        );
     };
     // Without the mark the gate records that the workload never started, so
     // no exec follows a mark that did not reach it. That holds when the gate
@@ -492,6 +513,7 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStrea
     if let Err(error) = report.write_all(EXEC_MARK) {
         return exec_failed(
             &mut report,
+            Some(&mut journal),
             &format!("the exec mark did not reach the gate: {error}"),
         );
     }
@@ -501,15 +523,36 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd, streams: WorkloadStrea
         .envs(&exec.env)
         .current_dir(&exec.cwd)
         .exec();
-    exec_failed(&mut report, &format!("{program}: {error}"))
+    exec_failed(
+        &mut report,
+        Some(&mut journal),
+        &format!("{program}: {error}"),
+    )
 }
 
 /// Tells the gate on the report pipe why the workload's exec failed, as one
-/// line, and returns the status for it.
-fn exec_failed(report: &mut std::fs::File, why: &str) -> i32 {
-    journal_line!("job-exec: {why}");
-    if let Err(error) = writeln!(report, "{}", why.replace('\n', " ")) {
-        journal_line!("job-exec: the gate was not told: {error}");
+/// line, then says it in the journal, and returns the status for it. The
+/// gate is told first and the journal line goes to `journal`, the copy of
+/// descriptor 2 from before it became the log pipe (None: descriptor 2 is
+/// still the journal). PIPE is ignored again first: the standard library
+/// resets it to its default for the exec and leaves it so when the exec
+/// fails, and a write to a pipe with no reader would end `job-exec` before
+/// the gate is told (review r6 R6-04).
+fn exec_failed(report: &mut std::fs::File, journal: Option<&mut std::fs::File>, why: &str) -> i32 {
+    // SAFETY: SIG_IGN is a valid disposition for PIPE.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+    let told = writeln!(report, "{}", why.replace('\n', " "));
+    let line = match &told {
+        Ok(()) => format!("job-exec: {why}"),
+        Err(error) => format!("job-exec: {why}; the gate was not told: {error}"),
+    };
+    match journal {
+        Some(journal) => {
+            let _ = writeln!(journal, "{line}");
+        }
+        None => journal_line!("{line}"),
     }
     exec_status::EXEC_FAILED
 }

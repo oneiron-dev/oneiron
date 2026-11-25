@@ -17,12 +17,21 @@
 //! R4's reader (`jobs/log_tail.rs`) maps a stream offset by the record and
 //! reads again when the record changed or the file shrank under its read.
 //!
+//! A rotation that fails after its first record keeps only the head, which
+//! no rotation writes, and settles the record with `"rotating": false` and
+//! every byte past the head counted as dropped, so a reader never waits on a
+//! rotation that will not finish (review r6 R6-03). Only a writer killed
+//! inside a rotation, or a failure of the settling itself, leaves
+//! `"rotating": true` behind; the reader answers that once the job has ended.
+//!
 //! The writer is `job-exec`'s grandchild, not the workload's child, so a
 //! workload that waits for all of its children never waits for it. It runs
 //! as the job account inside the unit: under the file wall, the cgroup, the
 //! memory cap and the tree kill. It ignores TERM, so the unit's stop lets it
 //! copy what the workload wrote before it ended; it leaves when both pipes
-//! close, or with the unit's KILL after the stop grace. `log/` is the
+//! close, or with the unit's KILL after the stop grace. `job-exec` goes on
+//! only after the writer said it is ready ([`READY_BYTE`]): TERM ignored and
+//! every other descriptor closed (review r6 R6-01). `log/` is the
 //! workload's own directory, so the files and the records are its untrusted
 //! bytes once it runs: the writer creates its files before the workload
 //! exists and never follows a link.
@@ -55,9 +64,13 @@ const READ_CHUNK_BYTES: usize = 64 * 1024;
 /// The most one step of a rotation's move copies.
 const MOVE_CHUNK_BYTES: usize = 1024 * 1024;
 
-/// How long `job-exec` waits for the writer to hold only its own
-/// descriptors.
+/// How long `job-exec` waits for the writer to say it is ready.
 const READY_WAIT: Duration = Duration::from_secs(5);
+
+/// The writer's one byte on the ready pipe: it ignores TERM and holds only
+/// its own descriptors. The pipe closing without it is a writer that died
+/// in its setup.
+const READY_BYTE: u8 = b'R';
 
 /// The workload's ends of the two log pipes.
 #[derive(Debug)]
@@ -71,8 +84,8 @@ pub struct WorkloadStreams {
 /// Creates `log/stdout` and `log/stderr` beneath `log_dir` (job account,
 /// mode 0644, never through a link, never over an existing file), makes the
 /// two pipes and starts the writer with `cap` bytes per file. Returns once
-/// the writer holds nothing but its files and its pipes' read ends: no gate
-/// pipe stays open in it.
+/// the writer said it is ready: it ignores TERM and holds nothing but its
+/// files and its pipes' read ends, so no gate pipe stays open in it.
 ///
 /// `job-exec` runs one thread, so the forked children may run any code.
 ///
@@ -100,14 +113,22 @@ pub fn start(log_dir: &Path, cap: u64) -> Result<WorkloadStreams, String> {
         // SAFETY: as above; this child only forks the writer and leaves.
         let writer = unsafe { libc::fork() };
         if writer == 0 {
+            // SAFETY: SIG_IGN is a valid disposition for TERM. Set before the
+            // ready byte, so the unit's stop never ends a writer that said it
+            // is ready (review r6 R6-01).
+            unsafe {
+                libc::signal(libc::SIGTERM, libc::SIG_IGN);
+            }
             let keep = [
                 dir.as_raw_fd(),
                 stdout_file.as_raw_fd(),
                 stderr_file.as_raw_fd(),
                 stdout_read.as_raw_fd(),
                 stderr_read.as_raw_fd(),
+                ready_write.as_raw_fd(),
             ];
-            let status = if close_all_but(&keep).is_ok() {
+            let ready = close_all_but(&keep).is_ok() && say_ready(ready_write);
+            let status = if ready {
                 run_writer(
                     &dir,
                     [
@@ -137,7 +158,7 @@ pub fn start(log_dir: &Path, cap: u64) -> Result<WorkloadStreams, String> {
     if status != 0 {
         return Err("the writer's fork failed".to_owned());
     }
-    wait_closed(&ready_read, READY_WAIT)?;
+    wait_ready(&ready_read, READY_WAIT)?;
     Ok(WorkloadStreams {
         stdout: stdout_write,
         stderr: stderr_write,
@@ -223,15 +244,24 @@ fn reap(child: libc::pid_t) -> io::Result<i32> {
     }
 }
 
-/// Reads `ready` until every writer of it closed: the writer closed its
-/// copy with every other descriptor it does not keep.
-fn wait_closed(ready: &OwnedFd, wait: Duration) -> Result<(), String> {
+/// The writer's side of the ready pipe: one [`READY_BYTE`], then the pipe
+/// closes. False when the byte was not written.
+fn say_ready(ready: OwnedFd) -> bool {
+    let byte = [READY_BYTE];
+    // SAFETY: one readable byte; the descriptor is open.
+    let written = unsafe { libc::write(ready.as_raw_fd(), byte.as_ptr().cast(), 1) };
+    written == 1
+}
+
+/// Reads `ready` until the writer's [`READY_BYTE`]. The pipe closing first
+/// is a writer that died in its setup (review r6 R6-01).
+fn wait_ready(ready: &OwnedFd, wait: Duration) -> Result<(), String> {
     let started = Instant::now();
     let mut byte = [0_u8; 1];
     loop {
         let left = wait.saturating_sub(started.elapsed());
         if left.is_zero() {
-            return Err("the writer did not close its other descriptors in time".to_owned());
+            return Err("the writer did not say it is ready in time".to_owned());
         }
         let mut poll = libc::pollfd {
             fd: ready.as_raw_fd(),
@@ -245,8 +275,11 @@ fn wait_closed(ready: &OwnedFd, wait: Duration) -> Result<(), String> {
         }
         // SAFETY: byte is writable for its length.
         match unsafe { libc::read(ready.as_raw_fd(), byte.as_mut_ptr().cast(), 1) } {
-            0 => return Ok(()),
-            read if read > 0 => {}
+            0 => return Err("the writer ended before it was ready".to_owned()),
+            1 if byte[0] == READY_BYTE => return Ok(()),
+            read if read > 0 => {
+                return Err("the writer wrote something other than ready".to_owned());
+            }
             _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {}
             _ => return Err(format!("ready pipe: {}", io::Error::last_os_error())),
         }
@@ -272,10 +305,6 @@ impl Stream {
 
 /// The writer's loop: copies each pipe into its file until both close.
 fn run_writer(dir: &OwnedFd, mut streams: [Stream; 2]) -> i32 {
-    // SAFETY: SIG_IGN is a valid disposition for TERM.
-    unsafe {
-        libc::signal(libc::SIGTERM, libc::SIG_IGN);
-    }
     let mut buffer = vec![0_u8; READ_CHUNK_BYTES];
     while streams.iter().any(|stream| stream.open) {
         let mut polls: Vec<libc::pollfd> = streams
@@ -433,24 +462,70 @@ impl LogFile {
                         rotating: true,
                     },
                 )?;
-                self.move_down(self.len - keep_old, at, keep_old)?;
                 let new = &bytes[usize::try_from(skip_new).unwrap_or(bytes.len())..];
-                self.file.write_all_at(new, at + keep_old)?;
-                self.len = at + keep_old + n(new);
-                self.file.set_len(self.len)?;
+                let len = at + keep_old + n(new);
+                let total_dropped = self.dropped.saturating_add(dropped);
+                let rotated = self
+                    .move_down(self.len - keep_old, at, keep_old)
+                    .and_then(|()| self.file.write_all_at(new, at + keep_old))
+                    .and_then(|()| self.file.set_len(len))
+                    .and_then(|()| {
+                        self.write_record(
+                            dir,
+                            DropRecord {
+                                at,
+                                dropped: total_dropped,
+                                rotating: false,
+                            },
+                        )
+                    });
+                if let Err(error) = rotated {
+                    self.settle_failed_rotation(dir, at, n(bytes));
+                    return Err(error);
+                }
+                self.len = len;
                 self.at = Some(at);
-                self.dropped = self.dropped.saturating_add(dropped);
-                self.write_record(
-                    dir,
-                    DropRecord {
-                        at,
-                        dropped: self.dropped,
-                        rotating: false,
-                    },
-                )?;
+                self.dropped = total_dropped;
             }
         }
         Ok(())
+    }
+
+    /// After a rotation failed past its first record: keeps the file's head
+    /// alone, which no rotation writes, and settles the record with every
+    /// byte past the head, `chunk` included, counted as dropped (review r6
+    /// R6-03). When the record cannot be written, it is removed: the file is
+    /// then the stream's first bytes, which a reader without a record reads
+    /// truly. When the file cannot be cut, the record stays `rotating`.
+    fn settle_failed_rotation(&mut self, dir: BorrowedFd<'_>, at: u64, chunk: u64) {
+        let dropped = self
+            .dropped
+            .saturating_add(self.len.saturating_sub(at))
+            .saturating_add(chunk);
+        if let Err(error) = self.file.set_len(at) {
+            journal_line!(
+                "job-exec log writer: log/{}: the failed rotation left the record rotating: {error}",
+                self.name
+            );
+            return;
+        }
+        self.len = at;
+        self.at = Some(at);
+        self.dropped = dropped;
+        let record = DropRecord {
+            at,
+            dropped,
+            rotating: false,
+        };
+        if let Err(error) = self.write_record(dir, record) {
+            let name = format!("{}{DROP_RECORD_SUFFIX}", self.name);
+            let removed = rustix::fs::unlinkat(dir, name.as_str(), AtFlags::empty());
+            journal_line!(
+                "job-exec log writer: log/{}: the settled record was not written ({error}); record removed: {}",
+                self.name,
+                removed.is_ok()
+            );
+        }
     }
 
     /// Copies `count` bytes from `from` down to `to` (`to <= from`), front
@@ -608,6 +683,47 @@ mod tests {
             &stream[stream.len() - tail..],
             "chunk {chunk}: tail"
         );
+    }
+
+    /// A rotation that failed after its first record leaves the head and a
+    /// settled record that counts every byte past the head as dropped.
+    #[test]
+    fn a_failed_rotation_settles_to_the_head_and_a_record_that_is_not_rotating() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let fd = rustix::fs::open(
+            dir.path(),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .expect("dir");
+        let file = create_log_file(&fd, STDOUT_FILE_NAME).expect("file");
+        let mut log = LogFile::new(STDOUT_FILE_NAME, file, CAP);
+        let stream = numbered(1_200_000);
+        for part in stream.chunks(65_536) {
+            log.append(fd.as_fd(), part);
+        }
+        let at = log.at.expect("rotated once");
+        let before = log.len + log.dropped;
+        log.write_record(
+            fd.as_fd(),
+            DropRecord {
+                at,
+                dropped: log.dropped,
+                rotating: true,
+            },
+        )
+        .expect("rotating record");
+        log.settle_failed_rotation(fd.as_fd(), at, 4096);
+        let bytes = std::fs::read(dir.path().join(STDOUT_FILE_NAME)).expect("read");
+        let at_bytes = usize::try_from(at).expect("at fits");
+        assert_eq!(bytes, &stream[..at_bytes]);
+        let record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.path().join("stdout.dropped")).expect("record"),
+        )
+        .expect("json");
+        assert_eq!(record["rotating"], serde_json::Value::Bool(false));
+        assert_eq!(record["at"].as_u64(), Some(at));
+        assert_eq!(record["dropped"].as_u64(), Some(before + 4096 - at));
     }
 
     #[test]

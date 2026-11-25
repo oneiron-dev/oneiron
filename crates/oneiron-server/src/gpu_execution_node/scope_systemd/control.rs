@@ -17,7 +17,12 @@
 //! The third verb, `signal <id> <name>`, is the checkpoint notice (design
 //! 7.1 `Signal`; R4's `JobUnit::signal`): the handler sends one of
 //! [`CHECKPOINT_SIGNALS`] to that unit's main process alone, the workload,
-//! and never stops the unit.
+//! and never stops the unit. It sends it only while the unit is `active`:
+//! the unit is `Type=exec` with the root gate as `ExecStartPost=`, and the
+//! gate ends only after the workload's exec, so an active unit's main
+//! process is the workload and never `job-exec` in its start, which a
+//! checkpoint signal could end (review r6 R6-06). Before that the notice is
+//! refused and lost, as a notice may be.
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -27,7 +32,7 @@ use std::time::{Duration, Instant};
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::safe_fs::account;
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
 
 /// The socket the engine's account connects to.
@@ -44,6 +49,10 @@ pub const CONTROL_SERVICE_UNIT_PATH: &str = "/etc/systemd/system/oneiron-job-con
 
 /// The one job mode the handler asks for.
 pub const CONTROL_JOB_MODE: &str = "replace";
+
+/// The unit's `ActiveState` in which a checkpoint notice is sent: past its
+/// start, so its main process is the workload (module doc).
+const SIGNAL_ACTIVE_STATE: &str = "active";
 
 /// The longest request line: `signal `, 32 hex digits, a space, the
 /// longest checkpoint signal's name and the newline fit with room.
@@ -227,7 +236,15 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
     let line = read_line(stream, REQUEST_MAX_BYTES, REQUEST_WAIT)
         .map_err(|error| format!("request: {error}"))?;
     let (verb, id) = parse_request(&line)?;
-    let args = verb.systemctl_args(&id.unit_name());
+    let unit = id.unit_name();
+    if matches!(verb, ControlVerb::Signal(_)) {
+        let found = show(&unit, &["ActiveState"])?;
+        let state = found.get("ActiveState").map_or("", String::as_str);
+        if state != SIGNAL_ACTIVE_STATE {
+            return Err(format!("workload_not_running: the unit is {state:?}"));
+        }
+    }
+    let args = verb.systemctl_args(&unit);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(drop)
 }

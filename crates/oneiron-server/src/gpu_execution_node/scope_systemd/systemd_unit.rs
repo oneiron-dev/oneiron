@@ -122,6 +122,16 @@ pub fn parse_show(text: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// The answer of one `systemctl show` naming several units: one map per
+/// unit, as the blank lines between them part them.
+#[must_use]
+pub fn parse_show_units(text: &str) -> Vec<BTreeMap<String, String>> {
+    text.split("\n\n")
+        .map(parse_show)
+        .filter(|found| !found.is_empty())
+        .collect()
+}
+
 /// The unit properties `names` of `unit`, now.
 ///
 /// # Errors
@@ -229,6 +239,26 @@ impl SystemdJobUnit {
             reason,
         }
     }
+
+    /// The unit's status from its `ActiveState` and `ControlGroup`, as
+    /// `systemctl show` gave them.
+    fn status_from(
+        unit: &JobKeyId,
+        found: &BTreeMap<String, String>,
+    ) -> Result<JobUnitStatus, JobUnitError> {
+        let Some(active_state) = found.get("ActiveState") else {
+            return Err(Self::error(
+                unit,
+                "systemctl show named no ActiveState".to_owned(),
+            ));
+        };
+        let empty = cgroup_empty(found.get("ControlGroup").map_or("", String::as_str))
+            .map_err(|reason| Self::error(unit, reason))?;
+        Ok(JobUnitStatus {
+            phase: phase_of(active_state),
+            cgroup_empty: empty,
+        })
+    }
 }
 
 impl JobUnit for SystemdJobUnit {
@@ -267,20 +297,12 @@ impl JobUnit for SystemdJobUnit {
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {
         let found = show(&unit.unit_name(), &["ActiveState", "ControlGroup"])
             .map_err(|reason| Self::error(unit, reason))?;
-        let Some(active_state) = found.get("ActiveState") else {
-            return Err(Self::error(
-                unit,
-                "systemctl show named no ActiveState".to_owned(),
-            ));
-        };
-        let empty = cgroup_empty(found.get("ControlGroup").map_or("", String::as_str))
-            .map_err(|reason| Self::error(unit, reason))?;
-        Ok(JobUnitStatus {
-            phase: phase_of(active_state),
-            cgroup_empty: empty,
-        })
+        Self::status_from(unit, &found)
     }
 
+    /// Every job unit the service manager lists, with one `systemctl show`
+    /// for all of them (FIX EXEC-UNIT-LIVE-UNITS-ONE-SHOW-PER-UNIT: one per
+    /// unit held the admission lock that much longer).
     fn live_units(&self) -> Result<Vec<(JobKeyId, JobUnitStatus)>, JobUnitError> {
         let listing = run_tool(
             "systemctl",
@@ -298,19 +320,46 @@ impl JobUnit for SystemdJobUnit {
             unit: "oneiron-job@*.service".to_owned(),
             reason,
         })?;
+        let ids: Vec<JobKeyId> = listing
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .filter_map(|name| {
+                name.strip_prefix(super::super::jobs::job_unit::JOB_UNIT_TEMPLATE_PREFIX)
+                    .and_then(|rest| {
+                        rest.strip_suffix(super::super::jobs::job_unit::JOB_UNIT_SUFFIX)
+                    })
+                    .and_then(JobKeyId::parse)
+            })
+            .collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let names: Vec<String> = ids.iter().map(JobKeyId::unit_name).collect();
+        let mut args = vec![
+            "show",
+            "--property=Id",
+            "--property=ActiveState",
+            "--property=ControlGroup",
+        ];
+        args.extend(names.iter().map(String::as_str));
+        let answer =
+            run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map_err(|reason| JobUnitError {
+                unit: "oneiron-job@*.service".to_owned(),
+                reason,
+            })?;
+        let units = parse_show_units(&answer);
         let mut live = Vec::new();
-        for line in listing.lines() {
-            let Some(name) = line.split_whitespace().next() else {
-                continue;
-            };
-            let Some(id) = name
-                .strip_prefix(super::super::jobs::job_unit::JOB_UNIT_TEMPLATE_PREFIX)
-                .and_then(|rest| rest.strip_suffix(super::super::jobs::job_unit::JOB_UNIT_SUFFIX))
-                .and_then(JobKeyId::parse)
+        for (id, name) in ids.into_iter().zip(&names) {
+            let Some(found) = units
+                .iter()
+                .find(|found| found.get("Id").is_some_and(|unit| unit == name))
             else {
-                continue;
+                return Err(Self::error(
+                    &id,
+                    "systemctl show gave no properties for it".to_owned(),
+                ));
             };
-            let status = self.status(&id)?;
+            let status = Self::status_from(&id, found)?;
             if !status.is_gone() {
                 live.push((id, status));
             }
@@ -329,5 +378,26 @@ mod tests {
         assert_eq!(found.get("ActiveState").map(String::as_str), Some("active"));
         assert_eq!(phase_of("activating"), JobUnitPhase::Starting);
         assert_eq!(phase_of("failed"), JobUnitPhase::Inactive);
+    }
+
+    #[test]
+    fn one_show_for_several_units_reads_as_one_map_per_unit() {
+        let units = parse_show_units(
+            "Id=oneiron-job@a.service\nActiveState=active\nControlGroup=/system.slice/a\n\n\
+             Id=oneiron-job@b.service\nActiveState=inactive\nControlGroup=\n",
+        );
+        assert_eq!(units.len(), 2);
+        assert_eq!(
+            units[1].get("Id").map(String::as_str),
+            Some("oneiron-job@b.service")
+        );
+        assert_eq!(
+            units[1].get("ActiveState").map(String::as_str),
+            Some("inactive")
+        );
+        assert_eq!(
+            units[0].get("ControlGroup").map(String::as_str),
+            Some("/system.slice/a")
+        );
     }
 }
