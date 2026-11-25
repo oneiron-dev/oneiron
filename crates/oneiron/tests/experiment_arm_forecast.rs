@@ -511,8 +511,11 @@ fn an_invalid_rung_leaves_its_forecast_unresolved() {
         (&open, 500),
         (&promoted, 800),
     ] {
+        // An intent key names one ask of its caller, so each arm's forecast
+        // takes its own key.
+        let key = format!("forecast-{}", arm.title);
         fixture
-            .forecast(None, &forecast_ask("forecast", arm, pass_per_mille))
+            .forecast(None, &forecast_ask(&key, arm, pass_per_mille))
             .unwrap_or_else(|error| panic!("{}: {error:?}", arm.title));
     }
     fixture.close(killed.id, ArmState::Killed, RungEnd::Killed, Some(false));
@@ -628,7 +631,9 @@ fn the_required_forecast_is_the_arms_own_runner() {
 #[test]
 fn a_rung_holds_one_forecast() {
     let fixture = fixture();
-    let (lane, family) = fixture.lane(&Roles::default(), 1);
+    // Two floor arms: the second funds the arm the contract and range checks
+    // below are asked on.
+    let (lane, family) = fixture.lane(&Roles::default(), 2);
     let arm = fixture.admit(lane, family, 1, "one forecast");
 
     let first = fixture
