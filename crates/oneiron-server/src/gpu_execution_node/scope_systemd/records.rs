@@ -159,6 +159,12 @@ pub struct PreparedRecord {
     pub required: Vec<BoundRequirement>,
     /// The inner file wall: `read <path>` and `write <path>`, one per path.
     pub fence: Vec<String>,
+    /// For a session template's run (pass 34, 2.5; row W1), the latest
+    /// boot-clock time a renewal may move its cutoff to: the launch plus the
+    /// template's `session_max_secs`. `None` for a job, whose cutoff never
+    /// moves, and in a record written before sessions.
+    #[serde(default)]
+    pub session_until_boot_ns: Option<u64>,
 }
 
 /// The cutoff timer the prepare step armed.

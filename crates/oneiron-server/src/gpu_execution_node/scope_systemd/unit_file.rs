@@ -162,9 +162,16 @@ pub fn render_control_socket(engine_gid: u32) -> String {
     )
 }
 
+/// The longest a control handler lives (`RuntimeMaxSec=` of its service):
+/// a session's renewal hands its cutoff over within it
+/// ([`super::super::jobs::job_unit::RENEW_BEFORE_STOP_NS`]).
+pub const CONTROL_HANDLER_RUNTIME_MAX_SECS: u64 = 30;
+
 /// The control socket's handler, one instance per connection: `oneiron
 /// job-control` as root, with the connection as its standard input and
-/// output.
+/// output. It reads the node file and may write beneath the state directory
+/// only for a session's renewal (pass 34, 2.5; row W1), which records the
+/// moved cutoff in the key's `prepared.json`.
 #[must_use]
 pub fn render_control_service(inputs: &UnitInputs) -> String {
     format!(
@@ -172,19 +179,37 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
          [Unit]\n\
          Description=Oneiron job control request\n\n\
          [Service]\n\
-         ExecStart={} job-control --engine-account {}\n\
+         ExecStart={} job-control --engine-account {} --node-file {}\n\
          StandardInput=socket\n\
          StandardOutput=socket\n\
          StandardError=journal\n\
-         RuntimeMaxSec=30\n\
+         RuntimeMaxSec={CONTROL_HANDLER_RUNTIME_MAX_SECS}\n\
          NoNewPrivileges=yes\n\
          PrivateNetwork=yes\n\
          PrivateTmp=yes\n\
          ProtectSystem=strict\n\
-         ProtectHome=read-only\n",
+         ProtectHome=read-only\n\
+         ReadWritePaths={}\n",
         quote_path(&inputs.binary),
-        inputs.engine_account
+        inputs.engine_account,
+        quote_path(&inputs.node_file),
+        quote_path(&inputs.state_dir),
     )
+}
+
+/// Whether an installed control service takes a session's renewal (row W1):
+/// its handler is given the node file and may write beneath the state
+/// directory. A service written before sessions has neither.
+#[must_use]
+pub fn control_service_renews(service_text: &str) -> bool {
+    let names_node_file = service_text.lines().any(|line| {
+        line.strip_prefix("ExecStart=")
+            .is_some_and(|command| command.split_whitespace().any(|word| word == "--node-file"))
+    });
+    let writes_state = service_text
+        .lines()
+        .any(|line| line.starts_with("ReadWritePaths="));
+    names_node_file && writes_state
 }
 
 /// The value of `RuntimeMaxSec=` in an installed template, if it has one.
@@ -272,10 +297,27 @@ mod tests {
         assert!(socket.contains("ListenStream=/run/oneiron-job-control.sock\n"));
         assert!(socket.contains("SocketUser=root\nSocketGroup=970\nSocketMode=0660\nAccept=yes\n"));
         let service = render_control_service(&inputs());
-        assert!(
-            service.contains("ExecStart=/usr/bin/oneiron job-control --engine-account oneiron\n")
-        );
+        assert!(service.contains(
+            "ExecStart=/usr/bin/oneiron job-control --engine-account oneiron --node-file /etc/oneiron/execution-node.toml\n"
+        ));
+        // A session's renewal records its moved cutoff beneath the state
+        // directory, and nowhere else (row W1).
+        assert!(service.contains("ProtectSystem=strict\n"));
+        assert!(service.contains(&format!(
+            "ReadWritePaths={}\n",
+            inputs().state_dir.display()
+        )));
         assert!(service.contains("StandardInput=socket\n"));
         assert!(!service.contains("User="));
+        assert!(service.contains("RuntimeMaxSec=30\n"));
+        assert!(control_service_renews(&service));
+        // A handler written before sessions takes no renewal.
+        let without_node_file =
+            service.replace(" --node-file /etc/oneiron/execution-node.toml", "");
+        let before_sessions: Vec<&str> = without_node_file
+            .lines()
+            .filter(|line| !line.starts_with("ReadWritePaths="))
+            .collect();
+        assert!(!control_service_renews(&before_sessions.join("\n")));
     }
 }

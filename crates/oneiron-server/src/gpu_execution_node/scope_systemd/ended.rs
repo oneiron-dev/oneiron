@@ -348,7 +348,21 @@ fn monotonic_us() -> u64 {
 /// Stops the cutoff timer of a unit that ended before it, and takes away
 /// the job's payload bind source and exchange directory.
 fn disarm(context: &StepContext) {
-    disarm_instance(&context.args.instance);
+    let instance = context.args.instance.as_str();
+    // A session's renewal (row W1) armed its cutoff under a timer of its own,
+    // which root's record names.
+    let renewed = format!("{CUTOFF_UNIT_PREFIX}{instance}-");
+    if let Some(plan) = context
+        .read_record::<PreparedRecord>(PREPARED_FILE_NAME)
+        .ok()
+        .flatten()
+        .filter(|record| record.instance == instance)
+        .and_then(|record| record.cutoff)
+        .filter(|plan| plan.unit.starts_with(&renewed))
+    {
+        let _ = run_tool("systemctl", &["stop", "--no-block", &plan.unit], QUERY_WAIT);
+    }
+    disarm_instance(instance);
 }
 
 /// [`disarm`] by a checked job instance alone.
