@@ -1065,7 +1065,8 @@ fn a_returnable_output_is_fetched_and_checked_and_no_other_file_can_be() {
         end_with_outputs(rig, &unbound, &[("verdict.json", verdict, true)]);
         rig.node.put_output(unbound.key(), "verdict.json", verdict);
         rig.settle(&unbound);
-        let kinds = kinds_for(&rig.node.calls(), unbound.key());
+        let calls = rig.node.calls();
+        let kinds = kinds_for(&calls, unbound.key());
         assert!(!kinds.contains(&"fetch"), "no binding, no fetch: {kinds:?}");
         assert!(kinds.contains(&"ack"), "and the node may clean: {kinds:?}");
     });
