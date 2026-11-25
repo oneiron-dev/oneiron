@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8607 | 2318 | 277 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8607 | 2319 | 276 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 1 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 77 | 12 | 0 |
@@ -338,7 +338,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `wave_orchestration` | file+dir | 3 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_connector` | dir | 7 | s | yes | The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and… |
 | `window_key` | file | 1 | s | — | Monthly CRDT window keys and their timestamp conversion |
-| `work_order` | dir | 17 | L | yes | Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… |
+| `work_order` | dir | 17 | m | yes | Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… |
 | `workspace_roster` | dir | 155 | L | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `world_keys` | dir | 93 | L | yes | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 
