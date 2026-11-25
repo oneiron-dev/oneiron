@@ -16,6 +16,10 @@
 //! box's `disk_reserve_gib` and `keep_headroom.disk_gib`. With neither figure set the memory and
 //! the threads have no room of their own here, as before this row: the memory floor's lease still
 //! bounds the memory, and each template's `cpu_threads` the threads.
+//!
+//! The readiness check (row Q4) runs at the shorter of the box's `readiness_every_secs` and the
+//! owner's `jobs.readiness.every_secs`, and a passed check clears the node's drain only when the
+//! box's `drain_clear_by` and the owner's `machines.drain.clear_by` both leave it to the check.
 
 use std::path::Path;
 
@@ -25,7 +29,7 @@ use oneiron::job_workload::{DevicePlacement, NetworkMode};
 use oneiron::machine_policy::{ExecutionState, MachineAccepts, MachinePolicy};
 
 use super::availability::GpuDeviceAvailability;
-use super::node_settings::ExecutionNodeSettings;
+use super::node_settings::{DrainClearBy, ExecutionNodeSettings};
 use super::wire::{TemplateOffer, WorkloadPin};
 
 /// Where Linux lists the machine's power supplies.
@@ -193,6 +197,43 @@ pub fn work_threads(
 pub fn disk_reserve_bytes(settings: &ExecutionNodeSettings, policy: Option<&MachinePolicy>) -> u64 {
     let kept = policy.map_or(0, |policy| policy.keep_headroom.disk_gib);
     settings.disk_reserve_gib.max(kept).saturating_mul(1 << 30)
+}
+
+/// How often the node checks itself while no attempt runs, in seconds: the shorter of the box's
+/// `readiness_every_secs` and the owner's `jobs.readiness.every_secs`.
+#[must_use]
+pub fn readiness_every_secs(
+    settings: &ExecutionNodeSettings,
+    policy: Option<&MachinePolicy>,
+) -> u64 {
+    policy.map_or(settings.readiness_every_secs, |policy| {
+        settings
+            .readiness_every_secs
+            .min(policy.readiness_every_secs)
+    })
+}
+
+/// Who clears the node's drain: the box's `drain_clear_by`, unless the owner's
+/// `machines.drain.clear_by` is stricter. A passed readiness check clears the drain only when both
+/// leave it to the check. An owner row of `owner`, `grants` or `person_at_box` keeps the drain for
+/// the person at the box, because no act of the owner's or of a Grant reaches the node's own drain
+/// yet (the issuer's `vault.machines.execution.clear_drain` clears the issuer's guard only).
+#[must_use]
+pub fn drain_clear_by(
+    settings: &ExecutionNodeSettings,
+    policy: Option<&MachinePolicy>,
+) -> DrainClearBy {
+    let owner_leaves_it_to_the_check = policy.is_none_or(|policy| {
+        matches!(
+            policy.drain_clear_by,
+            oneiron::machine_policy::DrainClearBy::AfterReadinessCheck
+        )
+    });
+    if owner_leaves_it_to_the_check {
+        settings.drain_clear_by
+    } else {
+        DrainClearBy::PersonAtBox
+    }
 }
 
 /// The launch commit's check of a placement against both layers: every placed device is one the

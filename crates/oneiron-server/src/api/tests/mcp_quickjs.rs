@@ -1013,9 +1013,9 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
         "/mcp: {body}"
     );
     // The slip holds no Write: the connector's gate refuses the run's claim
-    // write with its proof error, and the guest's step reports it (the
+    // write for the missing grant, and the guest's step reports it (the
     // a90ddad52eed run). The writer below runs the same program.
-    let refusal = r#"step failure: {"denied":"mcp_auth_required","reasonCodes":[]}"#;
+    let refusal = r#"step failure: {"denied":"mcp_grant_missing","reasonCodes":[]}"#;
     assert!(
         body["error"]["message"]
             .as_str()
