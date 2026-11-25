@@ -374,13 +374,17 @@ impl Vault {
 /// Admits a live chunk again when this host holds no permit for it, after a
 /// restart: at its quote's price and unit, which froze at the quote, for its
 /// whole quote, as the kept permit before it held. Returns whether the record
-/// changed.
+/// changed. A unit's job is never admitted on the host account: its claim is
+/// its hold (design pass 32 r2, 7.2 point 3), and no permit is lost.
 fn take_up_gpu_chunk(
     job: &mut GpuJob,
     offer: &GpuOffer,
     admission: &RunAdmission,
     permits: &GpuJobPermits,
 ) -> crate::Result<bool> {
+    if job.claim.is_some() {
+        return Ok(false);
+    }
     let id = job.id;
     let chunk = job.chunk_mut()?;
     let key = chunk.idempotency_key.clone();

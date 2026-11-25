@@ -401,29 +401,6 @@ pub fn record_node_answer_in_txn(
     NODES.put(&vault.store, txn, &key, &row)
 }
 
-/// Marks the open claim under `key` started, as the start gate writes it when it inserts the
-/// claim's job row (row M2-C). The test door's seam until that gate lands.
-#[cfg(oneiron_test_support)]
-pub(crate) fn start_claim_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    key: &ClaimKey,
-) -> crate::Result<()> {
-    let Some(mut claim) = CLAIMS.get(&vault.store, txn, key)? else {
-        return Err(Error::InvalidConfig(
-            "no unit claim under this key".to_owned(),
-        ));
-    };
-    if claim.state != ClaimState::Claimed {
-        return Err(Error::InvalidConfig(
-            "only a claimed unit starts".to_owned(),
-        ));
-    }
-    claim.state = ClaimState::Started;
-    claim.revision += 1;
-    CLAIMS.put(&vault.store, txn, key, &claim)
-}
-
 /// The acquisition of this process's writer lease on the vault: one per start.
 fn serving_start(vault: &Vault) -> Option<[u8; 16]> {
     vault

@@ -42,8 +42,8 @@ pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
 pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};
 pub(crate) use store::erase_line_actor_in_txn;
 pub use store::{
-    MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,
-    settled_tallies_in_txn, stored_period_in_txn,
+    MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, offer_line_managed_in_txn,
+    period_view_in_txn, settled_tallies_in_txn, stored_period_in_txn,
 };
 pub use wire::{
     GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,

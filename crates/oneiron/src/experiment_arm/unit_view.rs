@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
-use crate::gpu_line::{ClaimState, Draw, UnitClaim, UnitEnd, UnitPurpose};
+use crate::gpu_line::{ClaimKey, ClaimState, Draw, UnitClaim, UnitEnd, UnitPurpose, claim_in_txn};
+use crate::{EntityId, Vault};
 
 /// One unit claim as the doors answer it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -54,6 +54,21 @@ impl UnitView {
             room_left_secs,
             replayed,
         }
+    }
+
+    /// This view with its claim's state and end as they stand now in `vault`, after the door
+    /// acted on the unit's job (its start, its cancel); the room and the replay stay the door's.
+    ///
+    /// # Errors
+    ///
+    /// A store read failure.
+    pub fn current(self, vault: &Vault) -> crate::Result<Self> {
+        let key = ClaimKey::of(self.arm, self.rung, &self.unit_key, self.attempt);
+        let txn = vault.store.env.read_txn()?;
+        Ok(match claim_in_txn(vault, &txn, &key)? {
+            Some(claim) => Self::of(&claim, self.room_left_secs, self.replayed),
+            None => self,
+        })
     }
 }
 

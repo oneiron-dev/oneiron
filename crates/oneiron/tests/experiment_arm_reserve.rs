@@ -20,8 +20,8 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::experiment_arm::{
     ARMS_UNITS_CANCEL_VERB, ARMS_UNITS_RESERVE_VERB, ArmAdmitRequest, ArmContractAsk, ArmRung,
-    ExperimentArm, HoldEndCause, RungState, RunnerRef, UnitCancelRequest, UnitReserveRequest,
-    UnitView, arm_admit_as, unit_cancel_as, unit_reserve_as,
+    ExperimentArm, HoldEndCause, RungState, RunnerRef, UnitCancel, UnitCancelRequest,
+    UnitReserveRequest, UnitView, arm_admit_as, unit_cancel_as, unit_reserve_as,
 };
 use oneiron::federation::{Scope, ScopeAxis, WalletRef};
 use oneiron::gpu_job::{GpuJobEnd, GpuJobTerminal, MeterVerdict};
@@ -442,12 +442,27 @@ impl Fixture {
         unit_reserve_as(&memory, owner, ask, at_ms)
     }
 
+    /// The withdrawal of an unstarted unit, as its view; a started unit's admitted cancel
+    /// answers the view the cancel read.
     fn cancel(
         &self,
         agent: Option<Agent>,
         ask: &UnitReserveRequest,
         at_ms: u64,
     ) -> MemoryResult<UnitView> {
+        self.cancel_outcome(agent, ask, at_ms)
+            .map(|outcome| match outcome {
+                UnitCancel::Withdrawn(view) => view,
+                UnitCancel::JobStarted(started) => started.view().clone(),
+            })
+    }
+
+    fn cancel_outcome(
+        &self,
+        agent: Option<Agent>,
+        ask: &UnitReserveRequest,
+        at_ms: u64,
+    ) -> MemoryResult<UnitCancel> {
         let (memory, owner) = self.caller(agent);
         unit_cancel_as(
             &memory,
@@ -1009,11 +1024,16 @@ fn a_cancelled_unit_returns_its_room_and_a_repeat_answers_it() {
         .expect("the same ask now fits");
     assert_eq!(replacement.room_left_secs, Some(0));
     fixture.start(&next);
-    refused_as(
-        fixture.cancel(Some(lead), &next, NOW_MS),
-        MEMORY_CODE_INVALID_STATE,
-        "unit_started:",
-    );
+    // A started unit's cancel is admitted for its reserver and ends its job through the scoped
+    // path (row M2-C part 2); the claim ends at the job's terminal.
+    let UnitCancel::JobStarted(started) = fixture
+        .cancel_outcome(Some(lead), &next, NOW_MS)
+        .expect("the reserver may cancel its started unit")
+    else {
+        panic!("a started unit's cancel is the cancel of its job")
+    };
+    assert_eq!(started.job(), replacement.job);
+    assert_eq!(started.view().state, "started");
     let claims = fixture.claims(&arm, 1);
     assert_eq!(claims.len(), 2);
     let ended = claims
