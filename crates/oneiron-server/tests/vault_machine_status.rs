@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::gpu_job::{
     GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobError,
-    GpuJobLifecycle, GpuJobNodeView, GpuJobState, MeterVerdict,
+    GpuJobLifecycle, GpuJobNodeView, GpuJobState, GpuJobStatus, MeterVerdict,
 };
 use oneiron::job_dispatch::machine_records::{
     MachineDrainClearRequest, UnattributedSeconds, clear_drain_as,
@@ -343,6 +343,38 @@ fn a_node_reset_reports_lost_with_unknown_seconds_and_bills_nothing() {
         assert_eq!(guard.failures_in_a_row, 1);
         assert_eq!(guard.last_failure.as_deref(), Some("lost: node_reset"));
         assert_eq!(guard.drained, None, "one failure does not drain");
+    });
+}
+
+/// Pass 33, 8.6 (10.3 need 5): a run its node ends at the job's maximum ends the job with the
+/// end reason `time_limit`. It is never shown as a natural exit, and never as `stopped`, whose
+/// stop offers a resume from a checkpoint: a hard stop offers none.
+#[test]
+fn a_job_its_node_ends_at_the_maximum_ends_time_limit_not_exited() {
+    with_rig(|rig| {
+        let workload = rig.approve("time-limit", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(30), None, true);
+        rig.step(&run).expect("poll the running job");
+        rig.clock.advance_secs(60);
+        end_clean(rig, &run, JobEnd::TimeLimit, Some(90));
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+            "the node ended the job at its maximum; it did not end by itself",
+        );
+        let status = GpuJobStatus::from(&ended);
+        assert_eq!(status.state, "ended");
+        assert_eq!(status.end_reason.as_deref(), Some("time_limit"));
+        assert!(
+            status.stop.is_none(),
+            "a hard stop offers no resume: {:?}",
+            status.stop
+        );
+        let node = view(rig, &run).node.expect("the node's receipt");
+        assert_eq!(node.end.as_deref(), Some("time_limit"));
     });
 }
 
