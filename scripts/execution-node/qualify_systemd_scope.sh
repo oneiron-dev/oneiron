@@ -6,8 +6,8 @@
 # It needs root and systemd as process 1 on a SCRATCH machine: it installs the job unit, makes accounts and fake
 # device nodes, and starts job units. Run it in a container with systemd as process 1 (qualify_in_container.sh), or
 # on a node before its first job (row R6). No engine and no issuer run while it does: every job is started the way
-# the engine starts one (launch.json in the key's control directory, then `systemctl start` as the engine's account,
-# which the installed polkit rule allows).
+# the engine starts one (launch.json in the key's control directory, then `oneiron execution-node unit-control start`
+# as the engine's account, through the job control socket install wrote; the engine's account has no polkit grant).
 #
 # usage: qualify_systemd_scope.sh --oneiron <binary> [--maximum-secs <n>] [--only <test name>]...
 # Prints `## TEST <name> PASS|FAIL|UNPROVEN <why>` per test and, last, `## QUALIFY rc=<n> pass=<p> fail=<f> unproven=<u>`.
@@ -116,7 +116,7 @@ launch_file() {
     host_memory_mib: $mem, maximum_secs: $max, boot_id: $boot, launch_boot_ns: $at }'
 }
 
-start() { as_engine systemctl start --no-block "$UNIT"; }
+start() { as_engine "$BIN" execution-node unit-control start "$KEY"; }
 
 wait_ended() { # [seconds]
   local i
@@ -163,6 +163,39 @@ pick_devices() {
   if [ ${#DEVICES[@]} -eq 2 ]; then
     node_file "QUAL-DEV-0 = [\"${DEVICES[0]}\"]
 QUAL-DEV-1 = [\"${DEVICES[1]}\"]"
+  fi
+}
+
+# Review r1 of #10439 (P1): a polkit rule for verb `start` on oneiron-job@<id>.service also let the engine's account
+# create a transient unit of that name with any command, as root. Now the engine's account holds no grant: it cannot
+# start a transient unit, a job unit or any other unit through the service manager. The control socket is root's,
+# open to the engine's group alone, and starts the job unit only.
+the_engines_account_starts_only_job_units_and_only_through_the_control_socket() {
+  local id key marker=/run/qual-transient-ran other=/run/qual-other-ran why= stat_line
+  key="qual-control-$(date +%s%N)"
+  id=$("$BIN" execution-node unit-name "$key"); id=${id#oneiron-job@}; id=${id%.service}
+  rm -f "$marker" "$other"
+  printf '[Service]\nType=oneshot\nExecStart=/usr/bin/touch %s\n' "$other" > /etc/systemd/system/qual-other.service
+  systemctl daemon-reload
+  as_engine systemd-run --no-ask-password --quiet --unit="oneiron-job@$id.service" /usr/bin/touch "$marker" 2> /dev/null \
+    && why+="systemd-run of a transient oneiron-job@$id.service was accepted; "
+  as_engine systemctl --no-ask-password start "oneiron-job@$id.service" 2> /dev/null \
+    && why+="systemctl start of the job unit was accepted without the socket; "
+  as_engine systemctl --no-ask-password start qual-other.service 2> /dev/null && why+="another unit was started; "
+  sleep 1
+  [ -e "$marker" ] && why+="the transient unit's command ran; "
+  [ -e "$other" ] && why+="the other unit's command ran; "
+  runuser -u "$JOB" -- "$BIN" execution-node unit-control start "$key" > /dev/null 2>&1 \
+    && why+="the job account could use the control socket; "
+  stat_line=$(stat -c '%U %G %a' /run/oneiron-job-control.sock 2>&1)
+  [ "$stat_line" = "root $(id -gn "$ENGINE") 660" ] || why+="control socket is '$stat_line'; "
+  systemctl stop "oneiron-job@$id.service" > /dev/null 2>&1
+  systemctl reset-failed "oneiron-job@$id.service" > /dev/null 2>&1
+  rm -f /etc/systemd/system/qual-other.service "$marker" "$other"; systemctl daemon-reload
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "transient start, direct job start and another unit's start refused for the engine's account; the job account cannot use the socket; socket $stat_line"
+  else
+    result "$FUNCNAME" FAIL "$why"
   fi
 }
 
@@ -432,7 +465,7 @@ EOF
 }
 
 setup
-echo "## SETUP host=$(uname -r) systemd=$(systemctl --version | head -1) landlock-abi=$(cat /sys/kernel/security/landlock/abi_version 2> /dev/null || echo ?)"
+echo "## SETUP host=$(uname -r) systemd=$(systemctl --version | head -1) landlock-abi=$(cat /sys/kernel/security/landlock/abi_version 2> /dev/null || echo ?) cgroup=$(cut -d: -f3 /proc/self/cgroup) root-subtree=[$(cat /sys/fs/cgroup/cgroup.subtree_control 2> /dev/null)]"
 wanted a_machine_without_the_minimum_contract_offers_no_jobs && BEFORE_INSTALL=1
 if [ -n "${BEFORE_INSTALL:-}" ]; then
   before=$("$BIN" execution-node check --file "$NODE_FILE" 2>&1)
@@ -449,6 +482,7 @@ if [ -n "${BEFORE_INSTALL:-}" ]; then
   fi
 fi
 for test in \
+  the_engines_account_starts_only_job_units_and_only_through_the_control_socket \
   a_child_that_left_its_session_dies_when_the_leader_exits \
   a_job_over_its_memory_request_ends_as_memory_limit \
   a_job_cannot_open_the_vault_store_the_keystore_or_the_control_files \

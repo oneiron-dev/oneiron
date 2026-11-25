@@ -15,6 +15,7 @@ use std::time::Duration;
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::ExecutionNodeSettings;
 use super::capabilities::{CheckReport, capabilities_of, check_report_path, kernel_facts};
+use super::control::{CONTROL_SOCKET_PATH, CONTROL_SOCKET_UNIT};
 use super::device_files;
 use super::records::{ExecFile, ScopeBound, ScopeReport};
 use super::safe_fs::{self, account, boot_id, borrow, make_dir_beneath, open_dir_path};
@@ -23,6 +24,13 @@ use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, REPORT_PIPE_NAME, UNIT_TEMPLATE_PA
 
 /// How long the probe unit may run.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Whether the control socket is there: its socket unit removes the file
+/// when it stops (`RemoveOnStop=yes`).
+fn control_socket_listens() -> bool {
+    use std::os::unix::fs::FileTypeExt as _;
+    std::fs::symlink_metadata(CONTROL_SOCKET_PATH).is_ok_and(|found| found.file_type().is_socket())
+}
 
 /// Prints each bound's strength and returns what would refuse a job: a
 /// machine without the minimum contract, or a template that requires a
@@ -36,12 +44,12 @@ pub fn check_scope(node_file: &Path, settings: &ExecutionNodeSettings) -> Vec<St
         match run_probe(node_file, settings) {
             Ok(report) => Some(report),
             Err(why) => {
-                println!("scope probe: did not run: {why}");
+                stdout_line!("scope probe: did not run: {why}");
                 None
             }
         }
     } else {
-        println!(
+        stdout_line!(
             "scope probe: not run ({}); the report below is from the configuration{}",
             if facts.unit_installed {
                 "run `execution-node check` as root to prove each bound in a probe unit"
@@ -62,12 +70,17 @@ pub fn check_scope(node_file: &Path, settings: &ExecutionNodeSettings) -> Vec<St
     let capabilities = capabilities_of(&facts, probed.as_ref());
     for bound in ScopeBound::ALL {
         let proof = capabilities.report(bound);
-        println!(
+        stdout_line!(
             "scope {}: {:?}: {}",
             bound.name(),
             proof.strength,
             proof.evidence
         );
+    }
+    if facts.unit_installed && !control_socket_listens() {
+        refusals.push(format!(
+            "the job control socket {CONTROL_SOCKET_PATH} is not there ({CONTROL_SOCKET_UNIT} not started): the engine could not start a job (run `oneiron execution-node install`)"
+        ));
     }
     if !capabilities.meets_minimum_contract() {
         refusals.push(
@@ -162,7 +175,7 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
         .ok_or("the node file has no name")?;
     safe_fs::write_beneath(borrow(&dir), name, &bytes, 0o644, Some((0, 0)))
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    println!("scope probe: report written to {}", path.display());
+    stdout_line!("scope probe: report written to {}", path.display());
     match probe_failure {
         Some(why) => Err(why),
         None => Ok(report),

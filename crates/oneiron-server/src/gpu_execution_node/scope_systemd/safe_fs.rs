@@ -388,6 +388,24 @@ pub fn host_network_namespace() -> String {
 ///
 /// No such account, or the lookup failed.
 pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
+    account_entry(name).map(|found| (found.uid, found.gid, found.home))
+}
+
+/// One account's entry in the account database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountEntry {
+    pub uid: u32,
+    pub gid: u32,
+    pub home: std::path::PathBuf,
+    pub shell: std::path::PathBuf,
+}
+
+/// The account `name`'s entry.
+///
+/// # Errors
+///
+/// No such account (`NotFound`), or the lookup failed.
+pub fn account_entry(name: &str) -> io::Result<AccountEntry> {
     let c =
         CString::new(name).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
@@ -415,13 +433,19 @@ pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
     }
     // SAFETY: getpwnam_r found the entry and filled it.
     let entry = unsafe { entry.assume_init() };
-    // SAFETY: pw_dir points into `buffer`, NUL terminated.
-    let home = unsafe { std::ffi::CStr::from_ptr(entry.pw_dir) };
-    Ok((
-        entry.pw_uid,
-        entry.pw_gid,
-        std::path::PathBuf::from(OsStr::from_bytes(home.to_bytes())),
-    ))
+    // SAFETY: pw_dir and pw_shell point into `buffer`, NUL terminated.
+    let (home, shell) = unsafe {
+        (
+            std::ffi::CStr::from_ptr(entry.pw_dir),
+            std::ffi::CStr::from_ptr(entry.pw_shell),
+        )
+    };
+    Ok(AccountEntry {
+        uid: entry.pw_uid,
+        gid: entry.pw_gid,
+        home: std::path::PathBuf::from(OsStr::from_bytes(home.to_bytes())),
+        shell: std::path::PathBuf::from(OsStr::from_bytes(shell.to_bytes())),
+    })
 }
 
 /// The boot clock in nanoseconds (`CLOCK_BOOTTIME`).

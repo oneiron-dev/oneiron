@@ -66,7 +66,7 @@ pub fn run(args: StepArgs) -> i32 {
     let context = match StepContext::open(args) {
         Ok(context) => context,
         Err(why) => {
-            eprintln!("job-prepare: {why}");
+            journal_line!("job-prepare: {why}");
             return 1;
         }
     };
@@ -75,14 +75,14 @@ pub fn run(args: StepArgs) -> i32 {
     match context.read_record::<PreparedRecord>(PREPARED_FILE_NAME) {
         Ok(None) => {}
         Ok(Some(_)) => {
-            eprintln!(
+            journal_line!(
                 "job-prepare: {} was prepared before; a key starts once",
                 context.unit()
             );
             return 1;
         }
         Err(why) => {
-            eprintln!("job-prepare: {why}");
+            journal_line!("job-prepare: {why}");
             return 1;
         }
     }
@@ -104,10 +104,10 @@ pub fn run(args: StepArgs) -> i32 {
     let outcome = prepare(&context, &mut record);
     if let Err(why) = &outcome {
         record.refusal = Some(why.clone());
-        eprintln!("job-prepare: refused {}: {why}", context.unit());
+        journal_line!("job-prepare: refused {}: {why}", context.unit());
     }
     if let Err(why) = context.write_record(PREPARED_FILE_NAME, &record) {
-        eprintln!("job-prepare: {why}");
+        journal_line!("job-prepare: {why}");
         return 1;
     }
     i32::from(outcome.is_err())
@@ -259,10 +259,18 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     let group = unit_cgroup(&unit);
     let tasks = cgroup_file(group.as_deref(), "pids.max");
     if tasks.as_deref() != Some(template.tasks_max.to_string().as_str()) {
+        // The cgroup's own controller list says whether the pids controller
+        // was given to this unit at all (qualification q2: a container whose
+        // root cgroup holds a process enables none).
+        let controllers = cgroup_file(group.as_deref(), "cgroup.controllers");
         return Err(format!(
-            "tasks_cap_not_applied: pids.max is {} where TasksMax={}",
+            "tasks_cap_not_applied: pids.max is {} where TasksMax={} (cgroup {}, controllers [{}])",
             tasks.as_deref().unwrap_or("unreadable"),
-            template.tasks_max
+            template.tasks_max,
+            group
+                .as_deref()
+                .map_or_else(|| "unknown".to_owned(), |path| path.display().to_string()),
+            controllers.as_deref().unwrap_or("unreadable")
         ));
     }
     record.configured = configured_bounds(

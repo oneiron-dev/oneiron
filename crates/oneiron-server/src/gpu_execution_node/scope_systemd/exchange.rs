@@ -170,14 +170,14 @@ pub fn withdraw(instance: &str) {
     if let Ok(dir) = open_dir_path(&exchange) {
         for name in EXCHANGE_FILES {
             if let Err(error) = remove_beneath(borrow(&dir), name) {
-                eprintln!("{}/{name}: not removed: {error}", exchange.display());
+                journal_line!("{}/{name}: not removed: {error}", exchange.display());
             }
         }
         drop(dir);
         if let Err(error) = std::fs::remove_dir(&exchange)
             && error.kind() != io::ErrorKind::NotFound
         {
-            eprintln!("{}: not removed: {error}", exchange.display());
+            journal_line!("{}: not removed: {error}", exchange.display());
         }
     }
 }

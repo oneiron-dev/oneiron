@@ -15,7 +15,7 @@ use super::{CUTOFF_FILE_NAME, is_job_instance};
 #[must_use]
 pub fn run(args: StepArgs) -> i32 {
     if !is_job_instance(&args.instance) {
-        eprintln!("job-cutoff: {:?} is not a job instance", args.instance);
+        journal_line!("job-cutoff: {:?} is not a job instance", args.instance);
         return 1;
     }
     let unit = format!("oneiron-job@{}.service", args.instance);
@@ -36,15 +36,15 @@ pub fn run(args: StepArgs) -> i32 {
     match StepContext::open(args) {
         Ok(context) => {
             if let Err(why) = context.write_record(CUTOFF_FILE_NAME, &mark) {
-                eprintln!("job-cutoff: the mark was not written: {why}");
+                journal_line!("job-cutoff: the mark was not written: {why}");
             }
         }
-        Err(why) => eprintln!("job-cutoff: the mark was not written: {why}"),
+        Err(why) => journal_line!("job-cutoff: the mark was not written: {why}"),
     }
     match stopped {
         Ok(_) => 0,
         Err(why) => {
-            eprintln!("job-cutoff: {unit} did not take the stop: {why}");
+            journal_line!("job-cutoff: {unit} did not take the stop: {why}");
             1
         }
     }

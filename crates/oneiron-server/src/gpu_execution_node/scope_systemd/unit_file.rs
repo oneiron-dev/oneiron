@@ -1,5 +1,6 @@
-//! The job unit template (pass 33, section 7.6) and the rule that lets the
-//! engine's account start and stop its instances, as `install` writes them.
+//! The job unit template (pass 33, section 7.6) and the job control socket
+//! through which the engine's account starts and stops its instances
+//! ([`super::control`]), as `install` writes them.
 //!
 //! One list of unit properties ([`sandbox_properties`]) makes both the
 //! template and the transient probe unit of `execution-node check`, so the
@@ -8,6 +9,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use super::control::CONTROL_SOCKET_PATH;
 use super::{EXCHANGE_ROOT, PAYLOAD_ROOT};
 
 /// What a unit template is made from: the paths and accounts `install`
@@ -138,22 +140,50 @@ pub fn render_job_unit(inputs: &UnitInputs) -> String {
     text
 }
 
-/// The polkit rule: the engine's account may start and stop units named
-/// `oneiron-job@<32 hex>.service`, and nothing else. Every other unit, verb
-/// and account falls through to the system's own rules.
+/// The job control socket's unit: root's socket, mode 0660, group the
+/// engine account's (`engine_gid`), one handler per connection.
 #[must_use]
-pub fn render_polkit_rule(engine_account: &str) -> String {
+pub fn render_control_socket(engine_gid: u32) -> String {
     format!(
-        "// Written by `oneiron execution-node install` (pass 33, section 7.6); root-owned.\n\
-         // The engine's account may start and stop instances of the job unit template, and nothing else.\n\
-         polkit.addRule(function(action, subject) {{\n    \
-             if (action.id == \"org.freedesktop.systemd1.manage-units\" &&\n        \
-                 subject.user == \"{engine_account}\" &&\n        \
-                 /^oneiron-job@[0-9a-f]{{32}}\\.service$/.test(action.lookup(\"unit\")) &&\n        \
-                 (action.lookup(\"verb\") == \"start\" || action.lookup(\"verb\") == \"stop\")) {{\n        \
-                 return polkit.Result.YES;\n    \
-             }}\n\
-         }});\n"
+        "# Written by `oneiron execution-node install` (pass 33, section 7.6); root-owned.\n\
+         # The engine's account starts and stops job units through this socket; it has no polkit grant.\n\
+         [Unit]\n\
+         Description=Oneiron job control\n\n\
+         [Socket]\n\
+         ListenStream={CONTROL_SOCKET_PATH}\n\
+         SocketUser=root\n\
+         SocketGroup={engine_gid}\n\
+         SocketMode=0660\n\
+         Accept=yes\n\
+         MaxConnections=16\n\
+         RemoveOnStop=yes\n\n\
+         [Install]\n\
+         WantedBy=sockets.target\n"
+    )
+}
+
+/// The control socket's handler, one instance per connection: `oneiron
+/// job-control` as root, with the connection as its standard input and
+/// output.
+#[must_use]
+pub fn render_control_service(inputs: &UnitInputs) -> String {
+    format!(
+        "# Written by `oneiron execution-node install` (pass 33, section 7.6); root-owned.\n\
+         [Unit]\n\
+         Description=Oneiron job control request\n\n\
+         [Service]\n\
+         ExecStart={} job-control --engine-account {}\n\
+         StandardInput=socket\n\
+         StandardOutput=socket\n\
+         StandardError=journal\n\
+         RuntimeMaxSec=30\n\
+         NoNewPrivileges=yes\n\
+         PrivateNetwork=yes\n\
+         PrivateTmp=yes\n\
+         ProtectSystem=strict\n\
+         ProtectHome=read-only\n",
+        quote_path(&inputs.binary),
+        inputs.engine_account
     )
 }
 
@@ -193,7 +223,7 @@ pub fn unit_path_word(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether an account name is one the unit file and the rule may hold.
+/// Whether an account name is one the unit files may hold.
 #[must_use]
 pub fn plain_account(name: &str) -> bool {
     !name.is_empty()
@@ -237,10 +267,15 @@ mod tests {
     }
 
     #[test]
-    fn the_rule_names_only_job_units_and_only_start_and_stop() {
-        let rule = render_polkit_rule("oneiron");
-        assert!(rule.contains("subject.user == \"oneiron\""));
-        assert!(rule.contains("/^oneiron-job@[0-9a-f]{32}\\.service$/"));
-        assert!(rule.contains("action.lookup(\"verb\") == \"stop\""));
+    fn the_control_socket_is_roots_and_open_to_the_engines_group_alone() {
+        let socket = render_control_socket(970);
+        assert!(socket.contains("ListenStream=/run/oneiron-job-control.sock\n"));
+        assert!(socket.contains("SocketUser=root\nSocketGroup=970\nSocketMode=0660\nAccept=yes\n"));
+        let service = render_control_service(&inputs());
+        assert!(
+            service.contains("ExecStart=/usr/bin/oneiron job-control --engine-account oneiron\n")
+        );
+        assert!(service.contains("StandardInput=socket\n"));
+        assert!(!service.contains("User="));
     }
 }

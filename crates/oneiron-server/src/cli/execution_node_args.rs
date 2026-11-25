@@ -3,8 +3,8 @@
 //! command edits the node's root-owned `[execution_node]` file's markers, or
 //! the drain and the state directory beside them; no remote party can, and
 //! no verb does. The engine reads them fresh at each admission and on each
-//! authority tick. `install` and `unit-name` are row R3b's (Linux with
-//! systemd).
+//! authority tick. `install`, `unit-name` and `unit-control` are row R3b's
+//! (Linux with systemd).
 
 use std::path::PathBuf;
 
@@ -34,13 +34,16 @@ pub enum ExecutionNodeCommand {
     /// next start opens a new journal under a new epoch.
     ResetHistory(ExecutionNodeResetHistoryArgs),
     /// As root, once: make the job account, write the root-owned job unit
-    /// template and the rule that lets the engine's account start and stop
-    /// its instances and nothing else. Run it again after a template's
-    /// maximum grows.
+    /// template and the job control socket through which the engine's
+    /// account starts and stops its instances and nothing else. Run it again
+    /// after a template's maximum grows.
     Install(ExecutionNodeInstallArgs),
     /// Print the job unit of a job key (`oneiron-job@<id>.service`), for
     /// `systemctl` and `journalctl`.
     UnitName(ExecutionNodeUnitNameArgs),
+    /// Start or stop the job unit of a job key through the job control
+    /// socket, as the engine does: as the engine's account or root.
+    UnitControl(ExecutionNodeUnitControlArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -55,13 +58,22 @@ pub struct ExecutionNodeInstallArgs {
     /// elsewhere. Repeat for each.
     #[arg(long)]
     pub protect: Vec<PathBuf>,
-    /// Print the unit template and the rule, and write nothing.
+    /// Print the unit template and the control socket's units, and write
+    /// nothing.
     #[arg(long)]
     pub dry_run: bool,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct ExecutionNodeUnitNameArgs {
+    /// The job key.
+    pub key: String,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ExecutionNodeUnitControlArgs {
+    /// `start` or `stop`.
+    pub verb: String,
     /// The job key.
     pub key: String,
 }

@@ -6,11 +6,14 @@
 //!
 //! The parts, by who runs them:
 //! - `oneiron execution-node install` ([`install`], root, once): the job
-//!   account, the unit template ([`unit_file`]) and the rule that lets the
-//!   engine's account start and stop instances of that template and nothing
-//!   else.
-//! - the engine ([`systemd_unit`]): R3a's [`JobUnit`] over `systemctl`, and
-//!   the machine's capability report.
+//!   account, the unit template ([`unit_file`]) and the job control socket
+//!   ([`control`]), through which the engine's account starts and stops
+//!   instances of that template and nothing else.
+//! - `oneiron job-control` ([`control`], root, one per connection to the
+//!   control socket): checks the caller and the instance name, then starts
+//!   or stops that one job unit.
+//! - the engine ([`systemd_unit`]): R3a's [`JobUnit`] over the control socket
+//!   and `systemctl show`, and the machine's capability report.
 //! - the unit's own steps, fixed in the template:
 //!   - `oneiron job-prepare <id>` ([`prepare`], root, `ExecStartPre=+`):
 //!     checks `launch.json` against the root-owned node file, sets this job's
@@ -39,7 +42,26 @@
 //! ([`exchange`]), and its bind sources are optional (`-`), so a step that
 //! runs before they exist still starts.
 
+/// One line to standard error, which the service manager files in the
+/// journal under the step's unit: the steps' diagnostics.
+macro_rules! journal_line {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = ::std::writeln!(::std::io::stderr().lock(), $($arg)*);
+    }};
+}
+
+/// One line to standard output: what `install` and `check` tell the
+/// operator.
+macro_rules! stdout_line {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = ::std::writeln!(::std::io::stdout().lock(), $($arg)*);
+    }};
+}
+
 pub mod capabilities;
+pub mod control;
 pub mod cutoff;
 pub mod device_files;
 pub mod ended;
@@ -101,7 +123,8 @@ pub const SCOPE_FILE_NAME: &str = "scope.json";
 pub const CUTOFF_FILE_NAME: &str = "cutoff.json";
 
 /// The prefix of the cutoff timer's transient unit: `oneiron-job-cutoff-<id>`.
-/// The engine's account may not stop it: the rule names only the job units.
+/// The engine's account may not stop it: the control socket takes only job
+/// unit instances.
 pub const CUTOFF_UNIT_PREFIX: &str = "oneiron-job-cutoff-";
 
 /// The prefix of the sleep inhibitor's transient unit, bound to the job unit:
@@ -113,9 +136,6 @@ pub const PROBE_UNIT_PREFIX: &str = "oneiron-job-probe-";
 
 /// The unit template's file, as `install` writes it.
 pub const UNIT_TEMPLATE_PATH: &str = "/etc/systemd/system/oneiron-job@.service";
-
-/// The rule that lets the engine's account start and stop job units.
-pub const POLKIT_RULE_PATH: &str = "/etc/polkit-1/rules.d/50-oneiron-job.rules";
 
 /// The scope report `execution-node check` writes beside the node file
 /// (`<node file>.scope.json`), root-owned; [`SystemdJobUnit::probe`] reads it.
@@ -213,8 +233,9 @@ const _: fn(&SystemdJobUnit) -> &dyn JobUnit = |unit| unit;
 
 /// The unit's own steps, run by the `oneiron` binary before anything else
 /// (no runtime, no logging set-up, no configuration but the node file):
-/// `job-prepare`, `job-exec`, `job-cutoff` and `job-ended`. `None` when
-/// `args` (the whole command line) names none of them.
+/// `job-prepare`, `job-exec`, `job-cutoff`, `job-ended`, and the control
+/// socket's handler `job-control`. `None` when `args` (the whole command
+/// line) names none of them.
 #[must_use]
 pub fn run_unit_step(args: &[String]) -> Option<i32> {
     let (name, rest) = match args {
@@ -223,6 +244,7 @@ pub fn run_unit_step(args: &[String]) -> Option<i32> {
     };
     let status = match name {
         "job-exec" => exec::run(rest),
+        "job-control" => control::run(rest),
         "job-prepare" | "job-cutoff" | "job-ended" => {
             // First, while this process has one thread.
             let entered = step::enter_host_mount_namespace();
@@ -236,7 +258,7 @@ pub fn run_unit_step(args: &[String]) -> Option<i32> {
                     }
                 }
                 Err(why) => {
-                    eprintln!("{name}: {why}");
+                    journal_line!("{name}: {why}");
                     2
                 }
             }

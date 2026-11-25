@@ -1,24 +1,28 @@
 //! `oneiron execution-node install` (root, once per machine and again after
 //! a template's maximum grows; pass 33, 7.6; EM-4 = A): the one privileged
 //! step. It makes the job account, writes the root-owned unit template and
-//! the rule that lets the engine's account start and stop its instances and
-//! nothing else, makes the state and payload directories the engine's, and
-//! reloads the service manager. It is idempotent: a second run with the same
-//! inputs changes nothing.
+//! the job control socket through which the engine's account starts and
+//! stops its instances and nothing else ([`super::control`]; the engine's
+//! account gets no polkit grant), makes the state and payload directories
+//! the engine's, reloads the service manager and starts the socket. It is
+//! idempotent: a second run with the same inputs changes nothing.
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
 use super::super::node_settings::ExecutionNodeSettings;
+use super::UNIT_TEMPLATE_PATH;
+use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
 use super::safe_fs::{
-    account, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path, require_root_owned,
+    account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
+    require_root_owned,
 };
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
 use super::unit_file::{
-    UnitInputs, plain_account, render_job_unit, render_polkit_rule, unit_path_word,
+    UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
+    unit_path_word,
 };
-use super::{POLKIT_RULE_PATH, UNIT_TEMPLATE_PATH};
 
 /// What `install` is given.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,19 +105,16 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         unit_path_word(path)?;
     }
     let unit = render_job_unit(&inputs);
-    let rule = render_polkit_rule(&request.engine_account);
+    let socket = render_control_socket(engine_gid);
+    let handler = render_control_service(&inputs);
     if request.dry_run {
-        println!("--- {UNIT_TEMPLATE_PATH}\n{unit}--- {POLKIT_RULE_PATH}\n{rule}");
+        stdout_line!(
+            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}"
+        );
         print_templates(&settings);
         return Ok(());
     }
-    if !Path::new("/etc/polkit-1").is_dir() {
-        return Err(
-            "polkit is not installed: the engine's account could not start job units (install the polkit package)"
-                .to_owned(),
-        );
-    }
-    ensure_job_account(&settings.job_account)?;
+    ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
     ensure_dir(
         &inputs.state_dir.join("control"),
@@ -123,37 +124,74 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     ensure_dir(&inputs.work_dir, engine_uid, engine_gid, 0o755)?;
     let unit_changed = write_if_changed(Path::new(UNIT_TEMPLATE_PATH), &unit)?;
-    let rule_changed = write_if_changed(Path::new(POLKIT_RULE_PATH), &rule)?;
-    if unit_changed {
+    let socket_changed = write_if_changed(Path::new(CONTROL_SOCKET_UNIT_PATH), &socket)?;
+    let handler_changed = write_if_changed(Path::new(CONTROL_SERVICE_UNIT_PATH), &handler)?;
+    if unit_changed || socket_changed || handler_changed {
         run_tool("systemctl", &["daemon-reload"], SYSTEMCTL_TIMEOUT)?;
     }
-    println!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {POLKIT_RULE_PATH} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
-        if unit_changed { "written" } else { "unchanged" },
-        if rule_changed { "written" } else { "unchanged" },
+    run_tool(
+        "systemctl",
+        &["enable", "--quiet", CONTROL_SOCKET_UNIT],
+        SYSTEMCTL_TIMEOUT,
+    )?;
+    // A changed socket unit (another engine group) takes effect only once
+    // the socket is made again.
+    let socket_verb = if socket_changed { "restart" } else { "start" };
+    run_tool(
+        "systemctl",
+        &[socket_verb, CONTROL_SOCKET_UNIT],
+        SYSTEMCTL_TIMEOUT,
+    )?;
+    let said = |changed: bool| if changed { "written" } else { "unchanged" };
+    stdout_line!(
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
+        said(unit_changed),
+        said(socket_changed),
+        said(handler_changed),
         settings.job_account
     );
     print_templates(&settings);
-    println!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
+    stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
     Ok(())
 }
 
 fn print_templates(settings: &ExecutionNodeSettings) {
     for name in settings.templates.keys() {
         if let Some(digest) = settings.template_digest(name) {
-            println!("template {name} digest {digest}");
+            stdout_line!("template {name} digest {digest}");
         }
     }
 }
 
+/// The shells of an account no one logs in to.
+const NO_LOGIN_SHELLS: [&str; 5] = [
+    "/usr/sbin/nologin",
+    "/usr/bin/nologin",
+    "/sbin/nologin",
+    "/bin/false",
+    "/usr/bin/false",
+];
+
+/// Above this uid an account is a login account (`SYS_UID_MAX` of
+/// login.defs(5), shadow's default).
+const SYSTEM_UID_MAX: u32 = 999;
+
 /// Makes the job account as a system account with no login and no home,
-/// unless it exists.
-fn ensure_job_account(name: &str) -> Result<(), String> {
-    if account(name).is_ok() {
-        return Ok(());
+/// unless it exists. An account that exists must be such an account and not
+/// the engine's (review r1 of #10439): a name that collides with a login
+/// account would give every workload that account's uid.
+fn ensure_job_account(name: &str, engine_uid: u32) -> Result<(), String> {
+    match account_entry(name) {
+        Ok(found) => {
+            return existing_job_account_fits(&found.shell, found.uid, engine_uid)
+                .map_err(|why| format!("job account {name}: {why}"));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("job account {name}: {error}")),
     }
-    let shell = ["/usr/sbin/nologin", "/usr/bin/nologin", "/sbin/nologin"]
-        .into_iter()
+    let shell = NO_LOGIN_SHELLS[..3]
+        .iter()
+        .copied()
         .find(|path| Path::new(path).is_file())
         .unwrap_or("/bin/false");
     if tool_path("useradd").is_none() {
@@ -174,6 +212,26 @@ fn ensure_job_account(name: &str) -> Result<(), String> {
         SYSTEMCTL_TIMEOUT,
     )
     .map(drop)
+}
+
+/// Why an existing account cannot be the job account: a login shell, a uid
+/// outside the system range (root included), or the engine's own uid.
+fn existing_job_account_fits(shell: &Path, uid: u32, engine_uid: u32) -> Result<(), String> {
+    if uid == engine_uid {
+        return Err("it is the engine's account".to_owned());
+    }
+    if uid == 0 || uid > SYSTEM_UID_MAX {
+        return Err(format!(
+            "uid {uid} is not a system account's (1 to {SYSTEM_UID_MAX})"
+        ));
+    }
+    if !NO_LOGIN_SHELLS
+        .iter()
+        .any(|allowed| shell == Path::new(allowed))
+    {
+        return Err(format!("its shell {} allows a login", shell.display()));
+    }
+    Ok(())
 }
 
 /// Makes `path` the account's directory. It walks from `/` one component at
@@ -253,4 +311,23 @@ fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
         .map_err(|error| format!("{}: {error}", staging.display()))?;
     std::fs::rename(&staging, path).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_existing_job_account_must_be_a_system_account_with_no_login_and_not_the_engines() {
+        let nologin = Path::new("/usr/bin/nologin");
+        assert_eq!(existing_job_account_fits(nologin, 970, 971), Ok(()));
+        assert_eq!(
+            existing_job_account_fits(Path::new("/bin/false"), 970, 971),
+            Ok(())
+        );
+        assert!(existing_job_account_fits(Path::new("/bin/bash"), 970, 971).is_err());
+        assert!(existing_job_account_fits(nologin, 1000, 971).is_err());
+        assert!(existing_job_account_fits(nologin, 0, 971).is_err());
+        assert!(existing_job_account_fits(nologin, 971, 971).is_err());
+    }
 }

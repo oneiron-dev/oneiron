@@ -41,7 +41,7 @@ pub fn run(args: StepArgs) -> i32 {
     let context = match StepContext::open(args) {
         Ok(context) => context,
         Err(why) => {
-            eprintln!("job-prepare --after-exec: {why}");
+            journal_line!("job-prepare --after-exec: {why}");
             return 1;
         }
     };
@@ -131,11 +131,11 @@ fn finish(
     // Recorded and synced before the go: a workload that started always has
     // `released` on disk.
     if let Err(why) = context.write_record(SCOPE_FILE_NAME, &record) {
-        eprintln!("job-prepare --after-exec: {why}");
+        journal_line!("job-prepare --after-exec: {why}");
         return 1;
     }
     let Some(go) = go else {
-        eprintln!(
+        journal_line!(
             "job-prepare --after-exec: {} refused: {}",
             context.unit(),
             refusal.as_deref().unwrap_or("no go")
@@ -154,13 +154,13 @@ fn finish(
     match outcome {
         AfterGo::Became => 0,
         AfterGo::Failed(why) => {
-            eprintln!(
+            journal_line!(
                 "job-prepare --after-exec: {}: the workload's exec failed: {why}",
                 context.unit()
             );
             record.exec_failed = Some(why);
             if let Err(error) = context.write_record(SCOPE_FILE_NAME, &record) {
-                eprintln!("job-prepare --after-exec: {error}");
+                journal_line!("job-prepare --after-exec: {error}");
             }
             1
         }

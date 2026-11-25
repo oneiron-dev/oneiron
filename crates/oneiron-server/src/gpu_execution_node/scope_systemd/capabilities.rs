@@ -10,12 +10,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::control::CONTROL_SOCKET_UNIT_PATH;
 use super::records::{
     BoundReport, ScopeBound, ScopeCapabilities, enforced_by_kernel, is_enforced, not_enforced,
     scope_capabilities,
 };
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
-use super::{CHECK_REPORT_SUFFIX, POLKIT_RULE_PATH, UNIT_TEMPLATE_PATH};
+use super::{CHECK_REPORT_SUFFIX, UNIT_TEMPLATE_PATH};
 
 /// What the kernel and the service manager offer, read without privilege.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,9 +30,10 @@ pub struct KernelFacts {
     pub cgroup_controllers: BTreeSet<String>,
     /// Landlock's ABI version; below 1 where the kernel has none.
     pub landlock_abi: i32,
-    /// Whether the unit template and the polkit rule are installed.
+    /// Whether the unit template and the job control socket's unit are
+    /// installed.
     pub unit_installed: bool,
-    pub rule_installed: bool,
+    pub control_socket_installed: bool,
 }
 
 /// The facts, now.
@@ -56,7 +58,7 @@ pub fn kernel_facts() -> KernelFacts {
         cgroup_controllers,
         landlock_abi: oneiron_container::landlock_abi(),
         unit_installed: Path::new(UNIT_TEMPLATE_PATH).is_file(),
-        rule_installed: Path::new(POLKIT_RULE_PATH).is_file(),
+        control_socket_installed: Path::new(CONTROL_SOCKET_UNIT_PATH).is_file(),
     }
 }
 
@@ -148,7 +150,11 @@ pub fn capabilities_of(facts: &KernelFacts, probed: Option<&CheckReport>) -> Sco
     );
     out.insert(
         ScopeBound::CpuCap,
-        not_enforced("this scope sets no CPU cap yet"),
+        promise(
+            installed && has("cpu"),
+            "CPUQuota= on the unit's cgroup (cpu.max)",
+            "needs the cgroup v2 cpu controller",
+        ),
     );
     out.insert(
         ScopeBound::FileWall,

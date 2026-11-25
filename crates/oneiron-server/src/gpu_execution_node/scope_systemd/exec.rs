@@ -40,25 +40,25 @@ const GATE_WAIT: Duration = Duration::from_secs(45);
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
     let [instance] = args else {
-        eprintln!("job-exec: usage: job-exec <instance>");
+        journal_line!("job-exec: usage: job-exec <instance>");
         return exec_status::EXEC_FILE;
     };
     if !is_job_instance(instance) {
-        eprintln!("job-exec: {instance:?} is not a job instance");
+        journal_line!("job-exec: {instance:?} is not a job instance");
         return exec_status::EXEC_FILE;
     }
     let exchange = Path::new(EXCHANGE_ROOT).join(instance);
     let exec = match read_exec_file(&exchange, instance) {
         Ok(exec) => exec,
         Err(why) => {
-            eprintln!("job-exec: {why}");
+            journal_line!("job-exec: {why}");
             return exec_status::EXEC_FILE;
         }
     };
     let (report_pipe, go_pipe) = match open_gate_pipes(&exchange) {
         Ok(pipes) => pipes,
         Err(why) => {
-            eprintln!("job-exec: {why}");
+            journal_line!("job-exec: {why}");
             return exec_status::GATE_PIPES;
         }
     };
@@ -97,14 +97,14 @@ pub fn run(args: &[String]) -> i32 {
         refusal: refusal.clone(),
     };
     if let Err(error) = send_report(&report_pipe, &report) {
-        eprintln!("job-exec: the report did not reach the gate: {error}");
+        journal_line!("job-exec: the report did not reach the gate: {error}");
         return exec_status::GATE_PIPES;
     }
     if exec.probe {
         return exec_status::PROBE_DONE;
     }
     if let Some(why) = refusal {
-        eprintln!("job-exec: refused before the workload: {why}");
+        journal_line!("job-exec: refused before the workload: {why}");
         let wall_unmet = unmet.is_some_and(|requirement| requirement.bound == ScopeBound::FileWall);
         return if wall_error.is_some() && wall_unmet {
             exec_status::FILE_WALL
@@ -113,7 +113,7 @@ pub fn run(args: &[String]) -> i32 {
         };
     }
     if let Err(why) = wait_for_go(&go_pipe) {
-        eprintln!("job-exec: no go from the gate: {why}");
+        journal_line!("job-exec: no go from the gate: {why}");
         return exec_status::GATE_REFUSED;
     }
     drop(go_pipe);
@@ -418,10 +418,10 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
 /// Tells the gate on the report pipe why the workload's exec failed, as one
 /// line, and returns the status for it.
 fn exec_failed(report_pipe: OwnedFd, why: &str) -> i32 {
-    eprintln!("job-exec: {why}");
+    journal_line!("job-exec: {why}");
     let mut file = std::fs::File::from(report_pipe);
     if let Err(error) = writeln!(file, "{}", why.replace('\n', " ")) {
-        eprintln!("job-exec: the gate was not told: {error}");
+        journal_line!("job-exec: the gate was not told: {error}");
     }
     exec_status::EXEC_FAILED
 }

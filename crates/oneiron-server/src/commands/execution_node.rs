@@ -79,6 +79,7 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
         }
         ExecutionNodeCommand::Install(args) => install(&args),
         ExecutionNodeCommand::UnitName(args) => unit_name(&args.key),
+        ExecutionNodeCommand::UnitControl(args) => unit_control(&args.verb, &args.key),
     }
 }
 
@@ -294,11 +295,32 @@ fn install(_args: &crate::cli::ExecutionNodeInstallArgs) -> anyhow::Result<()> {
 /// `execution-node unit-name`: the job unit of a key.
 #[cfg(unix)]
 fn unit_name(key: &str) -> anyhow::Result<()> {
-    println!(
+    use std::io::Write as _;
+    writeln!(
+        std::io::stdout().lock(),
         "{}",
         crate::gpu_execution_node::jobs::JobKeyId::for_key(key).unit_name()
-    );
+    )?;
     Ok(())
+}
+
+/// `execution-node unit-control`: the engine's own start or stop of a key's
+/// job unit, through the job control socket.
+#[cfg(target_os = "linux")]
+fn unit_control(verb: &str, key: &str) -> anyhow::Result<()> {
+    use crate::gpu_execution_node::scope_systemd::control::{self, ControlVerb};
+    use crate::gpu_execution_node::scope_systemd::systemd_unit::SYSTEMCTL_TIMEOUT;
+    let verb = ControlVerb::from_word(verb)
+        .ok_or_else(|| anyhow::anyhow!("unit-control: the verb is start or stop, not {verb:?}"))?;
+    let id = crate::gpu_execution_node::jobs::JobKeyId::for_key(key);
+    control::request(verb, &id, SYSTEMCTL_TIMEOUT)
+        .map_err(|why| anyhow::anyhow!("unit-control {} {id}: {why}", verb.word()))
+}
+
+/// Job units exist on Linux only.
+#[cfg(not(target_os = "linux"))]
+fn unit_control(_verb: &str, _key: &str) -> anyhow::Result<()> {
+    anyhow::bail!("unit-control: the job unit needs Linux with systemd (pass 33, EM-4)")
 }
 
 /// Job units exist on Linux only.

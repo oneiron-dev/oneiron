@@ -39,13 +39,13 @@ pub fn run(args: StepArgs) -> i32 {
     if let Some(why) = &args.host_namespace_error {
         // The record goes on from inside the unit's view: the control
         // directory is not one of its binds.
-        eprintln!("job-ended: process 1's mount namespace not entered: {why}");
+        journal_line!("job-ended: process 1's mount namespace not entered: {why}");
     }
     let instance = args.instance.clone();
     let context = match StepContext::open(args) {
         Ok(context) => context,
         Err(why) => {
-            eprintln!("job-ended: no end record: {why}");
+            journal_line!("job-ended: no end record: {why}");
             // The runtime paths go even so (review r3 R3-05): they are named
             // by the instance alone, once it is a job's.
             if is_job_instance(&instance) {
@@ -63,7 +63,7 @@ pub fn run(args: StepArgs) -> i32 {
     )
     .is_ok_and(|found| found.is_some())
     {
-        eprintln!("job-ended: {} has its end record already", context.unit());
+        journal_line!("job-ended: {} has its end record already", context.unit());
         disarm(&context);
         return 0;
     }
@@ -78,7 +78,7 @@ pub fn run(args: StepArgs) -> i32 {
     match written {
         Ok(()) => 0,
         Err(why) => {
-            eprintln!("job-ended: the end record was not written: {why}");
+            journal_line!("job-ended: the end record was not written: {why}");
             1
         }
     }

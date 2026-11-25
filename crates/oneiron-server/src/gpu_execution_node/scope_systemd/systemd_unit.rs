@@ -1,7 +1,8 @@
 //! R3a's [`JobUnit`] over the system's service manager: the engine's account
-//! starts and stops instances of `oneiron-job@.service` (the polkit rule
-//! `install` wrote allows exactly that) and reads their state. A tool that
-//! does not answer is an error, never "inactive".
+//! starts and stops instances of `oneiron-job@.service` through the job
+//! control socket `install` wrote ([`super::control`]; it holds no polkit
+//! grant) and reads their state with `systemctl show`. A tool that does not
+//! answer is an error, never "inactive".
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant};
 use super::super::jobs::{JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus};
 use super::super::wire::ScopeFacts;
 use super::capabilities;
+use super::control::{self, ControlVerb};
 use super::records::{PreparedRecord, ScopeCapabilities, ScopeRecord, scope_facts};
 use super::step::RECORD_MAX_BYTES;
 use super::{PREPARED_FILE_NAME, SCOPE_FILE_NAME};
@@ -248,23 +250,13 @@ impl JobUnit for SystemdJobUnit {
     }
 
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
-        run_tool(
-            "systemctl",
-            &["start", "--no-block", &unit.unit_name()],
-            SYSTEMCTL_TIMEOUT,
-        )
-        .map(drop)
-        .map_err(|reason| Self::error(unit, reason))
+        control::request(ControlVerb::Start, unit, SYSTEMCTL_TIMEOUT)
+            .map_err(|reason| Self::error(unit, reason))
     }
 
     fn stop(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
-        run_tool(
-            "systemctl",
-            &["stop", "--no-block", &unit.unit_name()],
-            SYSTEMCTL_TIMEOUT,
-        )
-        .map(drop)
-        .map_err(|reason| Self::error(unit, reason))
+        control::request(ControlVerb::Stop, unit, SYSTEMCTL_TIMEOUT)
+            .map_err(|reason| Self::error(unit, reason))
     }
 
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {

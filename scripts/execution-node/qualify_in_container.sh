@@ -40,9 +40,15 @@ cp "$bin" "$stage/oneiron" && cp "$here/qualify_systemd_scope.sh" "$stage/"
 docker run -d --name "$name" --privileged --cgroupns=private --memory 8g --cpus 4 \
   --tmpfs /run --tmpfs /run/lock -v "$stage:/opt/qualify:ro" "$tag" "$init" > /dev/null \
   || { echo "## QUALIFY rc=77 why=container-did-not-start"; exit 77; }
+# Every `docker exec` before systemd has made its cgroups lands in the container's root cgroup, and while a process
+# lives there systemd can enable no controller (cgroup v2: a cgroup with processes delegates none; qualification q2,
+# 25 Nov: no pids.max, every job refused). So wait for the manager's socket with short execs only, and run the
+# qualification in a scope of its own, which takes it out of the root cgroup.
+for _ in $(seq 1 240); do docker exec "$name" test -S /run/systemd/private 2> /dev/null && break; sleep 0.5; done
 state=$(docker exec "$name" timeout 120 systemctl is-system-running --wait 2>&1)
 echo "## CONTAINER $name system=$state kernel=$(uname -r)"
-docker exec "$name" bash /opt/qualify/qualify_systemd_scope.sh --oneiron /opt/qualify/oneiron "$@"
+docker exec "$name" systemd-run --scope --quiet --unit=oneiron-qualify-run \
+  bash /opt/qualify/qualify_systemd_scope.sh --oneiron /opt/qualify/oneiron "$@"
 rc=$?
 [ $rc -ne 0 ] && docker exec "$name" journalctl --no-pager -n 200 -u 'oneiron-job*' 2> /dev/null | sed 's/^/## JOURNAL /'
 exit $rc
