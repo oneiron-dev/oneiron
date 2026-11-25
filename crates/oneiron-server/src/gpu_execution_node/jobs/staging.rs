@@ -65,9 +65,9 @@
 //! removes `checkout/`. A staged key that will not launch has its staged
 //! code removed ([`Stager::unstage`]) before its end is recorded, while its
 //! disk is still booked; a refusal of the launch commit itself removes it
-//! just after; and the recovery at each start removes it for every key that
-//! ended before its launch. So a closed key keeps no code on the node's
-//! disk.
+//! just after; the recovery at each start removes it for every key that
+//! ended before its launch; and the release check removes it for a key that
+//! launched. So a closed key keeps no code on the node's disk.
 
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -448,7 +448,7 @@ impl Stager for MirrorStager {
         for staged in [CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME] {
             let path = payload_dir.join(staged);
             if std::fs::symlink_metadata(&path).is_ok() {
-                tracing::info!(key, path = %path.display(), "job staging: the key did not launch; its staged code is removed");
+                tracing::info!(key, path = %path.display(), "job staging: the key's staged code is removed");
                 remove_logged(&path);
             }
         }
