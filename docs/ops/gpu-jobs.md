@@ -93,19 +93,17 @@ no allocation". The owner funds it in their own config
 
 ```toml
 [gpu_jobs.host_allocation]
-id = "own-gpu-2026-11"   # a plain name; granted once per vault
-units = 3600             # greater than zero
+id = "own-gpu"           # a plain name
+units = 3600             # granted at each start; greater than zero
 unit = "credit-micros"   # the cost_unit of one [gpu_jobs.offers] offer
 ```
 
-- At start, `serve` (and the desktop app's embedded serve) records the id in
-  the vault, then grants the account `units` of `unit` as a walletless
-  allocation. Jobs reserve and settle on it, and are receipted, as on any
-  allocation.
-- Each id is granted once per vault. The host account lives in memory, so a
-  restart starts it empty, and a start whose id the vault already recorded
-  grants nothing and logs a warning. What was left of that id is gone. To fund
-  more, name a new id and restart.
+- At each start, `serve` (and the desktop app's embedded serve) grants the
+  account `units` of `unit` as the walletless allocation `id`. Jobs reserve and
+  settle on it, and are receipted, as on any allocation.
+- The host account lives in memory until the durable allocation ledger is
+  wired, so every start begins with the full `units` again: one process, one
+  budget.
 - A managed server refuses to start with the section: its supervisor funds
   its account.
 
@@ -228,6 +226,5 @@ its chunk again at its quote's frozen price, and that new permit pays the
 chunk's end. If it no longer fits, the chunk runs on unpaid and the job record
 says `admission_lost`, since a running chunk is never cut for money.
 
-On a self-hosted server, a restart grants no allocation for a
-`[gpu_jobs.host_allocation]` id it granted before, so a chunk that was running
-then runs on unpaid until it ends, unless a new id funds it.
+On a self-hosted server, each start grants `[gpu_jobs.host_allocation]` again
+before any job steps, so a chunk that was running is admitted again on it.

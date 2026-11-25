@@ -7,9 +7,10 @@
 //!   the same size does not fit beside it. The job settles there: once its cancel is billed, a
 //!   start that needs the whole allocation again does not fit, and a smaller one fits in what the
 //!   settle released.
-//! - The vault records each granted id. The same install again grants nothing, a restarted server
-//!   on the same vault grants nothing for that id and its start answers no allocation, and a new
-//!   id grants afresh.
+//! - Each start grants the units again (Engine 23:46: one process, one budget). The same install
+//!   again grants nothing more, since its account already holds the allocation; a restarted server
+//!   on the same vault starts with the full units again, even though the first start's job held
+//!   them all.
 //! - The section is checked when it is read, and a managed server's start refuses it.
 //!
 //! The owner acts on its host-root credential on a profiled install, over the real facade routes,
@@ -405,52 +406,44 @@ fn the_config_allocation_holds_the_start_and_takes_its_settlement() {
 }
 
 #[test]
-fn a_restart_never_grants_the_same_id_again() {
+fn a_restarted_server_grants_the_units_again() {
     run_on_engine_stack("gpu-host-allocation-restart", || async {
         let (_dir, vault) = open_vault();
         let first = serve(&vault, &allocation("own-1", QUOTE_UNITS));
         let owner = owner_of(&vault);
         assert!(
-            install_host_allocation(&first.server).expect("the first grant"),
+            install_host_allocation(&first.server).expect("the first start's grant"),
             "the first start grants the allocation"
-        );
-        let recorded = vault
-            .host_allocation_grant("own-1")
-            .expect("read the grant")
-            .expect("the vault recorded the grant");
-        assert_eq!(
-            (recorded.units, recorded.unit.as_str()),
-            (QUOTE_UNITS, "credit-micros")
         );
         assert!(
             !install_host_allocation(&first.server).expect("a second install is no refusal"),
-            "the same install again grants nothing"
+            "the same account is not granted it twice"
+        );
+        let quote = owner_quote(&first, &owner, 100).await;
+        let (status, body) = owner_start(&first, &owner, quote).await;
+        assert_eq!(status, StatusCode::OK, "the first start's job: {body}");
+        let second = owner_quote(&first, &owner, 100).await;
+        let (status, body) = owner_start(&first, &owner, second).await;
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "the second install added nothing: the job holds it all: {body}"
         );
         drop(first);
 
         let restarted = serve(&vault, &allocation("own-1", QUOTE_UNITS));
         assert!(
-            !install_host_allocation(&restarted.server).expect("a restart is no refusal"),
-            "a restart grants nothing for a recorded id"
+            install_host_allocation(&restarted.server).expect("the restart's grant"),
+            "a restarted server grants the units again"
         );
         let quote = owner_quote(&restarted, &owner, 100).await;
         let (status, body) = owner_start(&restarted, &owner, quote).await;
-        assert_no_allocation(status, &body);
-        assert!(
-            restarted.gpu.state().calls.is_empty(),
-            "no provider was called"
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the restart's full units fund a whole quote: {body}"
         );
-        drop(restarted);
-
-        let renewed = serve(&vault, &allocation("own-2", QUOTE_UNITS));
-        assert!(
-            install_host_allocation(&renewed.server).expect("a new id"),
-            "a new id grants afresh"
-        );
-        let quote = owner_quote(&renewed, &owner, 100).await;
-        let (status, body) = owner_start(&renewed, &owner, quote).await;
-        assert_eq!(status, StatusCode::OK, "the new id funds the start: {body}");
-        assert_eq!(renewed.gpu.called("create"), 1);
+        assert_eq!(restarted.gpu.called("create"), 1);
     });
 }
 

@@ -73,15 +73,15 @@
 //! `[gpu_jobs.host_allocation]` funds this server's host account, which every offer's job reserves
 //! on, from the owner's own config (R6-VAULT-MACHINE-FUNDING = A). With no supervisor to deliver
 //! an allocation, a self-hosted server's account starts empty and every start answers that the
-//! host has delivered none. At start the server grants the account `units` of `unit`, which must
-//! be the `cost_unit` of one of the offers above, as the walletless allocation `id`. Each id is
-//! granted once per vault: the vault records the grant, a restart grants nothing for an id it
-//! recorded, and what was left of it then is gone. Name a new id to fund more. A managed server
-//! refuses the section at start: its supervisor funds its account.
+//! host has delivered none. At each start the server grants the account `units` of `unit`, which
+//! must be the `cost_unit` of one of the offers above, as the walletless allocation `id`. The
+//! account lives in memory until the durable allocation ledger is wired, so every start begins
+//! with the full `units` again: one process, one budget. A managed server refuses the section at
+//! start: its supervisor funds its account.
 //!
 //! ```toml
 //! [gpu_jobs.host_allocation]
-//! id = "own-gpu-2026-11"
+//! id = "own-gpu"
 //! units = 3600
 //! unit = "credit-micros"
 //! ```
@@ -143,8 +143,8 @@ pub const VAULT_MACHINE_SUBMIT_WINDOW_SECS: u64 = 300;
 pub const VAULT_MACHINE_RECHECK_HORIZON_SECS: u64 = 900;
 /// How long one job protocol call to a node may take, the dial included.
 pub const VAULT_MACHINE_CALL_TIMEOUT_SECS: u64 = 10;
-/// The one generation of a `[gpu_jobs.host_allocation]` id: the id is granted once, so it never
-/// has a second.
+/// The generation of a `[gpu_jobs.host_allocation]` grant: each start's host account is fresh and
+/// holds it once.
 pub const HOST_ALLOCATION_GENERATION: u64 = 1;
 
 /// `[gpu_jobs]` as written.
@@ -259,12 +259,13 @@ pub struct GpuJobsSettings {
 }
 
 /// The one allocation `[gpu_jobs.host_allocation]` names (R6-VAULT-MACHINE-FUNDING = A): granted
-/// to the host account at start, walletless, once per id in the vault.
+/// to the host account at each start, walletless.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostAllocationSettings {
-    /// The allocation's id, at [`HOST_ALLOCATION_GENERATION`]; a new id grants its units
-    /// afresh.
+    /// The allocation's id, at [`HOST_ALLOCATION_GENERATION`].
     pub reference: AllocationRef,
+    /// Units granted to this server's host account at each start; the account lives in memory
+    /// until the durable allocation ledger is wired.
     pub units: u64,
     /// One offer's `cost_unit`: a job holds only on an allocation in its offer's unit.
     pub unit: LeaseUnit,
