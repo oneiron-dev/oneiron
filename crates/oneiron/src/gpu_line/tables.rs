@@ -17,6 +17,15 @@ crate::side_table::side_tables! {
         // Restore class: A period's record is what units drew against: a restore never mints
         // it again from other inputs.
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One ask a GPU line's budget could not meet (design pass 32, section 3.5): a reserve
+    /// refused `over_rung_cap` or `budget_denied`, with its family, arm, rung, the seconds
+    /// asked, the bucket short and the room left. Key: id16 (lane project) + u32be (period
+    /// index) + u64be (sequence).
+    GPU_LINE_REFUSAL: VaultMeta b"gpu_line_refusal:v1:" Named
+        // Restore class: Unmet demand is history the comparison reads: a restore keeps the
+        // refusals it holds and never invents one.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::gpu_line::erase_refusal_actor_in_txn;
     /// One kept write of a lane-economy door under its asker's intent key (design pass 32
     /// section 5): the asker, the verb, the ask's digest and the key of the row the write made,
     /// never the answer. Key: blake3 (32) of the framed asker, verb and intent key.

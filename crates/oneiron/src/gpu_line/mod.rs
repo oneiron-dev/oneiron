@@ -18,6 +18,7 @@ pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
+mod refusal;
 mod store;
 pub(crate) mod tables;
 mod wire;
@@ -26,8 +27,8 @@ pub use claim::{
     AllocationSettle, AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused,
     ClaimKey, ClaimState, UnattributedJob, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
     UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn, claim_hold_in_txn,
-    claim_in_txn, claims_at_rung_in_txn, open_claim_in_txn, record_node_answer_in_txn,
-    settle_unit_in_txn,
+    claim_in_txn, claims_at_rung_in_txn, custody_lapsed_in_txn, open_claim_in_txn,
+    record_node_answer_in_txn, settle_unit_in_txn,
 };
 pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
 pub use doors::{
@@ -40,6 +41,8 @@ pub use mint::{
     economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
     pools, posterior_sampling,
 };
+pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
+pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};
 pub(crate) use store::erase_line_actor_in_txn;
 pub use store::{
     MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,

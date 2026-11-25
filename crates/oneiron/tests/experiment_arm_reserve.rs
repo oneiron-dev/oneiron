@@ -1,0 +1,1079 @@
+//! `vault.arms.units.reserve` and `vault.arms.units.cancel` through the engine doors.
+//!
+//! - T9–T10: settled seconds count across attempts and periods; rung 2 needs a promotion.
+//! - T14 (claim half), T15: logical replay, intent conflicts, and the contract and workload pins.
+//! - T45: two callers race for the last room, and exactly one reserves it.
+//! - T47 (custody half), T48: an unstarted claim lapses but an unconfirmed start holds its room.
+//! - T59: the reviewer's separate bound and the family's cost.
+//! - T62 (reserve half): a new-idea arm reserves only at rung 1.
+//! - Budget-refusal rows and cancellation, including authorization and replay.
+//!
+//! The start test door changes only the claim; these tests do not start a GPU job or call a node.
+#![cfg(oneiron_test_support)]
+
+use std::sync::{Arc, Barrier};
+
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{
+    ActSurface, HostSlipIssuer, MachineRole, MeshMachineAddress, pairing_binding_transcript,
+};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::experiment_arm::{
+    ARMS_UNITS_CANCEL_VERB, ARMS_UNITS_RESERVE_VERB, ArmAdmitRequest, ArmContractAsk, ArmRung,
+    ExperimentArm, HoldEndCause, RungState, RunnerRef, UnitCancelRequest, UnitReserveRequest,
+    UnitView, arm_admit_as, unit_cancel_as, unit_reserve_as,
+};
+use oneiron::federation::{Scope, ScopeAxis, WalletRef};
+use oneiron::gpu_job::{GpuJobEnd, GpuJobTerminal, MeterVerdict};
+use oneiron::gpu_line::{
+    BudgetPolicy, ClaimKey, ClaimState, DIFFERENT_ASK, Draw, DrawSource, GpuLineFamilyAdmitRequest,
+    GpuLinePolicy, GpuLineSetRequest, IntentAsk, IntentStand, LineRefusal, LineRefusalKey,
+    SpendRow, Track, UnattributedJob, UnitCharge, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
+    claims_at_rung_in_txn, gpu_seconds, line_refusals_in_txn, mint_first_in_txn,
+    record_node_answer_in_txn, settle_unit_in_txn,
+};
+use oneiron::job_workload::{
+    DeviceClaim, DeviceKind, JOB_ALPN, NetworkMode, ResourceRequest, ScopeKind, Sharing,
+    WorkloadApproveRequest, WorkloadCaller, WorkloadPin, WorkloadPinRequest, WorkloadStanding,
+};
+use oneiron::memory::{
+    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory,
+    MemoryError, MemoryResult,
+};
+use oneiron::receipt::task_type_ref::TypeRef;
+use oneiron::registry::ENTITY_TYPE_MACHINE;
+use oneiron::store::GateDecisionId;
+use oneiron::test_doors::experiment_arm_rows::put_arm;
+use oneiron::test_doors::gpu_line_hold_is_the_claim::{read_txn, start_claim};
+use oneiron::test_doors::room_facet_set::create_owner_project;
+use oneiron::test_doors::store_writes::last_committed_write;
+use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::workspace_roster::ProjectRecord;
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+
+const PERIOD_SECS: u64 = 1_209_600;
+const ANCHOR_MS: u64 = 1_000_000;
+const BEFORE_MS: u64 = ANCHOR_MS - 1_000;
+const NOW_MS: u64 = ANCHOR_MS + 60_000;
+const NEXT_MS: u64 = NOW_MS + PERIOD_SECS * 1_000;
+const RUNG_1_SECS: u64 = 1_800;
+const MARKET_SECS: u64 = 300;
+const CUSTODY_MS: u64 = 600_000;
+const LAPSED_MS: u64 = NOW_MS + CUSTODY_MS;
+const REVIEW_SECS: u64 = 600;
+// In the tight-room tests the wallet has room for one of these, not two.
+// Two would still fit the rung cap and the arm's draw plan.
+const LAST_UNIT_SECS: u64 = 900;
+const OCCUPIED_SECS: u64 = RUNG_1_SECS + MARKET_SECS - LAST_UNIT_SECS;
+const OFFER: &str = "fixture-gpu";
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+const CONTRACT_PATH: &str = "contracts/arm.md";
+const CONTRACT_SHA256: &str = "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0";
+
+struct Fixture {
+    vault: Vault,
+    owner: EntityId,
+    issuer: HostSlipIssuer,
+    owner_proof: AuthenticatedOwner,
+    machine: EntityId,
+    _dir: tempfile::TempDir,
+}
+
+fn fixture() -> Fixture {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    // A node answer belongs to this process's writer lease.
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh owned vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("owner bound to host");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner_proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    vault
+        .sign_owner_project(
+            &owner_proof,
+            &vault
+                .owner_project_signer(&issuer)
+                .expect("owner project signer"),
+            vault.root_project().expect("root project"),
+        )
+        .expect("the owner signs the root project");
+    let machine = job_machine(&vault, &issuer);
+    Fixture {
+        vault,
+        owner,
+        issuer,
+        owner_proof,
+        machine,
+        _dir: dir,
+    }
+}
+
+/// A paired MACHINE with a live job-protocol grant, without a listener or connector.
+fn job_machine(vault: &Vault, issuer: &HostSlipIssuer) -> EntityId {
+    let machine = EntityId::now();
+    vault
+        .put_entity(
+            &machine,
+            ENTITY_TYPE_MACHINE,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"test machine",
+        )
+        .expect("the machine's holder row");
+    let device = SigningKey::from_bytes(&[31; 32]);
+    let transport = SigningKey::from_bytes(&[32; 32]);
+    let device_key = device.verifying_key().to_bytes();
+    let endpoint_key = transport.verifying_key().to_bytes();
+    let link = vault
+        .issue_pairing_link(issuer, Scope::top(), 3600)
+        .expect("pairing link");
+    let holder = machine.to_hex();
+    let proof = device
+        .sign(
+            &pairing_binding_transcript(&link.code, &device_key, &holder)
+                .expect("pairing transcript"),
+        )
+        .to_bytes();
+    let pair = vault
+        .redeem_pairing_link(issuer, &link.code, &holder, device_key, &proof)
+        .expect("machine redeems pairing link");
+    // The binding transcript from authority/mesh_machine.rs, also used by
+    // doors_read_standing_heads.rs. The holder and transport both sign it.
+    let mut binding = b"oneiron/mesh-machine-binding/v1\0".to_vec();
+    binding.extend_from_slice(machine.as_bytes());
+    binding.extend_from_slice(&endpoint_key);
+    vault
+        .bind_mesh_machine(
+            issuer,
+            machine,
+            MeshMachineAddress {
+                endpoint_key,
+                direct_addrs: Vec::new(),
+                relay_url: None,
+            },
+            device_key,
+            pair.claims.slip_id,
+            [
+                &device.sign(&binding).to_bytes(),
+                &transport.sign(&binding).to_bytes(),
+            ],
+        )
+        .expect("bind the machine's endpoint");
+    vault
+        .set_mesh_alpn_grant(issuer, machine, endpoint_key, JOB_ALPN, true)
+        .expect("grant the machine the job protocol");
+    machine
+}
+
+#[derive(Default)]
+struct Roles {
+    leads: Vec<EntityId>,
+    reviewers: Vec<EntityId>,
+}
+
+#[derive(Clone, Copy)]
+struct Agent {
+    actor: EntityId,
+    grant: EntityId,
+}
+
+impl Fixture {
+    fn project_under(&self, parent: EntityId, depth_remaining: u64) -> EntityId {
+        let id = EntityId::now();
+        let mut record = ProjectRecord::new(
+            id,
+            Some(parent),
+            self.vault.root_project().expect("root project"),
+            self.owner,
+        )
+        .expect("project record");
+        record.depth_remaining = depth_remaining;
+        create_owner_project(
+            &self.vault,
+            &self.issuer,
+            &self.owner_proof,
+            &self
+                .vault
+                .owner_project_signer(&self.issuer)
+                .expect("owner project signer"),
+            self.owner,
+            id,
+            &record,
+        )
+        .expect("the owner bears the project");
+        id
+    }
+
+    fn agent(&self, name: &str) -> Agent {
+        let actor = self
+            .vault
+            .ensure_agent_principal(name)
+            .expect("named agent principal");
+        let mut authority_scope = Scope::top();
+        authority_scope.verbs = ScopeAxis::Some(
+            ["read", ARMS_UNITS_RESERVE_VERB, ARMS_UNITS_CANCEL_VERB]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
+        let minted = mint_agent_grant_as(
+            &self.vault,
+            &self.owner_proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent: actor,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: Default::default(),
+                wallet_ref: None,
+                working_view_bounds: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("the owner mints the agent a Grant");
+        assert!(minted.grant.confers, "agent={name}");
+        Agent {
+            actor,
+            grant: minted.grant.grant_ref,
+        }
+    }
+
+    fn caller(&self, agent: Option<Agent>) -> (Memory<'_>, Option<&AuthenticatedOwner>) {
+        match agent {
+            None => (
+                self.vault.memory(self.owner, EdgeActorClass::Human),
+                Some(&self.owner_proof),
+            ),
+            Some(agent) => (self.vault.memory(agent.actor, EdgeActorClass::Agent), None),
+        }
+    }
+
+    fn lane(&self, roles: Roles, track: Track, floor_arms: u32) -> ExperimentArm {
+        let lane = self.project_under(self.vault.root_project().expect("root project"), 2);
+        let family = self.project_under(lane, 0);
+        let (memory, owner) = self.caller(None);
+        memory
+            .set_gpu_line(
+                owner,
+                &GpuLineSetRequest {
+                    intent_key: "set-line".to_owned(),
+                    project: lane,
+                    policy: GpuLinePolicy {
+                        unit: gpu_seconds(),
+                        wallet: WalletRef {
+                            issuer: "host".to_owned(),
+                            id: "gpu".to_owned(),
+                        },
+                        offers: vec![OFFER.to_owned()],
+                        machines: vec![self.machine],
+                        leads: roles.leads,
+                        reviewers: roles.reviewers,
+                        planners: Vec::new(),
+                        period_secs: PERIOD_SECS,
+                        period_anchor_ms: ANCHOR_MS,
+                        budget: BudgetPolicy {
+                            allowance_units: u64::from(floor_arms) * RUNG_1_SECS + MARKET_SECS,
+                            floor_arms,
+                            rung_caps_secs: vec![RUNG_1_SECS, RUNG_1_SECS],
+                            new_idea_slots_per_period: if track == Track::NewIdea { 1 } else { 0 },
+                            review_check_secs: REVIEW_SECS,
+                            ..BudgetPolicy::default()
+                        },
+                    },
+                },
+                BEFORE_MS,
+            )
+            .expect("set the line before period 0");
+        memory
+            .admit_gpu_line_family(
+                owner,
+                &GpuLineFamilyAdmitRequest {
+                    intent_key: "seat-family".to_owned(),
+                    project: lane,
+                    family,
+                    track,
+                },
+                BEFORE_MS,
+            )
+            .expect("seat the family before period 0");
+        arm_admit_as(
+            &memory,
+            owner,
+            &ArmAdmitRequest {
+                intent_key: "admit-arm".to_owned(),
+                line: lane,
+                family,
+                type_ref: TypeRef::root(1),
+                title: "fixture arm".to_owned(),
+                contract: ArmContractAsk {
+                    path: CONTRACT_PATH.to_owned(),
+                    sha256: CONTRACT_SHA256.to_owned(),
+                    note: None,
+                    claimed_frozen_at_ms: Some(BEFORE_MS),
+                },
+                runner: RunnerRef {
+                    model: "fixture-runner".to_owned(),
+                    actor: None,
+                },
+                supersedes: None,
+                ledger_rows: Vec::new(),
+                card_digest: None,
+            },
+            NOW_MS,
+        )
+        .expect("admit the arm with a first allowance")
+        .arm
+    }
+
+    fn answer(&self, arm: &ExperimentArm, now_ms: u64, occupied_secs: u64) {
+        let jobs: Vec<_> = (occupied_secs > 0)
+            .then(|| UnattributedJob {
+                node_key: "restored-job:0".to_owned(),
+                secs: occupied_secs,
+                ended: true,
+            })
+            .into_iter()
+            .collect();
+        self.vault
+            .with_write_txn(|txn| {
+                let period = mint_first_in_txn(&self.vault, txn, &arm.line, now_ms)?
+                    .expect("mint")
+                    .expect("line")
+                    .period
+                    .expect("current period");
+                record_node_answer_in_txn(
+                    &self.vault,
+                    txn,
+                    &period.allocation.allocation(gpu_seconds()).reference,
+                    self.machine,
+                    &jobs,
+                    now_ms,
+                )
+            })
+            .expect("record the machine's answer for this generation");
+    }
+
+    fn ask(
+        &self,
+        arm: &ExperimentArm,
+        unit: &str,
+        secs: u64,
+        starter: Option<Agent>,
+    ) -> UnitReserveRequest {
+        let caller = WorkloadCaller::Owner(&self.owner_proof);
+        let pin = WorkloadPin {
+            template: "fixture-template".to_owned(),
+            template_digest: "a1".repeat(32),
+            commit: COMMIT.to_owned(),
+            contract_sha256: arm.contract.sha256.clone(),
+            contract_path: arm.contract.path.clone(),
+            entry: "arms/run.py".to_owned(),
+            args: vec![unit.to_owned()],
+            request: ResourceRequest {
+                cpu_threads: 0,
+                memory_mib: 512,
+                disk_mib: 128,
+                maximum_secs: secs,
+                devices: vec![DeviceClaim {
+                    kind: DeviceKind::Gpu,
+                    count: 1,
+                    memory_mib: 0,
+                    features: Vec::new(),
+                    sharing: Sharing::Exclusive,
+                }],
+            },
+            scope: ScopeKind::Host,
+            network: NetworkMode::None,
+            outputs: Vec::new(),
+        };
+        let pinned = self
+            .vault
+            .pin_job_workload(caller, &WorkloadPinRequest { pin }, NOW_MS)
+            .expect("the owner pins the workload");
+        let workload = pinned.workload.digest;
+        let approved = self
+            .vault
+            .approve_job_workload(
+                caller,
+                &WorkloadApproveRequest {
+                    workload: workload.clone(),
+                    machines: vec![self.machine.to_hex()],
+                    // The owner may start any approved workload; agents must be named by Grant.
+                    starters: starter
+                        .into_iter()
+                        .map(|agent| agent.grant.to_hex())
+                        .collect(),
+                    expires_at_ms: NEXT_MS + PERIOD_SECS * 1_000,
+                },
+                NOW_MS,
+            )
+            .expect("the owner approves the workload");
+        assert_eq!(approved.workload.standing, WorkloadStanding::Approved);
+        UnitReserveRequest {
+            intent_key: format!("reserve-{unit}-{secs}"),
+            line: arm.line,
+            arm: arm.id,
+            rung: 1,
+            unit_key: unit.to_owned(),
+            attempt: 1,
+            purpose: UnitPurpose::Work,
+            offer: OFFER.to_owned(),
+            workload,
+            machine: Some(self.machine),
+            code_sha: COMMIT.to_owned(),
+            contract_sha256: arm.contract.sha256.clone(),
+            secs,
+        }
+    }
+
+    fn reserve(
+        &self,
+        agent: Option<Agent>,
+        ask: &UnitReserveRequest,
+        at_ms: u64,
+    ) -> MemoryResult<UnitView> {
+        let (memory, owner) = self.caller(agent);
+        unit_reserve_as(&memory, owner, ask, at_ms)
+    }
+
+    fn cancel(
+        &self,
+        agent: Option<Agent>,
+        ask: &UnitReserveRequest,
+        at_ms: u64,
+    ) -> MemoryResult<UnitView> {
+        let (memory, owner) = self.caller(agent);
+        unit_cancel_as(
+            &memory,
+            owner,
+            &UnitCancelRequest {
+                line: ask.line,
+                arm: ask.arm,
+                rung: ask.rung,
+                unit_key: ask.unit_key.clone(),
+                attempt: ask.attempt,
+            },
+            at_ms,
+        )
+    }
+
+    fn claims(&self, arm: &ExperimentArm, rung: u8) -> Vec<UnitClaim> {
+        let txn = read_txn(&self.vault).expect("read snapshot");
+        claims_at_rung_in_txn(&self.vault, &txn, &arm.id, rung).expect("read claim rows")
+    }
+
+    fn refusals(&self, arm: &ExperimentArm, period: u32) -> Vec<(LineRefusalKey, LineRefusal)> {
+        let txn = read_txn(&self.vault).expect("read snapshot");
+        line_refusals_in_txn(&self.vault, &txn, &arm.line, period).expect("read refusal rows")
+    }
+
+    fn start(&self, ask: &UnitReserveRequest) -> ClaimKey {
+        let key = ClaimKey::of(ask.arm, ask.rung, &ask.unit_key, ask.attempt);
+        start_claim(&self.vault, &key).expect("start the claim through the test door");
+        key
+    }
+
+    fn settle(&self, ask: &UnitReserveRequest, job: EntityId, at_ms: u64) -> UnitClaim {
+        let key = self.start(ask);
+        let report = UnitEndReport::Machine(GpuJobTerminal {
+            end: GpuJobEnd::Exited { code: 0 },
+            measured_secs: Some(ask.secs),
+            billed_secs: ask.secs,
+            meter: MeterVerdict::Agreed,
+            machine: Some(self.machine),
+            device_id: Some(OFFER.to_owned()),
+            outputs: Vec::new(),
+        });
+        let settlement = self
+            .vault
+            .with_write_txn(|txn| settle_unit_in_txn(&self.vault, txn, &key, &job, &report, at_ms))
+            .expect("terminal write transaction")
+            .expect("machine end settles the claim");
+        assert!(!settlement.replayed);
+        let ClaimState::Ended(terminal) = &settlement.claim.state else {
+            panic!("not ended")
+        };
+        assert_eq!(terminal.end, UnitEnd::Settled);
+        assert_eq!(terminal.charged_secs, ask.secs);
+        settlement.claim
+    }
+}
+
+fn refused_as(result: MemoryResult<UnitView>, code: &str, prefix: &str) {
+    let error: MemoryError = result.expect_err("the unit door should refuse this ask");
+    assert_eq!(error.code, code, "{error:?}");
+    assert!(
+        error.message.starts_with(prefix),
+        "expected {prefix:?}: {error:?}"
+    );
+}
+
+fn only_claim(claims: &[UnitClaim]) -> &UnitClaim {
+    let [claim] = claims else {
+        panic!("expected exactly one claim: {claims:?}")
+    };
+    claim
+}
+
+fn only_refusal(rows: &[(LineRefusalKey, LineRefusal)]) -> &(LineRefusalKey, LineRefusal) {
+    let [row] = rows else {
+        panic!("expected exactly one refusal: {rows:?}")
+    };
+    row
+}
+
+/// T9.
+#[test]
+fn the_rung_cap_counts_every_attempt_and_period() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, 0);
+
+    let oversized = fixture.ask(&arm, "oversized", RUNG_1_SECS + 1, None);
+    refused_as(
+        fixture.reserve(None, &oversized, NOW_MS),
+        MEMORY_CODE_BUDGET_SPENT,
+        "over_rung_cap:",
+    );
+    assert!(fixture.claims(&arm, 1).is_empty());
+    let period_zero = fixture.refusals(&arm, 0);
+    let (_, row) = only_refusal(&period_zero);
+    assert_eq!(row.reason, "over_rung_cap");
+    assert_eq!(row.asked_secs, 1_801);
+    assert_eq!(row.room, RUNG_1_SECS);
+    assert!(row.short.is_none());
+
+    let first = fixture.ask(&arm, "model-check", 1_200, None);
+    let reserved = fixture
+        .reserve(None, &first, NOW_MS)
+        .expect("first attempt fits");
+    let settled = fixture.settle(&first, reserved.job, NOW_MS + first.secs * 1_000);
+    assert_eq!(settled.period, 0);
+
+    fixture.answer(&arm, NEXT_MS, 0);
+    let mut next = fixture.ask(&arm, &first.unit_key, 700, None);
+    next.attempt = 2;
+    refused_as(
+        fixture.reserve(None, &next, NEXT_MS),
+        MEMORY_CODE_BUDGET_SPENT,
+        "over_rung_cap:",
+    );
+    assert_eq!(fixture.claims(&arm, 1), vec![settled]);
+    assert_eq!(fixture.refusals(&arm, 0), period_zero);
+    let period_one = fixture.refusals(&arm, 1);
+    let (key, row) = only_refusal(&period_one);
+    assert_eq!(key.period, 1);
+    assert_eq!(row.reason, "over_rung_cap");
+    assert_eq!(row.asked_secs, 700);
+    assert_eq!(row.room, 600);
+    assert!(row.short.is_none());
+    assert!(fixture.vault.gpu_jobs().expect("read GPU jobs").is_empty());
+}
+
+/// T10.
+#[test]
+fn a_rung_two_unit_needs_a_promotion_record() {
+    let fixture = fixture();
+    let mut arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, 0);
+    let mut ask = fixture.ask(&arm, "rung-two", 60, None);
+    ask.rung = 2;
+    refused_as(
+        fixture.reserve(None, &ask, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "rung_not_promoted:",
+    );
+
+    // A rung row alone is not proof that a reviewer opened it.
+    arm.rungs.push(ArmRung::open(2, None));
+    arm.revision += 1;
+    put_arm(&fixture.vault, &arm).expect("stand rung 2 without a promotion record");
+    refused_as(
+        fixture.reserve(None, &ask, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "rung_not_promoted:",
+    );
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert!(fixture.claims(&arm, 2).is_empty());
+    assert!(fixture.refusals(&arm, 0).is_empty());
+}
+
+/// T14, the claim half.
+#[test]
+fn a_reserve_retried_after_a_lost_answer_gets_the_same_claim() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, 0);
+    let ask = fixture.ask(&arm, "same-attempt", 60, None);
+    let first = fixture
+        .reserve(None, &ask, NOW_MS)
+        .expect("first reservation");
+    assert!(!first.replayed);
+
+    let mut retry = ask.clone();
+    retry.intent_key = "new-intent-after-lost-answer".to_owned();
+    let again = fixture
+        .reserve(None, &retry, NOW_MS)
+        .expect("logical attempt replays");
+    assert!(again.replayed);
+    assert_eq!(again.job, first.job);
+    let rows = fixture.claims(&arm, 1);
+    let claim = only_claim(&rows);
+    assert_eq!(claim.id, first.job);
+    assert_eq!(claim.state, ClaimState::Claimed);
+
+    retry.machine = None;
+    refused_as(
+        fixture.reserve(None, &retry, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        DIFFERENT_ASK,
+    );
+    retry.intent_key = "new-intent-different-ask".to_owned();
+    refused_as(
+        fixture.reserve(None, &retry, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "attempt_conflict:",
+    );
+    assert_eq!(fixture.claims(&arm, 1), rows);
+    assert!(fixture.refusals(&arm, 0).is_empty());
+    assert!(fixture.vault.gpu_jobs().expect("read GPU jobs").is_empty());
+}
+
+/// T15.
+#[test]
+fn a_changed_contract_digest_refuses_the_reservation() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, 0);
+    let ask = fixture.ask(&arm, "pinned", 60, None);
+    let mut changed = ask.clone();
+    changed.contract_sha256 = "b2".repeat(32);
+    refused_as(
+        fixture.reserve(None, &changed, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "contract_changed:",
+    );
+
+    changed = ask.clone();
+    changed.code_sha = "b2".repeat(20);
+    refused_as(
+        fixture.reserve(None, &changed, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "workload_mismatch:",
+    );
+
+    changed = ask;
+    changed.secs += 1;
+    refused_as(
+        fixture.reserve(None, &changed, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "maximum_mismatch:",
+    );
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert!(fixture.refusals(&arm, 0).is_empty());
+}
+
+/// T45.
+#[test]
+fn two_reserves_for_the_last_room_admit_one() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, OCCUPIED_SECS);
+    let left = fixture.ask(&arm, "left", LAST_UNIT_SECS, None);
+    let right = fixture.ask(&arm, "right", LAST_UNIT_SECS, None);
+    let gate = Barrier::new(2);
+    let reserve = |ask: &UnitReserveRequest| {
+        gate.wait();
+        fixture.reserve(None, ask, NOW_MS)
+    };
+    let (first, second) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| reserve(&left));
+        let b = scope.spawn(|| reserve(&right));
+        (
+            a.join().expect("left caller"),
+            b.join().expect("right caller"),
+        )
+    });
+    let (winner, loser) = match (first, second) {
+        (Ok(winner), Err(loser)) | (Err(loser), Ok(winner)) => (winner, loser),
+        other => panic!("one caller must win and the other must be refused: {other:?}"),
+    };
+    refused_as(Err(loser), MEMORY_CODE_BUDGET_SPENT, "budget_denied:");
+    assert!(!winner.replayed);
+    assert_eq!(winner.room_left_secs, Some(0));
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&claims).id, winner.job);
+    let rows = fixture.refusals(&arm, 0);
+    let (_, row) = only_refusal(&rows);
+    assert_eq!(row.reason, "budget_denied");
+    assert_eq!(row.asked_secs, LAST_UNIT_SECS);
+    assert_eq!(row.room, 0);
+}
+
+/// T47, the custody half.
+#[test]
+fn a_claim_past_its_custody_is_released_by_the_next_attempt() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, OCCUPIED_SECS);
+    let first = fixture.ask(&arm, "retryable", LAST_UNIT_SECS, None);
+    let claimed = fixture
+        .reserve(None, &first, NOW_MS)
+        .expect("first attempt");
+    let mut next = first.clone();
+    next.intent_key = "attempt-two".to_owned();
+    next.attempt = 2;
+
+    refused_as(
+        fixture.reserve(None, &next, LAPSED_MS - 1),
+        MEMORY_CODE_INVALID_STATE,
+        "attempt_open:",
+    );
+    let claims = fixture.claims(&arm, 1);
+    let prior = only_claim(&claims);
+    assert_eq!(prior.state, ClaimState::Claimed);
+    assert_eq!(prior.reserved_at_ms + CUSTODY_MS, LAPSED_MS);
+
+    let successor = fixture
+        .reserve(None, &next, LAPSED_MS)
+        .expect("custody ends at the boundary");
+    assert_eq!(successor.state, "claimed");
+    assert!(!successor.replayed);
+    assert_ne!(successor.job, claimed.job);
+    let claims = fixture.claims(&arm, 1);
+    let [prior, current] = claims.as_slice() else {
+        panic!("expected two attempts: {claims:?}")
+    };
+    assert_eq!((prior.attempt, current.attempt), (1, 2));
+    assert_eq!(current.state, ClaimState::Claimed);
+    let ClaimState::Ended(terminal) = &prior.state else {
+        panic!("still open: {prior:?}")
+    };
+    assert_eq!(terminal.end, UnitEnd::Released("custody_lapsed".to_owned()));
+    assert_eq!(terminal.ended_at_ms, LAPSED_MS);
+
+    let replay = fixture
+        .reserve(None, &first, LAPSED_MS)
+        .expect("read ended attempt by replay");
+    assert!(replay.replayed);
+    assert_eq!(replay.job, claimed.job);
+    assert_eq!(replay.end.as_deref(), Some("released: custody_lapsed"));
+    assert!(fixture.refusals(&arm, 0).is_empty());
+}
+
+/// T48.
+#[test]
+fn an_unconfirmed_unit_holds_its_room_and_admits_no_successor() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, OCCUPIED_SECS);
+    let first = fixture.ask(&arm, "unconfirmed", LAST_UNIT_SECS, None);
+    let claimed = fixture
+        .reserve(None, &first, NOW_MS)
+        .expect("first attempt");
+    fixture.start(&first);
+    let mut next = first.clone();
+    next.intent_key = "attempt-two".to_owned();
+    next.attempt = 2;
+    let after_custody = LAPSED_MS + 1;
+    refused_as(
+        fixture.reserve(None, &next, after_custody),
+        MEMORY_CODE_INVALID_STATE,
+        "attempt_open:",
+    );
+    assert!(fixture.refusals(&arm, 0).is_empty());
+
+    let other = fixture.ask(&arm, "other-unit", LAST_UNIT_SECS, None);
+    refused_as(
+        fixture.reserve(None, &other, after_custody),
+        MEMORY_CODE_BUDGET_SPENT,
+        "budget_denied:",
+    );
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    assert_eq!(claim.id, claimed.job);
+    assert_eq!(claim.state, ClaimState::Started);
+    assert_eq!(claim.reserved_secs, LAST_UNIT_SECS);
+    let rows = fixture.refusals(&arm, 0);
+    let (_, row) = only_refusal(&rows);
+    assert_eq!(row.reason, "budget_denied");
+    assert_eq!(row.room, 0);
+}
+
+/// T59.
+#[test]
+fn a_review_check_is_bounded_and_is_the_familys_cost() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let reviewer = fixture.agent("reviewer");
+    let roles = Roles {
+        leads: vec![lead.grant],
+        reviewers: vec![reviewer.grant],
+    };
+    // Two floor allowances leave room for review even after work spends the full rung cap.
+    let mut arm = fixture.lane(roles, Track::Demand, 2);
+    fixture.answer(&arm, NOW_MS, 0);
+    let work = fixture.ask(&arm, "work", RUNG_1_SECS, Some(lead));
+    let reserved = fixture
+        .reserve(Some(lead), &work, NOW_MS)
+        .expect("work fills the rung cap");
+    let review_at = NOW_MS + RUNG_1_SECS * 1_000;
+    let work_claim = fixture.settle(&work, reserved.job, review_at);
+    arm.rungs[0].state = RungState::AwaitingReview;
+    assert!(arm.end_hold(review_at, HoldEndCause::RungClosed));
+    arm.revision += 1;
+    put_arm(&fixture.vault, &arm).expect("stand the rung awaiting review");
+
+    let mut check = fixture.ask(&arm, "review-check", REVIEW_SECS, Some(reviewer));
+    check.purpose = UnitPurpose::ReviewCheck;
+    let reviewed = fixture
+        .reserve(Some(reviewer), &check, review_at)
+        .expect("review has its own bound");
+    assert_eq!(reviewed.purpose, UnitPurpose::ReviewCheck);
+    let floor_draws = vec![Draw {
+        source: DrawSource::Floor,
+        units: REVIEW_SECS,
+    }];
+    assert_eq!(reviewed.draws, floor_draws);
+
+    let mut extra = fixture.ask(&arm, "extra-review", 1, Some(reviewer));
+    extra.purpose = UnitPurpose::ReviewCheck;
+    refused_as(
+        fixture.reserve(Some(reviewer), &extra, review_at),
+        MEMORY_CODE_INVALID_STATE,
+        "over_review_check:",
+    );
+    let mut blocked_work = fixture.ask(&arm, "extra-work", 1, Some(lead));
+    refused_as(
+        fixture.reserve(Some(lead), &blocked_work, review_at),
+        MEMORY_CODE_INVALID_STATE,
+        "rung_not_open:",
+    );
+    blocked_work.purpose = UnitPurpose::ReviewCheck;
+    refused_as(
+        fixture.reserve(Some(lead), &blocked_work, review_at),
+        MEMORY_CODE_FORBIDDEN,
+        "vault.arms.units.reserve: not_this_line:",
+    );
+
+    let review_claim = fixture.settle(&check, reviewed.job, review_at + REVIEW_SECS * 1_000);
+    assert_eq!(review_claim.grant, Some(reviewer.grant));
+    assert_eq!(
+        review_claim.spend_row(),
+        SpendRow::Unit {
+            arm: arm.id,
+            family: arm.family,
+            period: 0,
+            draws: floor_draws,
+            charge: UnitCharge::Settled(REVIEW_SECS),
+        }
+    );
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(claims.len(), 2);
+    assert!(claims.contains(&work_claim) && claims.contains(&review_claim));
+    assert!(fixture.refusals(&arm, 0).is_empty());
+}
+
+#[test]
+fn a_budget_refusal_writes_one_refusal_row_and_nothing_else() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, OCCUPIED_SECS);
+    let ask = fixture.ask(&arm, "too-large-for-wallet", LAST_UNIT_SECS + 1, None);
+    let period = fixture
+        .vault
+        .gpu_line_period(&arm.line, 0)
+        .expect("read period");
+    let line = fixture.vault.gpu_line(&arm.line).expect("read line");
+    let workload = fixture
+        .vault
+        .job_workload(&ask.workload)
+        .expect("read workload");
+    assert!(fixture.refusals(&arm, 0).is_empty());
+    let before = last_committed_write(&fixture.vault);
+    refused_as(
+        fixture.reserve(None, &ask, NOW_MS),
+        MEMORY_CODE_BUDGET_SPENT,
+        "budget_denied:",
+    );
+    assert_eq!(last_committed_write(&fixture.vault), before + 1);
+
+    let rows = fixture.refusals(&arm, 0);
+    let (key, row) = only_refusal(&rows);
+    assert_eq!(
+        *key,
+        LineRefusalKey {
+            line: arm.line,
+            period: 0,
+            sequence: 0
+        }
+    );
+    assert_eq!(row.family, arm.family);
+    assert_eq!(row.arm, Some(arm.id));
+    assert_eq!(row.rung, 1);
+    assert_eq!(row.asked_secs, ask.secs);
+    assert_eq!(row.reason, "budget_denied");
+    assert_eq!(row.by, Some(fixture.owner));
+    assert_eq!(row.at_ms, NOW_MS);
+    assert_eq!(row.room, LAST_UNIT_SECS);
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert!(fixture.vault.gpu_jobs().expect("read GPU jobs").is_empty());
+    assert_eq!(
+        fixture.vault.experiment_arm(&arm.id).expect("read arm"),
+        Some(arm.clone())
+    );
+    assert_eq!(fixture.vault.gpu_line(&arm.line).expect("read line"), line);
+    assert_eq!(
+        fixture
+            .vault
+            .gpu_line_period(&arm.line, 0)
+            .expect("read period"),
+        period
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .job_workload(&ask.workload)
+            .expect("read workload"),
+        workload
+    );
+
+    // `stand_in_txn` returns New only if the (actor, verb, intent key) row is absent,
+    // regardless of this probe's ask digest.
+    let intent = IntentAsk::new(fixture.owner, ARMS_UNITS_RESERVE_VERB, &ask.intent_key, &())
+        .expect("frame the refused intent key");
+    let txn = read_txn(&fixture.vault).expect("read snapshot");
+    assert!(matches!(
+        intent
+            .stand_in_txn(&fixture.vault, &txn)
+            .expect("read intent"),
+        Ok(IntentStand::New)
+    ));
+}
+
+#[test]
+fn a_cancelled_unit_returns_its_room_and_a_repeat_answers_it() {
+    let fixture = fixture();
+    let lead = fixture.agent("reserver");
+    let other_lead = fixture.agent("other-lead");
+    let roles = Roles {
+        leads: vec![lead.grant, other_lead.grant],
+        ..Roles::default()
+    };
+    let arm = fixture.lane(roles, Track::Demand, 1);
+    fixture.answer(&arm, NOW_MS, OCCUPIED_SECS);
+    let first = fixture.ask(&arm, "to-withdraw", LAST_UNIT_SECS, Some(lead));
+    let reserved = fixture
+        .reserve(Some(lead), &first, NOW_MS)
+        .expect("claim the last room");
+    let next = fixture.ask(&arm, "takes-returned-room", LAST_UNIT_SECS, Some(lead));
+    refused_as(
+        fixture.reserve(Some(lead), &next, NOW_MS),
+        MEMORY_CODE_BUDGET_SPENT,
+        "budget_denied:",
+    );
+    refused_as(
+        fixture.cancel(Some(other_lead), &first, NOW_MS),
+        MEMORY_CODE_FORBIDDEN,
+        "vault.arms.units.cancel: not_the_reserver:",
+    );
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&claims).state, ClaimState::Claimed);
+
+    let cancelled = fixture
+        .cancel(Some(lead), &first, NOW_MS)
+        .expect("withdraw the unstarted claim");
+    assert_eq!(cancelled.job, reserved.job);
+    assert_eq!(cancelled.state, "ended");
+    assert_eq!(cancelled.end.as_deref(), Some("released: withdrawn"));
+    assert!(!cancelled.replayed);
+    let replay = fixture
+        .cancel(Some(lead), &first, NOW_MS)
+        .expect("repeat answers the withdrawn claim");
+    assert_eq!(
+        replay,
+        UnitView {
+            replayed: true,
+            ..cancelled
+        }
+    );
+
+    let replacement = fixture
+        .reserve(Some(lead), &next, NOW_MS)
+        .expect("the same ask now fits");
+    assert_eq!(replacement.room_left_secs, Some(0));
+    fixture.start(&next);
+    refused_as(
+        fixture.cancel(Some(lead), &next, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "unit_started:",
+    );
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(claims.len(), 2);
+    let ended = claims
+        .iter()
+        .find(|claim| claim.id == reserved.job)
+        .expect("withdrawn claim");
+    let ClaimState::Ended(terminal) = &ended.state else {
+        panic!("the withdrawal did not stand")
+    };
+    assert_eq!(terminal.end, UnitEnd::Released("withdrawn".to_owned()));
+    assert_eq!(terminal.charged_secs, 0);
+    let started = claims
+        .iter()
+        .find(|claim| claim.id == replacement.job)
+        .expect("started claim");
+    assert_eq!(started.state, ClaimState::Started);
+    let rows = fixture.refusals(&arm, 0);
+    assert_eq!(only_refusal(&rows).1.reason, "budget_denied");
+}
+
+/// T62, the reserve half.
+#[test]
+fn a_new_idea_arm_reserves_at_rung_one_only() {
+    let fixture = fixture();
+    let arm = fixture.lane(Roles::default(), Track::NewIdea, 1);
+    fixture.answer(&arm, NOW_MS, 0);
+    assert_eq!(arm.track, Track::NewIdea);
+    let hold = arm
+        .first_allowance
+        .as_ref()
+        .expect("hold on the new-idea floor");
+    assert_eq!(
+        hold.draws,
+        vec![Draw {
+            source: DrawSource::Floor,
+            units: RUNG_1_SECS
+        }]
+    );
+    let first = fixture.ask(&arm, "new-idea", RUNG_1_SECS, None);
+    let reserved = fixture
+        .reserve(None, &first, NOW_MS)
+        .expect("new ideas can reserve rung 1");
+    assert_eq!(
+        reserved.draws,
+        vec![Draw {
+            source: DrawSource::FirstAllowance,
+            units: RUNG_1_SECS
+        }]
+    );
+
+    let mut later = first;
+    later.rung = 2;
+    later.intent_key = "new-idea-rung-two".to_owned();
+    refused_as(
+        fixture.reserve(None, &later, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "new_idea_rung_one_only:",
+    );
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&claims).id, reserved.job);
+    assert!(fixture.claims(&arm, 2).is_empty());
+    assert!(fixture.refusals(&arm, 0).is_empty());
+}

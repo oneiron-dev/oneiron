@@ -303,11 +303,15 @@ pub(crate) enum DoorClaim {
 /// replay, as the seat's does: a same-id retry runs the admit again, role
 /// first, and its intent key or the ask's logical key then replays the arm
 /// already admitted (review round 2 of #10400).
+/// A unit's reserve and cancel (`vault.arms.units.reserve`, `.cancel`) answer
+/// the claim, and each door judges the caller's role on the line before any
+/// replay: a same-id retry runs the door again, role first, and the intent
+/// or logical key then answers the claim already written.
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 12] = [
+const UNKEPT_REPLY_VERBS: [&str; 14] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -316,6 +320,8 @@ const UNKEPT_REPLY_VERBS: [&str; 12] = [
     oneiron::experiment_arm::ARMS_GET_VERB,
     oneiron::experiment_arm::ARMS_LIST_VERB,
     oneiron::experiment_arm::ARMS_ADMIT_VERB,
+    oneiron::experiment_arm::ARMS_UNITS_RESERVE_VERB,
+    oneiron::experiment_arm::ARMS_UNITS_CANCEL_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",

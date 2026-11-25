@@ -18,12 +18,13 @@
 //! standing is a fold over its claims ([`allocation_standing_in_txn`]), so the claim's terminal
 //! is the allocation's settle.
 
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::experiment_arm::ArmEvidenceDigest;
 use crate::federation::WalletRef;
 use crate::gpu_job::{GpuJobEnd, GpuJobTerminal};
-use crate::gpu_line::{Draw, SpendRow, UnitCharge};
+use crate::gpu_line::{Draw, SpendRow, UnitCharge, defaults, stored_period_in_txn};
 use crate::llm::run_admission::AllocationRef;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Vault};
@@ -38,9 +39,6 @@ pub use allocation::{
     allocation_standing_in_txn, claim_hold_in_txn, open_claim_in_txn, record_node_answer_in_txn,
 };
 
-/// Domain of a unit key's digest in a claim's row key.
-const UNIT_KEY_CONTEXT: &str = "oneiron lane economy unit key v1";
-
 /// The logical attempt -> its claim.
 const CLAIMS: SideTable<ClaimKey, UnitClaim, Named> =
     SideTable::new(&side_table::EXPERIMENT_ARM_UNIT);
@@ -52,7 +50,7 @@ pub struct ClaimKey {
     pub arm: EntityId,
     /// 1 is the first rung.
     pub rung: u8,
-    /// The first 16 bytes of the BLAKE3 digest of the unit key.
+    /// The first 16 bytes of the unit key's fingerprint (purpose `gpu_line::UNIT_KEY`).
     pub unit_key_digest: [u8; 16],
     /// 1 is the first attempt.
     pub attempt: u16,
@@ -62,10 +60,10 @@ impl ClaimKey {
     /// The key of attempt `attempt` of unit `unit_key` at rung `rung` of arm `arm`.
     #[must_use]
     pub fn of(arm: EntityId, rung: u8, unit_key: &str, attempt: u16) -> Self {
-        let mut hasher = blake3::Hasher::new_derive_key(UNIT_KEY_CONTEXT);
-        hasher.update(unit_key.as_bytes());
+        let digest = Fingerprint::of_parts(purposes::gpu_line::UNIT_KEY, &[unit_key.as_bytes()])
+            .into_bytes();
         let mut unit_key_digest = [0_u8; 16];
-        unit_key_digest.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+        unit_key_digest.copy_from_slice(&digest[..16]);
         Self {
             arm,
             rung,
@@ -469,6 +467,63 @@ pub fn settle_unit_in_txn(
         }
     };
     Ok(Ok(settlement))
+}
+
+/// Whether `claim`, still `Claimed`, has passed its custody at `now_ms`: its job has not
+/// started within the `claim_custody_secs` of the policy its period was minted under, read
+/// here only, so the reserve's next attempt and a late start judge it alike (design 5.2).
+///
+/// # Errors
+///
+/// A store failure.
+pub fn custody_lapsed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &UnitClaim,
+    now_ms: u64,
+) -> crate::Result<bool> {
+    if claim.state != ClaimState::Claimed {
+        return Ok(false);
+    }
+    let custody_secs = stored_period_in_txn(vault, txn, &claim.line, claim.period)?
+        .map_or(defaults::CLAIM_CUSTODY_SECS, |period| {
+            period.policy.claim_custody_secs
+        });
+    Ok(now_ms
+        >= claim
+            .reserved_at_ms
+            .saturating_add(custody_secs.saturating_mul(1_000)))
+}
+
+/// Ends `claim` `Released(reason)` if it still stands as read: `Claimed`, at the same
+/// revision (the compare-and-set of design 5.2's custody). Answers the ended claim, or `None`
+/// when it has since started, ended or changed: the other writer won.
+///
+/// # Errors
+///
+/// A store failure.
+pub(crate) fn release_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim: &UnitClaim,
+    reason: &str,
+    now_ms: u64,
+) -> crate::Result<Option<UnitClaim>> {
+    let key = claim.key();
+    let Some(stored) = CLAIMS.get(&vault.store, wtxn, &key)? else {
+        return Ok(None);
+    };
+    if stored.state != ClaimState::Claimed || stored.revision != claim.revision {
+        return Ok(None);
+    }
+    let report = UnitEndReport::Refused {
+        reason: reason.to_owned(),
+    };
+    Ok(
+        settle_unit_in_txn(vault, wtxn, &key, &stored.id, &report, now_ms)?
+            .ok()
+            .map(|settlement| settlement.claim),
+    )
 }
 
 /// The claim under `key`.
