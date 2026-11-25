@@ -298,11 +298,16 @@ pub(crate) enum DoorClaim {
 /// role away, with only the verb Grant judged. A same-id retry runs the admit
 /// again, role first; its intent key then replays the seat already made and
 /// writes nothing.
+/// An experiment arm's writes (`vault.arms.admit`, `.forecast`, `.verdict`,
+/// `.review`) answer the arm too, and each door judges the caller's role on
+/// the arm's stored line before its intent replay, as the seat's does: a
+/// same-id retry runs the door again, role first, and its intent key or the
+/// ask's logical key then replays the write already made.
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 11] = [
+const UNKEPT_REPLY_VERBS: [&str; 15] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -310,6 +315,10 @@ const UNKEPT_REPLY_VERBS: [&str; 11] = [
     "vault.booking.personal_link.mint",
     oneiron::experiment_arm::ARMS_GET_VERB,
     oneiron::experiment_arm::ARMS_LIST_VERB,
+    oneiron::experiment_arm::ARMS_ADMIT_VERB,
+    oneiron::experiment_arm::ARMS_FORECAST_VERB,
+    oneiron::experiment_arm::ARMS_VERDICT_VERB,
+    oneiron::experiment_arm::ARMS_REVIEW_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",
