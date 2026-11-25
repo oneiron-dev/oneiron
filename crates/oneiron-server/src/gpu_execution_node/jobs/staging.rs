@@ -12,27 +12,41 @@
 //!   command from the mirror's configuration, no promisor remote to fetch
 //!   from, no attributes file. It runs with an empty environment but `PATH`,
 //!   reads no system or global configuration or attributes, and has every
-//!   transport refused. A mirror whose object directory borrows from another
-//!   (`objects/info/alternates`) is refused, so a commit only another
-//!   repository holds never stages. A commit the mirror lacks ends the key
-//!   as `LaunchRefused { commit_missing }`.
+//!   transport refused. It reads no multi-pack index and no commit graph, so
+//!   a pack is found only in `pack/` and a commit's tree is the one its
+//!   object names. A mirror whose object directory borrows from another
+//!   store (`objects/info/alternates`, or a symbolic link as the object
+//!   directory, in it, in a loose-object directory or in `pack/`) is
+//!   refused, so a commit only another repository holds never stages. A
+//!   commit the mirror lacks ends the key as
+//!   `LaunchRefused { commit_missing }`. The mirror is checked once, before
+//!   git runs: the account that pushes to it is trusted not to change it
+//!   while staging runs.
 //! - **The mirror is the pinned template's.** The stager takes the
 //!   template's mirror from a reading of the node's configuration in which
 //!   that template's digest is still the pin's.
-//! - **The checkout** is `git archive` of the commit, unpacked here: files,
+//! - **The checkout** is `git archive` of the commit, unpacked here: the
+//!   commit's tree as committed (the view's own attributes turn
+//!   `export-subst` and `export-ignore` off, so no `$Format:` text is filled
+//!   in, no signature program runs and no path is left out), files,
 //!   directories and symbolic links only, nothing written outside
 //!   `checkout/`, and its size counted against the pin's `disk_mib`, each
 //!   entry at least one block. The count is an early refusal; the payload
 //!   directory's disk use is the engine's 5 s check (design 7.9). It belongs
 //!   to the engine's account, files 0644 or 0755 and directories 0755, so
 //!   the job account reads the code and cannot change it.
-//! - **The payload directory is the engine's alone.** The work directory is
-//!   owned by the engine's account and no other account may write in it;
-//!   each of its ancestors is owned by root or the engine's account, and no
-//!   other account may rename in it (it is not writable by them, or it is
-//!   sticky); the key's payload directory is a directory, not a symbolic
-//!   link, owned by the engine's account. Else the key ends as
-//!   `LaunchRefused { work_dir_unsafe }`, and nothing is removed there.
+//! - **The payload directory is the engine's alone.** The work directory's
+//!   path is walked from `/` one component at a time: each directory on it
+//!   is owned by root or the engine's account and no other account may
+//!   rename in it (it is not writable by them, or it is sticky), and each
+//!   symbolic link on it is owned by root or the engine's account and is
+//!   followed from the directory that holds it. A missing component is made
+//!   only once its parent passed. The work directory itself is owned by the
+//!   engine's account and no other account may write in it, and the key's
+//!   payload directory is a directory, not a symbolic link, owned by the
+//!   engine's account. No other account can then change what the path
+//!   names. Else the key ends as `LaunchRefused { work_dir_unsafe }`, and
+//!   nothing is removed there.
 //! - **The contract.** The file at `contract_path`, opened beneath the
 //!   checkout with no symbolic link at any step, is a regular file whose
 //!   sha256 is `contract_sha256`. Else the key ends as `LaunchRefused`.
@@ -48,22 +62,29 @@
 //! before it reaps git, while git's id still names the group, so no process
 //! git started outlives it; once the key is closed or the staging limit
 //! passes, it kills the group at once. A staging that does not complete
-//! removes `checkout/`, and so does a staged key that does not launch
-//! ([`Stager::unstage`]), so a closed key keeps no code on the node's disk.
+//! removes `checkout/`. A staged key that will not launch has its staged
+//! code removed ([`Stager::unstage`]) before its end is recorded, while its
+//! disk is still booked; a refusal of the launch commit itself removes it
+//! just after; and the recovery at each start removes it for every key that
+//! ended before its launch. So a closed key keeps no code on the node's
+//! disk.
 
 use std::io::{Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-use std::os::unix::process::CommandExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{ChildStdout, ExitStatus, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
 
-use rustix::process::{Pid, Signal, WaitId, WaitIdOptions};
 use sha2::{Digest, Sha256};
 
 use super::node_parts::{StageFailure, StageOrder, Stager};
 use crate::gpu_execution_node::node::ExecutionNode;
+
+mod git_process;
+mod payload_dir;
+
+use git_process::{GitChild, GitView};
+use payload_dir::payload_dir_owned;
 
 /// The checkout's directory name inside a key's payload directory.
 pub const CHECKOUT_DIR_NAME: &str = "checkout";
@@ -74,9 +95,6 @@ pub const GIT_VIEW_DIR_NAME: &str = "stage-git";
 
 /// The git program the stager runs, found on the engine's `PATH`.
 pub const GIT_PROGRAM: &str = "git";
-
-/// How often the stager looks at a running git and at `closed`.
-const GIT_POLL: Duration = Duration::from_millis(20);
 
 /// The disk block every checkout entry is counted in: a file's size rounded
 /// up to it (an empty file takes one), and one for each directory and
@@ -91,12 +109,6 @@ const GIT_ANSWER_KEPT_BYTES: u64 = 512;
 
 /// The contract's read chunk; `closed` is asked before each.
 const CONTRACT_CHUNK_BYTES: usize = 64 * 1024;
-
-/// The mode bits that let the group or other accounts write in a directory.
-const GROUP_OTHER_WRITE: u32 = 0o022;
-
-/// The sticky bit: in such a directory only an entry's owner renames it.
-const STICKY: u32 = 0o1000;
 
 /// Why staging refused a key. Each ends the key as
 /// `LaunchRefused { reason: code }`: not started, zero seconds.
@@ -114,8 +126,9 @@ pub enum StagingRefusal {
     CommitMissing,
     /// git could not read the template's mirror.
     MirrorUnreadable,
-    /// The mirror's object directory borrows objects from another
-    /// (`objects/info/alternates`).
+    /// The mirror's object directory borrows objects from another store
+    /// (`objects/info/alternates`, or a symbolic link as the object
+    /// directory, in it, in a loose-object directory or in `pack/`).
     MirrorNotSelfContained,
     /// The work directory, one of its ancestors, or the key's payload
     /// directory is not the engine's alone.
@@ -416,164 +429,29 @@ impl Stager for MirrorStager {
         // Paths are removed only beneath a payload directory that is the
         // engine's alone.
         if matches!(payload_dir_owned(&order.payload_dir, false), Ok(true)) {
-            remove_logged(&order.payload_dir.join(GIT_VIEW_DIR_NAME));
             if let Err(failure) = &staged {
                 tracing::info!(key = %order.key, %failure, "job staging did not complete; its checkout is removed");
                 remove_logged(&order.payload_dir.join(CHECKOUT_DIR_NAME));
             }
+            // The git view goes last: a checkout beside no view is complete.
+            remove_logged(&order.payload_dir.join(GIT_VIEW_DIR_NAME));
         }
         staged
     }
 
-    fn unstage(&self, order: &StageOrder) {
-        if matches!(payload_dir_owned(&order.payload_dir, false), Ok(true)) {
-            tracing::info!(key = %order.key, "job staging: the key did not launch; its checkout is removed");
-            remove_logged(&order.payload_dir.join(CHECKOUT_DIR_NAME));
-        }
-    }
-}
-
-/// The git directory of one staging: a `HEAD` with no ref behind it, an
-/// empty `refs/` and `objects/`, and a configuration that names the object
-/// format alone.
-/// The mirror's object directory is git's `GIT_OBJECT_DIRECTORY`.
-struct GitView {
-    dir: PathBuf,
-    objects: PathBuf,
-}
-
-impl GitView {
-    /// Writes the view beneath `payload_dir`, in place of one an earlier
-    /// staging of the key left. A 64-character commit id is a SHA-256
-    /// repository's; a 40-character one, a SHA-1 repository's.
-    fn write(payload_dir: &Path, objects: PathBuf, commit: &str) -> std::io::Result<Self> {
-        let dir = payload_dir.join(GIT_VIEW_DIR_NAME);
-        remove_tree(&dir)?;
-        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-        // `refs/` and an empty `objects/` make it a git directory to every
-        // git; the objects git reads are the mirror's.
-        for part in ["refs", "objects"] {
-            std::fs::DirBuilder::new()
-                .mode(0o700)
-                .create(dir.join(part))?;
-        }
-        std::fs::write(dir.join("HEAD"), b"ref: refs/heads/staging\n")?;
-        let config: &[u8] = if commit.len() == 64 {
-            b"[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n"
-        } else {
-            b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
-        };
-        std::fs::write(dir.join("config"), config)?;
-        Ok(Self { dir, objects })
-    }
-
-    /// git on the view with the node's fences: an empty environment but
-    /// `PATH`, no system or global configuration or attributes, no replace
-    /// refs, no lazy fetch, every transport refused, and git the leader of
-    /// its own process group.
-    fn command(&self, git: &Path) -> Command {
-        let mut command = Command::new(git);
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
-        command
-            .env("GIT_DIR", &self.dir)
-            .env("GIT_OBJECT_DIRECTORY", &self.objects)
-            .envs([
-                ("GIT_CONFIG_NOSYSTEM", "1"),
-                ("GIT_CONFIG_GLOBAL", "/dev/null"),
-                ("GIT_ATTR_NOSYSTEM", "1"),
-                ("GIT_NO_REPLACE_OBJECTS", "1"),
-                ("GIT_NO_LAZY_FETCH", "1"),
-                // Set and empty: no transport is allowed, whatever a
-                // `protocol.<name>.allow` says.
-                ("GIT_ALLOW_PROTOCOL", ""),
-                ("GIT_TERMINAL_PROMPT", "0"),
-                ("LC_ALL", "C"),
-            ])
-            .args([
-                "-c",
-                "core.attributesFile=/dev/null",
-                "-c",
-                "protocol.allow=never",
-            ])
-            .current_dir("/")
-            .process_group(0);
-        command
-    }
-}
-
-/// A started git, the leader of its own process group. Its end kills the
-/// group before git is reaped, while git's id still names the group, so no
-/// process git started outlives it. Dropped unreaped, it does the same.
-struct GitChild {
-    child: Child,
-    reaped: bool,
-}
-
-impl GitChild {
-    fn spawn(mut command: Command) -> std::io::Result<Self> {
-        command.spawn().map(|child| Self {
-            child,
-            reaped: false,
-        })
-    }
-
-    /// Waits for git to exit, ending it once `closed` answers true.
-    fn wait(
-        &mut self,
-        closed: &dyn Fn() -> bool,
-        failed: StagingRefusal,
-    ) -> Result<ExitStatus, StageFailure> {
-        let pid = Pid::from_child(&self.child);
-        let exited = WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG;
-        loop {
-            match rustix::process::waitid(WaitId::Pid(pid), exited) {
-                Ok(Some(_)) => {
-                    // git has exited and is not reaped yet.
-                    self.kill_group();
-                    self.reaped = true;
-                    return self.child.wait().map_err(|error| {
-                        tracing::warn!(%error, "job staging: git's exit status does not read");
-                        failed.into()
-                    });
-                }
-                Ok(None) | Err(rustix::io::Errno::INTR) => {}
-                Err(error) => {
-                    tracing::warn!(%error, "job staging: git's state does not read");
-                    self.end();
-                    return Err(failed.into());
-                }
-            }
-            if closed() {
-                self.end();
-                return Err(StageFailure::Closed);
-            }
-            std::thread::sleep(GIT_POLL);
-        }
-    }
-
-    fn kill_group(&self) {
-        // A group with no process left answers ESRCH.
-        let _ = rustix::process::kill_process_group(Pid::from_child(&self.child), Signal::KILL);
-    }
-
-    /// Kills git's group and reaps git.
-    fn end(&mut self) {
-        if self.reaped {
+    fn unstage(&self, key: &str, payload_dir: &Path) {
+        // Nothing is made here, and paths are removed only beneath a
+        // payload directory that is the engine's alone.
+        if !matches!(payload_dir_owned(payload_dir, false), Ok(true)) {
             return;
         }
-        self.kill_group();
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        self.reaped = true;
-    }
-}
-
-impl Drop for GitChild {
-    fn drop(&mut self) {
-        self.end();
+        for staged in [CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME] {
+            let path = payload_dir.join(staged);
+            if std::fs::symlink_metadata(&path).is_ok() {
+                tracing::info!(key, path = %path.display(), "job staging: the key did not launch; its staged code is removed");
+                remove_logged(&path);
+            }
+        }
     }
 }
 
@@ -607,118 +485,59 @@ fn relative_inside(path: &str) -> bool {
 
 /// The mirror's object directory, when the mirror's objects are its own: an
 /// object directory that names another in `info/alternates` could lend a
-/// commit the mirror lacks.
+/// commit the mirror lacks, and so could a symbolic link as the object
+/// directory, in it, in a loose-object directory or in `pack/`. The check
+/// is made once, before git runs.
 fn mirror_objects(mirror: &Path) -> Result<PathBuf, StagingRefusal> {
+    let borrowed = |path: &Path| {
+        tracing::warn!(path = %path.display(), "job staging: the mirror borrows objects from another store");
+        StagingRefusal::MirrorNotSelfContained
+    };
+    let unreadable = |path: &Path, error: &std::io::Error| {
+        tracing::warn!(path = %path.display(), %error, "job staging: the mirror's object directory does not read");
+        StagingRefusal::MirrorUnreadable
+    };
     let objects = mirror.join("objects");
-    match std::fs::metadata(&objects) {
-        Ok(found) if found.is_dir() => {}
-        Ok(_) => {
-            tracing::warn!(objects = %objects.display(), "job staging: the mirror's object directory is not a directory");
-            return Err(StagingRefusal::MirrorUnreadable);
+    let found =
+        std::fs::symlink_metadata(&objects).map_err(|error| unreadable(&objects, &error))?;
+    if found.file_type().is_symlink() {
+        return Err(borrowed(&objects));
+    }
+    if !found.is_dir() {
+        tracing::warn!(objects = %objects.display(), "job staging: the mirror's object directory is not a directory");
+        return Err(StagingRefusal::MirrorUnreadable);
+    }
+    let listed = |dir: &Path| std::fs::read_dir(dir).map_err(|error| unreadable(dir, &error));
+    for entry in listed(&objects)? {
+        let entry = entry.map_err(|error| unreadable(&objects, &error))?;
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| unreadable(&path, &error))?;
+        if kind.is_symlink() {
+            return Err(borrowed(&path));
         }
-        Err(error) => {
-            tracing::warn!(objects = %objects.display(), %error, "job staging: the mirror's object directory does not read");
-            return Err(StagingRefusal::MirrorUnreadable);
+        // `info/` lends objects only through `alternates`, checked below.
+        if !kind.is_dir() || entry.file_name() == "info" {
+            continue;
+        }
+        for inner in listed(&path)? {
+            let inner = inner.map_err(|error| unreadable(&path, &error))?;
+            let inner_path = inner.path();
+            let inner_kind = inner
+                .file_type()
+                .map_err(|error| unreadable(&inner_path, &error))?;
+            if inner_kind.is_symlink() {
+                return Err(borrowed(&inner_path));
+            }
         }
     }
     let alternates = objects.join("info").join("alternates");
     match std::fs::symlink_metadata(&alternates) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(objects),
-        Ok(_) => {
-            tracing::warn!(alternates = %alternates.display(), "job staging: the mirror borrows objects from another repository");
-            Err(StagingRefusal::MirrorNotSelfContained)
-        }
-        Err(error) => {
-            tracing::warn!(alternates = %alternates.display(), %error, "job staging: the mirror's alternates do not read");
-            Err(StagingRefusal::MirrorUnreadable)
-        }
+        Ok(_) => Err(borrowed(&alternates)),
+        Err(error) => Err(unreadable(&alternates, &error)),
     }
-}
-
-/// Whether the key's payload directory exists and is the engine's alone:
-/// the work directory is owned by the engine's account and no other account
-/// writes in it, each ancestor is owned by root or the engine's account and
-/// no other account renames in it, and the payload directory is a
-/// directory (not a symbolic link) owned by the engine's account. With
-/// `make`, the work directory and the payload directory are made (0755)
-/// when missing; the payload directory is made only once the work directory
-/// passed. Path-based writes and removals beneath it are then safe: no
-/// other account can move an entry on the path.
-fn payload_dir_owned(payload_dir: &Path, make: bool) -> Result<bool, StagingRefusal> {
-    let not_owned = |path: &Path, why: &str| {
-        tracing::warn!(path = %path.display(), why, "job staging: the payload directory is not the engine's alone");
-        StagingRefusal::WorkDirUnsafe
-    };
-    let Some(work_dir) = payload_dir.parent() else {
-        return Err(not_owned(payload_dir, "it has no work directory"));
-    };
-    if make {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o755)
-            .create(work_dir)
-            .map_err(|error| {
-                tracing::warn!(work_dir = %work_dir.display(), %error, "job staging: the work directory was not made");
-                StagingRefusal::CheckoutFailed
-            })?;
-    }
-    let canonical = match std::fs::canonicalize(work_dir) {
-        Ok(found) => found,
-        Err(error) if !make && error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(not_owned(work_dir, &error.to_string())),
-    };
-    let engine = rustix::process::geteuid().as_raw();
-    let work = std::fs::symlink_metadata(&canonical)
-        .map_err(|error| not_owned(&canonical, &error.to_string()))?;
-    if !work.is_dir() || work.uid() != engine || work.mode() & GROUP_OTHER_WRITE != 0 {
-        return Err(not_owned(
-            &canonical,
-            "the work directory is not the engine's, or others may write in it",
-        ));
-    }
-    for ancestor in canonical.ancestors().skip(1) {
-        let found = std::fs::symlink_metadata(ancestor)
-            .map_err(|error| not_owned(ancestor, &error.to_string()))?;
-        let owner_trusted = found.uid() == 0 || found.uid() == engine;
-        let renames_closed = found.mode() & GROUP_OTHER_WRITE == 0 || found.mode() & STICKY != 0;
-        if !owner_trusted || !renames_closed {
-            return Err(not_owned(
-                ancestor,
-                "an ancestor another account owns or may rename in",
-            ));
-        }
-    }
-    if make {
-        match std::fs::DirBuilder::new().mode(0o755).create(payload_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => {
-                tracing::warn!(payload_dir = %payload_dir.display(), %error, "job staging: the payload directory was not made");
-                return Err(StagingRefusal::CheckoutFailed);
-            }
-        }
-    }
-    match std::fs::symlink_metadata(payload_dir) {
-        Ok(found) if found.is_dir() && found.uid() == engine => {}
-        Ok(_) => {
-            return Err(not_owned(
-                payload_dir,
-                "the payload directory is a link, not a directory, or not the engine's",
-            ));
-        }
-        Err(error) if !make && error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(not_owned(payload_dir, &error.to_string())),
-    }
-    if make {
-        // The job account passes through and reads; only the engine writes.
-        std::fs::set_permissions(payload_dir, std::fs::Permissions::from_mode(0o755)).map_err(
-            |error| {
-                tracing::warn!(payload_dir = %payload_dir.display(), %error, "job staging: the payload directory's mode was not set");
-                StagingRefusal::CheckoutFailed
-            },
-        )?;
-    }
-    Ok(true)
 }
 
 /// The first `kept` bytes of `pipe` as text; the rest is read and dropped,
@@ -804,6 +623,14 @@ fn unpack_checkout(
             }
         }
     }
+    // git writes the archive's last record past its end blocks, where the
+    // unpacker stops; read to the end, git finishes its write and exits
+    // instead of failing on a closed pipe.
+    let mut rest = archive.into_inner();
+    std::io::copy(&mut rest, &mut std::io::sink()).map_err(|error| {
+        tracing::warn!(%error, "job staging: the end of git's archive does not read");
+        StagingRefusal::CheckoutFailed
+    })?;
     Ok(())
 }
 

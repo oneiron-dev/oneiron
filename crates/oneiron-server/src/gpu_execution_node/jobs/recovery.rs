@@ -245,6 +245,22 @@ impl NodeJobs {
                 self.read_unit_end(book, &current, now)?;
             }
         }
+        // A key that ended before its launch keeps no code on the node's
+        // disk: a staging this restart ended above, or an end recorded just
+        // before a crash took the stager's removal (row R3c). Nothing is
+        // removed for a key that launched.
+        if let Some(journal) = book.journal.as_ref() {
+            let work_dir = &self.paths().work_dir;
+            for known in journal
+                .table()
+                .iter()
+                .filter(|known| known.is_ended() && known.launch.is_none())
+            {
+                self.parts()
+                    .stager
+                    .unstage(&known.key, &known.id.payload_dir(work_dir));
+            }
+        }
         Ok(())
     }
 

@@ -99,10 +99,18 @@ impl NodeJobs {
             Err(StageFailure::Closed) => Some("staging_limit".to_owned()),
             Err(StageFailure::Refused(reason)) => Some(reason),
         };
+        // A key that will not launch keeps no code on the node's disk: it is
+        // removed before the key's end is recorded, while its disk is still
+        // booked.
+        let refused = failure.is_some();
+        if refused {
+            self.parts().stager.unstage(key, &run.order.payload_dir);
+        }
         self.launch_commit(key, failure, deadline);
-        // A staged key that did not launch keeps no code on the node's disk.
-        if !self.key_launched(key) {
-            self.parts().stager.unstage(&run.order);
+        // A refusal of the launch commit itself (a device, the memory, the
+        // control file) ended the key after its code was staged.
+        if !refused && !self.key_launched(key) {
+            self.parts().stager.unstage(key, &run.order.payload_dir);
         }
     }
 
