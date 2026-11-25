@@ -15,10 +15,12 @@ pub mod defaults;
 mod doors;
 pub(crate) mod doors_caller;
 mod fold;
+mod graduate;
 mod intent;
 mod mint;
 mod store;
 pub(crate) mod tables;
+mod tally;
 mod wire;
 
 pub use claim::{
@@ -36,10 +38,12 @@ pub use mint::{
     economic_digest, line_allocation_id, mint_period, payoff_share, period_balances, pools,
 };
 pub(crate) use store::erase_line_actor_in_txn;
+pub use graduate::{GpuLineFamilyGraduateRequest, VAULT_GPU_LINES_FAMILIES_GRADUATE};
 pub use store::{
     MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,
-    settled_tallies_in_txn, stored_period_in_txn,
+    stored_period_in_txn,
 };
+pub use tally::settled_tallies_in_txn;
 pub use wire::{
     GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,
 };
