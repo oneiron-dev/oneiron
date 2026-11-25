@@ -19,7 +19,6 @@ pub struct FileFacts {
     pub mode: u32,
     pub is_dir: bool,
     pub is_regular: bool,
-    pub is_fifo: bool,
     pub size: u64,
 }
 
@@ -68,7 +67,6 @@ pub fn facts(fd: BorrowedFd<'_>) -> io::Result<FileFacts> {
         mode: stat.st_mode & 0o7777,
         is_dir: kind == libc::S_IFDIR,
         is_regular: kind == libc::S_IFREG,
-        is_fifo: kind == libc::S_IFIFO,
         size: u64::try_from(stat.st_size).unwrap_or(0),
     })
 }
@@ -296,27 +294,33 @@ pub fn make_dir_beneath(
     Ok(made)
 }
 
-/// Makes the pipe `name` beneath `dir` with `mode` and group `gid`.
+/// Gives the file `name` beneath `dir`, which its maker just made there (the
+/// gate's socket, made by root), the group `gid` and `mode`; its owner
+/// stays.
 ///
 /// # Errors
 ///
-/// It exists, or a step failed.
-pub fn make_fifo_beneath(dir: BorrowedFd<'_>, name: &str, mode: u32, gid: u32) -> io::Result<()> {
+/// A step failed.
+pub fn set_group_and_mode_beneath(
+    dir: BorrowedFd<'_>,
+    name: &str,
+    gid: u32,
+    mode: u32,
+) -> io::Result<()> {
     let c = c_name(OsStr::new(name))?;
-    // SAFETY: c is NUL terminated.
-    check(unsafe { libc::mkfifoat(dir.as_raw_fd(), c.as_ptr(), 0o600) })?;
-    // SAFETY: c is NUL terminated; AT_SYMLINK_NOFOLLOW changes no link target.
+    // SAFETY: c is NUL terminated; AT_SYMLINK_NOFOLLOW changes no link
+    // target; the owner (uid_t)-1 is left as it is.
     check(unsafe {
         libc::fchownat(
             dir.as_raw_fd(),
             c.as_ptr(),
-            0,
+            libc::uid_t::MAX,
             gid,
             libc::AT_SYMLINK_NOFOLLOW,
         )
     })?;
-    // SAFETY: c is NUL terminated. fchmodat follows no link here: the name
-    // was made by this call in a directory only root writes.
+    // SAFETY: c is NUL terminated. fchmodat follows no link here: the name's
+    // maker made it in a directory only it writes.
     check(unsafe { libc::fchmodat(dir.as_raw_fd(), c.as_ptr(), mode as libc::mode_t, 0) })
 }
 
