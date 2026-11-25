@@ -40,7 +40,9 @@
 //! agent runs, the world is readable there) is the one that counts: a run
 //! the placed machine does not take, the home takes after the grace (item
 //! 03). Only the lease the placement released is ordered: the first take
-//! ends it, and a later handover follows the reaper's order as before.
+//! ends it, and a later handover follows the reaper's order as before. The
+//! reaper (`super::run_handover`) asks this module for both orders
+//! ([`take_due_in`]).
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -125,10 +127,78 @@ pub(super) const fn placed_take_due(
     }
 }
 
+/// How long after an expired lease's `held_until` a machine that is not the
+/// vault's elected home node waits before it takes the run (FIX 4747 slice
+/// 6), so the home node, which takes at expiry, goes first. Engine call
+/// (CALLS, FIX 4747): five minutes, five housekeeping ticks, the send
+/// handover's grace.
+pub(super) const AGENT_RUN_HANDOVER_GRACE_SECS: u64 = 5 * 60;
+
+/// Whether the ruled handover order lets this machine take a run whose
+/// lease expired at `lease.held_until`, at `now` (FIX 4747 slice 6; canon
+/// items 02-03, "a run on another machine falls back to the home node").
+/// Engine call (CALLS, FIX 4747): the vault's elected home node (`home`)
+/// takes at expiry; any other live machine, as this one is while it runs the
+/// pass, only [`AGENT_RUN_HANDOVER_GRACE_SECS`] later, so the home node, when
+/// it can run the run, goes first. With no machine able, the run waits.
+pub(super) fn agent_run_handover_due(lease: AgentRunExecutorLease, home: bool, now: u64) -> bool {
+    let due_at = if home {
+        lease.held_until
+    } else {
+        lease
+            .held_until
+            .saturating_add(AGENT_RUN_HANDOVER_GRACE_SECS)
+    };
+    now >= due_at
+}
+
+/// Whether this machine (`node_id`) is the vault's elected home node, read
+/// in `txn` (FIX 4747 slice 6). Engine call (CALLS, FIX 4747): the committed
+/// MACRO home designation (`dreamer_runner::home`), which the owner's pick
+/// wins and an attached cloud, then an always-on machine, then the primary
+/// device fill; the handover holds no election of its own.
+pub(super) fn elected_home_here_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    node_id: u64,
+) -> Result<bool> {
+    Ok(DreamerRunnerStore::new(vault)
+        .home_node_designation_in_txn(txn)?
+        .is_some_and(|home| home.node_id == node_id))
+}
+
+/// Whether this machine (`here`; the home when `home`) may take, at `now`,
+/// the run of `body`, whose lease another machine holds and is expired:
+/// in its placement's order while the placement orders that lease (row P4,
+/// [`placed_take_due`]), else in the handover's ruled order
+/// ([`agent_run_handover_due`]).
+pub(super) fn take_due_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &AgentRunTaskBody,
+    home: bool,
+    here: Option<EntityId>,
+    now: u64,
+) -> Result<bool> {
+    let lease = body.executor;
+    let Some(placement) = body.placement.as_ref().filter(|p| p.orders(lease)) else {
+        return Ok(agent_run_handover_due(lease, home, now));
+    };
+    let taker = if here == Some(placement.machine) {
+        PlacedTaker::Placed
+    } else if home {
+        PlacedTaker::Home
+    } else {
+        PlacedTaker::Other
+    };
+    let place_grace = place_grace_secs_in_txn(vault, txn, body.project())?;
+    Ok(now >= placed_take_due(lease, taker, place_grace, AGENT_RUN_HANDOVER_GRACE_SECS))
+}
+
 /// Whether the vault's elected home node is a cloud node other than this
 /// machine (`node_id`), read in `txn` (FIX 4747 slice 7). Engine call
 /// (CALLS, FIX 4747): the committed MACRO home designation the handover's
-/// ruled order reads (`run_handover::elected_home_here_in`) names the node;
+/// ruled order reads ([`elected_home_here_in`]) names the node;
 /// the host's home candidacy says whether it is a cloud node, by its
 /// `cloud` flag. A candidacy that lists no row for that node falls back to
 /// the designation's own election class (`CloudAttached`). No designation
@@ -176,17 +246,12 @@ pub(super) fn leaves_own_lease_in(
         if crate::identity::read_machine_id_in_txn(vault, txn)? == Some(placement.machine) {
             return Ok(false);
         }
-        let taker = if super::run_handover::elected_home_here_in(vault, txn, node_id)? {
+        let taker = if elected_home_here_in(vault, txn, node_id)? {
             PlacedTaker::Home
         } else {
             PlacedTaker::Other
         };
-        let due = placed_take_due(
-            lease,
-            taker,
-            place_grace,
-            super::run_handover::AGENT_RUN_HANDOVER_GRACE_SECS,
-        );
+        let due = placed_take_due(lease, taker, place_grace, AGENT_RUN_HANDOVER_GRACE_SECS);
         return Ok(now < due);
     }
     Ok(cloud_home_elsewhere_in(vault, txn, node_id)?
