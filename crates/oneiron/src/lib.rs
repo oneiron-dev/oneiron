@@ -110,6 +110,7 @@ pub mod conversation;
 pub(crate) use oneiron_base::distance;
 pub mod embed;
 pub mod entity_doc;
+pub mod experiment_arm;
 mod text_diff;
 pub(crate) use oneiron_base::fusion;
 pub mod graph_fs;
@@ -223,7 +224,9 @@ pub mod connector_key;
 pub mod delivery_window;
 pub mod feedback;
 pub mod gpu_job;
+pub mod gpu_line;
 pub mod ingest;
+pub mod job_dispatch;
 pub mod job_workload;
 pub mod linkedin_connector;
 pub mod linkedin_lead_preload;
@@ -235,6 +238,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
+pub mod work_order;
 pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;

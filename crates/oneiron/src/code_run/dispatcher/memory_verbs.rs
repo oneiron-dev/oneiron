@@ -87,6 +87,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
             | SelfEffect::TasksRefuse
+            // A work order and its wait are the canonical vault's.
+            | SelfEffect::JobsOrdersWait
             // A consult's landing settles a canonical TASK.
             | SelfEffect::ConsultResult
             // A callable skill loads against the canonical vault and the

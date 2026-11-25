@@ -566,6 +566,8 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "summarize" => Ok(SelfEffect::Summarize),
         // A held `connector.call` parks on the call's ref (FIX 4380).
         "self.verbs.call" => Ok(SelfEffect::AgentVerb),
+        // A wait on a work order parks on the order's wait (pass 34 Q1).
+        "vault.jobs.orders.wait" => Ok(SelfEffect::JobsOrdersWait),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }

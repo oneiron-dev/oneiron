@@ -231,7 +231,9 @@ pub(in crate::engine_executor) fn effect_step(effect: SelfEffect, verb: Option<&
         | SelfEffect::RepoViewsGet
         | SelfEffect::RepoViewsRead
         | SelfEffect::RepoMergeQueueObserve
-        | SelfEffect::RepoSymbolsObserve => false,
+        | SelfEffect::RepoSymbolsObserve
+        // A wait on a work order reads the order (pass 34 Q1).
+        | SelfEffect::JobsOrdersWait => false,
         SelfEffect::AgentVerb => verb
             .and_then(AgentVerb::from_name)
             .is_none_or(AgentVerb::writes),
