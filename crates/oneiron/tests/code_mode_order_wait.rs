@@ -267,6 +267,8 @@ fn order_fixture(vault: &Vault) -> (EntityId, WorkOrder, TestHost<'_>) {
             retry_on: Vec::new(),
             result: None,
             intent_key: None,
+            after: None,
+            group: None,
         },
         NOW,
     )

@@ -287,6 +287,8 @@ impl Rig {
             attempts: Vec::new(),
             result: None,
             intent_key: None,
+            after: None,
+            group: None,
             ordered_at_ms: NOW,
             updated_at_ms: NOW,
             revision: 0,
@@ -1201,4 +1203,409 @@ fn a_pending_cancel_does_not_end_the_wait_until_the_attempt_ends() {
         answer.view.order.state,
         OrderState::Cancelled { .. }
     ));
+}
+
+/// Row Q5 (pass 34, 1.1, 4.5, 13; test in section 10): an order that waits on another's end,
+/// named running caps and the array group's cap, through the loop and the order door.
+mod after_and_caps {
+    use super::*;
+
+    use oneiron::authority::{ActSurface, MachineRole};
+    use oneiron::consent::AuthenticatedOwner;
+    use oneiron::federation::{Scope, ScopeAxis};
+    use oneiron::memory::{
+        MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
+        MEMORY_CODE_NOT_FOUND, MemoryError,
+    };
+    use oneiron::setting::{SetSetting, SettingCaller};
+    use oneiron::test_doors::label_writers::embedded_owner;
+    use oneiron::test_doors::work_order::put_order_group;
+    use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+    use oneiron::work_order::{
+        AfterCondition, AfterOn, GroupMember, GroupRequest, WorkOrderGroup, WorkOrderRequest,
+        group_cap_name, order_work_as,
+    };
+
+    /// `order` as stored after `change`, as the order door would have written it.
+    fn put_with(rig: &Rig, mut order: WorkOrder, change: impl FnOnce(&mut WorkOrder)) -> WorkOrder {
+        change(&mut order);
+        put_order(&rig.vault, &order);
+        order
+    }
+
+    /// The owner proves himself on a vault that signs his acts.
+    fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        oneiron::test_support::provision_engine_machines(vault);
+        embedded_owner(vault).expect("the owner's proof").1
+    }
+
+    /// The owner sets the running cap `name` to `cap`.
+    fn set_running_cap(vault: &Vault, proof: &AuthenticatedOwner, name: &str, cap: u32) {
+        let mut change = SetSetting::vault_value("jobs.caps", serde_json::Value::Null);
+        change.item = Some(name.to_owned());
+        change.value = Some(serde_json::json!(cap));
+        vault
+            .set_setting(SettingCaller::Owner(proof), change)
+            .expect("the owner sets jobs.caps");
+    }
+
+    /// Ends `job` with exit 0, as its provider reports it, and steps it as the job worker does.
+    fn end_well(rig: &Rig, host: &TestHost<'_>, jobs: &[EntityId], at_ms: u64) {
+        rig.gpu.state().status = Some(GpuResourceStatus::Exited { used_secs: 7 });
+        for job in jobs {
+            host.step(job, at_ms);
+        }
+    }
+
+    #[test]
+    fn a_named_cap_admits_its_number_of_running_attempts_and_blocks_the_next_as_cap_full() {
+        let rig = rig();
+        let proof = owner_proof(&rig.vault);
+        set_running_cap(&rig.vault, &proof, "sol-seat", 2);
+        let free = EntityId::now();
+        let digest = rig.workload(0, &[free]);
+        let seated: Vec<WorkOrder> = (0..3)
+            .map(|_| {
+                put_with(&rig, rig.order(&digest, 0, WaitRule::Open), |order| {
+                    order.limits.caps = vec!["sol-seat".to_owned()];
+                })
+            })
+            .collect();
+        let free_order = rig.order(&digest, 0, WaitRule::Open);
+        let host = TestHost::new(&rig, vec![machine(free, None)]);
+
+        rig.vault.work_order_pass(&host, NOW).expect("pass");
+
+        let stored: Vec<WorkOrder> = seated.iter().map(|order| rig.stored(order)).collect();
+        let made: Vec<&WorkOrder> = stored.iter().filter(|o| !o.attempts.is_empty()).collect();
+        assert_eq!(made.len(), 2, "the cap admits two: {stored:?}");
+        let held = stored
+            .iter()
+            .find(|order| order.attempts.is_empty())
+            .expect("the third waits");
+        assert_eq!(
+            blockers(held),
+            vec![(
+                None,
+                Blocker::CapFull {
+                    cap: "sol-seat".to_owned(),
+                    running: 2
+                }
+            )]
+        );
+        // An order that names no cap is not held by it.
+        assert_eq!(rig.stored(&free_order).attempts.len(), 1);
+
+        let jobs: Vec<EntityId> = made.iter().map(|order| order.attempts[0].job).collect();
+        end_well(&rig, &host, &jobs, NOW + 1_000);
+        rig.vault.work_order_pass(&host, NOW + 2_000).expect("pass");
+        assert_eq!(
+            rig.stored(held).attempts.len(),
+            1,
+            "the next is admitted once one ends"
+        );
+    }
+
+    #[test]
+    fn an_array_group_admits_its_cap_of_running_members() {
+        let rig = rig();
+        let free = EntityId::now();
+        let digest = rig.workload(0, &[free]);
+        let group = EntityId::now();
+        put_order_group(
+            &rig.vault,
+            &WorkOrderGroup {
+                id: group,
+                cap: 1,
+                made_by: OrderedBy::Owner {
+                    owner: Some(rig.owner_actor),
+                },
+                made_at_ms: NOW,
+            },
+        );
+        let members: Vec<WorkOrder> = (0..2)
+            .map(|index| {
+                put_with(&rig, rig.order(&digest, 0, WaitRule::Open), |order| {
+                    order.group = Some(GroupMember { group, index });
+                })
+            })
+            .collect();
+        let host = TestHost::new(&rig, vec![machine(free, None)]);
+
+        rig.vault.work_order_pass(&host, NOW).expect("pass");
+
+        let stored: Vec<WorkOrder> = members.iter().map(|order| rig.stored(order)).collect();
+        let running: Vec<&WorkOrder> = stored.iter().filter(|o| !o.attempts.is_empty()).collect();
+        assert_eq!(running.len(), 1, "{stored:?}");
+        let held = stored
+            .iter()
+            .find(|order| order.attempts.is_empty())
+            .expect("the other member waits");
+        assert_eq!(
+            blockers(held),
+            vec![(
+                None,
+                Blocker::CapFull {
+                    cap: group_cap_name(&group),
+                    running: 1
+                }
+            )]
+        );
+        end_well(&rig, &host, &[running[0].attempts[0].job], NOW + 1_000);
+        rig.vault.work_order_pass(&host, NOW + 2_000).expect("pass");
+        assert_eq!(rig.stored(held).attempts.len(), 1);
+    }
+
+    #[test]
+    fn an_order_after_another_waits_until_that_order_is_done() {
+        let rig = rig();
+        let free = EntityId::now();
+        let digest = rig.workload(0, &[free]);
+        let first = rig.order(&digest, 0, WaitRule::Open);
+        let then = put_with(&rig, rig.order(&digest, 0, WaitRule::Open), |order| {
+            order.after = Some(AfterCondition {
+                order: first.id,
+                on: AfterOn::Success,
+            });
+        });
+        let host = TestHost::new(&rig, vec![machine(free, None)]);
+
+        rig.vault.work_order_pass(&host, NOW).expect("pass");
+
+        assert_eq!(rig.stored(&first).attempts.len(), 1);
+        let waiting = rig.stored(&then);
+        assert!(waiting.attempts.is_empty());
+        assert_eq!(
+            blockers(&waiting),
+            vec![(
+                None,
+                Blocker::After {
+                    order: first.id.to_hex()
+                }
+            )]
+        );
+        end_well(
+            &rig,
+            &host,
+            &[rig.stored(&first).attempts[0].job],
+            NOW + 1_000,
+        );
+        rig.vault.work_order_pass(&host, NOW + 2_000).expect("pass");
+        assert_eq!(rig.stored(&first).state, OrderState::Done);
+        assert_eq!(
+            rig.stored(&then).attempts.len(),
+            1,
+            "released in the pass that saw its upstream done"
+        );
+    }
+
+    #[test]
+    fn an_order_after_another_that_ended_without_success_gives_up_naming_it() {
+        let rig = rig();
+        let free = EntityId::now();
+        let digest = rig.workload(0, &[free]);
+        let first = rig.order(&digest, 0, WaitRule::Open);
+        rig.vault
+            .cancel_work_order(&first.id, Some(rig.owner_actor), NOW)
+            .expect("cancel write")
+            .expect("cancelled");
+        let then = put_with(&rig, rig.order(&digest, 0, WaitRule::Open), |order| {
+            order.after = Some(AfterCondition {
+                order: first.id,
+                on: AfterOn::Success,
+            });
+        });
+        let host = TestHost::new(&rig, vec![machine(free, None)]);
+
+        rig.vault.work_order_pass(&host, NOW + 1_000).expect("pass");
+
+        let ended = rig.stored(&then);
+        assert!(ended.attempts.is_empty());
+        assert_eq!(
+            ended.state,
+            OrderState::GivenUp {
+                why: GiveUpWhy::Upstream { order: first.id }
+            }
+        );
+    }
+
+    /// The door's rig: two agents whose Grants name the order verbs and start their GPU jobs,
+    /// and a workload approved for both.
+    struct DoorRig {
+        _dir: tempfile::TempDir,
+        vault: Vault,
+        agents: [EntityId; 2],
+        digest: String,
+    }
+
+    fn door_rig() -> DoorRig {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("enroll the install");
+        let (owner, proof) = embedded_owner(&vault).expect("the owner's proof");
+        let mut agents = [EntityId::now(); 2];
+        let mut grants = Vec::new();
+        for (slot, name) in agents.iter_mut().zip(["q5-door-a", "q5-door-b"]) {
+            let agent = vault.ensure_agent_principal(name).expect("named agent");
+            let mut authority_scope = Scope::top();
+            authority_scope.verbs = ScopeAxis::Some(
+                ["read", "vault.jobs.order", "vault.gpu.jobs.start"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+            );
+            let grant = mint_agent_grant_as(
+                &vault,
+                &proof,
+                ActSurface::ThisInstall,
+                AgentGrantMintRequest {
+                    agent,
+                    authority_scope,
+                    expires_at: None,
+                    repo_bounds: None,
+                    verb_classes: Default::default(),
+                    wallet_ref: None,
+                    working_view_bounds: None,
+                    check_in_ref: None,
+                },
+            )
+            .expect("mint the agent's Grant")
+            .grant;
+            vault
+                .allow_gpu_jobs(&proof, &grant.grant_ref, 600, NOW)
+                .expect("set the Grant's per-job maximum")
+                .expect("allowance row");
+            *slot = agent;
+            grants.push(grant.grant_ref);
+        }
+        let digest = put_approved_workload(
+            &vault,
+            pin(0),
+            owner,
+            vec![EntityId::now()],
+            grants,
+            NOW + 86_400_000,
+            NOW,
+        );
+        DoorRig {
+            _dir: dir,
+            vault,
+            agents,
+            digest,
+        }
+    }
+
+    impl DoorRig {
+        /// Agent `agent` (0 or 1) orders the workload with `after` and `group`.
+        fn order(
+            &self,
+            agent: usize,
+            after: Option<EntityId>,
+            group: Option<GroupRequest>,
+        ) -> Result<WorkOrder, MemoryError> {
+            order_work_as(
+                &self.vault.memory(self.agents[agent], EdgeActorClass::Agent),
+                None,
+                &WorkOrderRequest {
+                    workload: self.digest.clone(),
+                    charge: OrderCharge::Offer {
+                        name: OFFER.to_owned(),
+                    },
+                    limits: OrderLimits::default(),
+                    wishes: OrderWishes::default(),
+                    class: OrderClass::Normal,
+                    wait: WaitRule::Open,
+                    retry_on: Vec::new(),
+                    result: None,
+                    intent_key: None,
+                    after: after.map(|order| AfterCondition {
+                        order,
+                        on: AfterOn::Success,
+                    }),
+                    group,
+                },
+                NOW,
+            )
+            .map(|view| view.order)
+        }
+    }
+
+    #[test]
+    fn an_order_waits_only_on_an_order_its_requester_reads_and_that_has_not_ended_without_success()
+    {
+        let rig = door_rig();
+        let theirs = rig.order(0, None, None).expect("agent a orders");
+        let refused = rig
+            .order(1, Some(theirs.id), None)
+            .expect_err("not b's order");
+        assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+        let unknown = rig
+            .order(1, Some(EntityId::now()), None)
+            .expect_err("no such order");
+        assert_eq!(unknown.code, MEMORY_CODE_NOT_FOUND, "{unknown:?}");
+        let then = rig
+            .order(0, Some(theirs.id), None)
+            .expect("a waits on its own order");
+        assert_eq!(then.after.map(|after| after.order), Some(theirs.id));
+
+        rig.vault
+            .cancel_work_order(&theirs.id, Some(rig.agents[0]), NOW)
+            .expect("cancel write")
+            .expect("cancelled");
+        let ended = rig
+            .order(0, Some(theirs.id), None)
+            .expect_err("its upstream ended");
+        assert_eq!(ended.code, MEMORY_CODE_INVALID_STATE, "{ended:?}");
+        assert_eq!(ended.reason_codes, vec!["after".to_owned()]);
+    }
+
+    #[test]
+    fn a_group_takes_members_from_its_maker_under_one_cap_at_distinct_indexes() {
+        let rig = door_rig();
+        let group = EntityId::now();
+        let member = |index: u32, cap: Option<u32>| Some(GroupRequest { group, index, cap });
+        let no_cap = rig
+            .order(0, None, member(0, None))
+            .expect_err("a first member names its cap");
+        assert_eq!(no_cap.code, MEMORY_CODE_BAD_REQUEST, "{no_cap:?}");
+        let first = rig
+            .order(0, None, member(0, Some(2)))
+            .expect("the first member");
+        assert_eq!(first.group, Some(GroupMember { group, index: 0 }));
+        let row = rig
+            .vault
+            .work_order_group(&group)
+            .expect("read")
+            .expect("the group row");
+        assert_eq!((row.cap, row.made_by.actor()), (2, Some(rig.agents[0])));
+
+        let other_cap = rig
+            .order(0, None, member(1, Some(3)))
+            .expect_err("another cap");
+        assert_eq!(other_cap.code, MEMORY_CODE_BAD_REQUEST, "{other_cap:?}");
+        let again = rig
+            .order(0, None, member(0, None))
+            .expect_err("index 0 is taken");
+        assert_eq!(again.code, MEMORY_CODE_BAD_REQUEST, "{again:?}");
+        let stranger = rig
+            .order(1, None, member(1, None))
+            .expect_err("not b's group");
+        assert_eq!(stranger.code, MEMORY_CODE_FORBIDDEN, "{stranger:?}");
+        rig.order(0, None, member(1, None))
+            .expect("a later member names no cap");
+        assert_eq!(
+            rig.vault
+                .work_order_group(&group)
+                .expect("read")
+                .expect("row")
+                .cap,
+            2,
+            "the row never changes"
+        );
+    }
 }

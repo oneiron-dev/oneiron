@@ -33,7 +33,9 @@ use crate::work_order_host::{dispatches_offer, locked_order_pass, machine_facts_
 fn refusal_of_end(why: &GiveUpWhy) -> Option<oneiron::memory::MemoryError> {
     let blocked = match why {
         GiveUpWhy::NeverFits { blocked } | GiveUpWhy::WaitEnded { blocked } => blocked,
-        GiveUpWhy::Ended { .. } | GiveUpWhy::WrittenOff => return None,
+        GiveUpWhy::Ended { .. } | GiveUpWhy::WrittenOff | GiveUpWhy::Upstream { .. } => {
+            return None;
+        }
     };
     let blockers: Vec<Blocker> = blocked.iter().map(|on| on.blocker.clone()).collect();
     let money = blockers

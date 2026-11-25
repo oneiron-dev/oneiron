@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 
 use super::blocker::BlockedOn;
+use super::group::GroupRequest;
 use super::record::{
-    EndKind, OrderCharge, OrderClass, OrderLimits, OrderWishes, ResultBinding, SlotDecision,
-    WaitRule, WorkOrder,
+    AfterCondition, EndKind, OrderCharge, OrderClass, OrderLimits, OrderWishes, ResultBinding,
+    SlotDecision, WaitRule, WorkOrder,
 };
 
 /// The wait rule an order takes when the request names none: it waits.
@@ -42,6 +43,13 @@ pub struct WorkOrderRequest {
     /// The same key with the same input answers the order it made, `replayed: true`.
     #[serde(default)]
     pub intent_key: Option<String>,
+    /// Run only after this order of the caller's reaches `Done`; its giving up or cancel gives
+    /// this one up.
+    #[serde(default)]
+    pub after: Option<AfterCondition>,
+    /// This order's place in an array: the group's cap holds how many members run at once.
+    #[serde(default)]
+    pub group: Option<GroupRequest>,
 }
 
 /// `vault.jobs.orders.get`, `vault.jobs.orders.cancel`: one order by its id.

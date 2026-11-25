@@ -1,4 +1,4 @@
-//! Doors for the work order tests (pass 34, row Q1). Compiled only under
+//! Doors for the work order tests (pass 34, rows Q1 and Q5). Compiled only under
 //! `--cfg oneiron_test_support`. A pinned workload with an approval in force is written
 //! straight into `JOB_WORKLOAD`, standing for the owner's approve (whose presence check and
 //! mesh grant check the workload tests prove), and an order is written as the order door
@@ -6,12 +6,14 @@
 
 use crate::job_workload::{JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadPin};
 use crate::side_table::{self, Named, SideTable};
-use crate::work_order::WorkOrder;
+use crate::work_order::{WorkOrder, WorkOrderGroup};
 use crate::{EntityId, Vault};
 
 const JOB_WORKLOADS: SideTable<[u8; 32], JobWorkload, Named> =
     SideTable::new(&side_table::JOB_WORKLOAD);
 const WORK_ORDERS: SideTable<EntityId, WorkOrder, Named> = SideTable::new(&side_table::WORK_ORDER);
+const WORK_ORDER_GROUPS: SideTable<EntityId, WorkOrderGroup, Named> =
+    SideTable::new(&side_table::WORK_ORDER_GROUP);
 
 /// Pins `pin` and writes the owner `owner`'s approval of it on `machines` for `starters`
 /// until `expires_at_ms`. Returns the workload digest.
@@ -65,6 +67,18 @@ pub fn put_order(vault: &Vault, order: &WorkOrder) {
     vault
         .with_write_txn_grouped(|txn| WORK_ORDERS.put(&vault.store, txn, &order.id, order))
         .expect("the order writes");
+}
+
+/// Writes array group `group`'s row as the order door writes it with the group's first member
+/// (row Q5).
+///
+/// # Panics
+///
+/// When the store write fails.
+pub fn put_order_group(vault: &Vault, group: &WorkOrderGroup) {
+    vault
+        .with_write_txn_grouped(|txn| WORK_ORDER_GROUPS.put(&vault.store, txn, &group.id, group))
+        .expect("the group writes");
 }
 
 /// The settled reply of the wait on `order` until `until`: what the order's writer delivered to
