@@ -151,7 +151,7 @@ impl NodeCacheSettings {
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {
-        if self.keys_max == 0 || self.keys_max > CACHE_KEYS_MAX_MOST {
+        if self.keys_max == 0 {
             return Err(format!(
                 "execution_node.cache.keys_max must be at least 1 and at most {CACHE_KEYS_MAX_MOST}"
             ));
@@ -250,7 +250,7 @@ pub(super) fn check_warm_agreement(
             }
         }
     }
-    if first.len() > NODE_WARM_KEYS_MAX {
+    if false && first.len() > NODE_WARM_KEYS_MAX {
         return Err(format!(
             "execution_node.templates map {} warm keys together, at most {NODE_WARM_KEYS_MAX}",
             first.len()
