@@ -3684,8 +3684,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/experiment_arm/reserve.rs` | src | m | 1 struct · 1 fn · 1 const · 4 crate-vis | UnitReserveRequest | `vault.arms.units.reserve` (design pass 32 r2, sections 3.4, 3.5 and 5.2): one unit claim on an open arm's… |
 | `src/experiment_arm/score.rs` | src | s | 3 struct · 1 fn · 1 const | CalibrationBin, ForecastScore, ForecastScoreRow | The forecast score view (design pass 32 r2, section 4.7): how well each declared runner model's rung… |
 | `src/experiment_arm/tables.rs` | src | s | — | — | The side table `experiment_arm` keeps: each row declares one, and the crate's build script places it in… |
-| `src/experiment_arm/unit_cancel.rs` | src | s | 1 struct · 1 fn · 1 const | UnitCancelRequest | `vault.arms.units.cancel` (design pass 32 r2, section 5.2): the owner, or the agent that reserved a unit… |
-| `src/experiment_arm/unit_view.rs` | src | s | 1 struct · 1 crate-vis | UnitView | One unit claim as the unit doors answer it (`vault.arms.units.reserve`, `.cancel`) |
+| `src/experiment_arm/unit_cancel.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const | StartedUnitCancel, UnitCancel, UnitCancelRequest | `vault.arms.units.cancel` (design pass 32 r2, sections 5.2 and 5.3): the owner, or the agent that reserved a… |
+| `src/experiment_arm/unit_view.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | UnitView | One unit claim as the unit doors answer it (`vault.arms.units.reserve`, `.cancel`) |
 | `src/experiment_arm/wire.rs` | src | s | 4 struct · 3 fn | ArmList, ArmListRequest, ArmRef, ArmView | The `vault.arms.*` verbs' inputs and answers |
 | `src/failure_ladder/blocked_reports.rs` | src | s | 1 struct · 1 fn · 1 re-export · 2 crate-vis | FailureIssueEntry | Blocked-report refs, verification against the vault, and Issues ingestion |
 | `src/failure_ladder/classify.rs` | src | s | 1 fn · 1 const · 1 re-export | — | Typed failure vocabulary and classifier (class, verdict, tier, evidence) |
@@ -4166,18 +4166,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/wire_worktree.rs` | src | m | 5 fn · 3 crate-vis | — | Journaled worktree effects: list, prune, add, remove, and crash-journal settlement |
 | `src/gpu_job/allowance.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | GpuJobAllowance | The per-job maximum an agent's Grant carries for starting GPU jobs (RULING L10-31-STARTER = B: "an agent may… |
 | `src/gpu_job/caller.rs` | src | s | 1 struct · 2 enum · 7 fn · 1 const · 2 crate-vis | GpuJobActor, GpuJobAgent, GpuJobVerb | Who may call the `vault.gpu.jobs.*` verbs (substrate behind grants, 9 Nov; RULING L10-31-STARTER = B) |
+| `src/gpu_job/claim_gate.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const · 1 crate-vis | LineStartRefused, UnitJobStart | The one start gate's line half (design pass 32 r2, section 5.3; LM-8 = A) |
 | `src/gpu_job/connector.rs` | src | s | 4 struct · 6 enum · 1 trait · 2 fn | GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec, GpuJobTerminal, GpuResourceRef +3 | What the engine asks of a GPU provider backend (CROSS-ARCH-0023 C1 B: the connectors live in OSS oneiron; C6… |
-| `src/gpu_job/mod.rs` | src | m | 5 struct · 3 enum · 7 fn · 2 const · 9 re-export · 6 crate-vis | GpuChunk, GpuEndReason, GpuJob, GpuJobError, GpuJobState, GpuJobStepReport, GpuOfferPin, GpuOverrun | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) |
+| `src/gpu_job/mod.rs` | src | m | 5 struct · 3 enum · 7 fn · 2 const · 10 re-export · 6 crate-vis | GpuChunk, GpuEndReason, GpuJob, GpuJobError, GpuJobState, GpuJobStepReport, GpuOfferPin, GpuOverrun | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) |
 | `src/gpu_job/node_view.rs` | src | s | 4 struct · 3 enum · 1 fn | GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved, GpuJobOutputView, GpuJobOutputsView | What `vault.gpu.jobs.status` and `.list` add for a job that one of the vault's own machines runs (pass 33… |
-| `src/gpu_job/offer.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 const · 3 crate-vis | GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape | The offer a host posts for one GPU class and the quote a job starts on (CROSS-ARCH-0023 lifecycle 01, C3) |
+| `src/gpu_job/offer.rs` | src | s | 3 struct · 1 enum · 3 fn · 1 const · 2 crate-vis | GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape | The offer a host posts for one GPU class and the quote a job starts on (CROSS-ARCH-0023 lifecycle 01, C3) |
 | `src/gpu_job/permits.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | GpuJobPermits | The permits of the chunks a host runs, held in memory between steps |
 | `src/gpu_job/result_landing.rs` | src | m | 2 struct · 4 fn | GpuJobResultBinding, GpuJobResultFile | A GPU job's returned result as a proposal (pass 33 row R4; EM-12 = A): each returnable output a vault… |
-| `src/gpu_job/start.rs` | src | m | 1 struct · 2 fn · 4 crate-vis | GpuJobStart | Starting a chunk: the quote shown, reserved whole, written, then created (CROSS-ARCH-0023 lifecycle 01-03… |
+| `src/gpu_job/start.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | GpuJobStart | Starting a chunk: the quote shown, reserved whole, written, then created (CROSS-ARCH-0023 lifecycle 01-03… |
 | `src/gpu_job/step.rs` | src | m | 1 fn · 1 crate-vis | — | The host's step over one live job: one bounded round of provider calls, then one write (CROSS-ARCH-0023… |
 | `src/gpu_job/tables.rs` | src | s | — | — | The side table `gpu_job` keeps: each row declares one, and the crate's build script places it in… |
 | `src/gpu_job/wire.rs` | src | m | 10 struct · 4 fn | GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest, GpuJobQuoteTerms, GpuJobRef, GpuJobStartRequest +2 | The `vault.gpu.jobs.*` verbs' inputs and answers: plain fields the SDK spells, converted at the door to and… |
 | `src/gpu_job/write_off.rs` | src | s | 1 fn | — | Door 10, `vault.gpu.jobs.write_off` (pass 33 row R4, 8.5): the owner closes the hold of a job whose end its… |
-| `src/gpu_line/claim/allocation.rs` | src | m | 4 struct · 2 enum · 8 fn · 1 crate-vis | AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob, UnattributedRecord | The allocation side of the unit claims (row M2-I2, "the hold is the claim"; design pass 32 r2, section 7.2… |
+| `src/gpu_line/claim/allocation.rs` | src | m | 4 struct · 2 enum · 8 fn | AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob, UnattributedRecord | The allocation side of the unit claims (row M2-I2, "the hold is the claim"; design pass 32 r2, section 7.2… |
 | `src/gpu_line/claim/mod.rs` | src | m | 4 struct · 6 enum · 14 fn · 1 re-export · 5 crate-vis | AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose, UnitSettleRefused +2 | The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical… |
 | `src/gpu_line/claim/tables.rs` | src | s | — | — | The side table the unit claims keep: each row declares one, and the crate's build script places it in… |
 | `src/gpu_line/cohort.rs` | src | s | 2 fn · 1 const | — | The comparison's cohorts (design pass 32 r2, section 4.4) |
@@ -4190,7 +4191,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_line/mod.rs` | src | s | 1 mod · 10 re-export · 8 crate-vis | — | The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… |
 | `src/gpu_line/preset.rs` | src | s | 2 struct · 3 fn | LinePresetDocument, LinePresetRef | Line presets (design pass 34, sections 3.2 and 3.3; row L1): a lane's line policy document, carried by a… |
 | `src/gpu_line/refusal.rs` | src | s | 2 struct · 1 fn · 2 crate-vis | LineRefusal, LineRefusalKey | Unmet demand on a GPU line (design pass 32, section 3.5): one row for each budget refusal, `over_rung_cap`… |
-| `src/gpu_line/store.rs` | src | m | 1 struct · 10 fn · 6 crate-vis | MintedLine | The GPU line's stored rows (design pass 32, sections 3.1, 3.2 and 4.1): one `GPU_LINE` row per lane project… |
+| `src/gpu_line/store.rs` | src | m | 1 struct · 11 fn · 6 crate-vis | MintedLine | The GPU line's stored rows (design pass 32, sections 3.1, 3.2 and 4.1): one `GPU_LINE` row per lane project… |
 | `src/gpu_line/tables.rs` | src | s | — | — | The side tables `gpu_line` keeps: each row declares one, and the crate's build script places it in… |
 | `src/gpu_line/wire.rs` | src | s | 7 struct | GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest, GpuLineSetWire, GpuLineView | The `vault.gpu.lines.*` verbs' inputs and answers (design pass 32, section 5) |
 | `src/graph_fs/claim_grep.rs` | src | s | 2 crate-vis | — | Indexed claim grep with search and final-hydration narrowing receipts |
@@ -9912,7 +9913,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/executor_error_policy_requeue.rs` | test | m | — | — | FIX 23347 part 2 (Engine ruling 06:28, 13 Nov): an executor-error park that waits on owner policy is… |
 | `tests/experiment_arm_admit.rs` | test | L | — | — | `vault.arms.admit` and the arm reads (design pass 32 r2, sections 3.3, 4.2, 5.1, 5.2 and 5.5) through the… |
 | `tests/experiment_arm_forecast.rs` | test | m | — | — | `vault.arms.forecast` and the forecast score view (design pass 32 r2, sections 3.3 and 4.7; row M2-D)… |
-| `tests/experiment_arm_reserve.rs` | test | L | — | — | `vault.arms.units.reserve` and `vault.arms.units.cancel` through the engine doors |
+| `tests/experiment_arm_reserve.rs` | test | XL | — | — | `vault.arms.units.reserve` and `vault.arms.units.cancel` through the engine doors |
 | `tests/expiry_boundaries.rs` | test | m | — | — | UC-12 PR 3: the expiry rule is written once (`oneiron_store::expiry`) and each site keeps its verdict at the… |
 | `tests/extraction_claim_evidence.rs` | test | m | — | — | Pinned claim evidence on a bound extraction operand is checked under the job's live read |
 | `tests/extraction_inputs_page.rs` | test | m | — | — | Pages one queued Meso extraction attempt's TURNs under the caller's live read |
