@@ -49,7 +49,7 @@ pub use model_pack::{InstalledModelPack, MODEL_PACK_FILE};
 pub use organs::{
     PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree, host_platform,
 };
-pub use screening::PackInstallRules;
+pub use screening::{ConnectorToolScreen, PackInstallRules, SkippedConnectorTool};
 pub use setup::{
     PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
     PackSetupRisk, PackSetupSecret,
