@@ -294,9 +294,14 @@ impl ExecutionNode {
         let file = &self.shared.file;
         let disabled = read_marker(&marker_beside(file, DISABLED_MARKER_EXTENSION));
         let paused = read_marker(&marker_beside(file, PAUSED_MARKER_EXTENSION));
+        // A drain file that does not read still drains the node. Its error names the file's
+        // path on this machine, which stays in this machine's log: the answer says only why.
         let drained = match self.shared.slots.drained() {
             Ok(drained) => drained,
-            Err(error) => Some(format!("drain_unreadable: {error}")),
+            Err(error) => {
+                tracing::warn!(%error, "the drain file does not read; the node stays drained");
+                Some("drain_unreadable".to_owned())
+            }
         };
         let file_enabled = matches!(&settings, Ok(Some(settings)) if settings.enabled);
         let (policy, owner_paused) = self.owner_controls(&settings);

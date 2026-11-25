@@ -442,7 +442,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/registry/backend.rs` | src | s | 3 struct · 5 fn | ModelBackendPin, ModelCostReceipt, PricedModelBackend | Moved from `crates/oneiron/src/llm/registry/backend.rs` (lib split W2: wire types below the lib) |
 | `src/llm/run_admission/mod.rs` | src | s | 2 mod · 28 re-export | — | — |
 | `src/llm/run_admission/person_billing.rs` | src | s | 1 struct · 1 re-export | BillingAccountFiling | Moved from `crates/oneiron/src/llm/run_admission/person_billing.rs` (lib split W2: wire types below the lib) |
-| `src/llm/run_admission/resident_doors.rs` | src | s | 4 struct | ResidentShareView, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest | Moved from `crates/oneiron/src/llm/run_admission/resident_doors.rs` (lib split W2: wire types below the lib) |
+| `src/llm/run_admission/resident_doors.rs` | src | s | 5 struct | ResidentShareView, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest, UnitSharesView | Moved from `crates/oneiron/src/llm/run_admission/resident_doors.rs` (lib split W2: wire types below the lib) |
 | `src/llm/seat.rs` | src | s | 1 enum · 1 fn · 1 mod · 1 re-export | DescriptionSource | Moved from `crates/oneiron/src/llm/seat.rs` (lib split W2: wire types below the lib) |
 | `src/llm/seat/policy.rs` | src | s | 1 enum · 2 fn | SeatPrecedence | Moved from `crates/oneiron/src/llm/seat/policy.rs` (lib split W2: wire types below the lib) |
 | `src/llm/step/mod.rs` | src | s | 1 mod · 12 re-export | — | — |
