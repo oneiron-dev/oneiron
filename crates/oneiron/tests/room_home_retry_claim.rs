@@ -261,6 +261,7 @@ fn origin() -> TestResult<Origin> {
             conversation_ref: room.to_hex(),
             turn_ref: Some(anchor.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
@@ -321,6 +322,7 @@ fn origin() -> TestResult<Origin> {
             offer_id: card.offer_id.clone(),
             action: OfferAnswer::Join,
             intent_key: format!("{FIXTURE_PATH}:answer:{}", agent_b.to_hex()),
+            check_in_ref: None,
         })?;
         let join = settled
             .join
@@ -344,6 +346,7 @@ fn origin() -> TestResult<Origin> {
                 conversation_ref: room.to_hex(),
                 turn_ref: Some(reply_turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![companion_message(
                     Some(serde_json::json!({
                         "room_reply_to": root.to_hex(),
@@ -436,6 +439,7 @@ fn answer_retry(origin: &Origin, action: &TurnActionAttempt) -> TestResult<Entit
             conversation_ref: action.conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![companion_message(None, 0)],
             occurred_at: origin.vault.now_recorded_at(),
             assertions: Default::default(),
