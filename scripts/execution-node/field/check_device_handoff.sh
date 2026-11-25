@@ -159,8 +159,10 @@ for account in "${OTHERS[@]}"; do
 done
 got="$(basename "${CARD[0]}")=$(open_as_job "${CARD[0]}") $(basename "${CARD[1]}")=$(open_as_job "${CARD[1]}")"
 if [ "$PHASE" = oneiron-only ]; then
-  # Only an open, or a fixture node's ENXIO (no driver behind it, past the permission check), passes (review r9 R9-09).
-  if grep -qvE '=(opened|ENXIO)$' <<< "$(tr ' ' '\n' <<< "$got")"; then check "open-as-job" FAIL "$got: a job holding the job device group cannot open the card"
+  # Only an open or an errno past the permission check (a fixture node's ENXIO: no driver behind it) passes; a
+  # setpriv error line, `closed` or ENOENT (no such file) fails (review r9 R9-09, R0 EM22 20:20).
+  if grep -qvE '=(opened|E[A-Z0-9]+)$' <<< "$(tr ' ' '\n' <<< "$got")" || grep -q '=ENOENT' <<< "$got"; then
+    check "open-as-job" FAIL "$got: a job holding the job device group cannot open the card"
   else check "open-as-job" PASS "$got"; fi
 else
   if grep -qvE '=closed$' <<< "$(tr ' ' '\n' <<< "$got")"; then check "open-as-job" FAIL "$got: open before the grant"
