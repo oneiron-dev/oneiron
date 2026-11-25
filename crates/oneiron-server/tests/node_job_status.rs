@@ -267,8 +267,13 @@ fn a_stop_is_confirmed_only_when_the_unit_is_empty_and_the_lease_waits_for_a_cle
     receipt(jobs.reserve(fixture.issuer, fixture.reserve(second)));
     receipt(jobs.submit(fixture.issuer, fixture.submit(second)));
     let refused = wait_for(&jobs, second, |entry| entry.state == JobState::Ended);
+    // Refused at placement (the slot table withholds the device) or at the
+    // launch: either way before any start.
     assert!(
-        matches!(&refused.end, Some(JobEnd::LaunchRefused { .. })),
+        matches!(
+            &refused.end,
+            Some(JobEnd::Refused { .. } | JobEnd::LaunchRefused { .. })
+        ),
         "no new job takes a device that waits for its probe: {:?}",
         refused.end
     );
