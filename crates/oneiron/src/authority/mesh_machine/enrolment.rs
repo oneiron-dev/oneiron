@@ -312,6 +312,13 @@ impl Vault {
         Ok(pairing.claims.slip_id)
     }
 
+    /// Why [`Self::pair_own_mesh_machine_as_owner`] refuses an install whose own
+    /// profile no owner answered, and the owner's step that answers it.
+    pub const PAIR_SELF_UNANSWERED: &str = "this install's own MACHINE has no answered \
+        profile, so no replica could prove it: the owner first answers it on this install \
+        (POST /v1/owner/machines/answer with {\"machine\": \"<this MACHINE, 32 hex>\", \
+        \"answer\": \"yours\"}), then pairs it";
+
     /// Pairs this install's own MACHINE as a machine of its vault
     /// (PLAN-HOME-ISSUER-MESH-PROOF, R6 1.5). It mints a pairing slip held by
     /// that MACHINE under its machine key, carrying the mesh verb of every
@@ -342,6 +349,19 @@ impl Vault {
         let identity = self.mesh_binding_identity_as_owner(owner)?;
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
+        // A replica proves a MACHINE only by a profile its owner answered
+        // (`proving_profile`); a serving start enrols this install as
+        // `unanswered`, so a pairing minted before the answer would bind and
+        // grant on every replica and still prove nothing there.
+        if self
+            .authority_view_readonly_in_txn(&txn)?
+            .machine_proof_key(identity.machine)
+            != Some(identity.device_key)
+        {
+            return Err(crate::error::Error::Record(
+                crate::error::RecordError::AuthorityRefused(Self::PAIR_SELF_UNANSWERED),
+            ));
+        }
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;

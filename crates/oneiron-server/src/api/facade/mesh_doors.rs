@@ -30,6 +30,24 @@ pub(crate) async fn vault_mesh_identity(
     .await
 }
 
+/// The refusal a mesh write gets on an install that holds no host issuer for
+/// the vault. A binding and a grant are this host's own signed rows, so
+/// without one it signs neither. `with_issuer` alone would answer an
+/// unexplained 401 (REVIEW-10531 P1).
+fn require_host_issuer(server: &SyncServer) -> Result<(), oneiron::memory::MemoryError> {
+    if server.host_issuer().is_some() {
+        return Ok(());
+    }
+    Err(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_INVALID_STATE,
+        "this install holds no host issuer for the vault, so it signs no mesh binding or grant \
+         here",
+        &[
+            "A replica that joined its home takes back the vault root's escrowed issuer seed when its keystore is installed at a start after its first sync (FIX-LIST 10770). Its start then logs no 'serves without signing as its root'.",
+        ],
+    ))
+}
+
 /// The same host issuer pairing uses; the caller's proof reaches the writer.
 pub(crate) async fn vault_mesh_bind_machine(
     server: &Arc<SyncServer>,
@@ -41,6 +59,7 @@ pub(crate) async fn vault_mesh_bind_machine(
         auth,
         "vault.mesh.bind_machine",
         move |server, owner| {
+            require_host_issuer(server)?;
             let bound = MeshMachineBound {
                 machine: input.machine,
                 endpoint_key: input.address.endpoint_key,
@@ -75,6 +94,7 @@ pub(crate) async fn vault_mesh_pair_self(
         auth,
         "vault.mesh.pair_self",
         |server, owner| {
+            require_host_issuer(server)?;
             let mut binding = crate::api::pairing::with_issuer(server, |issuer| {
                 server.vault().pair_own_mesh_machine_as_owner(
                     issuer,
@@ -107,6 +127,7 @@ pub(crate) async fn vault_mesh_set_alpn_grant(
         auth,
         "vault.mesh.set_alpn_grant",
         move |server, owner| {
+            require_host_issuer(server)?;
             crate::api::pairing::with_issuer(server, |issuer| {
                 server
                     .vault()

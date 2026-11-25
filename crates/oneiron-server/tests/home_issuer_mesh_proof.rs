@@ -108,8 +108,15 @@ impl Home {
         )
     }
 
-    /// `verb` as the owner, through the root credential with a fresh proof.
+    /// `verb` as the owner, at its facade door.
     async fn post(&self, verb: &str, body: &Value) -> (StatusCode, Value) {
+        self.post_path(&format!("/v1/core/facade/{verb}"), body)
+            .await
+    }
+
+    /// `body` posted to the route at `path` as the owner, through the root credential with a
+    /// fresh proof.
+    async fn post_path(&self, path: &str, body: &Value) -> (StatusCode, Value) {
         let timestamp = self.vault.now_recorded_at();
         let nonce = EntityId::now().to_hex();
         let challenge = format!("oneiron-request:{timestamp}:{nonce}");
@@ -120,7 +127,7 @@ impl Home {
         let binding = json!({"timestamp": timestamp, "nonce": nonce, "signature": hex(&signature)});
         let request = Request::builder()
             .method("POST")
-            .uri(format!("/v1/core/facade/{verb}"))
+            .uri(path)
             .header("content-type", "application/json")
             .header(
                 "authorization",
@@ -180,10 +187,12 @@ impl Home {
     }
 }
 
-/// The owner pairs the home's own MACHINE. The answered body names this install's MACHINE, its
-/// machine key and its endpoint key. That body binds as it is, so the pairing stands, held by
-/// the MACHINE under its machine key. Both job ALPNs are then granted, and `mesh_peer_machine`
-/// proves the home on `oneiron/job/1`, as a node's gate asks.
+/// The owner pairs the home's own MACHINE once he has answered it. A serving start enrols this
+/// install `unanswered`, and a replica proves no unanswered MACHINE, so the pairing refuses until
+/// the answer and names that step. The answered body names this install's MACHINE, its machine
+/// key and its endpoint key. That body binds as it is, so the pairing stands, held by the MACHINE
+/// under its machine key. Both job ALPNs are then granted, and `mesh_peer_machine` proves the
+/// home on `oneiron/job/1`, as a node's gate asks.
 #[test]
 fn the_owner_pairs_the_homes_own_machine_and_it_is_proven_on_the_job_alpn() {
     run_on_engine_stack("home-issuer-mesh-proof", || async {
@@ -192,6 +201,28 @@ fn the_owner_pairs_the_homes_own_machine_and_it_is_proven_on_the_job_alpn() {
         assert_eq!(status, StatusCode::OK, "{identity}");
         let machine = EntityId::from_hex(identity["machine"].as_str().unwrap()).unwrap();
         let endpoint_key = key_of(&identity["endpoint_key"]);
+
+        let (status, refused) = home.post("vault.mesh.pair_self", &json!({})).await;
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "an unanswered home is not paired: {refused}"
+        );
+        assert!(
+            refused.to_string().contains("/v1/owner/machines/answer"),
+            "the refusal names the owner's step: {refused}"
+        );
+        let (status, answered) = home
+            .post_path(
+                "/v1/owner/machines/answer",
+                &json!({"machine": machine.to_hex(), "answer": "yours"}),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner answers the home: {answered}"
+        );
 
         let (status, binding) = home.post("vault.mesh.pair_self", &json!({})).await;
         assert_eq!(
