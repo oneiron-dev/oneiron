@@ -44,8 +44,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, ScopeReport,
-    SignedJobSubmit, TemplateOffer, WorkloadPin,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer,
+    ScopeReport, SignedJobSubmit, TemplateOffer, WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -257,6 +257,12 @@ pub trait NodeKeys: Send + Sync {
     /// wants.
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Tail` from `peer`: the key's log from an offset (pass 34, 7.2).
+    fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
+        let _ = (peer, request);
         JobStatusAnswer::Refused(JobRefusal::NotEnabled)
     }
 
