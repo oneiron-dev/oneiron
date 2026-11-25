@@ -39,6 +39,7 @@ pub mod receipt;
 mod admission;
 mod end;
 mod launch;
+mod outputs;
 mod recovery;
 mod status;
 
