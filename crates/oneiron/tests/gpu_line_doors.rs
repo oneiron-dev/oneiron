@@ -1063,12 +1063,12 @@ fn every_floor_fits_its_own_side_of_the_allowance() {
 /// neither.
 #[test]
 fn a_two_rule_mint_commits_its_cohort_seed_and_hides_it() {
-    let fixture = fixture();
-    let lane = fixture.project_under(fixture.root(), 2);
+    let two_rule = fixture();
+    let lane = two_rule.project_under(two_rule.root(), 2);
     let mut two = policy();
     two.budget.rules = vec![RuleRef::PAYOFF_SHARE_1, RuleRef::EVEN_SPLIT_1];
-    fixture.owner_set("set", lane, two, NOW_MS);
-    let stored = fixture
+    two_rule.owner_set("set", lane, two, NOW_MS);
+    let stored = two_rule
         .vault
         .gpu_line_period(&lane, 0)
         .expect("read")
@@ -1086,7 +1086,7 @@ fn a_two_rule_mint_commits_its_cohort_seed_and_hides_it() {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
         "lower hex: {commit}"
     );
-    let shown = fixture
+    let shown = two_rule
         .view(lane, NOW_MS)
         .period
         .expect("the view has period 0");
