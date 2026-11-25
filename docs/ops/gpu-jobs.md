@@ -184,6 +184,33 @@ template under the pinned digest and must not refuse. A refusal names
 `workload_expired`, `starter_not_named`, `request_above_pin`,
 `machine_not_approved`, `machine_unreachable` or `machine_refuses`.
 
+## Machine status (`vault.machines.status`)
+
+The owner's read of every machine of his: the fields `vault.machines.list`
+shows, the machine's latest capacity claim (cores, memory, GPU memory, disk,
+power and the agents it can run) with the time the machine measured it and
+its age, and, with `refresh: true`, what each machine's execution node
+answers to `Node` now. Only the vault's issuer of vault machine jobs asks the
+nodes, each within `[gpu_jobs.vault_machine] call_timeout_secs`, all at once.
+A node that answers shows `answered` (enabled, paused, drained, each template
+with its digest, the launch scopes and what each enforces, disk); one that
+refuses this issuer shows `refused` with the refusal; one that gives no answer
+shows `unknown`, never idle, and its capacity claim stays its last sample.
+Nothing is stored: a node's answer is a sample.
+
+## Machine execution (`vault.machines.execution.get`)
+
+What each machine the vault holds a job grant for offers its GPU jobs now,
+asked of the machine by the vault's issuer: the owner reads it, and so does an
+agent whose own Grant names the verb. Per machine it shows the two job grants
+the vault holds (`oneiron/job/1`, `oneiron/job-status/1`), the node's answer to
+`Node` in the form above, its GPUs as its driver read them when asked (asked
+only once the node answered), and the keys it holds that have not ended (asked
+under the status grant, even when the job route refuses). Each ask shows
+`not_asked` with why, `answered`, `refused` or `unknown`, with when it was
+asked. Hourly capacity is never shown as availability. Name one `machine` to
+read it whether or not it holds a grant.
+
 ## Restart
 
 A permit cannot be stored. When the server stops, each live chunk's permit is

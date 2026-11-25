@@ -539,9 +539,29 @@ impl GpuJobConnector for VaultMachineConnector {
         let key = chunk.idempotency_key.as_str();
         self.keys.with(key, || self.write_off_key(key, now_ms))
     }
+
+    /// Row R4: the live orphans are asked to stop again, and the owed results returned.
+    fn housekeeping(&self) {
+        self.parts.orphans.follow_live();
+        let returns = self.result_returns();
+        for key in returns.owed_keys() {
+            self.keys.with(&key, || returns.follow_owed_return(&key));
+        }
+    }
 }
 
 impl VaultMachineConnector {
+    /// The returned result's parts, from this connector's.
+    fn result_returns(&self) -> super::returns::ResultReturns {
+        super::returns::ResultReturns {
+            vault: Arc::clone(&self.parts.vault),
+            issuer: self.parts.issuer,
+            client: Arc::clone(&self.parts.client),
+            signer: Arc::clone(&self.parts.signer),
+            clock: Arc::clone(&self.parts.clock),
+        }
+    }
+
     /// `write_off` under the key's lock.
     fn write_off_key(&self, key: &str, now_ms: u64) -> Result<(), GpuConnectorError> {
         let Some(row) = self.vault().job_dispatch(key).map_err(store)? else {

@@ -80,9 +80,11 @@ where
                 // The resident's pinned share: parked for the owner's share write (D3).
                 BudgetDenied::ResidentShareSpent {
                     resident,
+                    unit,
                     needed_units,
                 } => BudgetTrapCause::ResidentShare {
                     resident,
+                    unit,
                     needed_units,
                 },
                 _ => BudgetTrapCause::Spent { asked_units },

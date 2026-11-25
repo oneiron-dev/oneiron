@@ -23,10 +23,16 @@ pub struct SetResidentShareRequest {
     /// no longer fits it; soft, spend past it writes an overdraft receipt.
     #[serde(default)]
     pub pinned: bool,
+    /// The unit of the walletless allocation the share governs (Engine
+    /// RESIDENT-SHARE-UNIT = A). Absent names the host's one walletless
+    /// unit; with none or several, the set is refused with `unit_required`.
+    #[serde(default)]
+    pub unit: Option<String>,
 }
 
-/// One resident's share and its depletion on the allocation it last drew
-/// on.
+/// One resident's share in its block's unit, and its depletion on the
+/// block's allocation (on the newest generation it drew on in that unit,
+/// when no host account names the allocation).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResidentShareView {
     pub resident: String,
@@ -43,8 +49,17 @@ pub struct ResidentShareView {
     pub overdrafts: u64,
 }
 
-/// Every resident share on record, by resident.
+/// Every resident share on record, one block per walletless unit.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResidentSharesView {
+    /// One block per walletless allocation the host selects; with none,
+    /// one per unit a share or a charge is on record in.
+    pub allocations: Vec<UnitSharesView>,
+}
+
+/// Every resident's share and depletion in one walletless unit.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UnitSharesView {
+    pub unit: String,
     pub residents: Vec<ResidentShareView>,
 }
