@@ -14,7 +14,6 @@ use oneiron::EntityId;
 use oneiron::job_workload::{
     BoundReport, BoundRequirement, BoundStrength, DeviceClaim, DeviceKind, ScopeBound, Sharing,
 };
-use oneiron_server::gpu_execution_node::NodeKeys;
 use oneiron_server::gpu_execution_node::jobs::job_unit::RECEIPT_FILE_NAME;
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, JobUnitPhase, NodeControls, NodeGate, NodeJobs, NodeKey,
@@ -1288,4 +1287,71 @@ fn a_sealed_keys_missing_receipt_file_is_written_again_from_the_journal() {
     jobs.tick();
     let bytes = std::fs::read(&file).expect("receipt file written again");
     assert!(!bytes.is_empty());
+}
+
+#[test]
+fn a_launched_keys_staged_code_is_removed_at_its_release_and_never_while_a_process_may_read_it() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let pin = pin("tools/units/run.sh");
+    let payload_dir = |key: &str| JobKeyId::for_key(key).payload_dir(&fixture.node.paths.work_dir);
+    let unstaged = |key: &str| {
+        fixture
+            .node
+            .stager
+            .unstaged()
+            .into_iter()
+            .filter(|(unstaged, _)| unstaged == key)
+            .collect::<Vec<_>>()
+    };
+
+    // The prepare step refused the launch: the workload never ran, its
+    // disk is no longer booked, and its staged code goes at the release.
+    let refused = "job-37/refused";
+    fixture
+        .node
+        .units
+        .set_next_start(ScriptedStart::RefuseInPrepare(
+            "scope_unavailable".to_owned(),
+        ));
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(refused, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(refused, &pin)));
+    wait_for(&jobs, refused, |entry| entry.state == JobState::Launching);
+    jobs.tick();
+    wait_for(&jobs, refused, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(jobs.booked_disk_mib(), 0);
+    assert_eq!(
+        unstaged(refused),
+        vec![(refused.to_owned(), payload_dir(refused))]
+    );
+
+    // A workload that ran keeps its code while it runs, and while the
+    // release check cannot tell that no process of its unit is left.
+    fixture.node.units.set_next_start(ScriptedStart::Run);
+    let ran = "job-37/ran";
+    fixture.run(&jobs, ran);
+    jobs.tick();
+    assert!(unstaged(ran).is_empty());
+    fixture.node.devices.set_probe_fails(true);
+    fixture.node.units.exit(ran, 0);
+    jobs.tick();
+    wait_for(&jobs, ran, |entry| {
+        matches!(entry.release, DeviceRelease::Unconfirmed { .. })
+    });
+    jobs.tick();
+    assert!(unstaged(ran).is_empty());
+
+    // The clean probe releases the key: its code is removed once, before
+    // `released`, and its outputs' disk stays booked until the issuer's
+    // acknowledgement.
+    fixture.node.devices.set_probe_fails(false);
+    jobs.tick();
+    wait_for(&jobs, ran, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    jobs.tick();
+    assert_eq!(unstaged(ran), vec![(ran.to_owned(), payload_dir(ran))]);
+    assert_eq!(jobs.booked_disk_mib(), pin.request.disk_mib);
 }
