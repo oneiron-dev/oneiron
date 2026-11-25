@@ -65,6 +65,7 @@ fn standing_request(actor: &str, project: &str) -> CreateStandingGrantRequest {
                 project: project.to_owned(),
                 audience: vec!["owen".to_owned()],
                 budget: None,
+                compute: None,
             },
         }),
         check_in_ref: None,

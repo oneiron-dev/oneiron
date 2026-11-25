@@ -39,9 +39,10 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::job_workload::{
-    JOB_ALPN, TEMPLATE_CHANGED, WorkloadAgent, WorkloadApproveRequest, WorkloadCaller,
-    WorkloadChange, WorkloadError, WorkloadNodeAnswer, WorkloadPin, WorkloadPinRequest,
-    WorkloadRef, WorkloadStanding, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter,
+    JOB_ALPN, NoScreenModel, TEMPLATE_CHANGED, WorkloadAgent, WorkloadApproveRequest,
+    WorkloadCaller, WorkloadChange, WorkloadError, WorkloadNodeAnswer, WorkloadPin,
+    WorkloadPinRequest, WorkloadRef, WorkloadStanding, WorkloadStartAsk, WorkloadStartRefusal,
+    WorkloadStarter,
 };
 use oneiron::test_doors::steward;
 use oneiron::verbs::{
@@ -176,20 +177,35 @@ impl Rack {
         &self.mesh.machine(0).device.vault
     }
 
-    /// The owner pins `tag`; answers its digest.
+    /// The owner pins `tag`, which goes on his own proof; answers its
+    /// digest.
     fn pin(&self, tag: &str) -> String {
-        self.pin_as(WorkloadCaller::Owner(&self.owner), tag)
-    }
-
-    /// `caller` pins `tag`; answers its digest.
-    fn pin_as(&self, caller: WorkloadCaller<'_>, tag: &str) -> String {
         let pinned = self
             .vault()
-            .pin_job_workload(caller, &pin_request(tag), NOW_MS)
-            .expect("the caller pins");
+            .memory(self.owner_id, EdgeActorClass::Human)
+            .pin_job_workload(&pin_request(tag), &NoScreenModel, NOW_MS)
+            .expect("the owner pins");
         assert!(pinned.changed, "a new pin is written");
-        assert_eq!(pinned.workload.standing, WorkloadStanding::Pinned);
+        assert_eq!(pinned.workload.standing, WorkloadStanding::Cleared);
         pinned.workload.digest
+    }
+
+    /// `agent` pins `tag`, which no grant covers and no model screens: the
+    /// pin waits on its check-in (pass 34, 6.5). Answers its digest.
+    fn pin_waits_as(&self, agent: &WorkloadAgent, tag: &str) -> String {
+        let request = pin_request(tag);
+        let waits = self
+            .vault()
+            .memory(agent.actor(), EdgeActorClass::Agent)
+            .pin_job_workload(&request, &NoScreenModel, NOW_MS);
+        assert!(
+            matches!(
+                waits,
+                Err(WorkloadError::Vault(oneiron::Error::CheckInPending(_)))
+            ),
+            "the agent's first pin outside any grant waits: {waits:?}"
+        );
+        request.pin.digest().expect("the pin's digest")
     }
 
     /// The owner approves `digest` on `machines` for `starters`.
@@ -716,6 +732,9 @@ fn an_agent_cannot_approve_a_workload() {
             .expect("the Grant's id")
             .to_owned();
 
+        // Pass 34, 6.5: no compute.pin grant covers the pin and no model
+        // screens it here, and the family has pinned nothing before, so the
+        // fallback is unsure and the pin waits on its check-in.
         let (status, pinned) = as_agent(
             &served,
             &agent,
@@ -723,17 +742,19 @@ fn an_agent_cannot_approve_a_workload() {
             pin_json("agent-pin"),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "the agent pins: {pinned}");
-        assert_eq!(pinned["workload"]["standing"], "pinned", "{pinned}");
         assert_eq!(
-            pinned["workload"]["pinned_under"],
-            json!(grant),
-            "the pin records the Grant it was made under: {pinned}"
+            status,
+            StatusCode::ACCEPTED,
+            "the agent's pin waits on its check-in: {pinned}"
         );
-        let digest = pinned["workload"]["digest"]
-            .as_str()
-            .expect("the workload digest")
-            .to_owned();
+        assert_eq!(
+            pinned["error"]["pending"]["kind"], "check_in",
+            "it names its pending check-in: {pinned}"
+        );
+        let digest = pin_request("agent-pin")
+            .pin
+            .digest()
+            .expect("the pin's digest");
 
         let (status, refused) = as_agent(
             &served,
@@ -772,7 +793,16 @@ fn an_agent_cannot_approve_a_workload() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "the owner reads it: {read}");
-        assert_eq!(read["standing"], "pinned", "still not approved: {read}");
+        assert_eq!(read["standing"], "waiting", "its check-in waits: {read}");
+        assert_eq!(
+            read["pinned_under"],
+            json!(grant),
+            "the pin records the Grant it was made under: {read}"
+        );
+        assert_eq!(
+            read["check_in"]["screen"]["by"], "fallback",
+            "with no model the fallback screened it: {read}"
+        );
         assert_eq!(
             read["approval"],
             Value::Null,
@@ -786,8 +816,8 @@ fn an_agent_cannot_approve_a_workload() {
             WorkloadStarter::Grant(grant),
             NOW_MS,
         );
-        assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadNotApproved));
-        assert!(!asked, "an unapproved workload asks no machine");
+        assert_eq!(verdict, Err(WorkloadStartRefusal::WorkloadWaiting));
+        assert!(!asked, "a workload whose check-in waits asks no machine");
     });
 }
 
@@ -807,7 +837,7 @@ fn a_starter_reads_a_workload_only_while_its_approval_stands() {
         let by_pinner = WorkloadCaller::Agent(&pinner);
         let by_starter = WorkloadCaller::Agent(&starter);
         let expires_at_ms = NOW_MS + 3_600_000;
-        let digest = rack.pin_as(by_pinner, "starter-reads");
+        let digest = rack.pin_waits_as(&pinner, "starter-reads");
         assert!(
             matches!(
                 rack.get_at(by_starter, &digest, NOW_MS),
@@ -901,9 +931,10 @@ fn a_pin_that_holds_a_secret_is_refused() {
             .args
             .push("token=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned());
         let digest = request.pin.digest().expect("the pin's digest");
-        let refused =
-            rack.vault()
-                .pin_job_workload(WorkloadCaller::Owner(&rack.owner), &request, NOW_MS);
+        let refused = rack
+            .vault()
+            .memory(rack.owner_id, EdgeActorClass::Human)
+            .pin_job_workload(&request, &NoScreenModel, NOW_MS);
         assert!(
             matches!(
                 refused,
