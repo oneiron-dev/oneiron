@@ -13,11 +13,13 @@
 //! `job-exec` takes the id the prepare step gave it ([`super::exec`]).
 //!
 //! The table is `JOB_IDS_ROOT`, root's alone: one file per id in use, named by
-//! the id and holding the unit's name. The prepare step takes the lowest id
+//! the id and holding the unit's name and the process that reserved it (its
+//! pid and start time). The prepare step takes the lowest id
 //! with no file, no account or group of that number, and no process holding
 //! it in any of its real, effective, saved or file-system ids or as a
 //! supplementary group. A file is taken back only when its unit is no longer
-//! running and no process holds the id. The end step removes the file once
+//! running, its reserving process has ended (a probe reserves its id before
+//! its unit exists) and no process holds the id. The end step removes the file once
 //! the unit's group is empty and the job's files are the engine's
 //! ([`super::handover`]). Every change is made under one lock on the table;
 //! the slow questions (the units' states, the name service) are asked before
@@ -62,6 +64,14 @@ const UNIT_STATE_WAIT: Duration = Duration::from_secs(2);
 
 /// The most units one `systemctl show` names.
 const UNITS_PER_QUERY: usize = 256;
+
+/// The most times one allocation takes the lock: again only for an id the
+/// name service had not been asked about.
+const ALLOCATE_ROUNDS: u32 = 3;
+
+/// The most units one allocation asks about again under the lock before it
+/// takes one's id back.
+const CONFIRMATIONS_MAX: u32 = 2;
 
 /// The uid and gid one job unit runs as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,9 +137,9 @@ pub(super) fn choose(
     Choice::Exhausted
 }
 
-/// The name service's answers for the ids one allocation tries, kept so that
-/// the choice made under the lock asks again only for an id the first choice
-/// did not try.
+/// The name service's answers for the ids one allocation tries. The choice
+/// made under the lock only reads them: an id it has no answer for is
+/// looked up after the lock is dropped, and the choice is made again.
 #[derive(Default)]
 struct NameAnswers {
     named: BTreeMap<u32, bool>,
@@ -152,12 +162,25 @@ impl NameAnswers {
     }
 }
 
-/// Gives `unit` an id of `range` and records it in the table.
+/// The ids a process holds: those `/proc` lists, and those whose entry's
+/// reserving process still runs (a probe reserves its id before its unit
+/// exists).
+fn held_ids(entries: &Entries) -> Result<BTreeSet<u32>, String> {
+    let mut held = ids_held_by_processes()?;
+    held.extend(entries.reserved.iter().copied());
+    Ok(held)
+}
+
+/// Gives `unit` an id of `range` and records it in the table, with this
+/// process as the entry's reserving process.
 ///
 /// The units' states and the name service are asked first, without the lock:
-/// one choice made then names the ids to ask about. The choice is then made
-/// again under the lock, on the table and `/proc` as they are then, and with
-/// those answers: a unit the first read did not name counts as running.
+/// one choice made then names the ids to ask about. The choice is made again
+/// under the lock, on the table and `/proc` as they are then. Under the lock
+/// it asks the name service nothing (an id with no answer yet sends the
+/// allocation round again), and an id is taken back only after one more
+/// question to the service manager about that one unit: a unit started
+/// since the first answer is running again (review r9 R9-01, R9-04).
 ///
 /// # Errors
 ///
@@ -166,54 +189,102 @@ impl NameAnswers {
 pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIdentity, String> {
     let before = entries_in(&open_table()?)?;
     let owners: BTreeSet<String> = before
+        .owners
         .values()
         .map(String::as_str)
         .filter(|owner| *owner != unit && is_table_unit(owner))
         .map(unit_id)
         .collect();
-    let ended = units_ended(&owners);
-    let mut owner_ended = |owner: &str| !is_table_unit(owner) || ended.contains(&unit_id(owner));
+    let mut ended = units_ended(&owners);
     let mut names = NameAnswers::default();
-    let _ = choose(
-        range.clone(),
-        unit,
-        engine_uid,
-        &before,
-        &ids_held_by_processes()?,
-        &mut owner_ended,
-        &mut |uid| names.named(uid),
-    );
-    let table = Table::lock(LOCK_WAIT)?;
-    let taken = table.entries()?;
-    let held = ids_held_by_processes()?;
-    let choice = choose(
-        range.clone(),
-        unit,
-        engine_uid,
-        &taken,
-        &held,
-        &mut owner_ended,
-        &mut |uid| names.named(uid),
-    );
-    let uid = match choice {
-        Choice::Own(uid) => return Ok(JobIdentity::of(uid)),
-        Choice::Free(uid) => uid,
-        Choice::TakeBack(uid) => {
-            table.remove(uid)?;
-            uid
+    for round in 1..=ALLOCATE_ROUNDS {
+        let before = entries_in(&open_table()?)?;
+        let _ = choose(
+            range.clone(),
+            unit,
+            engine_uid,
+            &before.owners,
+            &held_ids(&before)?,
+            &mut |owner: &str| owner_ended(owner, &ended),
+            &mut |uid| names.named(uid),
+        );
+        let table = Table::lock(LOCK_WAIT)?;
+        let taken = table.entries()?;
+        let held = held_ids(&taken)?;
+        let mut unanswered = Vec::new();
+        let mut confirmations = 0;
+        let choice = loop {
+            let choice = choose(
+                range.clone(),
+                unit,
+                engine_uid,
+                &taken.owners,
+                &held,
+                &mut |owner: &str| owner_ended(owner, &ended),
+                &mut |uid| {
+                    names.named.get(&uid).copied().unwrap_or_else(|| {
+                        unanswered.push(uid);
+                        true
+                    })
+                },
+            );
+            let Choice::TakeBack(uid) = choice else {
+                break choice;
+            };
+            let owner = taken.owners.get(&uid).cloned().unwrap_or_default();
+            if confirmations < CONFIRMATIONS_MAX && unit_ended_now(&owner) {
+                break choice;
+            }
+            // Running again, or not asked again: it is not taken back.
+            confirmations += 1;
+            ended.remove(&unit_id(&owner));
+        };
+        if !unanswered.is_empty() && round < ALLOCATE_ROUNDS {
+            drop(table);
+            for uid in unanswered {
+                names.named(uid);
+            }
+            continue;
         }
-        Choice::Exhausted => {
-            return Err(format!(
-                "job_uids_exhausted: no id of {}..{} is free ({} taken, {} account lookups failed)",
-                range.start,
-                range.end,
-                taken.len(),
-                names.failures
-            ));
-        }
-    };
-    table.write(uid, unit)?;
-    Ok(JobIdentity::of(uid))
+        let uid = match choice {
+            Choice::Own(uid) | Choice::Free(uid) => uid,
+            Choice::TakeBack(uid) => {
+                table.remove(uid)?;
+                uid
+            }
+            Choice::Exhausted => {
+                return Err(format!(
+                    "job_uids_exhausted: no id of {}..{} is free ({} taken, {} account lookups failed)",
+                    range.start,
+                    range.end,
+                    taken.owners.len(),
+                    names.failures
+                ));
+            }
+        };
+        table.write(uid, unit)?;
+        return Ok(JobIdentity::of(uid));
+    }
+    Err("job_uids_exhausted: no allocation round completed".to_owned())
+}
+
+/// Whether the table's `owner` no longer runs, as `ended` (one answer of the
+/// service manager) says. An entry that names no job or probe unit is no
+/// write of this table's and is never taken back.
+fn owner_ended(owner: &str, ended: &BTreeSet<String>) -> bool {
+    is_table_unit(owner) && ended.contains(&unit_id(owner))
+}
+
+/// Whether `owner` no longer runs, asked now about that one unit.
+fn unit_ended_now(owner: &str) -> bool {
+    if !is_table_unit(owner) {
+        return false;
+    }
+    let id = unit_id(owner);
+    let mut args = vec!["show", "--property=Id,ActiveState,LoadState"];
+    args.push(&id);
+    run_tool("systemctl", &args, UNIT_STATE_WAIT)
+        .is_ok_and(|text| !ended_in_show(&text, &[id.as_str()]).is_empty())
 }
 
 /// Removes `identity`'s file when it names `unit`, waiting at most `wait` for
@@ -232,12 +303,13 @@ pub fn release(identity: JobIdentity, unit: &str, wait: Duration) -> Result<bool
 }
 
 /// The identity the table gives `unit`, read without the lock: the end step's
-/// answer when the job's exchange file was never written.
+/// answer for the job's ids (review r8 R8-04, r9 R9-13).
 #[must_use]
 pub fn identity_of(unit: &str) -> Option<JobIdentity> {
     let dir = open_table().ok()?;
     entries_in(&dir)
         .ok()?
+        .owners
         .into_iter()
         .find(|(_, owner)| owner == unit)
         .map(|(uid, _)| JobIdentity::of(uid))
@@ -248,12 +320,23 @@ fn open_table() -> Result<OwnedFd, String> {
     root_dir(JOB_IDS_ROOT, 0o700).map_err(|why| format!("job_ids_table: {why}"))
 }
 
-/// Every id the table `dir` names, with its unit; an entry that does not read
-/// is an id taken by a unit no one knows.
-fn entries_in(dir: &OwnedFd) -> Result<BTreeMap<u32, String>, String> {
+/// The table as one read gives it.
+struct Entries {
+    /// Every id the table names, with its unit; an entry that does not read
+    /// is an id taken by a unit no one knows.
+    owners: BTreeMap<u32, String>,
+    /// The ids whose entry's reserving process still runs.
+    reserved: BTreeSet<u32>,
+}
+
+/// The table in `dir`.
+fn entries_in(dir: &OwnedFd) -> Result<Entries, String> {
     let listing =
         std::fs::read_dir(JOB_IDS_ROOT).map_err(|error| format!("job_ids_table: {error}"))?;
-    let mut taken = BTreeMap::new();
+    let mut entries = Entries {
+        owners: BTreeMap::new(),
+        reserved: BTreeSet::new(),
+    };
     for entry in listing.flatten() {
         let Some(uid) = entry
             .file_name()
@@ -262,18 +345,55 @@ fn entries_in(dir: &OwnedFd) -> Result<BTreeMap<u32, String>, String> {
         else {
             continue;
         };
-        taken.insert(uid, owner_in(dir, uid).unwrap_or_default());
+        let (owner, reserver) = entry_text(dir, uid)
+            .map(|text| parse_entry(&text))
+            .unwrap_or_default();
+        if reserver.is_some_and(|(pid, started)| process_started_at(pid) == Some(started)) {
+            entries.reserved.insert(uid);
+        }
+        entries.owners.insert(uid, owner);
     }
-    Ok(taken)
+    Ok(entries)
 }
 
-/// The unit the entry of `uid` names, if it reads.
-fn owner_in(dir: &OwnedFd, uid: u32) -> Option<String> {
+/// The text of the entry of `uid`, if it reads.
+fn entry_text(dir: &OwnedFd, uid: u32) -> Option<String> {
     read_beneath(borrow(dir), &uid.to_string(), ENTRY_MAX_BYTES, Some(0))
         .ok()
         .flatten()
         .and_then(|bytes| String::from_utf8(bytes).ok())
-        .map(|text| text.trim().to_owned())
+}
+
+/// The unit the entry of `uid` names, if it reads.
+fn owner_in(dir: &OwnedFd, uid: u32) -> Option<String> {
+    entry_text(dir, uid).map(|text| parse_entry(&text).0)
+}
+
+/// An entry's unit (its first line) and its reserving process (pid and
+/// start time, the second line), when it names one.
+pub(super) fn parse_entry(text: &str) -> (String, Option<(u32, u64)>) {
+    let mut lines = text.lines();
+    let owner = lines.next().unwrap_or_default().trim().to_owned();
+    let reserver = lines.next().and_then(|line| {
+        let (pid, started) = line.trim().split_once(' ')?;
+        Some((pid.parse().ok()?, started.parse().ok()?))
+    });
+    (owner, reserver)
+}
+
+/// The start time of process `pid` (field 22 of `/proc/<pid>/stat`, in clock
+/// ticks since boot): with the pid, it names one process, never a later one
+/// that reused the pid.
+fn process_started_at(pid: u32) -> Option<u64> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    start_time_in_stat(&text)
+}
+
+/// The start time in a `/proc/<pid>/stat` text: the 20th field after the
+/// command name, which ends at the last `)`.
+pub(super) fn start_time_in_stat(text: &str) -> Option<u64> {
+    let (_, after_name) = text.rsplit_once(')')?;
+    after_name.split_whitespace().nth(19)?.parse().ok()
 }
 
 /// The table, open and locked until it is dropped.
@@ -318,9 +438,9 @@ impl Table {
         Ok(Self { dir, _lock: lock })
     }
 
-    /// Every id the table names, with its unit. A staged file the lock holder
-    /// finds is a write that did not complete, so it is removed.
-    fn entries(&self) -> Result<BTreeMap<u32, String>, String> {
+    /// The table. A staged file the lock holder finds is a write that did not
+    /// complete, so it is removed.
+    fn entries(&self) -> Result<Entries, String> {
         let listing =
             std::fs::read_dir(JOB_IDS_ROOT).map_err(|error| format!("job_ids_table: {error}"))?;
         for entry in listing.flatten() {
@@ -341,11 +461,17 @@ impl Table {
         owner_in(&self.dir, uid)
     }
 
+    /// Writes the entry of `uid`: `unit`, and this process as its reserving
+    /// process.
     fn write(&self, uid: u32, unit: &str) -> Result<(), String> {
+        let pid = std::process::id();
+        let reserver = process_started_at(pid)
+            .map(|started| format!("{pid} {started}\n"))
+            .unwrap_or_default();
         write_beneath(
             borrow(&self.dir),
             &uid.to_string(),
-            format!("{unit}\n").as_bytes(),
+            format!("{unit}\n{reserver}").as_bytes(),
             0o600,
             Some((0, 0)),
         )
@@ -526,7 +652,7 @@ mod tests {
             101,
             taken,
             held,
-            &mut |owner| ended.contains(&owner),
+            &mut |owner: &str| ended.contains(&owner),
             &mut |uid| named.contains(&uid),
         )
     }
@@ -604,6 +730,37 @@ mod tests {
             ]
         );
         assert!(ids_in_status("Groups:\t\n").is_empty());
+    }
+
+    #[test]
+    fn an_entry_names_its_unit_and_its_reserving_process() {
+        assert_eq!(
+            parse_entry(&format!("{UNIT_A}\n4242 987654\n")),
+            (UNIT_A.to_owned(), Some((4242, 987_654)))
+        );
+        // An entry written before the reserving process was recorded.
+        assert_eq!(
+            parse_entry(&format!("{UNIT_A}\n")),
+            (UNIT_A.to_owned(), None)
+        );
+        assert_eq!(parse_entry(""), (String::new(), None));
+        // A command name with spaces and parentheses ends at the last `)`.
+        let stat =
+            "4242 (a b) c) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10";
+        assert_eq!(start_time_in_stat(stat), Some(987_654));
+        assert_eq!(start_time_in_stat("4242 (x"), None);
+    }
+
+    #[test]
+    fn an_unreadable_or_foreign_entry_is_never_taken_back() {
+        let ended = BTreeSet::from([UNIT_A.to_owned()]);
+        assert!(owner_ended(UNIT_A, &ended));
+        assert!(!owner_ended(UNIT_B, &ended));
+        assert!(!owner_ended("", &ended));
+        assert!(!owner_ended(
+            "sshd.service",
+            &BTreeSet::from(["sshd.service".to_owned()])
+        ));
     }
 
     #[test]

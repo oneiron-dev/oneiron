@@ -24,6 +24,14 @@ use serde::{Deserialize, Serialize};
 
 use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 
+mod job_ids;
+
+pub use job_ids::{
+    JOB_DEVICE_GROUP_DEFAULT, JOB_UID_COUNT_DEFAULT, JOB_UID_END_MAX, JOB_UID_FIRST_DEFAULT,
+    JOB_UID_FIRST_MIN,
+};
+use job_ids::{job_device_group_default, job_uid_count_default, job_uid_first_default};
+
 /// Where the node's file is when neither the server's configuration nor
 /// [`EXECUTION_NODE_FILE_ENV`] names one.
 pub const EXECUTION_NODE_FILE_DEFAULT: &str = "/etc/oneiron/execution-node.toml";
@@ -47,28 +55,6 @@ pub const RECEIPT_KEEP_DAYS_DEFAULT: u32 = 30;
 /// Default of `staging_limit_secs`: the longest a key may stage before its
 /// launch.
 pub const STAGING_LIMIT_SECS_DEFAULT: u64 = 600;
-
-/// Default of `job_uid_first`: the first id of the range systemd leaves
-/// unused after the container range (systemd's UIDS-GIDS.md: 1879048192 to
-/// 2147352575), clear of the system and login accounts, of `DynamicUser=`
-/// (61184 to 65519) and of the subordinate ids `useradd` hands out (from
-/// 100000 up to 600100000).
-pub const JOB_UID_FIRST_DEFAULT: u32 = 1_879_048_192;
-
-/// Default of `job_uid_count`: one 16-bit block, far more than the jobs that
-/// run at once.
-pub const JOB_UID_COUNT_DEFAULT: u32 = 65_536;
-
-/// Default of `job_device_group`.
-pub const JOB_DEVICE_GROUP_DEFAULT: &str = "oneiron-job-devices";
-
-/// The lowest `job_uid_first`: the 16-bit ids are the system's, the login
-/// accounts', `DynamicUser=`'s and `nobody`'s.
-pub const JOB_UID_FIRST_MIN: u32 = 65_536;
-
-/// One past the highest id a job may get: ids from 2^31 up are read as
-/// negative by tools that keep them in a signed 32-bit number.
-pub const JOB_UID_END_MAX: u64 = 1 << 31;
 
 /// Default of `readiness_every_secs` (`jobs.readiness.every_secs`, pass 34
 /// 6.3): how often a node with no attempt running checks itself. The owner's
@@ -330,15 +316,6 @@ fn receipt_keep_days_default() -> u32 {
 fn staging_limit_secs_default() -> u64 {
     STAGING_LIMIT_SECS_DEFAULT
 }
-fn job_uid_first_default() -> u32 {
-    JOB_UID_FIRST_DEFAULT
-}
-fn job_uid_count_default() -> u32 {
-    JOB_UID_COUNT_DEFAULT
-}
-fn job_device_group_default() -> String {
-    JOB_DEVICE_GROUP_DEFAULT.to_owned()
-}
 fn readiness_every_secs_default() -> u64 {
     READINESS_EVERY_SECS_DEFAULT
 }
@@ -438,30 +415,11 @@ impl ExecutionNodeSettings {
         if self.job_threads == Some(0) {
             return Err("execution_node.job_threads must be at least 1 when set".to_owned());
         }
-        if self.job_uid_first < JOB_UID_FIRST_MIN {
-            return Err(format!(
-                "execution_node.job_uid_first must be at least {JOB_UID_FIRST_MIN}"
-            ));
-        }
-        if self.job_uid_count == 0 {
-            return Err("execution_node.job_uid_count must be at least 1".to_owned());
-        }
-        if !(1..=32).contains(&self.job_device_group.len())
-            || !self.job_device_group.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
-            })
-            || self.job_device_group.starts_with('-')
-        {
-            return Err(
-                "execution_node.job_device_group must be 1 to 32 of a-z, 0-9, '-' and '_'"
-                    .to_owned(),
-            );
-        }
-        if u64::from(self.job_uid_first) + u64::from(self.job_uid_count) > JOB_UID_END_MAX {
-            return Err(format!(
-                "execution_node.job_uid_first + job_uid_count must be at most {JOB_UID_END_MAX}"
-            ));
-        }
+        job_ids::check(
+            self.job_uid_first,
+            self.job_uid_count,
+            &self.job_device_group,
+        )?;
         for (name, template) in &self.templates {
             template
                 .validate()

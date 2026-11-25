@@ -193,11 +193,13 @@ fn end_record(context: &StepContext) -> EndRecord {
     }
 }
 
-/// The ids the prepare step gave this unit's job: from root's `exec.json`,
-/// or from the id table when the prepare step refused before it wrote that
-/// file (review r8 R8-04: the job's directories are handed over even then).
+/// The ids the prepare step gave this unit's job: the id table's entry for
+/// the unit (the reservation of this run, review r9 R9-13), else root's
+/// `exec.json`. The table also answers when the prepare step refused before
+/// it wrote that file (review r8 R8-04): the job's directories are handed
+/// over even then.
 fn job_identity(context: &StepContext) -> Option<JobIdentity> {
-    exchange_identity(context).or_else(|| job_ids::identity_of(&context.unit()))
+    job_ids::identity_of(&context.unit()).or_else(|| exchange_identity(context))
 }
 
 /// The ids root's `exec.json` names for this unit's instance.

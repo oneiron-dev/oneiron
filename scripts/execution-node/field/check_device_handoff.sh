@@ -13,7 +13,7 @@
 #                   file a job may lease. Each job unit runs as its own uid from the node's range and keeps this group
 #                   as its one supplementary group when it leases a device (FIX EXEC-UNIT-CROSS-JOB-SAME-UID).
 #   --job-uid       the uid a job's open is tried as, holding that group alone: an id of the node's range no job
-#                   holds (default 1879113727, the last id of the default range).
+#                   holds and no account or group has (default 1879113727, the last id of the default range).
 #   --also-account  an account to try besides the ordinary ones (UID_MIN..UID_MAX of /etc/login.defs): the engine's
 #                   account, or the private tool's account when either is a system account.
 #   --allow-holder  a process that may hold the card's files open, by its command name (e.g. nvidia-persistenced).
@@ -52,6 +52,9 @@ command -v python3 > /dev/null || unproven "no-python3 (the open probe)"
 command -v setpriv > /dev/null || unproven "no-setpriv (the open as a job)"
 group_gid=$(getent group "$GROUP" | cut -d: -f3)
 [ -n "$group_gid" ] || unproven "no-job-device-group-$GROUP"
+# The job's uid: a number of the job range's kind (65536 up) that no account or group has (review r9 R9-09).
+[[ "$JOB_UID" =~ ^[0-9]+$ ]] && (( JOB_UID >= 65536 && JOB_UID < 2147483648 )) || unproven "job-uid-$JOB_UID-not-a-job-range-id"
+! getent passwd "$JOB_UID" > /dev/null && ! getent group "$JOB_UID" > /dev/null || unproven "job-uid-$JOB_UID-has-an-account-or-group"
 
 mkdir -p "$(dirname "$EVIDENCE")" && : > "$EVIDENCE" || unproven "evidence-file-not-writable"
 say() { echo "$*"; echo "$*" >> "$EVIDENCE"; }
@@ -84,6 +87,14 @@ except OSError as e:
     print("closed" if e.errno in (errno.EACCES, errno.EPERM) else errno.errorcode.get(e.errno, str(e.errno)))
 '
 open_as() { runuser -u "$1" -- python3 -c "$OPEN_PROBE" "$2" 2>&1 | tail -1; }
+ACL_PROBE='
+import os, sys
+try:
+    os.getxattr(sys.argv[1], "system.posix_acl_access", follow_symlinks=False)
+    print("acl")
+except OSError:
+    print("none")
+'
 # The same open as a job: the job uid, its own gid, and the job device group as its one supplementary group.
 open_as_job() {
   setpriv --reuid="$JOB_UID" --regid="$JOB_UID" --groups="$group_gid" -- python3 -c "$OPEN_PROBE" "$1" 2>&1 | tail -1
@@ -98,12 +109,20 @@ members_of_gid() { # the accounts whose primary or supplementary group is <gid>
 for f in "${CARD[@]}" "${CARD_SIDE[@]}"; do
   [ -e "$f" ] && say "## EVIDENCE file $(stat -c '%n owner=%U group=%G gid=%g mode=%a' "$f")"
 done
+# The job device group itself has no account in it, in both phases (review r9 R9-15).
+members=$(members_of_gid "$group_gid" | tr '\n' ' ')
+if [ -n "$members" ]; then check job-device-group-members FAIL "group $GROUP (gid $group_gid) holds [${members% }]: each could open every card outside any unit"
+else check job-device-group-members PASS "group $GROUP (gid $group_gid) holds no account"; fi
 for f in "${CARD[@]}"; do
   [ -e "$f" ] || { check "file-$(basename "$f")" FAIL "missing"; continue; }
-  mode=$(stat -c %a "$f"); gid=$(stat -c %g "$f")
+  mode=$(stat -c %a "$f"); gid=$(stat -c %g "$f"); owner=$(stat -c %u "$f")
+  acl=$(python3 -c "$ACL_PROBE" "$f" 2>&1 | tail -1)
   others=$(members_of_gid "$gid" | tr '\n' ' ')
-  why="mode=$mode gid=$gid other_members=[${others% }]"
-  if (( 8#$mode & 8#007 )); then check "file-$(basename "$f")" FAIL "$why: open to every account"
+  why="owner=$owner mode=$mode gid=$gid acl=$acl other_members=[${others% }]"
+  # Root owns it and no access ACL names another account (review r9 R9-10).
+  if [ "$owner" != 0 ]; then check "file-$(basename "$f")" FAIL "$why: owned by uid $owner, not root"
+  elif [ "$acl" != none ]; then check "file-$(basename "$f")" FAIL "$why: an access ACL can open it to other accounts"
+  elif (( 8#$mode & 8#007 )); then check "file-$(basename "$f")" FAIL "$why: open to every account"
   elif [ -n "$others" ] && (( 8#$mode & 8#070 )); then check "file-$(basename "$f")" FAIL "$why: open to the group's other members"
   elif [ "$PHASE" = oneiron-only ] && { [ "$gid" != "$group_gid" ] || ! (( (8#$mode & 8#060) == 8#060 )); }; then
     check "file-$(basename "$f")" FAIL "$why: the job device group $group_gid cannot read and write it"
@@ -140,7 +159,8 @@ for account in "${OTHERS[@]}"; do
 done
 got="$(basename "${CARD[0]}")=$(open_as_job "${CARD[0]}") $(basename "${CARD[1]}")=$(open_as_job "${CARD[1]}")"
 if [ "$PHASE" = oneiron-only ]; then
-  if grep -q '=closed' <<< "$got"; then check "open-as-job" FAIL "$got: a job holding the job device group cannot open the card"
+  # Only an open, or a fixture node's ENXIO (no driver behind it, past the permission check), passes (review r9 R9-09).
+  if grep -qvE '=(opened|ENXIO)$' <<< "$(tr ' ' '\n' <<< "$got")"; then check "open-as-job" FAIL "$got: a job holding the job device group cannot open the card"
   else check "open-as-job" PASS "$got"; fi
 else
   if grep -qvE '=closed$' <<< "$(tr ' ' '\n' <<< "$got")"; then check "open-as-job" FAIL "$got: open before the grant"

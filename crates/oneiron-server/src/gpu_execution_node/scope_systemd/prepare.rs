@@ -17,25 +17,28 @@ use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
+mod unit_checks;
+
 use super::super::jobs::{JobKeyId, LaunchFile};
 use super::super::wire::NetworkMode;
-use super::capabilities::kernel_facts;
 use super::device_files;
 use super::exchange::{publish_payload, write_exchange};
 use super::job_ids::{self, JobIdentity};
 use super::records::{
-    BoundReport, BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, ScopeBound,
-    enforced_by_kernel, first_unmet, not_enforced,
+    BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, first_unmet,
 };
 use super::safe_fs::{
     self, boot_id, boot_ns, borrow, make_dir_beneath, open_dir_beneath, open_dir_path, read_beneath,
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::unit_file::{installed_runtime_max_secs, template_outdated};
 use super::{
     AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
     UNIT_TEMPLATE_PATH,
+};
+use unit_checks::{
+    cgroup_file, configured_bounds, effective_unit_matches, required_bounds, unit_cgroup,
 };
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
@@ -184,7 +187,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         ));
     }
     let unit = context.unit();
-    effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
+    effective_unit_matches(&unit, settings.stop_grace_secs)?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
 
     let mut allowed = Vec::new();
@@ -222,7 +225,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
 
     let identity = job_ids::allocate(settings.job_uids(), &unit, context.engine_uid)
         .map_err(|why| format!("job_uid_not_given: {why}"))?;
-    let device_gid = job_device_gid(settings, &allowed)?;
+    let device_gid = job_device_gid(settings, &allowed, context.engine_gid)?;
     record.account = match device_gid {
         Some(group) => format!(
             "uid {} gid {} device group {group}",
@@ -244,7 +247,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         (identity, device_gid),
     )?;
     write_exchange(&exec)?;
-    record.required.clone_from(&template.require);
+    record.required.clone_from(&exec.require);
     record.fence = exec
         .read
         .iter()
@@ -260,10 +263,14 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     let memory_bytes = memory_mib
         .max(UNIT_MEMORY_FLOOR_MIB)
         .saturating_mul(1 << 20);
+    // The empty `DeviceAllow=` first empties the unit's list: one this
+    // unit's name kept from an earlier run is no lease of this one's (review
+    // r9 R9-06).
     let mut properties = vec![
         format!("MemoryMax={memory_bytes}"),
         format!("TasksMax={}", template.tasks_max),
         format!("CPUQuota={}%", u64::from(cpu_threads).saturating_mul(100)),
+        "DeviceAllow=".to_owned(),
     ];
     properties.extend(
         allowed
@@ -364,64 +371,6 @@ fn leased_device_ids(launch: &LaunchFile) -> Result<Vec<String>, String> {
         }
     }
     Ok(ids.into_iter().collect())
-}
-
-/// The unit's effective stop timeout (its file and every drop-in) is the
-/// node file's stop grace, so the cutoff's TERM comes a whole grace before
-/// the maximum and the KILL by it.
-fn effective_stop_grace_matches(unit: &str, stop_grace_secs: u64) -> Result<(), String> {
-    let found =
-        show(unit, &["TimeoutStopUSec"]).map_err(|why| format!("stop_grace_unknown: {why}"))?;
-    let text = found.get("TimeoutStopUSec").map_or("", String::as_str);
-    match timespan_usec(text) {
-        Some(usec) if usec == stop_grace_secs.saturating_mul(1_000_000) => Ok(()),
-        _ => Err(format!(
-            "stop_grace_not_unit_timeout: the unit's TimeoutStopSec is {text:?} and the node file's stop grace {stop_grace_secs} s: run `oneiron execution-node install` again"
-        )),
-    }
-}
-
-/// A systemd time span as `systemctl show` prints it (`10s`, `1min 30s`,
-/// `500ms`), in microseconds; `None` for `infinity` or a word it does not
-/// know.
-#[must_use]
-pub(super) fn timespan_usec(text: &str) -> Option<u64> {
-    let mut total: u64 = 0;
-    let mut any = false;
-    for word in text.split_whitespace() {
-        let digits = word.find(|c: char| !c.is_ascii_digit())?;
-        let (number, unit) = word.split_at(digits);
-        let number: u64 = number.parse().ok()?;
-        let scale: u64 = match unit {
-            "us" => 1,
-            "ms" => 1_000,
-            "s" => 1_000_000,
-            "min" => 60_000_000,
-            "h" => 3_600_000_000,
-            "d" => 86_400_000_000,
-            _ => return None,
-        };
-        total = total.checked_add(number.checked_mul(scale)?)?;
-        any = true;
-    }
-    any.then_some(total)
-}
-
-/// The unit's cgroup directory under `/sys/fs/cgroup`, from the service
-/// manager.
-fn unit_cgroup(unit: &str) -> Option<PathBuf> {
-    let found = show(unit, &["ControlGroup"]).ok()?;
-    let group = found
-        .get("ControlGroup")
-        .filter(|group| !group.is_empty())?;
-    Some(Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/')))
-}
-
-/// One file of the unit's cgroup, trimmed: what the kernel holds now, not
-/// only what the service manager accepted.
-fn cgroup_file(group: Option<&Path>, name: &str) -> Option<String> {
-    let text = std::fs::read_to_string(group?.join(name)).ok()?;
-    Some(text.trim().to_owned())
 }
 
 /// The protected paths the installed unit makes inaccessible (its
@@ -553,16 +502,18 @@ fn exec_file(
         devices_denied: denied.to_vec(),
         hidden_pids,
         host_network_namespace: safe_fs::host_network_namespace(),
-        require: template.require.clone(),
+        require: required_bounds(&template.require, device_gid.is_some()),
         log_max_bytes: template.log_max_bytes(),
     })
 }
 
 /// The job's supplementary group: the node's job device group when the
 /// launch leases a device (`allowed`, the leased devices' files), else none.
+/// Never root's, the engine's (`engine_gid`) or one of the job range.
 fn job_device_gid(
     settings: &super::super::node_settings::ExecutionNodeSettings,
     allowed: &[PathBuf],
+    engine_gid: u32,
 ) -> Result<Option<u32>, String> {
     if allowed.is_empty() {
         return Ok(None);
@@ -570,9 +521,9 @@ fn job_device_gid(
     let name = &settings.job_device_group;
     let gid = safe_fs::group_id(name)
         .map_err(|error| format!("job_device_group_unknown: {name}: {error}"))?;
-    if gid == 0 || settings.job_uids().contains(&gid) {
+    if gid == 0 || gid == engine_gid || settings.job_uids().contains(&gid) {
         return Err(format!(
-            "job_device_group_not_fit: {name} has gid {gid}, root's or inside the job range"
+            "job_device_group_not_fit: {name} has gid {gid}, root's, the engine's or inside the job range"
         ));
     }
     Ok(Some(gid))
@@ -667,139 +618,4 @@ fn hold_awake(unit: &str, instance: &str) -> Option<String> {
     )
     .ok()
     .map(|_| format!("{awake}.service"))
-}
-
-/// Each bound as the unit's effective properties and this kernel give it.
-fn configured_bounds(
-    unit: &str,
-    group: Option<&Path>,
-    write_rate_failure: Option<String>,
-    has_denied_device: bool,
-) -> BTreeMap<ScopeBound, BoundReport> {
-    let facts = kernel_facts();
-    let found = show(
-        unit,
-        &[
-            "KillMode",
-            "PrivateNetwork",
-            "ProtectProc",
-            "ProtectSystem",
-            "DevicePolicy",
-        ],
-    )
-    .unwrap_or_default();
-    let is = |name: &str, value: &str| found.get(name).is_some_and(|got| got == value);
-    let cgroup_file = |name: &str| cgroup_file(group, name);
-    let memory_max = cgroup_file("memory.max");
-    let io_max = cgroup_file("io.max");
-    let on = |holds: bool, evidence: String| {
-        if holds {
-            enforced_by_kernel(evidence)
-        } else {
-            not_enforced(evidence)
-        }
-    };
-    let unified = !facts.cgroup_controllers.is_empty();
-    let mut out = BTreeMap::new();
-    out.insert(
-        ScopeBound::TreeKill,
-        on(
-            unified && is("KillMode", "control-group"),
-            format!(
-                "KillMode={}",
-                found.get("KillMode").map_or("?", String::as_str)
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::CutoffWithoutEngine,
-        enforced_by_kernel("the service manager's cutoff timer, armed before the workload"),
-    );
-    out.insert(
-        ScopeBound::Emptiness,
-        on(unified, "cgroup v2 cgroup.events".to_owned()),
-    );
-    out.insert(
-        ScopeBound::MemoryCap,
-        on(
-            memory_max
-                .as_deref()
-                .is_some_and(|value| value.parse::<u64>().is_ok()),
-            format!(
-                "memory.max {}",
-                memory_max.as_deref().unwrap_or("unreadable")
-            ),
-        ),
-    );
-    let cpu_max = cgroup_file("cpu.max");
-    out.insert(
-        ScopeBound::CpuCap,
-        on(
-            cpu_max
-                .as_deref()
-                .and_then(|text| text.split_whitespace().next())
-                .is_some_and(|quota| quota.parse::<u64>().is_ok()),
-            format!("cpu.max {}", cpu_max.as_deref().unwrap_or("unreadable")),
-        ),
-    );
-    out.insert(
-        ScopeBound::FileWall,
-        on(
-            is("ProtectSystem", "strict") && facts.landlock_abi >= 3,
-            format!(
-                "ProtectSystem={}, Landlock ABI {}",
-                found.get("ProtectSystem").map_or("?", String::as_str),
-                facts.landlock_abi
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::NetworkClosed,
-        on(
-            is("PrivateNetwork", "yes"),
-            format!(
-                "PrivateNetwork={}",
-                found.get("PrivateNetwork").map_or("?", String::as_str)
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::DeviceClosure,
-        on(
-            is("DevicePolicy", "closed"),
-            format!(
-                "DevicePolicy={}{}",
-                found.get("DevicePolicy").map_or("?", String::as_str),
-                if has_denied_device {
-                    ""
-                } else {
-                    "; no other device to try"
-                }
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::ProcessesHidden,
-        on(
-            is("ProtectProc", "invisible"),
-            format!(
-                "ProtectProc={}",
-                found.get("ProtectProc").map_or("?", String::as_str)
-            ),
-        ),
-    );
-    out.insert(
-        ScopeBound::WriteRateCap,
-        match (write_rate_failure, io_max.as_deref()) {
-            (None, Some(text)) if text.contains("wbps=") && !text.contains("wbps=max") => {
-                enforced_by_kernel(format!("io.max {text}"))
-            }
-            (None, text) => not_enforced(format!(
-                "IOWriteBandwidthMax= accepted, but io.max holds no write rate ({}): no block device under the payload directory?",
-                text.unwrap_or("unreadable")
-            )),
-            (Some(why), _) => not_enforced(format!("IOWriteBandwidthMax= not applied: {why}")),
-        },
-    );
-    out
 }

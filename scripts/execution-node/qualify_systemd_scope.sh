@@ -860,10 +860,12 @@ EOF
 # account (a directory A made 0700 included), and A's uid leaves the node's id table. Red (one job account for every
 # job): B sees and signals A, and A's files stay the job account's.
 a_job_cannot_signal_read_or_trace_another_running_job() {
-  local why= i a_unit a_key a_p a_c a_pid a_uid b_uid engine_ids found path
+  local why= i a_unit a_key a_p a_c a_pid a_uid a_shm b_uid b_groups engine_ids found path
   launch t24-a qual 120 256 "" <<'EOF'
 echo $$ > "$ONEIRON_JOB_OUT/pid"; id -u > "$ONEIRON_JOB_OUT/uid"
-printf 'secret-a\n' > /dev/shm/qual-a-shm
+# A name of this run's own: on red it is in the host's /dev/shm (review r9 R9-16).
+echo "/dev/shm/qual-a-shm-$$-$(date +%s%N)" > "$ONEIRON_JOB_OUT/shm"
+printf 'secret-a\n' > "$(cat "$ONEIRON_JOB_OUT/shm")"
 mkdir -m 0700 "$ONEIRON_JOB_OUT/private" && printf 'x\n' > "$ONEIRON_JOB_OUT/private/file"
 echo a-ready
 touch "$ONEIRON_JOB_OUT/ready"
@@ -874,20 +876,21 @@ EOF
   for ((i = 0; i < 150; i++)); do [ -e "$a_p/out/ready" ] && break; sleep 0.2; done
   if [ ! -e "$a_p/out/ready" ]; then
     as_engine "$BIN" execution-node unit-control stop "$a_key" > /dev/null 2>&1
-    rm -f /dev/shm/qual-a-shm
+    wait_ended 60 > /dev/null 2>&1
+    a_shm=$(cat "$a_p/out/shm" 2> /dev/null); [ -n "$a_shm" ] && rm -f "$a_shm"
     result "$FUNCNAME" FAIL "job A was not ready in 30 s: $(jq -c '{refusal}' "$a_c/prepared.json" 2>&1)"; return
   fi
-  a_pid=$(cat "$a_p/out/pid"); a_uid=$(cat "$a_p/out/uid")
+  a_pid=$(cat "$a_p/out/pid"); a_uid=$(cat "$a_p/out/uid"); a_shm=$(cat "$a_p/out/shm")
   launch t24-b qual 120 256 "" <<EOF
 id -u > "\$ONEIRON_JOB_OUT/uid"; id -G > "\$ONEIRON_JOB_OUT/groups"
 { [ -d /proc/$a_pid ] && echo "sees process $a_pid"
   kill -0 $a_pid 2> /dev/null && echo "signals process $a_pid"
   head -c 1 /proc/$a_pid/environ > /dev/null 2>&1 && echo "reads /proc/$a_pid/environ"
-  [ -e /dev/shm/qual-a-shm ] && echo "finds /dev/shm/qual-a-shm"; } > "\$ONEIRON_JOB_OUT/reached"
+  [ -e $a_shm ] && echo "finds $a_shm"; } > "\$ONEIRON_JOB_OUT/reached"
 EOF
   start
   wait_ended 60 || why="job B: no end record in 60 s; "
-  b_uid=$(cat "$P/out/uid" 2> /dev/null)
+  b_uid=$(cat "$P/out/uid" 2> /dev/null); b_groups=$(cat "$P/out/groups" 2> /dev/null)
   [ -z "$why" ] && [ "$(ended .workload_started)" != true ] && why="job B did not start: $(ended .refusal); "
   [ -s "$P/out/reached" ] && why+="job B $(tr '\n' ',' < "$P/out/reached")of job A; "
   # A ends as the engine ends a key: its stop through the control socket.
@@ -895,11 +898,11 @@ EOF
   UNIT=$a_unit KEY=$a_key P=$a_p C=$a_c
   wait_ended 60 || why+="job A: no end record in 60 s after its stop; "
   # On red A's file is in the host's /dev/shm (review r8 R8-10); on green it went with A's own.
-  rm -f /dev/shm/qual-a-shm
+  rm -f "$a_shm"
   [ -n "$a_uid" ] && [ "$a_uid" = "$b_uid" ] && why+="both jobs ran as uid $a_uid; "
   if [ "$IDS_MODE" = range ]; then
     # A job that leases no device keeps no supplementary group.
-    [ "$(cat "$P/out/groups" 2> /dev/null)" = "$b_uid" ] || why+="job B's groups are '$(cat "$P/out/groups" 2>&1)', not its own gid alone; "
+    [ "$b_groups" = "$b_uid" ] || why+="job B's groups are '$b_groups', not its own gid alone; "
     for found in "$a_uid" "$b_uid"; do
       [ -n "$found" ] && [ "$found" -ge "$JOB_UID_FIRST" ] && [ "$found" -lt $((JOB_UID_FIRST + JOB_UID_COUNT)) ] \
         || why+="uid '$found' is not in the node's range; "

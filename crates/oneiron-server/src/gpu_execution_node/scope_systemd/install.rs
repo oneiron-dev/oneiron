@@ -226,9 +226,11 @@ fn check_job_range(range: &Range<u32>, engine: (u32, u32)) -> Result<(), String>
 }
 
 /// Makes the job device group as a system group unless it exists, and checks
-/// it: not root's, outside the job range, not the engine's group, and no
-/// account in it (an account in it could open every card outside any unit).
-/// Its gid, or `None` on a dry run before the group exists.
+/// it: not root's, outside the job range, not the engine's group, a group of
+/// `/etc/group` (the only list whose members install can read whole), and no
+/// account in it under any name of its gid (an account in it could open
+/// every card outside any unit; review r9 R9-03). Its gid, or `None` on a dry
+/// run before the group exists.
 fn ensure_device_group(
     name: &str,
     range: &Range<u32>,
@@ -251,9 +253,18 @@ fn ensure_device_group(
             "job device group {name}: gid {gid} is root's, the engine's or inside the job range"
         ));
     }
-    let accounts = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-    let groups = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    if let Some(member) = group_members(&accounts, &groups, name, gid).first() {
+    let read = |path: &str| {
+        std::fs::read_to_string(path)
+            .map_err(|error| format!("job device group {name}: {path}: {error}"))
+    };
+    let accounts = read("/etc/passwd")?;
+    let groups = read("/etc/group")?;
+    if !is_local_group(&groups, name, gid) {
+        return Err(format!(
+            "job device group {name}: gid {gid} is not its gid in /etc/group: make it a local group (groupadd --system {name})"
+        ));
+    }
+    if let Some(member) = group_members(&accounts, &groups, gid).first() {
         return Err(format!(
             "job device group {name}: account {member} is in it, so it could open every card outside any unit"
         ));
@@ -261,9 +272,18 @@ fn ensure_device_group(
     Ok(Some(gid))
 }
 
-/// The accounts in the group `name` (gid `gid`): those whose primary group it
-/// is, and those `/etc/group` lists as its members.
-fn group_members(accounts: &str, groups: &str, name: &str, gid: u32) -> Vec<String> {
+/// Whether `/etc/group` (`groups`) names the group `name` with gid `gid`.
+fn is_local_group(groups: &str, name: &str, gid: u32) -> bool {
+    groups.lines().any(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        fields.first() == Some(&name)
+            && fields.get(2).and_then(|id| id.parse::<u32>().ok()) == Some(gid)
+    })
+}
+
+/// The accounts in the group of gid `gid`: those whose primary group it is,
+/// and those `/etc/group` lists as members of any group of that gid.
+fn group_members(accounts: &str, groups: &str, gid: u32) -> Vec<String> {
     let mut members: Vec<String> = accounts
         .lines()
         .filter_map(|line| {
@@ -273,7 +293,7 @@ fn group_members(accounts: &str, groups: &str, name: &str, gid: u32) -> Vec<Stri
         .collect();
     for line in groups.lines() {
         let fields: Vec<&str> = line.split(':').collect();
-        if fields.first() == Some(&name) {
+        if fields.get(2).and_then(|id| id.parse::<u32>().ok()) == Some(gid) {
             members.extend(
                 fields
                     .get(3)
@@ -421,15 +441,15 @@ mod tests {
         let accounts =
             "root:x:0:0::/root:/bin/bash\noneiron:x:970:971::/var/lib/oneiron:/bin/bash\n";
         let groups = "oneiron-job-devices:x:960:\nvideo:x:44:lexi\n";
-        assert!(group_members(accounts, groups, "oneiron-job-devices", 960).is_empty());
+        assert!(group_members(accounts, groups, 960).is_empty());
+        assert!(is_local_group(groups, "oneiron-job-devices", 960));
+        assert!(!is_local_group(groups, "oneiron-job-devices", 961));
+        assert!(!is_local_group(groups, "devices", 960));
         let listed = "oneiron-job-devices:x:960:lexi,\n";
-        assert_eq!(
-            group_members(accounts, listed, "oneiron-job-devices", 960),
-            vec!["lexi"]
-        );
-        assert_eq!(
-            group_members(accounts, groups, "oneiron-job-devices", 971),
-            vec!["oneiron"]
-        );
+        assert_eq!(group_members(accounts, listed, 960), vec!["lexi"]);
+        // Another name of the same gid counts too.
+        let alias = "oneiron-job-devices:x:960:\ncards:x:960:tool\n";
+        assert_eq!(group_members(accounts, alias, 960), vec!["tool"]);
+        assert_eq!(group_members(accounts, groups, 971), vec!["oneiron"]);
     }
 }

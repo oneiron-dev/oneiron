@@ -395,8 +395,6 @@ pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
     account_entry(name).map(|found| (found.uid, found.gid, found.home))
 }
 
-/// One account's entry in the account database.
-#[derive(Debug, Clone, PartialEq, Eq)]
 /// The id of the group `name`, as the system's name service names it.
 ///
 /// # Errors
@@ -431,6 +429,8 @@ pub fn group_id(name: &str) -> io::Result<u32> {
     Ok(unsafe { entry.assume_init() }.gr_gid)
 }
 
+/// One account's entry in the account database.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountEntry {
     pub uid: u32,
     pub gid: u32,
