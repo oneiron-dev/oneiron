@@ -686,6 +686,9 @@ fn receipt_status(receipt: &JobReceipt) -> GpuResourceStatus {
         },
         JobState::Ended => match receipt.end {
             Some(JobEnd::Lost { .. }) => GpuResourceStatus::Gone,
+            // A session's slice the run passed (row W1) is no end: `ended_or_status` confirms
+            // and bills it; any other read of it answers that the run goes on.
+            Some(JobEnd::Continued) => GpuResourceStatus::Pending,
             _ if !receipt.started => GpuResourceStatus::Exited { used_secs: 0 },
             _ => GpuResourceStatus::Exited {
                 used_secs: receipt.measured_secs.unwrap_or(0),

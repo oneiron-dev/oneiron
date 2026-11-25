@@ -1,7 +1,9 @@
 //! What a vault machine job is billed (pass 33 section 8.4; pass 34, 9.2): the occupied time of
 //! the attempt's leases, from the launch commit to the empty unit, as the node measured it on its
-//! boot clock, and never more than the issuer saw pass or the quote's maximum. An attempt with no
-//! device lease (CPU only) bills the same way:
+//! boot clock, and never more than the issuer saw pass or the quote's maximum. A session's chunk
+//! (row W1) bills its slice of the one run: from its start (the launch, or the cutoff before it)
+//! to its own cutoff, the unit still occupied when the run goes on, or to the empty unit for the
+//! slice the run ends in. An attempt with no device lease (CPU only) bills the same way:
 //!
 //! ```text
 //! billed_secs = min(quote maximum, node measured_secs, issuer bracket)
