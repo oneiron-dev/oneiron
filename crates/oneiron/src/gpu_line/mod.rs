@@ -28,7 +28,7 @@ mod wire;
 pub use claim::{
     AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
     UnitSettleRefused, UnitSettlement, UnitTerminal, claim_in_txn, claims_at_rung_in_txn,
-    settle_unit_in_txn,
+    claims_in_txn, settle_unit_in_txn,
 };
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,

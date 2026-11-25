@@ -475,19 +475,6 @@ pub fn claim_in_txn(
     CLAIMS.get(&vault.store, txn, key)
 }
 
-/// Every claim of the vault, in key order.
-///
-/// # Errors
-///
-/// A store failure.
-pub(crate) fn claims_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<UnitClaim>> {
-    Ok(CLAIMS
-        .scan(&vault.store, txn)?
-        .into_iter()
-        .map(|(_, claim)| claim)
-        .collect())
-}
-
 /// Every claim of arm `arm` at rung `rung`, over every unit and attempt, in key order.
 ///
 /// # Errors
@@ -504,6 +491,20 @@ pub fn claims_at_rung_in_txn(
     rung.encode_into(&mut prefix);
     Ok(CLAIMS
         .scan_from(&vault.store, txn, &prefix)?
+        .into_iter()
+        .map(|(_, claim)| claim)
+        .collect())
+}
+
+/// Every claim of the vault, over every arm, rung, unit and attempt, in key order: the rows a
+/// read over the whole line's history (`vault.jobs.history`) projects.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn claims_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<UnitClaim>> {
+    Ok(CLAIMS
+        .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, claim)| claim)
         .collect())

@@ -352,7 +352,7 @@ impl Vault {
         GPU_JOBS.get(&self.store, &self.store.env.read_txn()?, id)
     }
 
-    /// One GPU job's record, in the caller's snapshot.
+    /// [`Vault::gpu_job`] in the caller's transaction.
     pub(crate) fn gpu_job_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
