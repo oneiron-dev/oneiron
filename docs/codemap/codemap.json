@@ -5762,18 +5762,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MeshBindRefusal",
-      "MeshEnrolment"
+      "MeshEnrolment",
+      "MeshEnrolmentAsk"
      ],
      "path": "src/authority/mesh_machine/enrolment.rs",
      "purpose": "The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x)",
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -96232,6 +96234,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
+      "const": 1,
       "crate-vis": 10,
       "fn": 10,
       "re-export": 2,
@@ -120245,6 +120248,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/team_receipt_arm_prefix.rs",
+     "purpose": "The `arm:` team reference prefix is reserved (design pass 32 r2, sections 3.6 and 4.5; row M2-E, the generic…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/temporal_query_window.rs",
      "purpose": "Query-derived occurred windows must not lose their eligible hit to learned-time candidates",
      "surface": {}
@@ -123720,7 +123731,7 @@
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8532,
-   "test_files": 2298
+   "test_files": 2299
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -142761,7 +142772,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -142918,7 +142929,7 @@
      "entry": "crates/oneiron-mesh-transport/src/iroh_transport.rs",
      "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Private iroh data plane",
      "spec_ids": []
@@ -142955,7 +142966,7 @@
      "spec_ids": []
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Vault-scoped mesh transport",
    "source_files": 9,
    "test_files": 3
@@ -176337,7 +176348,7 @@
      "path": "src/device_sync/enrolment.rs",
      "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -176347,7 +176358,7 @@
      "path": "src/device_sync/enrolment/home_bind.rs",
      "purpose": "The home's half of a device's mesh enrolment (FIX 3374, L02 04:5x)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -177186,7 +177197,7 @@
      "path": "src/gpu_execution_node/service.rs",
      "purpose": "The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "fn": 2,
       "struct": 2
      }
@@ -177532,6 +177543,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
+      "const": 1,
       "crate-vis": 30
      }
     },
@@ -177959,7 +177971,7 @@
       "crate-vis": 2,
       "fn": 3,
       "mod": 29,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -185183,6 +185195,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/device_enrolment.rs",
+     "purpose": "`oneiron device enrol` against the files serve reads, for the re-enrolment of a machine that is enrolled…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/device_home_dial.rs",
      "purpose": "Whether a served host is a device of another home (`crate::device_sync::dials_home`), as plain serve and a…",
      "surface": {
@@ -185555,7 +185577,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 88
+      "mod": 89
      }
     },
     {
@@ -187411,6 +187433,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/device_enrol_replace.rs",
+     "purpose": "An enrolled machine enrols again with a new link only through `oneiron device enrol --replace`, and keeps…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/device_home_dial_unreadable_enrolment.rs",
      "purpose": "FIX-LIST [HOME-SELF-MARK-STALE-AS-DEVICE], case 2: a machine whose enrolment record is there but does not…",
      "surface": {}
@@ -188494,6 +188524,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mesh_pairing_ceiling.rs",
+     "purpose": "An enrolled machine's binding may be granted every protocol the engine serves, and only those…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -189398,7 +189436,7 @@
      "path": "tests/support/mesh_machines.rs",
      "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 28
      }
     },
     {
@@ -190897,7 +190935,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron-server/src/test_doors/mod.rs",
-     "files": 91,
+     "files": 92,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -190998,8 +191036,8 @@
    },
    "over_bar": 67,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2125,
-   "test_files": 584
+   "source_files": 2126,
+   "test_files": 586
   },
   "oneiron-setting-contract": {
    "files": [
