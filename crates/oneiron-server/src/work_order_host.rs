@@ -289,68 +289,74 @@ impl OrderHost for ServerOrderHost<'_> {
     /// ceiling first. Every model rung blocks on the runtime; the pass runs on a blocking
     /// thread.
     fn decide(&self, ask: &SlotAsk) -> DeciderReply {
-        let admitted = self
-            .server
-            .gpu_jobs
-            .orders()
-            .asks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .admit(ask.slot, ask.grant, ask.max_asks_per_hour, self.now_ms);
-        if !admitted {
-            return DeciderReply::Ceiling;
-        }
-        let request = match slot_verdict_request(ask) {
-            Ok(request) => request,
-            Err(why) => {
-                return DeciderReply::Failed {
-                    why: why.to_owned(),
-                    receipt: None,
-                };
-            }
-        };
-        let memory = self.server.vault.memory(ask.agent, ask.class);
-        let mut evidence_read = Vec::new();
-        let answered = crate::decision_verdict::run_verdict_reasoned(
-            self.server,
-            ask.agent,
-            ask.class,
-            &memory,
-            None,
-            None,
-            &request,
-            None,
-            &mut evidence_read,
-            None,
-        );
-        match answered {
-            Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => DeciderReply::NoModel,
-            Err(error) => DeciderReply::Failed {
-                why: error.to_string(),
+        decide_slot_ask(self.server, ask, self.now_ms)
+    }
+}
+
+/// A slot's decider (row P1; an agent run's PLACE, row P4), asked through `server`'s decision
+/// ladder as one `ai.verdict` read of the decider's agent: a Choice over the options, inside the
+/// slot's deadline, metered on that agent's own read line. Counted against the slot's hourly
+/// ceiling at `now_ms` first. Every model rung blocks on the runtime, so the caller runs on a
+/// blocking thread.
+pub(crate) fn decide_slot_ask(server: &SyncServer, ask: &SlotAsk, now_ms: u64) -> DeciderReply {
+    let admitted = server
+        .gpu_jobs
+        .orders()
+        .asks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .admit(ask.slot, ask.grant, ask.max_asks_per_hour, now_ms);
+    if !admitted {
+        return DeciderReply::Ceiling;
+    }
+    let request = match slot_verdict_request(ask) {
+        Ok(request) => request,
+        Err(why) => {
+            return DeciderReply::Failed {
+                why: why.to_owned(),
                 receipt: None,
-            },
-            Ok((verdict, no_answer)) => {
-                let receipt = decider_receipt(&verdict);
-                match (verdict.answer, no_answer) {
-                    (DecisionAnswer::Choice(label), _) => DeciderReply::Answered { label, receipt },
-                    (DecisionAnswer::Abstain, Some(HumanAskReason::ProviderUnavailable))
-                        if no_model_read(&verdict.receipt.providers) =>
-                    {
-                        DeciderReply::NoModel
-                    }
-                    (DecisionAnswer::Abstain, Some(HumanAskReason::Deadline)) => {
-                        DeciderReply::Silent {
-                            receipt: Some(receipt),
-                        }
-                    }
-                    (DecisionAnswer::Abstain, _) => DeciderReply::Abstained {
-                        receipt: Some(receipt),
-                    },
-                    (_, _) => DeciderReply::Failed {
-                        why: "the decider's read gave no choice".to_owned(),
-                        receipt: Some(receipt),
-                    },
+            };
+        }
+    };
+    let memory = server.vault.memory(ask.agent, ask.class);
+    let mut evidence_read = Vec::new();
+    let answered = crate::decision_verdict::run_verdict_reasoned(
+        server,
+        ask.agent,
+        ask.class,
+        &memory,
+        None,
+        None,
+        &request,
+        None,
+        &mut evidence_read,
+        None,
+    );
+    match answered {
+        Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => DeciderReply::NoModel,
+        Err(error) => DeciderReply::Failed {
+            why: error.to_string(),
+            receipt: None,
+        },
+        Ok((verdict, no_answer)) => {
+            let receipt = decider_receipt(&verdict);
+            match (verdict.answer, no_answer) {
+                (DecisionAnswer::Choice(label), _) => DeciderReply::Answered { label, receipt },
+                (DecisionAnswer::Abstain, Some(HumanAskReason::ProviderUnavailable))
+                    if no_model_read(&verdict.receipt.providers) =>
+                {
+                    DeciderReply::NoModel
                 }
+                (DecisionAnswer::Abstain, Some(HumanAskReason::Deadline)) => DeciderReply::Silent {
+                    receipt: Some(receipt),
+                },
+                (DecisionAnswer::Abstain, _) => DeciderReply::Abstained {
+                    receipt: Some(receipt),
+                },
+                (_, _) => DeciderReply::Failed {
+                    why: "the decider's read gave no choice".to_owned(),
+                    receipt: Some(receipt),
+                },
             }
         }
     }

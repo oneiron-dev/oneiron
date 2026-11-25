@@ -186,11 +186,13 @@ pub(crate) enum AgentRunLeaseTake {
     /// This process released its leases as it closes: it claims nothing,
     /// and the row stays queued for the next process or machine.
     Closing,
-    /// The vault's home is a cloud node elsewhere and the run's own lease
-    /// was released for it within the placement grace (FIX 4747 slice 7,
-    /// `super::run_placement`): this machine claims nothing for now, and the
-    /// row stays queued until the cloud takes the run or the grace ends.
-    LeftForCloud,
+    /// The run's own lease was released for another machine and this
+    /// machine's turn to take it has not come (`super::run_placement`): the
+    /// run was placed on another machine at its first claim (row P4), or the
+    /// vault's home is a cloud node elsewhere (FIX 4747 slice 7). This
+    /// machine claims nothing for now, and the row stays queued until that
+    /// machine takes the run or this machine's turn comes.
+    LeftForPlacement,
 }
 
 /// What the run TASK says of a claim by this machine (FIX 4747).
@@ -239,7 +241,7 @@ pub(super) struct AgentRunTaskBody {
     pub(super) run_id: Option<String>,
     /// The TASK the dispatch realizes, when it realizes one.
     pub(super) realized_task_ref: Option<String>,
-    agent_definition_ref: String,
+    pub(super) agent_definition_ref: String,
     /// The caller whose request queued the run; `None` for the host's own
     /// work.
     requester_ref: Option<String>,
@@ -252,7 +254,7 @@ pub(super) struct AgentRunTaskBody {
     /// The world the dispatch's scope names, as its TASK's birth stamp
     /// places it; `None` for base reality.
     pub(super) world_ref: Option<String>,
-    project_ref: Option<String>,
+    pub(super) project_ref: Option<String>,
     pub(super) executor: AgentRunExecutorLease,
     pub(super) outcome: Option<AgentRunOutcome>,
     /// The run is a spawned child that outlived its root (REVIEW-6638): the
@@ -285,6 +287,13 @@ pub(super) struct AgentRunTaskBody {
     /// so such a TASK reads as before and moves to no other machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) writer_proof: Option<AgentRunWriterProof>,
+    /// Where the run was placed at its first claim and why (row P4,
+    /// `super::run_placement`), never a frozen field. `None` for a run never
+    /// placed, and for a TASK minted before it, so such a TASK reads as
+    /// before; an engine that does not know it drops it when it rewrites the
+    /// row, and that lease's takers then go in the reaper's order as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) placement: Option<super::run_placement::RunPlacement>,
 }
 
 /// The context bound a spawned child that outlived its root (REVIEW-6638)
@@ -477,6 +486,13 @@ impl AgentRunSpendCarry {
 }
 
 impl AgentRunTaskBody {
+    /// The project the dispatch's scope names, when its id reads.
+    pub(super) fn project(&self) -> Option<EntityId> {
+        self.project_ref
+            .as_deref()
+            .and_then(|project| EntityId::from_hex(project).ok())
+    }
+
     /// The parent projection this run resolves its context under where the
     /// row of its settled parent is absent (REVIEW-6638): the bound frozen at
     /// its promotion, rebuilt by
@@ -870,6 +886,7 @@ fn put_agent_run_task_in_txn(
         effects: Vec::new(),
         spend: spend_carry_at_mint(input, node_id),
         writer_proof: None,
+        placement: None,
     };
     // This machine wrote every frozen field from its own queue row and
     // dispatch input, so it signs them (`super::run_writer_proof`).
@@ -940,9 +957,11 @@ fn frozen_parent_context_in(
 /// taken again at the next generation; a run this machine settled reopens
 /// for its later try (`claim_standing`). Another machine's lease, another
 /// machine's settlement, or a run TASK this version does not read is left as
-/// it is. A closing process takes none, and nor does a machine whose vault's
-/// home is a cloud node elsewhere while its own released lease is inside the
-/// placement grace (FIX 4747 slice 7, `super::run_placement`).
+/// it is. A closing process takes none, and nor does a machine whose own
+/// lease was released for another machine before its turn comes: a run
+/// placed on another machine at its first claim (row P4), or a vault whose
+/// home is a cloud node elsewhere within the placement grace (FIX 4747 slice
+/// 7; `super::run_placement`).
 ///
 /// A spawned child's claim (REVIEW-6638) reads its nearest ancestor's run
 /// TASK, its root's or a child's that outlived its root: while that lease
@@ -980,19 +999,17 @@ pub(crate) fn take_agent_run_lease_in_txn(
             }))
         }
         ClaimStanding::Own { lease: held, open } => {
-            // Cloud users run in the cloud (FIX 4747 slice 7): an open run
-            // whose lease was released for a cloud home elsewhere is left for
-            // the cloud's reaper within the grace; after it this machine
-            // takes its own expired lease again, below, as before.
+            // An open run whose lease was released for another machine (a
+            // placement, row P4, or a cloud home elsewhere, FIX 4747 slice 7)
+            // is left for that machine until this machine's turn; after it
+            // this machine takes its own expired lease again, below, as
+            // before.
             if open
                 && held.expired_at(now)
-                && super::run_placement::leaves_lease_for_cloud(
-                    held,
-                    super::run_placement::cloud_home_elsewhere_in(vault, &*wtxn, node_id)?,
-                    now,
-                )
+                && let Some(body) = agent_run_task_body_in(vault, &*wtxn, task_ref)?
+                && super::run_placement::leaves_own_lease_in(vault, &*wtxn, &body, node_id, now)?
             {
-                return Ok(AgentRunLeaseTake::LeftForCloud);
+                return Ok(AgentRunLeaseTake::LeftForPlacement);
             }
             let lease =
                 own_expired_agent_run_lease_retaken(held, now).unwrap_or(AgentRunExecutorLease {
@@ -1459,6 +1476,7 @@ pub(crate) fn put_peer_agent_run_task_in_txn(
         effects: Vec::new(),
         spend: None,
         writer_proof: None,
+        placement: None,
     };
     if let Some((machine, key, signed_payload)) = writer {
         let genesis = vault

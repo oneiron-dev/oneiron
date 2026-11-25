@@ -461,45 +461,57 @@ impl Vault {
             let Some(machine) = local_machine_row_in_txn(self, txn)? else {
                 return Ok(MachineCapacityWrite::NoMachine);
             };
-            let heads = capacity_heads_in_txn(self, txn, machine)?;
-            if let Some((standing, recorded)) = latest_capacity(&heads)
-                && !capacity.moved_from(&recorded)
-            {
-                return Ok(MachineCapacityWrite::Unchanged(standing));
-            }
-            let now = self.store.clock.now_recorded_at();
-            let mut body = ClaimBody::new(
-                PREDICATE_MACHINE_CAPACITY,
-                ClaimSubject::Entity(machine),
-                capacity.to_value(),
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )?;
-            body.evidence = Some(Value::from(EVIDENCE));
-            body.valid_from = Some(now);
-            body.source = Some(ClaimSource::Observed);
-            // A MACHINE is no FACET, so the subject-derived facet has no
-            // FACET row and the claim birth gate would refuse it
-            // (InvalidFacet). The claim is born in the vault's default facet,
-            // as the provider confidence prior is.
-            body.scope_facet = self.default_facet_in_txn(txn)?;
-            let id = self.store.clock.entity_id()?;
-            self.put_reserved_claim_in_txn(
-                txn,
-                &id,
-                &body,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )?;
-            for (replaced, _) in heads {
-                self.supersede_reserved_claim_in_txn(txn, &id, &replaced, now)?;
-            }
-            Ok(MachineCapacityWrite::Recorded(id))
+            self.record_capacity_in_txn(txn, machine, capacity)
         })
+    }
+
+    /// Records `capacity` on `machine`'s MACHINE entity in `txn`, as
+    /// [`Self::record_machine_capacity`] records this install's own. The
+    /// test door records another machine's through it.
+    pub(crate) fn record_capacity_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        machine: EntityId,
+        capacity: &MachineCapacity,
+    ) -> Result<MachineCapacityWrite> {
+        let heads = capacity_heads_in_txn(self, txn, machine)?;
+        if let Some((standing, recorded)) = latest_capacity(&heads)
+            && !capacity.moved_from(&recorded)
+        {
+            return Ok(MachineCapacityWrite::Unchanged(standing));
+        }
+        let now = self.store.clock.now_recorded_at();
+        let mut body = ClaimBody::new(
+            PREDICATE_MACHINE_CAPACITY,
+            ClaimSubject::Entity(machine),
+            capacity.to_value(),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.evidence = Some(Value::from(EVIDENCE));
+        body.valid_from = Some(now);
+        body.source = Some(ClaimSource::Observed);
+        // A MACHINE is no FACET, so the subject-derived facet has no
+        // FACET row and the claim birth gate would refuse it
+        // (InvalidFacet). The claim is born in the vault's default facet,
+        // as the provider confidence prior is.
+        body.scope_facet = self.default_facet_in_txn(txn)?;
+        let id = self.store.clock.entity_id()?;
+        self.put_reserved_claim_in_txn(
+            txn,
+            &id,
+            &body,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        for (replaced, _) in heads {
+            self.supersede_reserved_claim_in_txn(txn, &id, &replaced, now)?;
+        }
+        Ok(MachineCapacityWrite::Recorded(id))
     }
 
     /// [`Self::machine_capacity`] with the id of the claim that holds it, so a
@@ -518,9 +530,19 @@ impl Vault {
     /// machine of the owner's, or `None` while it has recorded none.
     pub fn machine_capacity(&self, machine: EntityId) -> Result<Option<MachineCapacity>> {
         let txn = self.store.env.read_txn()?;
-        Ok(
-            latest_capacity(&capacity_heads_in_txn(self, &txn, machine)?)
-                .map(|(_, capacity)| capacity),
-        )
+        machine_capacity_in_txn(self, &txn, machine)
     }
+}
+
+/// [`Vault::machine_capacity`] in `txn`: what agent-run placement reads of each candidate
+/// machine (row P4, `agent_dispatch::run_placement`).
+///
+/// # Errors
+/// Storage errors.
+pub(crate) fn machine_capacity_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    machine: EntityId,
+) -> Result<Option<MachineCapacity>> {
+    Ok(latest_capacity(&capacity_heads_in_txn(vault, txn, machine)?).map(|(_, capacity)| capacity))
 }
