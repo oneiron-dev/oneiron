@@ -52,8 +52,8 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::authority::{
     AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
     AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityHistorySelection, AuthorityRepairOutcome, MESH_AUTHORITY_PAGE_MAX, MeshAuthorityRow,
-    PeerMachine, authority_entry_hash, decode_authority_log_entry_body, side_world,
+    AuthorityHistorySelection, AuthorityRepairOutcome, PeerMachine, authority_entry_hash,
+    decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -278,7 +278,7 @@ async fn catch_up_mesh_authority(
             Err(error) => return Err(error),
         };
         let reply: MeshAuthorityReply = serde_json::from_value(reply).map_err(|_| refused())?;
-        if reply.rows.len() > MESH_AUTHORITY_PAGE_MAX {
+        if reply.rows.len() > crate::authority::MESH_AUTHORITY_PAGE_MAX {
             return Err(refused());
         }
         let decode = |encoded: &str| {
@@ -286,18 +286,17 @@ async fn catch_up_mesh_authority(
                 .decode(encoded)
                 .map_err(|_| refused())
         };
-        let mut rows = Vec::with_capacity(reply.rows.len());
+        let mut rows: Vec<crate::authority::MeshAuthorityRow> =
+            Vec::with_capacity(reply.rows.len());
         for row in &reply.rows {
             let machine = EntityId::from_hex(&row.machine).map_err(|_| refused())?;
             // Each page names MACHINEs past the last one, in order.
             if after.is_some_and(|after| machine <= after)
-                || rows
-                    .last()
-                    .is_some_and(|last: &MeshAuthorityRow| machine <= last.machine)
+                || rows.last().is_some_and(|last| machine <= last.machine)
             {
                 return Err(refused());
             }
-            rows.push(MeshAuthorityRow {
+            rows.push(crate::authority::MeshAuthorityRow {
                 machine,
                 authority: decode(&row.authority)?,
                 address: decode(&row.address)?,
