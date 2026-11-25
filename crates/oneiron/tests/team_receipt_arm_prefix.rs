@@ -123,8 +123,7 @@ fn the_generic_receipt_writer_refuses_an_arm_reference() {
     );
 
     let ordinary = fixture.receipt("run-ordinary");
-    record_team_receipt(&fixture.vault, &ordinary)
-        .expect("an ordinary receipt records");
+    record_team_receipt(&fixture.vault, &ordinary).expect("an ordinary receipt records");
     assert_eq!(
         team_receipt(&fixture.vault, "run-ordinary").expect("read"),
         Some(ordinary)
@@ -141,8 +140,7 @@ fn the_generic_outcome_setter_refuses_an_arm_reference() {
         "the generic setter on an arm: receipt",
     );
 
-    record_team_receipt(&fixture.vault, &fixture.receipt("run-1"))
-        .expect("an ordinary receipt");
+    record_team_receipt(&fixture.vault, &fixture.receipt("run-1")).expect("an ordinary receipt");
     assert_reserved(
         settle_team_outcome(&fixture.vault, "run-1", &outcome(ARM_REF)),
         "an outcome resting on an arm: receipt",
