@@ -135,6 +135,7 @@ mod machine_profile;
 mod machine_signatures;
 mod machine_standing;
 mod machine_write;
+mod main_log_position;
 mod managed_owner_check;
 mod membership_execution;
 mod mesh_machine;

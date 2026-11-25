@@ -8,23 +8,31 @@
 //! never takes is reset at the write deadline (review round 1 of #10431).
 //!
 //! The connection is an in-process stand-in for the mesh seam
-//! (`MeshConnection`), so the test needs no vault and no grant: each stream
-//! it hands the service is scripted as a request that never finishes, a
-//! request whose answer cannot be sent, or a request whose answer is read.
+//! (`MeshConnection`), so the test needs no grant: each stream it hands the
+//! service is scripted as a request that never finishes, a request whose
+//! answer cannot be sent, or a request whose answer is read. The service's
+//! node (row R1) has a fresh vault of its own, which proves no stand-in peer,
+//! so every answered stream is the gate's refusal: what counts is that the
+//! second stream is answered at all.
 //!
 //! Run with: `cargo test --locked -p oneiron-server --features mesh --test
 //! job_service_streams`.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::EntityId;
+use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_mesh_transport::message::{decode_message, encode_message};
 use oneiron_mesh_transport::{
     MachineId, MeshConnection, MeshDuplex, MeshError, MeshFuture, MeshService, MeshStream,
 };
-use oneiron_server::gpu_execution_node::JobService;
 use oneiron_server::gpu_execution_node::service::REQUEST_READ_DEADLINE;
-use oneiron_server::gpu_execution_node::wire::{JOB_ALPN, JOB_PROTOCOL, JobAnswer, JobRequest};
+use oneiron_server::gpu_execution_node::wire::{
+    JOB_ALPN, JOB_PROTOCOL, JobAnswer, JobRefusal, JobRequest,
+};
+use oneiron_server::gpu_execution_node::{
+    ExecutionNode, GpuDeviceOffer, GpuSlotTable, JobService, NvidiaSmiProbe,
+};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 /// How long the test waits for the answer it expects.
@@ -123,6 +131,22 @@ fn node_request() -> Vec<u8> {
     encode_message(JOB_PROTOCOL, &JobRequest::Node).expect("encode the Node request")
 }
 
+/// The job service of a node over a fresh vault of its own, which proves no
+/// stand-in peer, and the directory that holds the vault while it serves.
+fn job_service() -> (tempfile::TempDir, JobService) {
+    let dir = tempfile::tempdir().expect("a directory for the node's vault");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open the node's vault");
+    let service = JobService::new(ExecutionNode::new(
+        dir.path().join("execution-node.toml"),
+        Arc::new(vault),
+        Arc::new(GpuSlotTable::new(
+            Arc::new(NvidiaSmiProbe),
+            GpuDeviceOffer::default(),
+        )),
+    ));
+    (dir, service)
+}
+
 /// Serves `connection` until the answer on `answer` arrives, and decodes it.
 /// Fails if the service ends first or no answer comes within
 /// [`ANSWER_WAIT`].
@@ -130,7 +154,7 @@ async fn answer_while_serving(
     connection: ScriptedConnection,
     answer: oneshot::Receiver<Vec<u8>>,
 ) -> JobAnswer {
-    let service = JobService;
+    let (_dir, service) = job_service();
     let bytes = tokio::select! {
         served = service.serve(Box::new(connection)) => {
             panic!("the service closed the connection before the second answer: {served:?}")
@@ -142,14 +166,12 @@ async fn answer_while_serving(
     decode_message(JOB_PROTOCOL, &bytes).expect("decode the answer")
 }
 
-fn assert_not_enabled_node(answer: &JobAnswer) {
-    match answer {
-        JobAnswer::Node(node) => assert!(
-            !node.enabled,
-            "a node with no [execution_node] is not enabled"
-        ),
-        other => panic!("expected the Node answer, got {other:?}"),
-    }
+fn assert_gate_refusal(answer: &JobAnswer) {
+    assert_eq!(
+        answer,
+        &JobAnswer::Refused(JobRefusal::PeerNotProven),
+        "the node's vault proves no stand-in peer"
+    );
 }
 
 #[tokio::test]
@@ -172,7 +194,7 @@ async fn a_request_that_never_finishes_holds_up_no_later_stream() {
         .expect("queue the second stream");
 
     let answered = answer_while_serving(connection, answer).await;
-    assert_not_enabled_node(&answered);
+    assert_gate_refusal(&answered);
     drop(opens);
 }
 
@@ -196,7 +218,7 @@ async fn a_peer_that_stops_reading_one_answer_still_gets_the_next() {
         .expect("queue the second stream");
 
     let answered = answer_while_serving(connection, answer).await;
-    assert_not_enabled_node(&answered);
+    assert_gate_refusal(&answered);
     drop(opens);
 }
 
@@ -212,7 +234,7 @@ async fn a_request_that_never_finishes_is_dropped_at_the_read_deadline() {
         })
         .expect("queue the unfinished stream");
 
-    let service = JobService;
+    let (_dir, service) = job_service();
     let waited = tokio::select! {
         served = service.serve(Box::new(connection)) => {
             panic!("the service closed the connection while the peer kept it: {served:?}")

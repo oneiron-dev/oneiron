@@ -211,7 +211,7 @@ mod host {
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
     use crate::gpu_execution_node::wire::{JOB_ALPN, JOB_STATUS_ALPN};
-    use crate::gpu_execution_node::{JobService, JobStatusService};
+    use crate::gpu_execution_node::{ExecutionNode, JobService, JobStatusService};
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -362,21 +362,61 @@ mod host {
                 FILES_SEARCH_ALPN,
                 Arc::new(FilesSearchService::new(Arc::clone(vault))),
             )
-            // This machine's job protocols (pass 33, EM-1 = A): new work on
-            // one, the keys it holds on the other, each its own grant.
-            .route(JOB_ALPN, Arc::new(JobService))
-            .route(JOB_STATUS_ALPN, Arc::new(JobStatusService))
             .tick(organ_redrive(
                 router,
                 Arc::clone(vault),
                 work.organs.clone(),
             ))
             .tick(server.pack_organ_tick(work.organs.clone()));
+        let routes = job_routes(routes, server);
         debug_assert!(
             routes.within_served(),
             "a protocol mesh_routes serves is missing from SERVED_MESH_ALPNS"
         );
         routes
+    }
+
+    /// This machine's job protocols (pass 33, EM-1 = A): new work on one,
+    /// the keys it holds on the other, each its own grant. They are served
+    /// only when the machine's `[execution_node]` file enables it as the
+    /// listener starts (T3), so a machine that runs no jobs refuses both at
+    /// the handshake. With them comes the node's authority tick (EN-4 A).
+    fn job_routes(routes: MeshRoutes, server: &Arc<crate::server::SyncServer>) -> MeshRoutes {
+        let Some(file) = server.config.execution_node_file.clone() else {
+            return routes;
+        };
+        let node = ExecutionNode::new(
+            file,
+            Arc::clone(&server.vault),
+            Arc::clone(&server.gpu_slots),
+        );
+        if !node.serves() {
+            return routes;
+        }
+        routes
+            .route(JOB_ALPN, Arc::new(JobService::new(node.clone())))
+            .route(
+                JOB_STATUS_ALPN,
+                Arc::new(JobStatusService::new(node.clone())),
+            )
+            .tick(node_authority_tick(node))
+    }
+
+    /// The node's authority tick on a blocking thread: its own fold read for
+    /// its own job grant and its issuer's, and the revoke handed to its keys
+    /// (EN-4 A). It runs on the listener's tick, under its stop.
+    fn node_authority_tick(node: ExecutionNode) -> MeshTick {
+        Arc::new(move || -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            let node = node.clone();
+            Box::pin(async move {
+                if tokio::task::spawn_blocking(move || node.authority_tick())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("the execution node's authority tick did not finish");
+                }
+            })
+        })
     }
 
     /// The router a call the host itself makes takes (OF-575): this
@@ -573,6 +613,16 @@ mod host {
         let alpns: Vec<Vec<u8>> = routes.routes.iter().map(|(alpn, _)| alpn.clone()).collect();
         #[cfg(oneiron_test_support)]
         let bound = alpns.clone();
+        // A full listener dials every protocol the engine serves, whether or
+        // not this machine serves it: an issuer that is no execution node
+        // dials the nodes (pass 33 row R1). A sync-only device dials sync.
+        let dialed: Vec<Vec<u8>> = match route_set {
+            super::MeshRouteSet::Full => super::SERVED_MESH_ALPNS
+                .iter()
+                .map(|alpn| alpn.to_vec())
+                .collect(),
+            super::MeshRouteSet::SyncOnly => Vec::new(),
+        };
         let transport = Arc::new(
             IrohTransport::bind_paired(
                 key,
@@ -583,7 +633,8 @@ mod host {
                 Arc::new(VaultPathReceipts(vault)),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?,
+            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?
+            .dialing(dialed),
         );
         server
             .mesh_transport

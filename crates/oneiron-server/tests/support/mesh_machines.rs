@@ -331,6 +331,21 @@ impl Device {
         Ok(())
     }
 
+    /// This vault withdraws `peer`'s grant of `alpn`, as the owner does with
+    /// `vault.mesh.set_alpn_grant` and `allow = false`.
+    pub(crate) fn revoke(&self, peer: &Device, alpn: &[u8]) -> TestResult {
+        self.vault
+            .set_mesh_alpn_grant(
+                &test_host_issuer(),
+                peer.machine,
+                peer.identity.endpoint_key,
+                alpn,
+                false,
+            )
+            .map_err(at("withdraw the peer's grant of a protocol"))?;
+        Ok(())
+    }
+
     /// Whether this vault's grants admit `peer` on `alpn` now, as its mesh
     /// listener's admission reads them.
     pub(crate) fn admits(&self, peer: &Device, alpn: &[u8]) -> TestResult<bool> {
@@ -344,8 +359,14 @@ impl Device {
     /// other test of the binary (they run in parallel) can take that port
     /// between the choice and the bind.
     pub(crate) async fn serve(&self) -> TestResult<Served> {
-        let server = SyncServer::new(Arc::clone(&self.vault), SyncServerConfig::default())
-            .map_err(at("the device's server"))?;
+        self.serve_with(SyncServerConfig::default()).await
+    }
+
+    /// As [`Self::serve`], with the server's configuration `config` (e.g.
+    /// an `[execution_node]` file).
+    pub(crate) async fn serve_with(&self, config: SyncServerConfig) -> TestResult<Served> {
+        let server =
+            SyncServer::new(Arc::clone(&self.vault), config).map_err(at("the device's server"))?;
         let (server, host) = AiHost::attach_device(server, None, true).await;
         let server = Arc::new(server);
         let app = oneiron_server::build_app(Arc::clone(&server));
@@ -414,15 +435,27 @@ impl Machines {
     /// endpoint, at the address its listener took, in every other replica.
     /// It grants nothing past enrolment's sync.
     pub(crate) async fn start(count: u8) -> TestResult<Self> {
+        Self::start_with(count, |_, _| SyncServerConfig::default()).await
+    }
+
+    /// As [`Self::start`], each device's server configured by
+    /// `configure(index, machines)`, where `machines` are every device's
+    /// MACHINE ids in enrolment order (e.g. a node's file naming its
+    /// issuer).
+    pub(crate) async fn start_with(
+        count: u8,
+        configure: impl Fn(usize, &[EntityId]) -> SyncServerConfig,
+    ) -> TestResult<Self> {
         let home = home()?;
         let devices = (0..count)
             .map(|index| home.enrol(0x0a + index))
             .collect::<TestResult<Vec<_>>>()?;
         home.share_history(&devices.iter().collect::<Vec<_>>())?;
+        let ids: Vec<EntityId> = devices.iter().map(|device| device.machine).collect();
         let mut machines = Vec::with_capacity(devices.len());
-        for device in devices {
+        for (index, device) in devices.into_iter().enumerate() {
             machines.push(Machine {
-                served: device.serve().await?,
+                served: device.serve_with(configure(index, &ids)).await?,
                 device,
             });
         }
@@ -464,6 +497,37 @@ impl Machines {
             self.machines[holder]
                 .device
                 .grant(&self.machines[peer].device, alpn)?;
+        }
+        Ok(())
+    }
+
+    /// `holder`'s vault withdraws `peer`'s grant of each of `alpns`.
+    pub(crate) fn revoke(&self, holder: usize, peer: usize, alpns: &[&[u8]]) -> TestResult {
+        for alpn in alpns {
+            self.machines[holder]
+                .device
+                .revoke(&self.machines[peer].device, alpn)?;
+        }
+        Ok(())
+    }
+
+    /// The machine at `index` binds its own endpoint in its own vault and
+    /// grants itself each of `alpns`, as a replica holds its own grant once
+    /// the owner's grant of it syncs there (e.g. a node's own job grant).
+    pub(crate) fn grant_own(&self, index: usize, alpns: &[&[u8]]) -> TestResult {
+        let machine = &self.machines[index];
+        // A vault binds each machine's endpoint once.
+        let bound = machine
+            .device
+            .vault
+            .mesh_machine(machine.device.machine)
+            .map_err(at("read the machine's own endpoint"))?
+            .is_some();
+        if !bound {
+            machine.device.bind(&machine.device, &machine.served)?;
+        }
+        for alpn in alpns {
+            machine.device.grant(&machine.device, alpn)?;
         }
         Ok(())
     }

@@ -382,6 +382,28 @@ impl Vault {
             _ => Ok(super::PeerMachine::Unknown),
         }
     }
+    /// Whether `machine`'s grant of `alpn` was ended by an act this vault
+    /// folded, and not by time alone: the grant withdrawn or its slip
+    /// revoked, the machine's binding revoked or gone, its pairing revoked,
+    /// or the machine removed. A grant or a pairing that only expired is not
+    /// withdrawn, and neither is a grant whose mint this replica has not
+    /// folded yet: that is unknown here (pass 33 EN-4 A: a revoke stops what
+    /// it authorised; an expiry does not).
+    pub fn mesh_grant_withdrawn(&self, machine: EntityId, alpn: &[u8]) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some((fold, claims)) = self.mesh_authority_signed_in_txn(&txn, machine)? else {
+            return Ok(true);
+        };
+        // The pairing's standing apart from its lifetime: a revoke or the
+        // MACHINE's removal ends it, its expiry does not.
+        if claims.revoked || mesh_pairing_standing(&fold, &claims).is_none() {
+            return Ok(true);
+        }
+        let Some(grant_id) = claims.alpns.get(alpn) else {
+            return Ok(true);
+        };
+        Ok(fold.slips.mints.get(grant_id).is_some() && !fold.slip_is_live(grant_id))
+    }
     fn mesh_grant_permits_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
