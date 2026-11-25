@@ -442,9 +442,10 @@ impl NodeAdmission for ExecutionNode {
     fn job_settings(&self) -> NodeJobSettings {
         let file = ExecutionNode::settings(self).ok().flatten();
         let defaults = NodeJobSettings::default();
+        // RED PIN: the box file alone, as before row P0-B.
         let (readiness_every_secs, drain_clear_by) = file.as_ref().map_or(
             (defaults.readiness_every_secs, defaults.drain_clear_by),
-            |file| ExecutionNode::readiness_settings(self, file),
+            |file| (file.readiness_every_secs, file.drain_clear_by),
         );
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
