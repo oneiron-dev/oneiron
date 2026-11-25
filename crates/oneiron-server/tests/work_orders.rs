@@ -226,6 +226,9 @@ backend = "fake"
 price_per_second = 2
 cost_unit = "credit-micros"
 catalog_revision = "gpu-prices-1"
+startup_secs = 0
+teardown_secs = 0
+rounding_secs = 0
 "#;
 
 // Placement asks a node for facts, but dispatch goes to this offer's fake provider.

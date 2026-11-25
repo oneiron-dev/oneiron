@@ -222,6 +222,12 @@ The next call that agent makes is refused with JSON-RPC error `-32001`
   (`server_error`) with the status in the message. A server that cannot be
   reached, or gives no whole answer within the request's time, comes back as
   `-32000` (`server_unreachable`).
+- A call the credential's tier does not reach (a `read-only` agent that
+  writes, a `propose-only` agent whose write takes effect at once) is refused
+  with `-32020` (`mcp_grant_missing`), and `error.data.required_scope` names
+  the grant it needed (`core:propose` or `core:write`). The credential is
+  sound and its reads go on working; to write, the owner mints the agent a
+  tier that holds the grant.
 - A message over 2 MiB (the server's own request limit) is refused unsent
   with `-32600` (`frame_too_large`), and an answer over 16 MiB is dropped with
   `-32000` (`reply_too_large`); either way the session goes on.

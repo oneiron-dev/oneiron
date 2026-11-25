@@ -5,9 +5,10 @@
 //! worker steps every live job every `step_secs` on the blocking pool, since
 //! a backend's calls block.
 //!
-//! No backend ships here: the registry is empty until a backend registers
-//! (C6 02, GPU-LAUNCH-BACKENDS), and a start on an offer whose backend is
-//! not registered refuses before any reservation. Each job runs as its own
+//! No backend ships here. Server start registers `vault_machine` when
+//! `[gpu_jobs.vault_machine]` is enabled and this install is its issuer
+//! (`gpu_execution_node::issuer::register_vault_machine_at_start`); a start on
+//! an offer whose backend is not registered refuses before any reservation. Each job runs as its own
 //! declared run, whose one line is the chunk's quote, reserved whole on this
 //! server's host account (FRAUD-1: a host-paid offer draws on the vault's
 //! paid allocation).
@@ -47,10 +48,8 @@ impl std::fmt::Debug for GpuJobHost {
 }
 
 impl GpuJobHost {
-    /// Registers `connector` as the backend `name`, replacing any before it.
-    /// Only the test door registers one until a backend ships (C6 02,
-    /// GPU-LAUNCH-BACKENDS); that backend's PR drops the gate.
-    #[cfg(oneiron_test_support)]
+    /// Registers `connector` as the backend `name`, replacing any before it:
+    /// `vault_machine` at server start, and the test door's fixtures.
     pub(crate) fn register_backend(&self, name: &str, connector: Arc<dyn GpuJobConnector>) {
         self.backends
             .write()
