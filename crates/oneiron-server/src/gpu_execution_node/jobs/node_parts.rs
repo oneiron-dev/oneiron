@@ -39,11 +39,13 @@ use super::job_unit::{JobKeyId, JobUnit, NodeClock};
 use crate::gpu_execution_node::device::DeviceSample;
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
-use crate::gpu_execution_node::node_settings::{DrainClearBy, READINESS_EVERY_SECS_DEFAULT};
+use crate::gpu_execution_node::node_settings::{
+    DrainClearBy, ExecutionNodeSettings, NodeCacheSettings, READINESS_EVERY_SECS_DEFAULT,
+};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
-    NodeReadiness, ScopeReport, SignedJobSubmit, WorkloadPin,
+    NodeReadiness, ScopeReport, SignedJobSubmit, WarmKeyFact, WarmWanted, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -314,6 +316,8 @@ pub struct StageOrder {
     pub pin: WorkloadPin,
     /// The key's payload directory under `work_dir`.
     pub payload_dir: PathBuf,
+    /// The warm keys the signed submit lists (pass 34, row P2).
+    pub warm: Vec<String>,
 }
 
 /// Why staging did not complete.
@@ -677,6 +681,33 @@ impl NodeKeys for NodeJobsAttachment {
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         self.service()
             .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
+    }
+
+    fn warm_wanted(&self, peer: EntityId, wanted: &WarmWanted) {
+        if let Some(jobs) = self.service() {
+            jobs.warm_wanted(peer, wanted);
+        }
+    }
+
+    fn warm_facts(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+    ) -> Vec<WarmKeyFact> {
+        self.service()
+            .map(|jobs| jobs.warm_facts(settings, cache))
+            .unwrap_or_default()
+    }
+
+    fn cache_pass_if_due(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+        settings_now: super::warm::SettingsRead,
+    ) {
+        if let Some(jobs) = self.service() {
+            jobs.cache_pass_if_due(settings, cache, settings_now);
+        }
     }
 
     fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {

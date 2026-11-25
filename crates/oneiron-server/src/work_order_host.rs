@@ -24,7 +24,7 @@ use oneiron::work_order::{
 use crate::gpu_execution_node::issuer::node_status::node_answer;
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
+    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer, WarmWanted,
 };
 use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
 use crate::server::SyncServer;
@@ -74,6 +74,7 @@ pub fn facts_of_answer(machine: EntityId, answer: Option<&JobAnswer>, now_ms: u6
         keep_headroom_pct: None,
         roles: Vec::new(),
         warm: Vec::new(),
+        warm_absent: Vec::new(),
     };
     match answer {
         Some(JobAnswer::Node(node)) => fill_from_node(&mut facts, node, now_ms),
@@ -113,6 +114,21 @@ fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
         .saturating_sub(node.disk_reserved_bytes)
         .saturating_sub(node.disk_reserve_bytes);
     facts.room.disk_free_mib = Some(free / MIB);
+    // Row P2: a key is warm here when its path is present (a key remembered from use alone is a
+    // hint the PLACE rule does not count); a mapped input that is not there blocks an order that
+    // lists it.
+    facts.warm = node
+        .warm
+        .iter()
+        .filter(|fact| fact.present)
+        .map(|fact| fact.key.clone())
+        .collect();
+    facts.warm_absent = node
+        .warm
+        .iter()
+        .filter(|fact| fact.mapped && !fact.cache && !fact.present)
+        .map(|fact| fact.key.clone())
+        .collect();
 }
 
 /// The loop's host on this server: the node calls through `nodes`, the offers and backends of
@@ -176,6 +192,34 @@ impl OrderHost for ServerOrderHost<'_> {
             .collect()
     }
 
+    fn machine_facts_wanting(&self, asks: &[(EntityId, WarmWanted)]) -> Vec<MachineFacts> {
+        asks.iter()
+            .map(|(machine, wanted)| {
+                let request = JobRequest::NodeWanting(wanted.clone());
+                let (answer, before_warm) = match self.nodes.job(*machine, &request) {
+                    // A node before row P2 cannot read NodeWanting and closes the stream
+                    // unanswered: it is asked Node once, as before.
+                    Err(NodeCallError::Unreachable { .. }) => {
+                        (self.nodes.job(*machine, &JobRequest::Node).ok(), true)
+                    }
+                    answered => (answered.ok(), false),
+                };
+                let mut facts = facts_of_answer(*machine, answer.as_ref(), self.now_ms);
+                // Such a node checks no warm key before a launch and cannot verify a submit
+                // signed with one: each key asked counts as absent there, so an order that
+                // lists one waits for a node that checks it; an order with none runs as before.
+                if before_warm && answer.is_some() {
+                    for key in &wanted.keys {
+                        if !facts.warm_absent.contains(key) {
+                            facts.warm_absent.push(key.clone());
+                        }
+                    }
+                }
+                facts
+            })
+            .collect()
+    }
+
     fn make_attempt(&self, attempt: &AttemptToMake<'_>) -> AttemptOutcome {
         let OrderCharge::Offer { name } = &attempt.order.charge else {
             // A line unit's attempt is the line's reserve (hunk H3), never a bare start.
@@ -195,6 +239,12 @@ impl OrderHost for ServerOrderHost<'_> {
         let mut inputs = serde_json::json!({ "machine": attempt.machine.to_hex() });
         if let [device] = attempt.devices.as_slice() {
             inputs["device_id"] = serde_json::Value::String(device.clone());
+        }
+        // Row P2: the order's usable warm keys, as FIT and PLACE read them; an order stored
+        // before P2 may hold others.
+        let warm = oneiron::warm_key::attempt_warm_keys(&attempt.order.wishes.warm);
+        if !warm.is_empty() {
+            inputs["warm"] = serde_json::json!(warm);
         }
         if let Some(result) = attempt.order.result {
             inputs["result"] = serde_json::json!({

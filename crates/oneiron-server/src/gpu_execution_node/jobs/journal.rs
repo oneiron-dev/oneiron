@@ -183,6 +183,9 @@ pub struct NodeKey {
     pub ending_cause: Option<EndingCause>,
     pub end: Option<JobEnd>,
     pub end_boot_ns: Option<u64>,
+    /// The wall time of the `Ended` record (row P2: an exit-0 end is a use of each warm key the
+    /// submit listed, at this time).
+    pub ended_at_ms: Option<u64>,
     pub release: DeviceRelease,
     pub outputs: OutputsState,
     pub other_compute_pids: Vec<u32>,
@@ -211,6 +214,7 @@ impl NodeKey {
             ending_cause: None,
             end: None,
             end_boot_ns: None,
+            ended_at_ms: None,
             release: DeviceRelease::NotHeld,
             outputs: OutputsState::Pending,
             other_compute_pids: Vec::new(),
@@ -452,6 +456,7 @@ impl KeyTable {
                 }
                 next.end = Some(end.clone());
                 next.end_boot_ns = *end_boot_ns;
+                next.ended_at_ms = Some(record.at_ms);
                 next.state = JobState::Ended;
             }
             (JournalEvent::Released { other_compute_pids }, Some(JobState::Ended))

@@ -103,6 +103,11 @@ pub enum Blocker {
     TemplateNotOffered,
     TemplateChanged,
     WorldNotResident,
+    /// A warm key the order lists is an input the machine's template maps to a path that is not
+    /// there (pass 34, 7.1 gap 6; row P2): the node fetches nothing, so no wait clears it.
+    WarmKeyMissing {
+        key: String,
+    },
     /// The machine refused for a reason this vocabulary does not name.
     MachineRefuses {
         reason: String,
@@ -228,6 +233,7 @@ impl Blocker {
             Self::AboveCeiling { .. } => "above_ceiling",
             Self::TemplateNotOffered => TEMPLATE_NOT_OFFERED,
             Self::TemplateChanged => TEMPLATE_CHANGED,
+            Self::WarmKeyMissing { .. } => "warm_key_missing",
             Self::WorldNotResident => "world_not_resident",
             Self::MachineRefuses { .. } => "machine_refuses",
             Self::DeviceBusy { .. } => "device_busy",
@@ -290,6 +296,7 @@ impl Blocker {
             | Self::TemplateNotOffered
             | Self::TemplateChanged
             | Self::WorldNotResident
+            | Self::WarmKeyMissing { .. }
             | Self::MachineRefuses { .. } => Clearing::Capability,
             Self::DeviceBusy { .. }
             | Self::MemoryBusy { .. }
@@ -357,6 +364,7 @@ impl Blocker {
             "output_not_fetchable" => Self::OutputNotFetchable { why },
             "not_acknowledgeable" => Self::NotAcknowledgeable,
             "log_not_readable" => Self::LogNotReadable { why },
+            "warm_key_missing" => Self::WarmKeyMissing { key: why },
             code if code == TEMPLATE_CHANGED => Self::TemplateChanged,
             code if code == TEMPLATE_NOT_OFFERED => Self::TemplateNotOffered,
             _ => Self::MachineRefuses {

@@ -54,6 +54,10 @@ pub struct MachineFacts {
     /// The warm keys present on the machine.
     #[serde(default)]
     pub warm: Vec<String>,
+    /// The warm keys the machine's templates map to an input path that is not there (row P2):
+    /// an order that lists one is blocked on this machine.
+    #[serde(default)]
+    pub warm_absent: Vec<String>,
 }
 
 /// Whether the issuer reached the machine.
@@ -336,6 +340,11 @@ pub fn fit(order: &WorkOrder, template: (&str, &str), machine: &MachineFacts) ->
             None => blocked.push(Blocker::TemplateNotOffered),
             Some(held) if held.digest != digest => blocked.push(Blocker::TemplateChanged),
             Some(_) => {}
+        }
+    }
+    for key in crate::warm_key::attempt_warm_keys(&order.wishes.warm) {
+        if machine.warm_absent.contains(&key) {
+            blocked.push(Blocker::WarmKeyMissing { key });
         }
     }
     let needs = Needs::of(&order.request);

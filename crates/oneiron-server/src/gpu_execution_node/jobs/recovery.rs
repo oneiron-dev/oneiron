@@ -49,6 +49,7 @@ impl NodeJobs {
     /// file could not be opened. Nothing was read.
     pub fn open(paths: NodeJobPaths, parts: NodeJobParts) -> std::io::Result<Self> {
         let writer = JournalWriterLock::take(&paths.state_dir)?;
+        let warm = super::warm::WarmState::open(&paths.state_dir, parts.clock.wall_ms());
         let opened = ReceiptClock {
             boot_id: parts.clock.boot_id(),
             boot_ns: parts.clock.boot_ns(),
@@ -59,6 +60,7 @@ impl NodeJobs {
             shared: Arc::new(NodeJobsShared {
                 paths,
                 parts,
+                warm: Mutex::new(warm),
                 book: Mutex::new(NodeBook {
                     gate: NodeGate::Recovering,
                     journal: None,

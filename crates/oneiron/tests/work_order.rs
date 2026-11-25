@@ -218,6 +218,7 @@ fn machine(id: EntityId, devices: Option<Vec<DeviceFact>>) -> MachineFacts {
         keep_headroom_pct: None,
         roles: Vec::new(),
         warm: Vec::new(),
+        warm_absent: Vec::new(),
     }
 }
 

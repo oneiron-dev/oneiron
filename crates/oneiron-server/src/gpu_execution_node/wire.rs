@@ -24,6 +24,9 @@ pub use oneiron::job_workload::{
 };
 use oneiron::machine_readiness::ReadinessStreak;
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
+/// The warm keys of an issuer's open orders that may run on the node it
+/// asks (row P2): one type with the issuer's pass.
+pub use oneiron::warm_key::WarmWanted;
 use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
@@ -100,6 +103,13 @@ pub enum JobRequest {
     /// Run a key the node holds as `Held`: answered by its `Accepted`
     /// receipt, or the key's existing receipt, or `Busy`.
     Submit(SignedJobSubmit),
+    /// [`JobRequest::Node`] from an issuer whose open orders may run here,
+    /// with the warm keys they list (pass 34, row P2): answered as `Node`.
+    /// The node's cache budget removes none of them while this list is
+    /// newer than its wanted hold, and no cache at all while an ask that
+    /// left keys out for its bound holds. A node before row P2 cannot read
+    /// it and closes the stream: the issuer then asks `Node`.
+    NodeWanting(WarmWanted),
 }
 
 /// Which of the node's GPUs a key may take: the selectors of a GPU slot
@@ -151,6 +161,13 @@ pub struct JobSubmit {
     /// the key ends `LaunchRefused { authority_stale }` at the staging
     /// limit.
     pub authority_heads: Vec<String>,
+    /// The warm keys the work reads, from the order (pass 34, row P2): at
+    /// most [`oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX`]. Each one the
+    /// template maps to a path that is not a cache must be present before
+    /// the launch. Left out when empty, so a submit without warm keys
+    /// signs the bytes it signed before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warm: Vec<String>,
 }
 
 /// A submit with the issuer's machine-key signature under
@@ -208,6 +225,10 @@ pub struct NodeAnswer {
     pub swept: bool,
     pub boot_id: String,
     pub engine_version: String,
+    /// The warm keys this node holds or has used (pass 34, row P2): every
+    /// key a template maps, then those remembered from use alone.
+    #[serde(default)]
+    pub warm: Vec<WarmKeyFact>,
     /// What the node's last idle readiness check found (pass 34, 4.1 and
     /// 7.3); `None` while the node keeps no journal.
     #[serde(default)]
@@ -323,6 +344,28 @@ pub struct Breadcrumb {
     /// The key's devices, as the probe sampled them; empty where it gives
     /// nothing.
     pub devices: Vec<DeviceSample>,
+}
+
+/// One warm key, as [`NodeAnswer`] reports it. Nothing about the key's
+/// content is read or sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WarmKeyFact {
+    pub key: String,
+    /// A template maps the key to a path, and the path exists now.
+    pub present: bool,
+    /// A template maps the key to a path; a key no template maps is
+    /// remembered from use alone, a hint.
+    pub mapped: bool,
+    /// Its path is a cache: absent is a cold start, and the cache budget
+    /// may remove it.
+    pub cache: bool,
+    /// What its path held at the last cache pass; 0 when not measured.
+    pub bytes: u64,
+    /// When an attempt that listed it last ended with exit 0, or when the
+    /// node first found its path.
+    pub last_used_ms: Option<u64>,
+    /// How many attempts that listed it ended with exit 0.
+    pub uses: u64,
 }
 
 /// One template a node holds, as [`NodeAnswer`] names it.

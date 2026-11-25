@@ -80,7 +80,10 @@ pub(super) fn payload_dir_owned(payload_dir: &Path, make: bool) -> Result<bool, 
 /// `make`, a missing component is made (0755) once its parent passed. The
 /// work directory itself is owned by the engine's account, and no other
 /// account writes in it.
-fn trusted_work_dir(work_dir: &Path, make: bool) -> Result<Option<PathBuf>, StagingRefusal> {
+pub(in crate::gpu_execution_node::jobs) fn trusted_work_dir(
+    work_dir: &Path,
+    make: bool,
+) -> Result<Option<PathBuf>, StagingRefusal> {
     let not_owned = |path: &Path, why: &str| {
         tracing::warn!(path = %path.display(), why, "job staging: the work directory is not the engine's alone");
         StagingRefusal::WorkDirUnsafe

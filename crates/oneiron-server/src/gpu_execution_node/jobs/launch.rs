@@ -166,6 +166,7 @@ impl NodeJobs {
                 id: known.id.clone(),
                 pin: reserve.pin,
                 payload_dir: known.id.payload_dir(&self.paths().work_dir),
+                warm: submit.submit.warm,
             },
             authority_heads: submit.submit.authority_heads,
             deadline: Instant::now() + limit,

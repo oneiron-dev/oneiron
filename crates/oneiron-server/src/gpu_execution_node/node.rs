@@ -177,8 +177,11 @@ pub enum GateAsk {
     /// the node's file names the asker as an issuer, enabled or not, so the
     /// receipts of the jobs a `disable` stopped stay collectable.
     Status,
-    /// `Node`: what the node offers, answered to an issuer the file names
-    /// while the node is disabled too (it then says so).
+    /// `Node` or `NodeWanting`: what the node offers, answered to an issuer
+    /// the file names while the node is disabled too (it then says so).
+    /// `NodeWanting` also records the issuer's wanted warm keys (row P2): a
+    /// write in memory only, bounded by `WANTED_WARM_KEYS_MAX`, that keeps
+    /// caches from the cache budget for the wanted hold.
     Offer,
     /// `Availability` or `Release`: the node must be enabled.
     Read,
@@ -540,13 +543,20 @@ impl ExecutionNode {
         let keys = self.keys();
         let scopes = keys.map(|keys| keys.scopes());
         let policy = snapshot.policy.as_ref();
-        let (templates, disk_free_bytes, disk_reserve_bytes) = match snapshot.settings() {
+        let (templates, disk_free_bytes, disk_reserve_bytes, warm) = match snapshot.settings() {
             Some(settings) => (
                 machine_policy::offered_templates(policy, settings),
                 disk_free_bytes(&settings.work_dir).unwrap_or(0),
                 machine_policy::disk_reserve_bytes(settings, policy),
+                keys.map(|keys| {
+                    keys.warm_facts(
+                        settings,
+                        &settings.cache.tightened(policy.map(|policy| &policy.cache)),
+                    )
+                })
+                .unwrap_or_default(),
             ),
-            None => (Vec::new(), 0, 0),
+            None => (Vec::new(), 0, 0, Vec::new()),
         };
         NodeAnswer {
             enabled: snapshot.controls.enabled,
@@ -564,6 +574,7 @@ impl ExecutionNode {
             swept: keys.is_some_and(|keys| keys.swept()),
             boot_id: boot_id(),
             engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+            warm,
             readiness: keys.and_then(|keys| keys.readiness()),
         }
     }
@@ -664,6 +675,30 @@ impl ExecutionNode {
         }
         if snapshot.controls.stop_requested {
             keys.stop_live_keys();
+        }
+        // Row P2: the cache pass removes files, so it runs only under figures read now. With
+        // the owner's rows accepted but not readable, or this machine's own id not readable
+        // (its rows cannot be found then), it waits for a tick where they read. The pass reads
+        // the file and the owner's rows again under the admission lock: a reading whose figures
+        // in force differ from these, or do not read, is no reading, and it removes nothing.
+        if let Some(settings) = snapshot.settings() {
+            let in_force = match &snapshot.policy {
+                Some(policy) => Ok(settings.cache.tightened(Some(&policy.cache))),
+                None => self.cache_in_force(settings),
+            };
+            match in_force {
+                Ok(cache) => {
+                    let (file, node) = (self.shared.file.clone(), self.clone());
+                    let read_now = move || {
+                        let now = ExecutionNodeSettings::read(&file).ok().flatten()?;
+                        (node.cache_in_force(&now).ok()? == cache).then_some(now)
+                    };
+                    keys.cache_pass_if_due(settings, &cache, Arc::new(read_now));
+                }
+                Err(why) => {
+                    tracing::debug!(%why, "warm keys: no cache pass while the owner's policy does not read")
+                }
+            }
         }
     }
 

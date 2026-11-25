@@ -306,6 +306,7 @@ fn order_fixture(vault: &Vault) -> (EntityId, WorkOrder, TestHost<'_>) {
             keep_headroom_pct: None,
             roles: Vec::new(),
             warm: Vec::new(),
+            warm_absent: Vec::new(),
         },
         offer: GpuOffer {
             name: OFFER.to_owned(),
