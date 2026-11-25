@@ -309,11 +309,10 @@ fn unit_name(key: &str) -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 fn unit_control(verb: &str, key: &str) -> anyhow::Result<()> {
     use crate::gpu_execution_node::scope_systemd::control::{self, ControlVerb};
-    use crate::gpu_execution_node::scope_systemd::systemd_unit::SYSTEMCTL_TIMEOUT;
     let verb = ControlVerb::from_word(verb)
         .ok_or_else(|| anyhow::anyhow!("unit-control: the verb is start or stop, not {verb:?}"))?;
     let id = crate::gpu_execution_node::jobs::JobKeyId::for_key(key);
-    control::request(verb, &id, SYSTEMCTL_TIMEOUT)
+    control::request(verb, &id)
         .map_err(|why| anyhow::anyhow!("unit-control {} {id}: {why}", verb.word()))
 }
 

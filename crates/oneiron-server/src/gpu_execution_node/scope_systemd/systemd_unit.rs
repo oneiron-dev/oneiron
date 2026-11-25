@@ -250,13 +250,11 @@ impl JobUnit for SystemdJobUnit {
     }
 
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
-        control::request(ControlVerb::Start, unit, SYSTEMCTL_TIMEOUT)
-            .map_err(|reason| Self::error(unit, reason))
+        control::request(ControlVerb::Start, unit).map_err(|reason| Self::error(unit, reason))
     }
 
     fn stop(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {
-        control::request(ControlVerb::Stop, unit, SYSTEMCTL_TIMEOUT)
-            .map_err(|reason| Self::error(unit, reason))
+        control::request(ControlVerb::Stop, unit).map_err(|reason| Self::error(unit, reason))
     }
 
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {

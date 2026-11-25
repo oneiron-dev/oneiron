@@ -17,12 +17,12 @@ case $ID in
   arch)
     base=docker.io/library/archlinux:latest
     owners=$(ldd "$bin" | awk '/=> \// { print $3 }' | xargs -r pacman -Qoq 2> /dev/null | sort -u | tr '\n' ' ')
-    install="pacman -Syu --noconfirm --needed systemd polkit dbus jq util-linux procps-ng iproute2 shadow coreutils $owners && pacman -Scc --noconfirm"
+    install="pacman -Syu --noconfirm --needed systemd polkit dbus jq socat util-linux procps-ng iproute2 shadow coreutils $owners && pacman -Scc --noconfirm"
     init=/usr/lib/systemd/systemd;;
   debian | ubuntu)
     base=docker.io/library/$ID:${VERSION_CODENAME:-$VERSION_ID}
     owners=$(ldd "$bin" | awk '/=> \// { print $3 }' | xargs -r dpkg -S 2> /dev/null | cut -d: -f1 | sort -u | tr '\n' ' ')
-    install="apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus polkitd jq util-linux procps iproute2 passwd coreutils $owners && rm -rf /var/lib/apt/lists/*"
+    install="apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus polkitd jq socat util-linux procps iproute2 passwd coreutils $owners && rm -rf /var/lib/apt/lists/*"
     init=/lib/systemd/systemd;;
   *) echo "## QUALIFY rc=77 why=unsupported-host-distribution-$ID"; exit 77;;
 esac
@@ -44,8 +44,14 @@ docker run -d --name "$name" --privileged --cgroupns=private --memory 8g --cpus 
 # lives there systemd can enable no controller (cgroup v2: a cgroup with processes delegates none; qualification q2,
 # 25 Nov: no pids.max, every job refused). So wait for the manager's socket with short execs only, and run the
 # qualification in a scope of its own, which takes it out of the root cgroup.
+# The boot wait is short execs too (review r4 R4-03): no `--wait` that would sit in the root cgroup while systemd
+# starts.
 for _ in $(seq 1 240); do docker exec "$name" test -S /run/systemd/private 2> /dev/null && break; sleep 0.5; done
-state=$(docker exec "$name" timeout 120 systemctl is-system-running --wait 2>&1)
+for _ in $(seq 1 240); do
+  state=$(docker exec "$name" systemctl is-system-running 2>&1)
+  case $state in running | degraded) break;; esac
+  sleep 0.5
+done
 echo "## CONTAINER $name system=$state kernel=$(uname -r)"
 docker exec "$name" systemd-run --scope --quiet --unit=oneiron-qualify-run \
   bash /opt/qualify/qualify_systemd_scope.sh --oneiron /opt/qualify/oneiron "$@"

@@ -187,13 +187,29 @@ the_engines_account_starts_only_job_units_and_only_through_the_control_socket() 
   [ -e "$other" ] && why+="the other unit's command ran; "
   runuser -u "$JOB" -- "$BIN" execution-node unit-control start "$key" > /dev/null 2>&1 \
     && why+="the job account could use the control socket; "
+  # Raw requests as the engine's account (review r4 R4-07): the handler itself refuses a name that is not a job
+  # instance, a job mode and any other verb.
+  local raw_name raw_mode raw_verb started
+  raw_name=$(printf 'start oneiron-job@x.service\n' | as_engine socat -t 10 - UNIX-CONNECT:/run/oneiron-job-control.sock 2>&1)
+  raw_mode=$(printf 'start %s --job-mode=flush\n' "$id" | as_engine socat -t 10 - UNIX-CONNECT:/run/oneiron-job-control.sock 2>&1)
+  raw_verb=$(printf 'isolate %s\n' "$id" | as_engine socat -t 10 - UNIX-CONNECT:/run/oneiron-job-control.sock 2>&1)
+  [ "$raw_name" = "refused instance_not_a_job" ] || why+="a raw request for oneiron-job@x.service got '$raw_name'; "
+  [ "$raw_mode" = "refused instance_not_a_job" ] || why+="a raw request with a job mode got '$raw_mode'; "
+  [ "$raw_verb" = "refused verb_unknown" ] || why+="a raw isolate got '$raw_verb'; "
+  # The engine's own path (review r4 R4-02): through the socket the job unit starts. This key has no launch file,
+  # so its prepare step refuses; the start itself is what is checked.
+  as_engine "$BIN" execution-node unit-control start "$key" > /dev/null 2>&1 \
+    || why+="the engine's account could not start the job unit through the socket; "
+  sleep 2
+  started=$(systemctl show -P InactiveExitTimestampMonotonic "oneiron-job@$id.service")
+  [ "${started:-0}" -gt 0 ] || why+="the job unit never left inactive after the socket's ok; "
   stat_line=$(stat -c '%U %G %a' /run/oneiron-job-control.sock 2>&1)
   [ "$stat_line" = "root $(id -gn "$ENGINE") 660" ] || why+="control socket is '$stat_line'; "
   systemctl stop "oneiron-job@$id.service" > /dev/null 2>&1
   systemctl reset-failed "oneiron-job@$id.service" > /dev/null 2>&1
   rm -f /etc/systemd/system/qual-other.service "$marker" "$other"; systemctl daemon-reload
   if [ -z "$why" ]; then
-    result "$FUNCNAME" PASS "transient start, direct job start and another unit's start refused for the engine's account; the job account cannot use the socket; socket $stat_line"
+    result "$FUNCNAME" PASS "transient start, direct job start and another unit's start refused for the engine's account; the socket refused a non-job name, a job mode and isolate, and started the job unit for the engine; the job account cannot use it; socket $stat_line"
   else
     result "$FUNCNAME" FAIL "$why"
   fi
