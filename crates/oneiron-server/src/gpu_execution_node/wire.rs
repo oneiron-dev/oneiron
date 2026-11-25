@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 
 use super::availability::GpuAvailability;
 use super::device::DeviceSample;
-use super::node_settings::TemplateKind;
 
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
@@ -159,7 +158,9 @@ pub struct JobSubmit {
     /// Absent from the encoding when `None`, so a submit without it signs
     /// the same bytes as before. A node that predates it decodes a renewal
     /// without it, so the signature it checks fails
-    /// (`SubmitSignatureInvalid`): it journals and starts nothing.
+    /// (`SubmitSignatureInvalid`): it journals and starts nothing. A
+    /// renewal's `chunk` stays the issuer's own chunk counter, as for any
+    /// submit; its place in the run is its receipt's `slice.renewal`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continues: Option<String>,
 }
@@ -334,6 +335,26 @@ pub struct Breadcrumb {
     /// The key's devices, as the probe sampled them; empty where it gives
     /// nothing.
     pub devices: Vec<DeviceSample>,
+}
+
+/// What a run of a template is (pass 34, 2.5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateKind {
+    /// A finite workload: its run ends at the submit's maximum.
+    #[default]
+    Job,
+    /// A long-running harness or service: its run goes on while its issuer
+    /// pays each next chunk before the current one ends (row W1).
+    Session,
+}
+
+impl TemplateKind {
+    /// Whether this is the default kind, a job.
+    #[must_use]
+    pub fn is_job(&self) -> bool {
+        *self == Self::Job
+    }
 }
 
 /// One template a node holds, as [`NodeAnswer`] names it.
@@ -731,8 +752,10 @@ pub struct ReceiptSlice {
     /// The key the run was launched under, which holds its process and
     /// leases.
     pub first_key: String,
-    /// The chunk's place in the run: 0 for the first key's own chunk.
-    pub chunk: u32,
+    /// The slice's place in the run: 0 for the first key's own slice, `n`
+    /// for its `n`th renewal. Not the submit's `chunk`, the issuer's own
+    /// counter.
+    pub renewal: u32,
     pub from_boot_ns: u64,
     pub to_boot_ns: u64,
 }
