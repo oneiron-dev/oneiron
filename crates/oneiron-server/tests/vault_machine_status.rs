@@ -977,6 +977,13 @@ fn end_with_outputs(rig: &Rig, run: &JobRun, outputs: &[(&str, &[u8], bool)]) {
     });
 }
 
+/// [`end_with_outputs`], the node's end being `end`.
+fn end_with_outputs_as(rig: &Rig, run: &JobRun, end: JobEnd, outputs: &[(&str, &[u8], bool)]) {
+    end_with_outputs(rig, run, outputs);
+    rig.node
+        .revise(run.key(), |receipt| receipt.end = Some(end));
+}
+
 /// The names `calls` fetched for `key`, in order.
 fn fetched(calls: &[Call], key: &str) -> Vec<String> {
     calls
@@ -1438,42 +1445,108 @@ fn a_result_binding_its_agent_starter_cannot_read_is_refused_before_the_dispatch
     });
 }
 
-/// #10517 review P1-3: a revoke drops only work it stopped. The node ended the job by itself
-/// (exit 0, outputs hashed) before the issuer saw the workload approval's revoke; the issuer
-/// then closes the key `Revoked` and its stop finds the job already ended. The paid result
-/// still returns (ARCH-0046), here in the owner's own lane.
+/// #10517 review P1-3 and round 2 P1-2: a revoke drops only work it stopped. The node ended
+/// the job before the issuer saw the workload approval's revoke: by itself (exit 0), and by a
+/// stop at the box (`disable --stop` ends it `Stopped`, the end the issuer's own stop gives),
+/// outputs hashed. The issuer asks the node before it closes the key for the revoke, finds the
+/// job ended, and closes it as ended, not `Revoked`. The paid result still returns (ARCH-0046),
+/// here in the owner's own lane.
 #[test]
 fn a_job_that_ended_by_itself_before_a_revoke_still_returns_its_result() {
     with_rig(|rig| {
         let vault = rig.vault();
+        let ends = [
+            ("exited", JobEnd::Exited { code: 0 }),
+            ("stopped-at-the-box", JobEnd::Stopped),
+        ];
+        for (label, end) in ends {
+            let binding = result_binding(rig);
+            let workload = rig.approve(
+                &format!("result-ended-before-revoke-{label}"),
+                FAR_EXPIRY_MS,
+            );
+            let verdict: &[u8] = br#"{"verdict":"done first"}"#;
+            let run =
+                rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+            rig.clock.advance_secs(10);
+            rig.node
+                .advance(run.key(), JobState::Running, Some(10), None, true);
+            rig.step(&run).expect("poll the running job");
+            rig.clock.advance_secs(20);
+            end_with_outputs_as(rig, &run, end.clone(), &[("verdict.json", verdict, true)]);
+            rig.node.put_output(run.key(), "verdict.json", verdict);
+            let revoked = vault
+                .revoke_job_workload(
+                    WorkloadCaller::Owner(&rig.owner),
+                    &WorkloadRef {
+                        workload: workload.clone(),
+                    },
+                    rig.clock.now_ms(),
+                )
+                .expect("the owner revokes the approval");
+            assert!(revoked.changed, "{label}: the revoke was written");
+            rig.settle(&run);
+            assert_eq!(
+                rig.dispatch(&run).closed,
+                Some(DispatchClose::Ended),
+                "{label}: the node had ended the job, so the issuer closed it as ended",
+            );
+
+            let returned = vault
+                .job_return(run.key())
+                .expect("read JOB_RETURN")
+                .expect("the key's return");
+            assert_eq!(
+                returned.landed,
+                vec!["verdict.json".to_owned()],
+                "{label}: the result made before the revoke lands: {returned:?}",
+            );
+            assert!(returned.refused.is_empty(), "{label}: nothing refused");
+            assert!(
+                returned.acknowledged_at_ms.is_some(),
+                "{label}: then the node may clean"
+            );
+            assert_eq!(
+                vault
+                    .pending_proposals(&binding.artifact)
+                    .expect("list the artifact's proposals")
+                    .len(),
+                1,
+                "{label}: one proposal waits",
+            );
+        }
+    });
+}
+
+/// #10517 review round 2 P1-3 (ARCH-0075): a job the node itself ended for a revoke it saw (its
+/// grant for the issuer's job protocol ended; EN-4) lands nothing, though the issuer saw no
+/// revoke and closed the key as ended. Each returnable output is recorded refused
+/// `job_revoked`, never fetched, the node is told it may clean, and nothing waits.
+#[test]
+fn a_job_the_node_ended_for_its_own_revoke_lands_no_output() {
+    with_rig(|rig| {
+        let vault = rig.vault();
         let binding = result_binding(rig);
-        let workload = rig.approve("result-ended-before-revoke", FAR_EXPIRY_MS);
-        let verdict: &[u8] = br#"{"verdict":"done first"}"#;
+        let workload = rig.approve("result-node-revoked", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"after the node's revoke"}"#;
         let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
         rig.clock.advance_secs(10);
         rig.node
             .advance(run.key(), JobState::Running, Some(10), None, true);
         rig.step(&run).expect("poll the running job");
-        rig.clock.advance_secs(20);
-        end_with_outputs(rig, &run, &[("verdict.json", verdict, true)]);
+        rig.clock.advance_secs(5);
+        end_with_outputs_as(
+            rig,
+            &run,
+            JobEnd::Revoked,
+            &[("verdict.json", verdict, true)],
+        );
         rig.node.put_output(run.key(), "verdict.json", verdict);
-        let revoked = vault
-            .revoke_job_workload(
-                WorkloadCaller::Owner(&rig.owner),
-                &WorkloadRef {
-                    workload: workload.clone(),
-                },
-                rig.clock.now_ms(),
-            )
-            .expect("the owner revokes the approval");
-        assert!(revoked.changed, "the revoke was written");
         rig.settle(&run);
         assert_eq!(
             rig.dispatch(&run).closed,
-            Some(DispatchClose::Revoked {
-                code: "workload_revoked".to_owned()
-            }),
-            "the issuer closed the key for the revoke",
+            Some(DispatchClose::Ended),
+            "the issuer saw no revoke of its own",
         );
 
         let returned = vault
@@ -1481,22 +1554,29 @@ fn a_job_that_ended_by_itself_before_a_revoke_still_returns_its_result() {
             .expect("read JOB_RETURN")
             .expect("the key's return");
         assert_eq!(
-            returned.landed,
-            vec!["verdict.json".to_owned()],
-            "the result made before the revoke lands: {returned:?}",
+            returned.refused,
+            vec![ReturnRefusal {
+                name: "verdict.json".to_owned(),
+                why: "job_revoked".to_owned(),
+            }],
+            "the node's revoke drops the output: {returned:?}",
         );
-        assert!(returned.refused.is_empty());
+        assert!(returned.landed.is_empty(), "nothing landed");
         assert!(
             returned.acknowledged_at_ms.is_some(),
-            "then the node may clean"
+            "the node is told it may clean"
         );
-        assert_eq!(
+        let calls = rig.node.calls();
+        assert!(
+            fetched(&calls, run.key()).is_empty(),
+            "no output of a revoked job is fetched: {calls:?}",
+        );
+        assert!(
             vault
                 .pending_proposals(&binding.artifact)
                 .expect("list the artifact's proposals")
-                .len(),
-            1,
-            "one proposal waits",
+                .is_empty(),
+            "nothing waits on the artifact"
         );
     });
 }
