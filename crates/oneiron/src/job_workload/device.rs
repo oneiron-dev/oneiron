@@ -7,6 +7,8 @@
 //! vendor or a model name. A run with no device claim takes no device lease:
 //! the same attempt, on threads and memory alone.
 
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -123,7 +125,9 @@ pub enum DeviceState {
     Leased { keys: Vec<String> },
 }
 
-/// What a machine reports about one device: one row per device.
+/// What a machine reports about one device: one row per device. A report
+/// that repeats an id offers no row of that id
+/// ([`ResourceRequest::place_devices`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceFacts {
     pub id: String,
@@ -222,6 +226,10 @@ pub enum DevicePlacementError {
     },
     /// Devices meet every claim, but too few take this one now.
     DeviceBusy { claim: usize },
+    /// The request's own memory plus the memory of its claims on devices
+    /// that share the host's memory has no value in MiB, from the claim at
+    /// this place on: no machine holds it, and waiting never clears it.
+    HostMemoryOverflow { claim: usize },
 }
 
 impl ResourceRequest {
@@ -229,12 +237,15 @@ impl ResourceRequest {
     /// `devices`: `count` distinct devices for each claim, each device
     /// leased once. The placement is complete or it is an error; a request
     /// with no device claim is placed on any machine with no device lease.
+    /// A device is its id: a row whose id another row of `devices` repeats
+    /// is never placed.
     ///
     /// # Errors
     /// [`DevicePlacementError::NoDevice`] when the machine's devices cannot
     /// serve the claims even with nothing else holding them, else
     /// [`DevicePlacementError::DeviceBusy`] when the holders and states now
-    /// leave too few.
+    /// leave too few. [`DevicePlacementError::HostMemoryOverflow`] when the
+    /// host memory the placement leases has no value in MiB.
     pub fn place_devices(
         &self,
         devices: &[HeldDevice],
@@ -247,8 +258,9 @@ impl ResourceRequest {
                 features: claim_at.features.clone(),
             }
         };
+        let devices = leasable(devices);
         // More devices asked than the machine has: counted before any
-        // claim is expanded, so a large count allocates nothing.
+        // claim is expanded, so nothing is allocated per device asked.
         let mut needed = 0_u64;
         for (claim, claim_at) in self.devices.iter().enumerate() {
             needed = needed.saturating_add(u64::from(claim_at.count));
@@ -264,12 +276,12 @@ impl ResourceRequest {
                 std::iter::repeat_n((claim, claim_at), claim_at.count as usize)
             })
             .collect();
-        if let Err(claim) = match_units(&units, devices, |claim_at, device| {
+        if let Err(claim) = match_units(&units, &devices, |claim_at, device| {
             claim_at.is_met_by(&device.facts)
         }) {
             return Err(no_device(claim));
         }
-        let owners = match_units(&units, devices, |claim_at, device| device.admits(claim_at))
+        let owners = match_units(&units, &devices, |claim_at, device| device.admits(claim_at))
             .map_err(|claim| DevicePlacementError::DeviceBusy { claim })?;
         let mut leases = Vec::with_capacity(units.len());
         let mut host_memory_mib = self.memory_mib;
@@ -277,7 +289,9 @@ impl ResourceRequest {
             let Some(unit) = unit else { continue };
             let (claim, claim_at) = units[*unit];
             if device.facts.memory.is_unified() {
-                host_memory_mib = host_memory_mib.saturating_add(claim_at.memory_mib);
+                host_memory_mib = host_memory_mib
+                    .checked_add(claim_at.memory_mib)
+                    .ok_or(DevicePlacementError::HostMemoryOverflow { claim })?;
             }
             leases.push(DeviceLease {
                 claim,
@@ -293,6 +307,22 @@ impl ResourceRequest {
     }
 }
 
+/// The rows of `devices` that placement may lease: each row whose id no
+/// other row repeats. A lease names its device by id, so an id on two rows
+/// could be leased twice in one placement, or on a free row while a key
+/// holds it on the other. Which row is true is unknown: a repeated id offers
+/// none of its rows, as a device with no id is not offered.
+fn leasable(devices: &[HeldDevice]) -> Vec<&HeldDevice> {
+    let mut rows_of: BTreeMap<&str, usize> = BTreeMap::new();
+    for device in devices {
+        *rows_of.entry(device.facts.id.as_str()).or_default() += 1;
+    }
+    devices
+        .iter()
+        .filter(|device| rows_of.get(device.facts.id.as_str()) == Some(&1))
+        .collect()
+}
+
 /// Gives each device need (a claim's place and the claim, one entry per
 /// device) its own device that `fits` it: a maximum bipartite matching, so a
 /// claim that could take either of two devices leaves the one another claim
@@ -301,7 +331,7 @@ impl ResourceRequest {
 /// reported devices.
 fn match_units(
     units: &[(usize, &DeviceClaim)],
-    devices: &[HeldDevice],
+    devices: &[&HeldDevice],
     fits: impl Fn(&DeviceClaim, &HeldDevice) -> bool,
 ) -> Result<Vec<Option<usize>>, usize> {
     let mut owners: Vec<Option<usize>> = vec![None; devices.len()];
@@ -319,7 +349,7 @@ fn match_units(
 fn augment(
     root: usize,
     units: &[(usize, &DeviceClaim)],
-    devices: &[HeldDevice],
+    devices: &[&HeldDevice],
     fits: &impl Fn(&DeviceClaim, &HeldDevice) -> bool,
     owners: &mut [Option<usize>],
 ) -> bool {
@@ -330,7 +360,7 @@ fn augment(
     let mut gives_up: Vec<Option<usize>> = vec![None; units.len()];
     let mut queue = std::collections::VecDeque::from([root]);
     while let Some(unit) = queue.pop_front() {
-        for (device, held) in devices.iter().enumerate() {
+        for (device, held) in devices.iter().copied().enumerate() {
             if seen[device] || !fits(units[unit].1, held) {
                 continue;
             }

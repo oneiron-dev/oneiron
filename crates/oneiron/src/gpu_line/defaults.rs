@@ -41,6 +41,10 @@ pub const WINDOW_PERIODS: u32 = 1;
 pub const REVIEW_OVERDUE_SECS: u64 = 604_800;
 /// A returning machine is told for the units lost on it in the last 72 hours.
 pub const MACHINE_RETURNED_WINDOW_SECS: u64 = 259_200;
+/// posterior_sampling@1 divides its pool into at most this many slots.
+pub const POSTERIOR_MAX_SLOTS: u32 = 4_096;
+/// posterior_sampling@1 scales a family's wins and losses down together when they sum past this.
+pub const POSTERIOR_MAX_EVIDENCE: u32 = 1_023;
 
 /// The draw order of pass 32 section 4.2: what the three tracks mean, not a
 /// lane's number. Demand: the hold, the floor, the market. Interest: the
@@ -83,3 +87,5 @@ pub const RULE_COUNT_BOUNDS: RangeInclusive<usize> = 1..=2;
 pub const WINDOW_PERIODS_BOUNDS: RangeInclusive<u32> = 1..=26;
 /// The review bound and the returned-machine window: an hour to a year.
 pub const NOTICE_SECS_BOUNDS: RangeInclusive<u64> = 3_600..=31_536_000;
+pub const POSTERIOR_MAX_SLOTS_BOUNDS: RangeInclusive<u32> = 1..=4_096;
+pub const POSTERIOR_MAX_EVIDENCE_BOUNDS: RangeInclusive<u32> = 1..=1_023;

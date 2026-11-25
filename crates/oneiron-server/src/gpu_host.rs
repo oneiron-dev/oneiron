@@ -5,9 +5,10 @@
 //! worker steps every live job every `step_secs` on the blocking pool, since
 //! a backend's calls block.
 //!
-//! No backend ships here: the registry is empty until a backend registers
-//! (C6 02, GPU-LAUNCH-BACKENDS), and a start on an offer whose backend is
-//! not registered refuses before any reservation. Each job runs as its own
+//! No backend ships here. Server start registers `vault_machine` when
+//! `[gpu_jobs.vault_machine]` is enabled and this install is its issuer
+//! (`gpu_execution_node::issuer::register_vault_machine_at_start`); a start on
+//! an offer whose backend is not registered refuses before any reservation. Each job runs as its own
 //! declared run, whose one line is the chunk's quote, reserved whole on this
 //! server's host account (FRAUD-1: a host-paid offer draws on the vault's
 //! paid allocation).
@@ -33,6 +34,8 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 pub(crate) struct GpuJobHost {
     backends: RwLock<BTreeMap<String, Arc<dyn GpuJobConnector>>>,
     permits: GpuJobPermits,
+    /// The work-order loop's wake, lock and node client (pass 34, EM-22 = A: one worker).
+    orders: crate::work_order_host::OrderLoop,
 }
 
 impl std::fmt::Debug for GpuJobHost {
@@ -45,10 +48,8 @@ impl std::fmt::Debug for GpuJobHost {
 }
 
 impl GpuJobHost {
-    /// Registers `connector` as the backend `name`, replacing any before it.
-    /// Only the test door registers one until a backend ships (C6 02,
-    /// GPU-LAUNCH-BACKENDS); that backend's PR drops the gate.
-    #[cfg(oneiron_test_support)]
+    /// Registers `connector` as the backend `name`, replacing any before it:
+    /// `vault_machine` at server start, and the test door's fixtures.
     pub(crate) fn register_backend(&self, name: &str, connector: Arc<dyn GpuJobConnector>) {
         self.backends
             .write()
@@ -86,6 +87,11 @@ impl GpuJobHost {
 
     pub(crate) fn permits(&self) -> &GpuJobPermits {
         &self.permits
+    }
+
+    /// The work-order loop this worker runs.
+    pub(crate) fn orders(&self) -> &crate::work_order_host::OrderLoop {
+        &self.orders
     }
 }
 
@@ -235,9 +241,11 @@ fn step_one_job(
     )?)
 }
 
-/// Starts the worker: every `step_secs`, one step of every live job, each
-/// pass admitted through `admit` as a housekeeping pass is, so a vault frozen
-/// for reap steps nothing. A server that posts no offer starts no worker.
+/// Starts the worker: every `step_secs`, and at each wake of the work-order
+/// loop, one pass of the loop (pass 34, section 0) and then one step of every
+/// live job, each pass admitted through `admit` as a housekeeping pass is, so
+/// a vault frozen for reap steps nothing. A server that posts no offer starts
+/// no worker.
 pub(crate) fn spawn_gpu_job_steps(
     server: Arc<SyncServer>,
     admit: HousekeepingAdmission,
@@ -250,13 +258,17 @@ pub(crate) fn spawn_gpu_job_steps(
         let mut interval = tokio::time::interval(tick);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                () = server.gpu_jobs.orders().woken() => {}
+            }
             let Some(admission) = admit() else {
                 continue;
             };
             let server = Arc::clone(&server);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
+                crate::work_order_host::run_order_pass(&server, now_ms());
                 for (job, outcome) in step_live_jobs(&server, now_ms()) {
                     if let Err(error) = outcome {
                         tracing::warn!(job = %job.to_hex(), error = %error, "GPU job step failed");

@@ -652,7 +652,13 @@ fn a_promote_moves_the_payoff_row_only_when_reviewed() {
     let promoted = fixture
         .verdict(
             None,
-            &verdict_ask("promote", &arm, ArmDecision::Promote, &[unit.id], Some(&result)),
+            &verdict_ask(
+                "promote",
+                &arm,
+                ArmDecision::Promote,
+                &[unit.id],
+                Some(&result),
+            ),
         )
         .expect("the lead promotes");
     let rung = &promoted.arm.rungs[0];
@@ -665,13 +671,21 @@ fn a_promote_moves_the_payoff_row_only_when_reviewed() {
         "rung 1 left Open"
     );
     let receipt_ref = rung_receipt_ref(&arm.id, 1);
-    assert_eq!(team_receipt(&fixture.vault, &receipt_ref).expect("read"), None);
+    assert_eq!(
+        team_receipt(&fixture.vault, &receipt_ref).expect("read"),
+        None
+    );
     assert_eq!(fixture.payoff_of(family), None);
 
     let confirmed = fixture
         .review(
             reviewer,
-            &review_ask("confirm", &promoted.arm, ArmReviewVerdict::Confirmed, &result),
+            &review_ask(
+                "confirm",
+                &promoted.arm,
+                ArmReviewVerdict::Confirmed,
+                &result,
+            ),
         )
         .expect("the reviewer confirms");
     let rung = &confirmed.arm.rungs[0];
@@ -861,7 +875,13 @@ fn a_reviewer_who_ran_the_arm_is_refused() {
     let promoted = fixture
         .verdict(
             Some(lead),
-            &verdict_ask("promote-one", &arm, ArmDecision::Promote, &[unit.id], Some(&result)),
+            &verdict_ask(
+                "promote-one",
+                &arm,
+                ArmDecision::Promote,
+                &[unit.id],
+                Some(&result),
+            ),
         )
         .expect("the lead promotes");
     let before = last_committed_write(&fixture.vault);
@@ -874,7 +894,12 @@ fn a_reviewer_who_ran_the_arm_is_refused() {
         let refused = fixture
             .review(
                 caller,
-                &review_ask("review", &promoted.arm, ArmReviewVerdict::Confirmed, &result),
+                &review_ask(
+                    "review",
+                    &promoted.arm,
+                    ArmReviewVerdict::Confirmed,
+                    &result,
+                ),
             )
             .expect_err("not independent");
         refused_as(&refused, MEMORY_CODE_FORBIDDEN, "reviewer_not_independent");
@@ -890,7 +915,12 @@ fn a_reviewer_who_ran_the_arm_is_refused() {
     let refused = fixture
         .review(
             outsider,
-            &review_ask("outsider", &promoted.arm, ArmReviewVerdict::Confirmed, &result),
+            &review_ask(
+                "outsider",
+                &promoted.arm,
+                ArmReviewVerdict::Confirmed,
+                &result,
+            ),
         )
         .expect_err("a Grant outside the line's reviewers");
     refused_as(&refused, MEMORY_CODE_FORBIDDEN, "not_this_line");
@@ -968,7 +998,13 @@ fn an_owner_review_stands_without_a_reviewer_grant() {
     let promoted = fixture
         .verdict(
             Some(lead),
-            &verdict_ask("promote", &arm, ArmDecision::Promote, &[unit.id], Some(&result)),
+            &verdict_ask(
+                "promote",
+                &arm,
+                ArmDecision::Promote,
+                &[unit.id],
+                Some(&result),
+            ),
         )
         .expect("the lead promotes");
 
@@ -1021,7 +1057,13 @@ fn a_settled_rung_keeps_its_first_outcome() {
     let promoted = fixture
         .verdict(
             None,
-            &verdict_ask("promote", &arm, ArmDecision::Promote, &[unit.id], Some(&result)),
+            &verdict_ask(
+                "promote",
+                &arm,
+                ArmDecision::Promote,
+                &[unit.id],
+                Some(&result),
+            ),
         )
         .expect("the lead promotes");
 
@@ -1098,7 +1140,10 @@ fn a_second_hold_is_refused() {
         held.arm.first_allowance, arm.first_allowance,
         "a hold adds no room"
     );
-    assert_eq!(held.arm.hold_end, None, "the rung stays open inside its hold");
+    assert_eq!(
+        held.arm.hold_end, None,
+        "the rung stays open inside its hold"
+    );
 
     let again = fixture
         .verdict(
@@ -1123,7 +1168,13 @@ fn a_second_hold_is_refused() {
     let conflict = fixture
         .verdict(
             None,
-            &verdict_ask("kill-at-hold", &arm, ArmDecision::Kill, &[], Some(&digest("r", 1))),
+            &verdict_ask(
+                "kill-at-hold",
+                &arm,
+                ArmDecision::Kill,
+                &[],
+                Some(&digest("r", 1)),
+            ),
         )
         .expect_err("the hold was given at this revision");
     refused_as(&conflict, MEMORY_CODE_INVALID_STATE, "verdict_set");
@@ -1194,7 +1245,11 @@ fn a_confirmed_promote_publishes_nothing() {
         }
     }
     let last = fixture.arm(arm.id);
-    assert_eq!(last.state, ArmState::Succeeded, "the last rung closes the arm");
+    assert_eq!(
+        last.state,
+        ArmState::Succeeded,
+        "the last rung closes the arm"
+    );
     assert_eq!(last.rungs.len(), 2);
     assert_eq!(fixture.payoff_of(family), Some((2, 0)));
 }
@@ -1215,12 +1270,26 @@ fn a_verdict_without_a_measured_unit_is_refused() {
             .expect_err("refused")
     };
     let before = last_committed_write(&fixture.vault);
-    refused_as(&kill("none", &[]), MEMORY_CODE_INVALID_STATE, "no_measured_unit");
+    refused_as(
+        &kill("none", &[]),
+        MEMORY_CODE_INVALID_STATE,
+        "no_measured_unit",
+    );
 
-    let live = claim(&arm, 1, "check/shard-0", UnitPurpose::Work, ClaimState::Started);
+    let live = claim(
+        &arm,
+        1,
+        "check/shard-0",
+        UnitPurpose::Work,
+        ClaimState::Started,
+    );
     put_claim(&fixture.vault, &live).expect("the test door puts the claim");
     let before_live = last_committed_write(&fixture.vault);
-    refused_as(&kill("live", &[live.id]), MEMORY_CODE_INVALID_STATE, "units_live");
+    refused_as(
+        &kill("live", &[live.id]),
+        MEMORY_CODE_INVALID_STATE,
+        "units_live",
+    );
     let released = UnitClaim {
         state: ended(UnitEnd::Released("launch refused".to_owned())),
         revision: 2,

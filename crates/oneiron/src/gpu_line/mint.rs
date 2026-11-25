@@ -22,9 +22,12 @@ use crate::llm::run_admission::LeaseUnit;
 /// one second.
 pub const GPU_SECONDS: &str = "gpu_seconds";
 
-/// The rules the mint can fund today. `posterior_sampling@1` and
-/// `even_split@1` join with row M2-G.
-pub const BUILT_RULES: [RuleRef; 1] = [RuleRef::PAYOFF_SHARE_1];
+/// The rules the mint can fund today: the starter and its two rivals.
+pub const BUILT_RULES: [RuleRef; 3] = [
+    RuleRef::PAYOFF_SHARE_1,
+    RuleRef::EVEN_SPLIT_1,
+    RuleRef::POSTERIOR_SAMPLING_1,
+];
 
 /// `payoff_share`'s weight is `(wins + 1) * 2^PAYOFF_WEIGHT_SHIFT / (cost +
 /// prior)`: the scale keeps every positive weight above zero.
@@ -127,6 +130,15 @@ pub enum LineInvalid {
         max = defaults::WINDOW_PERIODS_BOUNDS.end()
     )]
     Window,
+    #[error(
+        "posterior_sampling@1 takes {slots_min} to {slots_max} slots and {evidence_min} to \
+         {evidence_max} wins plus losses a family",
+        slots_min = defaults::POSTERIOR_MAX_SLOTS_BOUNDS.start(),
+        slots_max = defaults::POSTERIOR_MAX_SLOTS_BOUNDS.end(),
+        evidence_min = defaults::POSTERIOR_MAX_EVIDENCE_BOUNDS.start(),
+        evidence_max = defaults::POSTERIOR_MAX_EVIDENCE_BOUNDS.end()
+    )]
+    PosteriorSampling,
     #[error(
         "the draw orders name each track once; each order names a pool once, and the first \
          allowance only at the head of the rung-1 order"
@@ -316,6 +328,11 @@ impl GpuLine {
         }
         if !defaults::WINDOW_PERIODS_BOUNDS.contains(&budget.window_periods) {
             return Err(LineInvalid::Window);
+        }
+        if !defaults::POSTERIOR_MAX_SLOTS_BOUNDS.contains(&budget.posterior_max_slots)
+            || !defaults::POSTERIOR_MAX_EVIDENCE_BOUNDS.contains(&budget.posterior_max_evidence)
+        {
+            return Err(LineInvalid::PosteriorSampling);
         }
         if !draw_orders_valid(budget) {
             return Err(LineInvalid::DrawOrders);
@@ -529,6 +546,9 @@ pub fn mint_period(
     let split_remainder = pools.market_pool % rules;
     let mut tables = Vec::with_capacity(policy.rules.len());
     for rule in &policy.rules {
+        if !BUILT_RULES.contains(rule) {
+            return Err(MintError::RuleNotBuilt(*rule));
+        }
         let (ceilings, unallocated) = match rule.rule {
             AllowanceRule::PayoffShare => payoff_share(
                 share,
@@ -536,8 +556,9 @@ pub fn mint_period(
                 policy.first_rung_secs(),
                 policy.invalid_cost,
             ),
-            AllowanceRule::PosteriorSampling | AllowanceRule::EvenSplit => {
-                return Err(MintError::RuleNotBuilt(*rule));
+            AllowanceRule::EvenSplit => even_split(share, &market_inputs),
+            AllowanceRule::PosteriorSampling => {
+                posterior_sampling(share, &market_inputs, policy, &line.project, index, *rule)
             }
         };
         tables.push(AllowanceTable {
@@ -682,4 +703,114 @@ pub fn payoff_share(
         .collect();
     ceilings.sort_by_key(|(family, _)| *family);
     (ceilings, leftover)
+}
+
+/// `even_split@1` (section 4.3): the pool divided evenly over the families.
+/// Returns the ceilings by family id and what nobody got.
+///
+/// Each family gets `pool / n`; the remainder, fewer seconds than families,
+/// is unallocated. It reads no input. With no family the whole pool is
+/// unallocated.
+#[must_use]
+pub fn even_split(pool: u64, families: &[&FamilyPayoff]) -> (Vec<(EntityId, u64)>, u64) {
+    if families.is_empty() {
+        return (Vec::new(), pool);
+    }
+    let count = families.len() as u64;
+    let per = pool / count;
+    let mut ceilings: Vec<(EntityId, u64)> =
+        families.iter().map(|input| (input.family, per)).collect();
+    ceilings.sort_by_key(|(family, _)| *family);
+    (ceilings, pool - count * per)
+}
+
+/// `posterior_sampling@1` (section 4.3): it gives uncertain families more
+/// tries. Returns the ceilings by family id and what nobody got.
+///
+/// The pool is divided into `min(pool / first_rung_secs, posterior_max_slots)`
+/// slots of `pool / slots` seconds; each slot goes to one family. Per slot
+/// and family the mint draws `w + l + 1` u64 values from the BLAKE3 XOF keyed
+/// by (line, period, rule, slot, family) and takes the `(w + 1)`-th smallest
+/// as the family's score, a discrete stand-in for a Beta(w + 1, l + 1) sample.
+/// The slot goes to the largest score, ties to the lowest family id. Wins and
+/// losses past `posterior_max_evidence` are scaled down together. It reads
+/// wins and losses only, never cost. With no family, or no slot, the whole
+/// pool is unallocated.
+#[must_use]
+pub fn posterior_sampling(
+    pool: u64,
+    families: &[&FamilyPayoff],
+    policy: &BudgetPolicy,
+    line: &EntityId,
+    period: u32,
+    rule: RuleRef,
+) -> (Vec<(EntityId, u64)>, u64) {
+    if families.is_empty() {
+        return (Vec::new(), pool);
+    }
+    let cap = u128::from(policy.posterior_max_evidence);
+    let mut ordered: Vec<(&FamilyPayoff, u64, u64)> = Vec::with_capacity(families.len());
+    for input in families {
+        let wins = u128::from(input.wins);
+        let losses = u128::from(input.losses);
+        let (scaled_wins, scaled_losses) = if wins + losses > cap {
+            let total = wins + losses;
+            (wins * cap / total, losses * cap / total)
+        } else {
+            (wins, losses)
+        };
+        ordered.push((*input, scaled_wins as u64, scaled_losses as u64));
+    }
+    ordered.sort_by_key(|(input, _, _)| input.family);
+    let first = policy.first_rung_secs();
+    let slots = if first == 0 {
+        0
+    } else {
+        (pool / first).min(u64::from(policy.posterior_max_slots))
+    };
+    if slots == 0 {
+        let ceilings: Vec<(EntityId, u64)> = ordered
+            .iter()
+            .map(|(input, _, _)| (input.family, 0))
+            .collect();
+        return (ceilings, pool);
+    }
+    let slot_secs = pool / slots;
+    let mut won = vec![0u64; ordered.len()];
+    let mut draws: Vec<u64> = Vec::with_capacity(cap as usize + 1);
+    let mut byte_buf = [0u8; 8];
+    for slot in 0..slots {
+        let mut best = 0usize;
+        let mut best_theta = 0u64;
+        for (index, entry) in ordered.iter().enumerate() {
+            let (input, scaled_wins, scaled_losses) = entry;
+            let count = (*scaled_wins as usize) + (*scaled_losses as usize) + 1;
+            draws.clear();
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"oneiron.gpu_line.posterior_sampling:v1");
+            hasher.update(line.as_bytes());
+            hasher.update(&period.to_le_bytes());
+            hasher.update(rule.rule.as_str().as_bytes());
+            hasher.update(&rule.version.to_le_bytes());
+            hasher.update(&slot.to_le_bytes());
+            hasher.update(input.family.as_bytes());
+            let mut xof = hasher.finalize_xof();
+            for _ in 0..count {
+                xof.fill(&mut byte_buf);
+                draws.push(u64::from_le_bytes(byte_buf));
+            }
+            let theta = *draws.select_nth_unstable(*scaled_wins as usize).1;
+            if index == 0 || theta > best_theta {
+                best = index;
+                best_theta = theta;
+            }
+        }
+        won[best] += 1;
+    }
+    let ceilings: Vec<(EntityId, u64)> = ordered
+        .iter()
+        .zip(won.iter())
+        .map(|(entry, count)| (entry.0.family, (*count) * slot_secs))
+        .collect();
+    (ceilings, pool - slots * slot_secs)
 }

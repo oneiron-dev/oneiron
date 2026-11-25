@@ -285,6 +285,10 @@ pub struct BudgetPolicy {
     /// The rules the mint funds, in order. One entry: the starter; a second
     /// turns the comparison on and halves the market pool.
     pub rules: Vec<RuleRef>,
+    /// posterior_sampling@1's most slots per pool.
+    pub posterior_max_slots: u32,
+    /// posterior_sampling@1's most wins plus losses per family; more are scaled down together.
+    pub posterior_max_evidence: u32,
     pub invalid_cost: InvalidCost,
     /// Outcomes older than this many periods leave the mint's inputs.
     pub window_periods: u32,
@@ -321,6 +325,8 @@ impl Default for BudgetPolicy {
             forecast_required: defaults::FORECAST_REQUIRED,
             forecast_score_after: defaults::FORECAST_SCORE_AFTER,
             rules: defaults::RULES.to_vec(),
+            posterior_max_slots: defaults::POSTERIOR_MAX_SLOTS,
+            posterior_max_evidence: defaults::POSTERIOR_MAX_EVIDENCE,
             invalid_cost: InvalidCost::default(),
             window_periods: defaults::WINDOW_PERIODS,
             draw_orders: defaults::draw_orders(),

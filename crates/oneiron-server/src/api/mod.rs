@@ -159,6 +159,9 @@ pub(crate) use self::facade::{
 pub(crate) use self::facade::clock_ingress;
 // FIX 12323: a facade route's caller, as its receipt layer resolved it.
 pub(crate) use self::facade::resolved_facade_caller;
+// FIX ACTION-REPLAY-SERVES-UNKEPT-VERB-ANSWERS: the app's action table
+// offers no row whose answer an invocation never keeps.
+pub(crate) use self::facade::verb_reply_is_kept;
 // Fix list row 17645: each served vault's mail pack runs its blocking mail
 // work on this server's runner, under the host's `[mail]` settings.
 pub(crate) use self::facade::install_mail_host;

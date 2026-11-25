@@ -97,8 +97,11 @@ pub enum SelfEffect {
     RepoCheckoutBind,
     RepoExport,
     /// The run's read of its own symbol declaration (NO-DOOR
-    /// SYMBOL-LEASE-OBSERVATION). Last, so no earlier label moves.
+    /// SYMBOL-LEASE-OBSERVATION).
     RepoSymbolsObserve,
+    /// `vault.jobs.orders.wait`: a wait on one work order's first started
+    /// attempt or its end (pass 34 row Q1). Last, so no earlier label moves.
+    JobsOrdersWait,
 }
 
 impl SelfEffect {
@@ -161,6 +164,7 @@ impl SelfEffect {
             Self::RepoCheckoutBind => "self.code.checkout.bind",
             Self::RepoExport => "self.code.export",
             Self::RepoSymbolsObserve => "self.code.symbols.observe",
+            Self::JobsOrdersWait => "vault.jobs.orders.wait",
         }
     }
 
@@ -223,6 +227,7 @@ impl SelfEffect {
             | Self::RepoCheckoutBind
             | Self::RepoExport
             | Self::RepoSymbolsObserve => None,
+            Self::JobsOrdersWait => None,
         }
     }
 

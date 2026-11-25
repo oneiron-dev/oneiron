@@ -20,14 +20,17 @@
 //!   the bounds count only the seats the next mint funds.
 //! - The record carries the policy it was minted under and the allocation the
 //!   installer installs; its economic digest leaves out the mint time.
+//! - T26, T27: the two allowance rules divide equal halves and conserve every
+//!   second; the cohort blocks hold two arms of each rule and read no room.
 use std::collections::BTreeMap;
 
 use oneiron::EntityId;
 use oneiron::federation::WalletRef;
 use oneiron::gpu_line::{
-    BudgetPolicy, DrawStep, FamilySeat, GpuLine, Graduation, InvalidCost, LineInvalid, MintError,
-    PeriodClockError, PinnedMode, RuleRef, SettledTally, Side, Track, defaults, economic_digest,
-    gpu_seconds, line_allocation_id, mint_period, period_balances,
+    AllowanceRule, BudgetPolicy, DrawStep, FamilyPayoff, FamilySeat, GpuLine, Graduation,
+    InvalidCost, LineInvalid, MintError, PeriodClockError, PinnedMode, RuleRef, SettledTally, Side,
+    Track, cohort_rule, defaults, economic_digest, gpu_seconds, line_allocation_id, mint_period,
+    payoff_share, period_balances, posterior_sampling,
 };
 use oneiron::llm::run_admission::LeaseUnit;
 
@@ -452,11 +455,43 @@ fn a_line_keeps_its_bounds() {
         LineInvalid::Rules,
     );
     refused(
-        &|lane| lane.budget.rules = vec![RuleRef::EVEN_SPLIT_1],
-        LineInvalid::RuleNotBuilt(MintError::RuleNotBuilt(RuleRef::EVEN_SPLIT_1)),
+        &|lane| {
+            lane.budget.rules = vec![RuleRef {
+                rule: AllowanceRule::EvenSplit,
+                version: 2,
+            }];
+        },
+        LineInvalid::RuleNotBuilt(MintError::RuleNotBuilt(RuleRef {
+            rule: AllowanceRule::EvenSplit,
+            version: 2,
+        })),
     );
     refused(&|lane| lane.budget.window_periods = 0, LineInvalid::Window);
     refused(&|lane| lane.budget.window_periods = 27, LineInvalid::Window);
+    refused(
+        &|lane| lane.budget.posterior_max_slots = 0,
+        LineInvalid::PosteriorSampling,
+    );
+    refused(
+        &|lane| lane.budget.posterior_max_slots = 4_097,
+        LineInvalid::PosteriorSampling,
+    );
+    refused(
+        &|lane| lane.budget.posterior_max_evidence = 0,
+        LineInvalid::PosteriorSampling,
+    );
+    refused(
+        &|lane| lane.budget.posterior_max_evidence = 1_024,
+        LineInvalid::PosteriorSampling,
+    );
+    accepted(&|lane| {
+        lane.budget.posterior_max_slots = 1;
+        lane.budget.posterior_max_evidence = 1;
+    });
+    accepted(&|lane| {
+        lane.budget.posterior_max_slots = 4_096;
+        lane.budget.posterior_max_evidence = 1_023;
+    });
     refused(
         &|lane| {
             lane.budget.draw_orders.pop();
@@ -658,4 +693,261 @@ fn a_new_idea_seat_lapses_at_the_mint_after_its_second_period() {
     marked.lapsed_from_period = Some(4);
     marked.track = Track::Demand;
     assert!(!listed(&marked, 5), "a lapsed seat is never listed again");
+}
+
+/// T26: a family with no history scores exactly the base rate.
+#[test]
+fn payoff_share_gives_an_unseen_family_the_base_rate() {
+    let seen = FamilyPayoff {
+        family: id(10),
+        wins: 2,
+        losses: 0,
+        cost_secs: 7_200,
+        invalid_secs: 0,
+    };
+    let unseen = FamilyPayoff {
+        family: id(11),
+        wins: 0,
+        losses: 0,
+        cost_secs: 0,
+        invalid_secs: 0,
+    };
+    // The prior is max(1_800, 7_200 / 2) = 3_600, so the seen family's weight
+    // (2 + 1) / (7_200 + 3_600) equals the unseen family's 1 / 3_600.
+    assert_eq!(
+        payoff_share(10_000, &[&seen, &unseen], 1_800, InvalidCost::CountsAsCost),
+        (vec![(id(10), 5_000), (id(11), 5_000)], 0)
+    );
+}
+
+/// T27: with two rules each rule divides one half of an odd market pool, and
+/// every table conserves its half.
+#[test]
+fn both_rules_divide_equal_halves_and_conserve_every_second() {
+    for rival in [RuleRef::EVEN_SPLIT_1, RuleRef::POSTERIOR_SAMPLING_1] {
+        let mut lane = line(five_families(), PinnedMode::FloorPlusMarket);
+        lane.budget.rules = vec![RuleRef::PAYOFF_SHARE_1, rival];
+        let tallies = BTreeMap::from([
+            (id(10), tally(3, 1, 9_000, 0)),
+            (id(11), tally(0, 2, 3_600, 600)),
+            (id(12), tally(1, 0, 0, 0)),
+            (id(20), tally(5, 5, 18_000, 1_200)),
+            (id(21), tally(0, 0, 1_800, 0)),
+        ]);
+        let mut record = mint_period(&lane, 0, &tallies, ANCHOR_MS + 5).expect("the mint");
+        if record.market_pool % 2 == 0 {
+            lane.budget.allowance_units += 1;
+            record = mint_period(&lane, 0, &tallies, ANCHOR_MS + 5).expect("the mint");
+        }
+        assert_eq!(record.market_pool % 2, 1, "the market pool is odd");
+        assert_eq!(record.tables.len(), 2);
+        for table in &record.tables {
+            assert_eq!(table.pool_units, record.market_pool / 2);
+            let given: u64 = table.ceilings.iter().map(|(_, units)| *units).sum();
+            assert_eq!(given + table.unallocated, table.pool_units);
+        }
+        assert_eq!(record.split_remainder, 1);
+        assert!(period_balances(&record));
+        assert_eq!(record.cohort_seed, None, "the store draws the seed");
+        assert_eq!(record.cohort_seed_commit, None);
+        let table = record
+            .tables
+            .iter()
+            .find(|table| table.rule == rival)
+            .expect("the rival's table");
+        if rival == RuleRef::EVEN_SPLIT_1 {
+            let families = table.ceilings.len() as u64;
+            assert_eq!(families, 5);
+            assert!(
+                table
+                    .ceilings
+                    .iter()
+                    .all(|(_, units)| *units == table.pool_units / families),
+                "every ceiling is an equal share: {:?}",
+                table.ceilings
+            );
+            assert!(table.unallocated < families);
+        } else {
+            let slots = (table.pool_units / 1_800).min(4_096);
+            let slot_secs = table.pool_units / slots;
+            assert!(
+                table
+                    .ceilings
+                    .iter()
+                    .all(|(_, units)| *units % slot_secs == 0),
+                "every ceiling is whole slots: {:?}",
+                table.ceilings
+            );
+        }
+    }
+}
+
+#[test]
+fn posterior_sampling_reads_wins_and_losses_and_no_cost() {
+    let policy = open_models();
+    let winner = FamilyPayoff {
+        family: id(10),
+        wins: 40,
+        losses: 0,
+        cost_secs: 7_200,
+        invalid_secs: 0,
+    };
+    let loser = FamilyPayoff {
+        family: id(11),
+        wins: 0,
+        losses: 40,
+        cost_secs: 3_600,
+        invalid_secs: 600,
+    };
+    let pool = 4_096 * 1_800;
+    let first = posterior_sampling(
+        pool,
+        &[&winner, &loser],
+        &policy,
+        &id(1),
+        0,
+        RuleRef::POSTERIOR_SAMPLING_1,
+    );
+    let again = posterior_sampling(
+        pool,
+        &[&winner, &loser],
+        &policy,
+        &id(1),
+        0,
+        RuleRef::POSTERIOR_SAMPLING_1,
+    );
+    assert_eq!(first, again, "the same call twice gives the same result");
+    let winner_other_cost = FamilyPayoff {
+        family: id(10),
+        wins: 40,
+        losses: 0,
+        cost_secs: 99_000,
+        invalid_secs: 9_000,
+    };
+    let loser_other_cost = FamilyPayoff {
+        family: id(11),
+        wins: 0,
+        losses: 40,
+        cost_secs: 0,
+        invalid_secs: 0,
+    };
+    let no_cost = posterior_sampling(
+        pool,
+        &[&winner_other_cost, &loser_other_cost],
+        &policy,
+        &id(1),
+        0,
+        RuleRef::POSTERIOR_SAMPLING_1,
+    );
+    assert_eq!(first, no_cost, "cost changes nothing");
+    let (ceilings, unallocated) = &first;
+    let won = ceilings
+        .iter()
+        .find(|(family, _)| *family == id(10))
+        .expect("the winner")
+        .1;
+    let lost = ceilings
+        .iter()
+        .find(|(family, _)| *family == id(11))
+        .expect("the loser")
+        .1;
+    assert!(won > lost, "the 40-win family wins more slots");
+    assert_eq!(
+        ceilings.iter().map(|(_, units)| *units).sum::<u64>() + *unallocated,
+        pool
+    );
+    let (small, small_unallocated) = posterior_sampling(
+        1_799,
+        &[&winner, &loser],
+        &policy,
+        &id(1),
+        0,
+        RuleRef::POSTERIOR_SAMPLING_1,
+    );
+    assert!(
+        small.iter().all(|(_, units)| *units == 0),
+        "below the first rung every ceiling is zero"
+    );
+    assert_eq!(small_unallocated, 1_799);
+    let mut capped = policy.clone();
+    capped.posterior_max_slots = 8;
+    let (few, _) = posterior_sampling(
+        pool,
+        &[&winner, &loser],
+        &capped,
+        &id(1),
+        0,
+        RuleRef::POSTERIOR_SAMPLING_1,
+    );
+    assert!(
+        few.iter().all(|(_, units)| *units % (pool / 8) == 0),
+        "eight slots: every ceiling is a multiple of pool / 8: {few:?}"
+    );
+}
+
+#[test]
+fn a_cohort_block_holds_two_arms_of_each_rule_and_reads_no_room() {
+    let mut lane = line(five_families(), PinnedMode::FloorPlusMarket);
+    lane.budget.rules = vec![RuleRef::PAYOFF_SHARE_1, RuleRef::EVEN_SPLIT_1];
+    let mut record = mint_period(&lane, 0, &BTreeMap::new(), ANCHOR_MS + 5).expect("the mint");
+    record.cohort_seed = Some([7; 32]);
+    for track in [Track::Demand, Track::Interest] {
+        for position in 0..16 {
+            assert!(
+                cohort_rule(&record, track, position).is_some(),
+                "{track:?} position {position} has a cohort"
+            );
+        }
+        for block in 0..4 {
+            let mut first = 0;
+            let mut second = 0;
+            for offset in 0..4 {
+                match cohort_rule(&record, track, block * 4 + offset) {
+                    Some(rule) if rule == RuleRef::PAYOFF_SHARE_1 => first += 1,
+                    Some(rule) if rule == RuleRef::EVEN_SPLIT_1 => second += 1,
+                    other => panic!("{track:?} block {block}: no such rule: {other:?}"),
+                }
+            }
+            assert_eq!((first, second), (2, 2), "{track:?} block {block}");
+        }
+    }
+    let mut other_room = record.clone();
+    for table in &mut other_room.tables {
+        table.pool_units += 1_000;
+        table.unallocated += 1_000;
+        for (_, ceiling) in &mut table.ceilings {
+            *ceiling += 5;
+        }
+    }
+    for track in [Track::Demand, Track::Interest] {
+        for position in 0..16 {
+            assert_eq!(
+                cohort_rule(&record, track, position),
+                cohort_rule(&other_room, track, position),
+                "{track:?} position {position} reads no room"
+            );
+        }
+    }
+    assert_eq!(cohort_rule(&record, Track::NewIdea, 0), None);
+    let mut no_seed = record.clone();
+    no_seed.cohort_seed = None;
+    assert_eq!(cohort_rule(&no_seed, Track::Demand, 0), None);
+    let mut one_rule = mint_period(
+        &line(five_families(), PinnedMode::FloorPlusMarket),
+        0,
+        &BTreeMap::new(),
+        ANCHOR_MS + 5,
+    )
+    .expect("a one-rule mint");
+    one_rule.cohort_seed = Some([7; 32]);
+    assert_eq!(cohort_rule(&one_rule, Track::Demand, 0), None);
+    let mut other_seed = record.clone();
+    other_seed.cohort_seed = Some([8; 32]);
+    let first: Vec<_> = (0..64)
+        .map(|position| cohort_rule(&record, Track::Demand, position))
+        .collect();
+    let second: Vec<_> = (0..64)
+        .map(|position| cohort_rule(&other_seed, Track::Demand, position))
+        .collect();
+    assert_ne!(first, second, "another seed moves a block");
 }

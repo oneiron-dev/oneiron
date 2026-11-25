@@ -80,6 +80,11 @@ pub enum GpuJobActor<'a> {
     Owner(&'a AuthenticatedOwner),
     /// An agent under its own Grant (RULING L10-31-STARTER = B).
     Agent(&'a GpuJobAgent),
+    /// The work-order loop, for the requester of the order the attempt belongs to (pass 34,
+    /// 1.1): the start checks the order's authority and revision in its own read and write
+    /// and writes the order's attempt entry beside the job; a cancel stops only the live
+    /// attempt of an order a cancel reached.
+    Order(&'a crate::work_order::OrderAttemptRef),
 }
 
 /// An agent caller of a paid GPU job act, as its own handle bound it. Only
