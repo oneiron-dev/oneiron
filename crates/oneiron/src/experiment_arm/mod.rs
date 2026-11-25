@@ -31,14 +31,15 @@ mod admit;
 mod read;
 mod reserve;
 pub(crate) mod tables;
+mod unit_cancel;
+mod unit_view;
 mod wire;
 
 pub use admit::{ARMS_ADMIT_VERB, ArmAdmitRequest, ArmContractAsk, arm_admit_as};
 pub use read::{ARMS_GET_VERB, ARMS_LIST_VERB, arm_get_as, arm_list_as};
-pub use reserve::{
-    ARMS_UNITS_CANCEL_VERB, ARMS_UNITS_RESERVE_VERB, UnitCancelRequest, UnitReserveRequest,
-    UnitView, unit_cancel_as, unit_reserve_as,
-};
+pub use reserve::{ARMS_UNITS_RESERVE_VERB, UnitReserveRequest, unit_reserve_as};
+pub use unit_cancel::{ARMS_UNITS_CANCEL_VERB, UnitCancelRequest, unit_cancel_as};
+pub use unit_view::UnitView;
 pub use wire::{ArmList, ArmListRequest, ArmRef, ArmView};
 
 const EXPERIMENT_ARMS: SideTable<EntityId, ExperimentArm, Named> =
