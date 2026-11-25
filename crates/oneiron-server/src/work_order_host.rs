@@ -117,7 +117,8 @@ pub(crate) struct ServerOrderHost<'a> {
     nodes: &'a dyn JobNodeClient,
     now_ms: u64,
     /// Whether this host is the job worker's own pass, which acts on each `Node` answer's
-    /// readiness fact; a placement preview (`vault.machines.place`) only reads.
+    /// readiness fact. A placement preview (`vault.machines.place`) and the order door's
+    /// immediate pass only read it.
     observe: bool,
 }
 
@@ -173,22 +174,33 @@ impl OrderHost for ServerOrderHost<'_> {
         }
     }
 
-    /// Each machine's `Node` answer, as the pass's facts. On the worker's pass the answer's
+    /// Each machine's `Node` answer, as the pass's facts. On the worker's pass, the answer's
     /// readiness fact is acted on first ([`OrderLoop::observe_readiness`]): a passed check clears
     /// the issuer's drain before the pass places, and a run of failed checks reaches the owner
-    /// (CG-2 row 9).
+    /// (CG-2 row 9). The issuer's guard row is read before the request is sent. A check the
+    /// answer shows as newer than an earlier one therefore ran after that read.
     fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
         machines
             .iter()
             .map(|machine| {
+                let guard_before = self.observe.then(|| {
+                    self.server
+                        .vault
+                        .machine_job_guard(*machine)
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the machine's job guard not read; its readiness clear waits");
+                            None
+                        })
+                });
                 let answer = self.nodes.job(*machine, &JobRequest::Node).ok();
-                if self.observe
+                if let Some(guard_before) = &guard_before
                     && let Some(JobAnswer::Node(node)) = &answer
                     && let Some(readiness) = &node.readiness
                 {
                     self.server.gpu_jobs.orders().observe_readiness(
                         &self.server.vault,
                         *machine,
+                        guard_before.as_ref(),
                         node.drained.as_deref(),
                         readiness,
                         self.now_ms,
@@ -437,7 +449,9 @@ pub fn dispatches_offer(server: &SyncServer, name: &str) -> Result<(), Blocker> 
 }
 
 /// One pass of the loop on this server at `now_ms`, with node calls through `nodes`. Orders
-/// charged to an offer this server does not dispatch are left to the issuer.
+/// charged to an offer this server does not dispatch are left to the issuer. Only the job
+/// worker's pass (`observe`) acts on the readiness facts it reads. The order door's immediate
+/// pass only reads them.
 ///
 /// # Errors
 ///
@@ -446,11 +460,11 @@ pub(crate) fn order_pass(
     server: &Arc<SyncServer>,
     nodes: &dyn JobNodeClient,
     now_ms: u64,
+    observe: bool,
 ) -> oneiron::Result<PassReport> {
-    server.vault.work_order_pass(
-        &ServerOrderHost::new(server, nodes, now_ms).observing(),
-        now_ms,
-    )
+    let host = ServerOrderHost::new(server, nodes, now_ms);
+    let host = if observe { host.observing() } else { host };
+    server.vault.work_order_pass(&host, now_ms)
 }
 
 /// The loop's state on this server: the wake its events send, the one-pass-at-a-time lock, and
@@ -463,10 +477,9 @@ pub(crate) struct OrderLoop {
     /// The slot deciders' asks this hour (row P1): the ceiling `policy.slots.max_asks_per_hour`
     /// counts them here, so an issuer that restarts opens a new window.
     asks: Mutex<SlotAskWindow>,
-    /// The readiness sample each machine last showed a pass: its check's time, its failed
-    /// checks in a row and whether its own drain stood. An answer that repeats it is not acted on
-    /// again (CG-2 row 9).
-    readiness_seen: Mutex<std::collections::HashMap<EntityId, (Option<u64>, u32, bool)>>,
+    /// The worker pass's readings of each machine's readiness fact: the last sample and the clear
+    /// baseline, for at most `ReadinessReads::MAX_MACHINES` machines (CG-2 row 9).
+    readiness: Mutex<crate::gpu_execution_node::issuer::guard::ReadinessReads>,
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -476,40 +489,32 @@ impl std::fmt::Debug for OrderLoop {
 }
 
 impl OrderLoop {
-    /// The worker pass's reading of `machine`'s readiness fact, with the node's own drain from the
-    /// same answer (`issuer::guard::observe_node_readiness`), once per sample: an answer that repeats the
-    /// sample this loop last read changes nothing and takes no write. A sample whose write failed
-    /// waits for the machine's next check.
+    /// The worker pass's reading of `machine`'s readiness fact
+    /// (`issuer::guard::ReadinessReads::observe`). It takes the issuer's guard row as read before
+    /// the request, and the node's own drain from the same answer. An answer that repeats the
+    /// sample this loop last acted on changes nothing and takes no write. A reading whose store
+    /// call failed is acted on again at the next answer. Passes run one at a time (`pass`), so
+    /// this lock is never contended.
     pub(crate) fn observe_readiness(
         &self,
         vault: &oneiron::Vault,
         machine: EntityId,
+        guard_before: Option<&oneiron::job_dispatch::machine_records::MachineJobGuard>,
         node_drained: Option<&str>,
         readiness: &crate::gpu_execution_node::wire::NodeReadiness,
         now_ms: u64,
     ) {
-        let sample = (
-            readiness.checked_at_ms,
-            readiness.failed_in_a_row,
-            node_drained.is_some(),
-        );
-        {
-            let mut seen = self
-                .readiness_seen
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if seen.get(&machine) == Some(&sample) {
-                return;
-            }
-            seen.insert(machine, sample);
-        }
-        crate::gpu_execution_node::issuer::guard::observe_node_readiness(
-            vault,
-            machine,
-            node_drained,
-            readiness,
-            now_ms,
-        );
+        self.readiness
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .observe(
+                vault,
+                machine,
+                guard_before,
+                node_drained,
+                readiness,
+                now_ms,
+            );
     }
 
     /// Wakes the worker for a pass now: a new order, a cancel, an end.
@@ -585,8 +590,8 @@ fn node_client(_server: &Arc<SyncServer>) -> Option<Arc<dyn JobNodeClient>> {
     None
 }
 
-/// One pass of the loop at `now_ms` under the loop's lock, so a door's pass and the worker's
-/// never run at once.
+/// The order door's immediate pass at `now_ms`, under the loop's lock. It reads each machine's
+/// readiness fact and acts on none; the worker's next pass does.
 ///
 /// # Errors
 ///
@@ -595,18 +600,29 @@ pub(crate) fn locked_order_pass(
     server: &Arc<SyncServer>,
     now_ms: u64,
 ) -> oneiron::Result<PassReport> {
+    locked_pass(server, now_ms, false)
+}
+
+/// One pass of the loop at `now_ms` under the loop's lock, so that a door's pass and the
+/// worker's never run at once. `observe` as in [`order_pass`].
+fn locked_pass(
+    server: &Arc<SyncServer>,
+    now_ms: u64,
+    observe: bool,
+) -> oneiron::Result<PassReport> {
     let orders = server.gpu_jobs.orders();
     let _pass = orders
         .pass
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nodes = orders.nodes(server);
-    order_pass(server, nodes.as_ref(), now_ms)
+    order_pass(server, nodes.as_ref(), now_ms, observe)
 }
 
-/// The worker's pass (hunk H2 calls it on each tick and wake): one pass, its failure logged.
+/// The worker's pass (hunk H2 calls it on each tick and wake): one pass, its failure logged. It
+/// is the one pass that acts on the readiness facts it reads.
 pub(crate) fn run_order_pass(server: &Arc<SyncServer>, now_ms: u64) {
-    match locked_order_pass(server, now_ms) {
+    match locked_pass(server, now_ms, true) {
         Ok(report) => {
             for (order, n, machine) in &report.made {
                 tracing::info!(

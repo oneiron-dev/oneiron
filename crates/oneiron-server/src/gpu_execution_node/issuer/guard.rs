@@ -6,18 +6,25 @@
 //! box, a refused launch, an unconfirmed release, an end inside `jobs.drain.fast_exit_secs`, and
 //! a node figure above the issuer's bracket count; a run past the window resets; a caller's
 //! stop, a revoke, a withdrawn key and a refusal the node wrote down for the request neither
-//! count nor reset. Door 12 clears the issuer's drain, as `machines.drain.clear_by` allows, and
-//! under `after_readiness_check` (the default) so does a passed readiness check that ran after
-//! the drain ([`observe_node_readiness`], CG-2 row 9).
+//! count nor reset. Door 12 clears the issuer's drain, as `machines.drain.clear_by` allows. Under
+//! `after_readiness_check` (the default), a passed readiness check that the node ran after the
+//! issuer read the drain clears it as well ([`ReadinessReads`], CG-2 row 9).
 //!
-//! [`observe_node_readiness`] is the issuer's reading of a node's readiness fact on its worker's
-//! scheduled read of the `Node` answer (the work-order pass; a placement preview reads only): a
-//! passed check clears the issuer's drain, and a run of failed checks reaches the owner as one ask
-//! per run once it is long enough (pass 34, 7.3 and 16, practice 6; row Q4). The node's own drain
-//! is the node's: `resume` at the box clears only that one.
+//! [`ReadinessReads`] is how the issuer reads a node's readiness fact from the `Node` answer. A
+//! passed check clears the issuer's drain. A run of failed checks reaches the owner as one ask per
+//! run once the run is long enough (pass 34, 7.3 and 16, practice 6; row Q4). Two callers read
+//! that answer:
+//! - the job worker's work-order pass, for the candidate machines of open orders. A placement
+//!   preview and the order door's own pass only read the answer;
+//! - a scheduled read of every machine the issuer enrolled, so that an idle machine is observed
+//!   too. It is not built yet (FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED).
+//!
+//! The node's own drain belongs to the node: `resume` at the box clears only that one.
+
+use std::collections::HashMap;
 
 use oneiron::gpu_job::MeterVerdict;
-use oneiron::job_dispatch::machine_records::{MachineDrain, MachineJobOutcome};
+use oneiron::job_dispatch::machine_records::{MachineDrain, MachineJobGuard, MachineJobOutcome};
 use oneiron::machine_readiness::ReadinessEscalation;
 use oneiron::{EntityId, Vault};
 
@@ -89,51 +96,199 @@ pub fn machine_job_guard_refusal(vault: &Vault, machine: EntityId) -> Option<Str
     }
 }
 
-/// How far two machines' clocks may differ: `jobs.submit.skew_secs`'s default (pass 33), the bound
-/// the node holds a reserve's `issued_at_ms` to. A check the node dates within it of the issuer's
-/// drain may have run before the drain, so it clears nothing; the machine's next check does.
-pub const READINESS_CLEAR_SKEW_MS: u64 = 120_000;
-
 /// What the issuer did with one reading of a machine's readiness fact.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReadinessObserved {
-    /// The issuer's drain a passed check cleared.
+    /// The issuer's drain that a passed check cleared.
     pub cleared: Option<MachineDrain>,
-    /// What a run of failed checks raised: `None` while the last check passed or before any ran.
+    /// What a run of failed checks raised. `None` while the last check passed, and before any
+    /// check ran.
     pub escalation: Option<ReadinessEscalation>,
+    /// A store read or write failed. The reading is acted on again at the next answer.
+    pub store_failed: bool,
 }
 
-/// The issuer's reading of `machine`'s readiness fact, from one `Node` answer it read at
-/// `now_ms`, with the node's own drain in the same answer (`node_drained`):
-/// - a passed check clears the issuer's drain of the machine when `machines.drain.clear_by` is
-///   `after_readiness_check`, the same answer shows the node's own drain cleared, and the check
-///   ran after the drain beyond [`READINESS_CLEAR_SKEW_MS`] (the check is dated by the machine's
-///   clock, the drain by the issuer's; `Vault::clear_machine_job_drain_after_check`);
-/// - a run of failed checks raises the owner's one ask for the run once it reaches
-///   `machines.readiness.escalate_after` (`Vault::raise_machine_readiness_ask`); a later read of
-///   the same run raises nothing more.
-///
-/// A store failure is logged and changes nothing: the machine's next check is read again.
-pub fn observe_node_readiness(
+/// What one reading is matched on: the node's check, its run of failures, its own drain, and
+/// the issuer's guard row as read before the request. An answer that repeats the last sample is
+/// not acted on again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadinessSample {
+    checked_at_ms: Option<u64>,
+    failed_in_a_row: u32,
+    node_drained: bool,
+    guard: Option<MachineJobGuard>,
+}
+
+/// The check that a drained machine's clear counts from. It is the node's newest check, on the
+/// node's own clock, in the first answer to a `Node` request sent after the issuer read `guard`.
+/// The answer reports the newest check the node had settled. So a check the node dates later
+/// settled after that answer was made, which is after the request and so after every write that
+/// `guard` holds. Both times are the node's, so the two machines' clocks are never compared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClearBaseline {
+    guard: MachineJobGuard,
+    checked_at_ms: Option<u64>,
+}
+
+/// One machine's entry in [`ReadinessReads`].
+#[derive(Debug)]
+struct MachineReads {
+    /// The sample last acted on. `None` after a store failure, so that the next answer is acted
+    /// on again.
+    sample: Option<ReadinessSample>,
+    baseline: Option<ClearBaseline>,
+    /// When the issuer last read this machine, on its own clock.
+    read_at_ms: u64,
+}
+
+/// The issuer's readings of its machines' readiness facts, held by the job worker. Each machine
+/// has its last sample and its clear baseline. At most [`Self::MAX_MACHINES`] machines are kept;
+/// a machine not read for [`Self::IDLE_MS`] is dropped. A dropped entry, or one lost to a
+/// restart, costs at most one more check: the next answer becomes the new baseline.
+#[derive(Debug, Default)]
+pub struct ReadinessReads {
+    machines: HashMap<EntityId, MachineReads>,
+}
+
+impl ReadinessReads {
+    /// The most machines kept. A new machine beyond it takes the place of the machine read
+    /// longest ago.
+    pub const MAX_MACHINES: usize = 1_024;
+    /// How long a machine stays kept with no read: a day.
+    pub const IDLE_MS: u64 = 86_400_000;
+
+    /// How many machines are kept.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.machines.len()
+    }
+
+    /// Whether no machine is kept.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.machines.is_empty()
+    }
+
+    /// Reads `machine`'s readiness fact from one `Node` answer the issuer read at `now_ms`. The
+    /// node's own drain comes from the same answer (`node_drained`). `guard_before` is the
+    /// issuer's guard row as read before that request was sent (`Vault::machine_job_guard`).
+    /// Returns `None`, and does nothing, when the answer repeats the last sample.
+    /// - A passed check clears the issuer's drain when all of these hold:
+    ///   `machines.drain.clear_by` is `after_readiness_check`; the same answer shows the node's
+    ///   own drain cleared; the node dates the check later than the baseline (see
+    ///   `ClearBaseline`); and the guard row is still the one the baseline was read with
+    ///   (`Vault::clear_machine_job_drain_after_check`, which compares the row in its write).
+    ///   A failure counted after that read changes the row, so the next answer becomes a new
+    ///   baseline and a later check clears.
+    /// - A run of failed checks raises the owner's one ask for the run once it reaches
+    ///   `machines.readiness.escalate_after` (`Vault::raise_machine_readiness_ask`). A later
+    ///   reading of the same run raises nothing more.
+    ///
+    /// A node wall clock that steps back delays a clear until it passes the baseline again. It
+    /// never brings a clear forward.
+    pub fn observe(
+        &mut self,
+        vault: &Vault,
+        machine: EntityId,
+        guard_before: Option<&MachineJobGuard>,
+        node_drained: Option<&str>,
+        readiness: &NodeReadiness,
+        now_ms: u64,
+    ) -> Option<ReadinessObserved> {
+        let sample = ReadinessSample {
+            checked_at_ms: readiness.checked_at_ms,
+            failed_in_a_row: readiness.failed_in_a_row,
+            node_drained: node_drained.is_some(),
+            guard: guard_before.cloned(),
+        };
+        if !self.machines.contains_key(&machine) {
+            self.make_room(now_ms);
+        }
+        let reads = self.machines.entry(machine).or_insert(MachineReads {
+            sample: None,
+            baseline: None,
+            read_at_ms: now_ms,
+        });
+        reads.read_at_ms = now_ms;
+        if reads.sample.as_ref() == Some(&sample) {
+            return None;
+        }
+        let observed = observe_node_readiness(
+            vault,
+            machine,
+            guard_before,
+            &mut reads.baseline,
+            node_drained,
+            readiness,
+            now_ms,
+        );
+        reads.sample = (!observed.store_failed).then_some(sample);
+        Some(observed)
+    }
+
+    /// Drops every machine idle for [`Self::IDLE_MS`]. If [`Self::MAX_MACHINES`] are still kept,
+    /// it also drops the machine read longest ago.
+    fn make_room(&mut self, now_ms: u64) {
+        self.machines
+            .retain(|_, reads| now_ms.saturating_sub(reads.read_at_ms) < Self::IDLE_MS);
+        if self.machines.len() >= Self::MAX_MACHINES
+            && let Some(oldest) = self
+                .machines
+                .iter()
+                .min_by_key(|(_, reads)| reads.read_at_ms)
+                .map(|(machine, _)| *machine)
+        {
+            self.machines.remove(&oldest);
+        }
+    }
+}
+
+/// One reading of `machine`'s readiness fact against its clear `baseline`, as
+/// [`ReadinessReads::observe`] describes. A store failure is logged, changes nothing and is
+/// reported.
+fn observe_node_readiness(
     vault: &Vault,
     machine: EntityId,
+    guard_before: Option<&MachineJobGuard>,
+    baseline: &mut Option<ClearBaseline>,
     node_drained: Option<&str>,
     readiness: &NodeReadiness,
     now_ms: u64,
 ) -> ReadinessObserved {
     let mut observed = ReadinessObserved::default();
-    if let (ReadinessState::Ready, Some(checked_at_ms), None) =
-        (&readiness.state, readiness.checked_at_ms, node_drained)
-    {
-        let ran_after_ms = checked_at_ms.saturating_sub(READINESS_CLEAR_SKEW_MS);
-        match vault.clear_machine_job_drain_after_check(machine, ran_after_ms, now_ms) {
-            Ok(Some(drain)) => {
-                tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
-                observed.cleared = Some(drain);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the issuer's drain not cleared after a passed readiness check");
+    match guard_before.filter(|guard| guard.drained.is_some()) {
+        None => *baseline = None,
+        Some(guard) => {
+            let counted_from = baseline
+                .as_ref()
+                .filter(|base| base.guard == *guard)
+                .map(|base| base.checked_at_ms);
+            match counted_from {
+                None => {
+                    *baseline = Some(ClearBaseline {
+                        guard: guard.clone(),
+                        checked_at_ms: readiness.checked_at_ms,
+                    });
+                }
+                Some(from)
+                    if matches!(readiness.state, ReadinessState::Ready)
+                        && node_drained.is_none()
+                        && readiness.checked_at_ms > from =>
+                {
+                    match vault.clear_machine_job_drain_after_check(machine, guard, now_ms) {
+                        Ok(Some(drain)) => {
+                            tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms = ?readiness.checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
+                            observed.cleared = Some(drain);
+                            *baseline = None;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the issuer's drain not cleared after a passed readiness check");
+                            observed.store_failed = true;
+                        }
+                    }
+                }
+                Some(_) => {}
             }
         }
     }
@@ -151,6 +306,7 @@ pub fn observe_node_readiness(
             }
             Err(error) => {
                 tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the readiness ask not raised");
+                observed.store_failed = true;
             }
         }
     }
