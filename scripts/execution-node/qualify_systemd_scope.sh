@@ -347,19 +347,26 @@ EOF
 a_fast_writer_is_stopped_within_its_request_plus_the_rate_times_five_seconds() {
   launch t20b qual 300 256 "" <<'EOF'
 start=$(date +%s%N)
-dd if=/dev/urandom of="$ONEIRON_JOB_OUT/big" bs=1M count=200 iflag=fullblock conv=fsync 2> /dev/null
+dd if=/dev/urandom of="$ONEIRON_JOB_OUT/big" bs=1M count=200 iflag=fullblock conv=fsync 2> "$ONEIRON_JOB_OUT/dd.err"
+dd_rc=$?
 end=$(date +%s%N)
+# No measurement from a write that did not complete: the bytes can sit in the page cache while the fsync fails.
+echo "$dd_rc" > "$ONEIRON_JOB_OUT/dd.rc"
+[ "$dd_rc" = 0 ] || exit 0
 bytes=$(stat -c %s "$ONEIRON_JOB_OUT/big" 2> /dev/null || echo 0)
 echo $(( bytes * 1000000000 / (end - start) )) > "$ONEIRON_JOB_OUT/rate"
 echo "$bytes" > "$ONEIRON_JOB_OUT/bytes"
 EOF
   start
   wait_ended 280 || { result "$FUNCNAME" FAIL "no end record"; return; }
-  local rate bytes cap=$((20 * 1048576)) applied
+  local rate bytes dd_rc cap=$((20 * 1048576)) applied
+  dd_rc=$(cat "$P/out/dd.rc" 2> /dev/null)
   rate=$(cat "$P/out/rate" 2> /dev/null || echo 0)
   bytes=$(cat "$P/out/bytes" 2> /dev/null || echo 0)
   applied=$(jq -r '.report.proofs.write_rate_cap.strength' "$C/scope.json")
-  if [ "$bytes" != $((200 * 1048576)) ]; then
+  if [ "$dd_rc" != 0 ]; then
+    result "$FUNCNAME" FAIL "the workload's write and fsync did not complete: dd exit ${dd_rc:-none}, $(head -c 200 "$P/out/dd.err" 2> /dev/null | tr '\n' ' ')"
+  elif [ "$bytes" != $((200 * 1048576)) ]; then
     result "$FUNCNAME" FAIL "the workload wrote $bytes bytes of the 200 MiB of random bytes it was to write"
   elif [ "$applied" != kernel ]; then
     result "$FUNCNAME" UNPROVEN "the write-rate cap does not hold here: $(jq -r '.report.proofs.write_rate_cap.evidence' "$C/scope.json"); measured $((rate / 1048576)) MiB/s of incompressible bytes. The 5 s payload check is the engine's (server test)"
