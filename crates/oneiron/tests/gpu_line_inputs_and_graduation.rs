@@ -690,7 +690,11 @@ fn gpu_time_is_cost_when_it_is_spent() {
     // released and a box-lost one.
     fixture.put(open, "work/late", settled(Vec::new(), in_period(1)));
     fixture.put(open, "work/open", ClaimState::Started);
-    fixture.put(open, "work/released", unsettled(UnitEnd::Released("withdrawn".to_owned()), 0));
+    fixture.put(
+        open,
+        "work/released",
+        unsettled(UnitEnd::Released("withdrawn".to_owned()), 0),
+    );
     fixture.put(open, "work/lost", unsettled(UnitEnd::BoxLost, CHARGED_SECS));
     // The other family: a confirmed promote is its win.
     let winner = fixture.admit(lead, lane, other, 9, "winner");
@@ -798,7 +802,11 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
     // A kill on another arm of the seat.
     let killed = fixture.admit(lead, lane, idea, 2, "the killed arm");
     let kill_result = digest("result.json", 0x22);
-    let kill_unit = fixture.put(&killed, "work/0", settled(vec![kill_result.clone()], SETTLED_MS));
+    let kill_unit = fixture.put(
+        &killed,
+        "work/0",
+        settled(vec![kill_result.clone()], SETTLED_MS),
+    );
     fixture.verdict(
         lead,
         &killed,
@@ -808,7 +816,14 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
         VERDICT_MS,
     );
     let refused = fixture
-        .graduate(Some(lead), lane, idea, Track::Demand, "after-kill", VERDICT_MS)
+        .graduate(
+            Some(lead),
+            lane,
+            idea,
+            Track::Demand,
+            "after-kill",
+            VERDICT_MS,
+        )
         .expect_err("a kill does not qualify");
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "no_confirmed_promote");
 
@@ -825,7 +840,14 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
     );
     assert_eq!(promoted.arm.rungs[0].state, RungState::AwaitingReview);
     let refused = fixture
-        .graduate(Some(lead), lane, idea, Track::Demand, "unreviewed", VERDICT_MS)
+        .graduate(
+            Some(lead),
+            lane,
+            idea,
+            Track::Demand,
+            "unreviewed",
+            VERDICT_MS,
+        )
         .expect_err("an unreviewed promote does not qualify");
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "no_confirmed_promote");
 
@@ -839,7 +861,14 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
     );
     let revision = fixture.line(lane).revision;
     let graduated = fixture
-        .graduate(Some(lead), lane, idea, Track::Demand, "graduate", in_period(1))
+        .graduate(
+            Some(lead),
+            lane,
+            idea,
+            Track::Demand,
+            "graduate",
+            in_period(1),
+        )
         .expect("the lead graduates the new idea to demand");
     assert!(!graduated.replayed);
     let seats: Vec<_> = graduated
@@ -874,7 +903,14 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
     // The same ask again, under a new key, answers the seat; the line does
     // not move.
     let again = fixture
-        .graduate(Some(lead), lane, idea, Track::Demand, "graduate-again", in_period(1))
+        .graduate(
+            Some(lead),
+            lane,
+            idea,
+            Track::Demand,
+            "graduate-again",
+            in_period(1),
+        )
         .expect("the same graduation answers again");
     assert!(again.replayed);
     assert_eq!(again.line.revision, revision + 1);
@@ -897,7 +933,14 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
     assert_eq!(MemoryError::from(seated).code, MEMORY_CODE_INVALID_STATE);
     // Demand does not graduate again, and no seat graduates to a new idea.
     let refused = fixture
-        .graduate(None, lane, idea, Track::Interest, "demand-to-interest", in_period(1))
+        .graduate(
+            None,
+            lane,
+            idea,
+            Track::Interest,
+            "demand-to-interest",
+            in_period(1),
+        )
         .expect_err("a demand seat is not a new idea");
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "not_new_idea");
     let refused = fixture
@@ -905,13 +948,27 @@ fn a_new_idea_graduates_only_after_a_confirmed_promote() {
         .expect_err("a demand seat does not graduate");
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "not_new_idea");
     let refused = fixture
-        .graduate(None, lane, idea, Track::NewIdea, "to-new-idea", in_period(1))
+        .graduate(
+            None,
+            lane,
+            idea,
+            Track::NewIdea,
+            "to-new-idea",
+            in_period(1),
+        )
         .expect_err("graduation names demand or interest");
     assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
 
     // The owner moves the second new idea to interest.
     let interest = fixture
-        .graduate(None, lane, second, Track::Interest, "to-interest", in_period(1))
+        .graduate(
+            None,
+            lane,
+            second,
+            Track::Interest,
+            "to-interest",
+            in_period(1),
+        )
         .expect("the owner graduates the new idea to interest");
     let seat = interest.line.seat(&second).expect("the seat");
     assert_eq!(seat.track, Track::Interest);
@@ -972,7 +1029,14 @@ fn a_new_idea_with_a_confirmed_promote_does_not_lapse() {
     // Seated before period 0, both are funded in periods 0 and 1. The first
     // write of period 2 mints it: the graduation itself.
     let graduated = fixture
-        .graduate(Some(lead), lane, promoted, Track::Demand, "late", in_period(2))
+        .graduate(
+            Some(lead),
+            lane,
+            promoted,
+            Track::Demand,
+            "late",
+            in_period(2),
+        )
         .expect("a promoted new idea did not lapse");
     let seat = graduated.line.seat(&promoted).expect("its seat in force");
     assert_eq!(seat.track, Track::Demand);
@@ -984,7 +1048,11 @@ fn a_new_idea_with_a_confirmed_promote_does_not_lapse() {
         .filter(|seat| seat.project == idle)
         .collect();
     assert_eq!(lapsed.len(), 1);
-    assert_eq!(lapsed[0].lapsed_from_period, Some(2), "the idle idea lapsed");
+    assert_eq!(
+        lapsed[0].lapsed_from_period,
+        Some(2),
+        "the idle idea lapsed"
+    );
     let refused = fixture
         .graduate(None, lane, idle, Track::Demand, "idle", in_period(2))
         .expect_err("a lapsed seat does not graduate");
