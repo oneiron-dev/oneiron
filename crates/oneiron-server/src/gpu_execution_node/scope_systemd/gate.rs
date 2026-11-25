@@ -12,7 +12,11 @@
 //! kernel who connected (`SO_PEERCRED`) and takes only the process the
 //! service manager names as the unit's main process (`MAINPID`, `job-exec`)
 //! under the job account. It closes every other connection, says so in the
-//! journal and waits on (FIX EXEC-UNIT-ONE-JOB-ACCOUNT). Once it holds
+//! journal and waits on (FIX EXEC-UNIT-ONE-JOB-ACCOUNT). The gate holds the
+//! main process by a pidfd from before its socket exists, and takes a
+//! connection only while that process has not been reaped: a process id is
+//! not reused before then, so the id the kernel recorded at the `connect`
+//! was `job-exec`'s and no later process's (review r7 R7-02). Once it holds
 //! `job-exec`'s connection it closes the socket and removes its name, before
 //! the go, so nothing can connect again (review r3 R3-04).
 //!
@@ -29,7 +33,7 @@
 //! EXEC-UNIT-GATE-EXEC-RACE).
 
 use std::io::{self, Write as _};
-use std::os::fd::{AsFd as _, AsRawFd, BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd as _, AsRawFd, BorrowedFd, FromRawFd as _, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -236,11 +240,12 @@ fn read_and_judge(
             .ok_or("exec_file_missing")?,
     )
     .map_err(|error| format!("exec_file: {error}"))?;
-    let main_pid = main_process_id()?;
+    // Held before the socket exists, so every connection comes after it.
+    let mut main = MainProcess::hold(main_process_id()?)?;
     // The socket is dropped at the end of this statement: closed, its name
     // removed, before the report is even read.
     let connection = GateSocket::bind(&context.exchange_path(), context.job_gid)?
-        .accept_main_process(&|| Ok(main_pid), context.job_uid, until, &context.unit())?;
+        .accept_main_process(&mut main, context.job_uid, until, &context.unit())?;
     let bytes = read_report(
         connection.as_fd(),
         until.saturating_duration_since(Instant::now()),
@@ -272,6 +277,88 @@ fn main_process_id() -> Result<libc::pid_t, String> {
         .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
         .filter(|pid| *pid > 0)
         .ok_or_else(|| "main_pid_unknown: the service manager named no MAINPID".to_owned())
+}
+
+/// A unit's main process, held by a pidfd. While the process has not been
+/// reaped its id names it and no other process (review r7 R7-02).
+pub(super) struct MainProcess {
+    pid: libc::pid_t,
+    pidfd: OwnedFd,
+}
+
+impl MainProcess {
+    /// Holds the process `pid`.
+    ///
+    /// # Errors
+    ///
+    /// The process is gone, or the kernel has no pidfds.
+    pub(super) fn hold(pid: libc::pid_t) -> Result<Self, String> {
+        // SAFETY: pidfd_open takes a process id and no flags, and returns a
+        // new descriptor or -1.
+        let opened = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0_u32) };
+        let error = io::Error::last_os_error();
+        let fd = libc::c_int::try_from(opened)
+            .ok()
+            .filter(|fd| *fd >= 0)
+            .ok_or_else(|| format!("main_process_gone: process {pid}: {error}"))?;
+        // SAFETY: fd is the descriptor pidfd_open just returned.
+        let pidfd = unsafe { OwnedFd::from_raw_fd(fd) };
+        Ok(Self { pid, pidfd })
+    }
+
+    /// Whether the held process has not been reaped (a zombie still counts).
+    fn alive(&self) -> bool {
+        // SAFETY: the pidfd is open; signal 0 with a null info and no flags
+        // only asks whether the very process it holds is still there.
+        let sent = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.pidfd.as_raw_fd(),
+                0,
+                std::ptr::null::<libc::siginfo_t>(),
+                0_u32,
+            )
+        };
+        sent == 0
+    }
+}
+
+/// What the gate's socket asks while it waits for a unit's main process.
+pub(super) trait MainProcessWatch {
+    /// The unit's main process as known now, asking for at most `left`. An
+    /// error, or `None` while the service manager names none yet, refuses
+    /// the connection at hand and the wait goes on (review r7 R7-03).
+    ///
+    /// # Errors
+    ///
+    /// Why the main process is not known.
+    fn main_process(&mut self, left: Duration) -> Result<Option<&MainProcess>, String>;
+
+    /// Asked before each wait for a connection: an error ends the wait at
+    /// once, as when the unit's start failed (review r7 R7-04).
+    ///
+    /// # Errors
+    ///
+    /// Why no connection of the main process can come.
+    fn still_starting(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The gate's case: the main process is held from the start.
+impl MainProcessWatch for MainProcess {
+    fn main_process(&mut self, _left: Duration) -> Result<Option<&MainProcess>, String> {
+        Ok(Some(self))
+    }
+}
+
+/// How long one wait for a connection lasts before the watch is asked again.
+const WATCH_SLICE: Duration = Duration::from_millis(200);
+
+/// What the gate does with one connection.
+enum Admission {
+    Take,
+    Refuse(String),
 }
 
 /// The gate's listening socket in a job's exchange directory. Dropping it
@@ -313,18 +400,19 @@ impl GateSocket {
     }
 
     /// Takes connections until one comes from the unit's main process under
-    /// the job account `job_uid`, and returns it. `main_pid` names that
-    /// process; it is asked at each connection, while the peer still waits on
-    /// it. Every other connection is closed and said in the journal for
-    /// `unit`, and the wait goes on until `until`.
+    /// the job account `job_uid`, and returns it. `watch` names that process;
+    /// it is asked at each connection, while the peer still waits on it, and
+    /// the connection is taken only while the held process has not been
+    /// reaped. Every other connection is closed and said in the journal for
+    /// `unit`, and the wait goes on until `until` or until `watch` ends it.
     ///
     /// # Errors
     ///
-    /// No connection of the main process by `until`, `main_pid` failed, or
-    /// the socket failed.
+    /// No connection of the main process by `until`, the main process was
+    /// reaped, `watch` ended the wait, or the socket failed.
     pub(super) fn accept_main_process(
         &self,
-        main_pid: &dyn Fn() -> Result<libc::pid_t, String>,
+        watch: &mut dyn MainProcessWatch,
         job_uid: u32,
         until: Instant,
         unit: &str,
@@ -337,7 +425,8 @@ impl GateSocket {
                     "report_late: job-exec did not connect in time ({refused} other connection(s) refused)"
                 ));
             }
-            if poll_in(self.listener.as_fd(), left)?.is_none() {
+            watch.still_starting()?;
+            if poll_in(self.listener.as_fd(), left.min(WATCH_SLICE))?.is_none() {
                 continue;
             }
             let connection = match self.listener.accept() {
@@ -352,15 +441,35 @@ impl GateSocket {
                 }
                 Err(error) => return Err(format!("gate_socket: {error}")),
             };
-            let why = match peer_of(&connection) {
-                Ok(peer) => peer_refusal(peer, main_pid()?, job_uid),
-                Err(why) => Some(why),
+            let left = until.saturating_duration_since(Instant::now());
+            let admission = match peer_of(&connection) {
+                Err(why) => Admission::Refuse(why),
+                Ok(peer) => match watch.main_process(left) {
+                    Err(why) => Admission::Refuse(format!("process {}: {why}", peer.pid)),
+                    Ok(None) => Admission::Refuse(format!(
+                        "process {} connected before the service manager named the unit's main process",
+                        peer.pid
+                    )),
+                    Ok(Some(main)) => match peer_refusal(peer, main.pid, job_uid) {
+                        Some(why) => Admission::Refuse(why),
+                        None if main.alive() => Admission::Take,
+                        None => {
+                            return Err(format!(
+                                "main_process_gone: process {} was reaped while its connection waited",
+                                main.pid
+                            ));
+                        }
+                    },
+                },
             };
-            let Some(why) = why else {
-                connection
-                    .set_nonblocking(true)
-                    .map_err(|error| format!("gate connection: {error}"))?;
-                return Ok(connection);
+            let why = match admission {
+                Admission::Take => {
+                    connection
+                        .set_nonblocking(true)
+                        .map_err(|error| format!("gate connection: {error}"))?;
+                    return Ok(connection);
+                }
+                Admission::Refuse(why) => why,
             };
             refused = refused.saturating_add(1);
             if refused <= REFUSALS_SAID_MAX {
@@ -538,8 +647,8 @@ fn read_some(fd: BorrowedFd<'_>, buffer: &mut [u8], left: Duration) -> Result<Re
 #[cfg(test)]
 mod tests {
     use super::{
-        AfterGo, EXEC_MARK, GATE_SOCKET_NAME, GateSocket, Peer, after_go, judge_after_go, peer_of,
-        peer_refusal,
+        AfterGo, EXEC_MARK, GATE_SOCKET_NAME, GateSocket, MainProcess, MainProcessWatch, Peer,
+        after_go, judge_after_go, peer_of, peer_refusal,
     };
     use std::io::Write as _;
     use std::os::fd::{AsFd as _, FromRawFd as _, OwnedFd};
@@ -555,6 +664,36 @@ mod tests {
 
     fn this_process() -> libc::pid_t {
         libc::pid_t::try_from(std::process::id()).expect("a pid fits pid_t")
+    }
+
+    fn parent_process() -> libc::pid_t {
+        // SAFETY: getppid has no preconditions.
+        unsafe { libc::getppid() }
+    }
+
+    /// A watch that names `main` only once `named` is set.
+    struct NamedLater {
+        main: MainProcess,
+        named: bool,
+    }
+
+    impl MainProcessWatch for NamedLater {
+        fn main_process(&mut self, _left: Duration) -> Result<Option<&MainProcess>, String> {
+            Ok(self.named.then_some(&self.main))
+        }
+    }
+
+    /// A watch whose unit's start failed.
+    struct StartFailed;
+
+    impl MainProcessWatch for StartFailed {
+        fn main_process(&mut self, _left: Duration) -> Result<Option<&MainProcess>, String> {
+            Ok(None)
+        }
+
+        fn still_starting(&mut self) -> Result<(), String> {
+            Err("probe_start_failed: systemd-run ended".to_owned())
+        }
     }
 
     #[test]
@@ -686,8 +825,9 @@ mod tests {
             assert_eq!(metadata.gid(), gid);
             let _other = UnixStream::connect(&path).expect("a connection");
             let until = Instant::now() + Duration::from_millis(300);
+            let mut other = MainProcess::hold(parent_process()).expect("the parent process");
             let refused = socket
-                .accept_main_process(&|| Ok(this_process() + 1), uid, until, "test")
+                .accept_main_process(&mut other, uid, until, "test")
                 .expect_err("another process's connection is not taken");
             assert!(
                 refused.contains("1 other connection(s) refused"),
@@ -695,13 +835,84 @@ mod tests {
             );
             let _main = UnixStream::connect(&path).expect("a connection");
             let until = Instant::now() + Duration::from_secs(5);
+            let mut main = MainProcess::hold(this_process()).expect("this process");
             socket
-                .accept_main_process(&|| Ok(this_process()), uid, until, "test")
+                .accept_main_process(&mut main, uid, until, "test")
                 .expect("the main process's connection is taken");
         }
         assert!(
             std::fs::symlink_metadata(&path).is_err(),
             "the name is gone"
         );
+    }
+
+    /// Review r7 R7-03: a connection that comes before the service manager
+    /// names the main process is refused, and the wait goes on to take the
+    /// main process's connection once it is named.
+    #[test]
+    fn a_connection_before_the_main_process_is_named_is_refused_and_the_wait_goes_on() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // SAFETY: getegid and geteuid have no preconditions.
+        let (gid, uid) = unsafe { (libc::getegid(), libc::geteuid()) };
+        let path = dir.path().join(GATE_SOCKET_NAME);
+        let socket = GateSocket::bind(dir.path(), gid).expect("the socket binds");
+        let mut watch = NamedLater {
+            main: MainProcess::hold(this_process()).expect("this process"),
+            named: false,
+        };
+        let _early = UnixStream::connect(&path).expect("a connection");
+        let until = Instant::now() + Duration::from_millis(300);
+        let refused = socket
+            .accept_main_process(&mut watch, uid, until, "test")
+            .expect_err("a connection before the main process is named is not taken");
+        assert!(
+            refused.contains("1 other connection(s) refused"),
+            "{refused}"
+        );
+        watch.named = true;
+        let _main = UnixStream::connect(&path).expect("a connection");
+        let until = Instant::now() + Duration::from_secs(5);
+        socket
+            .accept_main_process(&mut watch, uid, until, "test")
+            .expect("the named main process's connection is taken");
+    }
+
+    /// Review r7 R7-04: a watch whose unit's start failed ends the wait at
+    /// once, with its own words.
+    #[test]
+    fn a_failed_start_ends_the_wait_at_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // SAFETY: getegid and geteuid have no preconditions.
+        let (gid, uid) = unsafe { (libc::getegid(), libc::geteuid()) };
+        let socket = GateSocket::bind(dir.path(), gid).expect("the socket binds");
+        let started = Instant::now();
+        let why = socket
+            .accept_main_process(
+                &mut StartFailed,
+                uid,
+                started + Duration::from_secs(30),
+                "test",
+            )
+            .expect_err("no connection can come");
+        assert_eq!(why, "probe_start_failed: systemd-run ended");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Review r7 R7-02: a held process counts as there until it is reaped,
+    /// and not after, whatever process later gets its id.
+    #[test]
+    fn a_held_main_process_is_alive_until_it_is_reaped() {
+        assert!(
+            MainProcess::hold(this_process())
+                .expect("this process")
+                .alive()
+        );
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("true starts");
+        let pid = libc::pid_t::try_from(child.id()).expect("a pid fits pid_t");
+        let held = MainProcess::hold(pid).expect("held before it is reaped");
+        child.wait().expect("the child is reaped");
+        assert!(!held.alive());
     }
 }

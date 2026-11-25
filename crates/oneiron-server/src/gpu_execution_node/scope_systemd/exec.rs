@@ -7,22 +7,32 @@
 //! before any workload process exists (pass 34, 2.2: any other bound is
 //! recorded unproven).
 //!
-//! Order: catch the checkpoint signals; connect to the gate's socket (the
-//! gate takes this process's connection alone: FIX
-//! EXEC-UNIT-ONE-JOB-ACCOUNT); prove the device policy (before the file
-//! wall, so a refusal is the device policy's and not the wall's); apply the
-//! inner file wall (Landlock); prove the wall, the protected paths, the
-//! network, the hidden processes and the cgroup limits; report (one line,
-//! the connection kept open); wait for the go; start the log writer
-//! ([`super::log_writer`]: descriptors 1 and 2 become its pipes); close
-//! every descriptor above 2 at the exec; write the exec mark; `execve`. The
+//! Order: make this process not dumpable; catch the checkpoint signals;
+//! connect to the gate's socket (the gate takes this process's connection
+//! alone: FIX EXEC-UNIT-ONE-JOB-ACCOUNT); prove the device policy (before the
+//! file wall, so a refusal is the device policy's and not the wall's); apply
+//! the inner file wall (Landlock); prove the wall, the protected paths, the
+//! network, the hidden processes and the cgroup limits; report (one line, the
+//! connection kept open); wait for the go; start the log writer
+//! ([`super::log_writer`]: descriptors 1 and 2 become its pipes); close every
+//! descriptor above 2 at the exec; write the exec mark; `execve`. The
 //! connection closes with a successful exec; a failed one writes why on it
 //! after the mark, so the gate records that the workload never started
 //! (review r2 R2-02; the mark: FIX EXEC-UNIT-GATE-EXEC-RACE). A log writer
 //! that does not start is said on the connection without the mark: the
-//! workload never started either. In probe mode (`execution-node check`)
-//! the step stays connected after its report until root closes the
-//! connection, so root's check of the peer finds it alive, and then ends.
+//! workload never started either. In probe mode (`execution-node check`) the
+//! step stays connected after its report until root closes the connection, so
+//! root's check of the peer finds it alive, and then ends.
+//!
+//! Not dumpable: every job runs as the one job account, so where Yama's
+//! `ptrace_scope` is 0 and another job runs without Landlock, that job could
+//! attach to this process and speak for it on the gate's connection. A
+//! process that is not dumpable cannot be attached to or have its memory
+//! opened by a process of the same account. The window left is the few
+//! system calls between this binary's exec and its first statement; the
+//! workload's own exec makes it dumpable again, and the wider exposure of
+//! one job to another under one account is FIX EXEC-UNIT-CROSS-JOB-SAME-UID
+//! (review r7 R7-01).
 //!
 //! The checkpoint signals (design 7.1 `Signal`; the template's
 //! `checkpoint_signal`) reach the unit's main process. The control handler
@@ -58,6 +68,16 @@ const GATE_WAIT: Duration = Duration::from_secs(45);
 /// The step. Returns its exit status when it does not become the workload.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
+    let off: libc::c_ulong = 0;
+    // SAFETY: PR_SET_DUMPABLE with 0 takes no pointer and only clears this
+    // process's dumpable flag.
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, off, off, off, off) } != 0 {
+        journal_line!(
+            "job-exec: not made undumpable: {}",
+            io::Error::last_os_error()
+        );
+        return exec_status::GATE_SOCKET;
+    }
     catch_checkpoint_signals();
     let [instance] = args else {
         journal_line!("job-exec: usage: job-exec <instance>");
@@ -199,20 +219,24 @@ fn read_exec_file(exchange: &Path, instance: &str) -> Result<ExecFile, String> {
     Ok(exec)
 }
 
-/// The connection to the gate's socket (close-on-exec, blocking). The gate
-/// starts after this step's own exec (`ExecStartPost=`), so the socket is
-/// missing, refuses, or is not yet the job account's for a moment: each of
-/// those is waited out.
+/// The connection to the gate's socket (close-on-exec, blocking once made).
+/// The gate starts after this step's own exec (`ExecStartPost=`), so the
+/// socket is missing, refuses, or is not yet the job account's for a moment:
+/// each of those is waited out. Each try connects without blocking, so a
+/// full listen queue (`EAGAIN`) is waited out under the same deadline too
+/// (review r7 R7-07).
 fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
     let path = exchange.join(GATE_SOCKET_NAME);
+    let address = rustix::net::SocketAddrUnix::new(path.as_path())
+        .map_err(|error| format!("gate socket {}: {error}", path.display()))?;
     let started = Instant::now();
     loop {
-        match UnixStream::connect(&path) {
+        match connect_once(&address) {
             Ok(gate) => return Ok(gate),
             Err(error)
                 if matches!(
                     error.raw_os_error(),
-                    Some(libc::ENOENT | libc::ECONNREFUSED | libc::EACCES)
+                    Some(libc::ENOENT | libc::ECONNREFUSED | libc::EACCES | libc::EAGAIN)
                 ) =>
             {
                 if started.elapsed() >= GATE_WAIT {
@@ -223,6 +247,21 @@ fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
             Err(error) => return Err(format!("gate socket: {error}")),
         }
     }
+}
+
+/// One connection try that does not block, then the connection made
+/// blocking.
+fn connect_once(address: &rustix::net::SocketAddrUnix) -> io::Result<UnixStream> {
+    use rustix::net::{AddressFamily, SocketFlags, SocketType};
+    let socket = rustix::net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
+        None,
+    )?;
+    rustix::net::connect(&socket, address)?;
+    rustix::io::ioctl_fionbio(&socket, false)?;
+    Ok(UnixStream::from(socket))
 }
 
 fn open_raw(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {

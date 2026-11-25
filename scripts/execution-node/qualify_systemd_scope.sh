@@ -25,7 +25,12 @@ done
 [ -n "$BIN_SRC" ] || { echo "usage: $0 --oneiron <binary> [--maximum-secs <n>] [--only <test>]..." >&2; exit 64; }
 [ "$(id -u)" = 0 ] || { echo "## QUALIFY rc=77 why=not-root"; exit 77; }
 [ "$(cat /proc/1/comm 2>/dev/null)" = systemd ] || { echo "## QUALIFY rc=77 why=process-1-is-not-systemd"; exit 77; }
-command -v jq >/dev/null || { echo "## QUALIFY rc=77 why=no-jq"; exit 77; }
+# Every tool a case reads its verdict with, checked once here, so a missing one never reads as a failed bound (cmp was
+# missing from the Arch container and failed the log case in run q5: FIX EXEC-UNIT-QUALIFY-LOG-CASE-NO-CMP; review r7
+# R7-06).
+for tool in jq socat runuser timeout journalctl systemctl sha256sum stat awk; do
+  command -v "$tool" > /dev/null || { echo "## QUALIFY rc=77 why=no-$tool"; exit 77; }
+done
 
 BIN=/usr/local/bin/oneiron
 ENGINE=oneiron-qual-engine
@@ -433,56 +438,138 @@ a_unit_started_with_another_keys_parameters_fails_in_the_prepare_step() {
   fi
 }
 
-# forge_gate_report <exchange dir> <report line> <log> <seconds>: run as the job account. Until <log>.stop exists or
-# the time is up, it offers <report line> to the gate of the job whose exchange directory is <dir>: through the gate's
-# socket, or, on a head that still has them, through the report pipe. Each delivery that went through adds a line.
+# forge_gate_report <exchange dir> <log> <seconds>: run as the job account. Waits until the gate of the job whose
+# exchange directory is <dir> listens (its socket, or, on a head that still has them, its report pipe), offers it the
+# report line in <log>.line once, and writes `<socket|pipe> <pid of the process that delivered it> <exit status>` to
+# <log>. The offer is bounded by 5 s; <log>.stop or the end of <seconds> ends the wait (review r7 R7-06, R7-08).
 forge_gate_report() {
-  local dir=$1 line=$2 log=$3 end=$((SECONDS + $4))
+  local dir=$1 log=$2 end=$((SECONDS + $3)) rc
   while [ $SECONDS -lt $end ] && [ ! -e "$log.stop" ]; do
     if [ -S "$dir/gate.sock" ]; then
-      printf '%s\n' "$line" | socat -u - "UNIX-CONNECT:$dir/gate.sock" 2> /dev/null && echo socket >> "$log"
+      timeout 5 bash -c 'echo $$ > "$1.pid"; exec socat -u "OPEN:$1.line" "UNIX-CONNECT:$2"' _ "$log" "$dir/gate.sock" 2> /dev/null
+      rc=$?; echo "socket $(cat "$log.pid" 2> /dev/null) $rc" >> "$log"; return
     elif [ -p "$dir/report" ]; then
-      timeout 2 bash -c 'printf "%s\n" "$1" > "$2"' _ "$line" "$dir/report" 2> /dev/null && echo pipe >> "$log"
-    else
-      sleep 0.005
+      timeout 5 bash -c 'echo $$ > "$1.pid"; exec cat "$1.line" > "$2"' _ "$log" "$dir/report" 2> /dev/null
+      rc=$?; echo "pipe $(cat "$log.pid" 2> /dev/null) $rc" >> "$log"; return
     fi
+    sleep 0.005
   done
+}
+
+# hold_job_exec <unit> <job uid> <log> <seconds>: root. As soon as the unit's main process has become job-exec (a
+# process of the job account named oneiron in the unit's cgroup, after its exec, so the service manager starts the
+# gate), stops it with STOP and writes `held <pid>` to <log>.held; `not-held` when none came within <seconds>. Once
+# <log> says the other process delivered (or after <seconds>), it waits 1 s for the gate to take and refuse that
+# connection, then lets job-exec go on with CONT (review r7 R7-06: the other process reaches the gate first).
+hold_job_exec() {
+  local unit=$1 uid=$2 log=$3 end=$((SECONDS + $4)) cgroup= p comm key value pid=
+  while [ -z "$pid" ] && [ $SECONDS -lt $end ]; do
+    [ -n "$cgroup" ] || cgroup=$(systemctl show -P ControlGroup "$unit" 2> /dev/null)
+    [ -n "$cgroup" ] && [ -r "/sys/fs/cgroup$cgroup/cgroup.procs" ] || continue
+    while read -r p; do
+      comm=; read -r comm < "/proc/$p/comm" 2> /dev/null
+      [ "$comm" = oneiron ] || continue
+      value=; while read -r key value _; do [ "$key" = Uid: ] && break; done < "/proc/$p/status" 2> /dev/null
+      [ "$value" = "$uid" ] || continue
+      kill -STOP "$p" 2> /dev/null && pid=$p
+      break
+    done < "/sys/fs/cgroup$cgroup/cgroup.procs"
+  done
+  [ -n "$pid" ] || { echo not-held > "$log.held"; return; }
+  echo "held $pid" > "$log.held"
+  while [ $SECONDS -lt $end ] && [ ! -s "$log" ]; do sleep 0.01; done
+  sleep 1
+  kill -CONT "$pid" 2> /dev/null
+}
+
+# stop_helper <pid>: waits up to 10 s for a helper started with & to end, then kills it and reaps it (review r7 R7-08).
+stop_helper() {
+  local i
+  for ((i = 0; i < 100; i++)); do kill -0 "$1" 2> /dev/null || break; sleep 0.1; done
+  kill -KILL "$1" 2> /dev/null; wait "$1" 2> /dev/null
 }
 
 # FIX EXEC-UNIT-ONE-JOB-ACCOUNT: every job runs as the one job account, so another job's workload can reach a starting
 # job's exchange (through /proc of a same-uid process where Landlock is missing). Here a shell of the job account on the
-# machine plays that workload: from before the start it offers the gate a report that refuses the job. The job must
-# start on job-exec's own report, and the gate must have refused the other process. Up to 3 runs, until one shows the
-# gate refusing it; none: UNPROVEN (job-exec reached the gate first each time).
+# machine plays that workload, with a report that refuses the job. job-exec is held with STOP from its exec until that
+# shell has delivered to the gate, so the other process always comes first (review r7 R7-06). Green: the gate refused
+# that very process (the journal names its pid and job-exec's), and the job started on job-exec's own report. Red: the
+# gate took the other process's report (the record names its refusal). A run where job-exec was not held in time, or
+# the other process never reached the gate, is run again, up to 3 runs; then UNPROVEN with why.
 another_process_of_the_job_account_cannot_answer_the_gate_for_a_job() {
-  local run why= refused=0 log forger line
+  local run why= verdict= log forger= holder= job_uid held held_pid via forger_pid rc said
+  job_uid=$(id -u "$JOB")
   log=$(mktemp /tmp/qual-forger.XXXXXX); chmod 0666 "$log"
+  trap 'touch "$log.stop"; kill $forger $holder 2> /dev/null; rm -f "$log" "$log".*; exit 130' INT TERM
   for run in 1 2 3; do
     launch_marker t21-forge qual 120 256 ""
-    line=$(jq -cn --arg i "$ID" '{instance: $i, proofs: {}, refusal: "forged_by_another_process"}')
-    : > "$log"; rm -f "$log.stop"
-    runuser -u "$JOB" -- bash -c "$(declare -f forge_gate_report); forge_gate_report /run/oneiron-jobs/$ID '$line' $log 60" &
+    : > "$log"; rm -f "$log.stop" "$log.held" "$log.pid"
+    jq -cn --arg i "$ID" '{instance: $i, proofs: {}, refusal: "forged_by_another_process"}' > "$log.line"
+    chmod 0644 "$log.line"; touch "$log.pid"; chmod 0666 "$log.pid"
+    runuser -u "$JOB" -- bash -c "$(declare -f forge_gate_report); forge_gate_report /run/oneiron-jobs/$ID $log 30" &
     forger=$!
-    sleep 0.3
+    hold_job_exec "$UNIT" "$job_uid" "$log" 20 &
+    holder=$!
     start
     wait_ended 60 || why="run $run: no end record in 60 s"
-    touch "$log.stop"; wait "$forger" 2> /dev/null
+    touch "$log.stop"; stop_helper "$forger"; stop_helper "$holder"; forger= holder=
     [ -n "$why" ] && break
+    held=$(head -n 1 "$log.held" 2> /dev/null); held_pid=${held#held }
+    read -r via forger_pid rc < "$log" || via=
+    if [ "${held%% *}" != held ]; then
+      said="run $run: job-exec was not held (${held:-the holder wrote nothing})"; continue
+    fi
+    if [ -z "$via" ]; then
+      said="run $run: the other process never reached the gate (job-exec $held_pid held too late)"; continue
+    fi
     if [ "$(ended .workload_started)" != true ] || [ ! -e "$P/out/started" ] || [ "$(jq -r '.report.refusal // ""' "$C/scope.json")" != "" ]; then
-      why="run $run: the job did not start on its own report (deliveries: $(sort "$log" | uniq -c | tr -s ' \n' ' ')); scope $(jq -c '{released, refusal, report_refusal: .report.refusal}' "$C/scope.json" 2>&1); end $(tr -d '\n' < "$C/ended.json")"
+      if [ "$(jq -r '.report.refusal // ""' "$C/scope.json" 2> /dev/null)" = forged_by_another_process ]; then
+        verdict="FAIL run $run: the gate took the report of the other process $forger_pid (by $via, exit $rc) while job-exec $held_pid was held: the record's refusal is forged_by_another_process"
+      else
+        verdict="FAIL run $run: the job did not start on its own report (the other process $forger_pid by $via, exit $rc); scope $(jq -c '{released, refusal, report_refusal: .report.refusal}' "$C/scope.json" 2>&1); end $(tr -d '\n' < "$C/ended.json")"
+      fi
       break
     fi
+    # socat may end with a write error when the gate closed the refused connection first, so its exit status alone
+    # says nothing; the gate's journal line names the process it refused.
     journalctl --sync 2> /dev/null
-    refused=$(journalctl -u "$UNIT" --no-pager -o cat 2> /dev/null | grep -c 'refused a peer')
-    [ "$refused" -gt 0 ] && break
+    if journalctl -u "$UNIT" --no-pager -o cat 2> /dev/null | grep -qF "refused a peer: process $forger_pid is not the unit's main process $held_pid"; then
+      verdict="PASS run $run: job-exec $held_pid was held until the other process $forger_pid had connected (by $via); the gate refused that process by its pid and the job started on job-exec's own report"
+    elif [ "$via" != socket ] || [ "$rc" != 0 ]; then
+      said="run $run: the other process's offer by $via ended with exit $rc and the gate names no refusal of it"; continue
+    else
+      verdict="FAIL run $run: the other process $forger_pid connected while job-exec $held_pid was held, and the job started, but the journal has no refusal naming both"
+    fi
+    break
   done
-  rm -f "$log" "$log.stop"
+  trap - INT TERM
+  rm -f "$log" "$log".*
   if [ -n "$why" ]; then
     result "$FUNCNAME" FAIL "$why"
-  elif [ "$refused" -gt 0 ]; then
-    result "$FUNCNAME" PASS "run $run: the gate refused $refused connection(s) of another process of the job account; the job started on job-exec's own report"
+  elif [ -n "$verdict" ]; then
+    result "$FUNCNAME" "${verdict%% *}" "${verdict#* }"
   else
-    result "$FUNCNAME" UNPROVEN "in 3 runs the other process never reached the gate before job-exec"
+    result "$FUNCNAME" UNPROVEN "3 runs without a verdict; last: $said"
+  fi
+}
+
+# Review r7 R7-05: an exchange directory a binary from before the gate's socket left in /run (its report and go pipes,
+# after an interrupted job and then an update in place) does not stop the next start of that instance: the prepare step
+# removes the two old names with the rest and makes the exchange fresh.
+a_stale_exchange_from_before_the_gate_socket_does_not_stop_the_job() {
+  local stale why= group
+  launch_marker t21-stale qual 120 256 ""
+  stale=/run/oneiron-jobs/$ID; group=$(id -g "$JOB")
+  mkdir -p "$stale" && chown "root:$group" "$stale" && chmod 0750 "$stale" && mkfifo -m 0620 "$stale/report" "$stale/go" \
+    && chown "root:$group" "$stale/report" "$stale/go" || { result "$FUNCNAME" FAIL "the stale exchange could not be made"; return; }
+  start
+  wait_ended 60 || { result "$FUNCNAME" FAIL "no end record in 60 s; prepared $(jq -c '{refusal}' "$C/prepared.json" 2>&1)"; return; }
+  [ "$(ended .workload_started)" = true ] && [ -e "$P/out/started" ] || why="the workload did not start: prepared $(jq -c '{refusal}' "$C/prepared.json" 2>&1); end $(tr -d '\n' < "$C/ended.json")"
+  [ -z "$why" ] && { [ -e "$stale/report" ] || [ -e "$stale/go" ]; } && why="an old pipe is still in the exchange"
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "the old report and go pipes were removed with the exchange and the job started"
+  else
+    result "$FUNCNAME" FAIL "$why"
   fi
 }
 
@@ -586,6 +673,9 @@ without_quallog_template() {
   trap - EXIT INT TERM
 }
 
+# same_bytes <a> <b>: whether two byte streams (files or process substitutions) hold the same bytes, by coreutils alone.
+same_bytes() { [ "$(sha256sum < "$1")" = "$(sha256sum < "$2")" ]; }
+
 # The stream the log case's workload writes to stdout: 400,000 numbered lines of 14 bytes, 5,600,000 bytes.
 numbered_lines() { awk 'BEGIN { for (i = 1; i <= 400000; i++) printf "line %08d\n", i }'; }
 
@@ -622,8 +712,8 @@ EOF
   [ "$at" = $((cap / 2)) ] || why="at $at, not half the cap $((cap / 2))"
   [ -z "$why" ] && [ "$len" -gt "$cap" ] && why="the file is $len bytes, over the cap $cap"
   [ -z "$why" ] && [ $((len + dropped)) != "$total" ] && why="file $len + dropped $dropped is not the stream's $total bytes"
-  [ -z "$why" ] && ! cmp -s <(head -c "$at" "$log") <(head -c "$at" "$expected") && why="the head is not the stream's first $at bytes"
-  [ -z "$why" ] && ! cmp -s <(tail -c $((len - at)) "$log") <(tail -c $((len - at)) "$expected") && why="the tail is not the stream's newest $((len - at)) bytes"
+  [ -z "$why" ] && ! same_bytes <(head -c "$at" "$log") <(head -c "$at" "$expected") && why="the head is not the stream's first $at bytes"
+  [ -z "$why" ] && ! same_bytes <(tail -c $((len - at)) "$log") <(tail -c $((len - at)) "$expected") && why="the tail is not the stream's newest $((len - at)) bytes"
   [ -z "$why" ] && [ "$(stat -c '%U %a' "$log")" != "$JOB 644" ] && why="log/stdout is $(stat -c '%U %a' "$log"), not $JOB 644"
   [ -z "$why" ] && [ "$(cat "$P/log/stderr" 2> /dev/null)" != stderr-ok ] && why="log/stderr is not the workload's stderr: $(head -c 200 "$P/log/stderr" 2>&1)"
   [ -z "$why" ] && [ -e "$P/log/stderr.dropped" ] && why="log/stderr has a drop record under its cap"
@@ -711,6 +801,7 @@ for test in \
   a_unit_whose_network_or_process_hiding_did_not_apply_refuses_before_the_workload_exists \
   a_unit_started_with_another_keys_parameters_fails_in_the_prepare_step \
   another_process_of_the_job_account_cannot_answer_the_gate_for_a_job \
+  a_stale_exchange_from_before_the_gate_socket_does_not_stop_the_job \
   a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unproven \
   a_workload_cannot_write_or_replace_its_end_record \
   the_unit_opens_the_leased_device_and_no_other \

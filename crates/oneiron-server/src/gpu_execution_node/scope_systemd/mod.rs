@@ -168,7 +168,8 @@ pub const CHECK_REPORT_SUFFIX: &str = ".scope.json";
 pub mod exec_status {
     /// `exec.json` was missing, unreadable or not this job's.
     pub const EXEC_FILE: i32 = 150;
-    /// The gate's socket could not be reached.
+    /// The gate's socket could not be reached, or `job-exec` could not be
+    /// made undumpable before it speaks on it (review r7 R7-01).
     pub const GATE_SOCKET: i32 = 151;
     /// The inner file wall could not be applied.
     pub const FILE_WALL: i32 = 152;

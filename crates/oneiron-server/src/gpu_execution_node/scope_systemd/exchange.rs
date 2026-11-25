@@ -61,8 +61,24 @@ pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), Stri
 }
 
 /// Every name the exchange directory may hold, with `exec.json`'s staging
-/// name (review r3 R3-10).
-const EXCHANGE_FILES: [&str; 3] = [EXEC_FILE_NAME, EXEC_STAGING_NAME, GATE_SOCKET_NAME];
+/// name (review r3 R3-10), and the two report and go pipes a binary from
+/// before the gate's socket made there. Those two are only ever removed,
+/// never made or opened, so an exchange that an older binary left behind in
+/// `/run` (an interrupted job, then an update in place) does not fail the
+/// next prepare as not fresh (review r7 R7-05).
+const EXCHANGE_FILES: [&str; 5] = [
+    EXEC_FILE_NAME,
+    EXEC_STAGING_NAME,
+    GATE_SOCKET_NAME,
+    LEGACY_REPORT_PIPE_NAME,
+    LEGACY_GO_PIPE_NAME,
+];
+
+/// The report pipe of a binary from before the gate's socket.
+const LEGACY_REPORT_PIPE_NAME: &str = "report";
+
+/// The go pipe of a binary from before the gate's socket.
+const LEGACY_GO_PIPE_NAME: &str = "go";
 
 /// `exec.json` while [`write_beneath`] writes it.
 const EXEC_STAGING_NAME: &str = "exec.json.new";
