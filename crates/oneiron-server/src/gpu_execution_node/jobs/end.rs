@@ -52,6 +52,10 @@ use crate::gpu_execution_node::wire::{
 /// What the tick does with one launched key after reading it under the lock.
 enum KeyFollowUp {
     Nothing,
+    /// Look for a complete checkpoint while the unit runs.
+    ScanCheckpoint {
+        pin: Box<WorkloadPin>,
+    },
     /// Hash the outputs, outside the lock.
     HashOutputs {
         pin: Box<WorkloadPin>,
@@ -194,7 +198,12 @@ impl NodeJobs {
         for key in launched {
             match self.settle_launched(&key) {
                 KeyFollowUp::Nothing => {}
-                KeyFollowUp::HashOutputs { pin } => self.hash_and_seal(&key, &pin),
+                KeyFollowUp::ScanCheckpoint { pin } => {
+                    self.follow_checkpoint(&key, pin, JobState::Running);
+                }
+                KeyFollowUp::HashOutputs { pin } => {
+                    self.follow_checkpoint(&key, pin, JobState::Ended);
+                }
             }
         }
         self.rearm_renewed_cutoffs();
@@ -255,7 +264,14 @@ impl NodeJobs {
             let sealed = journal
                 .table()
                 .iter()
-                .filter(|key| key.launch.is_some() && key.outputs != OutputsState::Pending)
+                .filter(|key| {
+                    key.launch.is_some()
+                        && key.outputs != OutputsState::Pending
+                        && !book
+                            .checkpoint_scans
+                            .get(&key.key)
+                            .is_some_and(|scan| scan.in_flight)
+                })
                 .cloned()
                 .collect();
             (sealed, journal.epoch())
@@ -354,15 +370,19 @@ impl NodeJobs {
         else {
             return KeyFollowUp::Nothing;
         };
-        match known.state {
+        let unit_active = match known.state {
             JobState::Launching | JobState::Running | JobState::Ending => {
-                if let Err(why) = self.read_unit_end(book, &known, &now) {
-                    tracing::debug!(key, %why, "job end handling tries again at the next tick");
+                match self.read_unit_end(book, &known, &now) {
+                    Ok(active) => active,
+                    Err(why) => {
+                        tracing::debug!(key, %why, "job end handling tries again at the next tick");
+                        false
+                    }
                 }
             }
-            JobState::Ended => {}
+            JobState::Ended => false,
             _ => return KeyFollowUp::Nothing,
-        }
+        };
         let Some(known) = book
             .journal
             .as_ref()
@@ -371,6 +391,13 @@ impl NodeJobs {
         else {
             return KeyFollowUp::Nothing;
         };
+        if unit_active && known.state == JobState::Running {
+            return known.reserve.map_or(KeyFollowUp::Nothing, |reserve| {
+                KeyFollowUp::ScanCheckpoint {
+                    pin: Box::new(reserve.pin),
+                }
+            });
+        }
         if known.state != JobState::Ended {
             return KeyFollowUp::Nothing;
         }
@@ -398,6 +425,7 @@ impl NodeJobs {
     }
 
     /// Step 1: reads the key's end record and its unit, and moves the key.
+    /// Returns whether the unit was seen active.
     ///
     /// # Errors
     ///
@@ -409,13 +437,15 @@ impl NodeJobs {
         book: &mut NodeBook,
         known: &NodeKey,
         now: &super::ReceiptClock,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let Some(journal) = book.journal.as_mut() else {
             return Err("job_service.history_lost".to_owned());
         };
         let control_dir = known.id.control_dir(&self.paths().state_dir);
         match read_end_record(&control_dir, &known.key) {
-            Ok(Some(end_record)) => self.apply_end_record(journal, known, &end_record, now),
+            Ok(Some(end_record)) => self
+                .apply_end_record(journal, known, &end_record, now)
+                .map(|()| false),
             Ok(None) => self.read_unit_phase(journal, known, now),
             Err(error) => {
                 tracing::warn!(key = %known.key, %error, "job end record unreadable; asking again at the next tick");
@@ -516,7 +546,7 @@ impl NodeJobs {
         journal: &mut super::JobJournal,
         known: &NodeKey,
         now: &super::ReceiptClock,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let status = match self.parts().units.status(&known.id) {
             Ok(status) => status,
             Err(error) => {
@@ -526,12 +556,14 @@ impl NodeJobs {
         };
         if status.phase == JobUnitPhase::Inactive {
             if !status.cgroup_empty {
-                return self.kill_unconfirmed(journal, known, now);
+                return self.kill_unconfirmed(journal, known, now).map(|()| false);
             }
             let control_dir = known.id.control_dir(&self.paths().state_dir);
             match read_end_record(&control_dir, &known.key) {
                 Ok(Some(end_record)) => {
-                    return self.apply_end_record(journal, known, &end_record, now);
+                    return self
+                        .apply_end_record(journal, known, &end_record, now)
+                        .map(|()| false);
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -565,7 +597,8 @@ impl NodeJobs {
             _ => None,
         };
         if let Some(event) = event {
-            return Self::record_end_step(journal, known, now, event);
+            return Self::record_end_step(journal, known, now, event)
+                .map(|()| status.phase == JobUnitPhase::Active);
         }
         if known.state == JobState::Ending && status.phase != JobUnitPhase::Stopping {
             // A stop the service manager did not take: ask again.
@@ -573,7 +606,7 @@ impl NodeJobs {
         } else if matches!(known.state, JobState::Launching | JobState::Running) {
             self.write_tick(known, now);
         }
-        Ok(())
+        Ok(status.phase == JobUnitPhase::Active)
     }
 
     /// While the history is lost: asks the service manager again to stop
@@ -722,12 +755,167 @@ impl NodeJobs {
 
     /// Steps 3 and 4: hashes the outputs outside the lock, then records them
     /// and keeps the signed terminal receipt.
-    fn hash_and_seal(&self, key: &str, pin: &WorkloadPin) {
+    /// Starts at most one checkpoint worker per key. A final scan waits for
+    /// any running scan to return, but the tick does not wait for either.
+    /// An end with no checkpoint directory keeps the inline output path.
+    fn follow_checkpoint(&self, key: &str, pin: Box<WorkloadPin>, state: JobState) {
+        if self.service_closed()
+            || self
+                .lock()
+                .checkpoint_scans
+                .get(key)
+                .is_some_and(|scan| scan.in_flight)
+        {
+            return;
+        }
+        let admission = &self.parts().admission;
+        let Some(output) = admission.template_checkpoint_output(&pin) else {
+            if state == JobState::Ended {
+                self.hash_and_seal(key, &pin, &admission.job_settings(), None);
+                self.lock().checkpoint_scans.remove(key);
+            }
+            return;
+        };
+        let settings = admission.job_settings();
+        let now = self.parts().clock.boot_ns();
+        let interval = settings.checkpoint_scan_secs.saturating_mul(1_000_000_000);
+        {
+            let mut book = self.lock();
+            if book.gate != NodeGate::Open || !Self::checkpoint_key_pending(&book, key, state) {
+                return;
+            }
+            let scan = book.checkpoint_scans.entry(key.to_owned()).or_default();
+            if scan.in_flight
+                || (state == JobState::Running
+                    && scan
+                        .last_started_boot_ns
+                        .is_some_and(|last| now.saturating_sub(last) < interval))
+            {
+                return;
+            }
+            scan.in_flight = true;
+            scan.last_started_boot_ns = Some(now);
+        }
+        let jobs = self.clone();
+        let worker_key = key.to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("oneiron-job-checkpoint".to_owned())
+            .spawn(move || {
+                if state == JobState::Ended {
+                    jobs.hash_and_seal(&worker_key, &pin, &settings, Some(&output));
+                } else {
+                    jobs.scan_and_record_checkpoint(&worker_key, &pin, &output, &settings, state);
+                }
+                jobs.finish_checkpoint_work(&worker_key, state);
+            });
+        if let Err(error) = spawned {
+            tracing::warn!(key, %error, "job checkpoint worker not started");
+            self.finish_checkpoint_work(key, state);
+        }
+    }
+
+    fn checkpoint_key_pending(book: &NodeBook, key: &str, state: JobState) -> bool {
+        book.journal
+            .as_ref()
+            .and_then(|journal| journal.table().get(key))
+            .is_some_and(|known| known.state == state && known.outputs == OutputsState::Pending)
+    }
+
+    fn finish_checkpoint_work(&self, key: &str, state: JobState) {
+        let mut book = self.lock();
+        if state == JobState::Ended {
+            book.checkpoint_scans.remove(key);
+        } else if let Some(scan) = book.checkpoint_scans.get_mut(key) {
+            scan.in_flight = false;
+        }
+    }
+
+    /// A failed scan leaves the previous checkpoint alone. A failed journal
+    /// write is retried before the final outputs are sealed.
+    fn scan_and_record_checkpoint(
+        &self,
+        key: &str,
+        pin: &WorkloadPin,
+        output: &str,
+        settings: &NodeJobSettings,
+        state: JobState,
+    ) -> bool {
         let payload_dir = super::JobKeyId::for_key(key).payload_dir(&self.paths().work_dir);
-        let settings = self.parts().admission.job_settings();
-        let outputs = hash_outputs(&payload_dir, pin, &settings);
+        let mut checkpoint = match super::checkpoints::scan(
+            &payload_dir,
+            output,
+            pin.request.disk_mib,
+            Duration::from_secs(settings.checkpoint_hash_limit_secs),
+            || self.service_closed(),
+        ) {
+            Ok(checkpoint) => checkpoint,
+            Err(why) => {
+                tracing::debug!(key, %why, "job checkpoint not recorded");
+                return true;
+            }
+        };
+        if self
+            .parts()
+            .admission
+            .template_checkpoint_output(pin)
+            .as_deref()
+            != Some(output)
+        {
+            return true;
+        }
         let now = self.now();
         let mut book = self.lock();
+        if self.service_closed() || book.gate != NodeGate::Open {
+            return false;
+        }
+        let Some(journal) = book.journal.as_mut() else {
+            return false;
+        };
+        let Some(known) = journal.table().get(key) else {
+            return false;
+        };
+        if known.state != state || known.outputs != OutputsState::Pending {
+            return false;
+        }
+        if known
+            .checkpoint
+            .as_ref()
+            .is_some_and(|last| last.label == checkpoint.label && last.sha256 == checkpoint.sha256)
+        {
+            return true;
+        }
+        checkpoint.saved_at_ms = now.wall_ms;
+        let issuer = known.issuer;
+        let event = JournalEvent::CheckpointSaved { checkpoint };
+        match journal.record(key, issuer, &now.boot_id, now.wall_ms, event) {
+            Ok(_) => true,
+            Err(error) => {
+                log_write_error(key, &error);
+                false
+            }
+        }
+    }
+
+    fn hash_and_seal(
+        &self,
+        key: &str,
+        pin: &WorkloadPin,
+        settings: &NodeJobSettings,
+        checkpoint_output: Option<&str>,
+    ) {
+        if let Some(output) = checkpoint_output
+            && (!self.scan_and_record_checkpoint(key, pin, output, settings, JobState::Ended)
+                || self.service_closed())
+        {
+            return;
+        }
+        let payload_dir = super::JobKeyId::for_key(key).payload_dir(&self.paths().work_dir);
+        let outputs = hash_outputs(&payload_dir, pin, settings);
+        let now = self.now();
+        let mut book = self.lock();
+        if checkpoint_output.is_some() && (self.service_closed() || book.gate != NodeGate::Open) {
+            return;
+        }
         let Some(journal) = book.journal.as_mut() else {
             return;
         };
@@ -749,6 +937,11 @@ impl NodeJobs {
         drop(book);
         self.keep_terminal_receipt(&sealed, epoch, &now);
     }
+}
+
+/// The plain SHA-256 hasher for the node's output and checkpoint digests.
+pub(super) fn output_sha256() -> Sha256 {
+    Sha256::new()
 }
 
 /// Hashes the pin's declared outputs beneath `<payload_dir>/out/`: only
@@ -822,7 +1015,7 @@ pub(super) fn hash_outputs(
             };
         }
         let mut file = std::fs::File::from(descriptor);
-        let mut hasher = Sha256::new();
+        let mut hasher = output_sha256();
         let mut bytes = 0u64;
         let mut buffer = vec![0u8; 1 << 16];
         loop {

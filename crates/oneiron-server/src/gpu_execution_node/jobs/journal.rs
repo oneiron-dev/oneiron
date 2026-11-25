@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::job_unit::JobKeyId;
 use super::journal_file::{JournalAppendError, JournalEpoch, JournalFile};
 use crate::gpu_execution_node::wire::{
-    DeviceRelease, JobEnd, JobReserve, JobState, OutputsState, SignedJobSubmit,
+    CheckpointRecord, DeviceRelease, JobEnd, JobReserve, JobState, OutputsState, SignedJobSubmit,
 };
 
 /// One record: `{ seq, boot_id, at_ms, key, issuer, event }`. `issuer` is
@@ -102,6 +102,10 @@ pub enum JournalEvent {
         from_boot_ns: u64,
         cutoff_boot_ns: u64,
     },
+    /// The node's latest complete checkpoint of the key (pass 34 row C1):
+    /// the label LATEST named, with its manifest digest. It changes no
+    /// state; the receipt carries it.
+    CheckpointSaved { checkpoint: CheckpointRecord },
 }
 
 impl JournalEvent {
@@ -120,6 +124,7 @@ impl JournalEvent {
             Self::Acknowledged => "acknowledged",
             Self::Cleaned => "cleaned",
             Self::Renewed { .. } => "renewed",
+            Self::CheckpointSaved { .. } => "checkpoint_saved",
         }
     }
 }
@@ -220,6 +225,9 @@ pub struct NodeKey {
     /// The chunks that continue this key's run, oldest first: empty for a
     /// job and for a session that was never renewed.
     pub renewals: Vec<Renewal>,
+    /// The latest complete checkpoint the node recorded (pass 34 row C1);
+    /// `None` until the first scan records one.
+    pub checkpoint: Option<CheckpointRecord>,
     /// The sequence of the key's newest record.
     pub seq: u64,
     /// The boot of the key's newest record.
@@ -247,6 +255,7 @@ impl NodeKey {
             acknowledged_at_ms: None,
             cleaned: false,
             renewals: Vec::new(),
+            checkpoint: None,
             seq: record.seq,
             boot_id: record.boot_id.clone(),
             updated_at_ms: record.at_ms,
@@ -621,6 +630,12 @@ impl KeyTable {
                     at_ms: record.at_ms,
                     seq: record.seq,
                 });
+            }
+            (
+                JournalEvent::CheckpointSaved { checkpoint },
+                Some(JobState::Running | JobState::Ended),
+            ) => {
+                next.checkpoint = Some(checkpoint.clone());
             }
             _ => return Err(refuse()),
         }

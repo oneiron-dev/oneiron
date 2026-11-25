@@ -86,6 +86,7 @@ pub fn receipt_of(
         boot_id: now.boot_id.clone(),
         reported_at_ms: now.wall_ms,
         slice: None,
+        checkpoint: key.checkpoint.clone(),
     }
 }
 
@@ -192,12 +193,13 @@ pub fn chunk_receipt_of(
     } else {
         1
     };
-    // The run's release, outputs and other processes belong to the slice
-    // that holds its end alone.
+    // The run's release, outputs, other processes and latest checkpoint
+    // belong to the slice that holds its end alone.
     if passed || !began {
         view.release = DeviceRelease::NotHeld;
         view.outputs = OutputsState::Pending;
         view.other_compute_pids = Vec::new();
+        view.checkpoint = None;
     }
     let mut receipt = receipt_of(&view, machine, epoch, now);
     // A live slice that a later one follows is at most its own paid chunk
