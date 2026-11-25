@@ -1,7 +1,8 @@
 //! Pass 34 row W1 (`34-compute-general/DESIGN.md` 2.5), the systemd scope's
 //! half of a session's renewal: the control socket's `renew` request, root's
 //! decision on a renewal (forward only, a session's run only, within its
-//! longest run), the cutoff timer a renewal superseded, and the job unit's
+//! longest run, early enough for the handoff), the cutoff timer a renewal
+//! superseded, the control handler a session needs, and the job unit's
 //! backstop. Pure functions of the scope: no service manager, no root.
 //!
 //! Run: `cargo test --locked -p oneiron-server --all-features --test execution_node_session_cutoff`.
@@ -20,6 +21,7 @@ use oneiron_server::gpu_execution_node::scope_systemd::cutoff::cutoff_superseded
 use oneiron_server::gpu_execution_node::scope_systemd::install::unit_runtime_max_secs;
 use oneiron_server::gpu_execution_node::scope_systemd::records::{CutoffPlan, PreparedRecord};
 use oneiron_server::gpu_execution_node::scope_systemd::renew::renewed_cutoff_plan;
+use oneiron_server::gpu_execution_node::scope_systemd::unit_file::control_service_renews;
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 const LAUNCH_NS: u64 = 50 * NANOS_PER_SEC;
@@ -174,6 +176,42 @@ fn the_root_renewal_moves_a_sessions_cutoff_only_forward_and_within_its_longest_
         renewed_cutoff_plan(&unarmed, secs(1_200), now)
             .is_err_and(|why| why.starts_with("cutoff_not_armed"))
     );
+}
+
+/// Root takes a renewal only while its handoff can finish before the old
+/// timer fires (EM-22, R3B's review of #10502): 30 s before the current
+/// stop time is too late, 32 s is in time. A control handler written
+/// before sessions takes no renewal, so a session's launch is refused at
+/// its prepare step instead of at its first renewal.
+#[test]
+fn a_renewal_needs_the_whole_handoff_before_the_old_timer_fires() {
+    let instance = JobKeyId::for_key("session-0").as_str().to_owned();
+    let session = prepared(&instance, Some(secs(3_600)));
+    let stop_at = secs(600 - GRACE_SECS);
+    assert_eq!(
+        renewed_cutoff_plan(&session, secs(1_200), stop_at - 30 * NANOS_PER_SEC),
+        Err("cutoff_passed: the current cutoff is already stopping the run".to_owned())
+    );
+    assert!(matches!(
+        renewed_cutoff_plan(&session, secs(1_200), stop_at - 32 * NANOS_PER_SEC),
+        Ok(Some(_))
+    ));
+
+    let before_sessions = "[Service]\n\
+        ExecStart=/usr/bin/oneiron job-control --engine-account oneiron\n\
+        StandardInput=socket\n\
+        RuntimeMaxSec=30\n\
+        ProtectSystem=strict\n\
+        ProtectHome=read-only\n";
+    let since_sessions = "[Service]\n\
+        ExecStart=/usr/bin/oneiron job-control --engine-account oneiron --node-file /etc/oneiron/execution-node.toml\n\
+        StandardInput=socket\n\
+        RuntimeMaxSec=30\n\
+        ProtectSystem=strict\n\
+        ProtectHome=read-only\n\
+        ReadWritePaths=/var/lib/oneiron/jobs\n";
+    assert!(!control_service_renews(before_sessions));
+    assert!(control_service_renews(since_sessions));
 }
 
 /// A cutoff timer whose stop time a renewal moved past stops nothing; the
