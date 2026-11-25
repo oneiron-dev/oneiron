@@ -259,6 +259,30 @@ fn ensure_device_group(
     };
     let accounts = read("/etc/passwd")?;
     let groups = read("/etc/group")?;
+    // Members from another name service (a directory's accounts) cannot be
+    // read whole, so the node's accounts and groups must be local (review r10
+    // R10-05).
+    let nsswitch = match std::fs::read_to_string("/etc/nsswitch.conf") {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "job device group {name}: /etc/nsswitch.conf: {error}"
+            ));
+        }
+    };
+    let foreign = foreign_name_sources(&nsswitch);
+    let nis = [&accounts, &groups].iter().any(|text| {
+        text.lines()
+            .any(|line| line.starts_with(|c: char| c == '+' || c == '-'))
+    });
+    if !foreign.is_empty() || nis {
+        return Err(format!(
+            "job device group {name}: the name service reads accounts or groups from [{}{}] too, whose members install cannot check: the node's accounts and groups must be local (files, systemd)",
+            foreign.join(" "),
+            if nis { " nis (+/- lines)" } else { "" }
+        ));
+    }
     if !is_local_group(&groups, name, gid) {
         return Err(format!(
             "job device group {name}: gid {gid} is not its gid in /etc/group: make it a local group (groupadd --system {name})"
@@ -270,6 +294,40 @@ fn ensure_device_group(
         ));
     }
     Ok(Some(gid))
+}
+
+/// The name service sources install can read every member from: the local
+/// files, and systemd's own (its dynamic users never take a node's group).
+const LOCAL_NAME_SOURCES: [&str; 5] = ["files", "systemd", "altfiles", "compat", "mymachines"];
+
+/// The sources `/etc/nsswitch.conf` (`text`) names for accounts, groups or
+/// group membership that are not [`LOCAL_NAME_SOURCES`], each once.
+fn foreign_name_sources(text: &str) -> Vec<String> {
+    let mut foreign: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or_default();
+        let Some((database, sources)) = line.split_once(':') else {
+            continue;
+        };
+        if !matches!(database.trim(), "passwd" | "group" | "initgroups") {
+            continue;
+        }
+        let mut in_action = false;
+        for word in sources.split_whitespace() {
+            if word.starts_with('[') {
+                in_action = !word.ends_with(']');
+                continue;
+            }
+            if in_action {
+                in_action = !word.ends_with(']');
+                continue;
+            }
+            if !LOCAL_NAME_SOURCES.contains(&word) && !foreign.iter().any(|seen| seen == word) {
+                foreign.push(word.to_owned());
+            }
+        }
+    }
+    foreign
 }
 
 /// Whether `/etc/group` (`groups`) names the group `name` with gid `gid`.
@@ -451,5 +509,14 @@ mod tests {
         let alias = "oneiron-job-devices:x:960:\ncards:x:960:tool\n";
         assert_eq!(group_members(accounts, alias, 960), vec!["tool"]);
         assert_eq!(group_members(accounts, groups, 971), vec!["oneiron"]);
+    }
+
+    #[test]
+    fn only_local_name_sources_let_install_read_the_groups_members() {
+        let local = "# comment\npasswd: files systemd\ngroup: files [SUCCESS=merge] systemd\nshadow: files\nhosts: files dns\n";
+        assert!(foreign_name_sources(local).is_empty());
+        let directory = "passwd: files sss\ngroup: files sss # directory\ninitgroups: files [ NOTFOUND=return ] ldap\n";
+        assert_eq!(foreign_name_sources(directory), vec!["sss", "ldap"]);
+        assert!(foreign_name_sources("").is_empty());
     }
 }

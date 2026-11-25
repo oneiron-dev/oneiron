@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use super::exchange::root_dir;
 use super::safe_fs::{borrow, read_beneath, remove_beneath, write_beneath};
 use super::systemd_unit::{parse_show_units, run_tool};
-use super::{PROBE_UNIT_PREFIX, is_job_instance};
+use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, is_job_instance};
 
 /// The table of the ids in use.
 pub const JOB_IDS_ROOT: &str = "/run/oneiron-job-ids";
@@ -73,6 +73,10 @@ const ALLOCATE_ROUNDS: u32 = 3;
 /// takes one's id back.
 const CONFIRMATIONS_MAX: u32 = 2;
 
+/// The most ids one round under the lock leaves for the name service to be
+/// asked about after the lock is dropped (review r10 R10-03).
+const UNANSWERED_PER_ROUND: usize = 8;
+
 /// The uid and gid one job unit runs as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobIdentity {
@@ -93,6 +97,11 @@ impl JobIdentity {
 pub(super) enum Choice {
     /// The table names this unit already: its id again.
     Own(u32),
+    /// The table names this unit already, for an id it cannot have again:
+    /// outside the range, the engine's, an account's or group's, held by a
+    /// process (its reserving process included), or one of two entries of
+    /// the unit (review r10 R10-01, R10-06).
+    OwnRefused(u32),
     /// An id with no file.
     Free(u32),
     /// An id whose file names a unit that no longer runs, held by no process.
@@ -114,11 +123,22 @@ pub(super) fn choose(
     unit_ended: &mut dyn FnMut(&str) -> bool,
     named: &mut dyn FnMut(u32) -> bool,
 ) -> Choice {
-    if let Some((uid, _)) = taken
+    let own: Vec<u32> = taken
         .iter()
-        .find(|(uid, owner)| range.contains(uid) && owner.as_str() == unit)
-    {
-        return Choice::Own(*uid);
+        .filter(|(_, owner)| owner.as_str() == unit)
+        .map(|(uid, _)| *uid)
+        .collect();
+    if let Some(&uid) = own.first() {
+        let fits = own.len() == 1
+            && range.contains(&uid)
+            && uid != engine_uid
+            && !held.contains(&uid)
+            && !named(uid);
+        return if fits {
+            Choice::Own(uid)
+        } else {
+            Choice::OwnRefused(uid)
+        };
     }
     for uid in range {
         if uid == engine_uid || held.contains(&uid) {
@@ -197,6 +217,7 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
         .collect();
     let mut ended = units_ended(&owners);
     let mut names = NameAnswers::default();
+    let mut confirmations = 0;
     for round in 1..=ALLOCATE_ROUNDS {
         let before = entries_in(&open_table()?)?;
         let _ = choose(
@@ -212,7 +233,6 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
         let taken = table.entries()?;
         let held = held_ids(&taken)?;
         let mut unanswered = Vec::new();
-        let mut confirmations = 0;
         let choice = loop {
             let choice = choose(
                 range.clone(),
@@ -223,7 +243,9 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
                 &mut |owner: &str| owner_ended(owner, &ended),
                 &mut |uid| {
                     names.named.get(&uid).copied().unwrap_or_else(|| {
-                        unanswered.push(uid);
+                        if unanswered.len() < UNANSWERED_PER_ROUND {
+                            unanswered.push(uid);
+                        }
                         true
                     })
                 },
@@ -248,6 +270,12 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
         }
         let uid = match choice {
             Choice::Own(uid) | Choice::Free(uid) => uid,
+            Choice::OwnRefused(uid) => {
+                return Err(format!(
+                    "job_uid_still_taken: the table names {unit} for uid {uid}, outside {}..{}, held by a process, an account's, or one of two entries of it: its end step or its processes have not finished",
+                    range.start, range.end
+                ));
+            }
             Choice::TakeBack(uid) => {
                 table.remove(uid)?;
                 uid
@@ -275,9 +303,13 @@ fn owner_ended(owner: &str, ended: &BTreeSet<String>) -> bool {
     is_table_unit(owner) && ended.contains(&unit_id(owner))
 }
 
-/// Whether `owner` no longer runs, asked now about that one unit.
+/// Whether `owner` no longer runs, asked now about that one unit. A probe
+/// unit whose exchange directory is still there may still be started by the
+/// `execution-node check` that made it (its job-exec reads its ids from
+/// there), so it counts as running until the check removed it (review r10
+/// R10-02).
 fn unit_ended_now(owner: &str) -> bool {
-    if !is_table_unit(owner) {
+    if !is_table_unit(owner) || probe_exchange_left(owner) {
         return false;
     }
     let id = unit_id(owner);
@@ -285,6 +317,20 @@ fn unit_ended_now(owner: &str) -> bool {
     args.push(&id);
     run_tool("systemctl", &args, UNIT_STATE_WAIT)
         .is_ok_and(|text| !ended_in_show(&text, &[id.as_str()]).is_empty())
+}
+
+/// Whether `owner` is a probe unit whose exchange directory is there; one that
+/// cannot be looked at counts as there.
+fn probe_exchange_left(owner: &str) -> bool {
+    owner
+        .strip_prefix(PROBE_UNIT_PREFIX)
+        .map(|rest| rest.strip_suffix(".service").unwrap_or(rest))
+        .is_some_and(|instance| {
+            !matches!(
+                Path::new(EXCHANGE_ROOT).join(instance).symlink_metadata(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound
+            )
+        })
 }
 
 /// Removes `identity`'s file when it names `unit`, waiting at most `wait` for
@@ -303,16 +349,18 @@ pub fn release(identity: JobIdentity, unit: &str, wait: Duration) -> Result<bool
 }
 
 /// The identity the table gives `unit`, read without the lock: the end step's
-/// answer for the job's ids (review r8 R8-04, r9 R9-13).
+/// answer for the job's ids (review r8 R8-04, r9 R9-13). `None` unless one
+/// entry alone names the unit (review r10 R10-06).
 #[must_use]
 pub fn identity_of(unit: &str) -> Option<JobIdentity> {
     let dir = open_table().ok()?;
-    entries_in(&dir)
-        .ok()?
-        .owners
+    let owners = entries_in(&dir).ok()?.owners;
+    let mut uids = owners
         .into_iter()
-        .find(|(_, owner)| owner == unit)
-        .map(|(uid, _)| JobIdentity::of(uid))
+        .filter(|(_, owner)| owner == unit)
+        .map(|(uid, _)| uid);
+    let uid = uids.next()?;
+    uids.next().is_none().then_some(JobIdentity::of(uid))
 }
 
 /// The table's directory, made root's alone when it is missing.
@@ -634,143 +682,4 @@ fn id_is_named(id: u32) -> io::Result<bool> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const UNIT_A: &str = "oneiron-job@0123456789abcdef0123456789abcdef.service";
-    const UNIT_B: &str = "oneiron-job@fedcba9876543210fedcba9876543210.service";
-
-    fn pick(
-        taken: &BTreeMap<u32, String>,
-        held: &BTreeSet<u32>,
-        ended: &[&str],
-        named: &[u32],
-    ) -> Choice {
-        choose(
-            100..104,
-            UNIT_A,
-            101,
-            taken,
-            held,
-            &mut |owner: &str| ended.contains(&owner),
-            &mut |uid| named.contains(&uid),
-        )
-    }
-
-    #[test]
-    fn the_lowest_id_no_file_process_or_account_holds_is_given_and_never_the_engines() {
-        let taken = BTreeMap::from([(100, UNIT_B.to_owned())]);
-        // 100 is B's (running), 101 the engine's, 102 a process's.
-        assert_eq!(
-            pick(&taken, &BTreeSet::from([102]), &[], &[]),
-            Choice::Free(103)
-        );
-        assert_eq!(
-            pick(&taken, &BTreeSet::new(), &[], &[102]),
-            Choice::Free(103)
-        );
-        assert_eq!(
-            pick(&taken, &BTreeSet::from([102, 103]), &[], &[]),
-            Choice::Exhausted
-        );
-    }
-
-    #[test]
-    fn an_id_is_taken_back_only_when_its_unit_ended_and_no_process_holds_it() {
-        let taken = BTreeMap::from([(100, UNIT_B.to_owned())]);
-        let busy = BTreeSet::from([102, 103]);
-        assert_eq!(pick(&taken, &busy, &[UNIT_B], &[]), Choice::TakeBack(100));
-        // B ended, but a process still holds 100.
-        assert_eq!(
-            pick(&taken, &BTreeSet::from([100, 102, 103]), &[UNIT_B], &[]),
-            Choice::Exhausted
-        );
-        // B still runs.
-        assert_eq!(pick(&taken, &busy, &[], &[]), Choice::Exhausted);
-    }
-
-    #[test]
-    fn a_unit_the_table_names_gets_its_own_id_again() {
-        let taken = BTreeMap::from([(102, UNIT_A.to_owned())]);
-        assert_eq!(pick(&taken, &BTreeSet::new(), &[], &[]), Choice::Own(102));
-    }
-
-    #[test]
-    fn one_show_answer_names_the_ended_units_and_a_unit_it_leaves_out_still_runs() {
-        let probe = format!("{PROBE_UNIT_PREFIX}00000000000000000000000000000000.service");
-        let text = format!(
-            "Id={UNIT_A}\nActiveState=inactive\nLoadState=loaded\n\n\
-             Id={UNIT_B}\nActiveState=deactivating\nLoadState=loaded\n\n\
-             Id={probe}\nActiveState=inactive\nLoadState=not-found\n\n\
-             Id=sshd.service\nActiveState=failed\nLoadState=loaded\n"
-        );
-        let left_out = "oneiron-job@11111111111111111111111111111111.service";
-        let ended = ended_in_show(&text, &[UNIT_A, UNIT_B, probe.as_str(), left_out]);
-        assert_eq!(ended, vec![UNIT_A.to_owned(), probe.clone()]);
-        assert_eq!(unit_id(probe.trim_end_matches(".service")), probe);
-        assert_eq!(unit_id(UNIT_A), UNIT_A);
-    }
-
-    #[test]
-    fn the_status_ids_are_every_user_and_group_id_and_the_supplementary_groups() {
-        let text = "Name:\tsleep\nUid:\t1879048192\t1879048192\t0\t1879048193\nGid:\t5\t6\t7\t8\nGroups:\t9 10 \nNgid:\t0\n";
-        assert_eq!(
-            ids_in_status(text),
-            vec![
-                1_879_048_192,
-                1_879_048_192,
-                0,
-                1_879_048_193,
-                5,
-                6,
-                7,
-                8,
-                9,
-                10
-            ]
-        );
-        assert!(ids_in_status("Groups:\t\n").is_empty());
-    }
-
-    #[test]
-    fn an_entry_names_its_unit_and_its_reserving_process() {
-        assert_eq!(
-            parse_entry(&format!("{UNIT_A}\n4242 987654\n")),
-            (UNIT_A.to_owned(), Some((4242, 987_654)))
-        );
-        // An entry written before the reserving process was recorded.
-        assert_eq!(
-            parse_entry(&format!("{UNIT_A}\n")),
-            (UNIT_A.to_owned(), None)
-        );
-        assert_eq!(parse_entry(""), (String::new(), None));
-        // A command name with spaces and parentheses ends at the last `)`.
-        let stat =
-            "4242 (a b) c) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10";
-        assert_eq!(start_time_in_stat(stat), Some(987_654));
-        assert_eq!(start_time_in_stat("4242 (x"), None);
-    }
-
-    #[test]
-    fn an_unreadable_or_foreign_entry_is_never_taken_back() {
-        let ended = BTreeSet::from([UNIT_A.to_owned()]);
-        assert!(owner_ended(UNIT_A, &ended));
-        assert!(!owner_ended(UNIT_B, &ended));
-        assert!(!owner_ended("", &ended));
-        assert!(!owner_ended(
-            "sshd.service",
-            &BTreeSet::from(["sshd.service".to_owned()])
-        ));
-    }
-
-    #[test]
-    fn the_table_holds_only_job_and_probe_unit_names() {
-        assert!(is_table_unit(UNIT_A));
-        assert!(is_table_unit(&format!(
-            "{PROBE_UNIT_PREFIX}0123456789abcdef0123456789abcdef"
-        )));
-        assert!(!is_table_unit("oneiron-job@x.service"));
-        assert!(!is_table_unit("sshd.service"));
-        assert!(!is_table_unit(""));
-    }
-}
+mod tests;

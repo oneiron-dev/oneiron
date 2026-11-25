@@ -861,12 +861,15 @@ EOF
 # account (a directory A made 0700 included), and A's uid leaves the node's id table. Red (one job account for every
 # job): B sees and signals A, and A's files stay the job account's.
 a_job_cannot_signal_read_or_trace_another_running_job() {
-  local why= i a_unit a_key a_p a_c a_pid a_uid a_shm b_uid b_groups engine_ids found path
+  local why= i a_unit a_key a_p a_c a_pid a_uid a_shm a_shm_dev b_uid b_groups b_shm_dev engine_ids found path
   launch t24-a qual 120 256 "" <<'EOF'
 echo $$ > "$ONEIRON_JOB_OUT/pid"; id -u > "$ONEIRON_JOB_OUT/uid"
-# A name of this run's own: on red it is in the host's /dev/shm (review r9 R9-16).
+# The device number of the /dev/shm A sees: B's must differ (review r10 R10-07; the file wall refuses a job's write
+# there when Landlock works, so a file of A's proves nothing alone). The file has a name of this run's own: on red
+# it is in the host's /dev/shm when the write goes through (review r9 R9-16).
+stat -c %d /dev/shm > "$ONEIRON_JOB_OUT/shm-dev"
 echo "/dev/shm/qual-a-shm-$$-$(date +%s%N)" > "$ONEIRON_JOB_OUT/shm"
-printf 'secret-a\n' > "$(cat "$ONEIRON_JOB_OUT/shm")"
+printf 'secret-a\n' 2> /dev/null > "$(cat "$ONEIRON_JOB_OUT/shm")"
 mkdir -m 0700 "$ONEIRON_JOB_OUT/private" && printf 'x\n' > "$ONEIRON_JOB_OUT/private/file"
 echo a-ready
 touch "$ONEIRON_JOB_OUT/ready"
@@ -882,8 +885,9 @@ EOF
     result "$FUNCNAME" FAIL "job A was not ready in 30 s: $(jq -c '{refusal}' "$a_c/prepared.json" 2>&1)"; return
   fi
   a_pid=$(cat "$a_p/out/pid"); a_uid=$(cat "$a_p/out/uid"); a_shm=$(cat "$a_p/out/shm")
+  a_shm_dev=$(cat "$a_p/out/shm-dev" 2> /dev/null)
   launch t24-b qual 120 256 "" <<EOF
-id -u > "\$ONEIRON_JOB_OUT/uid"; id -G > "\$ONEIRON_JOB_OUT/groups"
+id -u > "\$ONEIRON_JOB_OUT/uid"; id -G > "\$ONEIRON_JOB_OUT/groups"; stat -c %d /dev/shm > "\$ONEIRON_JOB_OUT/shm-dev"
 { [ -d /proc/$a_pid ] && echo "sees process $a_pid"
   kill -0 $a_pid 2> /dev/null && echo "signals process $a_pid"
   head -c 1 /proc/$a_pid/environ > /dev/null 2>&1 && echo "reads /proc/$a_pid/environ"
@@ -892,6 +896,9 @@ EOF
   start
   wait_ended 60 || why="job B: no end record in 60 s; "
   b_uid=$(cat "$P/out/uid" 2> /dev/null); b_groups=$(cat "$P/out/groups" 2> /dev/null)
+  b_shm_dev=$(cat "$P/out/shm-dev" 2> /dev/null)
+  if [ -z "$a_shm_dev" ] || [ -z "$b_shm_dev" ]; then why+="no /dev/shm device number from A ('$a_shm_dev') or B ('$b_shm_dev'); "
+  elif [ "$a_shm_dev" = "$b_shm_dev" ]; then why+="A and B share one /dev/shm (device $a_shm_dev); "; fi
   [ -z "$why" ] && [ "$(ended .workload_started)" != true ] && why="job B did not start: $(ended .refusal); "
   [ -s "$P/out/reached" ] && why+="job B $(tr '\n' ',' < "$P/out/reached")of job A; "
   # A ends as the engine ends a key: its stop through the control socket.
@@ -918,7 +925,7 @@ EOF
   as_engine ls "$a_p/out/private" > /dev/null 2>&1 || why+="the engine cannot list the 0700 directory A made; "
   [ -n "$a_uid" ] && [ -e "/run/oneiron-job-ids/$a_uid" ] && why+="A's uid $a_uid is still in the id table after its end; "
   if [ -z "$why" ]; then
-    result "$FUNCNAME" PASS "jobs A (uid $a_uid) and B (uid $b_uid) ran at once: B saw no process of A, could not signal it or read its environ, and found no /dev/shm file of A's; after A's end its out tree (a 0700 directory included) and log are the engine's and uid $a_uid left the id table"
+    result "$FUNCNAME" PASS "jobs A (uid $a_uid) and B (uid $b_uid) ran at once: B saw no process of A, could not signal it or read its environ, and their /dev/shm mounts differ (devices $a_shm_dev, $b_shm_dev); after A's end its out tree (a 0700 directory included) and log are the engine's and uid $a_uid left the id table"
   else
     result "$FUNCNAME" FAIL "$why"
   fi

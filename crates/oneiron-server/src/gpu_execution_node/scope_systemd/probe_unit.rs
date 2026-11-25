@@ -120,7 +120,13 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     }
     let binary = std::env::current_exe().map_err(|error| error.to_string())?;
     let at_ms = wall_ms();
-    let id = JobKeyId::for_key(&format!("execution-node-check-probe-{}-{at_ms}", boot_id()));
+    // One instance per run of the check, even two in one millisecond (review
+    // r10 R10-01).
+    let id = JobKeyId::for_key(&format!(
+        "execution-node-check-probe-{}-{at_ms}-{}",
+        boot_id(),
+        std::process::id()
+    ));
     let instance = id.as_str().to_owned();
     // The probe runs as a job does: as its own uid from the node's range.
     let given = ProbeIdentity::allocate(settings, &instance)?;
@@ -175,9 +181,11 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     let exchange = Path::new(EXCHANGE_ROOT).join(&instance);
     let outcome = probe_in_unit(settings, &unit_text, &binary, &exec, &exchange);
     super::exchange::withdraw(&instance);
-    drop(given);
     let _ = std::fs::remove_dir_all(&payload);
     let _ = std::fs::remove_dir_all(&exchange);
+    // The id goes back once no probe can start with it: its exchange, where
+    // job-exec reads its ids, is gone (review r10 R10-02).
+    drop(given);
     let (proofs, probe_failure) = match outcome {
         Ok(report) => (report.proofs, None),
         Err(why) => (BTreeMap::new(), Some(why)),
