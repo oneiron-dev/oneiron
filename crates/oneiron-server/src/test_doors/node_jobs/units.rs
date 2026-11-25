@@ -74,6 +74,8 @@ struct UnitsState {
     /// units).
     status_answering: bool,
     next_start: ScriptedStart,
+    /// Every signal delivered, in order: the unit and the signal's name.
+    signals: Vec<(JobKeyId, String)>,
     probe: ScopeCapabilities,
 }
 
@@ -99,9 +101,22 @@ impl ScriptedJobUnits {
                 answering: true,
                 status_answering: true,
                 next_start: ScriptedStart::Run,
+                signals: Vec::new(),
                 probe: Self::kernel_scope(),
             }),
         })
+    }
+
+    /// The signals delivered to the key's unit, in order.
+    #[must_use]
+    pub fn signals(&self, key: &str) -> Vec<String> {
+        let id = JobKeyId::for_key(key);
+        locked(&self.state)
+            .signals
+            .iter()
+            .filter(|(unit, _)| *unit == id)
+            .map(|(_, signal)| signal.clone())
+            .collect()
     }
 
     /// A scope whose kernel gives every bound: what `probe` answers until a
@@ -393,5 +408,14 @@ impl JobUnit for ScriptedJobUnits {
                 )
             })
             .collect())
+    }
+
+    fn signal(&self, unit: &JobKeyId, signal: &str) -> Result<(), JobUnitError> {
+        let mut state = locked(&self.state);
+        if !state.answering {
+            return Err(Self::unavailable(unit));
+        }
+        state.signals.push((unit.clone(), signal.to_owned()));
+        Ok(())
     }
 }
