@@ -384,7 +384,11 @@ fn key_withholds_credential(key: &[u8]) -> bool {
 }
 
 /// Whether one decoded MessagePack value carries a credential: the value as the archive tree
-/// reads it, and every binary, extension or byte-array payload read as bytes.
+/// reads it, every binary, extension or byte-array payload read as bytes, and the value read as
+/// a body by the release doors' rules, its map keys as field names. The archive tree writes a map
+/// as `[key, value]` pairs, so the document pass reads a key as text and never as a field name: a
+/// GPU job's quote inputs `{"password": ...}` would travel on that pass alone (blind review round
+/// 1 of #10515, P1).
 fn tree_withholds_credential(value: &[u8], version_bytes: usize) -> bool {
     let Some(body) = value.get(version_bytes..) else {
         return opaque_withholds_credential(value);
@@ -403,7 +407,9 @@ fn tree_withholds_credential(value: &[u8], version_bytes: usize) -> bool {
     let Ok(json) = serde_json::to_value(&tree) else {
         return opaque_withholds_credential(value);
     };
-    json_withholds_credential(&json) || payload_withholds_credential(&decoded)
+    json_withholds_credential(&json)
+        || payload_withholds_credential(&decoded)
+        || crate::batch::secret_scan::release_decoded_hit(body).is_some()
 }
 
 /// Whether a binary, extension or byte-array payload anywhere in `value` reads as a credential.
