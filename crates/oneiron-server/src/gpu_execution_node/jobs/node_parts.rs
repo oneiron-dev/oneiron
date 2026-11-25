@@ -48,11 +48,12 @@ use crate::gpu_execution_node::wire::{
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
 /// the engine's default. Policy is a setting, never a constant in this code
-/// (lead 25 Nov 00:04). Until row P0 a node obeys its box file only (EM-17 =
-/// A): R1's `[execution_node]` file sets `staging_limit_secs`,
-/// `receipt_keep_days`, `readiness_every_secs` and `drain_clear_by`, and
-/// every other key takes its default. Read once per use, through
-/// [`NodeAdmission::job_settings`].
+/// (lead 25 Nov 00:04). R1's `[execution_node]` file sets
+/// `staging_limit_secs`, `receipt_keep_days`, `readiness_every_secs` and
+/// `drain_clear_by`; the owner's machine policy rows (row P0) may shorten
+/// the readiness period and keep the drain for the box, the stricter of the
+/// two applying; every other key takes its default. Read once per use,
+/// through [`NodeAdmission::job_settings`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeJobSettings {
     /// `jobs.submit.skew_secs`: how far before its `issued_at_ms` a reserve
@@ -76,13 +77,15 @@ pub struct NodeJobSettings {
     /// Default 30, longer than an allocation period.
     pub receipt_keep_days: u64,
     /// `jobs.readiness.every_secs`: how often the node checks itself while
-    /// no attempt runs (pass 34, 7.3). Default 900.
+    /// no attempt runs (pass 34, 7.3), the shorter of the box's and the
+    /// owner's. Default 900.
     pub readiness_every_secs: u64,
     /// `jobs.readiness.results_kept`: how many check results `Node`
     /// reports. Default 5.
     pub readiness_results_kept: u64,
     /// `machines.drain.clear_by`: who clears the node's drain (pass 34,
-    /// 2.4). Default: the machine, once its readiness check passes.
+    /// 2.4), the stricter of the box's and the owner's. Default: the
+    /// machine, once its readiness check passes.
     pub drain_clear_by: DrainClearBy,
     /// `jobs.incidents.keep`: how many incident records the node keeps.
     /// Default 200.
@@ -439,15 +442,15 @@ impl NodeAdmission for ExecutionNode {
     fn job_settings(&self) -> NodeJobSettings {
         let file = ExecutionNode::settings(self).ok().flatten();
         let defaults = NodeJobSettings::default();
+        let (readiness_every_secs, drain_clear_by) = file.as_ref().map_or(
+            (defaults.readiness_every_secs, defaults.drain_clear_by),
+            |file| ExecutionNode::readiness_settings(self, file),
+        );
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
             receipt_keep_days: ExecutionNode::receipt_keep_days(self),
-            readiness_every_secs: file.as_ref().map_or(defaults.readiness_every_secs, |file| {
-                file.readiness_every_secs
-            }),
-            drain_clear_by: file
-                .as_ref()
-                .map_or(defaults.drain_clear_by, |file| file.drain_clear_by),
+            readiness_every_secs,
+            drain_clear_by,
             ..defaults
         }
     }
