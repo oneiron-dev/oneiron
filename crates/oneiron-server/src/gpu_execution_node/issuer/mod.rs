@@ -8,6 +8,7 @@
 //! - [`orphans`]: the keys a node holds that the issuer has no dispatch row for (row R4).
 //! - [`guard`]: the issuer's half of the drain guard (row R4).
 //! - [`view`]: the four status fields of door 8 (row R4).
+//! - [`returns`]: the returned result, landed as a proposal, and the acknowledgement (row R4).
 //! - [`clock`]: the wall and boot clocks the dispatch and the bracket read.
 //! - [`register`]: where the backend may exist, and the one-issuer check of the start gate.
 //!
@@ -22,9 +23,11 @@ pub mod node_client;
 pub mod orphans;
 pub mod reconcile;
 pub mod register;
+pub mod returns;
 pub mod view;
 
 use oneiron::EntityId;
+use oneiron::gpu_job::GpuJobResultBinding;
 use oneiron::job_workload::WorkloadStartRefusal;
 
 pub use clock::{IssuerClock, SystemIssuerClock};
@@ -38,6 +41,7 @@ pub use register::{
     NotTheIssuer, VaultMachineNotRegistered, issuer_machine, not_the_issuer,
     register_vault_machine, register_vault_machine_at_start, vault_machine_backend,
 };
+pub use returns::ResultReturns;
 
 use crate::gpu_execution_node::wire::{JobAnswer, JobRefusal, JobStatusAnswer, SlotSelector};
 
@@ -48,13 +52,17 @@ pub const VAULT_MACHINE_BACKEND: &str = "vault_machine";
 /// `vault.machines.execution.get`.
 pub const NOT_AVAILABLE_TO_THIS_CALLER: &str = "not_available_to_this_caller";
 
-/// A `vault_machine` quote's inputs: the machine that runs the job (required) and the GPU it
-/// may take. Other fields (a lane's arm binding) pass through untouched.
+/// A `vault_machine` quote's inputs: the machine that runs the job (required), the GPU it
+/// may take, and where its returned result lands (EM-12 = A). Other fields (a lane's arm
+/// binding) pass through untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultMachineInputs {
     pub machine: EntityId,
     pub device_id: Option<String>,
     pub model: Option<String>,
+    /// `inputs.result { artifact, task }`: each returnable output becomes the artifact's next
+    /// version, pending Keep, made by the task. Absent: the issuer fetches nothing.
+    pub result: Option<GpuJobResultBinding>,
 }
 
 impl VaultMachineInputs {
@@ -73,7 +81,8 @@ impl VaultMachineInputs {
 /// # Errors
 ///
 /// `machine_missing` when `inputs.machine` is absent or not a MACHINE id in hex;
-/// `device_id_invalid` or `model_invalid` when one is present and not a string.
+/// `device_id_invalid` or `model_invalid` when one is present and not a string;
+/// `result_invalid` when `inputs.result` is present and not `{ artifact, task }` ids.
 pub fn vault_machine_inputs(
     inputs: &serde_json::Value,
 ) -> Result<VaultMachineInputs, &'static str> {
@@ -87,10 +96,18 @@ pub fn vault_machine_inputs(
         Some(serde_json::Value::String(text)) => Ok(Some(text.clone())),
         Some(_) => Err(refusal),
     };
+    let result = match inputs.get("result") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(binding) => Some(
+            serde_json::from_value::<GpuJobResultBinding>(binding.clone())
+                .map_err(|_| "result_invalid")?,
+        ),
+    };
     Ok(VaultMachineInputs {
         machine,
         device_id: text("device_id", "device_id_invalid")?,
         model: text("model", "model_invalid")?,
+        result,
     })
 }
 
