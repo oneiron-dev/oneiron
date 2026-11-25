@@ -626,4 +626,21 @@ impl Vault {
     ) -> Result<AuthorityView> {
         authority_view_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
     }
+
+    /// This vault's authority main-log heads now, lower hex: the entries a row appended now
+    /// names as its parents. The `vault_machine` connector signs them into each job submit
+    /// (pass 33, EM-11 = B), and the node launches only once its own fold holds every one.
+    ///
+    /// # Errors
+    ///
+    /// The store's read error.
+    pub fn authority_main_log_heads(&self) -> Result<Vec<String>> {
+        let txn = self.store.env.read_txn()?;
+        let view = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(view
+            .append_heads
+            .iter()
+            .map(|head| oneiron_hex::encode(head))
+            .collect())
+    }
 }

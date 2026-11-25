@@ -51,7 +51,7 @@ enum KeyFollowUp {
     },
 }
 
-/// The end a key's end record names. The service manager's own limits win;
+/// The end a key's end record names. The cutoff and the memory limit win;
 /// then the cause the engine journaled before it stopped the unit; then the
 /// workload's own exit.
 #[must_use]
@@ -61,7 +61,9 @@ pub(super) fn end_of(record: &EndRecord, cause: Option<EndingCause>) -> JobEnd {
             reason: record.refusal.clone().unwrap_or_else(|| "unit".to_owned()),
         };
     }
-    if record.cutoff_fired || record.service_result == "timeout" {
+    // The unit's end step says whether the cutoff ended the run; the service
+    // manager's `timeout` alone is also a stop grace that ran out.
+    if record.cutoff_fired {
         return JobEnd::TimeLimit;
     }
     if record.service_result == "oom-kill" {
@@ -233,10 +235,9 @@ impl NodeJobs {
         now: &super::ReceiptClock,
     ) {
         let parts = self.parts();
-        let signed = sign_receipt(
-            receipt_of(sealed, parts.machine, epoch, now),
-            parts.signer.as_ref(),
-        );
+        let mut receipt = receipt_of(sealed, parts.machine, epoch, now);
+        receipt.scope = parts.units.scope_facts(&sealed.id);
+        let signed = sign_receipt(receipt, parts.signer.as_ref());
         let written = signed
             .map_err(std::io::Error::other)
             .and_then(|signed| {

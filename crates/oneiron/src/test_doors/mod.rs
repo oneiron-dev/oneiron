@@ -135,6 +135,7 @@ pub mod erased_request_identity;
 pub mod esign_commitments;
 pub mod esign_send_binding;
 pub mod eval_authoring_execution_fault;
+pub mod experiment_arm_rows;
 pub mod external_effect_binding;
 pub mod extra_room_index;
 pub mod extraction_decisions;
@@ -193,6 +194,7 @@ pub mod gate_receipt_rows;
 #[cfg(feature = "sync")]
 pub mod gate_receipt_unclear;
 pub mod gpu_job;
+pub mod gpu_line_hold_is_the_claim;
 pub mod grant_roles;
 pub mod grant_sealed_file;
 pub mod graph_ask_centre;
@@ -427,6 +429,7 @@ pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
 pub mod weave_arc_rederive;
 pub mod witness_project;
+pub mod work_order;
 #[cfg(feature = "sync")]
 pub mod work_talk_replay;
 pub mod workaround_skills;
