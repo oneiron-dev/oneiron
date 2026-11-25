@@ -207,7 +207,9 @@ impl Home {
             )
             .map_err(at("the owner lowers the mesh pairing lifetime"))?;
         if !matches!(outcome, SetSettingOutcome::Applied { .. }) {
-            return Err(format!("FIXTURE: the pairing lifetime did not change: {outcome:?}").into());
+            return Err(
+                format!("FIXTURE: the pairing lifetime did not change: {outcome:?}").into(),
+            );
         }
         Ok(())
     }

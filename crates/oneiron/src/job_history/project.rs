@@ -170,7 +170,10 @@ fn admitted(attempt: &JobHistoryAttempt, filter: &JobHistoryFilter, viewer: Hist
         return false;
     }
     if let Some(wanted) = hex(&filter.order)
-        && attempt.order.as_ref().is_none_or(|order| order.order != wanted)
+        && attempt
+            .order
+            .as_ref()
+            .is_none_or(|order| order.order != wanted)
     {
         return false;
     }

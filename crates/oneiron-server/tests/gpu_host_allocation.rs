@@ -282,7 +282,8 @@ async fn owner_start(served: &Served, owner: &Owner, quote: Value) -> (StatusCod
 }
 
 async fn owner_status(served: &Served, owner: &Owner, job: &str) -> Value {
-    let (status, body) = as_owner(served, owner, "vault.gpu.jobs.status", json!({"job": job})).await;
+    let (status, body) =
+        as_owner(served, owner, "vault.gpu.jobs.status", json!({"job": job})).await;
     assert_eq!(status, StatusCode::OK, "owner status: {body}");
     body
 }
@@ -356,12 +357,21 @@ fn the_config_allocation_holds_the_start_and_takes_its_settlement() {
             !refused.contains("no allocation"),
             "the allocation is there, and held: {body}"
         );
-        assert_eq!(served.gpu.called("create"), 1, "the refused start created nothing");
+        assert_eq!(
+            served.gpu.called("create"),
+            1,
+            "the refused start created nothing"
+        );
 
         // The cancel is billed 30 seconds; the job settles on the allocation.
         served.gpu.state().termination = Some(GpuTermination::Confirmed { billed_secs: 30 });
-        let (status, body) =
-            as_owner(&served, &owner, "vault.gpu.jobs.cancel", json!({"job": job})).await;
+        let (status, body) = as_owner(
+            &served,
+            &owner,
+            "vault.gpu.jobs.cancel",
+            json!({"job": job}),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "the owner cancels: {body}");
         let mut ended = owner_status(&served, &owner, &job).await;
         for _ in 0..3 {
