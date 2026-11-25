@@ -1,6 +1,7 @@
 //! The experiment arm doors of the lane economy (design pass 32 section 5):
-//! `vault.arms.admit`, `vault.arms.forecast`, `vault.arms.get` and
-//! `vault.arms.list`. Each proves
+//! `vault.arms.admit`, `vault.arms.forecast`, `vault.arms.get`,
+//! `vault.arms.list`, `vault.arms.units.reserve` and
+//! `vault.arms.units.cancel`. Each proves
 //! `verb_grant_caller`: the owner under their own proof, or an agent whose
 //! own live owner Grant lists the verb; an agent admits into and reads only
 //! the lines its Grant reaches, as the engine's act judges it again. Arms
@@ -13,15 +14,17 @@
 use std::sync::Arc;
 
 use oneiron::experiment_arm::{
-    ARMS_ADMIT_VERB, ARMS_FORECAST_VERB, ARMS_GET_VERB, ARMS_LIST_VERB, ArmAdmitRequest,
-    ArmForecastRequest, ArmList, ArmListRequest, ArmRef, ArmView, arm_admit_as, arm_forecast_as,
-    arm_get_as, arm_list_as,
+    ARMS_ADMIT_VERB, ARMS_FORECAST_VERB, ARMS_GET_VERB, ARMS_LIST_VERB, ARMS_UNITS_CANCEL_VERB,
+    ARMS_UNITS_RESERVE_VERB, ArmAdmitRequest, ArmForecastRequest, ArmList, ArmListRequest, ArmRef,
+    ArmView, UnitCancelRequest, UnitReserveRequest, UnitView, arm_admit_as, arm_forecast_as,
+    arm_get_as, arm_list_as, unit_cancel_as, unit_reserve_as,
 };
+use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
 
 use super::support::Listed;
 use super::verb_grant::verb_grant_door;
 use crate::auth::CoreAuth;
-use crate::gpu_host::now_ms;
+use crate::gpu_host::{now_ms, offer_with_backend};
 use crate::server::SyncServer;
 
 /// `vault.arms.admit`: admits one arm into a seated family of a GPU line,
@@ -78,5 +81,53 @@ pub(crate) async fn vault_arms_list(
     verb_grant_door(server, auth, ARMS_LIST_VERB, move |_, memory, owner| {
         arm_list_as(memory, owner, &input)
     })
+    .await
+}
+
+/// `vault.arms.units.reserve`: claims one unit of an arm's current rung on
+/// one of the line's offers, with its seconds drawn from the line's pools,
+/// in one write (design 5.2). The offer must have a backend on this host;
+/// the engine's act judges every other check. A repeat under the same intent
+/// key, or of the same ask under the same logical attempt, answers the same
+/// claim. The claim's job starts through the start gate (row M2-C's second
+/// part); until then a claim whose job does not start within its custody is
+/// released.
+pub(crate) async fn vault_arms_units_reserve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: UnitReserveRequest,
+) -> Listed<UnitView> {
+    verb_grant_door(
+        server,
+        auth,
+        ARMS_UNITS_RESERVE_VERB,
+        move |server, memory, owner| {
+            if let Err(error) = offer_with_backend(server, &input.offer) {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    format!("{ARMS_UNITS_RESERVE_VERB}: offer_not_managed: {error}"),
+                    &["Reserve on an offer of the line that this host can start."],
+                ));
+            }
+            unit_reserve_as(memory, owner, &input, now_ms())
+        },
+    )
+    .await
+}
+
+/// `vault.arms.units.cancel`: withdraws a unit whose job has not started,
+/// ending its claim released and returning its seconds to the pools it
+/// drew. The owner cancels any unit; an agent only one it reserved.
+pub(crate) async fn vault_arms_units_cancel(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: UnitCancelRequest,
+) -> Listed<UnitView> {
+    verb_grant_door(
+        server,
+        auth,
+        ARMS_UNITS_CANCEL_VERB,
+        move |_, memory, owner| unit_cancel_as(memory, owner, &input, now_ms()),
+    )
     .await
 }
