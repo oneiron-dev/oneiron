@@ -207,7 +207,9 @@ fn admit_in_txn(
     let line = minted.line;
     caller.require_role(&line, &[LineRole::Lead], ARMS_ADMIT_VERB)?;
     let period = minted.period.ok_or_else(|| {
-        invalid_state("period_not_begun: the line's first period has not begun; admit the arm once it starts")
+        invalid_state(
+            "period_not_begun: the line's first period has not begun; admit the arm once it starts",
+        )
     })?;
     let asker = memory.actor();
     let intent = IntentAsk::new(asker, ARMS_ADMIT_VERB, &request.intent_key, &request.ask())?;

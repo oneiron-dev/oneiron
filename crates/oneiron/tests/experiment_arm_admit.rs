@@ -169,14 +169,7 @@ impl Fixture {
 
     /// The owner sets `lane`'s line at `now_ms` with `roles`, sized for
     /// `families` demand families of `floor_arms` floor arms each.
-    fn set_line(
-        &self,
-        key: &str,
-        lane: EntityId,
-        roles: &Roles,
-        sized: (u64, u32),
-        now_ms: u64,
-    ) {
+    fn set_line(&self, key: &str, lane: EntityId, roles: &Roles, sized: (u64, u32), now_ms: u64) {
         let (families, floor_arms) = sized;
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
@@ -456,7 +449,10 @@ fn an_admitted_arm_holds_its_first_allowance() {
     assert_eq!(first.rung, 1);
     assert_eq!(first.arm.state, ArmState::Open);
     assert_eq!(first.arm.rungs[0].state, RungState::Open);
-    assert_eq!(first.arm.contract.pinned_at_ms, NOW_MS, "the engine's clock");
+    assert_eq!(
+        first.arm.contract.pinned_at_ms, NOW_MS,
+        "the engine's clock"
+    );
     assert_eq!(first.arm.contract.claimed_frozen_at_ms, Some(BEFORE_MS));
     let line = fixture.vault.gpu_line(&lane).expect("read").expect("line");
     let seat = line.seat(&families[0]).expect("the family's seat");
@@ -608,12 +604,24 @@ fn a_lead_of_one_line_is_refused_on_another_lines_arm() {
         .expect_err("another line's lead reads no arm here");
     assert_eq!(hidden.code, MEMORY_CODE_NOT_FOUND, "{hidden:?}");
     assert!(
-        fixture.list_as(Some(other), lane).expect("a list").is_empty(),
+        fixture
+            .list_as(Some(other), lane)
+            .expect("a list")
+            .is_empty(),
         "another line's lead lists no arm here"
     );
     for caller in [lead, reviewer] {
-        assert_eq!(fixture.get_as(Some(caller), arm.id).expect("a role reads").arm, arm);
-        assert_eq!(fixture.list_as(Some(caller), lane).expect("a list").len(), 1);
+        assert_eq!(
+            fixture
+                .get_as(Some(caller), arm.id)
+                .expect("a role reads")
+                .arm,
+            arm
+        );
+        assert_eq!(
+            fixture.list_as(Some(caller), lane).expect("a list").len(),
+            1
+        );
     }
 
     // Taking the Grant out of the lists stops its next call at once, reads
@@ -636,7 +644,12 @@ fn a_lead_of_one_line_is_refused_on_another_lines_arm() {
         .get_as(Some(lead), arm.id)
         .expect_err("no longer a role on the line");
     assert_eq!(gone.code, MEMORY_CODE_NOT_FOUND, "{gone:?}");
-    assert!(fixture.list_as(Some(lead), lane).expect("a list").is_empty());
+    assert!(
+        fixture
+            .list_as(Some(lead), lane)
+            .expect("a list")
+            .is_empty()
+    );
 }
 
 /// One floor of one first allowance in one family: the room T43 watches.
@@ -656,7 +669,11 @@ fn a_dormant_hold_lapses_and_returns_its_pools_once() {
         .expect("the hold fits")
         .arm;
     let early = fixture
-        .admit_at(None, &ask("b", lane, family, 2, "early"), NOW_MS + HOLD_TTL_MS - 1)
+        .admit_at(
+            None,
+            &ask("b", lane, family, 2, "early"),
+            NOW_MS + HOLD_TTL_MS - 1,
+        )
         .expect_err("the hold still lives one millisecond before its ttl");
     refused_as(&early, MEMORY_CODE_BUDGET_SPENT, "budget_denied");
     let lapsed_at = NOW_MS + HOLD_TTL_MS;
@@ -774,7 +791,10 @@ fn a_second_arm_on_one_contract_needs_supersedes_and_gets_no_new_cap() {
     let rerun = fixture.admit(None, &rerun_ask).expect("the re-run").arm;
     assert_eq!(rerun.supersedes, Some(first.id));
     assert_eq!(rerun.first_allowance, None, "a re-run gets no hold");
-    assert_eq!(rerun.cohort, first.cohort, "it keeps its predecessor's cohort");
+    assert_eq!(
+        rerun.cohort, first.cohort,
+        "it keeps its predecessor's cohort"
+    );
 
     fixture.close(
         rerun.id,
@@ -827,7 +847,13 @@ fn an_agent_admits_only_into_a_line_its_grant_reaches() {
     let (off_line, off_grant) = fixture.agent("arm-lead-elsewhere", &verbs, named(elsewhere));
     let (no_verb, no_verb_grant) = fixture.agent("arm-lead-no-verb", &[], ScopeAxis::All);
     let roles = Roles {
-        leads: vec![every_grant, lane_grant, root_grant, off_grant, no_verb_grant],
+        leads: vec![
+            every_grant,
+            lane_grant,
+            root_grant,
+            off_grant,
+            no_verb_grant,
+        ],
         reviewers: Vec::new(),
     };
     let family = fixture.seat_families(lane, &roles, 1, 4)[0];
@@ -848,7 +874,10 @@ fn an_agent_admits_only_into_a_line_its_grant_reaches() {
         let refused = fixture
             .admit(Some(lead), &ask(key, lane, family, 9, key))
             .expect_err("the Grant does not admit this caller to this line");
-        assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{key}: seen {refused:?}");
+        assert_eq!(
+            refused.code, MEMORY_CODE_FORBIDDEN,
+            "{key}: seen {refused:?}"
+        );
     }
     assert_eq!(
         last_committed_write(&fixture.vault),
