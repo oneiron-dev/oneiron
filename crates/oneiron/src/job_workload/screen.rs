@@ -184,14 +184,12 @@ fn devices_within(asked: &[DeviceClaim], earlier: &[DeviceClaim]) -> bool {
 /// Whether two claims ask for the same class of device: kind, features (as
 /// a set) and sharing.
 fn same_device_class(one: &DeviceClaim, other: &DeviceClaim) -> bool {
-    let features = |claim: &DeviceClaim| {
-        claim
-            .features
-            .iter()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    one.kind == other.kind && one.sharing == other.sharing && features(one) == features(other)
+    one.kind == other.kind && one.sharing == other.sharing && feature_set(one) == feature_set(other)
+}
+
+/// The features `claim` names, as a set.
+fn feature_set(claim: &DeviceClaim) -> std::collections::BTreeSet<&str> {
+    claim.features.iter().map(String::as_str).collect()
 }
 
 /// The devices of `claims` as runs of (memory per device, how many), most
