@@ -31,6 +31,7 @@ pub use claim::{
 pub use doors::{
     GpuLineError, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
+pub use graduate::{GpuLineFamilyGraduateRequest, VAULT_GPU_LINES_FAMILIES_GRADUATE};
 pub(crate) use intent::erase_intent_asker_in_txn;
 pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 pub use mint::{
@@ -38,7 +39,6 @@ pub use mint::{
     economic_digest, line_allocation_id, mint_period, payoff_share, period_balances, pools,
 };
 pub(crate) use store::erase_line_actor_in_txn;
-pub use graduate::{GpuLineFamilyGraduateRequest, VAULT_GPU_LINES_FAMILIES_GRADUATE};
 pub use store::{
     MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,
     stored_period_in_txn,

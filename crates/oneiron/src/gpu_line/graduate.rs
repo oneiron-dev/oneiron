@@ -137,7 +137,9 @@ impl Memory<'_> {
         now_ms: u64,
     ) -> MemoryResult<GpuLineView> {
         if request.to == Track::NewIdea {
-            return Err(bad_request("a new-idea seat graduates to demand or interest"));
+            return Err(bad_request(
+                "a new-idea seat graduates to demand or interest",
+            ));
         }
         let verb = VAULT_GPU_LINES_FAMILIES_GRADUATE;
         let vault = self.vault();
