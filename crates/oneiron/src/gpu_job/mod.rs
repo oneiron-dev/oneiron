@@ -27,12 +27,14 @@ use crate::{EntityId, Vault};
 mod allowance;
 mod caller;
 mod connector;
+mod node_view;
 mod offer;
 mod permits;
 mod start;
 mod step;
 pub(crate) mod tables;
 mod wire;
+mod write_off;
 
 pub use allowance::GpuJobAllowance;
 pub(crate) use allowance::erase_allowance_actor_in_txn;
@@ -40,6 +42,10 @@ pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
 pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
     GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
+};
+pub use node_view::{
+    GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved,
+    GpuJobOutputView, GpuJobOutputsView,
 };
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
@@ -176,6 +182,9 @@ pub enum GpuEndReason {
     Cancelled,
     /// The provider lost the resource.
     Gone,
+    /// The owner wrote the job off: its end could not be confirmed, and it settled zero (pass 33
+    /// row R4, door 10).
+    Unconfirmed,
 }
 
 /// Where a job stands.

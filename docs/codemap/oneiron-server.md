@@ -459,15 +459,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 13 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | m | 220 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 221 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | m | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/arms.rs` | src | s | 4 crate-vis | — | The experiment arm doors of the lane economy (design pass 32 section 5): `vault.arms.admit`… |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
 | `src/api/facade/host_doors/diary.rs` | src | s | 4 crate-vis | — | The caller's own diary query doors (`self.memory.diary.query` and `self.memory.diary.pinned`), and the… |
-| `src/api/facade/host_doors/gpu_jobs.rs` | src | m | 7 crate-vis | — | The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2): `vault.gpu.jobs.quote`, `.start`… |
+| `src/api/facade/host_doors/gpu_jobs.rs` | src | m | 8 crate-vis | — | The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2): `vault.gpu.jobs.quote`, `.start`… |
 | `src/api/facade/host_doors/gpu_lines.rs` | src | s | 3 crate-vis | — | The GPU line doors (design pass 32, section 5): `vault.gpu.lines.set`, `.get` and `.families.admit` |
 | `src/api/facade/host_doors/job_workloads.rs` | src | m | 6 crate-vis | — | The pinned workload doors (pass 33, section 6 rows 2-5): `vault.jobs.workloads.pin`, `.approve`, `.revoke`… |
+| `src/api/facade/host_doors/machine_execution.rs` | src | s | 1 crate-vis | — | `vault.machines.execution.clear_drain` (pass 33 row R4, door 12): clears the issuer's drain of one machine |
 | `src/api/facade/host_doors/media.rs` | src | m | 32 crate-vis | — | The `ai.*` media doors past text: options, image, speech, transcription, embedding and video |
 | `src/api/facade/host_doors/packs.rs` | src | m | 26 crate-vis | — | The owner's pack, connector subscription, lens and pack setup doors |
 | `src/api/facade/host_doors/planner_card.rs` | src | s | 1 crate-vis | — | `vault.planner.card` (design pass 32 section 5, row 12): the planner card of one project and task type, with… |
@@ -651,7 +652,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | s | 4 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/actor_dispatch/auth.rs` | src | m | 13 crate-vis | — | Who an MCP call acts as: its actor, resolved from its credential, proof headers and placement |
 | `src/api/mcp_gateway/actor_dispatch/execute.rs` | src | s | 3 crate-vis | — | How an admitted MCP tool call executes: its params, its validation and its dispatch |
-| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | m | 13 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, execute_code's session and each… |
+| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | m | 14 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, execute_code's session and each… |
 | `src/api/mcp_gateway/admission.rs` | src | m | 14 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/admission_intent.rs` | src | s | 4 crate-vis | — | The durable admission receipt (ARCH-0044 C5) of a generated verb an MCP `tools/call` runs under the… |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 10 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
@@ -689,7 +690,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/code_run_resume/origin.rs` | src | s | 1 crate-vis | — | The admitted caller an MCP `execute_code` run is bound for (FIX 4606) |
 | `src/api/mcp_gateway/code_run_resume/recovery.rs` | src | m | 2 crate-vis | — | A served MCP `execute_code` run a restart left parked on a code consent wait, entered again for its original… |
 | `src/api/mcp_gateway/device_release.rs` | src | m | 18 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
-| `src/api/mcp_gateway/envelope.rs` | src | m | 18 crate-vis | — | JSON-RPC envelope types and request dispatch |
+| `src/api/mcp_gateway/envelope.rs` | src | m | 19 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/envelope/blob_body.rs` | src | m | 8 crate-vis | — | A tool-first `tools/call`'s `arguments.spec.content_base64`, spooled and decoded into a file before the call… |
 | `src/api/mcp_gateway/envelope/http.rs` | src | L | 16 crate-vis | — | The MCP gateway's Streamable HTTP side: its routes, its connection stamp and each POST's reply |
 | `src/api/mcp_gateway/envelope/request.rs` | src | m | 2 crate-vis | — | One MCP JSON-RPC request: its id and its dispatch to the method it names |
@@ -965,7 +966,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/feedback_inbox.rs` | test | m | — | — | The open feedback inbox (ARCH-0056 #open-inbox, owner ruling 2026-10-16): "if someone has an issue with… |
 | `src/api/tests/machine_identity.rs` | test | s | — | — | World privacy P1 through the server: the owner's answer at the pairing ceremony decides whether a machine is… |
 | `src/api/tests/mcp_body_budget.rs` | test | s | — | — | Native MCP `memory.query` and `memory.hydrate_many` decode bodies under the `/v1` doors' one… |
-| `src/api/tests/mcp_booking_publication.rs` | test | s | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
+| `src/api/tests/mcp_booking_publication.rs` | test | m | — | — | engine-prs-15: a propose-only slip cannot take a public booking page offline through MCP `claim_upsert` |
 | `src/api/tests/mcp_code_admission.rs` | test | m | 1 crate-vis | — | `execute_code` admission (C10, under the rate law of ARCH-0044 C5): a burst of runs on one credential all… |
 | `src/api/tests/mcp_code_check.rs` | test | m | — | — | Done-means (TSC-WIRE): feedback mode changes no program's behaviour or result |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
@@ -1440,10 +1441,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/issuer/connector.rs` | src | m | 2 struct · 2 fn | VaultMachineConnector, VaultMachineParts | [`VaultMachineConnector`]: the GPU job backend `vault_machine`, which runs a chunk of a job on one of the… |
 | `src/gpu_execution_node/issuer/connector/receipts.rs` | src | s | 4 crate-vis | — | The receipts of a key on the issuer: each one is checked, then judged against the stored rows and written in… |
 | `src/gpu_execution_node/issuer/connector/sends.rs` | src | s | 6 crate-vis | — | What the connector sends a node for a key, and how `status` steps it: the reserve and the submit, the gate… |
-| `src/gpu_execution_node/issuer/mod.rs` | src | s | 1 struct · 6 fn · 2 const · 6 mod · 6 re-export | VaultMachineInputs | The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a job's chunk on… |
+| `src/gpu_execution_node/issuer/guard.rs` | src | s | 3 fn | — | The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the… |
+| `src/gpu_execution_node/issuer/mod.rs` | src | s | 1 struct · 6 fn · 2 const · 9 mod · 7 re-export | VaultMachineInputs | The issuer's `vault_machine` GPU job backend (pass 33 section 8): the connector that runs a job's chunk on… |
 | `src/gpu_execution_node/issuer/node_client.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 fn · 1 re-export | JobNodeClient, MeshJobNodeClient, NodeCallError | How the issuer asks a node (pass 33 section 7.1): one request and one answer per call, on [`JOB_ALPN`] for… |
+| `src/gpu_execution_node/issuer/orphans.rs` | src | s | 2 struct · 1 trait · 1 fn | JobOrphanKeys, LoggedUnattributedLedger, UnattributedLedger | What the issuer does with a key a node holds that it has no dispatch row for (pass 33 row R4, 8.5)… |
 | `src/gpu_execution_node/issuer/reconcile.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 1 const | LoggedOrphanKeys, OrphanKeys, ReconcileError, Reconciled | The reconcile before dispatch (pass 33 section 8.5) |
 | `src/gpu_execution_node/issuer/register.rs` | src | s | 1 struct · 1 enum · 6 fn | NotTheIssuer, VaultMachineNotRegistered | Where the `vault_machine` backend may exist (pass 33, 8.1 and 8.7) |
+| `src/gpu_execution_node/issuer/view.rs` | src | s | 1 fn | — | The four status fields of door 8 for a job the `vault_machine` backend runs (pass 33 row R4): built from the… |
 | `src/gpu_execution_node/jobs/admission.rs` | src | m | 6 fn · 13 crate-vis | — | Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`… |
 | `src/gpu_execution_node/jobs/breadcrumb.rs` | src | s | 1 const · 4 crate-vis | — | Breadcrumb lines (pass 34, `34-compute-general/DESIGN.md` section 7.3, row Q4): while a key runs, every tick… |
 | `src/gpu_execution_node/jobs/end.rs` | src | L | 1 fn · 8 crate-vis | — | The node's tick and the end of a launched key (design pass 33, 7.6 "The engine's end handling") |
@@ -1477,12 +1481,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/scope_systemd/ended.rs` | src | m | 1 fn | — | `oneiron job-ended <id>` (root, the unit's `ExecStopPost=+`): runs after every process of the unit is gone… |
 | `src/gpu_execution_node/scope_systemd/exchange.rs` | src | s | 4 fn | — | The per-job directories root makes on the machine's own tree before the job's view is built, and takes away… |
 | `src/gpu_execution_node/scope_systemd/exec.rs` | src | m | 1 fn | — | `oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it applies `exec.json` and nothing else… |
-| `src/gpu_execution_node/scope_systemd/gate.rs` | src | m | 1 fn · 1 crate-vis | — | The gate, `oneiron job-prepare --after-exec <id>` (root, the unit's `ExecStartPost=+`) |
+| `src/gpu_execution_node/scope_systemd/gate.rs` | src | L | 1 fn · 7 crate-vis | — | The gate, `oneiron job-prepare --after-exec <id>` (root, the unit's `ExecStartPost=+`) |
 | `src/gpu_execution_node/scope_systemd/install.rs` | src | m | 1 struct · 1 fn | InstallRequest | `oneiron execution-node install` (root, once per machine and again after a template's maximum grows; pass… |
 | `src/gpu_execution_node/scope_systemd/log_writer.rs` | src | m | 1 struct · 1 fn · 3 const | WorkloadStreams | The unit's log writer (pass 34, 7.2; R4's Q3-LOG-CONTRACT, 25 Nov 02:07, with its 12:02 additions) |
-| `src/gpu_execution_node/scope_systemd/mod.rs` | src | s | 3 fn · 24 const · 18 mod · 1 re-export | — | The first launch scope (pass 33, `33-exec-node/DESIGN.md` sections 7.6 and 7.8; pass 34… |
+| `src/gpu_execution_node/scope_systemd/mod.rs` | src | s | 3 fn · 23 const · 18 mod · 1 re-export | — | The first launch scope (pass 33, `33-exec-node/DESIGN.md` sections 7.6 and 7.8; pass 34… |
 | `src/gpu_execution_node/scope_systemd/prepare.rs` | src | m | 1 fn · 3 crate-vis | — | `oneiron job-prepare <id>` (root, the unit's `ExecStartPre=+`) and its gate, `oneiron job-prepare… |
-| `src/gpu_execution_node/scope_systemd/probe_unit.rs` | src | s | 1 fn | — | The scope half of `oneiron execution-node check` (pass 33, 7.6: "`execution-node check` runs the same checks… |
+| `src/gpu_execution_node/scope_systemd/probe_unit.rs` | src | m | 1 fn | — | The scope half of `oneiron execution-node check` (pass 33, 7.6: "`execution-node check` runs the same checks… |
 | `src/gpu_execution_node/scope_systemd/records.rs` | src | s | 6 struct · 6 fn · 1 const · 1 re-export | CutoffMark, CutoffPlan, ExecFile, PreparedRecord, ScopeRecord, ScopeReport | The files the unit's steps hand each other, besides R3a's `launch.json` and `ended.json`… |
 | `src/gpu_execution_node/scope_systemd/safe_fs.rs` | src | m | 2 struct · 15 fn | AccountEntry, FileFacts | File operations for the unit's root steps in directories another account owns (the engine's state and… |
 | `src/gpu_execution_node/scope_systemd/step.rs` | src | s | 2 struct · 7 fn · 1 const | StepArgs, StepContext | What every root step of the unit starts from: its instance, the root-owned node file, the two accounts, and… |
@@ -2732,6 +2736,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/support/owner_skip_hook.rs` | test | s | 1 crate-vis | — | The owner's pre hook that skips every call of the verbs it names, for the served tests that show a door… |
 | `tests/support/question_head_fixture.rs` | test | m | 11 crate-vis | — | The fixture of `tests/question_head_host.rs` (FIX 23586, 23587): a vault holding a scored question run whose… |
 | `tests/support/role_training_fixture.rs` | test | m | 23 crate-vis | — | Shared fixture for the role-training run door tests (ROLE-TRAINING-RUN): a rooted vault served over the real… |
+| `tests/support/vault_machine_rig.rs` | test | L | 58 crate-vis | — | The scripted node and the issuer rig of pass 33's `vault_machine` tests (rows R5 and R4): two machines on… |
 | `tests/system_one_broker_budget.rs` | test | s | — | — | L9-19 (ARCH-0036 #decision-deadline part 4), #7827 review round 2: a System One seat whose key is a vault… |
 | `tests/systemone_pack_run_no_cancel.rs` | test | s | — | — | [SYSTEMONE-PACK-RUN-NO-CANCEL] (FIX-LIST l26281): a caller-run pack decide whose work is cancelled while the… |
 | `tests/t0i_token_revoke_log_on_stdout.rs` | test | s | — | — | `oneiron token revoke` (and `oneiron revoke`) print their JSON answer on stdout, with the log lines on… |
@@ -2762,8 +2767,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_hooks_doors.rs` | test | m | — | — | Vault hook doors over HTTP: replay is a dry run, an undeclared outcome is refused, cancel keeps the body |
 | `tests/vault_identity_doors.rs` | test | L | — | — | The `vault.identity` doors (ARCH-0055's identity topology… |
 | `tests/vault_key_generation_route.rs` | test | m | — | — | The owner's surfaces for a new data-key generation: the preview names every wrap the act would remove, the… |
-| `tests/vault_machine_connector.rs` | test | XL | — | — | DESIGN 33 tests T34–T36f for the vault machine connector (except T36c) |
+| `tests/vault_machine_connector.rs` | test | L | — | — | DESIGN 33 tests T34–T36f for the vault machine connector (except T36c) |
 | `tests/vault_machine_registration.rs` | test | s | — | — | R6 runbook B2: server start registers the `vault_machine` backend only where pass 33 (8.1 and 8.7) lets it… |
+| `tests/vault_machine_status.rs` | test | L | — | — | DESIGN 33 tests T26-T33c, the issuer's halves (row R4): the four status fields of a job on one of the… |
 | `tests/vault_mail_doors.rs` | test | XL | — | — | The mail doors (`vault.mail.*`, ARCH-0063 #mail-pack), entered as the SDK enters them: HTTP `POST… |
 | `tests/vault_members_doors.rs` | test | L | — | — | Public-door promise tests for the `vault.members` family: an Admin invites through `vault.members.add`, the… |
 | `tests/vault_mesh_doors.rs` | test | m | — | — | The `vault.mesh.*` rows at the public door: each test proves one canon promise of paired-machine mesh… |
