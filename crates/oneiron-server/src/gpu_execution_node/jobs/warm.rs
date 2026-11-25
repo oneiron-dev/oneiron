@@ -145,7 +145,11 @@ impl Resolved {
                 .map_err(|error| format!("the node's {name} does not resolve: {error}"))
         })
         .collect::<Result<_, String>>()?;
-        Ok(Self { warm, service })
+        drop(service);
+        Ok(Self {
+            warm,
+            service: Vec::new(),
+        })
     }
 
     /// Every warm key's lookup but `key`'s.
