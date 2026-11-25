@@ -828,6 +828,23 @@ pub fn type_tree_at(
     Ok(crate::agent_dispatch::load_team_type_tree_at(vault, project, version)?.map(TypeTree::from))
 }
 
+/// [`type_tree_at`] in the caller's snapshot.
+///
+/// # Errors
+///
+/// As [`type_tree_at`].
+pub(crate) fn type_tree_at_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    version: u64,
+) -> Result<Option<TypeTree>> {
+    Ok(
+        crate::agent_dispatch::load_team_type_tree_at_in_txn(vault, txn, project, version)?
+            .map(TypeTree::from),
+    )
+}
+
 /// Missing is invalid, never untyped; an unknown node, a merged-away one,
 /// or a version past the tree in force is invalid. A stamp keeps the
 /// version it was placed at, so one read at an earlier version of the live

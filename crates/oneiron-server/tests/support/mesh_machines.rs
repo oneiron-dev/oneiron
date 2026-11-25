@@ -495,16 +495,22 @@ pub(crate) fn inbound_path_receipts(
         .collect()
 }
 
-/// Polls `probe` every 250 ms until it holds or `within` passes.
+/// Polls `probe` every 250 ms until it holds or `within` passes. A probe
+/// reads what another serving process wrote after a call over a real
+/// transport: that process signals nothing to await, and it does not run on
+/// a fake clock.
 pub(crate) async fn eventually(within: Duration, mut probe: impl FnMut() -> bool) -> bool {
+    // testkit-lint: allow(wall-clock) bounds a wait on another serving process
     let deadline = Instant::now() + within;
     loop {
         if probe() {
             return true;
         }
+        // testkit-lint: allow(wall-clock) the same bound
         if Instant::now() >= deadline {
             return false;
         }
+        // testkit-lint: allow(sleep) the poll interval; the other process signals nothing
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }

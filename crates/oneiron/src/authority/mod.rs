@@ -132,6 +132,7 @@ mod machine_claims;
 mod machine_enroll;
 mod machine_identity;
 mod machine_profile;
+mod machine_signatures;
 mod machine_standing;
 mod machine_write;
 mod managed_owner_check;

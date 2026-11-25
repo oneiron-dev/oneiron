@@ -81,4 +81,6 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Frozen pattern revision witnesses](planned-spawn-revisions.md) — hard-erase scrubs,
   late intent writes, and launch comparison without changing the frozen pack body.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
-  per-crate file tables in [`../codemap/`](../codemap/).
+  per-crate file tables in [`../codemap/`](../codemap/); lookup by capability in
+  [`../codemap/BY-CAPABILITY.md`](../codemap/BY-CAPABILITY.md) and by OF or ARCH id in
+  [`../codemap/BY-SPEC.md`](../codemap/BY-SPEC.md).

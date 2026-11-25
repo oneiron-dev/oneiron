@@ -887,3 +887,11 @@ oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
 name = "vault_workflows_doors"
 path = "tests/vault_workflows_doors.rs"
 required-features = ["oneiron/test-support"]
+
+# Pinned workloads (pass 33 row R2): the issuer's vault is the mesh harness's,
+# whose devices keep their install keys in a `MemoryKeystore`
+# (`oneiron/test-support`); the listeners need the `mesh` feature.
+[[test]]
+name = "job_workloads"
+path = "tests/job_workloads.rs"
+required-features = ["oneiron/test-support", "mesh"]

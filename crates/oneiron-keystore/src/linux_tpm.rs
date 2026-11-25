@@ -42,9 +42,9 @@
 //! directory, as the platform tier keeps them (`<name>.sealed`,
 //! [`SealedBytesStore`]). The engine sealed them; the TPM did not.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::fs::{self, File};
+use std::io::{ErrorKind, Read};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
@@ -276,29 +276,6 @@ impl LinuxTpmKeystore {
         Ok(Some(sealed))
     }
 
-    /// A private temporary file holding `sealed`, beside the file it will
-    /// become, named as the platform tier names its own so one sweep clears
-    /// both. `stem` is that file's name without its suffix.
-    fn write_temp(&self, stem: &str, sealed: &[u8]) -> (PathBuf, std::io::Result<()>) {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let tmp = self
-            .files
-            .dir()
-            .join(format!(".{stem}.{}.{nanos}.tmp", std::process::id()));
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)
-            .and_then(|mut file| {
-                file.write_all(sealed)?;
-                file.sync_all()
-            });
-        (tmp, written)
-    }
-
     fn sync_dir(&self) -> Result<()> {
         File::open(self.files.dir())
             .and_then(|d| d.sync_all())
@@ -327,9 +304,11 @@ impl DeviceKeystore for LinuxTpmKeystore {
             return Err(KeystoreError::AlreadyExists);
         }
         let sealed = self.seal(&SLOT, &[], secret)?;
-        let (tmp, written) = self.write_temp(&slot.name(), &sealed);
-        let linked = written.and_then(|()| fs::hard_link(&tmp, &path));
-        let _ = fs::remove_file(&tmp);
+        // The platform tier's temporary file, under its hold, so one sweep
+        // clears both tiers' files.
+        let (tmp, written) = self.files.write_temp(&slot.name(), &sealed);
+        let linked = written.and_then(|()| fs::hard_link(&tmp.path, &path));
+        let _ = fs::remove_file(&tmp.path);
         match linked {
             Ok(()) => self.sync_dir(),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => Err(KeystoreError::AlreadyExists),
@@ -360,10 +339,10 @@ impl DeviceKeystore for LinuxTpmKeystore {
             Err(e) => return Err(io(e)),
         }
         let sealed = self.seal(&SLOT, &[], secret)?;
-        let (tmp, written) = self.write_temp(&slot.name(), &sealed);
-        let renamed = written.and_then(|()| fs::rename(&tmp, &path));
+        let (tmp, written) = self.files.write_temp(&slot.name(), &sealed);
+        let renamed = written.and_then(|()| fs::rename(&tmp.path, &path));
         if renamed.is_err() {
-            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp.path);
         }
         renamed.map_err(io)?;
         self.sync_dir()?;
