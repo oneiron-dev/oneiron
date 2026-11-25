@@ -259,14 +259,9 @@ pub async fn serve_measurements_with_path(
     receipt_wait: Duration,
 ) -> ListenOutcome {
     let served = serve_measurements(transport, deadline, connections).await;
-    let path = match &served {
-        Ok(tally) if tally.connections > 0 => {
-            receipts
-                .wait_closed(MeshPathDirection::Inbound, receipt_wait)
-                .await
-        }
-        _ => receipts.closed(MeshPathDirection::Inbound),
-    };
+    // Red scratch: the read listen made before review r1 of #10452.
+    let _ = receipt_wait;
+    let path = receipts.closed(MeshPathDirection::Inbound);
     ListenOutcome { served, path }
 }
 
