@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use oneiron::job_workload::{BoundRequirement, DeviceLease, ScopeBound, ScopeCapabilities};
 
-use crate::gpu_execution_node::wire::ScopeClass;
+use crate::gpu_execution_node::wire::{ScopeClass, ScopeFacts};
 
 /// The name every job unit instance starts with.
 pub const JOB_UNIT_TEMPLATE_PREFIX: &str = "oneiron-job@";
@@ -207,6 +207,14 @@ pub trait JobUnit: Send + Sync {
         Err(RenewRefusal::Unsupported)
     }
 
+    /// What the key's scope proved for its run (pass 34, 2.2): the receipt's
+    /// `scope`. `None` when the unit never prepared, or the scope keeps no
+    /// record of it.
+    fn scope_facts(&self, unit: &JobKeyId) -> Option<ScopeFacts> {
+        let _ = unit;
+        None
+    }
+
     /// Asks the service manager to start the key's unit. It returns once the
     /// start is queued; it does not wait for the workload.
     ///
@@ -377,8 +385,15 @@ pub fn read_end_record(control_dir: &Path, key: &str) -> io::Result<Option<EndRe
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let record: EndRecord = serde_json::from_slice(&bytes)
+    let mut record: EndRecord = serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    // The end step names no key it could not check: a launch file that named
+    // another key than the unit's instance is refused before any workload,
+    // and its record carries no key. In the key's own control directory such
+    // a refusal is this key's (R3b review r3 R3-09).
+    if record.key.is_empty() && !record.workload_started {
+        record.key = key.to_owned();
+    }
     if record.key != key {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
