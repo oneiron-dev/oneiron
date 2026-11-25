@@ -40,7 +40,7 @@ use oneiron::experiment_arm::{
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, WalletRef};
 use oneiron::gpu_job::{GpuJobEnd, GpuJobTerminal, MeterVerdict};
 use oneiron::gpu_line::{
-    BudgetPolicy, ClaimState, Draw, DrawSource, GpuLinePolicy, GpuLineFamilyAdmitRequest,
+    BudgetPolicy, ClaimState, Draw, DrawSource, GpuLineFamilyAdmitRequest, GpuLinePolicy,
     GpuLineSetRequest, LineNoticeKind, Track, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
     UnitTerminal, defaults, gpu_seconds,
 };
@@ -299,7 +299,12 @@ impl Fixture {
 fn recipients(notices: &[NotificationBody]) -> BTreeSet<String> {
     notices
         .iter()
-        .map(|notice| notice.recipient.clone().expect("a notice names its recipient"))
+        .map(|notice| {
+            notice
+                .recipient
+                .clone()
+                .expect("a notice names its recipient")
+        })
         .collect()
 }
 
@@ -478,8 +483,16 @@ fn a_unit_end_writes_one_notice_to_the_lines_leads() {
     assert_eq!(ended.len(), 2, "one notice per lead: {ended:?}");
     for notice in &ended {
         assert_eq!(notice.kind, NotificationKind::LineNotice);
-        assert_eq!(notice.source.result, Some(ran.id.to_hex()), "about the unit's job");
-        let detail = notice.source.detail.as_deref().expect("the facts it carries");
+        assert_eq!(
+            notice.source.result,
+            Some(ran.id.to_hex()),
+            "about the unit's job"
+        );
+        let detail = notice
+            .source
+            .detail
+            .as_deref()
+            .expect("the facts it carries");
         for words in [
             "end=exited(0)",
             "measured_secs=1200",
@@ -562,11 +575,7 @@ fn a_line_with_no_standing_lead_tells_its_owners() {
     };
     assert!(!fixture.settle(&refused, &release));
     let released = fixture.notices(LineNoticeKind::UnitReleased);
-    assert_eq!(
-        recipients(&released),
-        hex(&[fixture.owner]),
-        "{released:?}"
-    );
+    assert_eq!(recipients(&released), hex(&[fixture.owner]), "{released:?}");
 }
 
 /// T58.
@@ -583,8 +592,8 @@ fn a_returning_machine_writes_one_notice_per_outage() {
     fixture.put(&arm, "work/1", lost_on(aged, SETTLED_MS), None, None);
     let back_at = SETTLED_MS + 60_000;
 
-    let first = machine_returned(&fixture.vault, &machine, "boot-1", back_at)
-        .expect("the return's write");
+    let first =
+        machine_returned(&fixture.vault, &machine, "boot-1", back_at).expect("the return's write");
     assert_eq!(first.len(), 1, "one notice, to the one lead");
     let returned = fixture.notices(LineNoticeKind::MachineReturned);
     assert_eq!(recipients(&returned), hex(&[lead]), "{returned:?}");

@@ -90,11 +90,11 @@ pub fn line_notices(vault: &Vault) -> crate::Result<Vec<NotificationBody>> {
     use crate::ports::EntityStoreRead;
     let txn = vault.store.env.read_txn()?;
     let mut notices = Vec::new();
-    for id in
-        vault
-            .store
-            .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_NOTIFICATION, None)?
-    {
+    for id in vault.store.port_entity_ids_by_type(
+        &txn,
+        crate::registry::ENTITY_TYPE_NOTIFICATION,
+        None,
+    )? {
         let id = id?;
         let crate::vault::LiveEntityRow::Live { entity_type, body } =
             crate::vault::live_entity_row_in_txn(&vault.store, &txn, &id)?

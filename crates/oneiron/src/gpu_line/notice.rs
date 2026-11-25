@@ -25,7 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::experiment_arm::RungState;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
-use crate::schedule::{ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, When};
+use crate::schedule::{
+    ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, When,
+};
 use crate::{EntityId, Vault};
 
 use super::claim::{ClaimKey, ClaimState, UnitClaim, UnitEnd, claims_in_txn};
@@ -408,7 +410,11 @@ pub(crate) static LINE_NOTICES_JOB: JobSpec = JobSpec {
 };
 
 /// One run of [`LINE_NOTICES_JOB`]: the notices due by the vault's clock, in one write.
-fn run_line_notices(vault: &Vault, _armed: &Armed, _pass: &JobPass<'_>) -> crate::Result<JobResult> {
+fn run_line_notices(
+    vault: &Vault,
+    _armed: &Armed,
+    _pass: &JobPass<'_>,
+) -> crate::Result<JobResult> {
     let now_ms = vault.now_recorded_ms();
     vault.with_write_txn(|wtxn| raise_due_line_notices_in_txn(vault, wtxn, now_ms))?;
     Ok(JobResult::of(Ran::Done))
