@@ -13,6 +13,8 @@
 //!   settlements, cancels, releases, hold ends, late seats and a roll-over.
 //! - T62 (draw-plan half): a new-idea arm draws its hold and its slot only,
 //!   at rung 1 only.
+//! - Review round 1: whatever the order names, the pinned pool pays only the
+//!   pinned track, and a new idea draws nothing past rung 1.
 //!
 //! The fold is pure, so these run without a vault. Fleet command:
 //! `cargo test --locked -p oneiron --all-features --test gpu_line_draw_order`.
@@ -21,9 +23,9 @@ use std::collections::BTreeMap;
 use oneiron::EntityId;
 use oneiron::federation::WalletRef;
 use oneiron::gpu_line::{
-    AllowanceHold, Bucket, BudgetPolicy, Draw, DrawAsk, DrawPurpose, DrawSource, FamilySeat,
-    GpuLine, GpuLinePeriod, PeriodRoom, PinnedMode, RuleRef, Side, SpendRow, Track, UnitCharge,
-    gpu_seconds, mint_period, plan_draws,
+    AllowanceHold, Bucket, BudgetPolicy, Draw, DrawAsk, DrawPurpose, DrawSource, DrawStep,
+    FamilySeat, GpuLine, GpuLinePeriod, PeriodRoom, PinnedMode, RuleRef, Side, SpendRow, Track,
+    UnitCharge, gpu_seconds, mint_period, plan_draws,
 };
 
 const RUNG_1: u64 = 1_800;
@@ -590,6 +592,58 @@ fn a_new_idea_arm_never_draws_the_pinned_or_the_market_pool() {
         assert!(higher.room.is_empty());
         assert_eq!(higher.fits, 0);
     }
+}
+
+/// Review round 1 of #10398: whatever a valid policy's draw orders name, the
+/// pinned pool pays only the policy's pinned track, and a new idea draws
+/// nothing past rung 1 (section 4.2, `new_idea_rung_one_only`).
+#[test]
+fn a_configured_order_never_widens_the_pinned_pool_or_a_new_idea() {
+    // The pinned share pays the demand track; interest keeps the default
+    // order, which names the pinned pool.
+    let mut line = two_families(PinnedMode::FloorPlusMarket);
+    line.budget.pinned_track = Track::Demand;
+    let record = minted(&line, 0);
+    let room = PeriodRoom::fold(&record, &line.families, &[]);
+    assert!(room.left(Bucket::Pinned) > 0, "the pinned pool has room");
+    let unpinned = ask(
+        id(41),
+        interest(),
+        Track::Interest,
+        DrawPurpose::Unit { rung: 2 },
+        1,
+    );
+    assert_eq!(
+        plan_draws(&room, &unpinned).expect("the market covers it"),
+        vec![draw(market(), 1)],
+        "an arm off the pinned track never draws the pinned pool"
+    );
+
+    // A new-idea order that names the slot at later rungs too.
+    let mut line = two_families(PinnedMode::FloorPlusMarket);
+    line.families
+        .push(seat(new_idea(), Track::NewIdea, 0, None));
+    for order in &mut line.budget.draw_orders {
+        if order.track == Track::NewIdea {
+            order.later_rungs = vec![DrawStep::Floor];
+        }
+    }
+    let record = minted(&line, 0);
+    let room = PeriodRoom::fold(&record, &line.families, &[]);
+    assert_eq!(room.left(Bucket::Floor { family: new_idea() }), FLOOR);
+    let higher = plan_draws(
+        &room,
+        &ask(
+            id(80),
+            new_idea(),
+            Track::NewIdea,
+            DrawPurpose::Unit { rung: 2 },
+            1,
+        ),
+    )
+    .expect_err("rung 2 is refused outright");
+    assert_eq!((higher.short, higher.fits), (None, 0));
+    assert!(higher.room.is_empty());
 }
 
 /// A small deterministic generator for T37.

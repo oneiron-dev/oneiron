@@ -175,7 +175,9 @@ pub enum RungState {
     Open,
     /// A promote verdict waits for its independent review.
     AwaitingReview,
-    Closed { end: RungEnd },
+    Closed {
+        end: RungEnd,
+    },
 }
 
 /// How a rung closed.
