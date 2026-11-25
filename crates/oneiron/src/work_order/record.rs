@@ -10,6 +10,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId};
 
 use super::blocker::BlockedOn;
+use super::decider::{DeciderMiss, DeciderReceipt};
 
 pub(super) const WORK_ORDERS: SideTable<EntityId, WorkOrder, Named> =
     SideTable::new(&side_table::WORK_ORDER);
@@ -339,7 +340,24 @@ pub enum SlotName {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DecidedBy {
-    Rule { name: String },
+    Rule {
+        name: String,
+    },
+    /// The decider the owner named for the slot (row P1): its answer was one of the options
+    /// and came inside the slot's deadline. The receipt is its read's.
+    Grant {
+        grant: EntityId,
+        receipt: DeciderReceipt,
+    },
+    /// The slot's rule, kept because the decider the owner named did not decide (row P1, I9):
+    /// why, and its read's receipt when it was asked.
+    RuleKept {
+        name: String,
+        decider: EntityId,
+        miss: DeciderMiss,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<DeciderReceipt>,
+    },
 }
 
 /// The most bytes a decision's reason holds.

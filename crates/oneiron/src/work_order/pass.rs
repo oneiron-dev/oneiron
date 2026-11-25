@@ -60,6 +60,12 @@ pub trait OrderHost {
     ///
     /// Why the stop could not be asked now; the next pass asks again.
     fn stop_attempt(&self, order: &WorkOrder, job: &EntityId) -> Result<(), String>;
+
+    /// Asks a slot's named decider (row P1) through the host's decision ladder; a host with no
+    /// ladder answers that no model takes the question, and the rule decides.
+    fn decide(&self, _ask: &super::decider::SlotAsk) -> super::decider::DeciderReply {
+        super::decider::DeciderReply::NoModel
+    }
 }
 
 /// One attempt the loop asks the host to make.
@@ -312,6 +318,7 @@ impl Vault {
     /// pass saw it run.
     fn settle_attempt_end(
         &self,
+        host: &dyn OrderHost,
         order: &WorkOrder,
         end: EndKind,
         started: bool,
@@ -322,6 +329,7 @@ impl Vault {
             retry_policy_in_txn(self, &txn)?
         };
         let (pick, decision) = after_rule(order, end, &policy, now_ms);
+        let (pick, decision) = self.decide_after(host, order, end, pick, decision, now_ms)?;
         self.update_work_order(order, now_ms, |order| {
             if let Some(last) = order.attempts.last_mut() {
                 if started {
@@ -470,7 +478,7 @@ impl Vault {
     /// Writes why `order` waits, or ends it: cancelled when its authority ended, given up when
     /// no wait can clear what blocks it on every machine, when it may not wait, or when its
     /// wait has run out.
-    fn block_order(
+    pub(super) fn block_order(
         &self,
         order: &WorkOrder,
         blocked: Vec<BlockedOn>,
@@ -558,7 +566,7 @@ impl Vault {
                     }
                 }
                 AttemptStanding::Ended(end) => {
-                    if self.settle_attempt_end(&order, end, started, now_ms)? {
+                    if self.settle_attempt_end(host, &order, end, started, now_ms)? {
                         report.ended.push((order.id, end));
                     }
                 }
@@ -613,6 +621,7 @@ impl Vault {
             }
         }
         let ranked = rank(&runnable, &running);
+        let (ranked, first) = self.ranked_by_decider(host, ranked, &running, now_ms)?;
         let ranked_ids: Vec<EntityId> = ranked.iter().map(|order| order.id).collect();
         for (position, order) in ranked.into_iter().enumerate() {
             // Fit again against the room this pass's earlier attempts took.
@@ -646,6 +655,11 @@ impl Vault {
             let Some((chosen, placed)) = place(order, &all) else {
                 continue;
             };
+            let Some((chosen, placed)) =
+                self.decide_place(host, order, &all, (chosen, placed), now_ms, &mut report)?
+            else {
+                continue;
+            };
             let machine = chosen.machine;
             let needs = Needs::of(&order.request);
             let devices = chosen
@@ -659,7 +673,10 @@ impl Vault {
                 machine,
                 devices: devices.clone(),
                 pin: &pin,
-                ranked: rank_decision(&ranked_ids, position),
+                ranked: match (&first, position) {
+                    (Some(decision), 0) => decision.clone(),
+                    _ => rank_decision(&ranked_ids, position),
+                },
                 placed,
             };
             match host.make_attempt(&attempt) {

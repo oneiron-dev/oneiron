@@ -140,6 +140,11 @@ pub enum Blocker {
     AttemptUnconfirmed {
         key: String,
     },
+    /// The PLACE slot's decider (row P1), the Grant `decider` in lower hex, chose to wait for
+    /// a better machine; the next pass places the order again.
+    DeciderWait {
+        decider: String,
+    },
 
     // Faults of one key on the node: the issuer's own record disagrees with the node's, or a
     // read of the key's output or log was refused. An operator reads them; they say nothing
@@ -232,6 +237,7 @@ impl Blocker {
             Self::CapFull { .. } => "cap_full",
             Self::RetryNotBefore { .. } => "retry_not_before",
             Self::AttemptUnconfirmed { .. } => "attempt_unconfirmed",
+            Self::DeciderWait { .. } => "decider_wait",
             Self::NotReleasable => "not_releasable",
             Self::KeyConflict => "key_conflict",
             Self::NotTheKeysIssuer => "not_the_keys_issuer",
@@ -291,7 +297,8 @@ impl Blocker {
             Self::After { .. }
             | Self::CapFull { .. }
             | Self::RetryNotBefore { .. }
-            | Self::AttemptUnconfirmed { .. } => Clearing::Condition,
+            | Self::AttemptUnconfirmed { .. }
+            | Self::DeciderWait { .. } => Clearing::Condition,
             Self::NotReleasable
             | Self::KeyConflict
             | Self::NotTheKeysIssuer
