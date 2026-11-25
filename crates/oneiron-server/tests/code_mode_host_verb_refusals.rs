@@ -244,10 +244,11 @@ async fn unbound_credential_is_refused_before_any_gate() {
     }
 }
 
-/// A bound read-only credential answers `mcp_auth_required` on the composed
-/// call, on every Write row; its Read rows pass both gates and reach the pack
-/// gate. The gateway's message is pinned through the gate: the composed
-/// answer drops it.
+/// A bound read-only credential answers `mcp_grant_missing` on the composed
+/// call, on every Write row: its credential lacks the Write grant, and
+/// nothing about its proof is wrong. Its Read rows pass both gates and reach
+/// the pack gate. The gateway's message is pinned through the gate: the
+/// composed answer drops it.
 #[tokio::test]
 async fn read_only_credential_is_refused_on_write_rows() {
     let fixture = door_fixture("code-mode-read-only").await;
@@ -260,14 +261,16 @@ async fn read_only_credential_is_refused_on_write_rows() {
             .await
             .expect("the composed call runs")
             .expect_err("a Write row needs Write");
-        assert_eq!(refused.code, "mcp_auth_required", "{verb}");
+        assert_eq!(refused.code, "mcp_grant_missing", "{verb}");
         assert_eq!(refused.hook_notice, None, "{verb}");
         let dropped = gate_host_verb(&fixture.server, &reader, verb)
             .await
             .expect("the gate runs")
             .expect_err("a Write row needs Write");
+        assert_eq!(dropped.code, "mcp_grant_missing", "{verb}");
         assert_eq!(
-            dropped.message, "the registered connector requires its live paired holder proof",
+            dropped.message,
+            "this connector's credential does not hold the core:write grant this call needs",
             "{verb}"
         );
     }
