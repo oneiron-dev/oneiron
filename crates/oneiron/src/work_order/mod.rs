@@ -7,6 +7,10 @@
 //! decides: done, another attempt under a new key, or give up. Why an order waits is one typed
 //! list of [`Blocker`]s, the same words the start gate and the node use.
 //!
+//! An order may wait on another order's end ([`upstream`]), count against named running caps
+//! ([`caps`]), and be a member of an array whose group row caps its running members
+//! ([`group`]) (row Q5).
+//!
 //! Orders live on the issuer; the doors are `vault.jobs.order`, `vault.jobs.orders.get`,
 //! `.list`, `.cancel` and `.wait` ([`wait`]: in code mode it parks the run until the order's
 //! writer settles it), the read `vault.machines.place`, and `vault.jobs.logs.tail` (an
@@ -14,9 +18,12 @@
 
 pub mod after;
 pub mod blocker;
+pub mod caps;
+mod conditions;
 pub mod decider;
 mod doors;
 pub mod fit;
+pub mod group;
 pub mod logs_tail;
 pub mod pass;
 pub mod place;
@@ -25,11 +32,15 @@ pub mod record;
 pub(crate) mod setting_keys;
 pub mod start_check;
 pub(crate) mod tables;
+mod upstream;
 pub mod wait;
 mod wire;
 
 pub use after::{AFTER_RULE, AfterPick, RetryPolicy, RetryRule, after_rule};
 pub use blocker::{BlockedOn, Blocker, Clearing};
+pub use caps::{
+    CAP_NAME_MAX, CAPS_PER_ORDER_MAX, GROUP_CAP_PREFIX, RunningCaps, group_cap_name, is_cap_name,
+};
 pub use doors::{
     CancelRefused, ORDER_INTENT_KEY_MAX, machines_place_as, order_refusal, order_work_as,
     ordered_view_as, work_order_cancel_as, work_order_get_as, work_order_list_as,
@@ -38,6 +49,7 @@ pub use fit::{
     DeviceFact, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact, fit,
     scope_allowed, scope_kind_name,
 };
+pub use group::{GroupRequest, WorkOrderGroup};
 pub use logs_tail::{
     LOGS_TAIL_WAIT_MAX_MS, LogsTail, LogsTailRequest, LogsTailStream, LogsTailTarget,
     LogsTailTruncation, logs_tail_target_as,
@@ -46,11 +58,12 @@ pub use pass::{AttemptOutcome, AttemptToMake, OrderHost, PassReport, allowed_mac
 pub use place::{PLACE_RULE, place};
 pub use rank::{RANK_RULE, rank};
 pub use record::{
-    AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy, OrderAttempt, OrderCharge,
-    OrderClass, OrderLimits, OrderState, OrderWishes, OrderedBy, ResultBinding, SlotDecision,
-    SlotName, WaitRule, WorkOrder, attempt_job_id,
+    AfterCondition, AfterOn, AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy,
+    GroupMember, OrderAttempt, OrderCharge, OrderClass, OrderLimits, OrderState, OrderWishes,
+    OrderedBy, ResultBinding, SlotDecision, SlotName, WaitRule, WorkOrder, attempt_job_id,
 };
 pub use start_check::{AttemptRefused, OrderAttemptRef, OrderStarter};
+pub use upstream::upstream_ended_refusal;
 pub use wait::{order_wait_id, work_order_wait_as};
 pub use wire::{
     AttemptReceipt, MachinesPlaceRequest, MachinesPlaceView, WaitUntil, WorkOrderList,

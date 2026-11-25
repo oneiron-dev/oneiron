@@ -22,6 +22,7 @@ use crate::{EntityId, Vault};
 
 use super::after::{AfterPick, after_rule};
 use super::blocker::{BlockedOn, Blocker};
+use super::caps::RunningCaps;
 use super::decider::PassAsks;
 use super::fit::{MachineFacts, MachineReach, Needs, fit, scope_allowed};
 use super::place::place;
@@ -144,6 +145,8 @@ pub(super) enum OrderFit {
     AuthorityEnded,
     /// Its `Until` time passed before an attempt was made: it gives up, runnable or not.
     WaitEnded,
+    /// The order its `after` names ended without the end it waited for: it gives up (row Q5).
+    UpstreamEnded(EntityId),
 }
 
 /// The end an attempt's typed terminal names (4.7).
@@ -246,7 +249,7 @@ impl Vault {
 
     /// Applies `change` to the order as read and writes it if nobody wrote it since; false
     /// when another write came first.
-    fn update_work_order(
+    pub(super) fn update_work_order(
         &self,
         order: &WorkOrder,
         now_ms: u64,
@@ -391,6 +394,7 @@ impl Vault {
         &self,
         order: &WorkOrder,
         machines: &[MachineFacts],
+        running: &RunningCaps,
         now_ms: u64,
     ) -> crate::Result<OrderFit> {
         // An attempt with no end keeps the order as it is, whatever else ended: its receipt or
@@ -414,6 +418,9 @@ impl Vault {
         }
         if let Some(hold) = order.timed_hold(now_ms) {
             return Ok(OrderFit::Blocked(vec![hold]));
+        }
+        if let Some(held) = self.order_conditions_in_txn(&txn, order, running)? {
+            return Ok(held);
         }
         let Some(row) = self.job_workload_in_txn(&txn, &order.workload)? else {
             return Ok(OrderFit::Blocked(vec![BlockedOn {
@@ -579,8 +586,10 @@ impl Vault {
                 }
             }
         }
-        let orders: Vec<WorkOrder> = self
-            .work_orders()?
+        let all_orders = self.work_orders()?;
+        // Caps count every live attempt in the vault, as the attempt's own write counts them.
+        let mut caps = RunningCaps::of(&all_orders);
+        let orders: Vec<WorkOrder> = all_orders
             .into_iter()
             .filter(|order| host.holds(order))
             .collect();
@@ -614,7 +623,7 @@ impl Vault {
             .iter()
             .filter(|order| matches!(order.state, OrderState::Open { .. }))
         {
-            match self.order_fit(order, &machines, now_ms)? {
+            match self.order_fit(order, &machines, &caps, now_ms)? {
                 OrderFit::Runnable { .. } => runnable.push(order),
                 OrderFit::Blocked(blocked) => {
                     self.block_order(order, blocked, false, now_ms, &mut report)?;
@@ -625,13 +634,16 @@ impl Vault {
                 OrderFit::WaitEnded => {
                     self.block_order(order, Vec::new(), false, now_ms, &mut report)?;
                 }
+                OrderFit::UpstreamEnded(upstream) => {
+                    self.give_up_on_upstream(order, upstream, now_ms, &mut report)?;
+                }
             }
         }
         let by_rule = rank(&runnable, &running);
         let dispatch = self.ranked_by_decider(&asks, &by_rule, &running, now_ms)?;
         for (order, ranked) in dispatch {
             // Fit again against the room this pass's earlier attempts took.
-            let (pin, candidates) = match self.order_fit(order, &machines, now_ms)? {
+            let (pin, candidates) = match self.order_fit(order, &machines, &caps, now_ms)? {
                 OrderFit::Runnable { pin, candidates } => (pin, candidates),
                 OrderFit::Blocked(blocked) => {
                     self.block_order(order, blocked, false, now_ms, &mut report)?;
@@ -643,6 +655,10 @@ impl Vault {
                 }
                 OrderFit::WaitEnded => {
                     self.block_order(order, Vec::new(), false, now_ms, &mut report)?;
+                    continue;
+                }
+                OrderFit::UpstreamEnded(upstream) => {
+                    self.give_up_on_upstream(order, upstream, now_ms, &mut report)?;
                     continue;
                 }
             };
@@ -685,6 +701,7 @@ impl Vault {
             match host.make_attempt(&attempt) {
                 AttemptOutcome::Made => {
                     report.made.push((order.id, n, machine));
+                    caps.hold(order);
                     if let Some(facts) = machines.iter_mut().find(|facts| facts.machine == machine)
                     {
                         let until =
