@@ -8,7 +8,9 @@
 //!   refused and sets nothing;
 //! - a later version of the pack changes no line in force;
 //! - a policy stated whole sets as before and keeps no preset;
-//! - a document that leaves out its unit or budget reads with the defaults its install checked.
+//! - a document that leaves out its unit or budget reads with the defaults its install checked;
+//! - the host's offer check reads the policy in force inside the write, after the intent replay,
+//!   so a pack installed after an earlier read cannot skip it.
 //!
 //! The document holds the open-models lane's values of pass 34, 3.3.
 //!
@@ -16,14 +18,15 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::WalletRef;
 use oneiron::gpu_line::{
-    BudgetPolicy, GpuLineError, GpuLinePolicyFields, GpuLineSetWire, GpuLineView, LinePresetRef,
-    RuleRef, gpu_seconds,
+    BudgetPolicy, GpuLineError, GpuLinePolicy, GpuLinePolicyFields, GpuLineSetWire, GpuLineView,
+    LinePresetRef, RuleRef, gpu_seconds,
 };
 use oneiron::skill_hub::HubFile;
 use oneiron::skill_hub::pack_catalog::{PackInstallDisposition, PackSource};
@@ -211,12 +214,25 @@ impl Fixture {
         }
     }
 
+    /// The owner's set, with a host that manages every offer.
     fn set(
         &self,
         key: &str,
         lane: EntityId,
         preset: Option<LinePresetRef>,
         policy: GpuLinePolicyFields,
+    ) -> Result<GpuLineView, GpuLineError> {
+        self.set_checked(key, lane, preset, policy, &|_| Ok(()))
+    }
+
+    /// The owner's set, with `offers_managed` as the host's offer check.
+    fn set_checked(
+        &self,
+        key: &str,
+        lane: EntityId,
+        preset: Option<LinePresetRef>,
+        policy: GpuLinePolicyFields,
+        offers_managed: &dyn Fn(&GpuLinePolicy) -> Result<(), GpuLineError>,
     ) -> Result<GpuLineView, GpuLineError> {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
@@ -228,6 +244,7 @@ impl Fixture {
                     preset,
                     policy,
                 },
+                offers_managed,
                 NOW_MS,
             )
     }
@@ -386,4 +403,62 @@ fn a_preset_document_with_no_budget_reads_as_its_install_checked_it() {
         }
     );
     assert_eq!(view.line.preset, Some(preset));
+}
+
+#[test]
+fn the_hosts_offer_check_reads_the_policy_in_force_inside_the_write() {
+    let fx = fixture();
+    let lane = fx.lane();
+    let files = preset_pack("1.0.0", &open_models_document(345_600));
+    let preset = reference(files.clone());
+    // The pack is Active before the write opens, as one installed by a concurrent put after
+    // an earlier read would be: the owner states no unit, so only the preset gives it.
+    fx.put(files);
+    let mut fields = stated(300_000).0;
+    fields.insert("offers".to_owned(), json!(["not-posted"]));
+    let seen = RefCell::new(Vec::new());
+    let host_posts_none = |policy: &GpuLinePolicy| {
+        seen.borrow_mut()
+            .push((policy.unit.clone(), policy.offers.clone()));
+        match policy.offers.first() {
+            Some(offer) => Err(GpuLineError::OfferNotManaged {
+                offer: offer.clone(),
+                unit: policy.unit.as_str().to_owned(),
+            }),
+            None => Ok(()),
+        }
+    };
+
+    let refused = fx.set_checked(
+        "unmanaged",
+        lane,
+        Some(preset.clone()),
+        GpuLinePolicyFields(fields),
+        &host_posts_none,
+    );
+    assert!(
+        matches!(&refused, Err(GpuLineError::OfferNotManaged { offer, .. }) if offer == "not-posted"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        seen.borrow().as_slice(),
+        &[(gpu_seconds(), vec!["not-posted".to_owned()])],
+        "the check reads the preset's unit and the stated offers"
+    );
+    assert!(
+        fx.vault.gpu_line(&lane).expect("read").is_none(),
+        "an offer the host refuses sets nothing"
+    );
+
+    // An applied ask replays before the check: the host's answer to it stands.
+    let applied = fx
+        .set("applied", lane, Some(preset.clone()), stated(300_000))
+        .expect("the owner sets the line from the preset");
+    let replayed = fx
+        .set_checked("applied", lane, Some(preset), stated(300_000), &|_| {
+            panic!("a replay never reaches the host's check")
+        })
+        .expect("the same ask replays");
+    assert_eq!(replayed.line.budget, applied.line.budget);
+    assert_eq!(replayed.line.revision, applied.line.revision);
 }
