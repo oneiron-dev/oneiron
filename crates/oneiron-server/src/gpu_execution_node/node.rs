@@ -678,25 +678,22 @@ impl ExecutionNode {
         }
         // Row P2: the cache pass removes files, so it runs only under figures read now. With
         // the owner's rows accepted but not readable, or this machine's own id not readable
-        // (its rows cannot be found then), it waits for a tick where they read.
+        // (its rows cannot be found then), it waits for a tick where they read. The pass reads
+        // the file and the owner's rows again under the admission lock: a reading whose figures
+        // in force differ from these, or do not read, is no reading, and it removes nothing.
         if let Some(settings) = snapshot.settings() {
-            let owner = match &snapshot.policy {
-                Some(policy) => Ok(Some(policy.cache)),
-                None => match self.shared.vault.local_machine() {
-                    Err(error) => Err(format!("this machine's MACHINE id does not read: {error}")),
-                    Ok(machine) => self
-                        .owner_policy_of(settings, machine.map(|machine| machine.id))
-                        .map(|policy| policy.map(|policy| policy.cache)),
-                },
+            let in_force = match &snapshot.policy {
+                Some(policy) => Ok(settings.cache.tightened(Some(&policy.cache))),
+                None => self.cache_in_force(settings),
             };
-            match owner {
-                Ok(owner) => {
-                    let file = self.shared.file.clone();
-                    keys.cache_pass_if_due(
-                        settings,
-                        &settings.cache.tightened(owner.as_ref()),
-                        Arc::new(move || ExecutionNodeSettings::read(&file).ok().flatten()),
-                    );
+            match in_force {
+                Ok(cache) => {
+                    let (file, node) = (self.shared.file.clone(), self.clone());
+                    let read_now = move || {
+                        let now = ExecutionNodeSettings::read(&file).ok().flatten()?;
+                        (node.cache_in_force(&now).ok()? == cache).then_some(now)
+                    };
+                    keys.cache_pass_if_due(settings, &cache, Arc::new(read_now));
                 }
                 Err(why) => {
                     tracing::debug!(%why, "warm keys: no cache pass while the owner's policy does not read")

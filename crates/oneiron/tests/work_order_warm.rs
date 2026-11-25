@@ -122,6 +122,16 @@ fn a_warm_machine_is_preferred_after_role_and_before_headroom() {
 }
 
 #[test]
+fn the_warm_reason_names_only_the_keys_the_picked_machine_holds() {
+    let holds_a = machine(&["builds"], &["env:a"], 10);
+    let holds_none = machine(&["builds"], &[], 10);
+    let (picked, decision) =
+        place(&order(&["env:a", "env:b"]), &[&holds_none, &holds_a]).expect("a machine fits");
+    assert_eq!(picked.machine, holds_a.machine);
+    assert_eq!(decision.why, "already holds env:a");
+}
+
+#[test]
 fn an_order_listing_a_missing_input_is_blocked_on_that_machine_as_warm_key_missing() {
     let mut lacking = machine(&[], &["env:open-models"], 10);
     lacking.warm_absent = vec!["weights:aa".to_owned()];

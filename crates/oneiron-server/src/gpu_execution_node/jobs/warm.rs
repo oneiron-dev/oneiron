@@ -25,9 +25,11 @@
 //!   each removed path moved out of use, under the admission lock; the files are deleted after
 //!   it is dropped. A path is removed only directly inside a cache directory that is the
 //!   engine's alone, and never when another key's path lies in it where the file system
-//!   resolves that path or its lookup passes through it ([`eviction`]). The pass reads the
-//!   node's file again under the lock and removes nothing when it changed while the pass
-//!   measured. A moved path is deleted only once the table that records the move is on disk,
+//!   resolves that path or its lookup passes through it, reaches into it by another name, or
+//!   when the node's state or work directory lies in it ([`eviction`]). The pass reads the
+//!   node's file and the owner's cache figures again under the lock, resolves every path again
+//!   there, and removes nothing when any of them changed while the pass measured, or no longer
+//!   reads. A moved path is deleted only once the table that records the move is on disk,
 //!   and nothing is deleted from the removed caches' directory while anything is deferred. Once
 //!   the service closes ([`NodeJobs::close`]), no pass starts, and a running one stops at its
 //!   next move or directory.
@@ -109,23 +111,57 @@ fn template_digests(settings: &ExecutionNodeSettings) -> BTreeMap<String, String
         .collect()
 }
 
-/// Where the file system resolves each warm path of `paths`, with what its lookup passes
-/// through.
-///
-/// # Errors
-///
-/// A path does not resolve: what lies in a cache is then not known.
-fn resolved_paths(
-    paths: &BTreeMap<String, WarmPath>,
-) -> Result<BTreeMap<String, eviction::Lookup>, String> {
-    paths
-        .iter()
-        .map(|(key, warm)| {
-            eviction::lookup(&warm.path)
-                .map(|found| (key.clone(), found))
-                .map_err(|error| format!("the path of warm key {key} does not resolve: {error}"))
+/// Where the file system resolves each warm path of one reading of the node's file, and the
+/// node's own directories, with what each lookup passes through: no move takes a cache that one
+/// of them lies in or reaches into.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Resolved {
+    warm: BTreeMap<String, eviction::Lookup>,
+    /// The state directory (the journal, the warm-key table) and the work directory.
+    service: Vec<eviction::Lookup>,
+}
+
+impl Resolved {
+    /// # Errors
+    ///
+    /// A path does not resolve: what lies in a cache is then not known.
+    fn read(settings: &ExecutionNodeSettings) -> Result<Self, String> {
+        let warm: BTreeMap<String, eviction::Lookup> = warm_paths(settings)
+            .into_iter()
+            .map(|(key, warm)| match eviction::lookup(&warm.path) {
+                Ok(found) => Ok((key, found)),
+                Err(error) => Err(format!(
+                    "the path of warm key {key} does not resolve: {error}"
+                )),
+            })
+            .collect::<Result<_, String>>()?;
+        let service: Vec<eviction::Lookup> = [
+            ("state_dir", &settings.state_dir),
+            ("work_dir", &settings.work_dir),
+        ]
+        .into_iter()
+        .map(|(name, dir)| {
+            eviction::lookup(dir)
+                .map_err(|error| format!("the node's {name} does not resolve: {error}"))
         })
-        .collect()
+        .collect::<Result<_, String>>()?;
+        Ok(Self { warm, service })
+    }
+
+    /// Every warm key's lookup but `key`'s.
+    fn others(&self, key: &str) -> Vec<&eviction::Lookup> {
+        self.warm
+            .iter()
+            .filter(|(other, _)| other.as_str() != key)
+            .map(|(_, found)| found)
+            .collect()
+    }
+
+    /// What no entry in `key`'s cache path may be: what every other key's lookup and each of
+    /// the node's directories enters or ends at.
+    fn guarded(&self, key: &str) -> BTreeSet<eviction::Identity> {
+        eviction::guarded(self.others(key).into_iter().chain(&self.service))
+    }
 }
 
 /// The cache budget the box's ceiling gives. The owner's machine policy (row P0) may set each
@@ -446,14 +482,19 @@ impl NodeJobs {
         };
         let paths = warm_paths(&settings);
         let owners = eviction::EntryOwners::of(&settings.job_account);
-        // Each template's digest, and what each present cache path holds, are read before any
-        // lock is taken.
+        // Each template's digest, where each path resolves, and what each present cache path
+        // holds, are read before any lock is taken.
         let digests = template_digests(&settings);
+        let before = Resolved::read(&settings);
         let measured: BTreeMap<String, eviction::Measured> = paths
             .iter()
             .filter(|(_, warm)| warm.cache)
             .filter_map(|(key, warm)| {
-                eviction::measure(&warm.path).map(|measured| (key.clone(), measured))
+                let guarded = before
+                    .as_ref()
+                    .map(|before| before.guarded(key))
+                    .unwrap_or_default();
+                eviction::measure(&warm.path, &guarded).map(|measured| (key.clone(), measured))
             })
             .collect();
         let now_ms = self.now().wall_ms;
@@ -464,7 +505,9 @@ impl NodeJobs {
             let Some(journal) = book.journal.as_ref() else {
                 return report;
             };
-            // The file as it is now: a launch admitted after this lock reads this one.
+            // The file and the owner's cache figures as they are now (`settings_now` gives no
+            // reading when the figures differ from the pass's): a launch admitted after this
+            // lock reads these.
             let current = settings_now();
             let unchanged = current.as_ref().is_some_and(|now| {
                 now.cache_root() == settings.cache_root()
@@ -475,13 +518,17 @@ impl NodeJobs {
                     && template_digests(now) == digests
             });
             if !unchanged {
-                report.deferred =
-                    Some("the node's file changed while the pass measured".to_owned());
+                report.deferred = Some(
+                    "the node's file or the owner's cache figures changed while the pass measured, or do not read"
+                        .to_owned(),
+                );
             }
-            // Where each warm path of the file now resolves, and what its lookup passes through:
-            // a move never takes a cache another key's path overlaps, and nothing is deleted
-            // while one overlaps where removed caches go.
-            let resolved = match current.as_ref().map(|now| resolved_paths(&warm_paths(now))) {
+            // Where each warm path of the file and each of the node's directories now resolves,
+            // and what its lookup passes through: a move never takes a cache another key's path
+            // overlaps or reaches into, or one the node's directories lie in, and nothing is
+            // deleted while a warm path overlaps where removed caches go. A path that resolves
+            // otherwise than when the pass measured (a link or a mount made meanwhile) defers.
+            let resolved = match current.as_ref().map(Resolved::read) {
                 Some(Ok(resolved)) => Some(resolved),
                 Some(Err(why)) => {
                     report.deferred = Some(why);
@@ -489,9 +536,18 @@ impl NodeJobs {
                 }
                 None => None,
             };
-            let sweep = resolved
-                .as_ref()
-                .is_some_and(|resolved| !resolved.values().any(|found| trash.overlapped_by(found)));
+            if unchanged && resolved.is_some() && resolved.as_ref() != before.as_ref().ok() {
+                report.deferred = Some(
+                    "a warm path or a directory of the node's resolves otherwise than when the pass measured"
+                        .to_owned(),
+                );
+            }
+            let sweep = resolved.as_ref().is_some_and(|resolved| {
+                !resolved
+                    .warm
+                    .values()
+                    .any(|found| trash.overlapped_by(found))
+            });
             if resolved.is_some() && !sweep {
                 report.deferred = Some("a warm key's path lies where removed caches go".to_owned());
             }
@@ -555,13 +611,13 @@ impl NodeJobs {
                         closed = true;
                         break;
                     }
-                    let protected: Vec<&eviction::Lookup> = resolved
-                        .iter()
-                        .filter(|(key, _)| **key != chosen.key)
-                        .map(|(_, found)| found)
-                        .collect();
+                    let protected = resolved.others(&chosen.key);
                     let taken = match (paths.get(&chosen.key), measured.get(&chosen.key)) {
                         (None, _) => Err("no template maps it now".to_owned()),
+                        (Some(_), Some(found)) if found.aliased => Err(
+                            "another warm key's path or one of the node's directories reaches into it by another name"
+                                .to_owned(),
+                        ),
                         (Some(_), found) if !found.is_some_and(|found| found.emptiable) => {
                             Err("the engine's account cannot empty a directory in it".to_owned())
                         }
@@ -569,7 +625,7 @@ impl NodeJobs {
                             &cache_dir,
                             &warm_path.path,
                             owners,
-                            &protected,
+                            (protected.as_slice(), resolved.service.as_slice()),
                             warm.table.evicted_records(),
                             now_ms,
                         ),

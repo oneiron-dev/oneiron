@@ -38,6 +38,14 @@ pub const CACHE_PASS_EVERY_SECS_DEFAULT: u64 = 7_200;
 /// The most warm keys one template maps.
 pub const TEMPLATE_WARM_KEYS_MAX: usize = 64;
 
+/// The most warm keys the node's templates map together. With the most keys the table remembers
+/// past them ([`CACHE_KEYS_MAX_MOST`]), the warm keys a `Node` answer reports (each under 300
+/// bytes as JSON) stay under about 350 KiB, well within the mesh's 1 MiB message.
+pub const NODE_WARM_KEYS_MAX: usize = 256;
+
+/// The most `keys_max` may be: the warm keys the table remembers that no template maps.
+pub const CACHE_KEYS_MAX_MOST: u32 = 1024;
+
 /// The directory inside the cache directory that a pass moves a cache path into to take it out
 /// of use: what it holds is removed after the admission lock is dropped, and again by the next
 /// pass if that did not complete. No warm path may lie in it.
@@ -143,8 +151,10 @@ impl NodeCacheSettings {
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {
-        if self.keys_max == 0 {
-            return Err("execution_node.cache.keys_max must be at least 1".to_owned());
+        if self.keys_max == 0 || self.keys_max > CACHE_KEYS_MAX_MOST {
+            return Err(format!(
+                "execution_node.cache.keys_max must be at least 1 and at most {CACHE_KEYS_MAX_MOST}"
+            ));
         }
         if self.pass_every_secs == 0 {
             return Err("execution_node.cache.pass_every_secs must be at least 1".to_owned());
@@ -215,8 +225,9 @@ pub(super) fn check_template_warm(
 }
 
 /// Every template that maps one warm key maps it to the same path, and either all of them
-/// mark it a cache or none does; and no two keys, where either is a cache, have one path or
-/// paths one inside the other: a key names one thing on one machine.
+/// mark it a cache or none does; the templates map at most [`NODE_WARM_KEYS_MAX`] keys
+/// together; and no two keys, where either is a cache, have one path or paths one inside the
+/// other: a key names one thing on one machine.
 pub(super) fn check_warm_agreement(
     templates: &BTreeMap<String, NodeTemplate>,
 ) -> Result<(), String> {
@@ -238,6 +249,12 @@ pub(super) fn check_warm_agreement(
                 Some(_) => {}
             }
         }
+    }
+    if first.len() > NODE_WARM_KEYS_MAX {
+        return Err(format!(
+            "execution_node.templates map {} warm keys together, at most {NODE_WARM_KEYS_MAX}",
+            first.len()
+        ));
     }
     let keys: Vec<(&str, &Path, bool)> = first
         .iter()

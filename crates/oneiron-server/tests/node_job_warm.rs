@@ -27,7 +27,10 @@ use oneiron_server::gpu_execution_node::jobs::warm::{CacheBudget, WarmPath};
 use oneiron_server::gpu_execution_node::jobs::{
     MirrorStager, NodeJobs, NodeKey, StagingRefusal, TemplateMirrors,
 };
-use oneiron_server::gpu_execution_node::node_settings::{EVICTED_DIR_NAME, ExecutionNodeSettings};
+use oneiron_server::gpu_execution_node::node_settings::{
+    CACHE_KEYS_MAX_MOST, EVICTED_DIR_NAME, ExecutionNodeSettings, NODE_WARM_KEYS_MAX,
+    TEMPLATE_WARM_KEYS_MAX,
+};
 use oneiron_server::gpu_execution_node::wire::{
     HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobSubmit, NetworkMode,
     OutputDecl, ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector, Starter, WarmKeyFact,
@@ -822,6 +825,111 @@ fn a_cache_pass_never_moves_a_cache_another_keys_path_resolves_into() {
     for name in ["c", "h"] {
         assert!(!cache_dir.join(name).exists(), "{name} was kept");
     }
+}
+
+// It moves caches: off Linux the pass moves nothing (no `openat2`).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cache_pass_never_moves_a_cache_another_path_reaches_by_another_name_or_the_state_dir_lies_in()
+{
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
+    // `weights:hl` names, outside every cache, a second name of the file in cache `b`: what a
+    // bind mount of a directory in a cache shows too (the same file system and inode under a
+    // path that never enters the cache). The node's state directory lies in cache `h`.
+    let second_name = fixture.path("data/second-name.bin");
+    std::fs::create_dir_all(fixture.path("data")).expect("data dir");
+    std::fs::hard_link(cache_dir.join("b/blob.bin"), &second_name).expect("second name");
+    let mut settings = fixture.settings_with(
+        &cache_dir,
+        &format!(r#", "weights:hl" = "{}""#, second_name.display()),
+    );
+    settings.state_dir = cache_dir.join("h/node-state");
+    std::fs::create_dir_all(&settings.state_dir).expect("state dir in h");
+    let jobs = fixture.node.open();
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
+    assert_eq!(report.deferred, None, "{report:?}");
+    for kept in ["target:b", "target:h"] {
+        assert!(
+            report
+                .left
+                .iter()
+                .any(|(key, why)| key == kept && why.contains("reaches into it by another name")),
+            "{report:?}"
+        );
+    }
+    assert!(second_name.exists() && cache_dir.join("b/blob.bin").exists());
+    assert!(settings.state_dir.exists(), "the state directory was moved");
+    for name in ["a", "c"] {
+        assert!(!cache_dir.join(name).exists(), "{name} was kept");
+    }
+}
+
+// It moves caches: off Linux the pass moves nothing (no `openat2`).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_with_two_names_in_a_cache_counts_once_against_the_cap() {
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
+    let on_disk: u64 = ["a", "b", "c", "h"]
+        .iter()
+        .map(|name| allocated(&cache_dir.join(name)))
+        .sum();
+    // A second name for the file in cache `a` takes no more disk; the cap is what the caches
+    // take, so nothing goes.
+    std::fs::hard_link(
+        cache_dir.join("a/blob.bin"),
+        cache_dir.join("a/blob-again.bin"),
+    )
+    .expect("second name");
+    let settings = fixture.settings(&cache_dir);
+    let jobs = fixture.node.open();
+    let report = jobs.cache_pass_under(
+        &unchanged_file(&settings),
+        &settings.cache,
+        &budget(on_disk),
+    );
+    assert_eq!(report.deferred, None, "{report:?}");
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert_eq!(report.kept_bytes, on_disk, "{report:?}");
+}
+
+#[test]
+fn templates_that_map_more_warm_keys_together_than_the_node_reports_are_refused() {
+    // Each template within its own bound, together past the node's: a `Node` answer stays
+    // within the mesh's message.
+    let templates = NODE_WARM_KEYS_MAX / TEMPLATE_WARM_KEYS_MAX + 1;
+    let mut text = builds_file("");
+    for index in 0..templates {
+        let warm: Vec<String> = (0..TEMPLATE_WARM_KEYS_MAX)
+            .map(|key| format!(r#""env:t{index}-{key}" = "/srv/warm/t{index}/{key}""#))
+            .collect();
+        text.push_str(&format!(
+            r#"
+[execution_node.templates.many-{index}]
+repo = "/srv/builds.git"
+entries = ["{ENTRY}"]
+interpreter = ["/usr/bin/bash"]
+max_secs = 3600
+memory_gib = 32
+disk_gib = 10
+warm = {{ {} }}
+"#,
+            warm.join(", ")
+        ));
+    }
+    let refused = ExecutionNodeSettings::parse(&text).expect_err("past the node's bound");
+    assert!(refused.contains("warm keys together"), "{refused}");
+    // The keys the table remembers past the templates' are bound too.
+    let keys_max = |most: u32| {
+        ExecutionNodeSettings::parse(&format!(
+            "{}\n[execution_node.cache]\nkeys_max = {most}\n",
+            builds_file("")
+        ))
+    };
+    keys_max(CACHE_KEYS_MAX_MOST).expect("keys_max at its most");
+    let refused = keys_max(CACHE_KEYS_MAX_MOST + 1).expect_err("keys_max past its most");
+    assert!(refused.contains("keys_max"), "{refused}");
 }
 
 #[test]

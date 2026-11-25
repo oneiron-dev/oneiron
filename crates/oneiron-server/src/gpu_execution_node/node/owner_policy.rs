@@ -8,7 +8,7 @@ use oneiron::job_workload::DevicePlacement;
 use oneiron::machine_policy::MachinePolicy;
 
 use super::super::machine_policy;
-use super::super::node_settings::{DrainClearBy, ExecutionNodeSettings};
+use super::super::node_settings::{DrainClearBy, ExecutionNodeSettings, NodeCacheSettings};
 use super::super::wire::WorkloadPin;
 use super::ExecutionNode;
 
@@ -41,6 +41,28 @@ impl ExecutionNode {
         let devices: Vec<String> = self.shared.slots.offer().offered.iter().cloned().collect();
         machine_policy::owner_policy(&self.shared.vault, machine, settings, &devices)
             .map_err(|why| format!("owner_policy_unreadable: {why}"))
+    }
+
+    /// The cache figures in force for the file `settings` (row P2): the box's ceiling, each
+    /// figure lowered to the owner's where the owner's rows set it.
+    ///
+    /// # Errors
+    ///
+    /// This machine's MACHINE id does not read (its rows cannot be found then), or the owner's
+    /// rows are accepted and do not read.
+    pub(super) fn cache_in_force(
+        &self,
+        settings: &ExecutionNodeSettings,
+    ) -> Result<NodeCacheSettings, String> {
+        let machine = self
+            .shared
+            .vault
+            .local_machine()
+            .map_err(|error| format!("this machine's MACHINE id does not read: {error}"))?;
+        let policy = self.owner_policy_of(settings, machine.map(|machine| machine.id))?;
+        Ok(settings
+            .cache
+            .tightened(policy.as_ref().map(|policy| &policy.cache)))
     }
 
     /// The owner's policy beside the file `settings` as a snapshot reads it, and why it takes no

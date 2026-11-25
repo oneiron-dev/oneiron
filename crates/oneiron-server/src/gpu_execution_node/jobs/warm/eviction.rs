@@ -2,8 +2,11 @@
 //! removed only when it is a directory directly in the box's cache directory, that directory is
 //! the engine's alone (walked from `/` as the work directory is: [`trusted_work_dir`]), the
 //! engine's or the job account owns the entry, the engine's account can empty it, no mount lies
-//! at it or beneath it, and no other warm key's path lies in it where the file system resolves
-//! that path, by name or by what each directory is (its file system and inode).
+//! at it or beneath it, no other warm key's path lies in it where the file system resolves that
+//! path, by name or by what each directory is (its file system and inode), nothing in it is an
+//! entry another warm key's path reaches by another name (a bind mount of a directory in it, or
+//! a second name of a file in it), and neither of the node's own directories (its state and
+//! work directories) lies in it.
 //!
 //! It is first moved into [`EVICTED_DIR_NAME`] inside the cache directory ([`Trash`]), under the
 //! admission lock, so no launch finds it half removed, to a name nothing holds there and no
@@ -128,14 +131,33 @@ impl Lookup {
     /// identity, `above` that of each directory above it) would change what this path names:
     /// the path lies in it or its lookup passes through it, or it lies in the path. Each is
     /// checked by name and by identity, so another name for the same directory (a bind mount, or
-    /// a name that differs in case alone where the file system folds case) overlaps too.
+    /// a name that differs in case alone where the file system folds case) overlaps too. What
+    /// lies beneath `dir` under another name is [`Measured::aliased`]'s part.
     pub(super) fn overlaps(&self, dir: &Path, own: Identity, above: &[Identity]) -> bool {
-        self.real.starts_with(dir)
+        self.lies_in(dir, own)
             || dir.starts_with(&self.real)
-            || self.through.iter().any(|passed| passed.starts_with(dir))
-            || self.entered.contains(&own)
             || self.end.is_some_and(|end| above.contains(&end))
     }
+
+    /// Whether moving the directory `dir` (where the file system resolves it, `own` its
+    /// identity) would move what this path names or where its lookup goes: the path lies in it
+    /// or its lookup passes through it, by name or by identity. A directory of the node's own
+    /// is checked this way only, as the default cache directory lies in its work directory.
+    pub(super) fn lies_in(&self, dir: &Path, own: Identity) -> bool {
+        self.real.starts_with(dir)
+            || self.through.iter().any(|passed| passed.starts_with(dir))
+            || self.entered.contains(&own)
+    }
+}
+
+/// Every identity `lookups` enter or end at. An entry beneath a cache path with one of them is
+/// what another path reaches by another name (a bind mount of a directory in the cache, or a
+/// second name of a file in it): removing the cache would change what that path names.
+pub(super) fn guarded<'a>(lookups: impl IntoIterator<Item = &'a Lookup>) -> BTreeSet<Identity> {
+    lookups
+        .into_iter()
+        .flat_map(|lookup| lookup.entered.iter().copied().chain(lookup.end))
+        .collect()
 }
 
 /// One step of a lookup still to take.
@@ -231,18 +253,23 @@ pub(super) fn lookup(path: &Path) -> std::io::Result<Lookup> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Measured {
     /// The disk it uses: its own entry and everything beneath it on the same file system, a
-    /// mount's tree left out (it is not the cache's; 0 for a mount at the path itself).
+    /// mount's tree left out (it is not the cache's; 0 for a mount at the path itself), and a
+    /// file with several names in it counted once.
     pub(super) bytes: u64,
     /// The engine's account could empty every directory in it when it was read: the engine runs
     /// as root, or its account owns each of them with write and search permission; every entry
     /// read; no mount beneath it; and none deeper than a removal descends. A check before the
     /// move, not a promise: a removal that fails later is reported and tried again.
     pub(super) emptiable: bool,
+    /// An entry read in it (itself included) has an identity of the `guarded` set: another
+    /// warm key's path, or a directory of the node's own, reaches into it by another name, so
+    /// it is not the cache's alone.
+    pub(super) aliased: bool,
 }
 
-/// What `path` holds, with no symbolic link followed and no mount read into. `None` when the
-/// path does not exist.
-pub(super) fn measure(path: &Path) -> Option<Measured> {
+/// What `path` holds, with no symbolic link followed and no mount read into, and whether an
+/// entry in it is one `guarded` ([`guarded`]) names. `None` when the path does not exist.
+pub(super) fn measure(path: &Path, guarded: &BTreeSet<Identity>) -> Option<Measured> {
     let top = std::fs::symlink_metadata(path).ok()?;
     let device = top.dev();
     let engine = rustix::process::geteuid().as_raw();
@@ -252,6 +279,7 @@ pub(super) fn measure(path: &Path) -> Option<Measured> {
     let mut measured = Measured {
         bytes: top.blocks().saturating_mul(512),
         emptiable: !top.is_dir() || can_empty(&top),
+        aliased: guarded.contains(&identity(&top)),
     };
     if !top.is_dir() {
         return Some(measured);
@@ -265,8 +293,11 @@ pub(super) fn measure(path: &Path) -> Option<Measured> {
         return Some(Measured {
             bytes: 0,
             emptiable: false,
+            aliased: measured.aliased,
         });
     }
+    // Each file with more than one name, by identity: its blocks count once.
+    let mut linked: BTreeSet<Identity> = BTreeSet::new();
     let beneath: BTreeSet<&PathBuf> = mounts
         .iter()
         .filter(|point| point.starts_with(&real))
@@ -296,9 +327,14 @@ pub(super) fn measure(path: &Path) -> Option<Measured> {
                 measured.emptiable = false;
                 continue;
             }
-            measured.bytes = measured
-                .bytes
-                .saturating_add(found.blocks().saturating_mul(512));
+            measured.aliased |= guarded.contains(&identity(&found));
+            let first_name =
+                found.is_dir() || found.nlink() <= 1 || linked.insert(identity(&found));
+            if first_name {
+                measured.bytes = measured
+                    .bytes
+                    .saturating_add(found.blocks().saturating_mul(512));
+            }
             if found.is_dir() {
                 measured.emptiable &= can_empty(&found);
                 if found.dev() != device || depth + 1 >= REMOVE_DEPTH_MAX {
@@ -452,14 +488,15 @@ impl Trash {
     ///
     /// Why it was left: it is not a directory directly in the cache directory, neither the
     /// engine's nor the job account owns it, a mount lies at it or beneath it, a path of
-    /// `protected` (other warm keys' lookups) overlaps it, or the move failed. The move takes no
-    /// name `recorded` (the moves not deleted yet) holds.
+    /// `protected` (other warm keys' lookups) overlaps it, a directory of `service` (the node's
+    /// own) lies in it, or the move failed. The move takes no name `recorded` (the moves not
+    /// deleted yet) holds.
     pub(super) fn take(
         &self,
         cache_dir: &Path,
         path: &Path,
         owners: EntryOwners,
-        protected: &[&Lookup],
+        (protected, service): (&[&Lookup], &[Lookup]),
         recorded: &BTreeMap<String, EvictedRecord>,
         now_ms: u64,
     ) -> Result<EvictedRecord, String> {
@@ -493,6 +530,9 @@ impl Trash {
             .any(|other| other.overlaps(&real, own, &self.above_entries))
         {
             return Err("another warm key's path lies in it or passes through it".to_owned());
+        }
+        if service.iter().any(|dir| dir.lies_in(&real, own)) {
+            return Err("one of the node's directories (state or work) lies in it".to_owned());
         }
         let base = name.to_string_lossy();
         let mut attempt = 0;
