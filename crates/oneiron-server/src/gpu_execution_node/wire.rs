@@ -22,13 +22,16 @@ pub use oneiron::job_workload::{
     BoundRequirement, DeviceClaim, JOB_ALPN, JOB_STATUS_ALPN, NetworkMode, OutputDecl,
     ResourceRequest, ScopeCapabilities, ScopeKind, WorkloadPin,
 };
+use oneiron::machine_readiness::ReadinessStreak;
 use oneiron::machine_signature::{MachineSignatureError, MachineSignatures};
 /// The warm keys of an issuer's open orders that may run on the node it
 /// asks (row P2): one type with the issuer's pass.
 pub use oneiron::warm_key::WarmWanted;
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::availability::GpuAvailability;
+use super::device::DeviceSample;
 
 /// The protocols' name in a codec error.
 pub const JOB_PROTOCOL: &str = "job mesh";
@@ -226,6 +229,121 @@ pub struct NodeAnswer {
     /// key a template maps, then those remembered from use alone.
     #[serde(default)]
     pub warm: Vec<WarmKeyFact>,
+    /// What the node's last idle readiness check found (pass 34, 4.1 and
+    /// 7.3); `None` while the node keeps no journal.
+    #[serde(default)]
+    pub readiness: Option<NodeReadiness>,
+}
+
+/// One check of a node's idle readiness check (pass 34, 7.3). Its names
+/// ([`Register::name`]) are the wire spelling.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
+#[serde(rename_all = "snake_case")]
+#[register("jobs.readiness.check")]
+pub enum ReadinessCheck {
+    /// The launch scope meets the minimum contract.
+    Scope,
+    /// The devices answer a fresh reading.
+    Devices,
+    /// The payload disk keeps its reserve, and the state directory its
+    /// floor.
+    Disk,
+    /// Each template's mirror is a readable directory.
+    Mirrors,
+    /// The wall clock kept step with the boot clock since the last check.
+    Clock,
+    /// No job unit runs that no key launched.
+    Units,
+}
+
+/// What a node's last readiness check found.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessState {
+    /// No check has run yet.
+    #[default]
+    Unchecked,
+    Ready,
+    /// The first check that failed, and why. The node takes no new work
+    /// (`Drained`) until a check passes.
+    NotReady {
+        check: ReadinessCheck,
+        why: String,
+    },
+}
+
+/// One readiness check's result, as the node keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadinessResult {
+    /// When the check ran, on the node's wall clock.
+    pub at_ms: u64,
+    pub state: ReadinessState,
+}
+
+impl ReadinessResult {
+    /// The result on one line: `<at_ms> ready`, or `<at_ms> <check>: <why>`.
+    #[must_use]
+    pub fn line(&self) -> String {
+        match &self.state {
+            ReadinessState::Unchecked => format!("{} unchecked", self.at_ms),
+            ReadinessState::Ready => format!("{} ready", self.at_ms),
+            ReadinessState::NotReady { check, why } => {
+                format!("{} {}: {why}", self.at_ms, check.name())
+            }
+        }
+    }
+}
+
+/// A node's readiness, as `Node` reports it (pass 34, 4.1 and 7.3): the
+/// facts the issuer escalates on (16, practice 6).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct NodeReadiness {
+    pub state: ReadinessState,
+    /// When the last check ran, on the node's wall clock; `None` before the
+    /// first.
+    pub checked_at_ms: Option<u64>,
+    /// Checks failed in a row; 0 once one passes.
+    pub failed_in_a_row: u32,
+    /// When the first check of the current run of failures ran: the
+    /// streak's identity. `None` while the last check passed.
+    pub failing_since_ms: Option<u64>,
+    /// The newest results, oldest first: at most
+    /// `jobs.readiness.results_kept`.
+    pub results: Vec<ReadinessResult>,
+}
+
+impl NodeReadiness {
+    /// The run of failed checks this fact reports, as the issuer escalates
+    /// it ([`oneiron::Vault::raise_machine_readiness_ask`]) for `machine`;
+    /// `None` while the last check passed, or before any ran.
+    #[must_use]
+    pub fn streak(&self, machine: EntityId) -> Option<ReadinessStreak> {
+        let ReadinessState::NotReady { check, why } = &self.state else {
+            return None;
+        };
+        Some(ReadinessStreak {
+            machine,
+            failed_in_a_row: self.failed_in_a_row,
+            failing_since_ms: self.failing_since_ms?,
+            check: check.name().to_owned(),
+            why: why.clone(),
+            results: self.results.iter().map(ReadinessResult::line).collect(),
+        })
+    }
+}
+
+/// One line the node writes every tick while a key runs (pass 34, 7.3):
+/// what a host reset leaves behind, on the `Lost` receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Breadcrumb {
+    pub boot_id: String,
+    pub boot_ns: u64,
+    pub wall_ms: u64,
+    /// The key's devices, as the probe sampled them; empty where it gives
+    /// nothing.
+    pub devices: Vec<DeviceSample>,
 }
 
 /// One warm key, as [`NodeAnswer`] reports it. Nothing about the key's
@@ -502,6 +620,10 @@ pub enum JobEnd {
     Lost {
         reason: String,
         last_tick_boot_ns: u64,
+        /// The key's last breadcrumb lines before it was lost, oldest
+        /// first: the evidence of a reset (pass 34, 7.3).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        breadcrumbs: Vec<Breadcrumb>,
     },
 }
 

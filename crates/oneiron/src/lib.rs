@@ -54,6 +54,7 @@ pub mod machine_capacity;
 pub mod machine_destination;
 pub mod machine_names;
 pub mod machine_policy;
+pub mod machine_readiness;
 pub mod machine_signature;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;

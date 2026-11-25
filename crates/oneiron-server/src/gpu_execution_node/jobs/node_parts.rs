@@ -36,20 +36,24 @@ pub use oneiron_organ_host::{
 };
 
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
+use crate::gpu_execution_node::device::DeviceSample;
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
-use crate::gpu_execution_node::node_settings::{ExecutionNodeSettings, NodeCacheSettings};
+use crate::gpu_execution_node::node_settings::{
+    DrainClearBy, ExecutionNodeSettings, NodeCacheSettings, READINESS_EVERY_SECS_DEFAULT,
+};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
-    ScopeReport, SignedJobSubmit, WarmKeyFact, WarmWanted, WorkloadPin,
+    NodeReadiness, ScopeReport, SignedJobSubmit, WarmKeyFact, WarmWanted, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
 /// the engine's default. Policy is a setting, never a constant in this code
 /// (lead 25 Nov 00:04). Until row P0 a node obeys its box file only (EM-17 =
-/// A): R1's `[execution_node]` file sets `staging_limit_secs`, and every
-/// other key takes its default. Read once per use, through
+/// A): R1's `[execution_node]` file sets `staging_limit_secs`,
+/// `receipt_keep_days`, `readiness_every_secs` and `drain_clear_by`, and
+/// every other key takes its default. Read once per use, through
 /// [`NodeAdmission::job_settings`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeJobSettings {
@@ -73,6 +77,21 @@ pub struct NodeJobSettings {
     /// stays on the node before the cleaning removes it (design 7.6 step 5).
     /// Default 30, longer than an allocation period.
     pub receipt_keep_days: u64,
+    /// `jobs.readiness.every_secs`: how often the node checks itself while
+    /// no attempt runs (pass 34, 7.3). Default 900.
+    pub readiness_every_secs: u64,
+    /// `jobs.readiness.results_kept`: how many check results `Node`
+    /// reports. Default 5.
+    pub readiness_results_kept: u64,
+    /// `machines.drain.clear_by`: who clears the node's drain (pass 34,
+    /// 2.4). Default: the machine, once its readiness check passes.
+    pub drain_clear_by: DrainClearBy,
+    /// `jobs.incidents.keep`: how many incident records the node keeps.
+    /// Default 200.
+    pub incidents_keep: u64,
+    /// `jobs.breadcrumbs.keep`: how many breadcrumb lines a running key
+    /// keeps, which a `Lost` receipt carries. Default 20.
+    pub breadcrumbs_keep: u64,
 }
 
 impl Default for NodeJobSettings {
@@ -84,6 +103,11 @@ impl Default for NodeJobSettings {
             returnable_max_bytes: FETCH_MAX_BYTES,
             fast_exit_secs: 5,
             receipt_keep_days: 30,
+            readiness_every_secs: READINESS_EVERY_SECS_DEFAULT,
+            readiness_results_kept: 5,
+            drain_clear_by: DrainClearBy::AfterReadinessCheck,
+            incidents_keep: 200,
+            breadcrumbs_keep: 20,
         }
     }
 }
@@ -177,6 +201,12 @@ pub trait NodeAdmission: Send + Sync {
         let _ = template;
         None
     }
+
+    /// Each template's host-local mirror, by template name: what the
+    /// readiness check reads (pass 34, 7.3). The default names none.
+    fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
+        Vec::new()
+    }
 }
 
 /// The machine's devices, as the job service places and leases them. The
@@ -233,11 +263,38 @@ pub trait NodeDevices: Send + Sync {
     /// Ends the device's quarantine, at its key's clean release.
     fn clear_quarantine(&self, device_id: &str);
 
-    /// Drains the machine: it takes no new GPU job until a person clears it
-    /// at the box (`oneiron execution-node resume`). One drain per machine:
-    /// the slot table's. Recovery calls it when a job unit runs that no key
-    /// of the journal started.
+    /// Drains the machine: it takes no new GPU job until its drain is
+    /// cleared, by a passed readiness check or at the box (`oneiron
+    /// execution-node resume`), as `machines.drain.clear_by` says. One drain
+    /// per machine: the slot table's. Recovery calls it when a job unit runs
+    /// that no key of the journal started; a failed readiness check calls
+    /// it too.
     fn drain(&self, why: &str);
+
+    /// Clears the machine's drain: the DRAIN rule's clear after a passed
+    /// readiness check (pass 34, 7.3).
+    ///
+    /// # Errors
+    ///
+    /// Why the drain still stands.
+    fn clear_drain(&self) -> Result<(), String>;
+
+    /// The readiness check's device probe: a fresh reading of every device
+    /// answers, whether the machine is paused or drained (a look, not a
+    /// hold).
+    ///
+    /// # Errors
+    ///
+    /// Why the devices cannot be read.
+    fn probe(&self) -> Result<(), String>;
+
+    /// The temperature, power draw and memory in use of each of
+    /// `device_ids` now, where the probe gives them, for a breadcrumb line.
+    /// The default samples nothing.
+    fn samples(&self, device_ids: &[String]) -> Vec<DeviceSample> {
+        let _ = device_ids;
+        Vec::new()
+    }
 }
 
 /// Whether the node's own authority fold holds the position an issuer
@@ -384,15 +441,37 @@ impl NodeAdmission for ExecutionNode {
     }
 
     fn job_settings(&self) -> NodeJobSettings {
+        let file = ExecutionNode::settings(self).ok().flatten();
+        let defaults = NodeJobSettings::default();
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
             receipt_keep_days: ExecutionNode::receipt_keep_days(self),
-            ..NodeJobSettings::default()
+            readiness_every_secs: file.as_ref().map_or(defaults.readiness_every_secs, |file| {
+                file.readiness_every_secs
+            }),
+            drain_clear_by: file
+                .as_ref()
+                .map_or(defaults.drain_clear_by, |file| file.drain_clear_by),
+            ..defaults
         }
     }
 
     fn template_signal(&self, template: &str) -> Option<String> {
         ExecutionNode::template_signal(self, template)
+    }
+
+    fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
+        ExecutionNode::settings(self)
+            .ok()
+            .flatten()
+            .map(|settings| {
+                settings
+                    .templates
+                    .into_iter()
+                    .map(|(name, template)| (name, template.repo))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -445,6 +524,29 @@ impl NodeDevices for GpuSlotTable {
 
     fn drain(&self, why: &str) {
         GpuSlotTable::drain(self, why.to_owned());
+    }
+
+    fn clear_drain(&self) -> Result<(), String> {
+        GpuSlotTable::clear_drain(self).map_err(|error| format!("drain_not_cleared: {error}"))
+    }
+
+    fn probe(&self) -> Result<(), String> {
+        self.availability(oneiron_base::unix_millis_now())
+            .map(drop)
+            .map_err(|error| format!("devices_unreadable: {error}"))
+    }
+
+    fn samples(&self, device_ids: &[String]) -> Vec<DeviceSample> {
+        match GpuSlotTable::samples(self) {
+            Ok(samples) => samples
+                .into_iter()
+                .filter(|sample| device_ids.contains(&sample.device_id))
+                .collect(),
+            Err(error) => {
+                tracing::debug!(%error, "device samples not read; the breadcrumb line carries none");
+                Vec::new()
+            }
+        }
     }
 }
 
@@ -599,6 +701,10 @@ impl NodeKeys for NodeJobsAttachment {
     fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
         self.service()
             .map_or_else(status_not_enabled, |jobs| jobs.tail(peer, request))
+    }
+
+    fn readiness(&self) -> Option<NodeReadiness> {
+        self.service().map(|jobs| jobs.readiness())
     }
 }
 

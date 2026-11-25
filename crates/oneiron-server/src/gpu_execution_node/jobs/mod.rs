@@ -1,10 +1,12 @@
 //! The node's job service: the journal, the states of a key, admission
 //! (`Reserve`, `Release`, `Submit`, and the stop of a key), the launch
 //! commit, the end handling with its release check, recovery at start, the
-//! signed receipt (design pass 33, sections 5.2, 5.3 and 7.2 to 7.7), and the
+//! signed receipt (design pass 33, sections 5.2, 5.3 and 7.2 to 7.7), the
 //! status side's answers (`Keys`, `Signal`, `Fetch`, `Ack`) with the cleaning
-//! of an acknowledged payload (row R4, 7.1 and 7.6 step 5), and `Tail`, the
-//! log by offset (pass 34 row Q3, 7.2).
+//! of an acknowledged payload (row R4, 7.1 and 7.6 step 5), `Tail`, the
+//! log by offset (pass 34 row Q3, 7.2), and the machine's own state
+//! (pass 34 row Q4, 7.3): the idle readiness check with the DRAIN slot's
+//! default rule, the incidents, and the breadcrumb lines of a running key.
 //!
 //! One lock, the admission lock, serialises every change of a key's state
 //! and every read of the local controls. A reply is built only after its
@@ -26,10 +28,13 @@
 //! One service per `state_dir`: it holds the journal's writer lock while any
 //! handle of it lives, a staging worker's too.
 
+pub mod breadcrumb;
+pub mod incidents;
 pub mod job_unit;
 pub mod journal;
 pub mod journal_file;
 pub mod node_parts;
+pub mod readiness;
 pub mod receipt;
 pub mod staging;
 pub mod warm;
@@ -46,6 +51,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron_organ_host::FloorLease;
 
+pub use incidents::{IncidentKind, NodeIncident};
 pub use job_unit::{
     EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
     RenewRefusal, SystemNodeClock, scope_missing,
@@ -59,6 +65,7 @@ pub use node_parts::{
     NodeJobPaths, NodeJobSettings, NodeJobsAttachment, StageFailure, StageOrder, Stager,
     StagingNotBuilt,
 };
+pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, drain_rule_default};
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 pub use status::KEYS_PAGE_MAX_BYTES;
@@ -99,6 +106,8 @@ struct NodeJobsShared {
     book: Mutex<NodeBook>,
     /// The warm keys (row P2): taken only after `book`, never before it.
     warm: Mutex<warm::WarmState>,
+    /// The readiness record and the incidents, under locks of their own.
+    readiness: readiness::NodeReadinessShared,
     /// Held while any handle lives: no second service writes this journal.
     _writer: JournalWriterLock,
 }

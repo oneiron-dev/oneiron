@@ -425,6 +425,7 @@ impl JobNodeClient for ScriptedNode {
                 boot_id: "node-boot".to_owned(),
                 engine_version: "scripted".to_owned(),
                 warm: Vec::new(),
+                readiness: None,
             }),
             // The connector never asks for a GPU reading; the script has none.
             JobRequest::Availability => JobAnswer::Refused(JobRefusal::DevicesUnreadable {
