@@ -30,6 +30,7 @@ use oneiron::job_dispatch::machine_records::{
     MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase};
+use oneiron::job_history::{HistoryViewer, JobHistoryAttempt, JobHistoryRequest, read_job_history};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
 use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
@@ -383,6 +384,88 @@ fn a_job_its_node_ends_at_the_maximum_ends_time_limit_not_exited() {
         );
         let node = view(rig, &run).node.expect("the node's receipt");
         assert_eq!(node.end.as_deref(), Some("time_limit"));
+    });
+}
+
+/// The owner's jobs' history row of `run`'s chunk.
+fn history_attempt(rig: &Rig, run: &JobRun) -> JobHistoryAttempt {
+    let filter = JobHistoryRequest::default()
+        .filter()
+        .expect("a valid history request");
+    read_job_history(rig.vault(), &filter, HistoryViewer::Owner)
+        .expect("read the jobs' history")
+        .attempts
+        .into_iter()
+        .find(|attempt| attempt.key == run.key())
+        .expect("the chunk's history row")
+}
+
+/// Pass 33, 8.6: a cancel that reaches a run its node has already ended at the maximum does not
+/// overwrite the cause. The node's confirmed hard stop is the end: the job ends `time_limit`,
+/// never `cancelled`, and its history shows the node's measure of the run.
+#[test]
+fn a_cancel_after_the_nodes_hard_stop_ends_the_job_time_limit_not_cancelled() {
+    with_rig(|rig| {
+        let workload = rig.approve("time-limit-cancel", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(30), None, true);
+        rig.step(&run).expect("poll the running job");
+        rig.clock.advance_secs(60);
+        end_clean(rig, &run, JobEnd::TimeLimit, Some(90));
+
+        rig.vault()
+            .cancel_gpu_job(
+                GpuJobActor::Owner(&rig.owner),
+                &run.job.id,
+                &rig.permits,
+                &rig.connector,
+                rig.clock.now_ms(),
+            )
+            .expect("cancel the job before the issuer polls its end");
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+            "the node's hard stop came first; the cancel ended nothing",
+        );
+        assert_eq!(
+            GpuJobStatus::from(&ended).end_reason.as_deref(),
+            Some("time_limit")
+        );
+        let attempt = history_attempt(rig, &run);
+        assert_eq!(attempt.end, "time_limit");
+        assert_eq!(attempt.occupied_secs, Some(90), "the node's measure");
+    });
+}
+
+/// Pass 33, 8.6: a status taken while the node's journal still said running estimates the run
+/// time to the issuer's clock, which can pass the node's own measure to the hard stop. The
+/// node's measure at the end is the run's occupancy: the history never shows the estimate.
+#[test]
+fn a_hard_stop_shows_the_nodes_measure_not_an_earlier_larger_estimate() {
+    with_rig(|rig| {
+        let workload = rig.approve("time-limit-measure", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(15), None, true);
+        rig.step(&run).expect("poll the running job");
+        assert_eq!(rig.job(&run).chunks[0].used_secs, 15, "the live estimate");
+        end_clean(rig, &run, JobEnd::TimeLimit, Some(11));
+
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+        );
+        assert_eq!(ended.chunks[0].used_secs, 11, "the node's measure");
+        let attempt = history_attempt(rig, &run);
+        assert_eq!(attempt.end, "time_limit");
+        assert_eq!(
+            attempt.occupied_secs,
+            Some(11),
+            "the node measured 11 s to the hard stop; 15 s was an estimate"
+        );
     });
 }
 
@@ -1226,7 +1309,8 @@ fn a_bound_key_that_never_started_owes_no_return_and_housekeeping_asks_nothing()
                 returned.acknowledged_at_ms.is_some(),
                 "{end:?}: nothing to wait for, so the node is told it may clean"
             );
-            let kinds = kinds_for(&rig.node.calls(), run.key());
+            let calls = rig.node.calls();
+            let kinds = kinds_for(&calls, run.key());
             assert!(!kinds.contains(&"fetch"), "{end:?}: no fetch: {kinds:?}");
             assert!(kinds.contains(&"ack"), "{end:?}: an Ack: {kinds:?}");
         }
