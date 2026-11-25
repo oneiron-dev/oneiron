@@ -168,6 +168,7 @@ fn read_tool(name: &str) -> SlateToolManifest {
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     }
 }
 

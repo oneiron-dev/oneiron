@@ -69,6 +69,7 @@ const PIN: &str = "vault.jobs.workloads.pin";
 const APPROVE: &str = "vault.jobs.workloads.approve";
 const REVOKE: &str = "vault.jobs.workloads.revoke";
 const GET: &str = "vault.jobs.workloads.get";
+const LIST: &str = "vault.jobs.workloads.list";
 
 /// One exact workload, as the pin door takes it; `tag` makes its arguments,
 /// and so its digest, its own.
@@ -246,8 +247,9 @@ impl Rack {
         )
     }
 
-    /// An enabled agent the owner defines and gives one Grant naming
-    /// `verbs`; answers the agent's caller and its Grant.
+    /// An enabled agent the owner defines and gives one Grant naming `read`
+    /// and `verbs` (a Grant without `read` confers nothing); answers the
+    /// agent's caller and its Grant.
     fn agent(&self, agent_id: &str, verbs: &[&str]) -> (WorkloadAgent, EntityId) {
         let agent = EntityId::now();
         create_agent_definition_as(
@@ -267,8 +269,12 @@ impl Rack {
         )
         .expect("the owner defines the agent");
         let mut authority_scope = Scope::top();
-        authority_scope.verbs =
-            ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
+        authority_scope.verbs = ScopeAxis::Some(
+            std::iter::once("read")
+                .chain(verbs.iter().copied())
+                .map(str::to_owned)
+                .collect(),
+        );
         let minted = mint_agent_grant_as(
             self.vault(),
             &self.owner,
@@ -285,6 +291,7 @@ impl Rack {
             },
         )
         .expect("the owner mints the agent's Grant");
+        assert!(minted.grant.confers, "the agent's Grant confers");
         let caller = self
             .vault()
             .memory(agent, EdgeActorClass::Agent)
@@ -832,7 +839,7 @@ fn a_starter_reads_a_workload_only_while_its_approval_stands() {
     run_on_engine_stack("job-workloads-starter-reads", || async {
         let rack = Rack::start().await;
         let (pinner, _) = rack.agent("workload-pinner-reads", &[PIN, GET]);
-        let (starter, starter_grant) = rack.agent("workload-starter-reads", &[GET]);
+        let (starter, starter_grant) = rack.agent("workload-starter-reads", &[GET, LIST]);
         let (would_approve, _) = rack.agent("workload-would-approve", &[APPROVE, REVOKE, GET]);
         let by_pinner = WorkloadCaller::Agent(&pinner);
         let by_starter = WorkloadCaller::Agent(&starter);
