@@ -48815,15 +48815,16 @@
       "ClaimAdmissionRefused",
       "ClaimHold",
       "ClaimHoldRefused",
-      "UnattributedJob"
+      "UnattributedJob",
+      "UnattributedRecord"
      ],
      "path": "src/gpu_line/claim/allocation.rs",
      "purpose": "The allocation side of the unit claims (row M2-I2, \"the hold is the claim\"; design pass 32 r2, section 7.2…",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 6,
-      "struct": 3
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -48892,7 +48893,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 5
+      "fn": 4
      }
     },
     {
@@ -52035,7 +52036,7 @@
       "JobHistoryFilter"
      ],
      "path": "src/job_history/project.rs",
-     "purpose": "The pure projection behind `vault.jobs.history`: stored jobs, claims, periods, work orders and the issuer's…",
+     "purpose": "The pure projection behind `vault.jobs.history`: stored jobs, claims, periods, work orders, the issuer's…",
      "surface": {
       "crate-vis": 1,
       "enum": 1,
@@ -107474,7 +107475,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AttemptOutcome",
@@ -116943,6 +116944,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/job_history_unattributed.rs",
+     "purpose": "`vault.jobs.history`'s unattributed seconds (pass 33 section 8.5 and EM-15; design pass 34 sections 5 and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/job_kind_rows.rs",
      "purpose": "UC-09 K pins (PLAN-UC-09 \"The K-proof\"): the queue rows each Dreamer enqueue door stores, before and after a…",
      "surface": {}
@@ -125084,7 +125093,7 @@
      "entry": "crates/oneiron/src/work_order/mod.rs",
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22…",
      "spec_ids": []
@@ -125110,10 +125119,10 @@
      "spec_ids": []
     }
    },
-   "over_bar": 277,
+   "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8607,
-   "test_files": 2318
+   "test_files": 2319
   },
   "oneiron-agent-runtime": {
    "files": [
