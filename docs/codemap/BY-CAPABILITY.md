@@ -16,7 +16,7 @@ The capabilities in `scripts/codemap/capability_aliases.md`, one row each: its s
 | Pair a new device | machine enrollment link; machine enrolment link; device pairing code; single-use machine link | `crates/oneiron/src/authority/slip_pairing/issue.rs` (m); `crates/oneiron-server/src/api/pairing.rs` (m) | — | Issues a one-time pairing code for a machine; the joining device gets its credential only on redemption. |
 | Redeem a device pairing link | redeem pairing code; enrollment redemption; enrolment redemption; get a device slip | `crates/oneiron/src/authority/slip_pairing/redeem.rs` (m); `crates/oneiron/src/authority/machine_enroll.rs` (s); `crates/oneiron-remote/src/remote/pairing.rs` (s) | — | Spends the code once and binds the new machine and credential; it is not renewal of an existing device slip. |
 | Enroll a device with its home vault | device enrollment; device enrolment; home enrollment; home enrolment | `crates/oneiron-server/src/device_sync/enrolment.rs` (m); `crates/oneiron-server/src/commands/device.rs` (s); `crates/oneiron-server/src/device_sync/enrolment/join.rs` (s) | ARCH-0023b; OF-469; FIX 3374; FIX 3375; FIX 4956 | Keeps the home address, credential and checkpoint pin in install-local enrollment state; copying a vault does not copy that state. |
-| Bind a joining machine to the mesh | mesh enrollment; mesh enrolment; endpoint binding; sync grant during pairing | `crates/oneiron/src/authority/mesh_machine/enrolment.rs` (s); `crates/oneiron-server/src/device_sync/enrolment/home_bind.rs` (s); `crates/oneiron-server/src/handler/mesh/home_pin.rs` (s) | FIX 3374 | Can bind an endpoint key, grant the sync protocol and pin the home's mesh address during pairing; this is not a general-purpose permission grant. |
+| Bind a joining machine to the mesh | mesh enrollment; mesh enrolment; endpoint binding; sync grant during pairing | `crates/oneiron/src/authority/mesh_machine/enrolment.rs` (m); `crates/oneiron-server/src/device_sync/enrolment/home_bind.rs` (s); `crates/oneiron-server/src/handler/mesh/home_pin.rs` (s) | FIX 3374 | Can bind an endpoint key, grant the sync protocol and pin the home's mesh address during pairing; this is not a general-purpose permission grant. |
 | Renew a paired device credential | renew device slip; device credential refresh; extend a paired credential | `crates/oneiron/src/authority/slip_renewal.rs` (m); `crates/oneiron-remote/src/remote/renewal.rs` (s); `crates/oneiron-server/src/device_sync/renewal.rs` (m) | FIX 3377; FIX 5481; FIX 5772; FIX 3561; FIX 3374; FIX 3563; FIX 3131 | Uses holder and machine proof to get a fresh slip for the same key; it does not enroll a new machine or rotate that key. |
 | Run work on another of the owner's machines | route an organ call; choose an organ node; run an organ remotely; cross-machine execution | `crates/oneiron-organ-host/src/route.rs` (m); `crates/oneiron-organ-host/src/mesh/mod.rs` (s); `crates/oneiron-organ-host/src/mesh/serve.rs` (m) | OF-575; FIX 6193 | Routes an organ call locally, to another owner node offering that organ, or to a wait state; it is not a scheduler for arbitrary remote work. |
 | Retry an organ call that could not run | waiting organ job; held organ call; organ redrive; retry parked organ work | `crates/oneiron-organ-host/src/wait.rs` (m) | OF-575 | Keeps the call and its wait reason and retries when a node can run it; it is not time-based job scheduling. |
@@ -217,6 +217,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… | `crates/oneiron/src/engine_store_hooks.rs` | L | — |
 | Durable, bounded entity text documents, anchored edits, fork sets and owner purge | `crates/oneiron/src/entity_doc/mod.rs` | L | — |
 | Entity ids, world ids and the presentation-id grammar | `crates/oneiron/src/entity_id.rs` | s | — |
+| Experiment arms of the lane economy (design pass 32 section 3.3): one arm is a promise whose contract was… | `crates/oneiron/src/experiment_arm/mod.rs` | m | — |
 | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface | `crates/oneiron/src/failure_ladder/mod.rs` | m | ARCH-0066 |
 | Content-free, versioned tier-1 agent failure counts | `crates/oneiron/src/failure_signals.rs` | m | — |
 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam | `crates/oneiron/src/fanout_auto.rs` | m | — |
@@ -228,6 +229,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | OF-336 generated-UI component contract | `crates/oneiron/src/genui/mod.rs` | m | OF-336 |
 | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) | `crates/oneiron/src/git_wire/mod.rs` | m | ARCH-0068 |
 | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) | `crates/oneiron/src/gpu_job/mod.rs` | m | CROSS-ARCH-0023 |
+| The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… | `crates/oneiron/src/gpu_line/mod.rs` | L | — |
 | Graph-FS read projection over the vault graph | `crates/oneiron/src/graph_fs/mod.rs` | m | — |
 | Guest document share input for the sync export door | `crates/oneiron/src/guest_document_share.rs` | s | — |
 | A guest program's own error text, as the model reads it | `crates/oneiron/src/guest_error.rs` | s | — |
@@ -248,6 +250,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Ingest source registry and source-local normalization | `crates/oneiron/src/ingest/mod.rs` | m | — |
 | Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner… | `crates/oneiron/src/inquiry/mod.rs` | m | ARCH-0082 |
 | Interlocutor resolution substrate (OF-365 ILD-1) | `crates/oneiron/src/interlocutor.rs` | L | OF-365 |
+| The issuer's side of a job that one of the vault's machines runs (pass 33 section 8, the `vault_machine`… | `crates/oneiron/src/job_dispatch/mod.rs` | s | — |
 | Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron/src/job_workload/mod.rs` | m | — |
 | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… | `crates/oneiron/src/learning/mod.rs` | m | ARCH-0003, ARCH-0079 |
 | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… | `crates/oneiron/src/learning_setting.rs` | m | ARCH-0003 |
@@ -263,6 +266,8 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: "Capacity is measured | `crates/oneiron/src/machine_capacity.rs` | m | CROSS-ARCH-0024 |
 | Machine destinations and folded read-location values | `crates/oneiron/src/machine_destination.rs` | s | — |
 | The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16… | `crates/oneiron/src/machine_names/mod.rs` | m | — |
+| The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =… | `crates/oneiron/src/machine_policy/mod.rs` | m | — |
+| The issuer's half of a machine's readiness (pass 34, `34-compute-general/DESIGN.md` sections 7.3 and 16… | `crates/oneiron/src/machine_readiness.rs` | s | — |
 | A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and… | `crates/oneiron/src/machine_signature.rs` | s | OF-575 |
 | The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and… | `crates/oneiron/src/mail_pack/mod.rs` | XL | ARCH-0027, ARCH-0060, ARCH-0063 |
 | — | `crates/oneiron/src/maintain/mod.rs` | m | — |
@@ -375,6 +380,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) | `crates/oneiron/src/wave_orchestration.rs` | m | ARCH-0068 |
 | The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and… | `crates/oneiron/src/web_connector/mod.rs` | s | — |
 | Monthly CRDT window keys and their timestamp conversion | `crates/oneiron/src/window_key.rs` | s | — |
+| Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… | `crates/oneiron/src/work_order/mod.rs` | m | — |
 | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) | `crates/oneiron/src/workspace_roster/mod.rs` | L | ONEIRON-ARCH-0065 |
 | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… | `crates/oneiron/src/world_keys/mod.rs` | L | — |
 | The code sandbox backends, beside core's sandbox contract (re-exported whole, so the moved code's… | `crates/oneiron-agent-runtime/src/code_sandbox/mod.rs` | L | — |
@@ -635,6 +641,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier) | `crates/oneiron-keystore/src/auth_bound.rs` | s | — |
 | The Windows tier's names: the file each slot and each sealed value rests in, and the extra entropy DPAPI… | `crates/oneiron-keystore/src/dpapi_names.rs` | s | OF-168 |
 | Unix: one 0600 file per slot in a 0700 directory of its own | `crates/oneiron-keystore/src/file.rs` | m | — |
+| The key directory of the two tiers that keep one file per slot: the Unix file tier (`LocalFileKeystore`… | `crates/oneiron-keystore/src/key_dir.rs` | m | — |
 | Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168) | `crates/oneiron-keystore/src/linux_tpm.rs` | m | OF-168 |
 | macOS: the device's own unlock sheet, and the window server's word on the screen lock (row… | `crates/oneiron-keystore/src/macos_presence.rs` | s | — |
 | Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its… | `crates/oneiron-keystore/src/memory.rs` | s | — |
@@ -688,6 +695,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | One live organ process: spawn, handshake, a reader thread, calls | `crates/oneiron-organ-host/src/process.rs` | L | — |
 | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… | `crates/oneiron-organ-host/src/receipt.rs` | s | — |
 | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… | `crates/oneiron-organ-host/src/regions.rs` | s | — |
+| GPU leases, beside the memory floor's ([`crate::FloorLease`]) | `crates/oneiron-organ-host/src/resource_gpu.rs` | s | — |
 | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… | `crates/oneiron-organ-host/src/resource_memory.rs` | s | — |
 | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… | `crates/oneiron-organ-host/src/route.rs` | m | OF-575 |
 | What the host does to an organ process between fork and exec | `crates/oneiron-organ-host/src/sandbox.rs` | m | ARCH-0075 |
@@ -910,7 +918,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Deployment-selected feedback transport | `crates/oneiron-server/src/feedback_delivery.rs` | m | — |
 | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… | `crates/oneiron-server/src/feedback_redaction.rs` | s | OF-420 |
 | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… | `crates/oneiron-server/src/files_intake/mod.rs` | m | OF-554 |
-| A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | m | — |
+| A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | L | — |
 | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | s | CROSS-ARCH-0023 |
 | WebSocket upgrade handler and connection lifecycle | `crates/oneiron-server/src/handler/mod.rs` | L | ARCH-0023 |
 | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… | `crates/oneiron-server/src/home_candidacy.rs` | s | ARCH-0026 |
@@ -964,6 +972,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that selects… | `crates/oneiron-server/src/web_connector/mod.rs` | m | — |
 | The health check past a threshold (OF-520, ARCH-0044 C5) | `crates/oneiron-server/src/wire_health.rs` | m | ARCH-0044, ARCH-0064a, ARCH-0076, OF-520 |
 | RC42 observation-only wire counters | `crates/oneiron-server/src/wire_telemetry.rs` | L | — |
+| The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… | `crates/oneiron-server/src/work_order_host.rs` | m | — |
 | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… | `crates/oneiron-server/src/xlsx_recalc.rs` | m | ARCH-0075, OF-505 |
 | Which stored row a read takes its value from: one order for every key | `crates/oneiron-setting-contract/src/decide.rs` | m | — |
 | The stored key of one setting row: `name 0x00 item 0x00 mode scope` | `crates/oneiron-setting-contract/src/key.rs` | s | — |

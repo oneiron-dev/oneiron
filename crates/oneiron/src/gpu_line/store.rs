@@ -10,6 +10,9 @@
 //! seconds (EM-15) is an input.
 use std::collections::BTreeSet;
 
+use rand_core::RngCore;
+
+use super::cohort::cohort_seed_commit;
 use super::fold::{GpuLine, GpuLinePeriod, PeriodAllocation, PeriodClockError};
 use super::graduate::promoted_seats_in_txn;
 use super::mint::{MintError, mint_period};
@@ -190,10 +193,19 @@ pub fn mint_first_in_txn(
         })));
     }
     let tallies = settled_tallies_in_txn(vault, wtxn, &line, index)?;
-    let record = match mint_period(&line, index, &tallies, now_ms) {
+    let mut record = match mint_period(&line, index, &tallies, now_ms) {
         Ok(record) => record,
         Err(refusal) => return Ok(Err(refusal)),
     };
+    // A two-rule period draws its cohort seed now (section 4.4). The seed and
+    // its commit are outside the economic digest; the get view withholds the
+    // seed until the period ends.
+    if record.tables.len() == 2 {
+        let mut seed = [0u8; 32];
+        rand_core::OsRng.fill_bytes(&mut seed);
+        record.cohort_seed_commit = Some(cohort_seed_commit(&seed));
+        record.cohort_seed = Some(seed);
+    }
     PERIODS.put(&vault.store, wtxn, &(*project, index), &record)?;
     // A new idea with a confirmed promote does not lapse (section 4.1): it
     // may still graduate. It draws nothing meanwhile (`funded_in`).

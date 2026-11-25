@@ -507,12 +507,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write/after_mask.rs` | src | s | 1 crate-vis | — | Renewing a MACHINE claim's proof after the write door's secret mask rewrote it in the same transaction (FIX… |
 | `src/authority/machine_write/history_anchor.rs` | src | s | 1 crate-vis | — | The host history handoff's causal anchor (FIX 11241, ported from the bel build: 9f46db33fa, then… |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
+| `src/authority/main_log_position.rs` | src | s | 1 fn | — | Whether this vault's authority fold holds a position another machine read from its own fold (pass 33, EM-11… |
 | `src/authority/managed_owner_check.rs` | src | s | 1 enum · 1 trait · 2 fn · 5 crate-vis | ManagedOwnerCheck, ManagedOwnerCheckError | The live-owner check a managed vault's attested owner's queued work runs under (FIX 11090) |
 | `src/authority/membership_execution.rs` | src | s | 2 crate-vis | — | The signed record of a shared-vault membership change no host issuer could sign (FIX 12335, Engine 13:13… |
-| `src/authority/mesh_machine.rs` | src | m | 1 struct · 7 fn · 1 const · 3 re-export · 2 crate-vis | MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
+| `src/authority/mesh_machine.rs` | src | m | 1 struct · 8 fn · 1 const · 3 re-export · 3 crate-vis | MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 8 fn · 1 re-export · 2 crate-vis | — | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
 | `src/authority/mesh_machine/endpoint_index.rs` | src | s | 8 crate-vis | — | The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census L3-28B) |
-| `src/authority/mesh_machine/enrolment.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
+| `src/authority/mesh_machine/enrolment.rs` | src | m | 1 struct · 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
 | `src/authority/mod.rs` | src | m | 2 mod · 96 re-export · 89 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/oauth_server/access_slips.rs` | src | m | 5 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
 | `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
@@ -691,7 +692,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/world_root_flood.rs` | test | m | — | — | Strangers' roots at the store gate (Astra #1422e F1; the Engine, r23) |
 | `src/authority/tests/world_root_spam.rs` | test | s | — | — | World privacy P6b acceptance for root spam (contract §8, check 7b; Wonder R1-F5, Sol R1b-F8): roots are… |
 | `src/authority/valid_entries.rs` | src | s | 1 struct · 1 trait · 9 fn | EntryHashSet, ValidEntries | An authority fold's valid entries (FIX 12330): an ordered set of entry hashes that is persistent, so a fold… |
-| `src/authority/vault_api.rs` | src | m | 1 enum · 12 fn · 5 crate-vis | AuthorityEntryStatus | `impl Vault` — the AUTHORITY_LOG read/write door |
+| `src/authority/vault_api.rs` | src | m | 1 enum · 13 fn · 5 crate-vis | AuthorityEntryStatus | `impl Vault` — the AUTHORITY_LOG read/write door |
 | `src/authority/weave_admin.rs` | src | s | 2 struct · 2 fn · 2 const · 8 crate-vis | AdminStepUp, AuthenticatedWeaveAdmin | OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness |
 | `src/authority/withdrawn_grant.rs` | src | s | 7 crate-vis | — | A positively withdrawn Grant stays withdrawn (FIX-LIST 5107) |
 | `src/authority/work_rebind.rs` | src | s | 1 struct · 5 const · 1 crate-vis | InstrumentRebind | FIX 6108: work a holder's request queued keeps the slip that request was admitted on, and stops once that… |
@@ -1482,10 +1483,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_selection/tests.rs` | test | L | — | — | — |
 | `src/channel_identity_selection/thread_mask.rs` | src | s | 1 trait | ThreadMaskSelectionExt | Selection-law projection of an email thread mask |
 | `src/check_in/act_class.rs` | src | s | 1 re-export | — | The shipped act table (ARCH-0082 #act-table and #catastrophe-floor) |
-| `src/check_in/asker.rs` | src | m | 7 crate-vis | — | The asking side of the agent verbs `vault.check_in.preflight` and `vault.check_in.open` (ARCH-0082… |
+| `src/check_in/asker.rs` | src | m | 9 crate-vis | — | The asking side of the agent verbs `vault.check_in.preflight` and `vault.check_in.open` (ARCH-0082… |
 | `src/check_in/chain.rs` | src | m | 11 crate-vis | — | The ladder from verified records (ARCH-0082 #ladder; ROLES-CHECKIN P2.2, piece 2c; Engine ruling P22-SHAPE… |
 | `src/check_in/effect.rs` | src | L | 21 fn · 1 const · 1 re-export · 13 crate-vis | — | A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling… |
-| `src/check_in/mod.rs` | src | s | 19 re-export · 17 crate-vis | — | Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =… |
+| `src/check_in/mod.rs` | src | s | 19 re-export · 18 crate-vis | — | Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =… |
 | `src/check_in/mode.rs` | src | s | 1 re-export | — | The three check-in modes and their stable wire tokens |
 | `src/check_in/pending.rs` | src | m | 3 struct · 1 enum · 1 fn · 2 re-export · 10 crate-vis | DelayWindowOpen, HolderReply, OpenPendingCheckIn, RungMembers | The durable Wait handle (ARCH-0082 #ladder and #waits; ROLES-CHECKIN P2.2, pieces 2b and 2d; Engine ruling… |
 | `src/check_in/pending/transitions.rs` | src | m | 5 crate-vis | — | What holders and spenders do to a pending check-in row: answers, extensions, objections, and spending, with… |
@@ -1498,6 +1499,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/check_in/verb_act_class.rs` | src | s | 1 enum · 4 fn · 2 const | VerbActClass | The act class each verb row states (`act_class` in `scripts/sdk/verbs/<verb>.json`; ARCH-0082 #act-table… |
 | `src/check_in/waits.rs` | src | m | 1 enum · 5 crate-vis | CheckInTransition | The waits and canon's table "When nobody answers" (ARCH-0082 #waits and #no-answer; ruling R2; Engine ruling… |
 | `src/check_in/wake.rs` | src | s | 2 crate-vis | — | The job that advances a due check-in (ARCH-0082 #waits and "When nobody answers"; ROLES-CHECKIN P2.3, piece… |
+| `src/check_in/workload_pin.rs` | src | s | 5 crate-vis | — | The check-in of a pin of a workload (pass 34, `34-compute-general/DESIGN.md` section 6.5; NOTE… |
 | `src/checkout.rs` | src | s | 1 fn · 2 mod · 2 re-export · 1 crate-vis | — | Checkout leases and optional repository environment plans |
 | `src/checkout/env_blueprint/blueprint.rs` | src | m | 6 struct · 3 enum · 1 trait · 10 fn · 1 type · 3 const · 1 re-export · 5 crate-vis | CheckoutEnvPlan, EnvBlueprint, EnvBlueprintError, EnvBlueprintStages, EnvBlueprintStore, EnvStep, EnvValue, KnowledgeInput +2 | Blueprint model, deterministic validation pass (incl. shell-string lint), materialization policy, vault… |
 | `src/checkout/env_blueprint/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Declarative per-repository environment blueprints for checkouts (CSTDY-07) |
@@ -1740,7 +1742,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_revision/tree_inventory.rs` | src | m | 1 trait · 2 re-export · 4 crate-vis | CodeTreeInventoryRuntime | A tested revision's complete tree (FIX 6868, G2 PR3): the reviewed documents and every other path as a blob… |
 | `src/code_revision/types.rs` | src | s | 1 re-export · 2 crate-vis | — | Code-revision domain values and their constructors |
 | `src/code_run/action_inputs.rs` | src | s | 1 crate-vis | — | OF-568: the input versions a `self.*` call reads, captured before the host dispatches it, for its bridge… |
-| `src/code_run/actions.rs` | src | m | 5 struct · 1 enum · 14 fn · 1 type · 3 re-export · 3 crate-vis | ActionArgument, ActionDispatch, ActionHostBinding, ActionJson, ActionRegistry, AgentActionCall | One named verb registry for validated UI events and agent calls |
+| `src/code_run/actions.rs` | src | m | 5 struct · 1 enum · 15 fn · 1 type · 3 re-export · 3 crate-vis | ActionArgument, ActionDispatch, ActionHostBinding, ActionJson, ActionRegistry, AgentActionCall | One named verb registry for validated UI events and agent calls |
 | `src/code_run/actions/blob_input.rs` | src | s | 1 struct · 8 fn · 1 const · 3 crate-vis | ActionBlobInput | An action's verb input whose one base64 member its host holds as a file (FIX 22096, Engine ruling E4 = C on… |
 | `src/code_run/actions/build.rs` | src | s | 5 crate-vis | — | Construction of typed calls from registered action arguments |
 | `src/code_run/actions/execution.rs` | src | m | 7 fn · 1 crate-vis | — | Shared action execution under the principal and binding of the host |
@@ -1808,6 +1810,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/memory_verbs.rs` | src | m | 1 const · 5 crate-vis | — | The four durable memory writes, search, and the off-record policy that refuses them |
 | `src/code_run/dispatcher/memory_verbs/claim_put.rs` | src | s | 2 crate-vis | — | The claim put: code mode asks Proposed; a caller's live run asks Auto first, and the checker its door lent… |
 | `src/code_run/dispatcher/mod.rs` | src | s | 1 struct · 1 type · 6 re-export · 20 crate-vis | HostSelfDispatcher | State and export seam for the host-bound first-party dispatcher |
+| `src/code_run/dispatcher/orders_wait.rs` | src | s | 1 crate-vis | — | `vault.jobs.orders.wait` (pass 34 row Q1, 14.2): the run waits on one work order its actor may read, until… |
 | `src/code_run/dispatcher/program_step.rs` | src | m | 16 crate-vis | — | A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its… |
 | `src/code_run/dispatcher/read_worlds.rs` | src | m | 1 fn · 13 crate-vis | — | A run's read-world capture as its host serves it (FIX 6130) |
 | `src/code_run/dispatcher/reader_spawn.rs` | src | m | 4 fn · 20 crate-vis | — | Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn… |
@@ -1980,7 +1983,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/wait_delivery/resume.rs` | src | s | 2 crate-vis | — | Resumed wait checkpoints and their generation-bound row retirement: the commit of a run resumed from a… |
 | `src/code_run/storage/wait_delivery/settle_report.rs` | src | s | 1 fn | — | A settle that says whose reply stands (FIX 4284): the settle a wait's answerer makes when it has to tell its… |
 | `src/code_run/storage/wait_delivery/settlement.rs` | src | s | 2 crate-vis | — | The canonical settlement of a code-run wait, in the caller's writer: the settled row installed once, and the… |
-| `src/code_run/storage/wait_holders.rs` | src | m | 13 crate-vis | — | Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a… |
+| `src/code_run/storage/wait_holders.rs` | src | m | 14 crate-vis | — | Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a… |
 | `src/code_run/storage/wait_holders/response.rs` | src | s | 1 crate-vis | — | A wait's replies in checkpoint images (FIX 6588, KEY STORE = A): each delivery a run was given and each… |
 | `src/code_run/support.rs` | src | s | 29 crate-vis | — | Small value decoders and hashing helpers for code-run records |
 | `src/code_run/tables.rs` | src | s | — | — | The side tables `code_run` keeps (core split slice 1): each row declares one, and the crate's build script… |
@@ -2303,7 +2306,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/doors/request_credential.rs` | src | s | 1 fn · 2 crate-vis | — | The slip a person's request arrived with, bound to their proof as a liveness guard alone (FIX 4328… |
 | `src/consent/effect.rs` | src | m | 3 struct · 1 enum · 19 fn · 4 const · 3 re-export · 7 crate-vis | CatastropheFloor, ComposedEffect, EffectPlace, ReversibilityClass | — |
 | `src/consent/grant.rs` | src | s | 3 fn · 1 const · 1 re-export · 1 crate-vis | — | — |
-| `src/consent/lifecycle.rs` | src | s | 2 struct · 1 enum · 7 fn · 2 re-export · 2 crate-vis | ConsentActReceipt, CreateStandingGrantRequest, StandingGrantBound | Typed public consent lifecycle calls |
+| `src/consent/lifecycle.rs` | src | m | 2 struct · 1 enum · 7 fn · 2 re-export · 2 crate-vis | ConsentActReceipt, CreateStandingGrantRequest, StandingGrantBound | Typed public consent lifecycle calls |
 | `src/consent/mod.rs` | src | s | 8 mod · 16 re-export · 12 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
 | `src/consent/owner_reason.rs` | src | m | 3 struct · 2 enum · 3 fn · 1 const · 3 crate-vis | OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo, OwnerReasonVerdict, ReasonMatchConfidence | Owner-authenticated confirm reasons, bounded rule rows, and their derived grants |
 | `src/consent/owner_reason/selection.rs` | src | s | 4 crate-vis | — | Pure nearest-reason selection: remove dominated covering bounds first |
@@ -3672,6 +3675,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/token_uses.rs` | src | s | 4 crate-vis | — | The stamp tokens an entity document names, recorded as it is written (FIX 11965): its birth's token and each… |
 | `src/entity_doc/verbs.rs` | src | m | 3 struct · 2 enum · 6 fn · 10 crate-vis | AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest | Stable-cursor edit verbs and the lossless whole-text timeout path |
 | `src/entity_id.rs` | src | s | 1 re-export · 2 crate-vis | — | Entity ids, world ids and the presentation-id grammar |
+| `src/experiment_arm/admit.rs` | src | m | 2 struct · 1 fn · 1 const · 1 crate-vis | ArmAdmitRequest, ArmContractAsk | `vault.arms.admit` (design pass 32 r2, section 5.2 row 4): the lane lead admits one arm into a seated family… |
+| `src/experiment_arm/mod.rs` | src | m | 12 struct · 8 enum · 6 fn · 3 const · 3 re-export · 5 crate-vis | ArmChangedTo, ArmDecision, ArmEvidenceDigest, ArmInvalidReason, ArmOutcome, ArmPromotion, ArmReview, ArmReviewVerdict +12 | Experiment arms of the lane economy (design pass 32 section 3.3): one arm is a promise whose contract was… |
+| `src/experiment_arm/read.rs` | src | s | 2 fn · 2 const | — | The arm reads, `vault.arms.get` and `vault.arms.list`, under the proof `verb_grant_caller`: the owner reads… |
+| `src/experiment_arm/tables.rs` | src | s | — | — | The side table `experiment_arm` keeps: each row declares one, and the crate's build script places it in… |
+| `src/experiment_arm/wire.rs` | src | s | 4 struct · 3 fn | ArmList, ArmListRequest, ArmRef, ArmView | The `vault.arms.*` verbs' inputs and answers |
 | `src/failure_ladder/blocked_reports.rs` | src | s | 1 struct · 1 fn · 1 re-export · 2 crate-vis | FailureIssueEntry | Blocked-report refs, verification against the vault, and Issues ingestion |
 | `src/failure_ladder/classify.rs` | src | s | 1 fn · 1 const · 1 re-export | — | Typed failure vocabulary and classifier (class, verdict, tier, evidence) |
 | `src/failure_ladder/custom_review.rs` | src | s | 1 struct · 3 fn · 1 re-export · 1 crate-vis | CustomFailureGroup | Vault-local custom-agent failure index and content-free health projection |
@@ -4151,14 +4159,28 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/wire_worktree.rs` | src | m | 5 fn · 3 crate-vis | — | Journaled worktree effects: list, prune, add, remove, and crash-journal settlement |
 | `src/gpu_job/allowance.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | GpuJobAllowance | The per-job maximum an agent's Grant carries for starting GPU jobs (RULING L10-31-STARTER = B: "an agent may… |
 | `src/gpu_job/caller.rs` | src | s | 1 struct · 2 enum · 7 fn · 1 const · 2 crate-vis | GpuJobActor, GpuJobAgent, GpuJobVerb | Who may call the `vault.gpu.jobs.*` verbs (substrate behind grants, 9 Nov; RULING L10-31-STARTER = B) |
-| `src/gpu_job/connector.rs` | src | s | 2 struct · 4 enum · 1 trait | GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef, GpuResourceStatus, GpuTermination | What the engine asks of a GPU provider backend (CROSS-ARCH-0023 C1 B: the connectors live in OSS oneiron; C6… |
-| `src/gpu_job/mod.rs` | src | m | 5 struct · 3 enum · 7 fn · 2 const · 7 re-export · 4 crate-vis | GpuChunk, GpuEndReason, GpuJob, GpuJobError, GpuJobState, GpuJobStepReport, GpuOfferPin, GpuOverrun | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) |
+| `src/gpu_job/connector.rs` | src | s | 4 struct · 6 enum · 1 trait · 2 fn | GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec, GpuJobTerminal, GpuResourceRef +3 | What the engine asks of a GPU provider backend (CROSS-ARCH-0023 C1 B: the connectors live in OSS oneiron; C6… |
+| `src/gpu_job/mod.rs` | src | m | 5 struct · 3 enum · 7 fn · 2 const · 7 re-export · 5 crate-vis | GpuChunk, GpuEndReason, GpuJob, GpuJobError, GpuJobState, GpuJobStepReport, GpuOfferPin, GpuOverrun | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) |
 | `src/gpu_job/offer.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 const · 3 crate-vis | GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape | The offer a host posts for one GPU class and the quote a job starts on (CROSS-ARCH-0023 lifecycle 01, C3) |
 | `src/gpu_job/permits.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | GpuJobPermits | The permits of the chunks a host runs, held in memory between steps |
 | `src/gpu_job/start.rs` | src | m | 1 struct · 2 fn · 4 crate-vis | GpuJobStart | Starting a chunk: the quote shown, reserved whole, written, then created (CROSS-ARCH-0023 lifecycle 01-03… |
 | `src/gpu_job/step.rs` | src | m | 1 fn · 1 crate-vis | — | The host's step over one live job: one bounded round of provider calls, then one write (CROSS-ARCH-0023… |
 | `src/gpu_job/tables.rs` | src | s | — | — | The side table `gpu_job` keeps: each row declares one, and the crate's build script places it in… |
 | `src/gpu_job/wire.rs` | src | m | 10 struct · 4 fn | GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest, GpuJobQuoteTerms, GpuJobRef, GpuJobStartRequest +2 | The `vault.gpu.jobs.*` verbs' inputs and answers: plain fields the SDK spells, converted at the door to and… |
+| `src/gpu_line/claim/allocation.rs` | src | m | 3 struct · 2 enum · 6 fn · 1 crate-vis | AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob | The allocation side of the unit claims (row M2-I2, "the hold is the claim"; design pass 32 r2, section 7.2… |
+| `src/gpu_line/claim/mod.rs` | src | m | 4 struct · 6 enum · 12 fn · 1 re-export · 3 crate-vis | AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose, UnitSettleRefused +2 | The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical… |
+| `src/gpu_line/claim/tables.rs` | src | s | — | — | The side table the unit claims keep: each row declares one, and the crate's build script places it in… |
+| `src/gpu_line/cohort.rs` | src | s | 2 fn · 1 const | — | The comparison's cohorts (design pass 32 r2, section 4.4) |
+| `src/gpu_line/defaults.rs` | src | s | 1 fn · 28 const | — | Every default and bound of a GPU line's settings, in one place (design pass 32 section 3.1; pass 34 section… |
+| `src/gpu_line/doors.rs` | src | m | 1 enum · 3 fn · 3 const | GpuLineError | The `vault.gpu.lines.*` doors' acts (design pass 32, sections 4.1 and 5) |
+| `src/gpu_line/doors_caller.rs` | src | s | 5 crate-vis | — | The GPU line doors' one call into the lane economy's door kit (`verb_grant_caller`… |
+| `src/gpu_line/fold.rs` | src | L | 17 struct · 13 enum · 36 fn · 3 const | AllowanceHold, AllowanceRule, AllowanceTable, Bucket, BudgetDenied, BudgetPolicy, Draw, DrawAsk +22 | The lane economy's shared shapes and its pure fold (design pass 32, sections 3 and 4) |
+| `src/gpu_line/intent.rs` | src | s | 2 struct · 2 enum · 3 fn · 1 const · 1 crate-vis | IntentAsk, IntentRefused, IntentStand, LaneIntent | The intent key every lane-economy write door takes (design pass 32 section 5; the spawn-intent form of… |
+| `src/gpu_line/mint.rs` | src | L | 2 struct · 2 enum · 12 fn · 3 const | LineInvalid, MintError, Pools, SettledTally | The mint (design pass 32, sections 4.1 and 4.3): one period record from the line as it stood and the results… |
+| `src/gpu_line/mod.rs` | src | s | 1 mod · 8 re-export · 5 crate-vis | — | The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… |
+| `src/gpu_line/store.rs` | src | m | 1 struct · 10 fn · 5 crate-vis | MintedLine | The GPU line's stored rows (design pass 32, sections 3.1, 3.2 and 4.1): one `GPU_LINE` row per lane project… |
+| `src/gpu_line/tables.rs` | src | s | — | — | The side tables `gpu_line` keeps: each row declares one, and the crate's build script places it in… |
+| `src/gpu_line/wire.rs` | src | s | 5 struct | GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView | The `vault.gpu.lines.*` verbs' inputs and answers (design pass 32, section 5) |
 | `src/graph_fs/claim_grep.rs` | src | s | 2 crate-vis | — | Indexed claim grep with search and final-hydration narrowing receipts |
 | `src/graph_fs/claim_ids.rs` | src | s | 5 crate-vis | — | Claim listings in id order, `/claims/by-id` and an entity's `claims`: each page reads one bounded run of… |
 | `src/graph_fs/coreutils.rs` | src | m | 6 fn · 6 crate-vis | — | grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the… |
@@ -4382,15 +4404,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inquiry/terms.rs` | src | s | 2 struct · 2 enum · 11 fn | InquiryCheckInMode, InquiryKeepModes, InquiryTerms, InquiryTierCeiling | The inquiry edge's terms (federation.md #inquiry-first-build, "Grant row"; Engine ruling INQUIRE-SHAPE Q1 =… |
 | `src/interlocutor.rs` | src | L | 5 struct · 4 enum · 32 fn · 3 crate-vis | CallRoomParties, CallSpeaker, Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp +1 | Interlocutor resolution substrate (OF-365 ILD-1) |
 | `src/interlocutor/tests.rs` | test | m | — | — | — |
-| `src/job_workload/check.rs` | src | s | 1 struct · 3 enum · 5 fn · 2 const | WorkloadNodeAnswer, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter | The workload-approval check (pass 33, door 7; Engine ruling LM-8 = A): the one function the start gate in… |
+| `src/job_dispatch/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | The issuer's side of a job that one of the vault's machines runs (pass 33 section 8, the `vault_machine`… |
+| `src/job_dispatch/recheck.rs` | src | s | 1 struct · 1 enum · 4 fn | DispatchAsk, DispatchRefusal | What the issuer checks again before it sends a vault machine anything that could make work, and at every… |
+| `src/job_dispatch/record.rs` | src | s | 3 struct · 2 enum · 7 fn · 1 crate-vis | BootMark, DispatchClose, DispatchPhase, JobDispatch, JobObservation | The issuer's two rows per dispatched key (pass 33, 5.1): `JOB_DISPATCH`, what it sent and where the key… |
+| `src/job_dispatch/tables.rs` | src | s | — | — | The side tables `job_dispatch` keeps: each row declares one, and the crate's build script places it in… |
+| `src/job_workload/check.rs` | src | m | 1 struct · 3 enum · 5 fn · 2 const | WorkloadNodeAnswer, WorkloadStartAsk, WorkloadStartRefusal, WorkloadStarter | The workload-approval check (pass 33, door 7; Engine ruling LM-8 = A): the one function the start gate in… |
+| `src/job_workload/compute_bound.rs` | src | s | 1 const · 4 crate-vis | — | The `compute.pin` standing grant (pass 34, `34-compute-general/DESIGN.md` section 6.5; row R7 folded into… |
 | `src/job_workload/device.rs` | src | m | 5 struct · 7 enum · 5 fn · 1 const | DeviceClaim, DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceLease, DeviceMemory, DevicePlacement +4 | Devices in a resource request (pass 34, `34-compute-general/DESIGN.md` section 2.1): what a run claims… |
-| `src/job_workload/doors.rs` | src | m | 1 struct · 3 enum · 11 fn · 1 const | WorkloadAgent, WorkloadCaller, WorkloadError, WorkloadVerb | The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5) |
-| `src/job_workload/mod.rs` | src | s | 4 mod · 8 re-export · 2 crate-vis | — | Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the… |
+| `src/job_workload/doors.rs` | src | m | 1 struct · 3 enum · 10 fn · 1 const · 2 crate-vis | WorkloadAgent, WorkloadCaller, WorkloadError, WorkloadVerb | The `vault.jobs.workloads.*` doors (pass 33, section 6 rows 2-5; pass 34, section 6.5) |
+| `src/job_workload/mod.rs` | src | s | 4 mod · 11 re-export · 4 crate-vis | — | Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the… |
 | `src/job_workload/pin.rs` | src | s | 3 struct · 2 enum · 1 fn · 3 const | NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin | The workload pin (pass 33, `33-exec-node/DESIGN.md` section 5.1): the exact thing the owner allows to run on… |
-| `src/job_workload/pin_shape.rs` | src | s | 1 crate-vis | — | The pin door's shape check (pass 33, door 2's refusals): what a pin must look like before it is hashed and… |
+| `src/job_workload/pin_door.rs` | src | m | 1 fn | — | The pin door, `vault.jobs.workloads.pin` (pass 33, section 6 row 2; pass 34, `34-compute-general/DESIGN.md`… |
+| `src/job_workload/pin_shape.rs` | src | s | 1 fn · 1 crate-vis | — | The pin door's shape check (pass 33, door 2's refusals): what a pin must look like before it is hashed and… |
 | `src/job_workload/protocol.rs` | src | s | 2 const | — | The two mesh protocols a job crosses between the issuer and the node (pass 33, EM-1 = A) |
-| `src/job_workload/record.rs` | src | s | 3 struct · 1 enum · 4 fn · 3 crate-vis | JobWorkload, WorkloadApproval, WorkloadApprovedBy, WorkloadRevocation | The stored workload (pass 33, 5.1): one `JOB_WORKLOAD` row per pin, keyed by the pin's digest |
+| `src/job_workload/record.rs` | src | s | 4 struct · 3 enum · 4 fn · 3 crate-vis | JobWorkload, PinCheckInOutcome, PinGoBasis, WorkloadApproval, WorkloadApprovedBy, WorkloadCheckIn, WorkloadRevocation | The stored workload (pass 33, 5.1): one `JOB_WORKLOAD` row per pin, keyed by the pin's digest |
 | `src/job_workload/scope_bounds.rs` | src | s | 4 struct · 2 enum · 8 fn · 2 const | BoundReport, BoundRequirement, BoundStrength, ScopeBound, ScopeCapabilities, UnknownScopeBound | What a launch scope can enforce (pass 34, `34-compute-general/DESIGN.md` section 2.2): each bound… |
+| `src/job_workload/screen.rs` | src | s | 4 struct · 2 enum · 1 trait · 1 fn · 2 crate-vis | NoScreenModel, PinScreen, PinSignals, ScreenAnswer, ScreenSource, ScreenVerdict, WorkloadScreen | The screen of an agent's pin (pass 34, `34-compute-general/DESIGN.md` section 6.5): rung 1 of the pin's… |
+| `src/job_workload/setting_keys.rs` | src | s | 1 struct · 1 enum · 1 fn · 2 crate-vis | ApprovalDays, PinCheckInMode | The pinned workloads' Setting keys (pass 34, `34-compute-general/DESIGN.md` section 6.5; the lead's POLICY… |
 | `src/job_workload/tables.rs` | src | s | — | — | The side table `job_workload` keeps: its row declares it, and the crate's build script places it in… |
 | `src/job_workload/wire.rs` | src | s | 8 struct · 1 enum · 1 fn · 1 crate-vis | WorkloadApprovalView, WorkloadApproveRequest, WorkloadChange, WorkloadList, WorkloadListRequest, WorkloadPinRequest, WorkloadRef, WorkloadStanding +1 | The `vault.jobs.workloads.*` verbs' inputs and answers: plain fields the SDK spells (ids and digests in… |
 | `src/learning/cell.rs` | src | s | 1 struct · 14 fn · 2 re-export | LearningCell | One cell of measured state (ARCH-0003 #learning-qualifiers): the subject, the predicate and the applicable… |
@@ -4464,7 +4494,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 229 mod · 106 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 235 mod · 106 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -4641,7 +4671,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/run_admission/capture.rs` | src | s | 2 fn | — | Settlements kept for one scope on the calling thread (FIX 10075 seam): a host that must name the calls a… |
 | `src/llm/run_admission/declaration.rs` | src | s | 1 re-export | — | Run declaration values are defined below the invocation layer |
 | `src/llm/run_admission/gate.rs` | src | s | 1 struct · 3 crate-vis | GatedBackend | The run's model backend: every call starts its permit here, before any byte leaves, and leaves a dispatch… |
-| `src/llm/run_admission/host.rs` | src | m | 7 struct · 1 enum · 13 fn · 2 re-export · 10 crate-vis | AccountStatus, AllocationRefusal, HostAccount, OfferBinding, OfferRoute, PaidConnector, PayerPerson, SelectedAllocation | What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's… |
+| `src/llm/run_admission/host.rs` | src | m | 7 struct · 1 enum · 15 fn · 2 re-export · 10 crate-vis | AccountStatus, AllocationRefusal, HostAccount, OfferBinding, OfferRoute, PaidConnector, PayerPerson, SelectedAllocation | What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's… |
 | `src/llm/run_admission/job_maximum.rs` | src | s | 1 re-export | — | Paid-job maximum values are defined below the invocation layer |
 | `src/llm/run_admission/media.rs` | src | m | 2 struct · 19 fn · 2 crate-vis | MediaGate, MediaStreamLease | The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its… |
 | `src/llm/run_admission/media_job.rs` | src | s | 3 crate-vis | — | A media job's polls and its cancel, bound to the call that started the job (FIX 9923) |
@@ -4708,11 +4738,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/m8_forward_oracle/mod.rs` | src | s | — | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `src/m8_forward_oracle/r1691_ledger.rs` | src | s | — | — | ONE-1691 RT-11: intent-ledger exactly-once/crash-recovery oracles, ledger transports, and drive_* helpers |
 | `src/m8_forward_oracle/shared.rs` | src | s | 4 crate-vis | — | Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles |
-| `src/machine_capacity.rs` | src | m | 2 struct · 2 enum · 5 fn · 2 const · 2 crate-vis | MachineCapacity, MachineCapacityWrite, MachineMeasurement, MachinePower | What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: "Capacity is measured |
+| `src/machine_capacity.rs` | src | m | 3 struct · 2 enum · 6 fn · 2 const · 1 crate-vis | GpuDevice, MachineCapacity, MachineCapacityWrite, MachineMeasurement, MachinePower | What this install's machine measured itself to hold (CROSS-ARCH-0024 #my-network 05: "Capacity is measured |
 | `src/machine_destination.rs` | src | s | 1 re-export | — | Machine destinations and folded read-location values |
 | `src/machine_names/exchange.rs` | src | m | 1 enum · 7 crate-vis | MachineNameCell | The machine-name cells the owner's machines exchange through their residence home (FIX… |
 | `src/machine_names/mod.rs` | src | m | 2 struct · 1 enum · 2 fn · 1 const · 1 re-export · 6 crate-vis | MachineListing, MachineNameSource, MachineOwnerNameSet | The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16… |
 | `src/machine_names/tables.rs` | src | s | — | — | The side table `machine_names` keeps: each row declares one, and the crate's build script places it in… |
+| `src/machine_policy/mod.rs` | src | m | 8 struct · 4 enum · 8 fn · 6 const · 5 crate-vis | CachePolicy, DeviceOffer, DrainClearBy, ExecutionState, FreeForm, KeepHeadroom, MachineAccepts, MachineExecution +4 | The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =… |
+| `src/machine_policy/setting_keys.rs` | src | s | — | — | The machine policy keys (pass 34 DESIGN 2.4, and of 6.3 the cache budget, `placement.cache.*`, and the… |
+| `src/machine_readiness.rs` | src | s | 1 struct · 1 enum · 1 fn · 5 const · 1 crate-vis | ReadinessEscalation, ReadinessStreak | The issuer's half of a machine's readiness (pass 34, `34-compute-general/DESIGN.md` sections 7.3 and 16… |
+| `src/machine_readiness/setting_keys.rs` | src | s | — | — | The machine readiness Setting key (pass 34 sections 6.3 and 16, practice 6; row Q4): rows the setting… |
 | `src/machine_signature.rs` | src | s | 1 enum · 1 trait · 1 fn | MachineSignatureError, MachineSignatures | A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and… |
 | `src/mail_pack/attachments.rs` | src | m | 1 fn · 1 re-export · 4 crate-vis | — | Attachments on open (FIX 12559; MAIL-GOOGLE = A): a message's attachments land described, never fetched; a… |
 | `src/mail_pack/caldav_calendar.rs` | src | m | 1 struct · 1 fn · 1 const | HttpCalDavCalendarWire | The CalDAV wire of the pack's calendar sources (fix list row 16307; MAIL-PROVIDERS = A): one calendar… |
@@ -5136,7 +5170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/transcript/tests.rs` | test | m | — | — | A conversation's transcript is what its reader may read of it, in order: never an erased message, never one… |
 | `src/memory/usage_repair.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 re-export | UsageRepairCaller, UsageRepairVerb | The authority seam of a host's usage repair (FIX 6476) |
 | `src/memory/vault_standing.rs` | src | s | 2 crate-vis | — | The owner or administrator standing a room reader presents |
-| `src/memory/verb_grant_caller.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | VerbGrantCaller | Who may call a door whose verb row names the proof `verb_grant_caller` (design pass 32 section 5, the lane… |
+| `src/memory/verb_grant_caller.rs` | src | s | 1 enum · 1 fn · 2 crate-vis | VerbGrantCaller | Who may call a door whose verb row names the proof `verb_grant_caller` (design pass 32 section 5, the lane… |
 | `src/memory/voice_actor.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 re-export · 5 crate-vis | VoiceBankActor, VoiceCreator | Credential-bound voice actors and their transaction-local proof values |
 | `src/memory/wake_observation.rs` | src | s | 5 struct · 2 enum · 2 const · 2 re-export | WakeLiveCall, WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest, WakeObservationSelector, WakeObservedGeneration | Durable and live wake-observation read vocabulary |
 | `src/memory/web_fetch.rs` | src | m | 2 fn | — | Actor-bound web acquisition and import |
@@ -8263,7 +8297,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/pattern.rs` | src | m | 1 trait · 4 fn · 3 const · 2 re-export · 5 crate-vis | PatternLaunchRunner | Coordination patterns as skills (ARCH-0079 #coordination-patterns) |
 | `src/team/payoff.rs` | src | m | 3 struct · 2 fn · 1 const · 2 crate-vis | PatternCardEntry, PayoffRow, PlannerCard | The payoff table and the planner card (ARCH-0003 #learning-views, ARCH-0079 #scoring, #works-well-for) |
 | `src/team/planner_card_door.rs` | src | s | 4 struct · 4 fn · 2 const | PlannerCardPattern, PlannerCardPayoffRow, PlannerCardRequest, PlannerCardView | `vault.planner.card` (design pass 32 section 5, row 12; ARCH-0079 #planner): the planner card of one project… |
-| `src/team/receipt.rs` | src | m | 3 struct · 10 fn · 1 type · 2 re-export · 10 crate-vis | TeamCritic, TeamOutcome, TeamReceipt | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
+| `src/team/receipt.rs` | src | m | 3 struct · 10 fn · 1 type · 1 const · 2 re-export · 10 crate-vis | TeamCritic, TeamOutcome, TeamReceipt | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
 | `src/team/run.rs` | src | m | 2 re-export · 5 crate-vis | — | OF-540: a pattern-skill run's own team, from code mode |
 | `src/team/run_binding.rs` | src | s | 1 struct · 9 fn · 1 type · 1 crate-vis | TeamRunBinding | OF-540: what the host saw a team start do, and the team a run works in |
 | `src/team/solo.rs` | src | s | 1 fn | — | FIX 11532: the solo close writer - a solo run's team receipt |
@@ -8405,6 +8439,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/esign_seal_verify_reasons.rs` | src | s | 1 fn | — | Door for `tests/esign_seal_verify_reasons.rs`, declared inside e-sign so it can reach the ledger writer… |
 | `src/test_doors/esign_send_binding.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/esign_send_binding.rs`: a write between an e-sign act's command binding and its writer |
 | `src/test_doors/eval_authoring_execution_fault.rs` | src | s | 1 fn | — | Arms the requested-eval-authoring execution-record write fault (FIX EVAL-AUTHORING-EXECUTE-UNRECORDED-END)… |
+| `src/test_doors/experiment_arm_rows.rs` | src | s | 1 fn | — | TEST-ONLY: an experiment arm row put as given, so a test can stand an arm in a state whose writer is a later… |
 | `src/test_doors/external_effect_binding.rs` | src | s | 1 struct · 1 fn | HeldCallBindings | Doors for `tests/effect_binding_names_call.rs` (FIX [GATE-EFFECT-BINDING-NO-CALL-IDENTITY]): the Gate binds… |
 | `src/test_doors/extra_room_index.rs` | src | s | 1 fn | — | Doors for `tests/checkpoint_restore_derived_index_rebuild.rs`: drop one room's extra-room index row while… |
 | `src/test_doors/extraction_decisions.rs` | src | m | 4 struct · 1 enum · 1 fn | NativeAssembledCandidate, NativeConflictOutcome, NativeExtractionDecisions, NativeOperandCorrection, NativeSetOutcome | Native extraction decision oracle door for the decision parity test |
@@ -8460,6 +8495,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/gate_receipt_rows.rs` | src | s | 11 fn · 6 const | — | Doors for `tests/gate_receipt_rows.rs` and `tests/gate_receipt_mint.rs` (UC-03 PR 0): one Gate ledger row… |
 | `src/test_doors/gate_receipt_unclear.rs` | src | s | 3 fn | — | Door for `tests/gate_receipt_unclear_record_removal.rs`: the write of the owner's discard of a world copy… |
 | `src/test_doors/gpu_job.rs` | src | s | 1 fn · 1 crate-vis | — | A gate in a GPU job chunk's end, between the write that ends the chunk and the settlement of that chunk's… |
+| `src/test_doors/gpu_line_hold_is_the_claim.rs` | src | s | 2 fn | — | Doors for `tests/gpu_line_hold_is_the_claim.rs` (row M2-I2): a read snapshot, and the start of a unit claim… |
 | `src/test_doors/grant_roles.rs` | src | s | 3 fn | — | Door for `tests/grant_roles_seven.rs` (ROLES R1, the lead 11 Nov 11:38): the default membership scope a… |
 | `src/test_doors/grant_sealed_file.rs` | src | s | 2 fn | — | Doors for `tests/grant_sealed_file.rs` (REVIEW-7708 P1): how many key groups an agent's read of a stored… |
 | `src/test_doors/graph_ask_centre.rs` | src | s | 2 fn | — | Doors for the question read regressions: exact graph-neighbourhood controls for the standing graph owner… |
@@ -8521,7 +8557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 398 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 401 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8678,6 +8714,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/wake_envelope_ack.rs` | src | s | 1 fn | — | Doors for `tests/wake_ack.rs` (census L8-18, RC99): a failed TASK's wake routed as the own-task producer… |
 | `src/test_doors/weave_arc_rederive.rs` | src | s | 1 fn | — | Door for `tests/weave_arc_rederive.rs`: runs the Arc gate's due sweep, the one the Nightly recipe and the… |
 | `src/test_doors/witness_project.rs` | src | s | 1 fn | — | The PROJECT a witness row is stamped under, for integration tests |
+| `src/test_doors/work_order.rs` | src | s | 3 fn | — | Doors for the work order tests (pass 34, row Q1) |
 | `src/test_doors/work_talk_replay.rs` | src | s | 1 fn | — | A replicated-shape CONVERSATION put for the work-talk tests (L7-05 Astra T3) |
 | `src/test_doors/workaround_skills.rs` | src | s | 1 struct · 4 fn · 1 const | StoredFinding | Doors for the workaround-skills tests (CLIF-STEALS 2): a leased `coach.skill_distill` attempt (the Coach… |
 | `src/test_doors/workspace_onboarding_halt.rs` | src | s | 1 fn | — | A workspace onboarding stopped after a named step, for the test that resumes it once the one-vault setting… |
@@ -9134,6 +9171,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_connector/tables.rs` | src | s | — | — | The side tables `web_connector` keeps (core split slice 1): each row declares one, and the crate's build… |
 | `src/web_connector/usage.rs` | src | s | 2 fn · 1 re-export | — | One usage row per web call: provider, tool, key source, latency and cost |
 | `src/window_key.rs` | src | s | 1 re-export · 1 crate-vis | — | Monthly CRDT window keys and their timestamp conversion |
+| `src/work_order/after.rs` | src | s | 2 struct · 1 enum · 1 fn · 2 const | AfterPick, RetryPolicy, RetryRule | The AFTER slot's default rule, `typed_retry@1` (pass 34, 4.7): what follows an attempt's end |
+| `src/work_order/blocker.rs` | src | m | 1 struct · 2 enum · 5 fn | BlockedOn, Blocker, Clearing | One vocabulary of reasons (pass 34, section 1.3; Engine ruling EM-19 = A) |
+| `src/work_order/doors.rs` | src | m | 1 enum · 9 fn · 1 const · 3 crate-vis | CancelRefused | The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and… |
+| `src/work_order/fit.rs` | src | m | 7 struct · 1 enum · 10 fn | DeviceFact, DeviceNeed, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact | `fit` (pass 34, 1.3 and 4.2): whether an order can run on a machine now, from the facts the machine… |
+| `src/work_order/mod.rs` | src | s | 6 const · 9 mod · 11 re-export · 3 crate-vis | — | Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22… |
+| `src/work_order/pass.rs` | src | m | 2 struct · 1 enum · 1 trait · 5 fn · 1 const · 3 crate-vis | AttemptOutcome, AttemptToMake, OrderHost, PassReport | The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job… |
+| `src/work_order/place.rs` | src | s | 2 fn · 2 const | — | The PLACE slot's default rule, `role_warm_waste_headroom@1` (pass 34, 4.3): among the machines that fit now… |
+| `src/work_order/rank.rs` | src | s | 2 fn · 2 const | — | The RANK slot's default rule, `class_then_fewest_running_then_oldest@1` (pass 34, 4.5): who is dispatched… |
+| `src/work_order/record.rs` | src | m | 8 struct · 10 enum · 12 fn · 1 const · 1 crate-vis | AttemptEnd, CancelAsk, CancelWhy, DecidedBy, EndKind, GiveUpWhy, OrderAttempt, OrderCharge +10 | The stored work order (pass 34, section 1.1; Engine ruling EM-18 = A): one `WORK_ORDER` row per order, above… |
+| `src/work_order/setting_keys.rs` | src | s | 1 crate-vis | — | The work orders' Setting key (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov 00:04): how many… |
+| `src/work_order/start_check.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 crate-vis | AttemptRefused, OrderAttemptRef, OrderStarter | What the built start and cancel check of an order's attempt in their own read and write (pass 34, 1.1; hunk… |
+| `src/work_order/tables.rs` | src | s | — | — | The side table `work_order` keeps: its row declares it, and the crate's build script places it in… |
+| `src/work_order/wait.rs` | src | s | 4 fn · 3 crate-vis | — | `vault.jobs.orders.wait` (pass 34, 14.2; row Q1): wait on one order until its first started attempt or until… |
+| `src/work_order/wire.rs` | src | s | 10 struct · 1 enum | AttemptReceipt, MachinesPlaceRequest, MachinesPlaceView, WaitUntil, WorkOrderList, WorkOrderListRequest, WorkOrderRef, WorkOrderRequest +3 | The work order verbs' inputs and answers (pass 34, 1.1 and 14.2) |
 | `src/workspace_roster/codec.rs` | src | L | 51 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/companion_bind.rs` | src | s | 4 crate-vis | — | The first binding of a member's companion to her principal, and the one check a brought companion passes… |
 | `src/workspace_roster/house_link.rs` | src | m | 3 fn · 1 const · 12 crate-vis | — | A house mind's link to the org it runs (HOUSE-BIND = A: the owner, 10 Nov 07:43; the Engine's link shapes… |
@@ -9657,6 +9708,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/coaching_settlement_generated_over_tooloutput_taint.rs` | test | m | — | — | The deferred-supersession coaching settlement over a tool-output-tainted pair (FIX 23206) |
 | `tests/code_bundle/fixture.rs` | test | s | 8 crate-vis | — | The L4-25 file-bundle tests' shared fixture: a fresh owned vault, and a repo that is a committed two-file… |
 | `tests/code_conflict_multi_file_record.rs` | test | m | — | — | L4-25 PR 2 (ARCH-0050 #r7-conflicts): conflicts between file bundles, recorded never blocking |
+| `tests/code_mode_order_wait.rs` | test | m | — | — | A real QuickJS guest parks on its agent's work order |
 | `tests/code_mode_say.rs` | test | m | — | — | Census L8-25: code mode's `say(text or result, {to?, kind?, refs?})` and `self.think.aloud`… |
 | `tests/code_mode_step_capture.rs` | test | s | — | — | A code-mode step's replay capture (FIX row [AGENT-RUN-START-LATENCY-4S]) |
 | `tests/code_mode_step_sources.rs` | test | s | — | — | [CODE-MODE-STEP-SOURCES-UNWITNESSED]: the rows a code-mode step's model call is sent with… |
@@ -9821,6 +9873,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/evidence_revert_end_time.rs` | test | s | — | — | A reverted evidence attachment ends now, in Unix seconds (FIX-LIST PROVENANCE-RETRACT-MS-AS-SECONDS) |
 | `tests/executor_agent_runtime_tier.rs` | test | L | — | — | The 9 quarantined `FIX [LIBTEST-AGENT-RUNTIME-TIER]` lib unit tests, moved to one integration binary: they… |
 | `tests/executor_error_policy_requeue.rs` | test | m | — | — | FIX 23347 part 2 (Engine ruling 06:28, 13 Nov): an executor-error park that waits on owner policy is… |
+| `tests/experiment_arm_admit.rs` | test | L | — | — | `vault.arms.admit` and the arm reads (design pass 32 r2, sections 3.3, 4.2, 5.1, 5.2 and 5.5) through the… |
 | `tests/expiry_boundaries.rs` | test | m | — | — | UC-12 PR 3: the expiry rule is written once (`oneiron_store::expiry`) and each site keeps its verdict at the… |
 | `tests/extraction_claim_evidence.rs` | test | m | — | — | Pinned claim evidence on a bound extraction operand is checked under the job's live read |
 | `tests/extraction_inputs_page.rs` | test | m | — | — | Pages one queued Meso extraction attempt's TURNs under the caller's live read |
@@ -9938,6 +9991,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/google_docs_slides_connector.rs` | test | s | — | — | `google.docs` and `google.slides` on the workspace connector core (L3-17, PR 2): each routes to the built-in… |
 | `tests/google_drive_connector.rs` | test | m | — | — | `google.drive` on the workspace connector core (L3-17, PR 3; DRIVE-ACCESS = B; GOOGLE-DRIVE-CONTENT-READ)… |
 | `tests/gpu_job_maximum.rs` | test | L | — | — | Customer GPU jobs under their declared maximum (CROSS-ARCH-0023 lifecycle, C2; row L10-31): the quote… |
+| `tests/gpu_line_claim.rs` | test | m | — | — | The unit claim's key and its end rule (design pass 32 r2, sections 3.4 and 7.3): a claim is keyed by its… |
+| `tests/gpu_line_doors.rs` | test | L | — | — | The GPU line doors (design pass 32 r2, sections 3.1, 3.2, 4.1 and 5; LE-6, LE-7): `vault.gpu.lines.set`… |
+| `tests/gpu_line_draw_order.rs` | test | L | — | — | The lane economy's draw order and charging rule (design pass 32 r2, sections 3.8 and 4.2; LE-1 = B, LE-6)… |
+| `tests/gpu_line_hold_is_the_claim.rs` | test | m | — | — | Row M2-I2, "the hold is the claim" (design pass 32 r2, section 7.2 points 3 to 6; Engine EM-15) |
+| `tests/gpu_line_mint.rs` | test | L | — | — | The lane economy's mint (design pass 32 r2, sections 3.1, 3.2 and 4.1 to 4.3; LE-1 = B, LE-5 = A, LE-6): one… |
 | `tests/graduated_scope_demotion_authors.rs` | test | m | — | — | Who may demote another actor's graduated ramp scope (census L7-33; FIX 22934; Engine RULING L7-33-WHO = A… |
 | `tests/grant_reader_bm25_hidden_worlds.rs` | test | m | — | — | [GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS]: a key with no proof, no Scope and no owner, such as an embedded… |
 | `tests/grant_restore_and_engine_controls_verbs.rs` | test | m | — | — | The owner's three grant verbs (Engine RULING ROW3-GRANT-VERBS = A; FIX FABLE-6917-1 and… |
@@ -10189,6 +10247,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/machine_link_stored_row.rs` | test | s | — | — | L10-16 PR 1, stored change: keep (M-1) |
 | `tests/machine_names_exchange.rs` | test | m | — | — | MACHINE-NAMES-CARRIER = B (Engine RULING Mon 16 Nov 03:13; FIX [DEVICE-DISPLAY-NAME]): the owner's name for… |
 | `tests/machine_peer_binding_facet.rs` | test | s | — | — | A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary… |
+| `tests/machine_readiness_ask.rs` | test | s | — | — | Pass 34 row Q4, the issuer's half (`34-compute-general/DESIGN.md` 16, practice 6; Engine ANSWER… |
 | `tests/made_by_bounded_channels.rs` | test | m | — | — | [MADE-BY-BOUNDED-CHANNELS]: a call's `made_by` predicate (Rule A, OF-466) decides inside the bounded vector… |
 | `tests/mail_active_sources.rs` | test | s | — | — | [VAULT-STORE-FIELD-PUBLIC]: the host steps of `oneiron-mail-pack` (`mail_sources_due`, `mail_sync_sources`)… |
 | `tests/mail_late_address_headers.rs` | test | s | — | — | Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header… |
@@ -10722,6 +10781,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/tasks_owner_settles_composed_post.rs` | test | s | — | — | The vault owner settles his own composed task post (census L8-07) |
 | `tests/tasks_person_fit.rs` | test | s | — | — | FIX 1161: TASKS fits use measured person fit before completion count |
 | `tests/team_board_register_names.rs` | test | s | — | — | The team and board names, one line per row, generated from `scripts/ratchet/hand_name_tables.py --names… |
+| `tests/team_receipt_arm_prefix.rs` | test | s | — | — | The `arm:` team reference prefix is reserved (design pass 32 r2, sections 3.6 and 4.5; row M2-E, the generic… |
 | `tests/temporal_query_window.rs` | test | s | — | — | Query-derived occurred windows must not lose their eligible hit to learned-time candidates |
 | `tests/thread_task_from_message.rs` | test | m | — | — | A TASK made from a project-room message binds to that message's thread in the create's own write… |
 | `tests/thread_task_one_surface.rs` | test | m | — | — | A plain thread reply in a project room lands on the same surface as a witness turn… |
@@ -10823,6 +10883,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/witness_turn_no_project_position.rs` | test | m | — | — | FIX WITNESS-TURN-NO-PROJECT-POSITION: a turn witnessed through `vault.witness` keeps the default project… |
 | `tests/witness_turn_wire_project.rs` | test | s | — | — | FIX WITNESS-TURN-NO-PROJECT-POSITION, the wire half: a turn witnessed through `vault.witness` names an… |
 | `tests/word_bound_nonprojected_door.rs` | test | s | — | — | A TURN's non-projected children narrow nothing: on an unbound branch, a TURN whose shown words are a MESSAGE… |
+| `tests/work_order.rs` | test | L | — | — | Work orders and their loop (pass 34, `34-compute-general/DESIGN.md` sections 0, 1.1-1.3, 4.3, 4.5, 4.7; row… |
 | `tests/workspace_connector_routes.rs` | test | s | — | — | The workspace connector core (L3-17, PR 1): `google.sheets` is one module on it, and keeps its four tools… |
 | `tests/workspace_one_vault_mode.rs` | test | m | — | — | One-vault mode reads and the joining notice through public engine doors, and one test door that stops an… |
 | `tests/workspace_work_talk.rs` | test | XL | — | — | One-vault work talk in the company vault, through public engine doors |
