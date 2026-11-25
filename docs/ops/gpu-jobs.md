@@ -94,8 +94,15 @@ every quote refuses and no worker starts.
   long the order waited for it (from the order, or from the end of the
   attempt before), when the machine was first seen running it, and what the
   RANK, PLACE and AFTER rules decided, all as the order's row keeps them; the
-  totals sum those waits, and `order` narrows the list to one order. The
-  reply is never kept for a same-id retry, which reads again.
+  totals sum those waits, and `order` narrows the list to one order. Jobs a
+  machine ran for the vault that no row of it names (after the issuer was
+  restored from an older backup) show as unattributed seconds, as the
+  allocation records them against the generation their submit named: their
+  own sum fields (`unattributed_secs`, and `unattributed_running` for those
+  still running), by machine and, for a line's generation, by line and
+  period, never by family and never inside the other seconds. Only the owner
+  sees them, and a family or `order` filter shows none. The reply is never
+  kept for a same-id retry, which reads again.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
 verb. History admits the same callers, judged in the snapshot it reads; an

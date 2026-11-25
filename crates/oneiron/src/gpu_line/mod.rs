@@ -24,10 +24,10 @@ mod wire;
 
 pub use claim::{
     AllocationSettle, AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused,
-    ClaimKey, ClaimState, UnattributedJob, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
-    UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn, claim_hold_in_txn,
-    claim_in_txn, claims_at_rung_in_txn, claims_in_txn, open_claim_in_txn,
-    record_node_answer_in_txn, settle_unit_in_txn,
+    ClaimKey, ClaimState, UnattributedJob, UnattributedRecord, UnitClaim, UnitEnd, UnitEndReport,
+    UnitPurpose, UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn,
+    claim_hold_in_txn, claim_in_txn, claims_at_rung_in_txn, claims_in_txn, open_claim_in_txn,
+    record_node_answer_in_txn, settle_unit_in_txn, unattributed_in_txn,
 };
 pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
 pub use doors::{
