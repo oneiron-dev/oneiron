@@ -38,12 +38,14 @@ impl GpuSlotTable {
     }
 
     /// The clear from the owner's panel (pass 34, 2.4): clears the drain only
-    /// when it began before `before_ms`, in Unix milliseconds by this
-    /// machine's clock, and answers whether it did. A drain begins at the
-    /// drain file's last write (a time on a whole second counts as the end of
-    /// that second), or when the drain kept in memory was set; with both, at
-    /// the later. The look and the removal hold the table's lock, so a drain
-    /// the table writes meanwhile stands.
+    /// when it began before `before_ms`, the owner's clear time in Unix
+    /// milliseconds as the vault stamped it, and answers whether it did. The
+    /// drain's start is by this machine's clock, so a vault clock ahead of it
+    /// moves the line later (FIX row NODE-DRAIN-PANEL-CLEAR-CLOCK-SKEW). A
+    /// drain begins at the drain file's last write (a time on a whole second
+    /// counts as the end of that second), or when the drain kept in memory was
+    /// set; with both, at the later. The look and the removal hold the table's
+    /// lock, so a drain the table writes meanwhile stands.
     ///
     /// # Errors
     ///
