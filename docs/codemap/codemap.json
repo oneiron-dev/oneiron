@@ -48799,7 +48799,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -179976,7 +179976,7 @@
      "path": "src/gpu_host.rs",
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -188002,7 +188002,7 @@
      "path": "src/test_doors/gpu_backend.rs",
      "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row…",
      "surface": {
-      "fn": 11
+      "fn": 12
      }
     },
     {
