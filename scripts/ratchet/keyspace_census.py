@@ -12,9 +12,10 @@ reads and writes its rows through), `ports/` (the storage ports) and
 `store/open_gates/` (the storage ABI and manifest handshake rows). Target: 0.
 
 Non-test file: the same definition scripts/ratchet/check.sh uses — no `tests/`
-path component, filename is not `tests.rs`, does not end `_tests.rs` and does
-not start `tests_`. Whole-line `//` comments (doc comments included) are not
-counted, so prose that names the table is not a call.
+or `tests_*/` directory component, filename is not `tests.rs`, does not end
+`_tests.rs` and does not start `tests_`. Whole-line `//` comments (doc
+comments included) are not counted, so prose that names the table is not a
+call.
 
 Output: ONE integer on stdout, exit 0. With --list: one `path:line` line per
 call, sorted, for humans reading the number.
@@ -36,7 +37,7 @@ def is_test(rel):
     parts = rel.split("/")
     name = parts[-1]
     return (
-        "tests" in parts[:-1]
+        any(part == "tests" or part.startswith("tests_") for part in parts[:-1])
         or name == "tests.rs"
         or name.endswith("_tests.rs")
         or name.startswith("tests_")
