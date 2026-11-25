@@ -288,8 +288,9 @@ pub trait NodeDevices: Send + Sync {
     fn clear_drain(&self) -> Result<(), String>;
 
     /// The clear from the owner's panel (pass 34, 2.4): clears the machine's
-    /// drain only when it began before `before_ms`, in Unix milliseconds by
-    /// the machine's clock, checked and cleared in one step, so a drain set
+    /// drain only when it began before `before_ms`, the owner's clear time in
+    /// Unix milliseconds as the vault stamped it, against the drain's start by
+    /// the machine's clock; checked and cleared in one step, so a drain set
     /// meanwhile stands. Whether it cleared one.
     ///
     /// # Errors
