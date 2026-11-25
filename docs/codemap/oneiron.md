@@ -3679,10 +3679,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_id.rs` | src | s | 1 re-export · 2 crate-vis | — | Entity ids, world ids and the presentation-id grammar |
 | `src/experiment_arm/admit.rs` | src | m | 2 struct · 1 fn · 1 const · 2 crate-vis | ArmAdmitRequest, ArmContractAsk | `vault.arms.admit` (design pass 32 r2, section 5.2 row 4): the lane lead admits one arm into a seated family… |
 | `src/experiment_arm/forecast.rs` | src | s | 1 struct · 1 fn · 2 const | ArmForecastRequest | `vault.arms.forecast` (design pass 32 r2, sections 3.3 and 4.7; verb 5 of section 5.2): the lane lead writes… |
-| `src/experiment_arm/mod.rs` | src | m | 12 struct · 8 enum · 6 fn · 3 const · 5 re-export · 5 crate-vis | ArmChangedTo, ArmDecision, ArmEvidenceDigest, ArmInvalidReason, ArmOutcome, ArmPromotion, ArmReview, ArmReviewVerdict +12 | Experiment arms of the lane economy (design pass 32 section 3.3): one arm is a promise whose contract was… |
+| `src/experiment_arm/mod.rs` | src | m | 12 struct · 8 enum · 6 fn · 3 const · 8 re-export · 5 crate-vis | ArmChangedTo, ArmDecision, ArmEvidenceDigest, ArmInvalidReason, ArmOutcome, ArmPromotion, ArmReview, ArmReviewVerdict +12 | Experiment arms of the lane economy (design pass 32 section 3.3): one arm is a promise whose contract was… |
 | `src/experiment_arm/read.rs` | src | s | 2 fn · 2 const | — | The arm reads, `vault.arms.get` and `vault.arms.list`, under the proof `verb_grant_caller`: the owner reads… |
+| `src/experiment_arm/reserve.rs` | src | m | 1 struct · 1 fn · 1 const · 4 crate-vis | UnitReserveRequest | `vault.arms.units.reserve` (design pass 32 r2, sections 3.4, 3.5 and 5.2): one unit claim on an open arm's… |
 | `src/experiment_arm/score.rs` | src | s | 3 struct · 1 fn · 1 const | CalibrationBin, ForecastScore, ForecastScoreRow | The forecast score view (design pass 32 r2, section 4.7): how well each declared runner model's rung… |
 | `src/experiment_arm/tables.rs` | src | s | — | — | The side table `experiment_arm` keeps: each row declares one, and the crate's build script places it in… |
+| `src/experiment_arm/unit_cancel.rs` | src | s | 1 struct · 1 fn · 1 const | UnitCancelRequest | `vault.arms.units.cancel` (design pass 32 r2, section 5.2): the owner, or the agent that reserved a unit… |
+| `src/experiment_arm/unit_view.rs` | src | s | 1 struct · 1 crate-vis | UnitView | One unit claim as the unit doors answer it (`vault.arms.units.reserve`, `.cancel`) |
 | `src/experiment_arm/wire.rs` | src | s | 4 struct · 3 fn | ArmList, ArmListRequest, ArmRef, ArmView | The `vault.arms.*` verbs' inputs and answers |
 | `src/failure_ladder/blocked_reports.rs` | src | s | 1 struct · 1 fn · 1 re-export · 2 crate-vis | FailureIssueEntry | Blocked-report refs, verification against the vault, and Issues ingestion |
 | `src/failure_ladder/classify.rs` | src | s | 1 fn · 1 const · 1 re-export | — | Typed failure vocabulary and classifier (class, verdict, tier, evidence) |
@@ -4175,17 +4178,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_job/wire.rs` | src | m | 10 struct · 4 fn | GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest, GpuJobQuoteTerms, GpuJobRef, GpuJobStartRequest +2 | The `vault.gpu.jobs.*` verbs' inputs and answers: plain fields the SDK spells, converted at the door to and… |
 | `src/gpu_job/write_off.rs` | src | s | 1 fn | — | Door 10, `vault.gpu.jobs.write_off` (pass 33 row R4, 8.5): the owner closes the hold of a job whose end its… |
 | `src/gpu_line/claim/allocation.rs` | src | m | 4 struct · 2 enum · 8 fn · 1 crate-vis | AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob, UnattributedRecord | The allocation side of the unit claims (row M2-I2, "the hold is the claim"; design pass 32 r2, section 7.2… |
-| `src/gpu_line/claim/mod.rs` | src | m | 4 struct · 6 enum · 13 fn · 1 re-export · 4 crate-vis | AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose, UnitSettleRefused +2 | The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical… |
+| `src/gpu_line/claim/mod.rs` | src | m | 4 struct · 6 enum · 14 fn · 1 re-export · 5 crate-vis | AllocationSettle, ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose, UnitSettleRefused +2 | The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical… |
 | `src/gpu_line/claim/tables.rs` | src | s | — | — | The side table the unit claims keep: each row declares one, and the crate's build script places it in… |
 | `src/gpu_line/cohort.rs` | src | s | 2 fn · 1 const | — | The comparison's cohorts (design pass 32 r2, section 4.4) |
-| `src/gpu_line/defaults.rs` | src | s | 1 fn · 28 const | — | Every default and bound of a GPU line's settings, in one place (design pass 32 section 3.1; pass 34 section… |
+| `src/gpu_line/defaults.rs` | src | s | 1 fn · 29 const | — | Every default and bound of a GPU line's settings, in one place (design pass 32 section 3.1; pass 34 section… |
 | `src/gpu_line/doors.rs` | src | m | 1 enum · 4 fn · 3 const | GpuLineError | The `vault.gpu.lines.*` doors' acts (design pass 32, sections 4.1 and 5) |
 | `src/gpu_line/doors_caller.rs` | src | s | 5 crate-vis | — | The GPU line doors' one call into the lane economy's door kit (`verb_grant_caller`… |
 | `src/gpu_line/fold.rs` | src | L | 17 struct · 13 enum · 36 fn · 3 const | AllowanceHold, AllowanceRule, AllowanceTable, Bucket, BudgetDenied, BudgetPolicy, Draw, DrawAsk +22 | The lane economy's shared shapes and its pure fold (design pass 32, sections 3 and 4) |
-| `src/gpu_line/intent.rs` | src | s | 2 struct · 2 enum · 3 fn · 1 const · 2 crate-vis | IntentAsk, IntentRefused, IntentStand, LaneIntent | The intent key every lane-economy write door takes (design pass 32 section 5; the spawn-intent form of… |
+| `src/gpu_line/intent.rs` | src | s | 2 struct · 2 enum · 4 fn · 1 const · 2 crate-vis | IntentAsk, IntentRefused, IntentStand, LaneIntent | The intent key every lane-economy write door takes (design pass 32 section 5; the spawn-intent form of… |
 | `src/gpu_line/mint.rs` | src | L | 2 struct · 2 enum · 12 fn · 3 const | LineInvalid, MintError, Pools, SettledTally | The mint (design pass 32, sections 4.1 and 4.3): one period record from the line as it stood and the results… |
-| `src/gpu_line/mod.rs` | src | s | 1 mod · 9 re-export · 7 crate-vis | — | The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… |
+| `src/gpu_line/mod.rs` | src | s | 1 mod · 10 re-export · 8 crate-vis | — | The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU… |
 | `src/gpu_line/preset.rs` | src | s | 2 struct · 3 fn | LinePresetDocument, LinePresetRef | Line presets (design pass 34, sections 3.2 and 3.3; row L1): a lane's line policy document, carried by a… |
+| `src/gpu_line/refusal.rs` | src | s | 2 struct · 1 fn · 2 crate-vis | LineRefusal, LineRefusalKey | Unmet demand on a GPU line (design pass 32, section 3.5): one row for each budget refusal, `over_rung_cap`… |
 | `src/gpu_line/store.rs` | src | m | 1 struct · 10 fn · 6 crate-vis | MintedLine | The GPU line's stored rows (design pass 32, sections 3.1, 3.2 and 4.1): one `GPU_LINE` row per lane project… |
 | `src/gpu_line/tables.rs` | src | s | — | — | The side tables `gpu_line` keeps: each row declares one, and the crate's build script places it in… |
 | `src/gpu_line/wire.rs` | src | s | 7 struct | GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest, GpuLineSetWire, GpuLineView | The `vault.gpu.lines.*` verbs' inputs and answers (design pass 32, section 5) |
@@ -9908,6 +9912,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/executor_error_policy_requeue.rs` | test | m | — | — | FIX 23347 part 2 (Engine ruling 06:28, 13 Nov): an executor-error park that waits on owner policy is… |
 | `tests/experiment_arm_admit.rs` | test | L | — | — | `vault.arms.admit` and the arm reads (design pass 32 r2, sections 3.3, 4.2, 5.1, 5.2 and 5.5) through the… |
 | `tests/experiment_arm_forecast.rs` | test | m | — | — | `vault.arms.forecast` and the forecast score view (design pass 32 r2, sections 3.3 and 4.7; row M2-D)… |
+| `tests/experiment_arm_reserve.rs` | test | L | — | — | `vault.arms.units.reserve` and `vault.arms.units.cancel` through the engine doors |
 | `tests/expiry_boundaries.rs` | test | m | — | — | UC-12 PR 3: the expiry rule is written once (`oneiron_store::expiry`) and each site keeps its verdict at the… |
 | `tests/extraction_claim_evidence.rs` | test | m | — | — | Pinned claim evidence on a bound extraction operand is checked under the job's live read |
 | `tests/extraction_inputs_page.rs` | test | m | — | — | Pages one queued Meso extraction attempt's TURNs under the caller's live read |

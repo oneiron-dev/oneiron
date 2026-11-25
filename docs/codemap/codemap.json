@@ -43097,7 +43097,7 @@
       "crate-vis": 5,
       "enum": 8,
       "fn": 6,
-      "re-export": 5,
+      "re-export": 8,
       "struct": 12
      }
     },
@@ -43110,6 +43110,21 @@
      "surface": {
       "const": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "UnitReserveRequest"
+     ],
+     "path": "src/experiment_arm/reserve.rs",
+     "purpose": "`vault.arms.units.reserve` (design pass 32 r2, sections 3.4, 3.5 and 5.2): one unit claim on an open arm's…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -43135,6 +43150,33 @@
      "path": "src/experiment_arm/tables.rs",
      "purpose": "The side table `experiment_arm` keeps: each row declares one, and the crate's build script places it in…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UnitCancelRequest"
+     ],
+     "path": "src/experiment_arm/unit_cancel.rs",
+     "purpose": "`vault.arms.units.cancel` (design pass 32 r2, section 5.2): the owner, or the agent that reserved a unit…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UnitView"
+     ],
+     "path": "src/experiment_arm/unit_view.rs",
+     "purpose": "One unit claim as the unit doors answer it (`vault.arms.units.reserve`, `.cancel`)",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -48871,9 +48913,9 @@
      "path": "src/gpu_line/claim/mod.rs",
      "purpose": "The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 6,
-      "fn": 13,
+      "fn": 14,
       "re-export": 1,
       "struct": 4
      }
@@ -48904,7 +48946,7 @@
      "path": "src/gpu_line/defaults.rs",
      "purpose": "Every default and bound of a GPU line's settings, in one place (design pass 32 section 3.1; pass 34 section…",
      "surface": {
-      "const": 28,
+      "const": 29,
       "fn": 1
      }
     },
@@ -48991,7 +49033,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -49020,9 +49062,9 @@
      "path": "src/gpu_line/mod.rs",
      "purpose": "The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -49036,6 +49078,21 @@
      "purpose": "Line presets (design pass 34, sections 3.2 and 3.3; row L1): a lane's line policy document, carried by a…",
      "surface": {
       "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LineRefusal",
+      "LineRefusalKey"
+     ],
+     "path": "src/gpu_line/refusal.rs",
+     "purpose": "Unmet demand on a GPU line (design pass 32, section 3.5): one row for each budget refusal, `over_rung_cap`…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
       "struct": 2
      }
     },
@@ -114216,6 +114273,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/experiment_arm_reserve.rs",
+     "purpose": "`vault.arms.units.reserve` and `vault.arms.units.cancel` through the engine doors",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -123547,7 +123612,7 @@
     },
     "experiment_arm": {
      "entry": "crates/oneiron/src/experiment_arm/mod.rs",
-     "files": 7,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -123665,7 +123730,7 @@
     },
     "gpu_line": {
      "entry": "crates/oneiron/src/gpu_line/mod.rs",
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125222,8 +125287,8 @@
    },
    "over_bar": 277,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8614,
-   "test_files": 2320
+   "source_files": 8618,
+   "test_files": 2321
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -141197,6 +141262,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/gpu_line.rs",
+     "purpose": "Purposes of the lane economy's GPU lines (`crates/oneiron/src/gpu_line`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/ingest.rs",
      "purpose": "Purposes of imports into the vault: claims from a registered source, and chat history",
      "surface": {}
@@ -141510,7 +141583,7 @@
     },
     "purposes": {
      "entry": "crates/oneiron-fingerprint/src/purposes/mod.rs",
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -141529,7 +141602,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 60,
+   "source_files": 61,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -168531,7 +168604,7 @@
      "path": "src/api/facade/host_doors/arms.rs",
      "purpose": "The experiment arm doors of the lane economy (design pass 32 section 5): `vault.arms.admit`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
