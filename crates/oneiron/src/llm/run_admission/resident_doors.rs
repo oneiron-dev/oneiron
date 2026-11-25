@@ -1,40 +1,25 @@
 //! Typed owner doors over the resident shares (FIX 11310): set one
-//! resident's share of the host-paid allocation, and read every resident's
-//! share and depletion. The vault's resident ledger owns every admission
-//! rule; these doors only check the owner's proof and project.
+//! resident's share of the host-paid allocation in one walletless unit, and
+//! read every resident's share and depletion, one block per walletless unit
+//! (Engine RESIDENT-SHARE-UNIT = A). The vault's resident ledger owns every
+//! admission rule; these doors only check the owner's proof and project.
 
-use super::{AllocationRef, ResidentShare};
+use super::{AccountStatus, LeaseUnit, ResidentShare};
 use crate::consent::AuthenticatedOwner;
+use crate::llm::ResidentShareRead;
 use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::run_admission::resident_doors::{
     ResidentShareView, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest,
+    UnitSharesView,
 };
 
-/// Which depletion a share view shows beside each resident's setting.
-#[derive(Clone, Copy)]
-enum Depletion<'a> {
-    /// Each resident's newest charged generation: the embedded verb rows,
-    /// whose vault has no host account to name the allocation.
-    NewestGeneration,
-    /// The allocation the owner's shares govern (row M2-I: the host
-    /// account's walletless allocation,
-    /// `AccountStatus::resident_share_allocation`). `None` when the account
-    /// selects no walletless allocation: the shares then govern nothing, and
-    /// the view shows the settings with no depletion, never another
-    /// wallet's usage (review 10403 P1-2).
-    On(Option<&'a AllocationRef>),
-}
-
-/// Each resident's share and the depletion `depletion` names.
-fn shares_view(vault: &Vault, depletion: Depletion<'_>) -> Result<ResidentSharesView> {
-    let (reads, depleted) = match depletion {
-        Depletion::NewestGeneration => (vault.resident_shares()?, true),
-        Depletion::On(Some(allocation)) => (vault.resident_shares_on(allocation)?, true),
-        Depletion::On(None) => (vault.resident_shares()?, false),
-    };
-    Ok(ResidentSharesView {
+/// One unit's block: each resident's share in `unit`, and the depletion in
+/// `reads` beside it when `depleted`.
+fn block(unit: &LeaseUnit, reads: Vec<ResidentShareRead>, depleted: bool) -> UnitSharesView {
+    UnitSharesView {
+        unit: unit.as_str().to_owned(),
         residents: reads
             .into_iter()
             .map(|read| {
@@ -58,71 +43,124 @@ fn shares_view(vault: &Vault, depletion: Depletion<'_>) -> Result<ResidentShares
                 view
             })
             .collect(),
-    })
+    }
 }
 
-/// Reads every resident's share and depletion, each on its newest charged
-/// generation. The embedded verb row calls this: an embedded vault has no
-/// host account to name the allocation.
+/// One block per unit a share is set in, each resident's depletion on its
+/// newest charged generation in that unit when `depleted`.
+fn blocks_by_unit(vault: &Vault, depleted: bool) -> Result<ResidentSharesView> {
+    let allocations = vault
+        .resident_share_units()?
+        .iter()
+        .map(|unit| Ok(block(unit, vault.resident_shares(unit)?, depleted)))
+        .collect::<Result<_>>()?;
+    Ok(ResidentSharesView { allocations })
+}
+
+/// One block per walletless allocation `account` selects, each with the
+/// shares in its unit and the depletion on that allocation (row M2-I). With
+/// none selected, the shares govern nothing: one block per unit a share is
+/// set in, with no depletion, never another wallet's usage (review 10403
+/// P1-2).
+fn blocks_on_account(vault: &Vault, account: &AccountStatus) -> Result<ResidentSharesView> {
+    let walletless: Vec<_> = account.walletless_allocations().collect();
+    if walletless.is_empty() {
+        return blocks_by_unit(vault, false);
+    }
+    let allocations = walletless
+        .into_iter()
+        .map(|selected| {
+            let reads = vault.resident_shares_on(&selected.unit, &selected.reference)?;
+            Ok(block(&selected.unit, reads, true))
+        })
+        .collect::<Result<_>>()?;
+    Ok(ResidentSharesView { allocations })
+}
+
+/// Reads every resident's share and depletion, one block per unit a share
+/// is set in, each on its newest charged generation in that unit. The
+/// embedded verb row calls this: an embedded vault has no host account to
+/// name the allocation.
 pub fn resident_shares_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     _input: &ResidentSharesRequest,
 ) -> Result<ResidentSharesView> {
     owner.revalidate(vault)?;
-    shares_view(vault, Depletion::NewestGeneration)
+    blocks_by_unit(vault, true)
 }
 
-/// Reads every resident's share and depletion on `allocation`, the host
-/// account's `AccountStatus::resident_share_allocation`, which the server
-/// door passes. With `None` (no walletless allocation) it shows the settings
-/// with no depletion.
-pub fn resident_shares_on_allocation_as_owner(
+/// Reads every resident's share and depletion, one block per walletless
+/// allocation the host `account` selects. The server door passes its host
+/// account's status.
+pub fn resident_shares_on_account_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     _input: &ResidentSharesRequest,
-    allocation: Option<&AllocationRef>,
+    account: &AccountStatus,
 ) -> Result<ResidentSharesView> {
     owner.revalidate(vault)?;
-    shares_view(vault, Depletion::On(allocation))
+    blocks_on_account(vault, account)
 }
 
-/// Sets one resident's share as the owner asks; its depletion stays as it
-/// stands. Answers the view on each resident's newest charged generation
-/// (the embedded verb row; see [`resident_shares_as_owner`]).
+/// Sets one resident's share in the unit the request names as the owner
+/// asks; its depletion stays as it stands. An embedded vault has no host
+/// account, so the request must name its unit. Answers the view
+/// [`resident_shares_as_owner`] reads.
 pub fn set_resident_share_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SetResidentShareRequest,
 ) -> Result<ResidentSharesView> {
-    set_resident_share(vault, owner, input)?;
-    shares_view(vault, Depletion::NewestGeneration)
+    set_resident_share(vault, owner, input, &[])?;
+    blocks_by_unit(vault, true)
 }
 
-/// Sets one resident's share as the owner asks; its depletion stays as it
-/// stands. Answers the view on `allocation`, as
-/// [`resident_shares_on_allocation_as_owner`] does.
-pub fn set_resident_share_on_allocation_as_owner(
+/// Sets one resident's share as the owner asks, in the unit the request
+/// names, else in the one walletless unit `account` selects; its depletion
+/// stays as it stands. Answers the view
+/// [`resident_shares_on_account_as_owner`] reads.
+pub fn set_resident_share_on_account_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SetResidentShareRequest,
-    allocation: Option<&AllocationRef>,
+    account: &AccountStatus,
 ) -> Result<ResidentSharesView> {
-    set_resident_share(vault, owner, input)?;
-    shares_view(vault, Depletion::On(allocation))
+    let walletless: Vec<LeaseUnit> = account
+        .walletless_allocations()
+        .map(|selected| selected.unit.clone())
+        .collect();
+    set_resident_share(vault, owner, input, &walletless)?;
+    blocks_on_account(vault, account)
 }
 
-/// Checks the owner's proof and writes the resident's new share.
+/// Checks the owner's proof and writes the resident's new share in the
+/// request's unit. A request that names no unit takes the one unit in
+/// `walletless`; with none or several it is refused with `unit_required`
+/// (Engine RESIDENT-SHARE-UNIT = A).
 fn set_resident_share(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SetResidentShareRequest,
+    walletless: &[LeaseUnit],
 ) -> Result<()> {
     owner.revalidate(vault)?;
     let resident = EntityId::from_hex(&input.resident)
         .map_err(|_| Error::InvalidConfig("resident is not an entity id".to_owned()))?;
+    let unit = match (&input.unit, walletless) {
+        (Some(unit), _) => LeaseUnit::new(unit.as_str())
+            .map_err(|_| Error::InvalidConfig("unit is not a lease unit".to_owned()))?,
+        (None, [only]) => only.clone(),
+        (None, _) => {
+            return Err(Error::InvalidConfig(format!(
+                "unit_required: the host selects {} walletless units; name the share's unit",
+                walletless.len()
+            )));
+        }
+    };
     vault.set_resident_share(
         resident,
+        &unit,
         ResidentShare {
             units: input.units,
             pinned: input.pinned,

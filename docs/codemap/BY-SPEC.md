@@ -1126,6 +1126,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0076 | `crates/oneiron/src/task_verb/highway.rs` | m |
 | ARCH-0076 | `crates/oneiron/src/training_pack/question_heads.rs` | m |
 | ARCH-0076 | `crates/oneiron/src/training_pack/question_trials.rs` | m |
+| ARCH-0076 | `crates/oneiron/src/work_order/decider.rs` | m |
 | ARCH-0076 | `crates/oneiron-model/src/llm/label_read.rs` | s |
 | ARCH-0076 | `crates/oneiron-server/src/ai_host/coach_host/judge_label_rechecks.rs` | m |
 | ARCH-0076 | `crates/oneiron-server/src/ai_host/coach_host/seal_checks.rs` | m |
