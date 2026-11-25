@@ -52569,7 +52569,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 229,
+      "mod": 231,
       "re-export": 106
      }
     },
@@ -55638,6 +55638,66 @@
      "notable": [],
      "path": "src/machine_names/tables.rs",
      "purpose": "The side table `machine_names` keeps: each row declares one, and the crate's build script places it in…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CachePolicy",
+      "DeviceOffer",
+      "DrainClearBy",
+      "ExecutionState",
+      "FreeForm",
+      "KeepHeadroom",
+      "MachineAccepts",
+      "MachineExecution",
+      "MachinePolicy",
+      "MachineWindows",
+      "TemplateNetwork",
+      "WorkRoles"
+     ],
+     "path": "src/machine_policy/mod.rs",
+     "purpose": "The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 5,
+      "enum": 4,
+      "fn": 8,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/machine_policy/setting_keys.rs",
+     "purpose": "The machine policy keys (pass 34 DESIGN 2.4, and the cache budget of 6.3, `placement.cache.*`): one row per…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReadinessEscalation",
+      "ReadinessStreak"
+     ],
+     "path": "src/machine_readiness.rs",
+     "purpose": "The issuer's half of a machine's readiness (pass 34, `34-compute-general/DESIGN.md` sections 7.3 and 16…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/machine_readiness/setting_keys.rs",
+     "purpose": "The machine readiness Setting key (pass 34 sections 6.3 and 16, practice 6; row Q4): rows the setting…",
      "surface": {}
     },
     {
@@ -116056,6 +116116,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/machine_readiness_ask.rs",
+     "purpose": "Pass 34 row Q4, the issuer's half (`34-compute-general/DESIGN.md` 16, practice 6; Engine ANSWER…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -122661,6 +122729,24 @@
      "purpose": "The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16…",
      "spec_ids": []
     },
+    "machine_policy": {
+     "entry": "crates/oneiron/src/machine_policy/mod.rs",
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =…",
+     "spec_ids": []
+    },
+    "machine_readiness": {
+     "entry": "crates/oneiron/src/machine_readiness.rs",
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "The issuer's half of a machine's readiness (pass 34, `34-compute-general/DESIGN.md` sections 7.3 and 16…",
+     "spec_ids": []
+    },
     "machine_signature": {
      "entry": "crates/oneiron/src/machine_signature.rs",
      "files": 1,
@@ -123813,8 +123899,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8538,
-   "test_files": 2299
+   "source_files": 8542,
+   "test_files": 2300
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -173076,7 +173162,7 @@
      "surface": {
       "enum": 11,
       "fn": 4,
-      "re-export": 25,
+      "re-export": 26,
       "struct": 22
      }
     },
@@ -173128,15 +173214,18 @@
       "ExecutionNodeCommand",
       "ExecutionNodeDisableArgs",
       "ExecutionNodeFileArgs",
+      "ExecutionNodeInstallArgs",
       "ExecutionNodePauseArgs",
       "ExecutionNodeResetHistoryArgs",
-      "ExecutionNodeServeArgs"
+      "ExecutionNodeServeArgs",
+      "ExecutionNodeUnitControlArgs",
+      "ExecutionNodeUnitNameArgs"
      ],
      "path": "src/cli/execution_node_args.rs",
      "purpose": "`oneiron execution-node`: this machine's execution node, at the box (pass 33, `33-exec-node/DESIGN.md`…",
      "surface": {
       "enum": 1,
-      "struct": 5
+      "struct": 8
      }
     },
     {
@@ -173237,6 +173326,23 @@
      "surface": {
       "enum": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExecutionNodeMeasurePathArgs",
+      "MeasurePathCommand",
+      "MeasurePathDialArgs",
+      "MeasurePathKeyArgs",
+      "MeasurePathListenArgs"
+     ],
+     "path": "src/cli/measure_path_args.rs",
+     "purpose": "`oneiron execution-node measure-path`: the path measurement of the first job's step 2 (pass 33…",
+     "surface": {
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -173747,13 +173853,23 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/execution_node.rs",
      "purpose": "`oneiron execution-node`: this machine's execution node, at the box (pass 33, `33-exec-node/DESIGN.md`…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/execution_node/measure_path.rs",
+     "purpose": "`oneiron execution-node measure-path` (pass 33 section 12, R6 step 2): the control round trip and a result…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -177297,6 +177413,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DeviceSample",
       "GpuComputeProcess",
       "GpuDeviceProbe",
       "GpuProbeError",
@@ -177307,9 +177424,9 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
-      "struct": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -177325,6 +177442,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/breadcrumb.rs",
+     "purpose": "Breadcrumb lines (pass 34, `34-compute-general/DESIGN.md` section 7.3, row Q4): while a key runs, every tick…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -177333,6 +177461,22 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IncidentKind",
+      "NodeIncident"
+     ],
+     "path": "src/gpu_execution_node/jobs/incidents.rs",
+     "purpose": "The node's incidents (pass 34, `34-compute-general/DESIGN.md` sections 5 and 7.3, row Q4): typed records of…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -177378,7 +177522,7 @@
      "purpose": "The job journal's records and the table of keys they build (design pass 33, 5.2 and 7.2)",
      "surface": {
       "enum": 3,
-      "fn": 20,
+      "fn": 21,
       "struct": 6
      }
     },
@@ -177436,8 +177580,8 @@
       "const": 1,
       "enum": 1,
       "fn": 9,
-      "mod": 6,
-      "re-export": 7,
+      "mod": 9,
+      "re-export": 9,
       "struct": 1
      }
     },
@@ -177466,6 +177610,21 @@
       "re-export": 2,
       "struct": 7,
       "trait": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DrainPick"
+     ],
+     "path": "src/gpu_execution_node/jobs/readiness.rs",
+     "purpose": "The node's idle readiness check and the DRAIN slot's default rule (pass 34, `34-compute-general/DESIGN.md`…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -177546,10 +177705,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gpu_execution_node/machine_policy.rs",
+     "purpose": "The two layers of a node's controls (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 = A, row…",
+     "surface": {
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 9,
+      "mod": 12,
       "re-export": 7
      }
     },
@@ -177569,24 +177738,275 @@
      "surface": {
       "const": 3,
       "enum": 2,
-      "fn": 31,
+      "fn": 29,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/node/owner_policy.rs",
+     "purpose": "The node's reads of the owner's machine policy rows (row P0; pass 34 DESIGN 2.4), and the admissions that…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DrainClearBy",
       "ExecutionNodeSettings",
       "NodeTemplate"
      ],
      "path": "src/gpu_execution_node/node_settings.rs",
      "purpose": "The node's own configuration (pass 33, `33-exec-node/DESIGN.md` section 5.2): the `[execution_node]` file…",
      "surface": {
-      "const": 12,
+      "const": 17,
+      "enum": 1,
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ListenOutcome",
+      "MeasureAnswer",
+      "MeasureError",
+      "MeasurePlan",
+      "MeasureReport",
+      "MeasureRequest",
+      "MeasurerKey",
+      "PathReceiptLog",
+      "Sample",
+      "SampleKind",
+      "SampleSummary",
+      "ServeTally"
+     ],
+     "path": "src/gpu_execution_node/path_measure.rs",
+     "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 14,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckReport",
+      "KernelFacts"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/capabilities.rs",
+     "purpose": "What this machine's systemd scope can enforce, bound by bound (pass 34, 2.2, `ScopeCapabilities`): from the…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ControlVerb"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/control.rs",
+     "purpose": "The job control socket: the engine's account starts and stops job units through a root handler, and holds no…",
+     "surface": {
+      "const": 6,
+      "enum": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/cutoff.rs",
+     "purpose": "`oneiron job-cutoff <id>` (root): the command of the cutoff timer the prepare step armed (pass 33, 7.6, \"the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/device_files.rs",
+     "purpose": "Which device files a leased device is (pass 33, 7.8 \"GPU\"; pass 34, 2.2: `DeviceAllow` is built from the…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/ended.rs",
+     "purpose": "`oneiron job-ended <id>` (root, the unit's `ExecStopPost=+`): runs after every process of the unit is gone…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/exchange.rs",
+     "purpose": "The per-job directories root makes on the machine's own tree before the job's view is built, and takes away…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/exec.rs",
+     "purpose": "`oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it applies `exec.json` and nothing else…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/gate.rs",
+     "purpose": "The gate, `oneiron job-prepare --after-exec <id>` (root, the unit's `ExecStartPost=+`)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InstallRequest"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/install.rs",
+     "purpose": "`oneiron execution-node install` (root, once per machine and again after a template's maximum grows; pass…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/mod.rs",
+     "purpose": "The first launch scope (pass 33, `33-exec-node/DESIGN.md` sections 7.6 and 7.8; pass 34…",
+     "surface": {
+      "const": 24,
+      "fn": 3,
+      "mod": 17,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/prepare.rs",
+     "purpose": "`oneiron job-prepare <id>` (root, the unit's `ExecStartPre=+`) and its gate, `oneiron job-prepare…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/scope_systemd/probe_unit.rs",
+     "purpose": "The scope half of `oneiron execution-node check` (pass 33, 7.6: \"`execution-node check` runs the same checks…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CutoffMark",
+      "CutoffPlan",
+      "ExecFile",
+      "PreparedRecord",
+      "ScopeRecord",
+      "ScopeReport"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/records.rs",
+     "purpose": "The files the unit's steps hand each other, besides R3a's `launch.json` and `ended.json`…",
+     "surface": {
+      "const": 1,
+      "fn": 6,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AccountEntry",
+      "FileFacts"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/safe_fs.rs",
+     "purpose": "File operations for the unit's root steps in directories another account owns (the engine's state and…",
+     "surface": {
+      "fn": 15,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StepArgs",
+      "StepContext"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/step.rs",
+     "purpose": "What every root step of the unit starts from: its instance, the root-owned node file, the two accounts, and…",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SystemdJobUnit"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/systemd_unit.rs",
+     "purpose": "R3a's [`JobUnit`] over the system's service manager: the engine's account starts and stops instances of…",
+     "surface": {
+      "const": 1,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UnitInputs"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/unit_file.rs",
+     "purpose": "The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account…",
+     "surface": {
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -177633,7 +178053,7 @@
      "path": "src/gpu_execution_node/slots.rs",
      "purpose": "This machine's GPU slots: one job per offered GPU, beside the machine's memory floor",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "re-export": 2,
       "struct": 1
      }
@@ -177676,6 +178096,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "Breadcrumb",
       "DeviceRelease",
       "HoldRef",
       "JobAnswer",
@@ -177695,9 +178116,13 @@
       "LogTailRequest",
       "LogTruncation",
       "NodeAnswer",
+      "NodeReadiness",
       "Occupied",
       "OutputDigest",
       "OutputsState",
+      "ReadinessCheck",
+      "ReadinessResult",
+      "ReadinessState",
       "ScopeClass",
       "ScopeFacts",
       "ScopeReport",
@@ -177711,10 +178136,10 @@
      "purpose": "The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1)",
      "surface": {
       "const": 5,
-      "enum": 12,
-      "fn": 6,
+      "enum": 14,
+      "fn": 8,
       "re-export": 1,
-      "struct": 18
+      "struct": 21
      }
     },
     {
@@ -186054,9 +186479,9 @@
       "ScriptedDevices"
      ],
      "path": "src/test_doors/node_jobs/devices.rs",
-     "purpose": "The scripted GPU slot table: its devices, their leases, quarantines and drains, and a device probe a test…",
+     "purpose": "The scripted GPU slot table: its devices, their leases, quarantines and drains, a device probe a test can…",
      "surface": {
-      "fn": 14,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -186070,7 +186495,7 @@
      "path": "src/test_doors/node_jobs/mod.rs",
      "purpose": "Scripted parts for the node's job service (pass 33, `33-exec-node/DESIGN.md` section 11: the journal's tests…",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "re-export": 3,
       "struct": 2
      }
@@ -186088,7 +186513,7 @@
      "path": "src/test_doors/node_jobs/parts.rs",
      "purpose": "The scripted admission, memory floor, signer, authority and stager",
      "surface": {
-      "fn": 24,
+      "fn": 27,
       "struct": 5
      }
     },
@@ -188105,6 +188530,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/execution_node_path_measure.rs",
+     "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -189151,6 +189584,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_machine_policy.rs",
+     "purpose": "Row P0 (pass 34, `34-compute-general/DESIGN.md` sections 2.4 and 10; EM-17 = A): the owner's machine policy…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_readiness.rs",
+     "purpose": "Pass 34 row Q4 (`34-compute-general/DESIGN.md` sections 1.2, 2.4 and 7.3; the tests of section 10): the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -190017,7 +190466,7 @@
      "path": "tests/support/mesh_machines.rs",
      "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 36
      }
     },
     {
@@ -190813,7 +191262,7 @@
     },
     "cli": {
      "entry": "crates/oneiron-server/src/cli.rs",
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -190840,7 +191289,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -191078,7 +191527,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 27,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191617,8 +192066,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2151,
-   "test_files": 595
+   "source_files": 2176,
+   "test_files": 598
   },
   "oneiron-setting-contract": {
    "files": [
@@ -196505,7 +196954,7 @@
      "path": "src/model_decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 59,
+      "const": 60,
       "fn": 1,
       "struct": 1
      }

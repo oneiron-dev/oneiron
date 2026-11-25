@@ -113,6 +113,7 @@ pub(super) fn hook_args(call: &SelfCall) -> Result<Value> {
             "resultRef": report.result_ref,
         }),
         SelfCall::TasksWaitSet(wait) => to_json(wait)?,
+        SelfCall::JobsOrdersWait(wait) => to_json(wait)?,
         SelfCall::Summarize(summary) => {
             let mut args = json!({
                 "ref": summary.reference,
