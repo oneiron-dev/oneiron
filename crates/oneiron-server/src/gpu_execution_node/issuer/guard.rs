@@ -6,13 +6,23 @@
 //! box, a refused launch, an unconfirmed release, an end inside `jobs.drain.fast_exit_secs`, and
 //! a node figure above the issuer's bracket count; a run past the window resets; a caller's
 //! stop, a revoke, a withdrawn key and a refusal the node wrote down for the request neither
-//! count nor reset. Only door 12 clears the issuer's drain, as `machines.drain.clear_by` allows.
+//! count nor reset. Door 12 clears the issuer's drain, as `machines.drain.clear_by` allows, and
+//! under `after_readiness_check` (the default) so does a passed readiness check that ran after
+//! the drain ([`observe_node_readiness`], CG-2 row 9).
+//!
+//! [`observe_node_readiness`] is the issuer's reading of a node's readiness fact on its scheduled
+//! read of the `Node` answer (the work-order pass): a passed check clears the issuer's drain, and
+//! a run of failed checks reaches the owner as one ask per run once it is long enough (pass 34,
+//! 7.3 and 16, practice 6; row Q4).
 
 use oneiron::gpu_job::MeterVerdict;
-use oneiron::job_dispatch::machine_records::MachineJobOutcome;
+use oneiron::job_dispatch::machine_records::{MachineDrain, MachineJobOutcome};
+use oneiron::machine_readiness::ReadinessEscalation;
 use oneiron::{EntityId, Vault};
 
-use crate::gpu_execution_node::wire::{DeviceRelease, JobEnd, JobReceipt};
+use crate::gpu_execution_node::wire::{
+    DeviceRelease, JobEnd, JobReceipt, NodeReadiness, ReadinessState,
+};
 
 /// How the terminal receipt `ended`, billed with `meter`, counts for its machine.
 #[must_use]
@@ -76,4 +86,66 @@ pub fn machine_job_guard_refusal(vault: &Vault, machine: EntityId) -> Option<Str
             Some("machine_guard_unreadable".to_owned())
         }
     }
+}
+
+/// What the issuer did with one reading of a machine's readiness fact.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReadinessObserved {
+    /// The issuer's drain a passed check cleared.
+    pub cleared: Option<MachineDrain>,
+    /// What a run of failed checks raised: `None` while the last check passed or before any ran.
+    pub escalation: Option<ReadinessEscalation>,
+}
+
+/// The issuer's reading of `machine`'s readiness fact, from the `Node` answer it read at
+/// `now_ms`:
+/// - a passed check clears the issuer's drain of the machine when `machines.drain.clear_by` is
+///   `after_readiness_check` and the check ran after the drain
+///   (`Vault::clear_machine_job_drain_after_check`); the node clears its own drain on the same
+///   check;
+/// - a run of failed checks raises the owner's one ask for the run once it reaches
+///   `machines.readiness.escalate_after` (`Vault::raise_machine_readiness_ask`); a later read of
+///   the same run raises nothing more.
+///
+/// The check's time is the machine's clock and the drain's the issuer's. A store failure is
+/// logged and changes nothing: the next read tries again.
+pub fn observe_node_readiness(
+    vault: &Vault,
+    machine: EntityId,
+    readiness: &NodeReadiness,
+    now_ms: u64,
+) -> ReadinessObserved {
+    let mut observed = ReadinessObserved::default();
+    if let (ReadinessState::Ready, Some(checked_at_ms)) =
+        (&readiness.state, readiness.checked_at_ms)
+    {
+        match vault.clear_machine_job_drain_after_check(machine, checked_at_ms, now_ms) {
+            Ok(Some(drain)) => {
+                tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
+                observed.cleared = Some(drain);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the issuer's drain not cleared after a passed readiness check");
+            }
+        }
+    }
+    if let Some(streak) = readiness.streak(machine) {
+        match vault.raise_machine_readiness_ask(&streak) {
+            Ok(escalation) => {
+                if let ReadinessEscalation::Asked {
+                    seq,
+                    queued_now: true,
+                } = escalation
+                {
+                    tracing::warn!(machine = %machine.to_hex(), seq, failed_in_a_row = streak.failed_in_a_row, "vault_machine: a machine keeps failing its readiness check; the owner is asked");
+                }
+                observed.escalation = Some(escalation);
+            }
+            Err(error) => {
+                tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the readiness ask not raised");
+            }
+        }
+    }
+    observed
 }

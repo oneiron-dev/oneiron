@@ -21,6 +21,7 @@ use oneiron::work_order::{
     OrderAttemptRef, OrderCharge, OrderHost, PassReport, Room, TemplateFact, WorkOrder,
 };
 
+use crate::gpu_execution_node::issuer::guard::observe_node_readiness;
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
@@ -161,11 +162,19 @@ impl OrderHost for ServerOrderHost<'_> {
         }
     }
 
+    /// Each machine's `Node` answer, as the pass's facts. The answer's readiness fact is read
+    /// first ([`observe_node_readiness`]): a passed check clears the issuer's drain before the
+    /// pass places, and a run of failed checks reaches the owner (CG-2 row 9).
     fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
         machines
             .iter()
             .map(|machine| {
                 let answer = self.nodes.job(*machine, &JobRequest::Node).ok();
+                if let Some(JobAnswer::Node(node)) = &answer
+                    && let Some(readiness) = &node.readiness
+                {
+                    observe_node_readiness(&self.server.vault, *machine, readiness, self.now_ms);
+                }
                 facts_of_answer(*machine, answer.as_ref(), self.now_ms)
             })
             .collect()

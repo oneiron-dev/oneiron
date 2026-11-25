@@ -1,6 +1,8 @@
 //! The drain guard: once `drain_after_failures` jobs in a row finish failed,
-//! or at its node's word, the machine takes no new GPU work until a person
-//! clears it. With a `drain_file`, the drain outlasts a restart.
+//! or at its node's word, the machine takes no new GPU work until the drain
+//! is cleared: by `resume` at the box, or by a passed readiness check when
+//! `machines.drain.clear_by` is `after_readiness_check`, the default
+//! (`jobs::readiness`). With a `drain_file`, the drain outlasts a restart.
 
 use super::{GpuProbeError, GpuSlotTable, Shared, State};
 
@@ -17,8 +19,8 @@ impl GpuSlotTable {
     }
 
     /// Drains the machine at its node's word (a job unit ran that no key of
-    /// the node's journal started): it takes no new GPU job until a person
-    /// clears the drain, as after repeated failures.
+    /// the node's journal started): it takes no new GPU job until the drain
+    /// is cleared, as after repeated failures.
     pub fn drain(&self, why: String) {
         let mut state = self.shared.lock();
         self.shared.drain(&mut state, why);

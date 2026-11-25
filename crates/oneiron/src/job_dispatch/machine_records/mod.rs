@@ -227,7 +227,9 @@ impl Vault {
     /// Counts `outcome` for `machine` in one durable write: a machine failure adds one and,
     /// at `jobs.drain.after_failures` in a row, drains the machine; a run past the fast-exit
     /// window resets the count; anything else changes nothing. A drained machine stays drained
-    /// until door 12 clears it. Answers the guard as written.
+    /// until door 12 clears it or, under `machines.drain.clear_by = after_readiness_check`, a
+    /// passed readiness check that ran after the drain
+    /// ([`Self::clear_machine_job_drain_after_check`]). Answers the guard as written.
     ///
     /// # Errors
     ///
@@ -296,6 +298,45 @@ impl Vault {
             guard.updated_at_ms = now_ms;
             MACHINE_JOB_GUARDS.put(&self.store, txn, &row_key, &guard)?;
             Ok(Ok(guard))
+        })
+    }
+
+    /// The readiness check's clear of the issuer's drain (pass 34 row Q4, CG-2 row 9: "a drained
+    /// machine clears itself once its readiness check passes"). Under
+    /// `machines.drain.clear_by = after_readiness_check` for `machine`, read in the same write, a
+    /// passed check that ran at `checked_at_ms` (the machine's clock), after the drain's `at_ms`,
+    /// clears the drain and its count, in one durable write. Under any other `clear_by`, for a
+    /// machine the issuer has not drained, and for a check that ran before the drain, nothing
+    /// changes. Answers the drain it cleared.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub fn clear_machine_job_drain_after_check(
+        &self,
+        machine: EntityId,
+        checked_at_ms: u64,
+        now_ms: u64,
+    ) -> crate::Result<Option<MachineDrain>> {
+        let row_key = machine.to_hex();
+        self.with_write_txn(|txn| {
+            let clear_by = crate::machine_policy::setting_keys::DRAIN_CLEAR_BY
+                .read_in_txn(self, txn, &[], Some(&row_key))?
+                .value;
+            if clear_by != crate::machine_policy::DrainClearBy::AfterReadinessCheck {
+                return Ok(None);
+            }
+            let Some(mut guard) = MACHINE_JOB_GUARDS.get(&self.store, txn, &row_key)? else {
+                return Ok(None);
+            };
+            let Some(drain) = guard.drained.take_if(|drain| checked_at_ms > drain.at_ms) else {
+                return Ok(None);
+            };
+            guard.failures_in_a_row = 0;
+            guard.last_failure = None;
+            guard.updated_at_ms = now_ms;
+            MACHINE_JOB_GUARDS.put(&self.store, txn, &row_key, &guard)?;
+            Ok(Some(drain))
         })
     }
 }
