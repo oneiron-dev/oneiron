@@ -158,6 +158,10 @@ enum AfterGo {
 
 /// Waits for `job-exec`'s exec: reads what it says after the go until the
 /// pipe closes or the wait runs out, then judges it ([`judge_after_go`]).
+/// When the wait runs out, the gate looks at the pipe once more without
+/// waiting, so a mark that came as the wait ended still counts as the exec
+/// (review r5 R5-03). The window left is the gate's own exit after that
+/// look, and only after `job-exec` stalled the whole wait.
 fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
     let started = Instant::now();
     let mut said = Vec::new();
@@ -165,13 +169,11 @@ fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
     loop {
         let left = wait.saturating_sub(started.elapsed());
         if left.is_zero() {
-            return judge_after_go(&said, false, wait);
+            let closed = drain_now(pipe, &mut said, &mut buffer);
+            return judge_after_go(&said, closed, wait);
         }
         match read_some(pipe, &mut buffer, left) {
-            Ok(PipeRead::Bytes(count)) => {
-                let room = EXEC_FAILURE_MAX_BYTES.saturating_sub(said.len());
-                said.extend_from_slice(&buffer[..count.min(room)]);
-            }
+            Ok(PipeRead::Bytes(count)) => keep_said(&mut said, &buffer[..count]),
             Ok(PipeRead::End) => return judge_after_go(&said, true, wait),
             Ok(PipeRead::Nothing) => {}
             Err(why) => {
@@ -184,6 +186,26 @@ fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
             }
         }
     }
+}
+
+/// Keeps what `job-exec` said, up to [`EXEC_FAILURE_MAX_BYTES`].
+fn keep_said(said: &mut Vec<u8>, bytes: &[u8]) {
+    let room = EXEC_FAILURE_MAX_BYTES.saturating_sub(said.len());
+    said.extend_from_slice(&bytes[..bytes.len().min(room)]);
+}
+
+/// Reads what the pipe holds now, without waiting. Returns whether it
+/// closed.
+fn drain_now(pipe: &OwnedFd, said: &mut Vec<u8>, buffer: &mut [u8]) -> bool {
+    // job-exec says at most the mark and one line, so a few reads empty it.
+    for _ in 0..16 {
+        match read_some(pipe, buffer, Duration::ZERO) {
+            Ok(PipeRead::Bytes(count)) => keep_said(said, &buffer[..count]),
+            Ok(PipeRead::End) => return true,
+            Ok(PipeRead::Nothing) | Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// Judges what `job-exec` wrote after the go. `closed`: the pipe closed;
@@ -373,7 +395,9 @@ fn open_go(context: &StepContext) -> Result<OwnedFd, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AfterGo, EXEC_MARK, judge_after_go};
+    use super::{AfterGo, EXEC_MARK, after_go, judge_after_go};
+    use std::io::Write as _;
+    use std::os::fd::{FromRawFd as _, OwnedFd};
     use std::time::Duration;
 
     const WAIT: Duration = Duration::from_secs(10);
@@ -423,5 +447,25 @@ mod tests {
     #[test]
     fn a_wait_that_ran_out_after_the_mark_counts_as_started() {
         assert_eq!(judge_after_go(EXEC_MARK, false, WAIT), AfterGo::Became);
+    }
+
+    /// Review r5 R5-03: the mark is in the pipe when the wait has run out.
+    #[test]
+    fn a_mark_that_came_as_the_wait_ran_out_counts_as_started() {
+        let mut ends = [0; 2];
+        // SAFETY: ends has room for the two descriptors.
+        let made = unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) };
+        assert_eq!(made, 0);
+        // SAFETY: pipe2 returned two new descriptors.
+        let (read_end, write_end) =
+            unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+        let mut writer = std::fs::File::from(write_end);
+        writer.write_all(EXEC_MARK).expect("the mark fits the pipe");
+        assert_eq!(after_go(&read_end, Duration::ZERO), AfterGo::Became);
+        drop(writer);
+        assert_eq!(
+            after_go(&read_end, Duration::ZERO),
+            failed("job-exec ended before the workload's exec")
+        );
     }
 }

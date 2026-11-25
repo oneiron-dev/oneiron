@@ -410,7 +410,13 @@ fn become_workload(exec: &ExecFile, report_pipe: OwnedFd) -> i32 {
         return exec_failed(&mut report, "exec.json names no program");
     };
     // Without the mark the gate records that the workload never started, so
-    // no exec follows a mark that did not reach it.
+    // no exec follows a mark that did not reach it. That holds when the gate
+    // is gone too (EPIPE): it may have judged `no_exec_in_time` already, and
+    // an exec then would run a workload its record says never started. Not
+    // to exec leaves at worst a record that says started for a workload that
+    // never ran, the safe side for a retry (review r5 R5-01, pushed back).
+    // Likewise a death between the mark and the execve, a window of a few
+    // system calls, counts as started (r5 R5-02).
     if let Err(error) = report.write_all(EXEC_MARK) {
         return exec_failed(
             &mut report,
