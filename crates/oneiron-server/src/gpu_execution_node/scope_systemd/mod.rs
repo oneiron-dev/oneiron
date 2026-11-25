@@ -110,6 +110,23 @@ pub const GO_PIPE_NAME: &str = "go";
 /// The one line the gate writes to let the workload start.
 pub const GATE_GO: &[u8] = b"go\n";
 
+/// The line `job-exec` writes on the report pipe after the go, just before
+/// its `execve` (FIX EXEC-UNIT-GATE-EXEC-RACE). The pipe is close-on-exec,
+/// so the gate reads: a close with no mark is `job-exec`'s exit before the
+/// exec; the mark and then a close is the exec; the mark and more words is
+/// a failed exec. No process state is read after the close, so a workload
+/// that ends at once is still recorded as started.
+pub const EXEC_MARK: &[u8] = b"exec\n";
+
+/// The smallest memory cap of a job unit, in MiB (FIX
+/// EXEC-UNIT-STEPS-IN-MEMORY-CAP). The unit's own steps (job-prepare and the
+/// gate, `job-exec` before its exec, job-ended) are this binary and run in
+/// the job's cgroup, so they count against `MemoryMax`. Qualification q3
+/// (nelly, 25 Nov) saw a 64 MiB cap end the unit by the OOM killer before
+/// the gate's record, while every unit under a 256 MiB cap peaked at 83 to
+/// 85 MiB. A smaller request gets this cap, and `prepared.json` names it.
+pub const UNIT_MEMORY_FLOOR_MIB: u64 = 256;
+
 /// What the prepare step applied, in the key's control directory.
 pub const PREPARED_FILE_NAME: &str = "prepared.json";
 

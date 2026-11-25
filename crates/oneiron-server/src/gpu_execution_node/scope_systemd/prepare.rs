@@ -29,7 +29,10 @@ use super::safe_fs::{
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::installed_runtime_max_secs;
-use super::{AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_TEMPLATE_PATH};
+use super::{
+    AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
+    UNIT_TEMPLATE_PATH,
+};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -231,7 +234,10 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         )
         .collect();
 
-    let memory_bytes = memory_mib.saturating_mul(1 << 20);
+    // The unit's own steps count against the cap: never below the floor.
+    let memory_bytes = memory_mib
+        .max(UNIT_MEMORY_FLOOR_MIB)
+        .saturating_mul(1 << 20);
     let mut properties = vec![
         format!("MemoryMax={memory_bytes}"),
         format!("TasksMax={}", template.tasks_max),
