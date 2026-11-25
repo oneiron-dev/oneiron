@@ -503,7 +503,10 @@ fn an_arm_is_not_admitted_when_no_first_allowance_fits() {
             .unwrap_or_else(|error| panic!("arm {key} fits the floor: {error:?}"));
     }
 
-    assert!(fixture.refusals(lane, 0).is_empty(), "two admissions refused nothing");
+    assert!(
+        fixture.refusals(lane, 0).is_empty(),
+        "two admissions refused nothing"
+    );
     let before = last_committed_write(&fixture.vault);
     let refused = fixture
         .admit(None, &ask("c", lane, family, 3, "third arm"))
@@ -525,8 +528,14 @@ fn an_arm_is_not_admitted_when_no_first_allowance_fits() {
             sequence: 0,
         }
     );
-    assert!(row.short.is_some(), "the row names the bucket that ran out: {row:?}");
-    assert!(row.room < RUNG_1_SECS, "what fits is less than the ask: {row:?}");
+    assert!(
+        row.short.is_some(),
+        "the row names the bucket that ran out: {row:?}"
+    );
+    assert!(
+        row.room < RUNG_1_SECS,
+        "what fits is less than the ask: {row:?}"
+    );
     assert_eq!(
         *row,
         LineRefusal {
