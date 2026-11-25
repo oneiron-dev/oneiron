@@ -8,14 +8,23 @@
 //! One exception (pass 34, 2.5; row W1): a session's renewal arms a later
 //! timer and then stops this one, so a timer that fires between the two
 //! finds `prepared.json` naming a later stop time than its own `--stop-at`,
-//! and stops nothing. Only a record that reads, is root's and names a later
-//! stop skips the stop: anything else stops the unit.
+//! and stops nothing. Only a record that reads within
+//! [`RECORD_READ_DEADLINE`], is root's and names a later stop skips the
+//! stop: anything else stops the unit. Only a session's timer names a stop
+//! time; a job's reads nothing before its stop.
+
+use std::sync::mpsc;
+use std::time::Duration;
 
 use super::records::{CutoffMark, CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 use super::{CUTOFF_FILE_NAME, PREPARED_FILE_NAME, is_job_instance};
+
+/// How long a session's cutoff waits for its record before it stops the
+/// unit anyway: a stalled state disk holds the stop no longer than this.
+pub const RECORD_READ_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Whether a cutoff timer armed for `own_stop_at_boot_ns` was superseded by
 /// a renewal: root's record names a later stop time. A timer that names no
@@ -29,6 +38,36 @@ pub fn cutoff_superseded(own_stop_at_boot_ns: Option<u64>, recorded: Option<&Cut
     }
 }
 
+/// The cutoff plan root's record of `args`'s instance names, read on a
+/// helper thread: `None` when it does not read, is not this instance's, or
+/// does not come within [`RECORD_READ_DEADLINE`]. A read that blocks keeps
+/// its thread, which ends with the step.
+fn recorded_cutoff(args: &StepArgs) -> Option<CutoffPlan> {
+    let (sender, receiver) = mpsc::channel();
+    let args = args.clone();
+    std::thread::Builder::new()
+        .name("job-cutoff-record".to_owned())
+        .spawn(move || {
+            let recorded = StepContext::open(args.clone())
+                .and_then(|context| context.read_record::<PreparedRecord>(PREPARED_FILE_NAME))
+                .ok()
+                .flatten()
+                // Root's record for this instance only: one moved in from
+                // another key's control directory is no record.
+                .filter(|prepared| prepared.instance == args.instance)
+                .and_then(|prepared| prepared.cutoff);
+            let _ = sender.send(recorded);
+        })
+        .ok()?;
+    match receiver.recv_timeout(RECORD_READ_DEADLINE) {
+        Ok(recorded) => recorded,
+        Err(why) => {
+            journal_line!("job-cutoff: the record did not read in time ({why}); stopping the unit");
+            None
+        }
+    }
+}
+
 /// The step. Returns its exit status.
 #[must_use]
 pub fn run(args: StepArgs) -> i32 {
@@ -39,14 +78,7 @@ pub fn run(args: StepArgs) -> i32 {
     let unit = format!("oneiron-job@{}.service", args.instance);
     let fired_boot_ns = boot_ns();
     if let Some(own) = args.stop_at_boot_ns {
-        let recorded = StepContext::open(args.clone())
-            .and_then(|context| context.read_record::<PreparedRecord>(PREPARED_FILE_NAME))
-            .ok()
-            .flatten()
-            // Root's record for this instance only: one moved in from
-            // another key's control directory is no record.
-            .filter(|prepared| prepared.instance == args.instance)
-            .and_then(|prepared| prepared.cutoff);
+        let recorded = recorded_cutoff(&args);
         if cutoff_superseded(Some(own), recorded.as_ref()) {
             journal_line!(
                 "job-cutoff: {unit}: a renewal moved the stop past {own}; this timer stops nothing"

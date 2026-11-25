@@ -17,19 +17,35 @@
 //! ([`super::cutoff::cutoff_superseded`]). The unit's own `RuntimeMaxSec`
 //! backstop covers each session template's longest run
 //! ([`super::install::unit_runtime_max_secs`]).
+//!
+//! Step 2 always lands before the old timer fires: a renewal is taken only
+//! [`RENEW_BEFORE_STOP_NS`] or more before the current stop time, the
+//! handler lives at most [`CONTROL_HANDLER_RUNTIME_MAX_SECS`], and the old
+//! timer fires `CUTOFF_MARGIN_MS` (half a second) before its stop time. One
+//! renewal of a key runs at a time: the handler holds a lock on the key's
+//! control directory for the whole handoff.
 
+use std::fs::{File, TryLockError};
 use std::path::Path;
 
 use super::super::jobs::JobKeyId;
-use super::prepare::arm_cutoff;
-use super::records::{CutoffPlan, PreparedRecord};
+use super::super::jobs::job_unit::RENEW_BEFORE_STOP_NS;
+use super::prepare::{CUTOFF_MARGIN_MS, arm_cutoff};
+use super::records::{CutoffMark, CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::unit_file::installed_runtime_max_secs;
-use super::{CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_TEMPLATE_PATH};
+use super::unit_file::{CONTROL_HANDLER_RUNTIME_MAX_SECS, installed_runtime_max_secs};
+use super::{CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_TEMPLATE_PATH};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
+
+// The handoff fits between the renewal's check and the old timer (EM-22,
+// R3B's review of #10502, P2-2).
+const _: () = assert!(
+    RENEW_BEFORE_STOP_NS
+        > CONTROL_HANDLER_RUNTIME_MAX_SECS * NANOS_PER_SEC + CUTOFF_MARGIN_MS * 1_000_000
+);
 
 /// `Ok` while the job unit is active: its cutoff may move.
 fn running(id: &JobKeyId) -> Result<(), String> {
@@ -42,9 +58,14 @@ fn running(id: &JobKeyId) -> Result<(), String> {
     }
 }
 
-/// How long before the current stop time a renewal must be taken: a timer
-/// this close may already be firing.
-const RENEW_BEFORE_STOP_NS: u64 = NANOS_PER_SEC;
+/// Whether the key's cutoff fired: its mark is there, or the mark does not
+/// read.
+fn cutoff_fired(context: &StepContext) -> bool {
+    !matches!(
+        context.read_record::<CutoffMark>(CUTOFF_FILE_NAME),
+        Ok(None)
+    )
+}
 
 /// The cutoff plan a renewal to `cutoff_boot_ns` makes of `prepared`'s, at
 /// boot-clock time `now_boot_ns`: `Ok(None)` when the record already holds
@@ -55,7 +76,7 @@ const RENEW_BEFORE_STOP_NS: u64 = NANOS_PER_SEC;
 ///
 /// The refusal: the run is no session's or no cutoff was armed, the cutoff
 /// would move back or past the session's longest run, or the current stop
-/// is too near to hand over.
+/// is too near to hand over ([`RENEW_BEFORE_STOP_NS`]).
 pub fn renewed_cutoff_plan(
     prepared: &PreparedRecord,
     cutoff_boot_ns: u64,
@@ -99,8 +120,9 @@ pub fn renewed_cutoff_plan(
 ///
 /// The refusal, in words: the step could not open, the record is missing or
 /// not this instance's, the unit is not running, [`renewed_cutoff_plan`]
-/// refused, or the service manager did not take the new timer or the record
-/// was not written.
+/// refused, another renewal of the key is running (`renew_busy`), the
+/// service manager did not take the new timer or the record was not
+/// written, or the old cutoff fired meanwhile (`cutoff_passed`).
 pub fn renew_cutoff(
     node_file: &Path,
     engine_account: &str,
@@ -115,13 +137,34 @@ pub fn renew_cutoff(
         host_namespace_error: None,
         stop_at_boot_ns: None,
     })?;
+    // One renewal of a key at a time: a second handler finds the key's
+    // control directory locked and refuses, and the engine asks again at
+    // its next tick. The lock goes with this handler.
+    let lock = context
+        .control
+        .try_clone()
+        .map(File::from)
+        .map_err(|error| format!("renew_lock_failed: {error}"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            return Err("renew_busy: another renewal of this key is running".to_owned());
+        }
+        Err(TryLockError::Error(error)) => return Err(format!("renew_lock_failed: {error}")),
+    }
     let mut prepared = context
         .read_record::<PreparedRecord>(PREPARED_FILE_NAME)?
         .filter(|record| record.instance == id.as_str())
         .ok_or("not_prepared: no prepared record of this instance")?;
     running(id)?;
     let Some(plan) = renewed_cutoff_plan(&prepared, cutoff_boot_ns, boot_ns())? else {
-        return Ok(());
+        // Asked again for the cutoff the record holds: taken, unless the
+        // cutoff fired meanwhile.
+        return if cutoff_fired(&context) {
+            Err("cutoff_passed: the cutoff stopped the run".to_owned())
+        } else {
+            Ok(())
+        };
     };
     // The unit's backstop, as the prepare step checks it: a node file whose
     // session ceiling grew without `oneiron execution-node install` again
@@ -139,7 +182,7 @@ pub fn renew_cutoff(
     let base = prepared.cutoff.clone();
     let previous = prepared.cutoff.replace(plan.clone());
     let timer = plan.unit.trim_end_matches(".timer");
-    arm_cutoff(&context, timer, plan.stop_at_boot_ns)?;
+    arm_cutoff(&context, timer, plan.stop_at_boot_ns, true)?;
     // Record the new plan only while the unit still runs and no other
     // renewal moved the record meanwhile: else the new timer goes, and the
     // engine asks again.
@@ -162,6 +205,19 @@ pub fn renew_cutoff(
         return Err(why);
     }
     context.write_record(PREPARED_FILE_NAME, &prepared)?;
+    // The old timer fires after the write (the module doc); should it have
+    // fired anyway, the renewal is not answered as taken. The new timer
+    // stays, since the record now names it: on a stopped run it stops
+    // nothing that runs.
+    if let Err(why) = running(id).and_then(|()| {
+        (!cutoff_fired(&context))
+            .then_some(())
+            .ok_or_else(|| "the cutoff mark is there".to_owned())
+    }) {
+        return Err(format!(
+            "cutoff_passed: the old cutoff stopped the run during the renewal ({why})"
+        ));
+    }
     if let Some(previous) = previous {
         let _ = run_tool(
             "systemctl",

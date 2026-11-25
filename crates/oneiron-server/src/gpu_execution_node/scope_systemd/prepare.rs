@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use super::super::jobs::{JobKeyId, LaunchFile};
 use super::super::wire::NetworkMode;
 use super::capabilities::kernel_facts;
+use super::control::CONTROL_SERVICE_UNIT_PATH;
 use super::device_files;
 use super::exchange::{publish_payload, write_exchange};
 use super::records::{
@@ -28,7 +29,7 @@ use super::safe_fs::{
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::unit_file::installed_runtime_max_secs;
+use super::unit_file::{control_service_renews, installed_runtime_max_secs};
 use super::{
     AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
     UNIT_TEMPLATE_PATH,
@@ -172,6 +173,18 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
             "unit_runtime_max_below_maximum: run `oneiron execution-node install` again".to_owned(),
         );
     }
+    // A session's renewals need the control handler `install` writes since
+    // sessions: an older one would refuse the first renewal, at the end of
+    // the first paid chunk, so the launch is refused now (row W1).
+    if template.session_max_secs().is_some()
+        && !std::fs::read_to_string(CONTROL_SERVICE_UNIT_PATH)
+            .is_ok_and(|service| control_service_renews(&service))
+    {
+        return Err(
+            "template_outdated: the job control service predates sessions: run `oneiron execution-node install` again"
+                .to_owned(),
+        );
+    }
     let unit = context.unit();
     effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
@@ -298,21 +311,22 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         return Err(format!("required_bound_not_given: {unmet}"));
     }
 
-    // The cutoff stops the unit at a fixed boot-clock time: its delay is taken
-    // from the clock just before the timer is made.
-    let cutoff_unit = format!("{CUTOFF_UNIT_PREFIX}{instance}");
-    arm_cutoff(context, &cutoff_unit, stop_at_boot_ns)?;
-    record.cutoff = Some(CutoffPlan {
-        unit: format!("{cutoff_unit}.timer"),
-        stop_at_boot_ns,
-        stop_grace_secs: settings.stop_grace_secs,
-    });
     // A session's run may have its cutoff moved by renewals, up to the
     // launch plus the template's longest run (row W1).
     record.session_until_boot_ns = template.session_max_secs().map(|secs| {
         launch
             .launch_boot_ns
             .saturating_add(secs.saturating_mul(NANOS_PER_SEC))
+    });
+    // The cutoff stops the unit at a fixed boot-clock time: its delay is taken
+    // from the clock just before the timer is made.
+    let cutoff_unit = format!("{CUTOFF_UNIT_PREFIX}{instance}");
+    let renewable = record.session_until_boot_ns.is_some();
+    arm_cutoff(context, &cutoff_unit, stop_at_boot_ns, renewable)?;
+    record.cutoff = Some(CutoffPlan {
+        unit: format!("{cutoff_unit}.timer"),
+        stop_at_boot_ns,
+        stop_grace_secs: settings.stop_grace_secs,
     });
     record.awake_unit = hold_awake(&unit, instance);
     Ok(())
@@ -561,9 +575,10 @@ fn set_properties(unit: &str, properties: &[String]) -> Result<(), String> {
 
 /// The cutoff: a transient timer `cutoff_unit` of the service manager that
 /// runs `job-cutoff` at `stop_at_boot_ns` on the boot clock, less its
-/// margin. The engine's account may not stop it. The timer names its stop
-/// time, so once a session's renewal armed a later one it stops nothing
-/// (row W1).
+/// margin. The engine's account may not stop it. A session's timer
+/// (`renewable`) names its stop time, so once a renewal armed a later one it
+/// stops nothing (row W1); a job's names none, and its cutoff stops the unit
+/// before it reads anything.
 ///
 /// # Errors
 ///
@@ -573,6 +588,7 @@ pub(super) fn arm_cutoff(
     context: &StepContext,
     cutoff_unit: &str,
     stop_at_boot_ns: u64,
+    renewable: bool,
 ) -> Result<(), String> {
     let binary = std::env::current_exe().map_err(|error| format!("binary_unknown: {error}"))?;
     let delay_ms = (stop_at_boot_ns.saturating_sub(boot_ns()) / 1_000_000)
@@ -584,30 +600,28 @@ pub(super) fn arm_cutoff(
     let binary = binary.display().to_string();
     let node_file = context.args.node_file.display().to_string();
     let stop_at = stop_at_boot_ns.to_string();
-    run_tool(
-        "systemd-run",
-        &[
-            "--no-block",
-            "--collect",
-            "--quiet",
-            &unit_flag,
-            &on_active,
-            "--timer-property=AccuracySec=100ms",
-            "--timer-property=RemainAfterElapse=no",
-            &binary,
-            "job-cutoff",
-            "--node-file",
-            &node_file,
-            "--engine-account",
-            &context.args.engine_account,
-            "--stop-at",
-            &stop_at,
-            &context.args.instance,
-        ],
-        SYSTEMCTL_TIMEOUT,
-    )
-    .map(drop)
-    .map_err(|why| format!("cutoff_not_armed: {why}"))
+    let mut args: Vec<&str> = vec![
+        "--no-block",
+        "--collect",
+        "--quiet",
+        unit_flag.as_str(),
+        on_active.as_str(),
+        "--timer-property=AccuracySec=100ms",
+        "--timer-property=RemainAfterElapse=no",
+        binary.as_str(),
+        "job-cutoff",
+        "--node-file",
+        node_file.as_str(),
+        "--engine-account",
+        context.args.engine_account.as_str(),
+    ];
+    if renewable {
+        args.extend(["--stop-at", stop_at.as_str()]);
+    }
+    args.push(context.args.instance.as_str());
+    run_tool("systemd-run", &args, SYSTEMCTL_TIMEOUT)
+        .map(drop)
+        .map_err(|why| format!("cutoff_not_armed: {why}"))
 }
 
 /// The sleep inhibitor, held by a root unit bound to the job unit: it holds

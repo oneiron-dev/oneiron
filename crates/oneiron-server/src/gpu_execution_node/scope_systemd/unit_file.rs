@@ -162,6 +162,11 @@ pub fn render_control_socket(engine_gid: u32) -> String {
     )
 }
 
+/// The longest a control handler lives (`RuntimeMaxSec=` of its service):
+/// a session's renewal hands its cutoff over within it
+/// ([`super::super::jobs::job_unit::RENEW_BEFORE_STOP_NS`]).
+pub const CONTROL_HANDLER_RUNTIME_MAX_SECS: u64 = 30;
+
 /// The control socket's handler, one instance per connection: `oneiron
 /// job-control` as root, with the connection as its standard input and
 /// output. It reads the node file and may write beneath the state directory
@@ -178,7 +183,7 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
          StandardInput=socket\n\
          StandardOutput=socket\n\
          StandardError=journal\n\
-         RuntimeMaxSec=30\n\
+         RuntimeMaxSec={CONTROL_HANDLER_RUNTIME_MAX_SECS}\n\
          NoNewPrivileges=yes\n\
          PrivateNetwork=yes\n\
          PrivateTmp=yes\n\
@@ -190,6 +195,21 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
         quote_path(&inputs.node_file),
         quote_path(&inputs.state_dir),
     )
+}
+
+/// Whether an installed control service takes a session's renewal (row W1):
+/// its handler is given the node file and may write beneath the state
+/// directory. A service written before sessions has neither.
+#[must_use]
+pub fn control_service_renews(service_text: &str) -> bool {
+    let names_node_file = service_text.lines().any(|line| {
+        line.strip_prefix("ExecStart=")
+            .is_some_and(|command| command.split_whitespace().any(|word| word == "--node-file"))
+    });
+    let writes_state = service_text
+        .lines()
+        .any(|line| line.starts_with("ReadWritePaths="));
+    names_node_file && writes_state
 }
 
 /// The value of `RuntimeMaxSec=` in an installed template, if it has one.
@@ -289,5 +309,15 @@ mod tests {
         )));
         assert!(service.contains("StandardInput=socket\n"));
         assert!(!service.contains("User="));
+        assert!(service.contains("RuntimeMaxSec=30\n"));
+        assert!(control_service_renews(&service));
+        // A handler written before sessions takes no renewal.
+        let without_node_file =
+            service.replace(" --node-file /etc/oneiron/execution-node.toml", "");
+        let before_sessions: Vec<&str> = without_node_file
+            .lines()
+            .filter(|line| !line.starts_with("ReadWritePaths="))
+            .collect();
+        assert!(!control_service_renews(&before_sessions.join("\n")));
     }
 }
