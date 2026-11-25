@@ -177436,8 +177436,8 @@
       "const": 1,
       "enum": 1,
       "fn": 9,
-      "mod": 5,
-      "re-export": 6,
+      "mod": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -177490,6 +177490,44 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MirrorStager",
+      "StagingRefusal",
+      "TemplateMirrors"
+     ],
+     "path": "src/gpu_execution_node/jobs/staging.rs",
+     "purpose": "Staging (design pass 33, `33-exec-node/DESIGN.md` section 7.4; row R3c): the code of a key's pin, exported…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/staging/git_process.rs",
+     "purpose": "The git a staging runs (row R3c): the git directory the stager writes for one staging, the fenced command on…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/staging/payload_dir.rs",
+     "purpose": "The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -185700,9 +185738,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/gpu_backend.rs",
-     "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the `[gpu_jobs]` section as `serve` resolves it…",
+     "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row…",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -187835,6 +187873,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/customer_cpu_job_seconds.rs",
+     "purpose": "CPU-only units (pass 32 row M3-D; pass 34 9.2, \"the first proof that nothing in the rig needs a GPU\"): a…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -189078,6 +189124,14 @@
      "notable": [],
      "path": "tests/node_job_journal.rs",
      "purpose": "Pass 33 row R3a (`33-exec-node/DESIGN.md` sections 7.2-7.7, tests T13-T16c): the node's job journal, the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_job_staging.rs",
+     "purpose": "Pass 33 row R3c (`33-exec-node/DESIGN.md` section 7.4, tests T24 and T25): staging",
      "surface": {}
     },
     {
@@ -191024,7 +191078,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 24,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191563,8 +191617,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2148,
-   "test_files": 593
+   "source_files": 2151,
+   "test_files": 595
   },
   "oneiron-setting-contract": {
    "files": [

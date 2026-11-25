@@ -1,7 +1,8 @@
-//! Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the
-//! `[gpu_jobs]` section as `serve` resolves it, a GPU backend registered on a
-//! built server, an allocation on its host account, and one pass of its GPU
-//! job worker, so a test does not wait on `step_secs`.
+//! Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and
+//! `tests/customer_cpu_job_seconds.rs` (row M3-D): the `[gpu_jobs]` section
+//! as `serve` resolves it, a backend registered on a built server,
+//! allocations on its host account, and one pass of its job worker, so a test
+//! does not wait on `step_secs`.
 
 use std::sync::Arc;
 
@@ -43,11 +44,28 @@ pub fn unregister_gpu_backend(server: &SyncServer, name: &str) {
 ///
 /// A unit that is not one, or the account's refusal of the allocation.
 pub fn grant_gpu_allocation(server: &SyncServer, units: u64, unit: &str) -> anyhow::Result<()> {
+    grant_allocation(server, "gpu-job-test-allocation", units, unit)
+}
+
+/// Grants `server`'s host account generation 1 of the walletless allocation
+/// `id`, of `units` `unit`. The account keeps one allocation per unit, so a
+/// test grants a `cpu_seconds` and a `gpu_seconds` allocation side by side
+/// under two ids (row M3-D).
+///
+/// # Errors
+///
+/// A unit that is not one, or the account's refusal of the allocation.
+pub fn grant_allocation(
+    server: &SyncServer,
+    id: &str,
+    units: u64,
+    unit: &str,
+) -> anyhow::Result<()> {
     server
         .host_account()
         .grant(Allocation {
             reference: AllocationRef {
-                id: "gpu-job-test-allocation".to_owned(),
+                id: id.to_owned(),
                 generation: 1,
             },
             units,
