@@ -6378,7 +6378,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -48667,7 +48667,7 @@
      "purpose": "Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 7,
       "re-export": 9,
@@ -48845,7 +48845,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 6,
-      "fn": 12,
+      "fn": 13,
       "re-export": 1,
       "struct": 4
      }
@@ -48961,7 +48961,7 @@
      "purpose": "The intent key every lane-economy write door takes (design pass 32 section 5; the spawn-intent form of…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 3,
       "struct": 2
@@ -48992,7 +48992,7 @@
      "path": "src/gpu_line/mod.rs",
      "purpose": "The lane economy's GPU line (design pass 32, FABLE-LANE-ECONOMY): the owner's policy for one lane's GPU…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "mod": 1,
       "re-export": 8
      }
@@ -49006,7 +49006,7 @@
      "path": "src/gpu_line/store.rs",
      "purpose": "The GPU line's stored rows (design pass 32, sections 3.1, 3.2 and 4.1): one `GPU_LINE` row per lane project…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 10,
       "struct": 1
      }
@@ -51986,6 +51986,48 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "JobHistory",
+      "JobHistoryAttempt",
+      "JobHistoryFamilySum",
+      "JobHistoryLineCharge",
+      "JobHistoryLineSum",
+      "JobHistoryMachineSum",
+      "JobHistoryOfferCharge",
+      "JobHistoryPeriodSum",
+      "JobHistoryRequest",
+      "JobHistorySum",
+      "JobHistoryTotals"
+     ],
+     "path": "src/job_history/mod.rs",
+     "purpose": "`vault.jobs.history` (design pass 34 section 5 and row Q2; the scheduler comparison's gap 2, \"one view of…",
+     "surface": {
+      "const": 3,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HistoryCursor",
+      "HistoryInputs",
+      "HistoryViewer",
+      "JobHistoryFilter"
+     ],
+     "path": "src/job_history/project.rs",
+     "purpose": "The pure projection behind `vault.jobs.history`: stored jobs, claims and periods in, the ended attempts and…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "WorkloadNodeAnswer",
       "WorkloadStartAsk",
       "WorkloadStartRefusal",
@@ -53101,7 +53143,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 235,
+      "mod": 236,
       "re-export": 106
      }
     },
@@ -79125,7 +79167,7 @@
      "purpose": "The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a…",
      "surface": {
       "const": 1,
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 2,
       "fn": 25,
       "re-export": 13,
@@ -79145,7 +79187,7 @@
      "purpose": "The default layer (DESIGN 1.5 \"The four layers\", layer 0, and \"Packs: a default that changes\")",
      "surface": {
       "const": 2,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "struct": 2
      }
     },
@@ -79171,13 +79213,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/setting/pack/installed.rs",
+     "purpose": "The tables of installed packs (design pass 34, section 3.2; row L1)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/setting/pack/layer.rs",
      "purpose": "The layer's reads and quarantine: the default a read starts from, the packs that hold a key, and the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -81586,7 +81638,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 1,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -81786,6 +81838,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PackSettingDefaults"
+     ],
+     "path": "src/skill_hub/pack_catalog/setting_defaults_pack.rs",
+     "purpose": "A table of setting defaults as pack data (design pass 34, section 3.2; row L1): a pack of kind `capability`…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "PackSetup"
      ],
      "path": "src/skill_hub/pack_catalog/setup.rs",
@@ -81869,7 +81935,7 @@
      "purpose": "Validated exact source trees",
      "surface": {
       "crate-vis": 3,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -99467,6 +99533,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/lane_economy_archive.rs",
+     "purpose": "Doors for `tests/archive_lane_economy_tables_retained.rs` (FIX LANE-ECONOMY-TABLES-ARCHIVE-CLASS): the lane…",
+     "surface": {
+      "const": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/learning_claim_value.rs",
      "purpose": "Doors for `tests/learning_claim_value.rs` (FIX LEARNING-CELL-POSITIONAL-DECODE): the learning claim value…",
      "surface": {
@@ -99796,7 +99873,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 402,
+      "mod": 403,
       "re-export": 3
      }
     },
@@ -111116,6 +111193,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/archive_lane_economy_tables_retained.rs",
+     "purpose": "FIX LANE-ECONOMY-TABLES-ARCHIVE-CLASS (P2; OPUS-LE-ARMS PLAN 25 Nov 17:23; Engine ANSWER…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -116760,6 +116845,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_history.rs",
+     "purpose": "`vault.jobs.history` is a view over rows the vault already keeps, not a second ledger (design pass 34…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/job_history_offers.rs",
+     "purpose": "`vault.jobs.history` over plain offer jobs, from the rows the job's own lifecycle writes (review round 1 of…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -118015,6 +118116,14 @@
      "notable": [],
      "path": "tests/pack_member_count.rs",
      "purpose": "A reader's context pack counts no row it cannot read (FIX-LIST ROOM-PACK-MEMBER-COUNT; the lead's ruling on…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_setting_presets.rs",
+     "purpose": "Design pass 34, section 3.2 (row L1; RULING L1-PACK-LAYER-READ = A, Engine 21:15 25 Nov): a pack's table of…",
      "surface": {}
     },
     {
@@ -123577,6 +123686,15 @@
      "purpose": "The issuer's side of a job that one of the vault's machines runs (pass 33 section 8, the `vault_machine`…",
      "spec_ids": []
     },
+    "job_history": {
+     "entry": "crates/oneiron/src/job_history/mod.rs",
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "`vault.jobs.history` (design pass 34 section 5 and row Q2; the scheduler comparison's gap 2, \"one view of…",
+     "spec_ids": []
+    },
     "job_workload": {
      "entry": "crates/oneiron/src/job_workload/mod.rs",
      "files": 15,
@@ -124345,7 +124463,7 @@
     },
     "setting": {
      "entry": "crates/oneiron/src/setting/mod.rs",
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124428,7 +124546,7 @@
     },
     "skill_hub": {
      "entry": "crates/oneiron/src/skill_hub/mod.rs",
-     "files": 111,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -124640,7 +124758,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 414,
+     "files": 415,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -124907,8 +125025,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8598,
-   "test_files": 2311
+   "source_files": 8603,
+   "test_files": 2315
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -168196,7 +168314,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 222
+      "crate-vis": 223
      }
     },
     {
@@ -168267,6 +168385,16 @@
      "purpose": "The GPU line doors (design pass 32, section 5): `vault.gpu.lines.set`, `.get` and `.families.admit`",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_doors/job_history.rs",
+     "purpose": "`vault.jobs.history` (design pass 34 section 5, row Q2): the ended attempts and their totals by machine…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -176089,16 +176217,17 @@
       "AtMaximum",
       "GpuJobsSettings",
       "GpuOfferSettings",
+      "HostAllocationSettings",
       "VaultMachineSettings"
      ],
      "path": "src/config/gpu_jobs.rs",
      "purpose": "`[gpu_jobs]`: the GPU offers this host posts for customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2, C3)",
      "surface": {
-      "const": 5,
+      "const": 6,
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -178681,6 +178810,7 @@
      "path": "src/gpu_execution_node/issuer/node_status.rs",
      "purpose": "The node half of `vault.machines.status` (design pass 34 section 5, row Q2): the issuer asks each machine…",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 1
      }
@@ -179519,13 +179649,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gpu_host.rs",
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
@@ -187551,7 +187681,7 @@
      "path": "src/test_doors/gpu_backend.rs",
      "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row…",
      "surface": {
-      "fn": 7
+      "fn": 10
      }
     },
     {
@@ -190070,6 +190200,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/gpu_host_allocation.rs",
+     "purpose": "`[gpu_jobs.host_allocation]` (R6-VAULT-MACHINE-FUNDING = A; Engine TASK 25 Nov 23:35, R6-B6): a self-hosted…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gpu_job_worker_housekeeping.rs",
+     "purpose": "Row GPU-WORKER-BACKEND-HOUSEKEEPING-UNCALLED (pass 33 row R4, 8.5): the GPU job worker's pass gives every…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/gpu_pod_hours.rs",
      "purpose": "A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset or in its IANA zone…",
      "surface": {}
@@ -191913,7 +192059,7 @@
      "path": "tests/support/mesh_machines.rs",
      "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 39
      }
     },
     {
@@ -192028,6 +192174,14 @@
      "notable": [],
      "path": "tests/token_agent_own_vault_agent.rs",
      "purpose": "`oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/token_bootstrap_redeem.rs",
+     "purpose": "`oneiron token bootstrap --redeem` (R6 B7; Engine ANSWER R6-OWNER-CREDENTIAL = A, 25 Nov 23:35)",
      "surface": {}
     },
     {
@@ -192648,7 +192802,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 851,
+     "files": 852,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -193027,7 +193181,7 @@
      "entry": "crates/oneiron-server/src/gpu_host.rs",
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)",
      "spec_ids": [
@@ -193564,8 +193718,8 @@
    },
    "over_bar": 67,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2207,
-   "test_files": 608
+   "source_files": 2208,
+   "test_files": 611
   },
   "oneiron-setting-contract": {
    "files": [

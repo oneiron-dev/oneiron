@@ -21,12 +21,18 @@ fn pack_rows_prefix(name: &str) -> Vec<u8> {
     prefix
 }
 
-/// Every layer row of `spec`, by pack: its value, or `None` when it does not decode.
+/// One layer row of a key: its pack; its value, or `None` when it does not decode; and, for a row
+/// an owner's yes wrote in an installed pack's layer, the sequence of that change (pass 34, 3.2;
+/// RULING L1-PACK-LAYER-READ = A). The door writes its own rows with no actor, so a row that
+/// names one is a yes's.
+pub(super) type LayerRow = (String, Option<EncodedValue>, Option<u64>);
+
+/// Every layer row of `spec`, by pack ([`LayerRow`]).
 pub(super) fn layer_rows_in_txn(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
-) -> Result<Vec<(String, Option<EncodedValue>)>> {
+) -> Result<Vec<LayerRow>> {
     let mut rows = Vec::new();
     for row in table_of(spec).iter_raw_from(dbs, txn, &pack_rows_prefix(spec.name))? {
         let (key, bytes) = row?;
@@ -39,28 +45,46 @@ pub(super) fn layer_rows_in_txn(
         else {
             continue;
         };
-        let value = rmp_serde::from_slice::<StoredRow>(&bytes)
-            .ok()
+        let stored = rmp_serde::from_slice::<StoredRow>(&bytes).ok();
+        let yes = stored
+            .as_ref()
+            .filter(|row| pack != ENGINE_PACK && row.by.is_some())
+            .map(|row| row.change);
+        let value = stored
             .map(|row| row.value)
             .filter(|value| spec.kind.decodes(value));
-        rows.push((pack, value));
+        rows.push((pack, value, yes));
     }
     Ok(rows)
 }
 
-/// The value the layer's readable rows read: on a key whose rows meet, their meet; on any other
-/// key, the engine pack's row, else the first.
+/// The pack whose readable row the newest owner's yes wrote in an installed pack's layer, among
+/// `rows` (RULING L1-PACK-LAYER-READ = A): the row a key that does not read met reads first.
+pub(super) fn newest_yes_pack(rows: &[LayerRow]) -> Option<String> {
+    rows.iter()
+        .filter(|(_, value, _)| value.is_some())
+        .filter_map(|(pack, _, yes)| yes.map(|change| (change, pack)))
+        .max_by_key(|(change, _)| *change)
+        .map(|(_, pack)| pack.clone())
+}
+
+/// The value the layer's readable rows read: on a key whose rows meet, their meet, so no pack
+/// loosens it; on any other key, the row of `yes_pack`, the installed pack whose row the newest
+/// owner's yes wrote ([`newest_yes_pack`]; RULING L1-PACK-LAYER-READ = A), else the engine pack's
+/// row, else the first.
 pub(in crate::setting) fn fold_layer(
     spec: &SettingSpec,
     rows: &[(String, EncodedValue)],
+    yes_pack: Option<&str>,
 ) -> Option<EncodedValue> {
     if spec.reads_met() {
         rows.iter()
             .map(|(_, value)| value.clone())
             .reduce(|met, value| spec.kind.meet(&met, &value).unwrap_or(met))
     } else {
-        rows.iter()
-            .find(|(pack, _)| pack == ENGINE_PACK)
+        yes_pack
+            .and_then(|chosen| rows.iter().find(|(pack, _)| pack == chosen))
+            .or_else(|| rows.iter().find(|(pack, _)| pack == ENGINE_PACK))
             .or_else(|| rows.first())
             .map(|(_, value)| value.clone())
     }
@@ -79,7 +103,7 @@ pub(in crate::setting) fn packs_holding_in_txn(
 ) -> Result<Vec<String>> {
     Ok(layer_rows_in_txn(dbs, txn, spec)?
         .into_iter()
-        .map(|(pack, _)| pack)
+        .map(|(pack, _, _)| pack)
         .collect())
 }
 
@@ -117,7 +141,7 @@ pub(in crate::setting) fn pack_head_act_in_txn(
     {
         return Ok(None);
     }
-    let table = shipped_table(pack, &digest)?;
+    let table = shipped_table(vault, txn, pack, &digest)?;
     let mut held: Vec<String> = head
         .proposal
         .iter()
@@ -253,14 +277,15 @@ pub(in crate::setting) fn layer_default_in_txn(
     spec: &SettingSpec,
 ) -> Result<LayerDefault> {
     let rows = layer_rows_in_txn(dbs, txn, spec)?;
-    if let Some((pack, _)) = rows.iter().find(|(_, value)| value.is_none()) {
+    if let Some((pack, _, _)) = rows.iter().find(|(_, value, _)| value.is_none()) {
         return lost(spec, pack);
     }
+    let yes_pack = newest_yes_pack(&rows);
     let readable: Vec<(String, EncodedValue)> = rows
         .into_iter()
-        .filter_map(|(pack, value)| value.map(|value| (pack, value)))
+        .filter_map(|(pack, value, _)| value.map(|value| (pack, value)))
         .collect();
-    if let Some(value) = fold_layer(spec, &readable) {
+    if let Some(value) = fold_layer(spec, &readable, yes_pack.as_deref()) {
         return Ok(LayerDefault { value, lost: None });
     }
     for row in HEADS.iter_raw_from(dbs, txn, &[])? {
@@ -292,15 +317,21 @@ pub(super) fn lost(spec: &SettingSpec, pack: &str) -> Result<LayerDefault> {
     })
 }
 
-/// The bytes of `pack`'s table whose digest is `digest` where this build ships it: the `engine`
-/// pack's own defaults (stage 7c-3c). `None` for any other table.
+/// The bytes of `pack`'s table whose digest is `digest` where this install holds it: the `engine`
+/// pack's own defaults, which this build ships (stage 7c-3c), or the table an installed pack's
+/// Active source carries (pass 34, 3.2; row L1). `None` for any other table.
 ///
 /// # Errors
 ///
-/// A key whose default does not encode.
-pub(super) fn shipped_table(pack: &str, digest: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+/// A key whose default does not encode; storage errors.
+pub(super) fn shipped_table(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pack: &str,
+    digest: &[u8; 32],
+) -> Result<Option<Vec<u8>>> {
     if pack != ENGINE_PACK {
-        return Ok(None);
+        return super::installed::installed_table(vault, txn, pack, digest);
     }
     let defaults = engine_pack_defaults()?;
     if defaults_digest(pack, &defaults).into_bytes() != *digest {

@@ -228,6 +228,7 @@ pub mod gpu_job;
 pub mod gpu_line;
 pub mod ingest;
 pub mod job_dispatch;
+pub mod job_history;
 pub mod job_workload;
 pub mod linkedin_connector;
 pub mod linkedin_lead_preload;
