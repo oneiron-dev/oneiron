@@ -951,3 +951,69 @@ fn a_cohort_block_holds_two_arms_of_each_rule_and_reads_no_room() {
         .collect();
     assert_ne!(first, second, "another seed moves a block");
 }
+
+/// The stored period digest keeps its bytes when it moves to the fingerprint
+/// door's legacy purpose (HASH-ROUTE-GPU-LINE-STORED = A).
+#[test]
+fn the_economic_digest_keeps_its_recipe() {
+    use oneiron::gpu_line::{AllowanceTable, FamilyFloor, PeriodAllocation, SeatAtMint};
+    use sha2::Digest;
+
+    #[derive(serde::Serialize)]
+    struct EconomicFields<'a> {
+        project: &'a EntityId,
+        index: u32,
+        start_ms: u64,
+        end_ms: u64,
+        line_revision: u64,
+        policy: &'a BudgetPolicy,
+        seats: &'a [SeatAtMint],
+        pinned_units: u64,
+        unpinned_units: u64,
+        floors: &'a [FamilyFloor],
+        new_idea_pool: u64,
+        reserve: (u64, u64),
+        pinned_pool: u64,
+        market_pool: u64,
+        inputs: &'a [FamilyPayoff],
+        inputs_cutoff_ms: u64,
+        tables: &'a [AllowanceTable],
+        split_remainder: u64,
+        allocation: &'a PeriodAllocation,
+    }
+
+    let lane = line(five_families(), PinnedMode::FloorPlusMarket);
+    let tallies = BTreeMap::from([(id(12), tally(1, 3, 9_000, 600))]);
+    let period = mint_period(&lane, 2, &tallies, ANCHOR_MS + 7).expect("the mint");
+    let fields = EconomicFields {
+        project: &period.project,
+        index: period.index,
+        start_ms: period.start_ms,
+        end_ms: period.end_ms,
+        line_revision: period.line_revision,
+        policy: &period.policy,
+        seats: &period.seats,
+        pinned_units: period.pinned_units,
+        unpinned_units: period.unpinned_units,
+        floors: &period.floors,
+        new_idea_pool: period.new_idea_pool,
+        reserve: period.reserve,
+        pinned_pool: period.pinned_pool,
+        market_pool: period.market_pool,
+        inputs: &period.inputs,
+        inputs_cutoff_ms: period.inputs_cutoff_ms,
+        tables: &period.tables,
+        split_remainder: period.split_remainder,
+        allocation: &period.allocation,
+    };
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"oneiron.gpu_line.period.economic:v1\n");
+    hasher.update(serde_json::to_vec(&fields).expect("a period record serializes"));
+    let recomputed: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(recomputed, economic_digest(&period));
+    assert_eq!(recomputed, period.economic_digest);
+}

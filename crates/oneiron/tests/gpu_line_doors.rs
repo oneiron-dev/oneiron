@@ -1105,3 +1105,24 @@ fn a_two_rule_mint_commits_its_cohort_seed_and_hides_it() {
     assert_eq!(stored.cohort_seed, None);
     assert_eq!(stored.cohort_seed_commit, None);
 }
+
+/// An intent's stored ask digest keeps its bytes when it moves to the
+/// fingerprint door's legacy purpose (HASH-ROUTE-GPU-LINE-STORED = A), and
+/// one ask written in two key orders digests alike.
+#[test]
+fn an_intents_ask_digest_keeps_its_recipe() {
+    use oneiron::gpu_line::IntentAsk;
+
+    let asker = EntityId::now();
+    let ask = serde_json::json!({"b": [1, {"d": true, "c": "x"}], "a": null, "e": 2.5});
+    let framed =
+        IntentAsk::new(asker, "vault.gpu.lines.set", "intent-1", &ask).expect("the ask frames");
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron lane economy intent ask v2");
+    oneiron_records::receipt::call::write_canonical(&mut hasher, &ask);
+    assert_eq!(hasher.finalize().to_hex().to_string(), framed.ask_digest());
+
+    let reordered = serde_json::json!({"e": 2.5, "a": null, "b": [1, {"c": "x", "d": true}]});
+    let reframed = IntentAsk::new(asker, "vault.gpu.lines.set", "intent-1", &reordered)
+        .expect("the reordered ask frames");
+    assert_eq!(framed.ask_digest(), reframed.ask_digest());
+}
