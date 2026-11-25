@@ -177319,12 +177319,12 @@
      "path": "src/gpu_execution_node/jobs/admission.rs",
      "purpose": "Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 6
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gpu_execution_node/jobs/end.rs",
@@ -177377,7 +177377,7 @@
      "purpose": "The job journal's records and the table of keys they build (design pass 33, 5.2 and 7.2)",
      "surface": {
       "enum": 3,
-      "fn": 19,
+      "fn": 20,
       "struct": 6
      }
     },
@@ -177426,7 +177426,7 @@
       "enum": 1,
       "fn": 9,
       "mod": 5,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -177482,6 +177482,18 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/status.rs",
+     "purpose": "The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -177493,7 +177505,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityEnded",
@@ -177508,7 +177520,7 @@
      "surface": {
       "const": 3,
       "enum": 2,
-      "fn": 29,
+      "fn": 31,
       "struct": 3,
       "trait": 1
      }
@@ -177523,7 +177535,7 @@
      "path": "src/gpu_execution_node/node_settings.rs",
      "purpose": "The node's own configuration (pass 33, `33-exec-node/DESIGN.md` section 5.2): the `[execution_node]` file…",
      "surface": {
-      "const": 11,
+      "const": 12,
       "fn": 9,
       "struct": 2
      }
@@ -186002,7 +186014,7 @@
      "path": "src/test_doors/node_jobs/parts.rs",
      "purpose": "The scripted admission, memory floor, signer, authority and stager",
      "surface": {
-      "fn": 21,
+      "fn": 24,
       "struct": 5
      }
     },
@@ -186017,7 +186029,7 @@
      "purpose": "The scripted service manager: the job units it starts and ends as a test tells it, and the end step that…",
      "surface": {
       "enum": 1,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -189033,6 +189045,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/node_job_status.rs",
+     "purpose": "Pass 33 row R4, the node's half (`33-exec-node/DESIGN.md` 7.1, 7.6 step 5, 7.9; tests T27-T33d): the node…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -189899,7 +189919,7 @@
      "path": "tests/support/mesh_machines.rs",
      "purpose": "The owner's machines, each serving over the real mesh, for tests of the protocols between two (or more) of…",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -190960,7 +190980,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191497,10 +191517,10 @@
      ]
     }
    },
-   "over_bar": 68,
+   "over_bar": 70,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2144,
-   "test_files": 591
+   "source_files": 2145,
+   "test_files": 592
   },
   "oneiron-setting-contract": {
    "files": [
