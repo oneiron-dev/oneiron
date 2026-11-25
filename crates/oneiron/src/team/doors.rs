@@ -143,6 +143,32 @@ pub struct PlanObservation {
     #[serde(default)]
     pub rung_skill: Option<SkillRevisionView>,
     pub rung_providers: Vec<ProviderPinView>,
+    /// Each knob as the spawn asked for it, read from the receipt: the
+    /// fields above are what the plan resolved, and a pin among these is
+    /// never overridden there (ARCH-0079 #seed-pin).
+    pub asked: SpawnAskObservation,
+    /// One line on what a bigger budget buys, when the best shape did not
+    /// fit; `None` when it fitted.
+    #[serde(default)]
+    pub what_more_would_buy: Option<String>,
+}
+
+/// The knobs a spawn asked for, as its plan receipt froze them: each
+/// seeded or pinned with the value asked. `None`: the asker left that knob
+/// to the planner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SpawnAskObservation {
+    /// The model, as `provider/name@revision`.
+    #[serde(default)]
+    pub model: Option<SpawnAskKnob<String>>,
+    #[serde(default)]
+    pub width: Option<SpawnAskKnob<u32>>,
+    #[serde(default)]
+    pub pattern: Option<SpawnAskKnob<CoordinationPatternView>>,
+    /// The whole spawn's hard spend cap, in lease units, before the
+    /// caller's and parent's caps narrowed it.
+    #[serde(default)]
+    pub budget_cap_units: Option<SpawnAskKnob<u64>>,
 }
 
 /// One attempt that launched: durably queued, not necessarily run. Its

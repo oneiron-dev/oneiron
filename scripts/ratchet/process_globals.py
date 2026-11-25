@@ -13,8 +13,8 @@ tests share one process, so a test-only global is exactly the seam that flakes
 (#922 bm25 diagnostics counter, #923 delete rendezvous slot).
 
 Non-test file: the same definition scripts/ratchet/check.sh uses — no `tests/`
-path component, filename is not `tests.rs`, does not end `_tests.rs` and does
-not start `tests_`. `vendor/` and `target/` are excluded.
+or `tests_*/` directory component, filename is not `tests.rs`, does not end
+`_tests.rs` and does not start `tests_`. `vendor/` and `target/` are excluded.
 
 A type ALIAS or a named wrapper STRUCT hides none of this: `type Slot =
 LazyLock<Mutex<..>>` and `struct Registry { entries: LazyLock<Mutex<..>> }` are
@@ -316,7 +316,9 @@ def source_files() -> list[Path]:
     files: list[Path] = []
     for path in sorted((REPO_ROOT / "crates").glob("*/src/**/*.rs")):
         parts = path.relative_to(REPO_ROOT).parts
-        if "tests" in parts or "vendor" in parts or "target" in parts:
+        if "vendor" in parts or "target" in parts:
+            continue
+        if any(part == "tests" or part.startswith("tests_") for part in parts[:-1]):
             continue
         name = path.name
         if name == "tests.rs" or name.endswith("_tests.rs") or name.startswith("tests_"):

@@ -155,11 +155,11 @@ def find_root(explicit: str | None = None) -> Path:
 def is_test_path(rel: str) -> bool:
     """The ratchet's non-test definition (scripts/ratchet/check.sh), inverted.
 
-    A path with a `tests/` component, or a file named `tests.rs`, `*_tests.rs` or
-    `tests_*.rs`.
+    A path with a `tests/` or `tests_*/` directory component, or a file named
+    `tests.rs`, `*_tests.rs` or `tests_*.rs`.
     """
     parts = PurePosixPath(rel).parts
-    if "tests" in parts[:-1]:
+    if any(part == "tests" or part.startswith("tests_") for part in parts[:-1]):
         return True
     name = parts[-1]
     return (
@@ -542,8 +542,8 @@ def render_top(data: dict) -> str:
         "Regenerated on main by `.github/workflows/codemap.yml`; PRs never touch it; "
         "run the generator locally only to read a fresh map.",
         "`--sizes` prints the live line-count table (never committed).",
-        "Test files follow the ratchet definition: a `tests/` path component, `tests.rs`, "
-        "`*_tests.rs` or `tests_*.rs`.",
+        "Test files follow the ratchet definition: a `tests/` or `tests_*/` directory, "
+        "`tests.rs`, `*_tests.rs` or `tests_*.rs`.",
         *legend_lines(),
         "",
         "## Workspace",

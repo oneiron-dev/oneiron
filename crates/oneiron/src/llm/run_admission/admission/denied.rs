@@ -63,29 +63,36 @@ pub enum RunDenied {
     #[error("the world's order admits no route this call walks")]
     WorldRouteNotAdmitted,
     /// The run's work is funded by an owner's agent Grant that names
-    /// `expected` (FIX 7766), and the live allocation the call would hold is
-    /// another wallet's, or one whose wallet the host did not name
-    /// (`live: None`). The call takes no hold and never falls back to that
-    /// allocation.
+    /// `expected` (FIX 7766), and the account selects no live allocation of
+    /// that wallet the call can draw on. `live` is the wallet of the
+    /// allocation the call would hold with no Grant: another wallet's, or
+    /// `None` when that one names no wallet or there is none. The call takes
+    /// no hold and never falls back to another allocation.
     #[error("the live allocation is not the funding grant's wallet")]
     AllocationWalletMismatch {
         expected: crate::federation::WalletRef,
         live: Option<crate::federation::WalletRef>,
     },
+    /// Several live allocations could hold the call and the host named none
+    /// of them (row M2-I): the call's rates price two selected units, or
+    /// two wallets' allocations serve its unit and none is walletless. The
+    /// call takes no hold; the host's next grant or close decides.
+    #[error("several allocations could fund the call and the host named none: {units:?}")]
+    AllocationAmbiguous { units: Vec<LeaseUnit> },
 }
 
 impl From<RunDenied> for LlmError {
     fn from(denied: RunDenied) -> Self {
         match denied {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
-            // No allocation of the funding grant's wallet is live: as with
-            // none at all, nothing funds the call (FIX 7766), and no budget
-            // write frees it (BUDGET-TRAP-UNTYPED-NO-SENDER, D3).
+            // No allocation of the funding grant's wallet is live, or the
+            // host named none of several (row M2-I): as with none at all,
+            // nothing funds the call (FIX 7766), and no budget write frees
+            // it (BUDGET-TRAP-UNTYPED-NO-SENDER, D3).
             RunDenied::NoAllocation
             | RunDenied::AllocationExhausted
-            | RunDenied::AllocationWalletMismatch { .. } => {
-                Self::BudgetDenied(BudgetDenied::Unfunded)
-            }
+            | RunDenied::AllocationWalletMismatch { .. }
+            | RunDenied::AllocationAmbiguous { .. } => Self::BudgetDenied(BudgetDenied::Unfunded),
             // The resident's pinned share keeps its resident and the share
             // the call needed: the owner's share write that fits it frees it.
             RunDenied::ResidentShareSpent {
