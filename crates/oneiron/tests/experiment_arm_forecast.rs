@@ -33,8 +33,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::experiment_arm::{
     ARMS_FORECAST_VERB, ARMS_LIST_VERB, ArmAdmitRequest, ArmContractAsk, ArmForecastRequest,
     ArmInvalidReason, ArmListRequest, ArmOutcome, ArmState, ArmView, CALIBRATION_BINS,
-    ExperimentArm, ForecastScoreRow, RungEnd, RungState, RunnerRef, arm_admit_as,
-    arm_forecast_as, arm_list_as,
+    ExperimentArm, ForecastScoreRow, RungEnd, RungState, RunnerRef, arm_admit_as, arm_forecast_as,
+    arm_list_as,
 };
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, WalletRef};
 use oneiron::gpu_line::{
@@ -505,8 +505,12 @@ fn an_invalid_rung_leaves_its_forecast_unresolved() {
     let invalid = fixture.admit(lane, family, 2, "invalid");
     let open = fixture.admit(lane, family, 3, "open");
     let promoted = fixture.admit(lane, family, 4, "promoted");
-    for (arm, pass_per_mille) in [(&killed, 300), (&invalid, 900), (&open, 500), (&promoted, 800)]
-    {
+    for (arm, pass_per_mille) in [
+        (&killed, 300),
+        (&invalid, 900),
+        (&open, 500),
+        (&promoted, 800),
+    ] {
         fixture
             .forecast(None, &forecast_ask("forecast", arm, pass_per_mille))
             .unwrap_or_else(|error| panic!("{}: {error:?}", arm.title));
@@ -520,7 +524,12 @@ fn an_invalid_rung_leaves_its_forecast_unresolved() {
         },
         None,
     );
-    fixture.close(promoted.id, ArmState::Succeeded, RungEnd::Promoted, Some(true));
+    fixture.close(
+        promoted.id,
+        ArmState::Succeeded,
+        RungEnd::Promoted,
+        Some(true),
+    );
 
     let rows = fixture.scores_of(lane);
     assert_eq!(rows.len(), 1, "one declared runner model: {rows:?}");
@@ -592,7 +601,10 @@ fn the_required_forecast_is_the_arms_own_runner() {
         .forecast
         .clone()
         .expect("the rung holds the forecast");
-    assert_eq!(forecast.runner, arm.runner, "the author is the arm's runner");
+    assert_eq!(
+        forecast.runner, arm.runner,
+        "the author is the arm's runner"
+    );
     assert_eq!(forecast.runner.actor, Some(runner));
     assert_eq!(forecast.written_by, Some(lead), "the lead wrote it down");
     assert_eq!(forecast.contract_sha256, arm.contract.sha256);
@@ -636,7 +648,10 @@ fn a_rung_holds_one_forecast() {
     let changed_key = fixture
         .forecast(None, &forecast_ask("first", &arm, 600))
         .expect_err("the key names another ask");
-    assert_eq!(changed_key.code, MEMORY_CODE_INVALID_STATE, "{changed_key:?}");
+    assert_eq!(
+        changed_key.code, MEMORY_CODE_INVALID_STATE,
+        "{changed_key:?}"
+    );
     let changed = fixture
         .forecast(None, &forecast_ask("third", &arm, 600))
         .expect_err("a second, different forecast");

@@ -18,8 +18,8 @@ use crate::gpu_line::{
     IntentAsk, IntentStand, LineRole, claims_at_rung_in_txn, doors_caller, line_in_txn,
 };
 use crate::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory,
-    MemoryError, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult,
 };
 use crate::{EntityId, Vault};
 
@@ -124,13 +124,17 @@ fn forecast_in_txn(
     let Some(mut arm) = vault.experiment_arm_in_txn(wtxn, &request.arm)? else {
         return Err(not_found("no experiment arm has this id"));
     };
-    let caller =
-        doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_FORECAST_VERB, arm.line)?;
+    let caller = doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_FORECAST_VERB, arm.line)?;
     let line = line_in_txn(vault, wtxn, &arm.line)?
         .ok_or_else(|| not_found("the arm's GPU line is gone"))?;
     caller.require_role(&line, &[LineRole::Lead], ARMS_FORECAST_VERB)?;
     let asker = memory.actor();
-    let intent = IntentAsk::new(asker, ARMS_FORECAST_VERB, &request.intent_key, &request.ask())?;
+    let intent = IntentAsk::new(
+        asker,
+        ARMS_FORECAST_VERB,
+        &request.intent_key,
+        &request.ask(),
+    )?;
     if let IntentStand::Replayed(_) = intent.stand_in_txn(vault, wtxn)?? {
         // The ask names the arm, so the row this key wrote is this arm's.
         return Ok(ArmView::of(arm, true));

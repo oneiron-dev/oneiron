@@ -87,9 +87,9 @@ struct Tally {
 /// other lines are skipped), one per declared runner model in model order,
 /// scored once `score_after` forecasts have resolved.
 #[must_use]
-pub fn forecast_scores(
+pub fn forecast_scores<'a>(
     line: EntityId,
-    arms: impl IntoIterator<Item = &ExperimentArm>,
+    arms: impl IntoIterator<Item = &'a ExperimentArm>,
     score_after: u32,
 ) -> Vec<ForecastScoreRow> {
     let mut tallies: BTreeMap<&str, Tally> = BTreeMap::new();
