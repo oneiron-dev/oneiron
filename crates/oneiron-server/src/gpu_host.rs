@@ -191,15 +191,6 @@ pub(crate) fn job_admission(
         .clone()
 }
 
-/// Milliseconds since the Unix epoch, the clock quotes and steps read.
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 /// What a server start did with `[gpu_jobs.host_allocation]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HostAllocationAtStart {
@@ -275,6 +266,15 @@ pub(crate) fn install_host_allocation_at_start(
 pub(crate) fn refuse_managed_host_allocation(settings: &GpuJobsSettings) -> anyhow::Result<()> {
     anyhow::ensure!(settings.host_allocation.is_none(), MANAGED_HOST_ALLOCATION);
     Ok(())
+}
+
+/// Milliseconds since the Unix epoch, the clock quotes and steps read.
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// One step of every live job at `now_ms`, each with its outcome. A job whose
