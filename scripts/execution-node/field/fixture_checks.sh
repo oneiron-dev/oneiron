@@ -23,13 +23,19 @@ fixture() { # <name> <want PASS|FAIL> <log file>: the TEST line of the log again
   else echo "## FIXTURE $1 want=$2 got=${got:-none} WRONG"; WRONG=$((WRONG + 1)); fi
 }
 
-# The fake card: a driver tree, two device nodes (major 195, as the driver's) and an nvidia-smi that answers for it.
+# The fake card: a driver tree, two device nodes and an nvidia-smi that answers for it. The nodes take a character
+# major that no driver holds on this kernel (not the NVIDIA driver's 195, which a fleet host with a card has: there
+# the open would reach the real card), so an open past the permission check fails with ENXIO.
 FX=/var/lib/oneiron-fixture; UUID=GPU-00000000-0000-4000-8000-0000000f1x00
 export NVIDIA_PROC=$FX/proc NVIDIA_DEV=/dev/oneiron-fixture PATH=$FX/bin:$PATH
 mkdir -p "$NVIDIA_PROC/gpus/0000:01:00.0" "$NVIDIA_DEV" "$FX/bin"
 printf 'Model: Fixture\nGPU UUID: %s\nDevice Minor: 0\n' "$UUID" > "$NVIDIA_PROC/gpus/0000:01:00.0/information"
-[ -e "$NVIDIA_DEV/nvidia0" ] || mknod "$NVIDIA_DEV/nvidia0" c 195 0
-[ -e "$NVIDIA_DEV/nvidiactl" ] || mknod "$NVIDIA_DEV/nvidiactl" c 195 255
+major=$(awk '/^Character devices:/ { c = 1; next } /^$/ { c = 0 } c { print $1 }' /proc/devices \
+  | awk 'BEGIN { for (m = 240; m <= 254; m++) free[m] = 1 } { delete free[$1] } END { for (m = 240; m <= 254; m++) if (m in free) { print m; exit } }')
+[ -n "$major" ] || { echo "## FIXTURES rc=77 why=no-free-character-major-in-240-254"; exit 77; }
+rm -f "$NVIDIA_DEV/nvidia0" "$NVIDIA_DEV/nvidiactl"
+mknod "$NVIDIA_DEV/nvidia0" c "$major" 0 && mknod "$NVIDIA_DEV/nvidiactl" c "$major" 255
+echo "## FIXTURE-CARD major=$major (no driver) nodes=$NVIDIA_DEV"
 : > "$FX/compute-apps"
 cat > "$FX/bin/nvidia-smi" <<EOF
 #!/usr/bin/env bash

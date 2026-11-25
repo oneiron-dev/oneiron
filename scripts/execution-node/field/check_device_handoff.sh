@@ -62,7 +62,7 @@ say "## EVIDENCE card uuid=$DEVICE bus=$CARD_BUS minor=$CARD_MINOR driver=$CARD_
 uid_min=$(awk '$1 == "UID_MIN" { print $2 }' /etc/login.defs 2>/dev/null); uid_min=${uid_min:-1000}
 uid_max=$(awk '$1 == "UID_MAX" { print $2 }' /etc/login.defs 2>/dev/null); uid_max=${uid_max:-60000}
 mapfile -t OTHERS < <({ getent passwd | awk -F: -v lo="$uid_min" -v hi="$uid_max" '$3 >= lo && $3 <= hi { print $1 }'
-  printf '%s\n' "${ALSO[@]}"; } | grep -vx -- "$JOB" | sort -u)
+  [ ${#ALSO[@]} -eq 0 ] || printf '%s\n' "${ALSO[@]}"; } | grep -v '^$' | grep -vx -- "$JOB" | sort -u)
 job_gid=$(id -g "$JOB")
 say "## EVIDENCE accounts tried=[${OTHERS[*]}] job=$JOB job_gid=$job_gid"
 
