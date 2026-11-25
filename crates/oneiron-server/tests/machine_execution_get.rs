@@ -582,6 +582,12 @@ async fn owner_is_shown_each_granted_machine() -> TestResult {
     // C runs no jobs. It is reachable (A dials it on sync), and its listener
     // refuses both job protocols at the handshake: its offer and its keys are
     // unknown, with the dial's error, and its GPUs are not asked.
+    // Enrolment grants each machine sync on H alone, and a grant is the
+    // granting replica's own: A dials C on sync, and C admits A on it, only
+    // once each grants the other. The grants come after the read, so the read
+    // is asked over the job grants alone.
+    mesh.grant(A, C, &[SYNC_ALPN])?;
+    mesh.grant(C, A, &[SYNC_ALPN])?;
     let transport = a.served.transport()?;
     let sync = tokio::time::timeout(
         std::time::Duration::from_secs(30),
