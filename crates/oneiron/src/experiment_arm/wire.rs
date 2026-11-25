@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 
-use super::ExperimentArm;
+use super::{ExperimentArm, ForecastScoreRow};
 
 /// `vault.arms.get`: one arm, by its id.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -28,7 +28,8 @@ impl ArmRef {
 
 /// `vault.arms.list`: the arms the caller may read, newest first; with
 /// `line` only that line's, with `family` only that family's, and with
-/// `open_only` only the arms no rung closed.
+/// `open_only` only the arms no rung closed. The answer carries the
+/// forecast scores of the lines and families it selects.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArmListRequest {
@@ -94,6 +95,11 @@ impl ArmView {
 #[serde(deny_unknown_fields)]
 pub struct ArmList {
     pub arms: Vec<ArmView>,
+    /// The forecast scores (section 4.7) of every arm the `line` and
+    /// `family` filters select, one row per line and declared runner model;
+    /// `open_only` does not narrow them.
+    #[serde(default)]
+    pub forecast_scores: Vec<ForecastScoreRow>,
 }
 
 fn parse_id(hex: &str, what: &str) -> MemoryResult<EntityId> {

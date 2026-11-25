@@ -1,0 +1,30 @@
+{
+  "SPDisplaysDataType": [
+    {
+      "_name": "Apple M4 Max",
+      "spdisplays_mtlgpufamilysupport": "spdisplays_metal4",
+      "spdisplays_vendor": "sppci_vendor_Apple",
+      "sppci_bus": "spdisplays_builtin",
+      "sppci_cores": "40",
+      "sppci_device_type": "spdisplays_gpu",
+      "sppci_model": "Apple M4 Max"
+    }
+  ],
+  "SPHardwareDataType": [
+    {
+      "_name": "hardware_overview",
+      "activation_lock_status": "activation_lock_disabled",
+      "boot_rom_version": "20457.60.77.501.2",
+      "chip_type": "Apple M4 Max",
+      "machine_model": "Mac16,5",
+      "machine_name": "MacBook Pro",
+      "model_number": "Z000000000/A",
+      "number_processors": "proc 16:0:12:4",
+      "os_loader_version": "20457.60.77.501.2",
+      "physical_memory": "64 GB",
+      "platform_UUID": "00000000-0000-4000-8000-00000000A001",
+      "provisioning_UDID": "00000000-000A000000000001",
+      "serial_number": "XXXXXXXXXX"
+    }
+  ]
+}
