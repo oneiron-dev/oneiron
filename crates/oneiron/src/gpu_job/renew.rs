@@ -11,7 +11,7 @@ use crate::llm::run_admission::{CallOutcome, DeclaredMaximum, PaidConnector, Run
 
 use super::{
     GpuChunk, GpuConnectorError, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
-    GpuJobState, GpuJobStepReport, GpuOffer, GpuResourceStatus, GpuTermination, seconds,
+    GpuJobState, GpuJobStepReport, GpuOffer, GpuTermination, seconds,
 };
 
 /// The default of `jobs.sessions.renew_lead_secs`: five minutes of the chunk's run time.
@@ -61,10 +61,10 @@ impl Vault {
                 return Ok(job);
             }
             // A next chunk this host holds no permit for (its admission was lost at a restart)
-            // is never sent: unsent, it closes here and the session ends at the end of its
-            // chunk; maybe sent, it ends with the run.
+            // is never sent again. It closes at zero only when its provider holds nothing under
+            // its key, so it was never sent; one that may have gone out ends with the run.
             if !permits.holds_chunk(&job.id, &next.idempotency_key) {
-                if next.dispatched {
+                if next.dispatched || connector.find(&next.idempotency_key)?.is_some() {
                     return Ok(job);
                 }
                 return self.close_gpu_renewal(job, permits, now_ms);
@@ -73,12 +73,9 @@ impl Vault {
                 return self.send_gpu_renewal(job, permits, connector, now_ms);
             };
             // Read at each step, so a provider whose send got no answer sends the same chunk
-            // again inside its window. A chunk the run has not reached that ended with nothing
-            // run (a refusal learned on a later send) settles at zero now; any other answer is
-            // the current chunk's to tell.
-            if let Ok(GpuResourceStatus::Exited { used_secs: 0 }) = connector.status(&resource) {
-                return self.close_gpu_renewal(job, permits, now_ms);
-            }
+            // again inside its window. What it says is the current chunk's to tell: that chunk's
+            // end, or the run's passage into this one, which also ends this one if it never ran.
+            let _ = connector.status(&resource);
             return Ok(job);
         }
         let Some(active) = job.chunk() else {
@@ -257,8 +254,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// An invariant violation when the job holds no open next chunk: the provider's run went on
-    /// under a chunk this job never sent. Nothing is written.
+    /// An invariant violation when the job holds no next chunk: the provider's run went on under
+    /// a chunk this job never sent. Nothing is written.
     pub(super) fn pass_gpu_slice(
         &self,
         mut job: GpuJob,
@@ -269,19 +266,19 @@ impl Vault {
         now_ms: u64,
     ) -> Result<(GpuJob, GpuJobStepReport), GpuJobError> {
         let id = job.id;
-        let open = job
-            .renewal
-            .as_ref()
-            .is_some_and(|next| next.billed_secs.is_none());
-        if !open {
-            return Err(crate::Error::InvariantViolation(
-                "a GPU session's run went on under a chunk the job does not hold",
-            )
-            .into());
-        }
         let mut next = job.renewal.take().ok_or(crate::Error::InvariantViolation(
-            "a GPU session holds its next chunk",
+            "a GPU session's run went on under a chunk the job does not hold",
         ))?;
+        // The run reached a next chunk this job had closed (a restart that could not admit it
+        // again, after its send had gone out): it runs on unpaid, as any chunk whose admission
+        // was lost, and its permit, if any, settled already.
+        if next.billed_secs.is_some() {
+            tracing::warn!(job = %id.to_hex(), key = %next.idempotency_key, "gpu session: the run passed into a next chunk the job had closed; it runs unpaid");
+            next.billed_secs = None;
+            next.settled_units = None;
+            next.unbilled_secs = 0;
+            next.admission_lost = true;
+        }
         if next.resource.is_none() {
             next.resource = connector.find(&next.idempotency_key)?;
             next.dispatched = true;

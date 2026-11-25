@@ -589,28 +589,3 @@ fn a_cancel_that_meets_a_passed_boundary_ends_the_next_chunk() {
         vec![(CHUNK_SECS + OVERHEAD_SECS) * UNIT_COST, 25 * UNIT_COST]
     );
 }
-
-#[test]
-fn a_next_chunk_that_ended_unrun_releases_its_hold_at_once() {
-    let rig = rig();
-    let (job, first, next) = renewed(&rig);
-    // A later read finds the node refused the next chunk: it ended with nothing run.
-    rig.gpu.running(&first, CHUNK_SECS - 200);
-    rig.gpu
-        .reports(&next, GpuResourceStatus::Exited { used_secs: 0 });
-    rig.step(&job.id);
-    let stored = rig.job(&job.id);
-    let held = stored
-        .renewal
-        .as_ref()
-        .expect("the next chunk stays on the job");
-    assert_eq!((held.billed_secs, held.settled_units), (Some(0), Some(0)));
-    assert_eq!(
-        stored.state,
-        GpuJobState::Running,
-        "the current chunk runs on"
-    );
-    assert_eq!(rig.settled().iter().sum::<u64>(), 0);
-    rig.step(&job.id);
-    assert_eq!(rig.gpu.called("renew"), 1, "no second renewal");
-}

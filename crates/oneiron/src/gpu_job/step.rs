@@ -104,20 +104,25 @@ impl Vault {
         renewal: &GpuJobRenewal<'_>,
         now_ms: u64,
     ) -> Result<GpuJobStepReport, GpuJobError> {
-        let mut job = self.load_gpu_job(id)?;
+        let job = self.load_gpu_job(id)?;
         let admission = match job.chunk() {
             Some(chunk) => (renewal.admission)(&chunk.quote),
             None => return Err(crate::Error::InvariantViolation("a GPU job holds a chunk").into()),
         };
         let renews = job.state.is_live() && job.renews();
-        // An admission lost again is written, so the step never sends that chunk; a lost write
-        // leaves it to the next step.
-        if renews && take_up_gpu_renewal(&mut job, offer, renewal, permits) {
-            self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?;
-        }
+        // The step takes the current chunk up first, so after a restart it has the first claim
+        // on the funds; the next chunk takes up what is left.
         let report = self.gpu_job_step(id, offer, &admission, permits, connector, now_ms)?;
         if renews && report.state == GpuJobState::Running {
-            let job = self.load_gpu_job(id)?;
+            let mut job = self.load_gpu_job(id)?;
+            // An admission lost again is written, so that chunk is never sent; a lost write
+            // leaves it to the next step.
+            if take_up_gpu_renewal(&mut job, offer, renewal, permits)
+                && !self
+                    .with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?
+            {
+                return Ok(report);
+            }
             self.renew_gpu_session(job, offer, renewal, permits, connector, now_ms)?;
         }
         Ok(report)

@@ -417,6 +417,10 @@ impl VaultMachineConnector {
                     Some(DispatchClose::Revoked { .. } | DispatchClose::Ended)
                 );
             if read_only {
+                // A revoke still stops it: it may be the slice the run is in by now.
+                if self.revoked(&row, &signed.submit)?.is_some() {
+                    return self.stop_and_read(&row);
+                }
                 return self.read_closed_renewal(&row, &signed);
             }
             return self.stop_and_read(&row);
