@@ -23,6 +23,17 @@ const LINES: SideTable<EntityId, GpuLine, Named> = SideTable::new(&side_table::G
 const PERIODS: SideTable<(EntityId, u32), GpuLinePeriod, Named> =
     SideTable::new(&side_table::GPU_LINE_PERIOD);
 
+/// Whether a stored `GPU_LINE_PERIOD` value holds a cohort seed still sealed at `now_ms`: the
+/// get view withholds the seed until the period's `end_ms` (`doors::view_in_txn`), and the
+/// whole-vault export withholds the whole row until then (Engine ANSWER LE-ARCHIVE-PERIOD-SEED
+/// = A). Bytes that do not read as a period count as sealed.
+pub(crate) fn period_row_seals_seed(value: &[u8], now_ms: u64) -> bool {
+    match PERIODS.decode_value(value) {
+        Ok(period) => period.cohort_seed.is_some() && now_ms < period.end_ms,
+        Err(_) => true,
+    }
+}
+
 impl PeriodAllocation {
     /// The host allocation the installer installs for this period.
     #[must_use]

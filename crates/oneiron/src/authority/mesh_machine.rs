@@ -275,15 +275,31 @@ impl Vault {
     /// replica's clock stops while its vault is closed or its host sleeps, so
     /// a replica behind the home would read a fresh pairing as not yet begun
     /// and refuse every bind on it until its own clock caught up
-    /// (MESH-PAIRING-REPLICA-CLOCK = A, Engine 25 Nov 11:55).
+    /// (MESH-PAIRING-REPLICA-CLOCK = A, Engine 25 Nov 11:55). For the same
+    /// reason its end is judged no earlier than the newest time a live owner
+    /// signed into the fold, so a replica that slept does not keep a pairing
+    /// past its expiry for the time it was closed (MESH-REPLICA-CLOCK-LIFETIMES
+    /// = A, Engine 25 Nov 19:45). The mesh grants this vault minted itself
+    /// stay on its own clock.
     fn mesh_pairing_live(
         &self,
         fold: &AuthorityFold,
         txn: &heed::RoTxn<'_>,
         claims: &MeshAuthorityClaims,
     ) -> Result<bool> {
-        let now = self.instant_in_txn(txn)?.secs();
-        Ok(mesh_pairing_standing(fold, claims).is_some_and(|pair| now < pair.expires_at))
+        let Some(pair) = mesh_pairing_standing(fold, claims) else {
+            return Ok(false);
+        };
+        if self.instant_in_txn(txn)?.secs() >= pair.expires_at {
+            return Ok(false);
+        }
+        let signed = super::readonly_fold::newest_owner_signed_ts_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            fold,
+        )?;
+        Ok(signed.is_none_or(|signed| signed < pair.expires_at))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(

@@ -78,6 +78,17 @@ pub(crate) async fn start_desktop_workers(
     // Read before any worker starts, so a candidate file that does not read
     // stops the start with nothing running (FIX 7386).
     let publisher_candidates = config.failure_signals.publisher_candidates()?;
+    // `[gpu_jobs.host_allocation]` funds the host account at each start, before any GPU job is
+    // started or taken up again (R6-VAULT-MACHINE-FUNDING = A). A refusal stops the start, and
+    // the GPU pool's poller, already running, stops with it: a dropped handle would leave it
+    // polling (review of #10520).
+    if let Err(refused) = crate::gpu_host::install_host_allocation_at_start(&sync_server) {
+        if let Some(poller) = gpu_poller {
+            poller.abort();
+            let _ = poller.await;
+        }
+        return Err(refused);
+    }
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(config);
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With

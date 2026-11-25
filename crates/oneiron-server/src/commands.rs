@@ -245,13 +245,48 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
 /// The command is intentionally not an HTTP route: possession of the host's
 /// local vault and issuer key is the admission. No bearer-only credential is
 /// revived and no root slip or signing key is printed.
+///
+/// It prints the owner's pairing link, which a client redeems at
+/// `/v1/core/pairing/redeem`. With `--redeem`, this process redeems the link
+/// itself at once with a fresh connection key, as `token read` does, and
+/// prints the owner's own credential in `token read`'s form instead: for an
+/// owner at the box with no client to redeem it. The link is then never
+/// printed, and the slip is logged and revoked by its id like every paired
+/// slip.
 pub fn token_bootstrap(args: TokenBootstrapArgs) -> anyhow::Result<()> {
-    let link = token_bootstrap_link(&args)?;
-    println!("{link}");
+    let BootstrapLink {
+        origin,
+        owner,
+        vault,
+        issuer,
+        link,
+    } = issue_bootstrap_link(&args)?;
+    let owner = owner.to_hex();
+    let printed = if args.redeem {
+        serde_json::to_string_pretty(&redeem_link_here(&vault, &issuer, &link, &owner, "human")?)?
+    } else {
+        oneiron::authority::format_pinned_pairing_link(
+            &origin,
+            &link.code,
+            &owner,
+            link.pin.as_ref(),
+        )
+    };
+    println!("{printed}");
     Ok(())
 }
 
-fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
+/// The first owner's pairing link, issued on the stopped vault, with what
+/// redeeming it here needs.
+struct BootstrapLink {
+    origin: String,
+    owner: oneiron::EntityId,
+    vault: oneiron::Vault,
+    issuer: oneiron::authority::HostSlipIssuer,
+    link: oneiron::authority::PairingLink,
+}
+
+fn issue_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<BootstrapLink> {
     anyhow::ensure!(
         !args.serve.managed_by_hypnos,
         "managed vaults pair through their supervisor; local bootstrap is self-host only"
@@ -303,12 +338,13 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             comm: None,
         },
     )?;
-    Ok(oneiron::authority::format_pinned_pairing_link(
-        &origin,
-        &link.code,
-        &owner.to_hex(),
-        link.pin.as_ref(),
-    ))
+    Ok(BootstrapLink {
+        origin,
+        owner,
+        vault,
+        issuer,
+        link,
+    })
 }
 
 /// What `token read` and `token agent` print: the credential in the SDK's
@@ -685,7 +721,6 @@ fn mint_paired_credential(
     lifetime_secs: u64,
     comm: Option<oneiron::agent_dispatch::CommReach>,
 ) -> anyhow::Result<PairedCredential> {
-    use ed25519_dalek::{Signer, SigningKey};
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
     let pairing_principal = oneiron::authority::PairingPrincipal {
@@ -710,6 +745,21 @@ fn mint_paired_credential(
             pairing_principal,
         )?,
     };
+    redeem_link_here(vault, issuer, &link, principal, actor_class)
+}
+
+/// Redeems `link` in this process at once with a fresh connection key, for
+/// `principal` as `actor_class`: the doors `/v1/core/pairing/redeem` uses,
+/// on the stopped vault. The credential holds the key's seed, so it is
+/// printed once and kept by the caller.
+fn redeem_link_here(
+    vault: &oneiron::Vault,
+    issuer: &oneiron::authority::HostSlipIssuer,
+    link: &oneiron::authority::PairingLink,
+    principal: &str,
+    actor_class: &str,
+) -> anyhow::Result<PairedCredential> {
+    use ed25519_dalek::{Signer, SigningKey};
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
     let transcript = oneiron::authority::pairing_binding_transcript_pinned(
