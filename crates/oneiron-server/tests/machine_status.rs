@@ -93,6 +93,7 @@ fn node_answer() -> NodeAnswer {
         swept: true,
         boot_id: "boot-7".to_owned(),
         engine_version: "0.0.0-test".to_owned(),
+        readiness: None,
     }
 }
 
