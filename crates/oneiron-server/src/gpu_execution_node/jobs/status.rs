@@ -189,7 +189,9 @@ impl NodeJobs {
     /// checks the digest again against its stored receipt.
     #[must_use]
     pub fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
-        let digest = {
+        // The holder's id names the payload: a renewed chunk's key reads its
+        // run's (row W1).
+        let (digest, holder_id) = {
             let mut book = self.lock();
             let journal = match answering(&mut book) {
                 Ok(journal) => journal,
@@ -210,13 +212,13 @@ impl NodeJobs {
                 return not_fetchable(format!("outputs_not_hashed: {:?}", known.outputs));
             };
             match outputs.iter().find(|output| output.name == name) {
-                Some(output) if output.returnable => output.clone(),
+                Some(output) if output.returnable => (output.clone(), known.id.clone()),
                 Some(_) => return not_fetchable(format!("not_returnable: {name}")),
                 None => return not_fetchable(format!("not_an_output: {name}")),
             }
         };
         let bound = self.parts().admission.job_settings().returnable_bound();
-        let payload_dir = super::JobKeyId::for_key(key).payload_dir(&self.paths().work_dir);
+        let payload_dir = holder_id.payload_dir(&self.paths().work_dir);
         match read_output(&payload_dir, &digest, bound) {
             Ok(bytes) => JobStatusAnswer::Output { bytes },
             Err(why) => not_fetchable(why),

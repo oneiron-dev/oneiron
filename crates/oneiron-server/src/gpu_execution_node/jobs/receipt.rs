@@ -19,7 +19,8 @@ use super::job_unit::JobKeyId;
 use super::journal::{KeyLaunch, NodeKey};
 use super::journal_file::JournalEpoch;
 use crate::gpu_execution_node::wire::{
-    JobEnd, JobReceipt, JobState, Occupied, ReceiptSlice, SignedJobReceipt,
+    DeviceRelease, JobEnd, JobReceipt, JobState, Occupied, OutputsState, ReceiptSlice,
+    SignedJobReceipt,
 };
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
@@ -93,19 +94,28 @@ pub fn receipt_of(
 /// chunk.
 ///
 /// The chunk's paid slice runs from the end of the chunk before (the launch,
-/// for chunk 0) to its own cutoff, and is cut at the run's end:
-/// - a slice the run went past, while a later chunk was paid, ends
-///   `Continued` with all its seconds;
-/// - the slice the run ends in carries the run's own end and its seconds up
-///   to the end;
-/// - a slice the run never reached ends with the run's end, never started,
-///   and bills nothing; while the run lives it is `Accepted`;
-/// - a live run's current slice carries the run's state and its seconds so
+/// for chunk 0) to its own cutoff. A slice moves only on what the node
+/// proved of the run, never on the clock alone: the run's end, once its end
+/// record is applied, else `alive_at_boot_ns`, the latest time the node saw
+/// the run's unit alive (its tick file, at least the launch; a lost run's
+/// last tick). So:
+/// - a slice the run was proved to go past ends `Continued` with all its
+///   seconds, and nothing of the run's end, release or outputs;
+/// - the slice the run ends in carries the run's end, release and outputs and
+///   its seconds up to the end; for a lost run, its end and no seconds;
+/// - a slice the run was not proved to reach is `Accepted` while the run
+///   lives and `Withdrawn` once it ended: never started, nothing billed;
+/// - the live run's current slice carries the run's state and its seconds so
 ///   far.
+///
+/// Its `seq` is the journal's sequence times four plus the slice's progress
+/// (0 not reached, 1 current, 2 ended), so a later receipt of a chunk key has
+/// a higher one, also when only the proof moved.
 #[must_use]
 pub fn chunk_receipt_of(
     first: &NodeKey,
     chunk: u32,
+    alive_at_boot_ns: u64,
     machine: oneiron::EntityId,
     epoch: JournalEpoch,
     now: &ReceiptClock,
@@ -132,24 +142,26 @@ pub fn chunk_receipt_of(
         .renewals
         .get(place)
         .map_or(launch.cutoff_boot_ns, |next| next.from_boot_ns);
-    // Where the run is: its end, or, while it lives in the launch's boot,
-    // now. `None` when that cannot be read (a lost run, another boot).
-    let run_at = match (first.state, &first.end) {
-        (JobState::Ended, Some(JobEnd::Lost { .. })) => None,
-        (JobState::Ended, _) => first.end_boot_ns,
-        _ if now.boot_id == launch.boot_id => Some(now.boot_ns),
-        _ => None,
-    };
     let ended = first.state == JobState::Ended;
+    let lost = matches!(first.end, Some(JobEnd::Lost { .. }));
+    // How far the run is proved to have gone: its end, a lost run's last
+    // tick, or the latest tick of a live one.
+    let proved = match &first.end {
+        Some(JobEnd::Lost {
+            last_tick_boot_ns, ..
+        }) => *last_tick_boot_ns,
+        _ if ended => first.end_boot_ns.unwrap_or(launch.launch_boot_ns),
+        _ => alive_at_boot_ns.max(launch.launch_boot_ns),
+    };
+    // A renewal's slice begins only once the run is proved past its start: a
+    // run that ended on a paid boundary used none of the next chunk.
+    let began = place == 0 || proved > from_boot_ns;
+    let passed = !last && proved > to_boot_ns;
     let mut view = first.clone();
     view.id = JobKeyId::for_key(&key);
     view.key = key;
     view.submit = submit;
     view.renewals = Vec::new();
-    // A renewal's slice begins only once the run is past its start: a run
-    // that ended on a paid boundary used none of the next chunk.
-    let began = place == 0 || run_at.is_none_or(|at| at > from_boot_ns);
-    let passed = !last && run_at.is_some_and(|at| at > to_boot_ns);
     view.launch = began.then(|| KeyLaunch {
         launch_boot_ns: from_boot_ns,
         cutoff_boot_ns: to_boot_ns,
@@ -158,18 +170,37 @@ pub fn chunk_receipt_of(
             .saturating_add(from_boot_ns.saturating_sub(launch.launch_boot_ns) / 1_000_000),
         ..launch.clone()
     });
-    if passed {
+    let progress = if passed {
         view.state = JobState::Ended;
         view.end = Some(JobEnd::Continued);
         view.end_boot_ns = Some(to_boot_ns);
-    } else if !began && !ended {
-        view.state = JobState::Accepted;
-        view.end = None;
-        view.end_boot_ns = None;
+        2
     } else if !began {
+        view.state = if ended {
+            JobState::Ended
+        } else {
+            JobState::Accepted
+        };
+        view.end = ended.then_some(JobEnd::Withdrawn);
         view.end_boot_ns = None;
+        if ended { 2 } else { 0 }
+    } else if ended {
+        if lost {
+            view.end_boot_ns = None;
+        }
+        2
+    } else {
+        1
+    };
+    // The run's release, outputs and other processes belong to the slice
+    // that holds its end alone.
+    if passed || !began {
+        view.release = DeviceRelease::NotHeld;
+        view.outputs = OutputsState::Pending;
+        view.other_compute_pids = Vec::new();
     }
     let mut receipt = receipt_of(&view, machine, epoch, now);
+    receipt.seq = first.seq.saturating_mul(4).saturating_add(progress);
     receipt.slice = Some(ReceiptSlice {
         first_key: first.key.clone(),
         chunk,

@@ -210,7 +210,14 @@ impl NodeJobs {
         let receipt = if key.renewals.is_empty() {
             Some(receipt_of(key, parts.machine, epoch, now))
         } else {
-            chunk_receipt_of(key, 0, parts.machine, epoch, now)
+            chunk_receipt_of(
+                key,
+                0,
+                self.last_tick_boot_ns(key),
+                parts.machine,
+                epoch,
+                now,
+            )
         };
         let Some(receipt) = receipt else {
             return busy();
@@ -227,7 +234,15 @@ impl NodeJobs {
         epoch: super::JournalEpoch,
         now: &ReceiptClock,
     ) -> JobAnswer {
-        match chunk_receipt_of(first, chunk, self.parts().machine, epoch, now) {
+        let alive_at_boot_ns = self.last_tick_boot_ns(first);
+        match chunk_receipt_of(
+            first,
+            chunk,
+            alive_at_boot_ns,
+            self.parts().machine,
+            epoch,
+            now,
+        ) {
             Some(receipt) => self.signed_answer(first, receipt),
             None => busy(),
         }
@@ -301,6 +316,9 @@ impl NodeJobs {
             Ok(journal) => journal,
             Err(answer) => return answer,
         };
+        if let Some(answer) = Self::chunk_key_refusal(journal, &reserve.key, peer) {
+            return answer;
+        }
         if let Some(known) = journal.table().get(&reserve.key) {
             if known.issuer != peer {
                 return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
@@ -377,6 +395,9 @@ impl NodeJobs {
             Ok(journal) => journal,
             Err(answer) => return answer,
         };
+        if let Some(answer) = Self::chunk_key_refusal(journal, key, peer) {
+            return answer;
+        }
         let state = match journal.table().get(key) {
             Some(known) if known.issuer != peer => {
                 return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
@@ -421,6 +442,9 @@ impl NodeJobs {
                 Ok(journal) => journal,
                 Err(answer) => return answer,
             };
+            if let Some(answer) = Self::chunk_key_refusal(journal, &key, peer) {
+                return answer;
+            }
             let known = journal.table().get(&key).cloned();
             // A key that already took effect is answered first: the
             // issuer, the pin and the slot must be the same.
@@ -523,6 +547,9 @@ impl NodeJobs {
     /// longer take (it ended, it is ending, or its cutoff is too near) is
     /// written down as the chunk key's `Refused` end: it continues nothing
     /// and bills nothing. A renewal sent again answers the chunk's receipt.
+    /// Two conditions that will pass answer `Busy` and write nothing: the
+    /// scope has not yet taken the run's last renewal, or the node's fold
+    /// does not hold the issuer's authority heads yet.
     fn renew(&self, peer: EntityId, first: &str, signed: SignedJobSubmit) -> JobAnswer {
         let key = signed.submit.key.clone();
         let (answer, armed) = {
@@ -538,7 +565,13 @@ impl NodeJobs {
                 if holder.issuer != peer {
                     return JobAnswer::Refused(JobRefusal::NotTheKeysIssuer);
                 }
-                if holder.key != first {
+                let same_terms = holder.key == first
+                    && holder.pin_digest == signed.submit.pin.digest().ok()
+                    && holder
+                        .reserve
+                        .as_ref()
+                        .is_some_and(|reserve| reserve.slot == signed.submit.slot);
+                if !same_terms {
                     return JobAnswer::Refused(JobRefusal::KeyConflict);
                 }
                 let holder = holder.clone();
@@ -554,6 +587,40 @@ impl NodeJobs {
             if let Err(not_live) = self.parts().admission.issuer_live(peer) {
                 return JobAnswer::Refused(not_live.refusal);
             }
+            // The run's own end first: a workload that exited before this
+            // tick read its end takes no renewal.
+            let live = journal
+                .table()
+                .get(first)
+                .filter(|holder| holder.issuer == peer && holder.renewable())
+                .cloned();
+            if let Some(live) = live
+                && self.read_unit_end(&mut book, &live, &now).is_err()
+            {
+                return busy();
+            }
+            let pending = book.journal.as_ref().and_then(|journal| {
+                let holder = journal.table().get(first)?;
+                let cutoff = holder.launch.as_ref()?.cutoff_boot_ns;
+                (!holder.renewals.is_empty() && book.armed_cutoffs.get(first) != Some(&cutoff))
+                    .then_some(())
+            });
+            if pending.is_some() {
+                // The scope has not taken the last renewal yet: until it
+                // does, the run's armed cutoff is earlier than the journal's.
+                return busy();
+            }
+            if !self
+                .parts()
+                .authority
+                .folded(&signed.submit.authority_heads)
+            {
+                return busy();
+            }
+            let journal = match admitting(&mut book) {
+                Ok(journal) => journal,
+                Err(answer) => return answer,
+            };
             let holder = journal
                 .table()
                 .get(first)
@@ -654,8 +721,13 @@ impl NodeJobs {
             return Err("continues_ended".to_owned());
         }
         let from_boot_ns = launch.cutoff_boot_ns;
-        let cutoff_boot_ns =
-            from_boot_ns.saturating_add(submit.maximum_secs.saturating_mul(NANOS_PER_SEC));
+        let Some(cutoff_boot_ns) = submit
+            .maximum_secs
+            .checked_mul(NANOS_PER_SEC)
+            .and_then(|chunk_ns| from_boot_ns.checked_add(chunk_ns))
+        else {
+            return Err("session_max_reached".to_owned());
+        };
         let longest_ns = session_max_secs.saturating_mul(NANOS_PER_SEC);
         if cutoff_boot_ns.saturating_sub(launch.launch_boot_ns) > longest_ns {
             return Err("session_max_reached".to_owned());
@@ -681,12 +753,26 @@ impl NodeJobs {
         }
     }
 
+    /// A request on a path that takes no chunk (`Reserve`, `Release`, a
+    /// submit without `continues`) that names a renewed chunk's key (row
+    /// W1): refused as another issuer's key, or as a key conflict, with
+    /// nothing journaled.
+    fn chunk_key_refusal(journal: &JobJournal, key: &str, peer: EntityId) -> Option<JobAnswer> {
+        let (holder, _) = journal.table().chunk(key)?;
+        Some(JobAnswer::Refused(if holder.issuer == peer {
+            JobRefusal::KeyConflict
+        } else {
+            JobRefusal::NotTheKeysIssuer
+        }))
+    }
+
     /// The stop of a key (design 7.2 rules 1 and 3). Before the launch
     /// commit it closes the key as `Withdrawn`, also a key the node never
     /// saw; after it the key moves to `Ending` and its unit is stopped. An
-    /// ended key answers its receipt. A renewed chunk's key (row W1) stops
-    /// the run it continues, unless its own slice is already over, which
-    /// answers its receipt and changes nothing.
+    /// ended key answers its receipt. A renewed run's key (row W1), its
+    /// first key or a chunk's, stops the run it holds, unless its own slice
+    /// is already over, which answers its receipt and changes nothing. The
+    /// stop is decided and journaled before any receipt is signed.
     #[must_use]
     pub fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         let mut book = self.lock();
@@ -695,24 +781,42 @@ impl NodeJobs {
             Ok(journal) => journal,
             Err(answer) => return answer,
         };
-        if let Some((holder, chunk)) = journal.table().chunk(key) {
+        let sliced = journal.table().chunk(key).or_else(|| {
+            journal
+                .table()
+                .get(key)
+                .filter(|known| !known.renewals.is_empty())
+                .map(|known| (known, 0))
+        });
+        if let Some((holder, chunk)) = sliced {
             if holder.issuer != peer {
                 return JobStatusAnswer::Refused(JobRefusal::NotTheKeysIssuer);
             }
             let holder = holder.clone();
             let epoch = journal.epoch();
-            let current = match self.chunk_answer(&holder, chunk, epoch, &now) {
-                JobAnswer::Receipt(signed) => signed,
-                _ => return status_busy(),
-            };
-            if current.receipt.state == JobState::Ended {
-                return JobStatusAnswer::Known(current);
-            }
-            if holder.renewable()
-                && let Err(error) = self.begin_ending(journal, &holder, EndingCause::Stopped, &now)
-            {
-                log_write_error(key, &error);
-                return status_busy();
+            let slice_over = chunk_receipt_of(
+                &holder,
+                chunk,
+                self.last_tick_boot_ns(&holder),
+                self.parts().machine,
+                epoch,
+                &now,
+            )
+            .is_some_and(|slice| slice.state == JobState::Ended);
+            if !slice_over {
+                match holder.state {
+                    JobState::Launching | JobState::Running => {
+                        if let Err(error) =
+                            self.begin_ending(journal, &holder, EndingCause::Stopped, &now)
+                        {
+                            log_write_error(key, &error);
+                            return status_busy();
+                        }
+                    }
+                    // A stop the service manager did not take: ask again.
+                    JobState::Ending => self.stop_unit(&holder.key),
+                    _ => {}
+                }
             }
             let Some(holder) = journal.table().get(&holder.key).cloned() else {
                 return status_busy();

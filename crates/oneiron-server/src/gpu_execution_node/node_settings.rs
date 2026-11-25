@@ -477,6 +477,7 @@ impl ExecutionNodeSettings {
                     network: template.network.clone(),
                     returnable: template.returnable.clone(),
                     require: template.require.clone(),
+                    kind: template.kind,
                 })
             })
             .collect()
@@ -558,7 +559,12 @@ impl NodeTemplate {
     ///
     /// The template does not encode.
     pub fn digest(&self) -> Result<String, String> {
-        let bytes = oneiron::llm::canonical_json_bytes(self)
+        // A session's default longest run, stated or not, is one template.
+        let mut canonical = self.clone();
+        if canonical.session_max_secs == Some(SESSION_MAX_SECS_DEFAULT) {
+            canonical.session_max_secs = None;
+        }
+        let bytes = oneiron::llm::canonical_json_bytes(&canonical)
             .map_err(|error| format!("template_unencodable: {error}"))?;
         Ok(ContentHash::of(&bytes).to_hex())
     }

@@ -476,7 +476,11 @@ impl KeyTable {
                 next.state = JobState::Held;
             }
             (JournalEvent::Accepted { submit }, Some(JobState::Held)) => {
-                if submit.submit.key != record.key || submit.submit.issuer != record.issuer {
+                // A renewal is never accepted as a run of its own.
+                if submit.submit.key != record.key
+                    || submit.submit.issuer != record.issuer
+                    || submit.submit.continues.is_some()
+                {
                     return Err(refuse());
                 }
                 next.submit = Some(submit.clone());
@@ -588,7 +592,17 @@ impl KeyTable {
                     && chunk.key != record.key
                     && !self.keys.contains_key(&chunk.key)
                     && !self.chunks.contains_key(&chunk.key)
-                    && cutoff_boot_ns > from_boot_ns;
+                    && chunk.maximum_secs > 0
+                    // The chunk is exactly its signed maximum long.
+                    && chunk
+                        .maximum_secs
+                        .checked_mul(1_000_000_000)
+                        .and_then(|chunk_ns| from_boot_ns.checked_add(chunk_ns))
+                        == Some(*cutoff_boot_ns)
+                    && next
+                        .launch
+                        .as_ref()
+                        .is_some_and(|launch| launch.boot_id == record.boot_id);
                 // The chunk begins where the paid time ends, and the cutoff
                 // only moves forward.
                 let Some(launch) = next
