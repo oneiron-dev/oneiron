@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,19 +48,33 @@ esac""",
     "getent": 'key="$1-$2"',
 }
 
-# `sshd -T [-f <dir>/<file>] ... -C user=<name>,...` prints the most specific of out/sshd.T-<file>-<name>,
-# out/sshd.T-<file>, out/sshd.T-<name> and out/sshd.T that exists; every call's arguments are appended
-# to out/sshd.calls.
-_SSHD_PICK = """spec=; cfg=; prev=
-for a in "$@"; do
-  [ "$prev" = -C ] && spec=$a
-  [ "$prev" = -f ] && cfg=$(basename "$a")
-  prev=$a
-done
-user=$(printf '%s\\n' "$spec" | sed -n 's/^user=\\([^,]*\\).*/\\1/p')
-printf '%s\\n' "$*" >> "@OUT@/sshd.calls"
-key=T
-for k in "T-$user" "T-$cfg" "T-$cfg-$user"; do [ -f "@OUT@/sshd.$k" ] && key=$k; done"""
+# A stand-in sshd. `sshd -T [-f <dir>/<file>] ... -C user=<name>,...` prints on stdout the most specific
+# of out/sshd.T-<file>-<name>, T-<file>, T-<name> and T that exists; `sshd -T -dd ...` prints on stderr
+# the same pick of out/sshd.files*, the configuration files sshd says it read. Each exits with the
+# pick's .rc file. Every call's arguments are appended, one call a line, to out/sshd.calls.
+_SSHD_STUB = """import pathlib, sys
+out = pathlib.Path(@OUT@)
+args = sys.argv[1:]
+with open(out / "sshd.calls", "a") as log:
+    log.write(" ".join(args) + "\\n")
+cfg = spec = ""
+for prev, arg in zip(args, args[1:]):
+    if prev == "-f":
+        cfg = pathlib.Path(arg).name
+    if prev == "-C":
+        spec = arg
+user = spec[len("user="):].split(",", 1)[0] if spec.startswith("user=") else ""
+kind = "files" if "-dd" in args else "T"
+key = kind
+for k in (kind + "-" + user, kind + "-" + cfg, kind + "-" + cfg + "-" + user):
+    if (out / ("sshd." + k)).exists():
+        key = k
+picked = out / ("sshd." + key)
+text = picked.read_text() if picked.exists() else ""
+(sys.stderr if kind == "files" else sys.stdout).write(text)
+rc = out / ("sshd." + key + ".rc")
+sys.exit(int(rc.read_text()) if rc.exists() else 0)
+"""
 
 
 def sshd_settings(**changed: str) -> str:
@@ -68,10 +83,23 @@ def sshd_settings(**changed: str) -> str:
         "loglevel": "INFO",
         "authorizedkeysfile": ".ssh/authorized_keys .ssh/authorized_keys2",
         "authorizedkeyscommand": "none",
+        "authorizedkeyscommanduser": "none",
         "trustedusercakeys": "none",
         **changed,
     }
     return "port 22\n" + "".join(f"{name} {value}\n" for name, value in settings.items()) + "pubkeyauthentication yes\n"
+
+
+def sshd_files(etc: Path, *extra: str) -> str:
+    """`sshd -T -dd` stderr naming the files read: etc/sshd_config, its Include and etc/sshd_config.d/*.conf."""
+    lines = [
+        "debug1: sshd version OpenSSH_10.6, OpenSSL 3.6.5",
+        f"debug2: load_server_config: filename {etc}/sshd_config",
+        f"debug2: load_server_config: done config len = 29",
+        f"debug2: {etc}/sshd_config line 1: new include {etc}/sshd_config.d/*.conf",
+    ]
+    lines += [f"debug2: load_server_config: filename {path}" for path in sorted((etc / "sshd_config.d").glob("*.conf"))]
+    return "\n".join([*lines, *extra]) + "\n"
 
 
 TCP_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
@@ -138,14 +166,24 @@ class Box:
             directory.mkdir(parents=True, exist_ok=True)
         for program, pick in _STUBS.items():
             self.stub(program, pick)
-        self.stub("sshd", _SSHD_PICK.replace("@OUT@", str(self.out)))
+        sshd = self.bin / "sshd"
+        sshd.write_text(f"#!{sys.executable}\n" + _SSHD_STUB.replace("@OUT@", repr(str(self.out))))
+        sshd.chmod(0o755)
         # sshd as the readback reads it, for every login from every rack connection.
         self.output("sshd", "T", sshd_settings())
+        # The configuration files sshd reads: sshd_config, which Includes sshd_config.d/*.conf.
+        self.sshd_etc = tmp / "etc-sshd"
+        (self.sshd_etc / "sshd_config.d").mkdir(parents=True)
+        (self.sshd_etc / "sshd_config").write_text("Include sshd_config.d/*.conf\n")
+        (self.sshd_etc / "sshd_config.d" / "10-rack.conf").write_text("LogLevel INFO\n")
+        self.output("sshd", "files", sshd_files(self.sshd_etc))
         self.output("findmnt", "fstype", "ext4\n")
         # The sshd journal reaches back before the fixtures' freeze (1000).
         self.output("journalctl", "coverage", "500.000000 box sshd[600]: Server listening on :: port 22.\n")
-        # The fake /proc is a proc mount that hides no process.
+        # The fake /proc is a proc mount that hides no process; every process in it started an hour
+        # from now (boot time plus a starttime of 0), after any file a test writes.
         self.proc_mount("rw")
+        self.booted(3600)
         # sshd's listener, in the unit its journal is read from.
         self.process(600, ["sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"], name="sshd", cgroup="0::/system.slice/sshd.service\n")
         # The password database: root, and owen, the rack's login account here.
@@ -236,6 +274,10 @@ class Box:
             f"25 22 0:21 / {point} rw,nosuid,nodev,noexec,relatime shared:12 - proc proc {super_options}\n"
         )
 
+    def booted(self, from_now_secs: int) -> None:
+        """The fake /proc/stat's boot time, `from_now_secs` from now: each process starts then."""
+        (self.proc / "stat").write_text(f"cpu  0 0 0 0\nbtime {int(time.time()) + from_now_secs}\nprocesses 1\n")
+
     def account(self, name: str, uid: int, home: Path) -> None:
         """A password database entry `getent passwd <name>` prints."""
         self.output("getent", f"passwd-{name}", f"{name}:x:{uid}:{uid}::{home}:/bin/sh\n")
@@ -277,6 +319,8 @@ class Box:
         entry.mkdir()
         (entry / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
         (entry / "status").write_text(f"Name:\t{name or Path(argv[0]).name}\nPPid:\t{ppid}\n")
+        # /proc/<pid>/stat: starttime (field 22) is 0 ticks after boot.
+        (entry / "stat").write_text(f"{pid} ({name or Path(argv[0]).name}) S {ppid} " + "0 " * 17 + "0 0 0\n")
         (entry / "cgroup").write_text(cgroup)
         net = entry / "net"
         net.mkdir()

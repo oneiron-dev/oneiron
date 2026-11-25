@@ -98,6 +98,9 @@
       "addr=<a rack machine's address as this box sees it>,host=<its name>"
     ],
     "sshd_program": "sshd",
+    "authorized_keys_commands": [
+      "/usr/bin/userdbctl ssh-authorized-keys %u"
+    ],
     "freeze_unix": 0,
     "journal_since_unix": 0
   }

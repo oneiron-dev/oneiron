@@ -43,6 +43,16 @@ def read_output(
     extra_env: dict[str, str] | None = None,
 ) -> str:
     """The stdout of `argv`, or CommandError. `extra_env` adds to the minimal environment."""
+    return read_streams(argv, timeout, ok_codes, extra_env)[0]
+
+
+def read_streams(
+    argv: list[str],
+    timeout: int,
+    ok_codes: tuple[int, ...] = (0,),
+    extra_env: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    """(stdout, stderr) of `argv`, or CommandError, as `read_output` runs it."""
     try:
         done = subprocess.run(
             argv,
@@ -60,4 +70,4 @@ def read_output(
         raise CommandError(argv[0], error.strerror or "not started") from None
     if done.returncode not in ok_codes:
         raise CommandError(argv[0], f"exit {done.returncode}")
-    return done.stdout
+    return done.stdout, done.stderr
