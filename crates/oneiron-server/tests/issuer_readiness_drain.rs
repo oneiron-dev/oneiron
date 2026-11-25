@@ -5,14 +5,17 @@
 //! The issuer reads a node's `Node` answer on a schedule, and `ReadinessReads` reads the
 //! answer's readiness fact:
 //! - A passed check clears the issuer's drain under `machines.drain.clear_by =
-//!   after_readiness_check` (the default) and under no other value. Only a check the node dates
-//!   later, on its own clock, than the newest check in the first answer after the issuer read
-//!   its guard row counts, and only while that row is unchanged. The two machines' clocks are
-//!   never compared (REVIEW-10518 P1; EM-22 R4 should-fix 1 and 2).
+//!   after_readiness_check` (the default) and under no other value. The baseline is the newest
+//!   check in the first answer after the issuer read its guard row. The first check the node
+//!   settles after it may have started before the drain, so it clears nothing. Only a check the
+//!   node dates later still counts, on its own clock, and only while the row is unchanged. The
+//!   two machines' clocks are never compared (REVIEW-10518 rounds 1 and 2; EM-22 R4 should-fix
+//!   1 and 2).
 //! - A run of failed checks raises the owner's one ask for the run once it reaches
 //!   `machines.readiness.escalate_after` (default 3).
-//! - The readings are kept for at most `ReadinessReads::MAX_MACHINES` machines, and a machine
-//!   idle for `ReadinessReads::IDLE_MS` is dropped.
+//! - Every machine read in the last `ReadinessReads::IDLE_MS` is kept, however many answer, and
+//!   a machine idle for longer is dropped.
+//! - Only the vault's issuer of vault machine jobs acts on the readings (round 2).
 //!
 //! Run on the fleet, not on a workstation:
 //! ```sh
@@ -316,8 +319,7 @@ fn a_failure_counted_after_the_read_keeps_the_drain_until_a_check_newer_than_a_n
         "the first answer after the new read is only its baseline"
     );
     assert_eq!(drained(&vault, machine), still);
-
-    let observed = read(
+    let settled = read(
         &mut reads,
         &vault,
         machine,
@@ -325,6 +327,20 @@ fn a_failure_counted_after_the_read_keeps_the_drain_until_a_check_newer_than_a_n
         None,
         &passed(FIRST_SEEN_MS + 2 * PERIOD_MS),
         READ_AT_MS + 4,
+    );
+    assert_eq!(
+        settled.cleared, None,
+        "the first check settled after the new baseline may have begun before the read"
+    );
+
+    let observed = read(
+        &mut reads,
+        &vault,
+        machine,
+        &after,
+        None,
+        &passed(FIRST_SEEN_MS + 3 * PERIOD_MS),
+        READ_AT_MS + 5,
     );
     assert_eq!(
         observed.cleared, still,
@@ -469,29 +485,81 @@ fn a_run_of_failed_checks_raises_one_ask_at_escalate_after() {
     );
 }
 
-/// The readings keep at most `MAX_MACHINES` machines: a new machine beyond that takes the place
-/// of the one read longest ago. A machine not read for `IDLE_MS` is dropped (REVIEW-10518 P1).
+/// A check the node settled after the baseline's answer may have started, and run its probes,
+/// before the issuer drained the machine: the node can pause between its probes and settling
+/// them. It clears nothing. The node runs one check at a time, so the next check it dates later
+/// began after that one settled, after the drain, and it clears (REVIEW-10518 round 2 P1).
 #[test]
-fn the_readings_keep_at_most_max_machines_and_drop_idle_ones() {
+fn a_check_settled_after_the_baseline_clears_nothing_and_the_next_one_clears() {
     let (_dir, vault) = open();
+    let machine = EntityId::now();
+    let was = drain(&vault, machine);
+    let before = guard(&vault, machine);
     let mut reads = ReadinessReads::default();
-    let max = u64::try_from(ReadinessReads::MAX_MACHINES).expect("fits");
-    for n in 0..=max {
-        assert!(
-            reads
-                .observe(
-                    &vault,
-                    EntityId::now(),
-                    None,
-                    None,
-                    &passed(FIRST_SEEN_MS),
-                    READ_AT_MS + n,
-                )
-                .is_some(),
-            "a machine read for the first time is acted on"
-        );
+    read(
+        &mut reads,
+        &vault,
+        machine,
+        &before,
+        None,
+        &passed(FIRST_SEEN_MS),
+        READ_AT_MS,
+    );
+
+    let in_flight = read(
+        &mut reads,
+        &vault,
+        machine,
+        &before,
+        None,
+        &passed(FIRST_SEEN_MS + PERIOD_MS / 2),
+        READ_AT_MS + 1,
+    );
+    assert_eq!(
+        in_flight.cleared, None,
+        "the check in flight at the drain may have run its probes before it"
+    );
+    assert_eq!(drained(&vault, machine), Some(was.clone()));
+
+    let next = read(
+        &mut reads,
+        &vault,
+        machine,
+        &before,
+        None,
+        &passed(FIRST_SEEN_MS + PERIOD_MS),
+        READ_AT_MS + 2,
+    );
+    assert_eq!(next.cleared, Some(was), "the next passed check clears");
+    assert_eq!(drained(&vault, machine), None);
+}
+
+/// Every machine read in the last `IDLE_MS` is kept, however many the worker reads in a pass. A
+/// drained machine read after more than a thousand others in each pass keeps its baseline, and
+/// its passed checks clear it (REVIEW-10518 round 2 P1). A machine not read for `IDLE_MS` is
+/// dropped.
+#[test]
+fn the_readings_keep_every_machine_read_within_a_day_and_drop_idle_ones() {
+    let (_dir, vault) = open();
+    let machine = EntityId::now();
+    let was = drain(&vault, machine);
+    let before = guard(&vault, machine);
+    let others: Vec<EntityId> = (0..1_100).map(|_| EntityId::now()).collect();
+    let mut reads = ReadinessReads::default();
+    for (pass, cleared) in [(0, None), (1, None), (2, Some(was))] {
+        let at = READ_AT_MS + pass * PERIOD_MS;
+        let check = passed(FIRST_SEEN_MS + pass * PERIOD_MS);
+        for other in &others {
+            reads.observe(&vault, *other, None, None, &check, at);
+        }
+        let observed = read(&mut reads, &vault, machine, &before, None, &check, at);
+        assert_eq!(observed.cleared, cleared, "pass {pass}");
     }
-    assert_eq!(reads.len(), ReadinessReads::MAX_MACHINES);
+    assert_eq!(
+        reads.len(),
+        others.len() + 1,
+        "no machine read today is dropped"
+    );
 
     reads.observe(
         &vault,
@@ -499,7 +567,70 @@ fn the_readings_keep_at_most_max_machines_and_drop_idle_ones() {
         None,
         None,
         &passed(FIRST_SEEN_MS),
-        READ_AT_MS + max + ReadinessReads::IDLE_MS,
+        READ_AT_MS + 2 * PERIOD_MS + ReadinessReads::IDLE_MS,
     );
     assert_eq!(reads.len(), 1, "every idle machine is dropped");
+}
+
+/// Only the vault's issuer of vault machine jobs (`[gpu_jobs.vault_machine] issuer` names this
+/// install's MACHINE) acts on the readiness facts its worker's pass reads. On any other replica
+/// the pass reads a node's answers and acts on none, so it neither clears the issuer's drain nor
+/// queues the owner's ask (REVIEW-10518 round 2 P1).
+#[cfg(oneiron_test_support)]
+#[test]
+fn only_the_issuer_acts_on_the_readiness_facts_it_reads() {
+    use std::sync::Arc;
+
+    use oneiron_server::config::gpu_jobs::VaultMachineSettings;
+    use oneiron_server::config::{GpuJobsSettings, SyncServerConfig};
+    use oneiron_server::server::SyncServer;
+    use oneiron_server::test_doors::work_order_host::worker_pass_observes;
+
+    let (_dir, vault) = open();
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let vault = Arc::new(vault);
+    let server = |issuer: Option<EntityId>| {
+        SyncServer::new(
+            Arc::clone(&vault),
+            SyncServerConfig {
+                auth_secret: Some("issuer-readiness-drain-secret".to_owned()),
+                gpu_jobs: GpuJobsSettings {
+                    vault_machine: VaultMachineSettings {
+                        enabled: true,
+                        issuer,
+                        ..VaultMachineSettings::default()
+                    },
+                    ..GpuJobsSettings::default()
+                },
+                ..SyncServerConfig::default()
+            },
+        )
+        .expect("the server boots")
+    };
+
+    let unnamed = server(None);
+    assert!(
+        !worker_pass_observes(&unnamed),
+        "no issuer named: the pass acts on nothing"
+    );
+    drop(unnamed);
+    let local = vault
+        .local_machine()
+        .expect("read this install's MACHINE")
+        .expect("a serving start enrols this install")
+        .id;
+    let elsewhere = server(Some(EntityId::now()));
+    assert!(
+        !worker_pass_observes(&elsewhere),
+        "another MACHINE is the issuer: the pass acts on nothing"
+    );
+    drop(elsewhere);
+    let issuer = server(Some(local));
+    assert!(
+        worker_pass_observes(&issuer),
+        "the issuer's pass acts on its readings"
+    );
 }

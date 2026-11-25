@@ -119,15 +119,35 @@ struct ReadinessSample {
     guard: Option<MachineJobGuard>,
 }
 
-/// The check that a drained machine's clear counts from. It is the node's newest check, on the
-/// node's own clock, in the first answer to a `Node` request sent after the issuer read `guard`.
-/// The answer reports the newest check the node had settled. So a check the node dates later
-/// settled after that answer was made, which is after the request and so after every write that
-/// `guard` holds. Both times are the node's, so the two machines' clocks are never compared.
+/// The checks that a drained machine's clear counts from, all on the node's own clock, so the
+/// two machines' clocks are never compared.
+/// - `checked_at_ms` is the node's newest check in the first answer to a `Node` request sent
+///   after the issuer read `guard`. That answer reports the newest check the node had settled.
+/// - `settled_after_ms` is the first check the node dates later. It settled after that answer,
+///   but it may have started, and run its probes, before the issuer drained the machine: the
+///   node can pause between its probes and settling them (REVIEW-10518 round 2 P1). So it
+///   clears nothing.
+///
+/// The node runs one check at a time. A check it dates later still started after that one
+/// settled, so after the answer, the request and every write `guard` holds. Only such a check
+/// clears.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ClearBaseline {
     guard: MachineJobGuard,
     checked_at_ms: Option<u64>,
+    settled_after_ms: Option<u64>,
+}
+
+/// What one reading does to a drained machine's clear.
+enum ClearStep {
+    /// The reading is the baseline's first answer.
+    Baseline,
+    /// The reading shows the first check settled after the baseline's answer.
+    SettledAfter(Option<u64>),
+    /// The reading shows a passed check that started after that one settled.
+    Clear,
+    /// Nothing to do.
+    Wait,
 }
 
 /// One machine's entry in [`ReadinessReads`].
@@ -142,18 +162,17 @@ struct MachineReads {
 }
 
 /// The issuer's readings of its machines' readiness facts, held by the job worker. Each machine
-/// has its last sample and its clear baseline. At most [`Self::MAX_MACHINES`] machines are kept;
-/// a machine not read for [`Self::IDLE_MS`] is dropped. A dropped entry, or one lost to a
-/// restart, costs at most one more check: the next answer becomes the new baseline.
+/// has its last sample and its clear baseline. Every machine read in the last [`Self::IDLE_MS`]
+/// is kept, however many the worker reads in a pass, so another machine's read never evicts a
+/// baseline (REVIEW-10518 round 2 P1). A machine not read for that long is dropped. The worker
+/// reads only the vault's own machines, so the entries stay as many as those. A dropped entry,
+/// or one lost to a restart, only delays a clear: the next answer becomes the new baseline.
 #[derive(Debug, Default)]
 pub struct ReadinessReads {
     machines: HashMap<EntityId, MachineReads>,
 }
 
 impl ReadinessReads {
-    /// The most machines kept. A new machine beyond it takes the place of the machine read
-    /// longest ago.
-    pub const MAX_MACHINES: usize = 1_024;
     /// How long a machine stays kept with no read: a day.
     pub const IDLE_MS: u64 = 86_400_000;
 
@@ -202,7 +221,7 @@ impl ReadinessReads {
             guard: guard_before.cloned(),
         };
         if !self.machines.contains_key(&machine) {
-            self.make_room(now_ms);
+            self.drop_idle(now_ms);
         }
         let reads = self.machines.entry(machine).or_insert(MachineReads {
             sample: None,
@@ -226,20 +245,10 @@ impl ReadinessReads {
         Some(observed)
     }
 
-    /// Drops every machine idle for [`Self::IDLE_MS`]. If [`Self::MAX_MACHINES`] are still kept,
-    /// it also drops the machine read longest ago.
-    fn make_room(&mut self, now_ms: u64) {
+    /// Drops every machine idle for [`Self::IDLE_MS`].
+    fn drop_idle(&mut self, now_ms: u64) {
         self.machines
             .retain(|_, reads| now_ms.saturating_sub(reads.read_at_ms) < Self::IDLE_MS);
-        if self.machines.len() >= Self::MAX_MACHINES
-            && let Some(oldest) = self
-                .machines
-                .iter()
-                .min_by_key(|(_, reads)| reads.read_at_ms)
-                .map(|(machine, _)| *machine)
-        {
-            self.machines.remove(&oldest);
-        }
     }
 }
 
@@ -259,22 +268,36 @@ fn observe_node_readiness(
     match guard_before.filter(|guard| guard.drained.is_some()) {
         None => *baseline = None,
         Some(guard) => {
-            let counted_from = baseline
-                .as_ref()
-                .filter(|base| base.guard == *guard)
-                .map(|base| base.checked_at_ms);
-            match counted_from {
-                None => {
+            let step = match baseline.as_ref().filter(|base| base.guard == *guard) {
+                None => ClearStep::Baseline,
+                Some(base) => match base.settled_after_ms {
+                    None if readiness.checked_at_ms > base.checked_at_ms => {
+                        ClearStep::SettledAfter(readiness.checked_at_ms)
+                    }
+                    Some(settled)
+                        if matches!(readiness.state, ReadinessState::Ready)
+                            && node_drained.is_none()
+                            && readiness.checked_at_ms > Some(settled) =>
+                    {
+                        ClearStep::Clear
+                    }
+                    _ => ClearStep::Wait,
+                },
+            };
+            match step {
+                ClearStep::Baseline => {
                     *baseline = Some(ClearBaseline {
                         guard: guard.clone(),
                         checked_at_ms: readiness.checked_at_ms,
+                        settled_after_ms: None,
                     });
                 }
-                Some(from)
-                    if matches!(readiness.state, ReadinessState::Ready)
-                        && node_drained.is_none()
-                        && readiness.checked_at_ms > from =>
-                {
+                ClearStep::SettledAfter(settled) => {
+                    if let Some(base) = baseline.as_mut() {
+                        base.settled_after_ms = settled;
+                    }
+                }
+                ClearStep::Clear => {
                     match vault.clear_machine_job_drain_after_check(machine, guard, now_ms) {
                         Ok(Some(drain)) => {
                             tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms = ?readiness.checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
@@ -288,7 +311,7 @@ fn observe_node_readiness(
                         }
                     }
                 }
-                Some(_) => {}
+                ClearStep::Wait => {}
             }
         }
     }

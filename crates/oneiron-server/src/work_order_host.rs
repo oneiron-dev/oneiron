@@ -132,10 +132,19 @@ impl<'a> ServerOrderHost<'a> {
         }
     }
 
-    /// This host as the job worker's pass: it acts on the readiness facts it reads.
+    /// This host as the job worker's pass: it acts on the readiness facts it reads, on the
+    /// vault's issuer of vault machine jobs only (`[gpu_jobs.vault_machine] issuer` names this
+    /// install's MACHINE). Another replica that dispatches an offer to the same node reads its
+    /// answers and acts on none: neither clears the issuer's drain nor queues the owner's ask
+    /// (REVIEW-10518 round 2 P1).
     pub(crate) fn observing(self) -> Self {
+        let issuer = crate::gpu_execution_node::issuer::not_the_issuer(
+            self.server,
+            crate::gpu_execution_node::issuer::VAULT_MACHINE_BACKEND,
+        )
+        .is_ok();
         Self {
-            observe: true,
+            observe: issuer,
             ..self
         }
     }
@@ -478,7 +487,7 @@ pub(crate) struct OrderLoop {
     /// counts them here, so an issuer that restarts opens a new window.
     asks: Mutex<SlotAskWindow>,
     /// The worker pass's readings of each machine's readiness fact: the last sample and the clear
-    /// baseline, for at most `ReadinessReads::MAX_MACHINES` machines (CG-2 row 9).
+    /// baseline of each machine read in the last `ReadinessReads::IDLE_MS` (CG-2 row 9).
     readiness: Mutex<crate::gpu_execution_node::issuer::guard::ReadinessReads>,
 }
 
@@ -546,6 +555,15 @@ impl OrderLoop {
     pub(crate) fn use_nodes(&self, nodes: Arc<dyn JobNodeClient>) -> bool {
         self.nodes.set(nodes).is_ok()
     }
+}
+
+/// Whether the job worker's pass on `server` acts on the readiness facts it reads
+/// ([`ServerOrderHost::observing`]), for `tests/issuer_readiness_drain.rs`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn worker_pass_observes(server: &SyncServer) -> bool {
+    ServerOrderHost::new(server, &NoNodes, 0)
+        .observing()
+        .observe
 }
 
 /// A node client for a server that cannot call nodes (no mesh, or no runtime): every machine
