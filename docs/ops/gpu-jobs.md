@@ -100,6 +100,31 @@ verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 
 Allow is the owner's own act.
 
+## Funding a self-hosted server (`[gpu_jobs.host_allocation]`)
+
+Every offer is host-paid: a start reserves the whole quote on the server's
+host account, in the offer's `cost_unit`. A managed server's supervisor
+delivers that account's allocation. A self-hosted server has no supervisor,
+so its account starts empty and every start answers "the host has delivered
+no allocation". The owner funds it in their own config
+(R6-VAULT-MACHINE-FUNDING = A):
+
+```toml
+[gpu_jobs.host_allocation]
+id = "own-gpu"           # a plain name
+units = 3600             # granted at each start; greater than zero
+unit = "credit-micros"   # the cost_unit of one [gpu_jobs.offers] offer
+```
+
+- At each start, `serve` (and the desktop app's embedded serve) grants the
+  account `units` of `unit` as the walletless allocation `id`. Jobs reserve and
+  settle on it, and are receipted, as on any allocation.
+- The host account lives in memory until the durable allocation ledger is
+  wired, so every start begins with the full `units` again: one process, one
+  budget.
+- A managed server refuses to start with the section: its supervisor funds
+  its account.
+
 ## Backends
 
 No backend ships yet (C6 02 is GPU-LAUNCH-BACKENDS). The registry is empty
@@ -218,3 +243,6 @@ handed off without a charge. After the restart, the step of a live job admits
 its chunk again at its quote's frozen price, and that new permit pays the
 chunk's end. If it no longer fits, the chunk runs on unpaid and the job record
 says `admission_lost`, since a running chunk is never cut for money.
+
+On a self-hosted server, each start grants `[gpu_jobs.host_allocation]` again
+before any job steps, so a chunk that was running is admitted again on it.
