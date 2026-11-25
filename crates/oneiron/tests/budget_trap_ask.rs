@@ -334,6 +334,7 @@ fn park_on_share(
         park.wait.map(|wait| wait.wait),
         Some(DreamerParkWait::ResidentShare {
             resident,
+            unit: LeaseUnit::tokens().as_str().to_owned(),
             needed_units: STEP_RESERVE,
         }),
         "a resident's spent pinned share parks a resident share wait"
@@ -355,6 +356,7 @@ fn pin_share(
             resident: resident.to_hex(),
             units: Some(units),
             pinned: true,
+            unit: Some(LeaseUnit::tokens().as_str().to_owned()),
         },
     )?;
     Ok(())
@@ -493,7 +495,7 @@ fn the_owners_overdraft_raises_the_resident_share_and_wakes_its_park() -> TestRe
     vault.answer_decision_ask(&owner, ask.seq, choice("overdraft"))?;
     assert_woken(&vault, &row, &trap, "the owner's overdraft")?;
     let share = vault
-        .resident_shares()?
+        .resident_shares(&LeaseUnit::tokens())?
         .into_iter()
         .find(|read| read.resident == resident)
         .expect("the resident's share")

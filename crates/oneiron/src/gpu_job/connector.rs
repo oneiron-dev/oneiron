@@ -204,4 +204,38 @@ pub trait GpuJobConnector: Send + Sync {
     /// Asks for termination, and answers whether the provider confirmed it.
     /// Asked again until it does (`#gpu-uncertain` 02).
     fn terminate(&self, resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError>;
+
+    /// The four status fields of `job` for a backend that runs on one of the vault's own
+    /// machines (pass 33 row R4, door 8), at `now_ms`, with the host's job step of `step_ms`
+    /// (what a stale observation is counted in); `None` for every other backend, the default.
+    fn node_view(
+        &self,
+        job: &super::GpuJob,
+        now_ms: u64,
+        step_ms: u64,
+    ) -> Option<super::GpuJobNodeView> {
+        let _ = (job, now_ms, step_ms);
+        None
+    }
+
+    /// Writes off `job`'s current chunk on this backend (pass 33 row R4, door 10): the backend
+    /// closes the chunk's dispatch for good, so nothing is sent for its key again, and answers
+    /// `Ok` once it is closed, also when it already was. A backend refuses a chunk whose end it
+    /// can still confirm. The default refuses: only a backend that runs on one of the vault's
+    /// own machines writes off.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuConnectorError::Refused`] with the reason; a store failure.
+    fn write_off(&self, job: &super::GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
+        let _ = (job, now_ms);
+        Err(GpuConnectorError::Refused {
+            reason: "write_off_not_offered".to_owned(),
+        })
+    }
+
+    /// One housekeeping pass of this backend outside any job's step (pass 33 row R4): the
+    /// `vault_machine` backend asks its live orphan keys to stop and returns the results it
+    /// still owes. The host's worker calls it once a round; the default does nothing.
+    fn housekeeping(&self) {}
 }

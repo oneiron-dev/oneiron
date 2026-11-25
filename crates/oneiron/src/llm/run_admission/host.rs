@@ -281,19 +281,14 @@ pub struct AccountStatus {
 }
 
 impl AccountStatus {
-    /// The allocation the owner's resident shares are shown on (FIX 7767,
-    /// row M2-I): the host's walletless allocation. With walletless
-    /// allocations in several units, each enforces the shares, and the view
-    /// shows the one of the highest generation (review 10403; the setting
-    /// names no unit yet, FIX RESIDENT-SHARE-NO-UNIT). `None` only when the
-    /// account selects no walletless allocation.
-    #[must_use]
-    pub fn resident_share_allocation(&self) -> Option<&AllocationRef> {
+    /// The allocations the owner's resident shares govern (FIX 7767, row
+    /// M2-I): the host's walletless allocations, at most one per unit, each
+    /// bound by the owner's shares in its own unit (Engine
+    /// RESIDENT-SHARE-UNIT = A).
+    pub fn walletless_allocations(&self) -> impl Iterator<Item = &SelectedAllocation> {
         self.allocations
             .iter()
             .filter(|selected| selected.wallet.is_none())
-            .map(|selected| &selected.reference)
-            .max_by_key(|reference| reference.generation)
     }
 }
 

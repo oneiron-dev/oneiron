@@ -27,12 +27,15 @@ use crate::{EntityId, Vault};
 mod allowance;
 mod caller;
 mod connector;
+mod node_view;
 mod offer;
 mod permits;
+mod result_landing;
 mod start;
 mod step;
 pub(crate) mod tables;
 mod wire;
+mod write_off;
 
 pub use allowance::GpuJobAllowance;
 pub(crate) use allowance::allowance_row_records;
@@ -42,8 +45,13 @@ pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
     GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
 };
+pub use node_view::{
+    GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved,
+    GpuJobOutputView, GpuJobOutputsView,
+};
 pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
+pub use result_landing::{GpuJobResultBinding, GpuJobResultFile};
 pub use start::GpuJobStart;
 pub use wire::{
     GpuJobAllowRequest, GpuJobAllowanceView, GpuJobList, GpuJobListRequest, GpuJobQuoteRequest,
@@ -177,6 +185,9 @@ pub enum GpuEndReason {
     Cancelled,
     /// The provider lost the resource.
     Gone,
+    /// The owner wrote the job off: its end could not be confirmed, and it settled zero (pass 33
+    /// row R4, door 10).
+    Unconfirmed,
 }
 
 /// Where a job stands.
@@ -378,6 +389,15 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         GPU_JOBS
             .iter_from(&self.store, &txn, &[])?
+            .map(|row| row.map(|(_, job)| job))
+            .collect()
+    }
+
+    /// Every GPU job of this vault, in the caller's read transaction: for a read that joins the
+    /// jobs to other rows of one snapshot (`vault.jobs.history`).
+    pub(crate) fn gpu_jobs_in_txn(&self, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<GpuJob>> {
+        GPU_JOBS
+            .iter_from(&self.store, txn, &[])?
             .map(|row| row.map(|(_, job)| job))
             .collect()
     }

@@ -506,6 +506,31 @@ pub fn claims_at_rung_in_txn(
         .collect())
 }
 
+/// Every claim of the vault, over every arm, rung, unit and attempt, in key order: the rows a
+/// read over the whole line's history (`vault.jobs.history`) projects.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn claims_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<UnitClaim>> {
+    Ok(CLAIMS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, claim)| claim)
+        .collect())
+}
+
+/// Puts `claim` under its key as given (TEST-ONLY, `test_doors::experiment_arm_rows`): a test
+/// stands a claim whose writer, the reserve door, is row M2-C's.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_claim_row_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim: &UnitClaim,
+) -> crate::Result<()> {
+    CLAIMS.put(&vault.store, wtxn, &claim.key(), claim)
+}
+
 /// Takes the erased actor out of every claim (the side table's actor scrub): as reserver or
 /// as the owner who wrote it off, its id is forgotten and the rest of the record stays. The
 /// scrub bumps the claim's revision.

@@ -69,9 +69,27 @@ every quote refuses and no worker starts.
 - **Status and list** (`vault.gpu.jobs.status`, `.list`): run time and spend
   against the maximum, the signals sent, the warning, the checkpoint and the
   stop.
+- **History** (`vault.jobs.history`): every ended attempt (one chunk of a
+  job), newest end first, with its machine, device, reserved, occupied,
+  billed, charged and returned seconds and its end cause, and totals by
+  machine, line, family and line period. It reads the job rows and the lane
+  economy's unit claims and keeps nothing of its own: a period's charged total
+  is what the line's own fold charges that period for the same ended attempts
+  (open claims and open holds are not history). An occupancy is shown only
+  where a machine measured it or a provider reported a chunk's final run time
+  (its exit); a stop, a cancel and a lost machine or resource show it as
+  unknown, never as zero. A chunk the provider refused before anything ran
+  charged nothing and returned its whole quote. A chunk the owner wrote off
+  (door 10) shows `written_off`: its occupancy is unknown, and it settled
+  zero. A stopped job that the customer cancels keeps its last chunk's end at
+  its maximum. The reply is never kept for a same-id retry, which reads
+  again.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
-verb. Start and cancel admit the owner, or an agent whose own Grant names the
+verb. History admits the same callers, judged in the snapshot it reads; an
+agent sees only the line units it reserved and the first chunk of each job it
+started (a resumed chunk's starter is not stored), and totals over those.
+Start and cancel admit the owner, or an agent whose own Grant names the
 verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 
 - a start passes only when the owner set a maximum beside the Grant that
@@ -81,6 +99,31 @@ verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 - a resume or cancel passes only on a job the agent started.
 
 Allow is the owner's own act.
+
+## Funding a self-hosted server (`[gpu_jobs.host_allocation]`)
+
+Every offer is host-paid: a start reserves the whole quote on the server's
+host account, in the offer's `cost_unit`. A managed server's supervisor
+delivers that account's allocation. A self-hosted server has no supervisor,
+so its account starts empty and every start answers "the host has delivered
+no allocation". The owner funds it in their own config
+(R6-VAULT-MACHINE-FUNDING = A):
+
+```toml
+[gpu_jobs.host_allocation]
+id = "own-gpu"           # a plain name
+units = 3600             # granted at each start; greater than zero
+unit = "credit-micros"   # the cost_unit of one [gpu_jobs.offers] offer
+```
+
+- At each start, `serve` (and the desktop app's embedded serve) grants the
+  account `units` of `unit` as the walletless allocation `id`. Jobs reserve and
+  settle on it, and are receipted, as on any allocation.
+- The host account lives in memory until the durable allocation ledger is
+  wired, so every start begins with the full `units` again: one process, one
+  budget.
+- A managed server refuses to start with the section: its supervisor funds
+  its account.
 
 ## Backends
 
@@ -166,6 +209,33 @@ template under the pinned digest and must not refuse. A refusal names
 `workload_expired`, `starter_not_named`, `request_above_pin`,
 `machine_not_approved`, `machine_unreachable` or `machine_refuses`.
 
+## Machine status (`vault.machines.status`)
+
+The owner's read of every machine of his: the fields `vault.machines.list`
+shows, the machine's latest capacity claim (cores, memory, GPU memory, disk,
+power and the agents it can run) with the time the machine measured it and
+its age, and, with `refresh: true`, what each machine's execution node
+answers to `Node` now. Only the vault's issuer of vault machine jobs asks the
+nodes, each within `[gpu_jobs.vault_machine] call_timeout_secs`, all at once.
+A node that answers shows `answered` (enabled, paused, drained, each template
+with its digest, the launch scopes and what each enforces, disk); one that
+refuses this issuer shows `refused` with the refusal; one that gives no answer
+shows `unknown`, never idle, and its capacity claim stays its last sample.
+Nothing is stored: a node's answer is a sample.
+
+## Machine execution (`vault.machines.execution.get`)
+
+What each machine the vault holds a job grant for offers its GPU jobs now,
+asked of the machine by the vault's issuer: the owner reads it, and so does an
+agent whose own Grant names the verb. Per machine it shows the two job grants
+the vault holds (`oneiron/job/1`, `oneiron/job-status/1`), the node's answer to
+`Node` in the form above, its GPUs as its driver read them when asked (asked
+only once the node answered), and the keys it holds that have not ended (asked
+under the status grant, even when the job route refuses). Each ask shows
+`not_asked` with why, `answered`, `refused` or `unknown`, with when it was
+asked. Hourly capacity is never shown as availability. Name one `machine` to
+read it whether or not it holds a grant.
+
 ## Restart
 
 A permit cannot be stored. When the server stops, each live chunk's permit is
@@ -173,3 +243,6 @@ handed off without a charge. After the restart, the step of a live job admits
 its chunk again at its quote's frozen price, and that new permit pays the
 chunk's end. If it no longer fits, the chunk runs on unpaid and the job record
 says `admission_lost`, since a running chunk is never cut for money.
+
+On a self-hosted server, each start grants `[gpu_jobs.host_allocation]` again
+before any job steps, so a chunk that was running is admitted again on it.
