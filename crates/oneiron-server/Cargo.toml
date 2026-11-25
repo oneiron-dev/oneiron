@@ -199,6 +199,9 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # version already in the tree through hyper.
 httpdate = "1"
 thiserror = { workspace = true }
+# An execution node's template matches each argument a pin passes against
+# its declared pattern (pass 33, 7.3 step 5).
+regex = { workspace = true }
 tempfile = "3"
 utoipa = "5.5.0"
 # The `/v1/ai/voices` route bodies' schemas in the OpenAPI document
@@ -726,6 +729,20 @@ name = "job_protocol_grant"
 path = "tests/job_protocol_grant.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
+# Pass 33 R1 T3, T4, T5, T5b and the authority tick: an execution node's opt-in and gate between
+# the owner's servers with their real mesh listeners; the listeners need the `mesh` feature.
+[[test]]
+name = "execution_node_gate"
+path = "tests/execution_node_gate.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
+# MESH-PAIRING-CEILING = A: an enrolled machine's binding may be granted every protocol the
+# engine serves (SERVED_MESH_ALPNS), and no other; the listeners need the `mesh` feature.
+[[test]]
+name = "mesh_pairing_ceiling"
+path = "tests/mesh_pairing_ceiling.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
 # The job service answers each stream of a connection on its own: a stream that never finishes
 # its request, or whose answer cannot be sent, costs only itself (review round 1 of #10407). An
 # in-process stand-in for the mesh connection; no vault, no grant.
@@ -887,4 +904,10 @@ required-features = ["oneiron/test-support"]
 [[test]]
 name = "job_workloads"
 path = "tests/job_workloads.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
+# Pass 34, 6.5: the check-in of an agent's pin under its family's compute.pin grant.
+[[test]]
+name = "job_workload_check_in"
+path = "tests/job_workload_check_in.rs"
 required-features = ["oneiron/test-support", "mesh"]

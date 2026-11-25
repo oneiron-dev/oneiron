@@ -50,7 +50,7 @@
 //! [ROOM-ADD-FULL-HISTORY-AFFECTED-OK]).
 
 use super::act_class::ActClass;
-use super::asker::{AskGo, AskVerdict, agent_door_grant_in_txn, judge_door_act_in_txn};
+use super::asker::{AskGo, AskVerdict, DoorRungs, agent_door_grant_in_txn, judge_door_act_in_txn};
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::effect::{
     CheckInDecision, DoorAct, DoorCheckIn, named_check_in_at_once, person_door_check_in_in_txn,
@@ -231,7 +231,14 @@ fn judge_room_add_in_txn(
         )?));
     }
     let scope = CheckInScope::default();
-    let (verdict, role) = judge_door_act_in_txn(memory, txn, verb, ActClass::RoomAdd, &scope)?;
+    let (verdict, role) = judge_door_act_in_txn(
+        memory,
+        txn,
+        verb,
+        ActClass::RoomAdd,
+        &scope,
+        &DoorRungs::NONE,
+    )?;
     let (asker, grant, mode, reason) = match verdict {
         AskVerdict::Go { reason, .. } => {
             let mode = (reason == AskGo::NeverAsk).then_some(CheckInMode::NeverAsk);
@@ -365,7 +372,14 @@ fn closed_room_check_in_in_txn(
     let actor = memory.actor();
     let scope = CheckInScope::default();
     let (grant_ref, role) = if memory.actor_class() == EdgeActorClass::Agent {
-        let (verdict, role) = judge_door_act_in_txn(memory, txn, verb, ActClass::RoomAdd, &scope)?;
+        let (verdict, role) = judge_door_act_in_txn(
+            memory,
+            txn,
+            verb,
+            ActClass::RoomAdd,
+            &scope,
+            &DoorRungs::NONE,
+        )?;
         match verdict {
             AskVerdict::Go { .. } | AskVerdict::Wait { .. } => {}
             AskVerdict::Absent { why } => return Err(not_granted(verb, why)),

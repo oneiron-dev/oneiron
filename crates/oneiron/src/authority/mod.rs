@@ -135,6 +135,7 @@ mod machine_profile;
 mod machine_signatures;
 mod machine_standing;
 mod machine_write;
+mod main_log_position;
 mod managed_owner_check;
 mod membership_execution;
 mod mesh_machine;
@@ -439,8 +440,8 @@ pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
-    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
-    MeshMachineAddressEnvelope, MeshMachineBinding,
+    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshEnrolmentAsk,
+    MeshMachineAddress, MeshMachineAddressEnvelope, MeshMachineBinding,
 };
 pub use restored_join::RestoredEnrolmentStanding;
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
