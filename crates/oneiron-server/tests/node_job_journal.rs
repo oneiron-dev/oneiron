@@ -126,6 +126,7 @@ impl Fixture {
                 generation: 1,
             },
             authority_heads: Vec::new(),
+            continues: None,
         };
         SignedJobSubmit::sign(submit, ScriptedSigner::new(self.issuer).as_ref())
             .expect("the issuer signs")

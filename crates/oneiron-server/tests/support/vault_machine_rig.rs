@@ -385,6 +385,7 @@ impl ScriptedNode {
             seq: 0,
             boot_id: "node-boot".to_owned(),
             reported_at_ms: 0,
+            slice: None,
         }
     }
 

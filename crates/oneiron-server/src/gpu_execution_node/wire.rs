@@ -151,6 +151,15 @@ pub struct JobSubmit {
     /// the key ends `LaunchRefused { authority_stale }` at the staging
     /// limit.
     pub authority_heads: Vec<String>,
+    /// A session's renewal (pass 34, 2.5; row W1): the first key of the run
+    /// this submit pays one more chunk of. The key is then a paid slice of
+    /// that run: it needs no reserve, never starts a process and never
+    /// holds a lease, and its chunk begins where the run's paid time ends.
+    /// Absent from the encoding when `None`, so a submit without it signs
+    /// the same bytes as before, and a node that predates it answers a
+    /// renewal `Refused { not_reserved }` and starts nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continues: Option<String>,
 }
 
 /// A submit with the issuer's machine-key signature under
@@ -555,6 +564,10 @@ pub enum JobEnd {
     },
     /// The node ended it at its maximum.
     TimeLimit,
+    /// A session's paid slice whose time ran out while the run went on under
+    /// the next chunk's key (pass 34, 2.5; row W1). The run itself has not
+    /// ended: its process and leases stay with its first key.
+    Continued,
     /// The node ended it over its memory request.
     MemoryLimit,
     /// The node ended it over its disk request.
@@ -694,6 +707,27 @@ pub struct JobReceipt {
     pub seq: u64,
     pub boot_id: String,
     pub reported_at_ms: u64,
+    /// The paid slice of a session's run this receipt reports (pass 34,
+    /// 2.5; row W1); `None` for a key whose run was never renewed. Absent
+    /// from the encoding when `None`, so such a receipt signs the same bytes
+    /// as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<ReceiptSlice>,
+}
+
+/// One chunk's paid bounds inside a session's run, on the node's boot clock
+/// of the run's launch: from the end of the chunk before (the launch, for the
+/// first chunk) to this chunk's cutoff. `occupied` says how much of it the
+/// run used; the slices of one run never overlap and leave no gap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptSlice {
+    /// The key the run was launched under, which holds its process and
+    /// leases.
+    pub first_key: String,
+    /// The chunk's place in the run: 0 for the first key's own chunk.
+    pub chunk: u32,
+    pub from_boot_ns: u64,
+    pub to_boot_ns: u64,
 }
 
 /// A receipt with the node's machine-key signature under

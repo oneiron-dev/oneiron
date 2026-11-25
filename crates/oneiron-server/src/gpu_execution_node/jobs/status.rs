@@ -25,9 +25,9 @@ use sha2::{Digest as _, Sha256};
 
 use super::NodeJobs;
 use super::admission::{answering, log_write_error, status_busy};
-use super::journal::{JournalEvent, NodeKey};
+use super::journal::{JournalEvent, KeyTable, NodeKey};
 use crate::gpu_execution_node::wire::{
-    JobRefusal, JobState, JobStatusAnswer, KeyEntry, KeyPage, OutputDigest, OutputsState,
+    JobAnswer, JobRefusal, JobState, JobStatusAnswer, KeyEntry, KeyPage, OutputDigest, OutputsState,
 };
 
 /// The most bytes the entries of one `Keys` page take in the codec, so the
@@ -41,7 +41,10 @@ fn not_fetchable(why: impl Into<String>) -> JobStatusAnswer {
 }
 
 /// The key `key` of `peer` in `journal`'s table: `Absent` with the epoch, or
-/// `NotTheKeysIssuer` for another issuer's key.
+/// `NotTheKeysIssuer` for another issuer's key. Callers pass
+/// [`super::KeyTable::holder`], so a renewed chunk's key (row W1) acts on
+/// the run its first key holds: its notice, outputs, acknowledgement and
+/// log.
 pub(super) fn own_key(
     known: Option<&NodeKey>,
     peer: EntityId,
@@ -74,26 +77,26 @@ impl NodeJobs {
         let mut entries = Vec::new();
         let mut used = 0usize;
         let mut next = None;
-        let keys = journal
-            .table()
+        let table = journal.table();
+        // The keys of the journal and each renewed chunk's key (row W1), in
+        // key order.
+        let mut listed: Vec<&str> = table
             .iter()
             .filter(|known| known.issuer == peer)
-            .filter(|known| after.is_none_or(|after| known.key.as_str() > after));
-        for known in keys {
-            let ended = if known.state == JobState::Ended {
-                match self.status_receipt(known, epoch, &now) {
-                    JobStatusAnswer::Known(signed) => Some(signed),
-                    // An unsigned receipt is no receipt: the issuer asks
-                    // again.
-                    _ => return status_busy(),
-                }
-            } else {
-                None
-            };
-            let entry = KeyEntry {
-                key: known.key.clone(),
-                state: known.state,
-                ended,
+            .map(|known| known.key.as_str())
+            .chain(
+                table
+                    .chunk_keys()
+                    .filter(|(_, first)| table.get(first).is_some_and(|first| first.issuer == peer))
+                    .map(|(chunk, _)| chunk),
+            )
+            .filter(|key| after.is_none_or(|after| *key > after))
+            .collect();
+        listed.sort_unstable();
+        for key in listed {
+            let Some(entry) = self.key_entry(table, key, epoch, &now) else {
+                // An unsigned receipt is no receipt: the issuer asks again.
+                return status_busy();
             };
             let Ok(encoded) = oneiron_organ_protocol::to_vec(&entry) else {
                 return status_busy();
@@ -106,6 +109,44 @@ impl NodeJobs {
             entries.push(entry);
         }
         JobStatusAnswer::Keys(KeyPage { entries, next })
+    }
+
+    /// One key's entry in a `Keys` page: its state and, once it ended, its
+    /// signed terminal receipt. A renewed run's keys (row W1) each list
+    /// their own slice's state. `None` when a receipt could not be signed.
+    fn key_entry(
+        &self,
+        table: &KeyTable,
+        key: &str,
+        epoch: super::JournalEpoch,
+        now: &super::ReceiptClock,
+    ) -> Option<KeyEntry> {
+        let answer = match table.get(key) {
+            Some(known) if known.renewals.is_empty() => {
+                if known.state != JobState::Ended {
+                    return Some(KeyEntry {
+                        key: key.to_owned(),
+                        state: known.state,
+                        ended: None,
+                    });
+                }
+                self.receipt_answer(known, epoch, now)
+            }
+            Some(first) => self.chunk_answer(first, 0, epoch, now),
+            None => {
+                let (first, chunk) = table.chunk(key)?;
+                self.chunk_answer(first, chunk, epoch, now)
+            }
+        };
+        let JobAnswer::Receipt(signed) = answer else {
+            return None;
+        };
+        let state = signed.receipt.state;
+        Some(KeyEntry {
+            key: key.to_owned(),
+            state,
+            ended: (state == JobState::Ended).then_some(signed),
+        })
     }
 
     /// `Signal { key, signal }`: a checkpoint notice. It reaches the
@@ -122,7 +163,7 @@ impl NodeJobs {
                 Err(answer) => return answer,
             };
             let epoch = journal.epoch().to_hex();
-            match own_key(journal.table().get(key), peer, epoch) {
+            match own_key(journal.table().holder(key), peer, epoch) {
                 Ok(known) => known,
                 Err(answer) => return answer,
             }
@@ -155,7 +196,7 @@ impl NodeJobs {
                 Err(answer) => return answer,
             };
             let epoch = journal.epoch().to_hex();
-            let known = match own_key(journal.table().get(key), peer, epoch) {
+            let known = match own_key(journal.table().holder(key), peer, epoch) {
                 Ok(known) => known,
                 Err(answer) => return answer,
             };
@@ -195,7 +236,7 @@ impl NodeJobs {
             Err(answer) => return answer,
         };
         let epoch = journal.epoch().to_hex();
-        let known = match own_key(journal.table().get(key), peer, epoch) {
+        let known = match own_key(journal.table().holder(key), peer, epoch) {
             Ok(known) => known,
             Err(answer) => return answer,
         };
@@ -208,8 +249,10 @@ impl NodeJobs {
         if !known.acknowledgeable() {
             return status_busy();
         }
+        // A renewed chunk's key acknowledges its run's payload, which its
+        // first key holds (row W1).
         match journal.record(
-            key,
+            &known.key,
             known.issuer,
             &now.boot_id,
             now.wall_ms,

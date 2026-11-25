@@ -278,7 +278,43 @@ pub struct NodeTemplate {
     /// no request asks more.
     #[serde(default = "cpu_threads_default")]
     pub cpu_threads: u32,
+    /// What a run of this template is (pass 34, 2.5): a finite `job`, cut
+    /// off at its maximum, or a `session`, whose one run continues through
+    /// the paid chunks its issuer renews (row W1). Absent from the digest as
+    /// a job, so a template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "TemplateKind::is_job")]
+    pub kind: TemplateKind,
+    /// A session's longest run across its renewals, in seconds, from its
+    /// launch: no renewal moves the cutoff past it, and the job unit's
+    /// backstop covers it. Read only for a `session`; None:
+    /// [`SESSION_MAX_SECS_DEFAULT`]. Absent from the digest when unset, so
+    /// a template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_max_secs: Option<u64>,
 }
+
+/// What a run of a template is (pass 34, 2.5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateKind {
+    /// A finite workload: its run ends at the submit's maximum.
+    #[default]
+    Job,
+    /// A long-running harness or service: its run goes on while its issuer
+    /// pays each next chunk before the current one ends.
+    Session,
+}
+
+impl TemplateKind {
+    /// Whether this is the default kind, a job.
+    #[must_use]
+    pub fn is_job(&self) -> bool {
+        *self == Self::Job
+    }
+}
+
+/// Default of a session template's `session_max_secs`: seven days.
+pub const SESSION_MAX_SECS_DEFAULT: u64 = 7 * 24 * 60 * 60;
 
 /// The signals a template may name as its checkpoint notice: each one a
 /// workload can catch and none that stops it.
@@ -527,6 +563,18 @@ impl NodeTemplate {
         Ok(ContentHash::of(&bytes).to_hex())
     }
 
+    /// A session's longest run from its launch, in seconds; `None` for a
+    /// job, whose run ends at its submit's maximum.
+    #[must_use]
+    pub fn session_max_secs(&self) -> Option<u64> {
+        match self.kind {
+            TemplateKind::Job => None,
+            TemplateKind::Session => {
+                Some(self.session_max_secs.unwrap_or(SESSION_MAX_SECS_DEFAULT))
+            }
+        }
+    }
+
     /// The bytes each of a run's log files keeps.
     #[must_use]
     pub fn log_max_bytes(&self) -> u64 {
@@ -562,6 +610,21 @@ impl NodeTemplate {
         }
         if self.cpu_threads == 0 {
             return Err("cpu_threads must be at least 1".to_owned());
+        }
+        match (self.kind, self.session_max_secs) {
+            (TemplateKind::Job, Some(_)) => {
+                return Err("session_max_secs is read only for kind = \"session\"".to_owned());
+            }
+            (TemplateKind::Session, _) => {
+                let longest = self.session_max_secs.unwrap_or(SESSION_MAX_SECS_DEFAULT);
+                if longest < self.max_secs {
+                    return Err(format!(
+                        "session_max_secs {longest} must be at least max_secs {}",
+                        self.max_secs
+                    ));
+                }
+            }
+            (TemplateKind::Job, None) => {}
         }
         if self.tasks_max < TASKS_MAX_FLOOR {
             return Err(format!(

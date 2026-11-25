@@ -23,7 +23,14 @@ pub fn machine_job_outcome(
 ) -> MachineJobOutcome {
     let failure = |why: String| MachineJobOutcome::MachineFailure { why };
     match &ended.end {
-        Some(JobEnd::Stopped | JobEnd::Revoked | JobEnd::Withdrawn | JobEnd::Refused { .. }) => {
+        // A session slice's paid end (row W1) is no end of the machine's run.
+        Some(
+            JobEnd::Stopped
+            | JobEnd::Revoked
+            | JobEnd::Withdrawn
+            | JobEnd::Refused { .. }
+            | JobEnd::Continued,
+        ) => {
             return MachineJobOutcome::NotTheMachines;
         }
         Some(JobEnd::Lost { reason, .. }) => return failure(format!("lost: {reason}")),
