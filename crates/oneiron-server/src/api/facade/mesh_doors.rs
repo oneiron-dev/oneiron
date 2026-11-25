@@ -58,6 +58,44 @@ pub(crate) async fn vault_mesh_bind_machine(
     .await
 }
 
+/// This install's own MACHINE paired as a machine of its vault, for the owner
+/// to bind on each other replica (`vault.mesh.bind_machine` there). The home
+/// never redeems a link of its own, so nothing else pairs it, and no node
+/// could prove a home that issues jobs (PLAN-HOME-ISSUER-MESH-PROOF, R6 1.5).
+/// The pairing's ceiling is every protocol this engine serves
+/// (MESH-PAIRING-CEILING = A). The answer carries this home's mesh address
+/// while its listener runs. It binds and grants nothing here.
+pub(crate) async fn vault_mesh_pair_self(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<MeshMachineBinding> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.mesh.pair_self",
+        |server, owner| {
+            let mut binding = crate::api::pairing::with_issuer(server, |issuer| {
+                server.vault().pair_own_mesh_machine_as_owner(
+                    issuer,
+                    owner,
+                    crate::device_sync::enrolment::home_bind::enrolment_ceiling(),
+                )
+            })
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            if let Some(address) =
+                crate::device_sync::enrolment::home_bind::home_mesh_address(server)
+                    .filter(|address| address.endpoint_key == binding.address.endpoint_key)
+            {
+                binding.address = address;
+            }
+            Ok(binding)
+        },
+        |binding| vec![binding.machine],
+    )
+    .await
+}
+
 /// Both allowing and revoking the exact key/ALPN, through one engine operation.
 pub(crate) async fn vault_mesh_set_alpn_grant(
     server: &Arc<SyncServer>,
