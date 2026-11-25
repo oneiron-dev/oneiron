@@ -24,6 +24,7 @@
 //! opens. A directory that cannot be listed is never read as empty.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use super::admission::{mib_bytes, withdrawn};
@@ -66,6 +67,7 @@ impl NodeJobs {
                     floors: BTreeMap::new(),
                     staging: BTreeSet::new(),
                 }),
+                closed: AtomicBool::new(false),
                 readiness,
                 _writer: writer,
             }),

@@ -7,9 +7,9 @@
 //! In each test A is the issuer: the one machine a node's `[execution_node]`
 //! file names. B is a node. C, where there is one, is another of the
 //! owner's machines that B grants both job protocols but does not name.
-//! Until the node's journal (row R3a) is attached, a request that passes the
-//! gate and names a key is refused as `NotEnabled`; every refusal before it
-//! names its gate.
+//! On Linux the listener opens the node's journal (row R3a) and attaches it
+//! before it serves, so a request that passes the gate and names a key is
+//! answered by the journal; every refusal before it names its gate.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -108,6 +108,19 @@ fn probe_pin() -> WorkloadPin {
         scope: ScopeKind::Host,
         network: NetworkMode::None,
         outputs: Vec::new(),
+    }
+}
+
+/// Whether `answer` came from past B's gate, from its keys. On Linux they are
+/// the node's journal, which the listener opened before it served: a
+/// receipt, or `Busy` while its start-up reconciliation waits on a service
+/// manager that does not answer (a container with no systemd). Elsewhere no
+/// journal is attached, and the keys answer `NotEnabled`.
+fn answered_by_the_keys(answer: &JobAnswer) -> bool {
+    if cfg!(target_os = "linux") {
+        matches!(answer, JobAnswer::Receipt(_) | JobAnswer::Busy { .. })
+    } else {
+        *answer == JobAnswer::Refused(JobRefusal::NotEnabled)
     }
 }
 
@@ -227,10 +240,14 @@ async fn revoked_job_grant_refuses_the_next_stream() -> TestResult {
     )
     .await
     .map_err(|_| "A's first Node hung")?;
-    match first {
-        Ok(JobAnswer::Node(node)) => assert!(node.enabled, "B is an enabled node: {node:?}"),
+    let epoch = match first {
+        Ok(JobAnswer::Node(node)) => {
+            assert!(node.enabled, "B is an enabled node: {node:?}");
+            node.epoch
+                .ok_or("B's Node must name the epoch of the journal it keeps")?
+        }
         other => panic!("B must answer its issuer's Node on oneiron/job/1: {other:?}"),
-    }
+    };
 
     // The owner withdraws A's job grant on B: the next stream of the same
     // connection gets no answer but a refusal, and a new connection is
@@ -257,7 +274,7 @@ async fn revoked_job_grant_refuses_the_next_stream() -> TestResult {
     );
 
     // The status route stands: A still holds B's status grant, and its ask
-    // passes B's gate (the status answers are row R4's).
+    // passes B's gate to the journal B keeps, which holds no key-1.
     assert_eq!(
         ask::<_, JobStatusAnswer>(
             a,
@@ -269,7 +286,7 @@ async fn revoked_job_grant_refuses_the_next_stream() -> TestResult {
         )
         .await?
         .map_err(|error| format!("A's Find on oneiron/job-status/1: {error:?}"))?,
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled),
+        JobStatusAnswer::Absent { epoch },
         "B must still answer its issuer on oneiron/job-status/1"
     );
     mesh.stop().await;
@@ -336,7 +353,7 @@ async fn granted_machine_not_the_issuer_is_refused() -> TestResult {
     }
 
     // A, the issuer B names, passes the same gate: `Node` is answered, and
-    // a reserve reaches the keys, which this node does not hold yet.
+    // a reserve reaches the keys.
     match ask::<_, JobAnswer>(a, b, JOB_ALPN, &JobRequest::Node).await? {
         Ok(JobAnswer::Node(node)) => {
             assert!(node.enabled, "B is an enabled node: {node:?}");
@@ -351,12 +368,12 @@ async fn granted_machine_not_the_issuer_is_refused() -> TestResult {
         }
         other => panic!("B must answer its issuer's Node: {other:?}"),
     }
-    assert_eq!(
-        ask::<_, JobAnswer>(a, b, JOB_ALPN, &reserve(a.device.machine))
-            .await?
-            .map_err(|error| format!("A's reserve: {error:?}"))?,
-        JobAnswer::Refused(JobRefusal::NotEnabled),
-        "A's reserve must pass B's gate"
+    let answer = ask::<_, JobAnswer>(a, b, JOB_ALPN, &reserve(a.device.machine))
+        .await?
+        .map_err(|error| format!("A's reserve: {error:?}"))?;
+    assert!(
+        answered_by_the_keys(&answer),
+        "A's reserve must pass B's gate: {answer:?}"
     );
 
     // `disable` at the box: C still learns nothing, and A reads that B takes
@@ -397,12 +414,12 @@ async fn node_whose_own_grant_ended_refuses() -> TestResult {
     let mesh = issuer_node_and_other(&files).await?;
     let (a, b) = (mesh.machine(A), mesh.machine(B));
     let issuer = a.device.machine;
-    assert_eq!(
-        ask::<_, JobAnswer>(a, b, JOB_ALPN, &reserve(issuer))
-            .await?
-            .map_err(|error| format!("A's reserve: {error:?}"))?,
-        JobAnswer::Refused(JobRefusal::NotEnabled),
-        "with its own job grant live, B passes its issuer's reserve to its keys"
+    let answer = ask::<_, JobAnswer>(a, b, JOB_ALPN, &reserve(issuer))
+        .await?
+        .map_err(|error| format!("A's reserve: {error:?}"))?;
+    assert!(
+        answered_by_the_keys(&answer),
+        "with its own job grant live, B passes its issuer's reserve to its keys: {answer:?}"
     );
 
     // B's own job grant ends in B's own fold; B still grants A.
@@ -535,4 +552,94 @@ async fn authority_tick_stops_the_work_a_revoke_ended() -> TestResult {
     assert_eq!(keys.take(), ["stop"]);
     mesh.stop().await;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_enabled_node_opens_and_attaches_its_job_journal_before_it_serves() -> TestResult {
+    on_engine_stack(enabled_node_opens_its_job_journal_before_it_serves)
+}
+
+/// FIX R3A-NODE-JOBS-ATTACH: B's server opens B's job journal on the
+/// `state_dir` its file names and attaches it before its listener serves,
+/// answers its issuer from it, and lets it go when the listener stops.
+#[cfg(target_os = "linux")]
+async fn enabled_node_opens_its_job_journal_before_it_serves() -> TestResult {
+    use oneiron_server::gpu_execution_node::jobs::journal_file::{
+        EPOCH_FILE_NAME, JOURNAL_FILE_NAME, JournalWriterLock, WRITER_LOCK_FILE_NAME,
+    };
+
+    let files = NodeFiles::new()?;
+    let mesh = issuer_node_and_other(&files).await?;
+    let (a, b) = (mesh.machine(A), mesh.machine(B));
+    let state_dir = files.state_dir(B);
+
+    // B's listener is up and no request has reached it: its journal is
+    // made, and its job service holds the journal's writer lock.
+    for name in [JOURNAL_FILE_NAME, EPOCH_FILE_NAME] {
+        assert!(
+            state_dir.join(name).is_file(),
+            "B must open its job journal before its listener serves: no {name} in {}",
+            state_dir.display()
+        );
+    }
+    match JournalWriterLock::take(&state_dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        other => {
+            return Err(format!(
+                "B's job service must hold its journal's writer lock while B serves: {other:?}"
+            )
+            .into());
+        }
+    }
+
+    // A reads the journal's epoch in B's Node answer.
+    let epoch = match ask::<_, JobAnswer>(a, b, JOB_ALPN, &JobRequest::Node).await? {
+        Ok(JobAnswer::Node(node)) => node.epoch,
+        other => return Err(format!("B must answer its issuer's Node: {other:?}").into()),
+    };
+    assert!(
+        epoch.is_some(),
+        "B's Node must name the epoch of the journal it keeps"
+    );
+
+    // A's reserve is answered by the journal, never refused as `NotEnabled`.
+    let answer = ask::<_, JobAnswer>(a, b, JOB_ALPN, &reserve(a.device.machine))
+        .await?
+        .map_err(|error| format!("A's reserve: {error:?}"))?;
+    assert!(
+        matches!(answer, JobAnswer::Receipt(_) | JobAnswer::Busy { .. }),
+        "B's journal must answer A's reserve: {answer:?}"
+    );
+    if let JobAnswer::Receipt(signed) = &answer {
+        assert_eq!(
+            signed.receipt.machine, b.device.machine,
+            "B's journal signs its receipt as B"
+        );
+        assert_eq!(
+            Some(&signed.receipt.epoch),
+            epoch.as_ref(),
+            "the receipt carries the epoch B's Node named"
+        );
+    }
+
+    // The listener's stop drops the job service: the journal's writer lock
+    // is free again (a tick still running lets it go when it returns).
+    mesh.stop().await;
+    let lock_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(state_dir.join(WRITER_LOCK_FILE_NAME))?;
+    let freed = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || lock_file.lock()),
+    )
+    .await;
+    match freed {
+        Ok(Ok(Ok(()))) => Ok(()),
+        other => Err(format!(
+            "B's journal must be free within 10 s of its listener's stop: {other:?}"
+        )
+        .into()),
+    }
 }

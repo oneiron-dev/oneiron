@@ -57,8 +57,9 @@ pub const RECEIPT_KEEP_DAYS_DEFAULT: u32 = 30;
 pub const STAGING_LIMIT_SECS_DEFAULT: u64 = 600;
 
 /// Default of `readiness_every_secs` (`jobs.readiness.every_secs`, pass 34
-/// 6.3): how often a node with no attempt running checks itself.
-pub const READINESS_EVERY_SECS_DEFAULT: u64 = 900;
+/// 6.3): how often a node with no attempt running checks itself. The owner's
+/// key has the same default.
+pub const READINESS_EVERY_SECS_DEFAULT: u64 = oneiron::machine_policy::READINESS_EVERY_SECS_DEFAULT;
 
 /// Default of `job_account`.
 pub const JOB_ACCOUNT_DEFAULT: &str = "oneiron-job";
@@ -160,11 +161,12 @@ pub struct ExecutionNodeSettings {
     #[serde(default = "job_account_default")]
     pub job_account: String,
     /// `jobs.readiness.every_secs`: how often the node checks itself while
-    /// no attempt runs (pass 34, 7.3).
+    /// no attempt runs (pass 34, 7.3). The owner's row may shorten it (row
+    /// P0).
     #[serde(default = "readiness_every_secs_default")]
     pub readiness_every_secs: u64,
     /// `machines.drain.clear_by`: who clears the node's drain (pass 34,
-    /// 2.4). Until row P0 the box file is the only control the node obeys.
+    /// 2.4). The owner's row may keep the drain for the box (row P0).
     #[serde(default)]
     pub drain_clear_by: DrainClearBy,
     /// The workloads this machine may run, by name.
@@ -204,8 +206,9 @@ pub struct ExecutionNodeSettings {
 }
 
 /// Who clears a node's drain (`machines.drain.clear_by`, pass 34 2.4). The
-/// box file accepts these two; `owner` and `grants` come with row P0's
-/// signed policy rows.
+/// box file accepts these two. The owner's row (row P0) of `owner` or
+/// `grants` reads here as `person_at_box`, since no owner act reaches the
+/// node's own drain yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DrainClearBy {
@@ -490,9 +493,15 @@ impl ExecutionNodeSettings {
     /// equals the pin's; the entry is relative, has no `..` and matches one
     /// of the template's entries; the scope kind and the network mode are
     /// ones the template and this machine permit; every returnable output is
-    /// on the template's list; the request fits the template's ceilings; and
+    /// on the template's list; the request fits the template's ceilings;
     /// when the template declares `params`, every argument is `name=value`
-    /// with a declared name and a value its pattern matches.
+    /// with a declared name and a value its pattern matches; and last, the
+    /// pin has the shape the issuer's pin door checks
+    /// ([`WorkloadPin::check_shape`]: lower-hex digests, relative paths,
+    /// bounded arguments and outputs, and at most `REQUEST_DEVICE_CLAIMS_MAX`
+    /// device claims, each of at least one device), since the node places
+    /// what its issuer sent. Both the reserve and the job unit's root prepare
+    /// step run this one check.
     ///
     /// # Errors
     ///
@@ -508,7 +517,12 @@ impl ExecutionNodeSettings {
         if !template.scopes.contains(&scope) || !self.scopes.contains(&scope) {
             return Err("scope_not_permitted".to_owned());
         }
-        template.admit_pin(pin)
+        template.admit_pin(pin)?;
+        // Last, so each refusal the template judges keeps its own reason; a
+        // claim of no device adds nothing to the template's devices ceiling,
+        // and only the shape bounds the claims a pin carries.
+        pin.check_shape()
+            .map_err(|why| format!("pin_shape_invalid: {why}"))
     }
 
     /// The launch commit's fit of `pin`'s placement (pass 34, section 2.1,

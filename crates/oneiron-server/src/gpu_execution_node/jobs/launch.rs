@@ -4,8 +4,10 @@
 //! submit is accepted. The launch commit is one critical section under the
 //! lock, and the only place a job can start:
 //! 1. the key is `Staging`, its staging completed within the staging limit
-//!    (read again under the lock, so a wait for the lock counts), and it is
-//!    not closed;
+//!    (read again under the lock, so a wait for the lock counts), it is not
+//!    closed, and the server still serves the service ([`NodeJobs::close`]:
+//!    after the close a staging key stays where it is, for the next
+//!    opening);
 //! 2. the local policy, read now: enabled, not paused, not drained, the
 //!    template's digest unchanged, and the launch scope meets the minimum
 //!    contract (it kills the whole tree, enforces the cutoff with the engine
@@ -65,7 +67,7 @@ impl NodeJobs {
     /// cannot be started leaves the key where it is; the next tick starts it
     /// again.
     pub(super) fn start_staging(&self, key: String) {
-        if !self.lock().staging.insert(key.clone()) {
+        if self.service_closed() || !self.lock().staging.insert(key.clone()) {
             return;
         }
         let jobs = self.clone();
@@ -87,14 +89,24 @@ impl NodeJobs {
             return;
         };
         let deadline = run.deadline;
-        let closed = || self.key_closed(key) || Instant::now() >= deadline;
+        let closed = || self.key_closed(key) || self.service_closed() || Instant::now() >= deadline;
         let staged = self.parts().stager.stage(&run.order, &closed);
+        // The server stopped serving: the key stays where it is, and the
+        // next opening takes up its staging again (7.7).
+        if self.service_closed() {
+            return;
+        }
         // Staging that ran past the limit, and a fold that did not reach the
         // submit's heads by the limit, end the key with their own reasons.
         let failure = match staged {
             Ok(()) if Instant::now() >= deadline => Some("staging_limit".to_owned()),
-            Ok(()) => (!self.wait_for_authority(key, &run.authority_heads, deadline))
-                .then(|| "authority_stale".to_owned()),
+            Ok(()) => {
+                let folded = self.wait_for_authority(key, &run.authority_heads, deadline);
+                if self.service_closed() {
+                    return;
+                }
+                (!folded).then(|| "authority_stale".to_owned())
+            }
             Err(StageFailure::Closed) if self.key_closed(key) => return,
             Err(StageFailure::Closed) => Some("staging_limit".to_owned()),
             Err(StageFailure::Refused(reason)) => Some(reason),
@@ -108,8 +120,10 @@ impl NodeJobs {
         }
         self.launch_commit(key, failure, deadline);
         // A refusal of the launch commit itself (a device, the memory, the
-        // control file) ended the key after its code was staged.
-        if !refused && !self.key_launched(key) {
+        // control file) ended the key after its code was staged. A commit
+        // the service's close skipped left the key staging: its code stays
+        // for the next opening.
+        if !refused && !self.key_launched(key) && !self.service_closed() {
             self.parts().stager.unstage(key, &run.order.payload_dir);
         }
     }
@@ -119,7 +133,7 @@ impl NodeJobs {
     fn begin_staging(&self, key: &str) -> Option<StagingRun> {
         let now = self.now();
         let mut book = self.lock();
-        if book.gate != NodeGate::Open {
+        if book.gate != NodeGate::Open || self.service_closed() {
             return None;
         }
         let journal = book.journal.as_mut()?;
@@ -177,15 +191,16 @@ impl NodeJobs {
             .is_none_or(NodeKey::is_ended)
     }
 
-    /// Waits until the node's fold holds every one of `heads`, the key is
-    /// closed, or `deadline` passes. Answers whether the fold holds them.
+    /// Waits until the node's fold holds every one of `heads`, the key or
+    /// the service is closed, or `deadline` passes. Answers whether the fold
+    /// holds them.
     fn wait_for_authority(&self, key: &str, heads: &[String], deadline: Instant) -> bool {
         loop {
             if self.parts().authority.folded(heads) {
                 return true;
             }
             let now = Instant::now();
-            if now >= deadline || self.key_closed(key) {
+            if now >= deadline || self.key_closed(key) || self.service_closed() {
                 return false;
             }
             std::thread::sleep(AUTHORITY_POLL.min(deadline - now));
@@ -197,7 +212,9 @@ impl NodeJobs {
         let mut guard = self.lock();
         let now = self.now();
         let book: &mut NodeBook = &mut guard;
-        if book.gate != NodeGate::Open {
+        // Read under the lock: a close that came first stops the commit
+        // before anything is leased or written.
+        if book.gate != NodeGate::Open || self.service_closed() {
             return;
         }
         let Some(journal) = book.journal.as_mut() else {

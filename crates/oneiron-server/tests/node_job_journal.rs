@@ -1166,6 +1166,51 @@ fn the_handle_the_node_attaches_never_keeps_the_job_service_alive() {
 }
 
 #[test]
+fn a_closed_job_service_begins_no_launch_and_its_next_opening_takes_up_the_staging_key() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let attachment = jobs.attachment();
+    let pin = pin("tools/units/run.sh");
+    let key = "job-40/chunk-0";
+
+    // The key stages when the server stops serving the service.
+    fixture.node.stager.hold();
+    receipt(jobs.reserve(fixture.issuer, fixture.reserve(key, &pin)));
+    receipt(jobs.submit(fixture.issuer, fixture.submit(key, &pin)));
+    assert!(fixture.node.stager.wait_entered(1, WAIT));
+    jobs.close();
+
+    // The node answers as one with no keys, though the staging worker still
+    // holds the service.
+    assert_eq!(
+        attachment.reserve(fixture.issuer, fixture.reserve("job-40/chunk-1", &pin)),
+        JobAnswer::Refused(JobRefusal::NotEnabled)
+    );
+    assert!(!attachment.swept());
+
+    // The worker returns at its next step, though its staging is still
+    // held: the journal's writer lock frees (the opening waits for it), and
+    // the closed service leased, started and wrote nothing.
+    drop(jobs);
+    let reopened = fixture.node.open();
+    assert_eq!(fixture.node.units.starts(key), 0);
+    assert_eq!(fixture.node.devices.leases_given(), 0);
+    assert_eq!(
+        entry(&reopened, key).map(|entry| entry.state),
+        Some(JobState::Staging)
+    );
+
+    // The next opening takes up the staging, and the key launches once.
+    assert!(fixture.node.stager.wait_entered(2, WAIT));
+    fixture.node.stager.let_go();
+    wait_for(&reopened, key, |entry| entry.state == JobState::Launching);
+    reopened.tick();
+    wait_for(&reopened, key, |entry| entry.state == JobState::Running);
+    assert_eq!(fixture.node.units.starts(key), 1);
+    assert_eq!(fixture.node.devices.leases_given(), 1);
+}
+
+#[test]
 fn a_quarantined_device_takes_no_new_reserve_until_its_clean_release() {
     let fixture = fixture();
     let jobs = fixture.node.open();

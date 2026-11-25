@@ -25,8 +25,13 @@
 //! floor, the job unit (row R3b), the stager (row R3c) and the machine-key
 //! signer. Its calls block; an async caller runs them on a blocking thread.
 //! The warm keys and the cache budget are [`warm`]'s (pass 34, row P2).
+//! On Linux the server opens it and steps it on the mesh listener's tick
+//! (`serving`).
 //! One service per `state_dir`: it holds the journal's writer lock while any
-//! handle of it lives, a staging worker's too.
+//! handle of it lives, a staging worker's too. Once the server stops serving
+//! it ([`NodeJobs::close`]), no staging begins and no launch commit begins,
+//! and each staging worker returns at its next step, so the lock frees soon
+//! after.
 
 pub mod breadcrumb;
 pub mod incidents;
@@ -36,6 +41,8 @@ pub mod journal_file;
 pub mod node_parts;
 pub mod readiness;
 pub mod receipt;
+#[cfg(target_os = "linux")]
+pub mod serving;
 pub mod staging;
 pub mod warm;
 
@@ -47,6 +54,7 @@ mod recovery;
 mod status;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron_organ_host::FloorLease;
@@ -67,6 +75,8 @@ pub use node_parts::{
 };
 pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, drain_rule_default};
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
+#[cfg(target_os = "linux")]
+pub use serving::ServedNodeJobs;
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 pub use status::KEYS_PAGE_MAX_BYTES;
 
@@ -106,6 +116,8 @@ struct NodeJobsShared {
     book: Mutex<NodeBook>,
     /// The warm keys (row P2): taken only after `book`, never before it.
     warm: Mutex<warm::WarmState>,
+    /// The server stopped serving this service ([`NodeJobs::close`]).
+    closed: AtomicBool,
     /// The readiness record and the incidents, under locks of their own.
     readiness: readiness::NodeReadinessShared,
     /// Held while any handle lives: no second service writes this journal.
@@ -150,6 +162,24 @@ impl NodeJobs {
             boot_ns: clock.boot_ns(),
             wall_ms: clock.wall_ms(),
         }
+    }
+
+    /// The server stops serving this service: the mesh listener's stop, or
+    /// a start that failed after the opening. From now on no staging begins
+    /// and no launch commit begins (one that began already ends as it
+    /// would have, and is journaled), each staging worker returns at its
+    /// next step and leaves its key where it is, for the next opening to
+    /// take up again (design 7.7: a key that has not launched is kept on the
+    /// same boot), and the node's attached handle answers as a node with no
+    /// keys. The journal's writer lock frees once the last staging worker
+    /// has returned. It never waits for the admission lock.
+    pub fn close(&self) {
+        self.shared.closed.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether [`Self::close`] ran.
+    fn service_closed(&self) -> bool {
+        self.shared.closed.load(Ordering::SeqCst)
     }
 
     /// Whether the start-up reconciliation has ended (`Node`'s `swept`).
