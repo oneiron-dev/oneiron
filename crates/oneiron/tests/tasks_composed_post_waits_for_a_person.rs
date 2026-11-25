@@ -177,6 +177,7 @@ fn decisions(rung: &TakeRung) -> TaskDecisions<'_> {
             rule: None,
             local: Some(rung),
             system_one: None,
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,
