@@ -895,3 +895,9 @@ required-features = ["oneiron/test-support"]
 name = "job_workloads"
 path = "tests/job_workloads.rs"
 required-features = ["oneiron/test-support", "mesh"]
+
+# Pass 34, 6.5: the check-in of an agent's pin under its family's compute.pin grant.
+[[test]]
+name = "job_workload_check_in"
+path = "tests/job_workload_check_in.rs"
+required-features = ["oneiron/test-support", "mesh"]
