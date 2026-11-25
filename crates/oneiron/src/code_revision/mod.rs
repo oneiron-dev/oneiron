@@ -24,7 +24,9 @@ mod storage;
 mod tree_codec;
 mod tree_inventory;
 mod types;
-pub(crate) use self::keys::archive_revision_tables;
+pub(crate) use self::keys::{
+    ArchivedRevisionTable, archive_revision_rows, archive_revision_tables,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::keys::{
     put_pins_code_revision_frontier_in_txn, put_pins_code_revision_integrity_in_txn,

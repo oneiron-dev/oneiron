@@ -13,6 +13,13 @@ use std::collections::BTreeSet;
 pub enum ReceiptSourceOmission {
     NotStored,
     CredentialRedaction,
+    /// An Owner's copy leaves the receipt home: its attempt read a row of
+    /// another member's personal mailbox the copy leaves out (fix list row
+    /// 15416).
+    MemberMailbox,
+    /// An Owner's copy leaves the receipt home: the rows its attempt read
+    /// are not all known (fix list row 15416).
+    SourceUnidentified,
 }
 
 /// Origin remains data on an untrusted archive, never a replay capability.

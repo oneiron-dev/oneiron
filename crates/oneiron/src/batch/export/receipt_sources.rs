@@ -110,9 +110,12 @@ impl ExportReceiptSource {
         Ok(())
     }
 }
+/// The receipt sources `body` cites, each as the export reads it: an
+/// archived source first, then the native receipt as the snapshot judged it
+/// (`receipts`), else not stored.
 pub(crate) fn receipt_sources_for_body(
     body: &ExportBody,
-    receipts: &std::collections::BTreeMap<String, ReceiptRecord>,
+    receipts: &std::collections::BTreeMap<String, ExportReceiptSource>,
     archived: Option<&std::collections::BTreeMap<String, ExportReceiptSource>>,
 ) -> Result<Vec<ExportReceiptSource>> {
     task_receipt_refs_from_body(body)
@@ -120,11 +123,13 @@ pub(crate) fn receipt_sources_for_body(
         .map(|id| {
             // Imported history keeps its exact bound source. A coincident local
             // receipt ID cannot silently rewrite the archived claim's trace.
-            if let Some(source) = archived.and_then(|rows| rows.get(&id)) {
+            if let Some(source) = archived
+                .and_then(|rows| rows.get(&id))
+                .or_else(|| receipts.get(&id))
+            {
                 return Ok(source.clone());
             }
-            let record = receipts.get(&id);
-            ExportReceiptSource::from_record(id, record)
+            ExportReceiptSource::from_record(id, None)
         })
         .collect()
 }

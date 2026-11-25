@@ -102,6 +102,7 @@ pub fn retained_row_withholds_credential(
         value,
         owner: None,
         carriers: Vec::new(),
+        names: Vec::new(),
     }))
 }
 
