@@ -781,15 +781,17 @@ def read_authorized_file(reading: KeyReading, path: Path) -> None:
     except OSError:
         reading.unread_files.append(str(path))
         return
-    with os.fdopen(fd, "rb") as handle:
-        try:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                reading.unread_files.append(str(path))
-                return
-            text = handle.read().decode("utf-8", errors="replace")
-        except OSError:
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
             reading.unread_files.append(str(path))
             return
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        reading.unread_files.append(str(path))
+        return
+    finally:
+        os.close(fd)
     reading.authorized[str(path)] = parse_authorized_keys(text)
 
 
