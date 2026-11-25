@@ -8,22 +8,31 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
+use std::os::fd::AsFd as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::ExecutionNodeSettings;
 use super::capabilities::{CheckReport, capabilities_of, check_report_path, kernel_facts};
 use super::control::{CONTROL_SOCKET_PATH, CONTROL_SOCKET_UNIT};
 use super::device_files;
+use super::gate::{GateSocket, MainProcess, MainProcessWatch, read_report};
 use super::records::{ExecFile, ScopeBound, ScopeReport};
 use super::safe_fs::{self, account, boot_id, borrow, make_dir_beneath, open_dir_path};
-use super::systemd_unit::tool_path;
-use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, REPORT_PIPE_NAME, UNIT_TEMPLATE_PATH};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show_within, tool_path};
+use super::{EXCHANGE_ROOT, PROBE_UNIT_PREFIX, UNIT_TEMPLATE_PATH};
 
 /// How long the probe unit may run.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long the probe unit has to end once root closed its connection,
+/// past [`PROBE_TIMEOUT`] when the report came late.
+const PROBE_END_GRACE: Duration = Duration::from_secs(10);
+
+/// How often the probe looks at its starter while it waits for it to end.
+const STARTER_POLL: Duration = Duration::from_millis(50);
 
 /// Whether the control socket is there: its socket unit removes the file
 /// when it stops (`RemoveOnStop=yes`).
@@ -151,7 +160,9 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
         log_max_bytes: u64::from(super::super::node_settings::LOG_MAX_MIB_DEFAULT) << 20,
     };
     let exchange = Path::new(EXCHANGE_ROOT).join(&instance);
-    let outcome = probe_in_unit(settings, &unit_text, &binary, &exec, &exchange, job_gid);
+    let outcome = probe_in_unit(
+        settings, &unit_text, &binary, &exec, &exchange, job_uid, job_gid,
+    );
     super::exchange::withdraw(&instance);
     let _ = std::fs::remove_dir_all(&payload);
     let _ = std::fs::remove_dir_all(&exchange);
@@ -184,13 +195,15 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
 }
 
 /// Starts the probe unit with the installed template's properties and reads
-/// `job-exec`'s report from its pipe.
+/// `job-exec`'s report on the gate's socket, from the probe unit's main
+/// process alone, as the gate takes it (FIX EXEC-UNIT-ONE-JOB-ACCOUNT).
 fn probe_in_unit(
     settings: &ExecutionNodeSettings,
     unit_text: &str,
     binary: &Path,
     exec: &ExecFile,
     exchange: &Path,
+    job_uid: u32,
     job_gid: u32,
 ) -> Result<ScopeReport, String> {
     let root = open_dir_path(Path::new(EXCHANGE_ROOT))
@@ -210,17 +223,15 @@ fn probe_in_unit(
         Some((0, job_gid)),
     )
     .map_err(|error| error.to_string())?;
-    safe_fs::make_fifo_beneath(borrow(&dir), REPORT_PIPE_NAME, 0o620, job_gid)
-        .map_err(|error| error.to_string())?;
-    safe_fs::make_fifo_beneath(borrow(&dir), super::GO_PIPE_NAME, 0o640, job_gid)
-        .map_err(|error| error.to_string())?;
+    let socket = GateSocket::bind(exchange, job_gid)?;
+    let unit = format!("{PROBE_UNIT_PREFIX}{}", exec.instance);
     let systemd_run = tool_path("systemd-run").ok_or("systemd-run: not found")?;
     let mut command = Command::new(systemd_run);
     command
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         .args(["--wait", "--collect", "--quiet"])
-        .arg(format!("--unit={PROBE_UNIT_PREFIX}{}", exec.instance))
+        .arg(format!("--unit={unit}"))
         .arg("--property=MemoryMax=268435456")
         .arg("--property=TasksMax=64")
         .arg(format!(
@@ -240,13 +251,101 @@ fn probe_in_unit(
     let mut child = command
         .spawn()
         .map_err(|error| format!("systemd-run: {error}"))?;
-    let read = super::gate::read_report(&dir, REPORT_PIPE_NAME, PROBE_TIMEOUT)
-        .map(|(report, _pipe)| report);
-    let waited = child.wait();
-    let _ = exchange;
+    let until = Instant::now() + PROBE_TIMEOUT;
+    // `job-exec` waits on its connection until root closes it, after the
+    // report, so the service manager still names it while root checks it.
+    let mut start = ProbeStart {
+        unit: &unit,
+        starter: &mut child,
+        main: None,
+    };
+    let read = socket
+        .accept_main_process(&mut start, job_uid, until, &unit)
+        .and_then(|connection| {
+            read_report(
+                connection.as_fd(),
+                until.saturating_duration_since(Instant::now()),
+            )
+        });
+    drop(socket);
+    drop(start);
+    let ended = end_starter(
+        &mut child,
+        &unit,
+        until.max(Instant::now() + PROBE_END_GRACE),
+    );
     let bytes = read?;
-    waited.map_err(|error| error.to_string())?;
+    let status = ended?;
+    // A report from a unit that then failed is no proof (review r7 R7-04).
+    if !status.success() {
+        return Err(format!(
+            "probe_unit_failed: systemd-run {status} after the report"
+        ));
+    }
     serde_json::from_slice(&bytes).map_err(|error| format!("probe report: {error}"))
+}
+
+/// The probe unit's start as the gate's socket waits on it: its main process
+/// once the service manager names it, held from then on, and its starter
+/// `systemd-run`, whose end before the connection ends the wait (review r7
+/// R7-03, R7-04).
+struct ProbeStart<'a> {
+    unit: &'a str,
+    starter: &'a mut Child,
+    main: Option<MainProcess>,
+}
+
+impl MainProcessWatch for ProbeStart<'_> {
+    fn main_process(&mut self, left: Duration) -> Result<Option<&MainProcess>, String> {
+        if self.main.is_none()
+            && let Some(pid) = unit_main_process(self.unit, left)?
+        {
+            self.main = Some(MainProcess::hold(pid)?);
+        }
+        Ok(self.main.as_ref())
+    }
+
+    fn still_starting(&mut self) -> Result<(), String> {
+        match self.starter.try_wait() {
+            Ok(None) => Ok(()),
+            Ok(Some(status)) => Err(format!(
+                "probe_start_failed: systemd-run {status} before job-exec connected"
+            )),
+            Err(error) => Err(format!("systemd-run: {error}")),
+        }
+    }
+}
+
+/// The main process of the unit `unit`, as the service manager names it,
+/// asking for at most `left`; `None` while it names none (the unit not
+/// there yet, or `MainPID=0`).
+fn unit_main_process(unit: &str, left: Duration) -> Result<Option<libc::pid_t>, String> {
+    let pid = show_within(unit, &["MainPID"], left.min(SYSTEMCTL_TIMEOUT))?
+        .get("MainPID")
+        .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
+        .unwrap_or(0);
+    Ok((pid > 0).then_some(pid))
+}
+
+/// Waits for the starter until `until`. A probe unit still running then is
+/// stopped and its starter killed and reaped, so `execution-node check`
+/// never outlives its deadline by more than the stop (review r7 R7-04).
+fn end_starter(starter: &mut Child, unit: &str, until: Instant) -> Result<ExitStatus, String> {
+    loop {
+        match starter.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() >= until => break,
+            Ok(None) => std::thread::sleep(STARTER_POLL),
+            Err(error) => return Err(format!("systemd-run: {error}")),
+        }
+    }
+    let stopped = run_tool("systemctl", &["stop", unit], SYSTEMCTL_TIMEOUT);
+    let _ = starter.kill();
+    let _ = starter.wait();
+    Err(format!(
+        "probe_unit_did_not_end: {unit} still ran at the probe's deadline; stopped: {}",
+        stopped.map_or_else(|why| why, |_| "yes".to_owned())
+    ))
 }
 
 /// The installed template's `[Service]` properties other than its `Exec*`

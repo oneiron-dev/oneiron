@@ -1,6 +1,7 @@
 //! The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2):
-//! `vault.gpu.jobs.quote`, `.start`, `.status`, `.list`, `.cancel` and
-//! `.allow` over this host's `[gpu_jobs]` offers and registered backends.
+//! `vault.gpu.jobs.quote`, `.start`, `.status`, `.list`, `.cancel`,
+//! `.allow` and `.write_off` (pass 33 row R4, door 10) over this host's
+//! `[gpu_jobs]` offers and registered backends.
 //! The engine decides (`oneiron::gpu_job`); a door reads the offer and
 //! backend, builds the job's run, and calls it. Quotes, status and the list
 //! are reads: the owner under their own proof, or an agent whose own Grant
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobConnector,
+    GpuJob, GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobConnector,
     GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms,
     GpuJobRef, GpuJobStart, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
 };
@@ -226,9 +227,27 @@ pub(crate) async fn vault_gpu_jobs_status(
     gpu_door(server, auth, GpuJobVerb::Status, move |server, _| {
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
-        Ok(GpuJobStatus::from(&job))
+        Ok(status_on_host(server, &job))
     })
     .await
+}
+
+/// `job`'s status, with the four fields of door 8 when `connector` runs on one of the vault's
+/// own machines (pass 33 row R4), judged against this host's job step.
+fn status_of(server: &SyncServer, connector: &dyn GpuJobConnector, job: &GpuJob) -> GpuJobStatus {
+    let mut status = GpuJobStatus::from(job);
+    let step_ms = server.config.gpu_jobs.step_secs.saturating_mul(1_000);
+    status.node = connector.node_view(job, now_ms(), step_ms);
+    status
+}
+
+/// `job`'s status on this host's backend for its offer. A job whose offer or backend this host
+/// no longer has shows no node fields.
+fn status_on_host(server: &SyncServer, job: &GpuJob) -> GpuJobStatus {
+    match offer_with_backend(server, &job.offer.name) {
+        Ok((_, connector)) => status_of(server, connector.as_ref(), job),
+        Err(_) => GpuJobStatus::from(job),
+    }
 }
 
 /// `vault.gpu.jobs.list`: every GPU job of the vault, newest first.
@@ -241,7 +260,7 @@ pub(crate) async fn vault_gpu_jobs_list(
         let mut jobs = server.vault.gpu_jobs()?;
         jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at_ms));
         Ok(GpuJobList {
-            jobs: jobs.iter().map(GpuJobStatus::from).collect(),
+            jobs: jobs.iter().map(|job| status_on_host(server, job)).collect(),
         })
     })
     .await
@@ -279,6 +298,32 @@ pub(crate) async fn vault_gpu_jobs_cancel(
             Err(error) => return Err(error.into()),
         };
         Ok(GpuJobStatus::from(&job))
+    })
+    .await
+}
+
+/// `vault.gpu.jobs.write_off` (pass 33 row R4, door 10): the owner closes the hold of a job
+/// whose end its backend cannot confirm. The backend closes the job's dispatch for good, then
+/// the job ends `unconfirmed` and settles zero; it is final. The backend refuses a job whose
+/// end it can still confirm, and one inside its wait.
+pub(crate) async fn vault_gpu_jobs_write_off(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GpuJobRef,
+) -> Listed<GpuJobStatus> {
+    gpu_door(server, auth, GpuJobVerb::WriteOff, move |server, caller| {
+        let owner = owner_act(caller, GpuJobVerb::WriteOff)?;
+        let id = input.id()?;
+        let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
+        let connector = offer_with_backend(server, &job.offer.name)?.1;
+        let job = server.vault.write_off_gpu_job(
+            owner,
+            &id,
+            server.gpu_jobs.permits(),
+            connector.as_ref(),
+            now_ms(),
+        )?;
+        Ok(status_of(server, connector.as_ref(), &job))
     })
     .await
 }

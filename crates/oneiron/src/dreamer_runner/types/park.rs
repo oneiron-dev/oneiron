@@ -82,6 +82,9 @@ pub enum DreamerParkWait {
     ResidentShare {
         /// The resident whose share refused the call.
         resident: EntityId,
+        /// The unit of the allocation whose share refused the call; the owner's share write in
+        /// it wakes the park. A park stored before parks named one waits in `micro_usd`.
+        unit: String,
         /// The share, in the allocation's unit, the call needed: what the resident had used and
         /// held, plus the call's reservation.
         needed_units: u64,

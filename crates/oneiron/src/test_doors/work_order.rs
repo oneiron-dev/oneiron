@@ -87,3 +87,25 @@ pub fn settled_order_wait(
         .expect("settled wait read")
         .map(|reply| serde_json::from_str(&reply).expect("settled reply is JSON"))
 }
+
+/// Whether the settled reply of the wait on `order` until `until` is in its erased form: the
+/// wait settled, and an erase took the reply's copy, so reading it answers the typed
+/// unavailable (`ResponseErased`). `false` while the wait has not settled or its reply reads.
+///
+/// # Panics
+///
+/// When the store read fails for another reason or the wait id is reserved: a broken fixture.
+#[must_use]
+pub fn settled_order_wait_erased(
+    vault: &Vault,
+    order: &EntityId,
+    until: crate::work_order::WaitUntil,
+) -> bool {
+    let wait = crate::work_order::order_wait_id(order, until).expect("order wait id");
+    let txn = vault.store.env.read_txn().expect("read txn");
+    match crate::code_run::settled_wait_reply_in_txn(vault, &txn, wait) {
+        Ok(_) => false,
+        Err(error) if error.kind() == crate::ErrorKind::ResponseErased => true,
+        Err(error) => panic!("settled wait read: {error}"),
+    }
+}

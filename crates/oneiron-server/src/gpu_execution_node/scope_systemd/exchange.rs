@@ -1,6 +1,7 @@
 //! The per-job directories root makes on the machine's own tree before the
 //! job's view is built, and takes away after the job: the exchange directory
-//! (`exec.json` and the two gate pipes) and the payload's bind source.
+//! (`exec.json`, and the gate's socket while the gate waits) and the
+//! payload's bind source.
 //!
 //! The unit binds the payload from `<PAYLOAD_ROOT>/<instance>`, a bind mount
 //! of the very directory the prepare step opened and checked, under a
@@ -16,14 +17,14 @@ use std::path::Path;
 
 use super::records::ExecFile;
 use super::safe_fs::{
-    self, borrow, make_dir_beneath, make_fifo_beneath, open_dir_beneath, open_dir_path,
-    remove_beneath, write_beneath,
+    self, borrow, make_dir_beneath, open_dir_beneath, open_dir_path, remove_beneath, write_beneath,
 };
 use super::step::StepContext;
-use super::{EXCHANGE_ROOT, EXEC_FILE_NAME, GO_PIPE_NAME, PAYLOAD_ROOT, REPORT_PIPE_NAME};
+use super::{EXCHANGE_ROOT, EXEC_FILE_NAME, GATE_SOCKET_NAME, PAYLOAD_ROOT};
 
 /// Makes the job's exchange directory fresh (root, mode 0750, the job
-/// account's group): `exec.json` and the two gate pipes.
+/// account's group) with `exec.json` in it. The gate binds its socket there
+/// once it runs ([`super::gate`]).
 ///
 /// # Errors
 ///
@@ -56,21 +57,28 @@ pub fn write_exchange(context: &StepContext, exec: &ExecFile) -> Result<(), Stri
         Some((0, context.job_gid)),
     )
     .map_err(|error| format!("exec_file: {error}"))?;
-    make_fifo_beneath(borrow(&exchange), REPORT_PIPE_NAME, 0o620, context.job_gid)
-        .map_err(|error| format!("report_pipe: {error}"))?;
-    make_fifo_beneath(borrow(&exchange), GO_PIPE_NAME, 0o640, context.job_gid)
-        .map_err(|error| format!("go_pipe: {error}"))?;
     Ok(())
 }
 
 /// Every name the exchange directory may hold, with `exec.json`'s staging
-/// name (review r3 R3-10).
-const EXCHANGE_FILES: [&str; 4] = [
+/// name (review r3 R3-10), and the two report and go pipes a binary from
+/// before the gate's socket made there. Those two are only ever removed,
+/// never made or opened, so an exchange that an older binary left behind in
+/// `/run` (an interrupted job, then an update in place) does not fail the
+/// next prepare as not fresh (review r7 R7-05).
+const EXCHANGE_FILES: [&str; 5] = [
     EXEC_FILE_NAME,
     EXEC_STAGING_NAME,
-    REPORT_PIPE_NAME,
-    GO_PIPE_NAME,
+    GATE_SOCKET_NAME,
+    LEGACY_REPORT_PIPE_NAME,
+    LEGACY_GO_PIPE_NAME,
 ];
+
+/// The report pipe of a binary from before the gate's socket.
+const LEGACY_REPORT_PIPE_NAME: &str = "report";
+
+/// The go pipe of a binary from before the gate's socket.
+const LEGACY_GO_PIPE_NAME: &str = "go";
 
 /// `exec.json` while [`write_beneath`] writes it.
 const EXEC_STAGING_NAME: &str = "exec.json.new";
