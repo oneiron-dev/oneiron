@@ -260,7 +260,7 @@ impl ResourceRequest {
         };
         let devices = leasable(devices);
         // More devices asked than the machine has: counted before any
-        // claim is expanded, so a large count allocates nothing.
+        // claim is expanded, so nothing is allocated per device asked.
         let mut needed = 0_u64;
         for (claim, claim_at) in self.devices.iter().enumerate() {
             needed = needed.saturating_add(u64::from(claim_at.count));
