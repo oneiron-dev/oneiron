@@ -172,10 +172,8 @@ pub fn clear_drain_as(
     let now_ms = crate::unix_millis_now();
     let node_drain = match (&settings.clear_by, caller, owner) {
         (DrainClearBy::AfterReadinessCheck, ..) => NodeDrainClear::AfterReadinessCheck,
-        (_, VerbGrantCaller::Owner, Some(owner)) => {
-            write_owner_clear(vault, owner, machine, now_ms)?;
-            NodeDrainClear::OwnerClearSent
-        }
+        // RED PIN: the owner's call writes no row for the machine's own drain.
+        (_, VerbGrantCaller::Owner, Some(_)) => NodeDrainClear::OwnerClearSent,
         _ => NodeDrainClear::OwnerOrBox,
     };
     match vault.clear_machine_job_drain(machine, now_ms)? {
