@@ -185,6 +185,7 @@ impl NodeAdmission for ScriptedAdmission {
         &self,
         _pin: &WorkloadPin,
         placement: &DevicePlacement,
+        _held_mib: u64,
     ) -> Result<(), String> {
         match locked(&self.state).memory_ceiling_mib {
             Some(ceiling) if placement.host_memory_mib > ceiling => {
