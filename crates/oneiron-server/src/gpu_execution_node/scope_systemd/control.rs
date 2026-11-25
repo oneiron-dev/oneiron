@@ -36,6 +36,7 @@
 //! never passes the engine's bound. The answer is `ok ` and
 //! [`PayloadUsage::render`]'s line.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -45,12 +46,13 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::super::jobs::payload_usage::{
-    PAYLOAD_DEPTH_MAX_CEILING, PayloadWalkBounds, measure_payload_fd,
+    PAYLOAD_DEPTH_MAX_CEILING, PayloadWalkBounds, measure_payload_fd_counting,
 };
 use super::super::jobs::{JobKeyId, PayloadUsage};
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::PAYLOAD_ROOT;
-use super::held_files::unlinked_held_bytes;
+use super::held_files::{HeldScan, add_unlinked_held};
+use super::job_ids;
 use super::safe_fs::{account, borrow, facts, open_dir_beneath, open_dir_path};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
@@ -282,7 +284,7 @@ pub fn request_usage(
 /// (empty for `start`, `stop` and `signal`).
 fn exchange(verb: ControlVerb, id: &JobKeyId) -> Result<String, String> {
     let fail = |error: std::io::Error| format!("{CONTROL_SOCKET_PATH}: {error}");
-    let mut stream = UnixStream::connect(CONTROL_SOCKET_PATH).map_err(fail)?;
+    let mut stream = connect_within(Path::new(CONTROL_SOCKET_PATH), CONNECT_WAIT).map_err(fail)?;
     stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
     stream
         .write_all(render_request(verb, id).as_bytes())
@@ -299,6 +301,47 @@ fn exchange(verb: ControlVerb, id: &JobKeyId) -> Result<String, String> {
     Err(reply
         .strip_prefix("refused ")
         .map_or_else(|| format!("job-control answered {reply:?}"), str::to_owned))
+}
+
+/// The longest the engine waits for the socket to take its connection: a
+/// full accept queue (the service manager not accepting for a while) holds
+/// a blocking connect for as long as it lasts (review r13 R13-15).
+const CONNECT_WAIT: Duration = Duration::from_secs(5);
+
+/// The pause between two connection tries while the accept queue is full.
+const CONNECT_RETRY_PAUSE: Duration = Duration::from_millis(50);
+
+/// A connection to the stream socket at `path`, made within `wait`: each
+/// try does not block, and a full accept queue is tried again until the
+/// wait ends. The connection is then made blocking.
+fn connect_within(path: &Path, wait: Duration) -> std::io::Result<UnixStream> {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
+    let address = SocketAddrUnix::new(path)?;
+    let deadline = Instant::now() + wait;
+    loop {
+        let socket = rustix::net::socket_with(
+            AddressFamily::UNIX,
+            SocketType::STREAM,
+            SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
+            None,
+        )?;
+        match rustix::net::connect(&socket, &address) {
+            Ok(()) => {
+                rustix::io::ioctl_fionbio(&socket, false)?;
+                return Ok(UnixStream::from(socket));
+            }
+            Err(rustix::io::Errno::AGAIN) if Instant::now() < deadline => {
+                std::thread::sleep(CONNECT_RETRY_PAUSE);
+            }
+            Err(rustix::io::Errno::AGAIN) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("not accepted within {} s", wait.as_secs()),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 /// `oneiron job-control --engine-account <name>` (root, one instance of the
@@ -380,17 +423,24 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<String, String> {
 /// `<PAYLOAD_ROOT>/<id>`, opened beneath the root-only payload root and
 /// never through a link, so the walk counts the directory the unit binds
 /// and no path the engine's account could replace (the bind carries no
-/// submount), and then the files on its device that the unit's processes
-/// hold with no name left (review r12 R12-01). Both within the walk's time
-/// bound, from the request's start.
+/// submount), and then the inodes on its device that the unit's tasks hold
+/// with no name left and the job's uid owns (review r12 R12-01, r13
+/// R13-01..R13-04). Both within the walk's time bound, from the request's
+/// start; the held files' links count against the walk's entry bound.
 fn payload_usage(
     id: &JobKeyId,
     stop_past: u64,
     bounds: &PayloadWalkBounds,
 ) -> Result<PayloadUsage, String> {
     let deadline = Instant::now() + bounds.time_max;
-    let found = show(&id.unit_name(), &["ControlGroup"])?;
+    let unit = id.unit_name();
+    let found = show(&unit, &["ControlGroup"])?;
     let control_group = found.get("ControlGroup").map_or("", String::as_str);
+    // The job's uid, from root's id table: a running job unit holds one
+    // entry (FIX EXEC-UNIT-CROSS-JOB-SAME-UID).
+    let job_uid = job_ids::identity_of(&unit)
+        .ok_or_else(|| format!("payload_not_measured: {unit} holds no id in the id table"))?
+        .uid;
     let root = open_dir_path(Path::new(PAYLOAD_ROOT))
         .map_err(|error| format!("payload_not_published: {error}"))?;
     let root_facts = facts(borrow(&root)).map_err(|error| format!("payload_root: {error}"))?;
@@ -412,19 +462,21 @@ fn payload_usage(
         time_max: deadline.saturating_duration_since(Instant::now()),
         ..bounds.clone()
     };
-    let walked = measure_payload_fd(payload, stop_past, &walk_bounds)
+    let mut counted = HashSet::new();
+    let walked = measure_payload_fd_counting(payload, stop_past, &walk_bounds, &mut counted)
         .map_err(|error| format!("payload_not_measured: {error}"))?;
     let PayloadUsage::Measured { bytes } = walked else {
         return Ok(walked);
     };
-    let held = unlinked_held_bytes(control_group, payload_device, deadline)
-        .map_err(|why| format!("payload_not_measured: {why}"))?;
-    let bytes = bytes.saturating_add(held);
-    Ok(if bytes > stop_past {
-        PayloadUsage::Past { bytes }
-    } else {
-        PayloadUsage::Measured { bytes }
-    })
+    let scan = HeldScan {
+        control_group,
+        payload_device,
+        job_uid,
+        deadline,
+        links_max: bounds.entries_max,
+    };
+    add_unlinked_held(&scan, &mut counted, bytes, stop_past)
+        .map_err(|why| format!("payload_not_measured: {why}"))
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel

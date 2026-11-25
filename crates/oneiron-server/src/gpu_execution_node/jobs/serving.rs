@@ -118,7 +118,7 @@ impl ServedNodeJobs {
             .map_err(|error| format!("this install's MACHINE id does not read: {error}"))?
             .ok_or_else(|| "this install has no MACHINE id yet".to_owned())?
             .id;
-        let disk_check_every = Duration::from_secs(settings.disk_check_secs.max(1));
+        let disk_check_every = Duration::from_secs(settings.disk_check_secs);
         let paths = NodeJobPaths {
             state_dir: settings.state_dir,
             work_dir: settings.work_dir,
@@ -141,12 +141,23 @@ impl ServedNodeJobs {
         let opened = NodeJobs::open(paths, parts)
             .map_err(|error| format!("the job journal did not open: {error}"))?;
         // No job runs unchecked for disk: a service whose check did not
-        // start is dropped, and the next tick opens it again (review r12
-        // R12-08).
-        self.start_disk_check(&opened, disk_check_every)?;
-        self.node
-            .attach_keys(opened.attachment())
-            .map_err(|_| "the node already holds other keys".to_owned())?;
+        // start, or that the node did not attach, is closed before it is
+        // dropped, and the next tick opens it again (review r12 R12-08). Its
+        // opening may already have started staging workers, which hold the
+        // service themselves: closed, none of them commits a launch (review
+        // r13 R13-11).
+        if let Err(why) = self.start_disk_check(&opened, disk_check_every) {
+            opened.close();
+            return Err(why);
+        }
+        if self.node.attach_keys(opened.attachment()).is_err() {
+            opened.close();
+            self.disk_check
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            return Err("the node already holds other keys".to_owned());
+        }
         *jobs = Some(opened);
         Ok(())
     }
@@ -161,12 +172,18 @@ impl ServedNodeJobs {
     fn start_disk_check(&self, jobs: &NodeJobs, every: Duration) -> Result<(), String> {
         let (keep, kept) = mpsc::channel::<()>();
         let service = Arc::downgrade(&jobs.shared);
+        // The first pass's time is known before the thread starts, so a
+        // period no clock can add fails here (review r13 R13-14); the node
+        // file bounds it anyway (`disk_check_secs` at most an hour).
+        let first = Instant::now()
+            .checked_add(every)
+            .ok_or_else(|| format!("disk_check_secs {} s is past the clock", every.as_secs()))?;
         std::thread::Builder::new()
             .name("oneiron-node-disk-check".to_owned())
             .spawn(move || {
                 // Each pass is planned from the one before it, so a slow
                 // pass does not stretch the period (review r12 R12-03).
-                let mut next = Instant::now() + every;
+                let mut next = first;
                 // Only a timeout runs a pass: the sender's drop, at this
                 // service's, ends the thread.
                 while let Err(RecvTimeoutError::Timeout) =
@@ -176,7 +193,8 @@ impl ServedNodeJobs {
                         break;
                     };
                     NodeJobs { shared }.check_payload_disk();
-                    next = (next + every).max(Instant::now());
+                    let now = Instant::now();
+                    next = next.checked_add(every).unwrap_or(now).max(now);
                 }
             })
             .map_err(|error| format!("the disk check's thread did not start: {error}"))?;

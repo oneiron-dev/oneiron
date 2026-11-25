@@ -485,7 +485,17 @@ a_unit_whose_network_or_process_hiding_did_not_apply_refuses_before_the_workload
     [ "$(ended .workload_started)" = false ] && [ ! -e "$P/out/started" ] && ended .refusal | grep -q processes_hidden || why="$why processes: $(ended .refusal);"
   fi
   unweaken
-  [ -z "$why" ] && result "$FUNCNAME" PASS "PrivateNetwork=no and (a template requiring it) ProtectProc=default each refused before the workload; no marker written" \
+  # A drop-in that empties the system call filter would let a job take disk with no write (review r13 R13-06 of
+  # #10512): the prepare step's check of the effective filter, or job-exec's own fallocate, refuses the job.
+  launch_marker t22b-filter qual 120 256 ""
+  weaken SystemCallFilter=; start
+  wait_ended 60 || why="$why filter: no end record;"
+  if [ -z "$why" ]; then
+    [ "$(ended .workload_started)" = false ] && [ ! -e "$P/out/started" ] && ended .refusal | grep -qE 'SystemCallFilter|disk_allocation' \
+      || why="$why filter: $(ended .refusal);"
+  fi
+  unweaken
+  [ -z "$why" ] && result "$FUNCNAME" PASS "PrivateNetwork=no, (a template requiring it) ProtectProc=default and an emptied SystemCallFilter= each refused before the workload; no marker written" \
     || result "$FUNCNAME" FAIL "$why"
 }
 
@@ -934,10 +944,13 @@ EOF
 # FIX EXEC-NODE-DISK-CHECK-UNBUILT (design 7.9): the engine's disk check asks root for a running job's payload size
 # through the control socket's `usage` verb, since a job runs as its own uid and may make a directory the engine's
 # account cannot list. Here the job writes 3 MiB into a 0700 directory of its own and 2 MiB into a file it holds open
-# with its name removed (review r12 R12-01: no walk of names sees it); root's answer counts both. Its `fallocate` of
-# 64 MiB is refused (R12-04: no disk past the write-rate cap without a write). A bound below the payload answers
-# `past`, and an account that is not the engine's is not answered. Red (a binary from before the verb): the CLI
-# refuses `usage`, and the fallocate takes its 64 MiB.
+# with its name removed (review r12 R12-01: no walk of names sees it), and root's answer, taken before anything else
+# is written, counts both (r13 R13-12: the held 2 MiB alone lifts it past 5 MiB). A bound below the payload answers
+# `past`, and an account that is not the engine's is not answered. Then the job's `fallocate` of 64 MiB is refused
+# (R12-04: no disk past the write-rate cap without a write); that refusal is evidence only where the payload's file
+# system takes fallocate outside the unit, so on one that does not it is UNPROVEN (R13-12). A file held only by a
+# mapping is not exercised: bash maps no file. Red (a binary from before the verb): the CLI refuses `usage`, and the
+# fallocate takes its 64 MiB.
 the_engine_learns_the_size_of_a_payload_with_a_private_directory_through_root() {
   launch t75 qual 120 256 "" <<'EOF'
 mkdir -m 0700 "$ONEIRON_JOB_OUT/private"
@@ -945,14 +958,15 @@ head -c 3145728 /dev/urandom > "$ONEIRON_JOB_OUT/private/blob"
 exec 3> "$ONEIRON_JOB_OUT/held"
 rm "$ONEIRON_JOB_OUT/held"
 head -c 2097152 /dev/urandom >&3
-fallocate -l 67108864 "$ONEIRON_JOB_OUT/prealloc" 2> "$ONEIRON_JOB_OUT/fallocate.err"
-echo $? > "$ONEIRON_JOB_OUT/fallocate.rc"
 sync
 echo written > "$ONEIRON_JOB_OUT/written"
+for ((i = 0; i < 300; i++)); do [ -e "$ONEIRON_JOB_OUT/measured" ] && break; sleep 0.1; done
+fallocate -l 67108864 "$ONEIRON_JOB_OUT/prealloc" 2> "$ONEIRON_JOB_OUT/fallocate.err"
+echo $? > "$ONEIRON_JOB_OUT/fallocate.rc"
 sleep 60
 EOF
   start
-  local i why= whole= past= other= listed=no
+  local i why= whole= past= other= listed=no native=no refused=no
   for ((i = 0; i < 300; i++)); do [ -e "$P/out/written" ] && break; sleep 0.1; done
   [ -e "$P/out/written" ] || why="the workload never wrote its payload"
   if [ -z "$why" ]; then
@@ -961,6 +975,11 @@ EOF
     past=$(as_engine "$BIN" execution-node unit-control usage "$KEY" 1048576 2>&1)
     other=$(as_job_id $(outside_job_ids) "$BIN" execution-node unit-control usage "$KEY" 1048576 2>&1) \
       && why="an account that is not the engine's was answered: $other"
+    touch "$P/out/measured"
+    for ((i = 0; i < 300; i++)); do [ -s "$P/out/fallocate.rc" ] && break; sleep 0.1; done
+    # Whether the payload's file system takes fallocate at all, outside the unit's filter.
+    fallocate -l 1048576 "$P/tmp/.native-fallocate" 2> /dev/null && native=yes
+    rm -f "$P/tmp/.native-fallocate"
   fi
   as_engine "$BIN" execution-node unit-control stop "$KEY" > /dev/null 2>&1
   wait_ended 60 || why="${why:-no end record in 60 s after the stop}"
@@ -969,18 +988,22 @@ EOF
     why="root's answer for the whole payload (3 MiB named, 2 MiB held with no name): ${whole:-none}"
   fi
   if [ -z "$why" ] && [ "${whole#bytes }" -ge 67108864 ]; then
-    why="root's answer counts the 64 MiB fallocate: ${whole}"
-  fi
-  if [ -z "$why" ] && ! { [ "$(cat "$P/out/fallocate.rc" 2> /dev/null)" != 0 ] && grep -qi 'not supported' "$P/out/fallocate.err" 2> /dev/null; }; then
-    why="the job's fallocate was not refused: rc $(cat "$P/out/fallocate.rc" 2>&1), $(tr '\n' ' ' < "$P/out/fallocate.err" 2>&1)"
+    why="root's answer, taken before the fallocate, holds 64 MiB: ${whole}"
   fi
   if [ -z "$why" ] && ! { [[ "$past" =~ ^past\ [0-9]+$ ]] && [ "${past#past }" -gt 1048576 ]; }; then
     why="root's answer under a 1 MiB bound: ${past:-none}"
   fi
-  if [ -z "$why" ]; then
-    result "$FUNCNAME" PASS "the engine's account cannot list the job's 0700 directory; root answered '$whole' (3 MiB there and 2 MiB held with no name) and '$past' under a 1 MiB bound; the job's 64 MiB fallocate was refused ($(head -c 80 "$P/out/fallocate.err")); a job's uid was refused"
-  else
+  [ "$(cat "$P/out/fallocate.rc" 2> /dev/null)" != 0 ] && grep -qi 'not supported' "$P/out/fallocate.err" 2> /dev/null && refused=yes
+  if [ -z "$why" ] && [ "$native" = yes ] && [ "$refused" = no ]; then
+    why="the job's fallocate was not refused: rc $(cat "$P/out/fallocate.rc" 2>&1), $(tr '\n' ' ' < "$P/out/fallocate.err" 2>&1)"
+  fi
+  local measured="the engine's account cannot list the job's 0700 directory; root answered '$whole' (3 MiB there and 2 MiB held with no name, before the fallocate) and '$past' under a 1 MiB bound; a job's uid was refused"
+  if [ -n "$why" ]; then
     result "$FUNCNAME" FAIL "$why"
+  elif [ "$native" = yes ]; then
+    result "$FUNCNAME" PASS "$measured; the job's 64 MiB fallocate was refused ($(head -c 80 "$P/out/fallocate.err")) on a file system that takes it outside the unit"
+  else
+    result "$FUNCNAME" UNPROVEN "$measured; the payload's file system takes no fallocate outside the unit either, so the filter's refusal is not shown here"
   fi
 }
 

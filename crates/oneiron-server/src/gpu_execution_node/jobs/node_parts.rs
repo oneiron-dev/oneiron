@@ -98,8 +98,10 @@ pub struct NodeJobSettings {
     pub breadcrumbs_keep: u64,
     /// The disk check's walk bounds (design 7.9): the node file's
     /// `payload_depth_max` and `payload_entries_max`. A payload past them
-    /// ends as `DiskLimit`. Default 64 levels and 1,000,000 entries.
-    pub payload_walk: PayloadWalkBounds,
+    /// ends as `DiskLimit`. Default 64 levels and 1,000,000 entries; `None`
+    /// when the node file does not read now, so the disk check does not take
+    /// a default for the node's own bounds (review r13 R13-09 of #10512).
+    pub payload_walk: Option<PayloadWalkBounds>,
 }
 
 impl Default for NodeJobSettings {
@@ -116,7 +118,7 @@ impl Default for NodeJobSettings {
             drain_clear_by: DrainClearBy::AfterReadinessCheck,
             incidents_keep: 200,
             breadcrumbs_keep: 20,
-            payload_walk: PayloadWalkBounds::default(),
+            payload_walk: Some(PayloadWalkBounds::default()),
         }
     }
 }
@@ -454,10 +456,9 @@ impl NodeAdmission for ExecutionNode {
             (defaults.readiness_every_secs, defaults.drain_clear_by),
             |file| ExecutionNode::readiness_settings(self, file),
         );
-        let payload_walk = file.as_ref().map_or_else(
-            PayloadWalkBounds::default,
-            ExecutionNodeSettings::payload_walk_bounds,
-        );
+        let payload_walk = file
+            .as_ref()
+            .map(ExecutionNodeSettings::payload_walk_bounds);
         NodeJobSettings {
             staging_limit_secs: ExecutionNode::staging_limit_secs(self),
             receipt_keep_days: ExecutionNode::receipt_keep_days(self),

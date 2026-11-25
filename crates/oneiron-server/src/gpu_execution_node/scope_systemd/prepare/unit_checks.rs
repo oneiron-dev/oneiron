@@ -9,16 +9,24 @@ use super::super::records::{
     BoundReport, BoundRequirement, ScopeBound, enforced_by_kernel, not_enforced,
 };
 use super::super::systemd_unit::show;
+use super::super::unit_file::effective_filter_refusal;
 
 /// The unit's effective settings (its file and every drop-in, review r9
 /// R9-14): its stop timeout is the node file's stop grace, so the cutoff's
 /// TERM comes a whole grace before the maximum and the KILL by it; and it
 /// names no job account and bounds `job-exec` to the two id capabilities, so
-/// `job-exec` can take the job's own ids.
+/// `job-exec` can take the job's own ids; and its system call filter
+/// refuses the calls that take disk with no write (review r13 R13-06).
 pub(super) fn effective_unit_matches(unit: &str, stop_grace_secs: u64) -> Result<(), String> {
     let found = show(
         unit,
-        &["TimeoutStopUSec", "User", "Group", "CapabilityBoundingSet"],
+        &[
+            "TimeoutStopUSec",
+            "User",
+            "Group",
+            "CapabilityBoundingSet",
+            "SystemCallFilter",
+        ],
     )
     .map_err(|why| format!("stop_grace_unknown: {why}"))?;
     let text = found.get("TimeoutStopUSec").map_or("", String::as_str);
@@ -30,7 +38,8 @@ pub(super) fn effective_unit_matches(unit: &str, stop_grace_secs: u64) -> Result
             ));
         }
     }
-    match effective_identity_refusal(&found) {
+    let filter = found.get("SystemCallFilter").map_or("", String::as_str);
+    match effective_identity_refusal(&found).or_else(|| effective_filter_refusal(filter)) {
         Some(why) => Err(format!(
             "unit_template_old: {why}: run `oneiron execution-node install` again"
         )),

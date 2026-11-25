@@ -32,6 +32,10 @@ pub use job_ids::{
     JOB_UID_FIRST_MIN,
 };
 use job_ids::{job_device_group_default, job_uid_count_default, job_uid_first_default};
+pub use payload_walk::{
+    DISK_CHECK_SECS_CEILING, PAYLOAD_DEPTH_MAX_CEILING, PAYLOAD_DEPTH_MAX_DEFAULT,
+    PAYLOAD_ENTRIES_MAX_DEFAULT,
+};
 use payload_walk::{payload_depth_max_default, payload_entries_max_default};
 
 /// Where the node's file is when neither the server's configuration nor
@@ -428,7 +432,11 @@ impl ExecutionNodeSettings {
             self.job_uid_count,
             &self.job_device_group,
         )?;
-        payload_walk::check(self.payload_entries_max, self.payload_depth_max)?;
+        payload_walk::check(
+            self.disk_check_secs,
+            self.payload_entries_max,
+            self.payload_depth_max,
+        )?;
         for (name, template) in &self.templates {
             template
                 .validate()

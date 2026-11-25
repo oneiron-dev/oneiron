@@ -263,7 +263,10 @@ fn a_payload_over_its_disk_request_ends_as_disk_limit() {
 /// what it holds and not its length, a file with two names once, and a
 /// link never as what it points to. It stops once it has counted past the
 /// bound it was given, and a payload directory that does not exist yet
-/// holds nothing.
+/// holds nothing. Every number is the temp file system's own (review r13
+/// R13-16): the checks hold on one that keeps no hole too, and the case
+/// covers the walk rather than proving a change (the base counted this
+/// fixture the same way).
 #[test]
 fn a_payload_is_counted_on_disk_once_and_never_through_a_link() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -295,30 +298,35 @@ fn a_payload_is_counted_on_disk_once_and_never_through_a_link() {
     .iter()
     .map(|path| std::fs::symlink_metadata(path).expect("entry").blocks() * 512)
     .sum::<u64>();
-    let sparse_blocks = std::fs::metadata(out.join("sparse.bin"))
-        .expect("sparse file")
-        .blocks()
-        * 512;
+    let blocks_of = |path: &Path| std::fs::metadata(path).expect("entry").blocks() * 512;
+    let data_blocks = blocks_of(&out.join("data.bin"));
+    let sparse_blocks = blocks_of(&out.join("sparse.bin"));
+    let outside_blocks = blocks_of(&outside.join("big.bin"));
+    assert!(data_blocks > 0, "the synced data holds blocks");
     match measure_payload(&payload, u64::MAX).expect("measured") {
         PayloadUsage::Measured { bytes } => {
             assert_eq!(
                 bytes, held,
                 "each entry's blocks once, the hard link's file once, no link followed"
             );
-            assert!(bytes >= MIB, "the 1 MiB of data: {bytes}");
+            assert!(bytes >= data_blocks, "the data's blocks: {bytes}");
             assert!(
-                bytes < 8 * MIB,
-                "neither the link's target nor the sparse length: {bytes}"
+                bytes < held + data_blocks.min(outside_blocks),
+                "neither the data twice nor the link's target: {bytes}"
             );
-            assert!(
-                sparse_blocks < MIB,
-                "the sparse file holds no data: {sparse_blocks}"
-            );
+            // A file system that keeps the hole: the sparse length is not
+            // counted. One that keeps none has the equality above alone.
+            if sparse_blocks < 64 * MIB {
+                assert!(
+                    bytes < held - sparse_blocks + 64 * MIB,
+                    "not the sparse length: {bytes}"
+                );
+            }
         }
         other => panic!("expected a measure, got {other:?}"),
     }
-    match measure_payload(&payload, MIB / 2).expect("measured") {
-        PayloadUsage::Past { bytes } => assert!(bytes > MIB / 2, "{bytes}"),
+    match measure_payload(&payload, data_blocks / 2).expect("measured") {
+        PayloadUsage::Past { bytes } => assert!(bytes > data_blocks / 2, "{bytes}"),
         other => panic!("expected a walk stopped past its bound, got {other:?}"),
     }
     assert!(

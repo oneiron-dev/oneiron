@@ -27,18 +27,9 @@ use std::time::{Duration, Instant};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 
-/// Default of `payload_depth_max`: the deepest directory the walk enters,
-/// counted from the payload directory (its own entries are at level 1).
-pub const PAYLOAD_DEPTH_MAX_DEFAULT: u32 = 64;
-
-/// The most `payload_depth_max` may say, and the most any walk enters: the
-/// walk holds one open directory per level, inside the job control
-/// handler's descriptor limit.
-pub const PAYLOAD_DEPTH_MAX_CEILING: u32 = 256;
-
-/// Default of `payload_entries_max`: the most entries the walk counts, the
-/// payload directory included.
-pub const PAYLOAD_ENTRIES_MAX_DEFAULT: u64 = 1_000_000;
+pub use crate::gpu_execution_node::node_settings::{
+    PAYLOAD_DEPTH_MAX_CEILING, PAYLOAD_DEPTH_MAX_DEFAULT, PAYLOAD_ENTRIES_MAX_DEFAULT,
+};
 
 /// The longest one walk takes: within the job control handler's own limit
 /// and the engine's wait for its answer.
@@ -60,6 +51,19 @@ pub struct PayloadWalkBounds {
     pub depth_max: u32,
     pub entries_max: u64,
     pub time_max: Duration,
+}
+
+impl PayloadWalkBounds {
+    /// The widest bounds a node file may set: the disk check's walk when
+    /// the node file does not read (review r13 R13-09 of #10512).
+    #[must_use]
+    pub fn widest() -> Self {
+        Self {
+            depth_max: PAYLOAD_DEPTH_MAX_CEILING,
+            entries_max: u64::MAX,
+            time_max: PAYLOAD_WALK_TIME_MAX,
+        }
+    }
 }
 
 impl Default for PayloadWalkBounds {
@@ -173,6 +177,24 @@ pub fn measure_payload_fd(
     stop_past: u64,
     bounds: &PayloadWalkBounds,
 ) -> io::Result<PayloadUsage> {
+    measure_payload_fd_counting(top, stop_past, bounds, &mut HashSet::new())
+}
+
+/// [`measure_payload_fd`], leaving in `counted` the (device, inode) of
+/// every file it counted other than a directory, so a later count (root's
+/// held files) charges none of them again (review r13 R13-01). A
+/// [`PayloadUsage::Past`] or [`PayloadUsage::Unmeasurable`] stands even
+/// when found after the time bound: it is no estimate (R13-04).
+///
+/// # Errors
+///
+/// As [`measure_payload_fd`].
+pub fn measure_payload_fd_counting(
+    top: OwnedFd,
+    stop_past: u64,
+    bounds: &PayloadWalkBounds,
+    counted: &mut HashSet<(u64, u64)>,
+) -> io::Result<PayloadUsage> {
     let started = Instant::now();
     let out_of_time = |entries: u64| {
         io::Error::new(
@@ -204,9 +226,8 @@ pub fn measure_payload_fd(
     // second name goes while the walk runs is not counted twice (review r12
     // R12-05).
     let mut bytes: u64 = 0;
-    let mut counted = HashSet::new();
     let mut add = |stat: &Stat| -> Option<PayloadUsage> {
-        if !is_directory(stat) && !counted.insert((stat.st_dev, stat.st_ino)) {
+        if !is_directory(stat) && !counted.insert(file_identity(stat)) {
             return None;
         }
         let blocks = u64::try_from(stat.st_blocks).unwrap_or(0);
@@ -286,6 +307,14 @@ pub fn measure_payload_fd(
         return Err(out_of_time(entries));
     }
     Ok(PayloadUsage::Measured { bytes })
+}
+
+/// The (device, inode) pair that names one file.
+fn file_identity(stat: &Stat) -> (u64, u64) {
+    (
+        u64::try_from(stat.st_dev).unwrap_or(u64::MAX),
+        u64::try_from(stat.st_ino).unwrap_or(u64::MAX),
+    )
 }
 
 fn is_directory(stat: &Stat) -> bool {

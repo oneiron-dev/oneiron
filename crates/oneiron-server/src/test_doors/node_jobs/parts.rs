@@ -253,7 +253,7 @@ impl NodeAdmission for ScriptedAdmission {
             receipt_keep_days: state.receipt_keep_days,
             readiness_every_secs: state.readiness_every_secs,
             drain_clear_by: state.drain_clear_by,
-            payload_walk: state.payload_walk.clone(),
+            payload_walk: Some(state.payload_walk.clone()),
             ..NodeJobSettings::default()
         }
     }
