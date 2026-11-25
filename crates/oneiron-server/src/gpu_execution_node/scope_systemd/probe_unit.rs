@@ -129,7 +129,7 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     ));
     let instance = id.as_str().to_owned();
     // The probe runs as a job does: as its own uid from the node's range.
-    let given = ProbeIdentity::allocate(settings, &instance)?;
+    let mut given = ProbeIdentity::allocate(settings, &instance)?;
     let JobIdentity {
         uid: job_uid,
         gid: job_gid,
@@ -180,6 +180,17 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     };
     let exchange = Path::new(EXCHANGE_ROOT).join(&instance);
     let outcome = probe_in_unit(settings, &unit_text, &binary, &exec, &exchange);
+    // The id goes back only once the probe unit is known to have ended: one
+    // still running could take the id after its release (review r11 R11-01).
+    // Kept, it is taken back once the unit ended.
+    if !job_ids::unit_has_ended(&given.unit) {
+        journal_line!(
+            "execution-node check: probe uid {} kept: {} has not ended",
+            given.identity.uid,
+            given.unit
+        );
+        given.release = false;
+    }
     super::exchange::withdraw(&instance);
     let _ = std::fs::remove_dir_all(&payload);
     let _ = std::fs::remove_dir_all(&exchange);
@@ -318,6 +329,8 @@ fn probe_unit_name(instance: &str) -> String {
 struct ProbeIdentity {
     identity: JobIdentity,
     unit: String,
+    /// Whether the drop gives the id back.
+    release: bool,
 }
 
 impl ProbeIdentity {
@@ -326,12 +339,19 @@ impl ProbeIdentity {
         // The check runs as root, whose uid is never in the range.
         let identity = job_ids::allocate(settings.job_uids(), &unit, 0)
             .map_err(|why| format!("probe uid: {why}"))?;
-        Ok(Self { identity, unit })
+        Ok(Self {
+            identity,
+            unit,
+            release: true,
+        })
     }
 }
 
 impl Drop for ProbeIdentity {
     fn drop(&mut self) {
+        if !self.release {
+            return;
+        }
         if let Err(why) = job_ids::release(self.identity, &self.unit, job_ids::LOCK_WAIT) {
             journal_line!(
                 "execution-node check: probe uid {} not given back: {why}",

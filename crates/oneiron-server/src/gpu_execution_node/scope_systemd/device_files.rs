@@ -46,7 +46,7 @@ pub fn files_of(
 
 /// Device files on this machine that no claim of this job names: every
 /// other configured device's files, and every NVIDIA card node not allowed.
-/// The proof of device closure tries to open one.
+/// The proof of device closure tries to open each.
 #[must_use]
 pub fn files_denied(
     allowed: &[PathBuf],

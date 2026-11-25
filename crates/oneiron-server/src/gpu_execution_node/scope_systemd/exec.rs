@@ -368,36 +368,47 @@ fn open_raw(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
 }
 
 /// The device policy (`DevicePolicy=closed`, `DeviceAllow=` per claim):
-/// each allowed device opens, and a device outside the allow-list fails
-/// with the device policy's EPERM. Run before the file wall, which would
-/// refuse it first with its own error.
+/// each allowed device opens, and every device outside the allow-list fails
+/// with the device policy's EPERM: each one, so a filter above the unit's
+/// that refuses only some is no proof (review r11 R11-05). Run before the
+/// file wall, which would refuse them first with its own error.
 fn prove_device_closure(exec: &ExecFile) -> BoundReport {
+    let flags = libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC;
     for path in &exec.devices_allowed {
-        if let Err(error) = open_raw(path, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
+        if let Err(error) = open_raw(path, flags) {
             return not_enforced(format!(
                 "the leased device {} does not open: {error}",
                 path.display()
             ));
         }
     }
-    let Some(other) = exec.devices_denied.first() else {
-        return enforced_by_kernel("DevicePolicy=closed; no other device exists here to try");
-    };
-    match open_raw(other, libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) {
-        Ok(_) => not_enforced(format!(
-            "{} opened: the device policy did not apply",
-            other.display()
-        )),
-        Err(error) if error.raw_os_error() == Some(libc::EPERM) => enforced_by_kernel(format!(
-            "{} refused by the device policy (EPERM); {} leased device(s) open",
-            other.display(),
-            exec.devices_allowed.len()
-        )),
-        Err(error) => not_enforced(format!(
-            "{} failed with {error}, not the device policy's EPERM",
-            other.display()
-        )),
+    if exec.devices_denied.is_empty() {
+        return enforced_by_kernel(
+            "DevicePolicy=closed; no other device file exists here, so the job device group opens only leased ones",
+        );
     }
+    for other in &exec.devices_denied {
+        match open_raw(other, flags) {
+            Ok(_) => {
+                return not_enforced(format!(
+                    "{} opened: the device policy did not apply",
+                    other.display()
+                ));
+            }
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) => {}
+            Err(error) => {
+                return not_enforced(format!(
+                    "{} failed with {error}, not the device policy's EPERM",
+                    other.display()
+                ));
+            }
+        }
+    }
+    enforced_by_kernel(format!(
+        "each of {} other device file(s) refused by the device policy (EPERM); {} leased device(s) open",
+        exec.devices_denied.len(),
+        exec.devices_allowed.len()
+    ))
 }
 
 fn apply_file_wall(exec: &ExecFile) -> Result<(), String> {

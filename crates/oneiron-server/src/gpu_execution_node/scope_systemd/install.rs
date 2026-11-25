@@ -227,10 +227,11 @@ fn check_job_range(range: &Range<u32>, engine: (u32, u32)) -> Result<(), String>
 
 /// Makes the job device group as a system group unless it exists, and checks
 /// it: not root's, outside the job range, not the engine's group, a group of
-/// `/etc/group` (the only list whose members install can read whole), and no
-/// account in it under any name of its gid (an account in it could open
-/// every card outside any unit; review r9 R9-03). Its gid, or `None` on a dry
-/// run before the group exists.
+/// `/etc/group`, on a node whose name service reads accounts and groups only
+/// from local sources (whose every entry `getent` lists), and no account in
+/// it under any name of its gid (an account in it could open every card
+/// outside any unit; reviews r9 R9-03, r10 R10-05, r11 R11-02). Its gid, or
+/// `None` on a dry run before the group exists.
 fn ensure_device_group(
     name: &str,
     range: &Range<u32>,
@@ -272,9 +273,13 @@ fn ensure_device_group(
         }
     };
     let foreign = foreign_name_sources(&nsswitch);
+    // glibc's compat reader skips leading blanks before a `+`/`-` line
+    // (review r11 R11-06).
     let nis = [&accounts, &groups].iter().any(|text| {
-        text.lines()
-            .any(|line| line.starts_with(|c: char| c == '+' || c == '-'))
+        text.lines().any(|line| {
+            line.trim_start()
+                .starts_with(|c: char| c == '+' || c == '-')
+        })
     });
     if !foreign.is_empty() || nis {
         return Err(format!(
@@ -288,6 +293,13 @@ fn ensure_device_group(
             "job device group {name}: gid {gid} is not its gid in /etc/group: make it a local group (groupadd --system {name})"
         ));
     }
+    // Every account and group the name service lists, from each local
+    // source (systemd's static records included, review r11 R11-02).
+    let listed = |database: &str| {
+        run_tool("getent", &[database], SYSTEMCTL_TIMEOUT)
+            .map_err(|why| format!("job device group {name}: getent {database}: {why}"))
+    };
+    let (accounts, groups) = (listed("passwd")?, listed("group")?);
     if let Some(member) = group_members(&accounts, &groups, gid).first() {
         return Err(format!(
             "job device group {name}: account {member} is in it, so it could open every card outside any unit"
@@ -296,9 +308,10 @@ fn ensure_device_group(
     Ok(Some(gid))
 }
 
-/// The name service sources install can read every member from: the local
-/// files, and systemd's own (its dynamic users never take a node's group).
-const LOCAL_NAME_SOURCES: [&str; 5] = ["files", "systemd", "altfiles", "compat", "mymachines"];
+/// The name service sources whose every account and group `getent` lists, so
+/// install reads every member of the device group from them: the local files
+/// (and their compat reading with no NIS lines) and systemd's records.
+const LOCAL_NAME_SOURCES: [&str; 4] = ["files", "systemd", "altfiles", "compat"];
 
 /// The sources `/etc/nsswitch.conf` (`text`) names for accounts, groups or
 /// group membership that are not [`LOCAL_NAME_SOURCES`], each once.
@@ -312,22 +325,41 @@ fn foreign_name_sources(text: &str) -> Vec<String> {
         if !matches!(database.trim(), "passwd" | "group" | "initgroups") {
             continue;
         }
-        let mut in_action = false;
-        for word in sources.split_whitespace() {
-            if word.starts_with('[') {
-                in_action = !word.ends_with(']');
-                continue;
-            }
-            if in_action {
-                in_action = !word.ends_with(']');
-                continue;
-            }
+        for word in source_names(sources) {
             if !LOCAL_NAME_SOURCES.contains(&word) && !foreign.iter().any(|seen| seen == word) {
                 foreign.push(word.to_owned());
             }
         }
     }
     foreign
+}
+
+/// The source names of one nsswitch database line's sources, without its
+/// `[...]` action blocks, which may touch a name on either side (review r11
+/// R11-06). An action block with no `]` makes the line one source `[`, which
+/// is no local one.
+fn source_names(sources: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = sources;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return names;
+        }
+        if let Some(action) = rest.strip_prefix('[') {
+            let Some(end) = action.find(']') else {
+                names.push("[");
+                return names;
+            };
+            rest = &action[end + 1..];
+            continue;
+        }
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == '[')
+            .unwrap_or(rest.len());
+        names.push(&rest[..end]);
+        rest = &rest[end..];
+    }
 }
 
 /// Whether `/etc/group` (`groups`) names the group `name` with gid `gid`.
@@ -517,6 +549,23 @@ mod tests {
         assert!(foreign_name_sources(local).is_empty());
         let directory = "passwd: files sss\ngroup: files sss # directory\ninitgroups: files [ NOTFOUND=return ] ldap\n";
         assert_eq!(foreign_name_sources(directory), vec!["sss", "ldap"]);
+        // An action block that touches the next source hides nothing.
+        assert_eq!(
+            foreign_name_sources("group: files [SUCCESS=merge]ldap\n"),
+            vec!["ldap"]
+        );
+        assert_eq!(
+            foreign_name_sources("group: files[NOTFOUND=return]nis\n"),
+            vec!["nis"]
+        );
+        assert_eq!(
+            foreign_name_sources("passwd: files [NOTFOUND=return\n"),
+            vec!["["]
+        );
+        assert_eq!(
+            foreign_name_sources("passwd: files mymachines\n"),
+            vec!["mymachines"]
+        );
         assert!(foreign_name_sources("").is_empty());
     }
 }

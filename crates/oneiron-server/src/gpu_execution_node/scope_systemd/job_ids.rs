@@ -33,7 +33,7 @@ use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +72,11 @@ const ALLOCATE_ROUNDS: u32 = 3;
 /// The most units one allocation asks about again under the lock before it
 /// takes one's id back.
 const CONFIRMATIONS_MAX: u32 = 2;
+
+/// How long after a probe's exchange was made the probe unit may still be
+/// started: the check's whole probe (its start and its deadline) and its
+/// stop take far less.
+const PROBE_START_WINDOW: Duration = Duration::from_secs(600);
 
 /// The most ids one round under the lock leaves for the name service to be
 /// asked about after the lock is dropped (review r10 R10-03).
@@ -253,12 +258,19 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
             let Choice::TakeBack(uid) = choice else {
                 break choice;
             };
-            let owner = taken.owners.get(&uid).cloned().unwrap_or_default();
-            if confirmations < CONFIRMATIONS_MAX && unit_ended_now(&owner) {
+            // A round that goes again for the name service asks nothing
+            // more now; every question counts (review r11 R11-04).
+            if !unanswered.is_empty() && round < ALLOCATE_ROUNDS {
                 break choice;
             }
+            let owner = taken.owners.get(&uid).cloned().unwrap_or_default();
+            if confirmations < CONFIRMATIONS_MAX {
+                confirmations += 1;
+                if unit_ended_now(&owner) {
+                    break choice;
+                }
+            }
             // Running again, or not asked again: it is not taken back.
-            confirmations += 1;
             ended.remove(&unit_id(&owner));
         };
         if !unanswered.is_empty() && round < ALLOCATE_ROUNDS {
@@ -277,6 +289,15 @@ pub fn allocate(range: Range<u32>, unit: &str, engine_uid: u32) -> Result<JobIde
                 ));
             }
             Choice::TakeBack(uid) => {
+                // A probe's exchange left by a check that ended early goes
+                // with its id (review r11 R11-03).
+                if let Some(instance) = taken
+                    .owners
+                    .get(&uid)
+                    .and_then(|owner| probe_instance(owner))
+                {
+                    let _ = std::fs::remove_dir_all(Path::new(EXCHANGE_ROOT).join(instance));
+                }
                 table.remove(uid)?;
                 uid
             }
@@ -304,33 +325,48 @@ fn owner_ended(owner: &str, ended: &BTreeSet<String>) -> bool {
 }
 
 /// Whether `owner` no longer runs, asked now about that one unit. A probe
-/// unit whose exchange directory is still there may still be started by the
-/// `execution-node check` that made it (its job-exec reads its ids from
-/// there), so it counts as running until the check removed it (review r10
-/// R10-02).
+/// unit whose exchange directory is younger than [`PROBE_START_WINDOW`] may
+/// still be started by the `execution-node check` that made it (its job-exec
+/// reads its ids from there), so it counts as running (review r10 R10-02);
+/// past that window no start the check asked for can still come (review r11
+/// R11-03).
 fn unit_ended_now(owner: &str) -> bool {
-    if !is_table_unit(owner) || probe_exchange_left(owner) {
-        return false;
-    }
-    let id = unit_id(owner);
+    is_table_unit(owner) && !probe_start_possible(owner) && unit_has_ended(&unit_id(owner))
+}
+
+/// Whether the service manager says now that `unit` no longer runs: it is
+/// inactive, failed or not found. No answer within [`UNIT_STATE_WAIT`] is
+/// "still runs".
+pub(super) fn unit_has_ended(unit: &str) -> bool {
+    let id = unit_id(unit);
     let mut args = vec!["show", "--property=Id,ActiveState,LoadState"];
     args.push(&id);
     run_tool("systemctl", &args, UNIT_STATE_WAIT)
         .is_ok_and(|text| !ended_in_show(&text, &[id.as_str()]).is_empty())
 }
 
-/// Whether `owner` is a probe unit whose exchange directory is there; one that
-/// cannot be looked at counts as there.
-fn probe_exchange_left(owner: &str) -> bool {
+/// The probe instance an entry's unit names, if it is a probe unit.
+fn probe_instance(owner: &str) -> Option<&str> {
     owner
         .strip_prefix(PROBE_UNIT_PREFIX)
         .map(|rest| rest.strip_suffix(".service").unwrap_or(rest))
-        .is_some_and(|instance| {
-            !matches!(
-                Path::new(EXCHANGE_ROOT).join(instance).symlink_metadata(),
-                Err(error) if error.kind() == io::ErrorKind::NotFound
-            )
-        })
+}
+
+/// Whether `owner` is a probe unit whose exchange directory is there and
+/// younger than [`PROBE_START_WINDOW`]; one that cannot be looked at counts
+/// as there and young.
+fn probe_start_possible(owner: &str) -> bool {
+    probe_instance(owner).is_some_and(|instance| {
+        match Path::new(EXCHANGE_ROOT).join(instance).symlink_metadata() {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(_) => true,
+            Ok(found) => found
+                .modified()
+                .ok()
+                .and_then(|made| SystemTime::now().duration_since(made).ok())
+                .is_none_or(|age| age < PROBE_START_WINDOW),
+        }
+    })
 }
 
 /// Removes `identity`'s file when it names `unit`, waiting at most `wait` for

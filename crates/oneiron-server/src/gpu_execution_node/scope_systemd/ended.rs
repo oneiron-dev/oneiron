@@ -80,7 +80,7 @@ pub fn run(args: StepArgs) -> i32 {
     {
         journal_line!("job-ended: {} has its end record already", context.unit());
         // A later run's id and files still go back.
-        if let Some(identity) = job_identity(&context) {
+        if let Some(identity) = job_identity(&context).filter(|_| run_by_the_unit()) {
             let (cgroup_empty, _) =
                 settle_cgroup(&context.unit(), context.settings.stop_grace_secs);
             give_back(&context, identity, cgroup_empty, began);
@@ -91,8 +91,15 @@ pub fn run(args: StepArgs) -> i32 {
     // Read from root's exchange before `disarm` removes it.
     let identity = job_identity(&context);
     let record = end_record(&context);
-    if let Some(identity) = identity {
-        give_back(&context, identity, record.cgroup_empty, began);
+    match identity {
+        Some(identity) if run_by_the_unit() => {
+            give_back(&context, identity, record.cgroup_empty, began);
+        }
+        Some(identity) => journal_line!(
+            "job-ended: run by hand: uid {} and the job's files stay; the unit's own end step, or a later take-back, gives them back",
+            identity.uid
+        ),
+        None => {}
     }
     let written = serde_json::to_vec_pretty(&record)
         .map_err(|error| error.to_string())
@@ -191,6 +198,15 @@ fn end_record(context: &StepContext) -> EndRecord {
         cgroup_empty,
         refusal,
     }
+}
+
+/// Whether the service manager runs this step as the unit's `ExecStopPost=`
+/// (it sets `SERVICE_RESULT` there). Only that run hands the job's files over
+/// and gives its id back: it comes after the unit's own processes, in order
+/// with its next start; a run by hand could give back an id a new start of
+/// the unit had just taken again (review r11 R11-10).
+fn run_by_the_unit() -> bool {
+    std::env::var_os("SERVICE_RESULT").is_some()
 }
 
 /// The ids the prepare step gave this unit's job: the id table's entry for

@@ -88,12 +88,13 @@ except OSError as e:
 '
 open_as() { runuser -u "$1" -- python3 -c "$OPEN_PROBE" "$2" 2>&1 | tail -1; }
 ACL_PROBE='
-import os, sys
+import errno, os, sys
 try:
     os.getxattr(sys.argv[1], "system.posix_acl_access", follow_symlinks=False)
     print("acl")
-except OSError:
-    print("none")
+except OSError as e:
+    no_acl = (errno.ENODATA, errno.EOPNOTSUPP, errno.ENOTSUP)
+    print("none" if e.errno in no_acl else "unread-" + errno.errorcode.get(e.errno, str(e.errno)))
 '
 # The same open as a job: the job uid, its own gid, and the job device group as its one supplementary group.
 open_as_job() {
@@ -102,9 +103,9 @@ open_as_job() {
 
 # 1. Each file of the card: owner, group and mode; no bit for others; the group is the job device group, with no
 #    account in it (oneiron-only), or no ordinary account's (nobody).
-members_of_gid() { # the accounts whose primary or supplementary group is <gid>
+members_of_gid() { # the accounts whose primary or supplementary group is <gid>, under every group name of it
   { getent passwd | awk -F: -v g="$1" '$4 == g { print $1 }'
-    getent group "$1" | awk -F: '{ gsub(",", "\n", $4); print $4 }'; } | grep -v '^$' | sort -u
+    getent group | awk -F: -v g="$1" '$3 == g { gsub(",", "\n", $4); print $4 }'; } | grep -v '^$' | sort -u
 }
 for f in "${CARD[@]}" "${CARD_SIDE[@]}"; do
   [ -e "$f" ] && say "## EVIDENCE file $(stat -c '%n owner=%U group=%G gid=%g mode=%a' "$f")"
@@ -121,7 +122,7 @@ for f in "${CARD[@]}"; do
   why="owner=$owner mode=$mode gid=$gid acl=$acl other_members=[${others% }]"
   # Root owns it and no access ACL names another account (review r9 R9-10).
   if [ "$owner" != 0 ]; then check "file-$(basename "$f")" FAIL "$why: owned by uid $owner, not root"
-  elif [ "$acl" != none ]; then check "file-$(basename "$f")" FAIL "$why: an access ACL can open it to other accounts"
+  elif [ "$acl" != none ]; then check "file-$(basename "$f")" FAIL "$why: an access ACL (or one that could not be read) can open it to other accounts"
   elif (( 8#$mode & 8#007 )); then check "file-$(basename "$f")" FAIL "$why: open to every account"
   elif [ -n "$others" ] && (( 8#$mode & 8#070 )); then check "file-$(basename "$f")" FAIL "$why: open to the group's other members"
   elif [ "$PHASE" = oneiron-only ] && { [ "$gid" != "$group_gid" ] || ! (( (8#$mode & 8#060) == 8#060 )); }; then
@@ -159,9 +160,10 @@ for account in "${OTHERS[@]}"; do
 done
 got="$(basename "${CARD[0]}")=$(open_as_job "${CARD[0]}") $(basename "${CARD[1]}")=$(open_as_job "${CARD[1]}")"
 if [ "$PHASE" = oneiron-only ]; then
-  # Only an open or an errno past the permission check (a fixture node's ENXIO: no driver behind it) passes; a
-  # setpriv error line, `closed` or ENOENT (no such file) fails (review r9 R9-09, R0 EM22 20:20).
-  if grep -qvE '=(opened|E[A-Z0-9]+)$' <<< "$(tr ' ' '\n' <<< "$got")" || grep -q '=ENOENT' <<< "$got"; then
+  # Only an open or an errno the driver gives past the permission check (a fixture node's ENXIO: no driver behind
+  # it; ENODEV, EBUSY, EIO) passes; a setpriv error line, `closed`, ENOENT or an errno from before the permission
+  # check (ENFILE, EMFILE, ...) fails (review r9 R9-09, R0 EM22 20:20, review r11 R11-07).
+  if grep -qvE '=(opened|ENXIO|ENODEV|EBUSY|EIO)$' <<< "$(tr ' ' '\n' <<< "$got")"; then
     check "open-as-job" FAIL "$got: a job holding the job device group cannot open the card"
   else check "open-as-job" PASS "$got"; fi
 else
