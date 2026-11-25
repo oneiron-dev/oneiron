@@ -1184,8 +1184,12 @@ async fn a_propose_only_narrowed_create_is_refused() {
 
     let body = mcp_refusal(&server, create("narrowed-propose-only", &narrowed)).await;
     assert_eq!(
-        body["error"]["data"]["error_code"], "mcp_auth_required",
+        body["error"]["data"]["error_code"], "mcp_grant_missing",
         "{body}"
+    );
+    assert_eq!(
+        body["error"]["data"]["required_scope"], "core:write",
+        "a narrowed birth takes Write: {body}"
     );
     assert_eq!(parked(), 0, "a refused create parks nothing");
 

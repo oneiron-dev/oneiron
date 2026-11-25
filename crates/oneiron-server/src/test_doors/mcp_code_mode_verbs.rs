@@ -42,7 +42,8 @@ pub struct TestCredential {
 /// One host-verb gate's refusal, as the gateway typed it: its code and message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostVerbRefusal {
-    /// The stable refusal code (`mcp_verb_not_bound`, `mcp_auth_required`).
+    /// The stable refusal code (`mcp_verb_not_bound`, `mcp_auth_required`,
+    /// `mcp_grant_missing`).
     pub code: String,
     /// The gateway's message for the code.
     pub message: String,
@@ -54,8 +55,8 @@ pub struct HostVerbRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestRefusal {
     /// The stable refusal code (`mcp_verb_not_bound`, `mcp_auth_required`,
-    /// `browser_pack_not_installed`, `browser_connection_unchecked`,
-    /// `browser_unbound`).
+    /// `mcp_grant_missing`, `browser_pack_not_installed`,
+    /// `browser_connection_unchecked`, `browser_unbound`).
     pub code: String,
     /// The host-side hook notice, always none on this path.
     pub hook_notice: Option<Value>,

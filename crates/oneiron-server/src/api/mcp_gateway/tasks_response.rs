@@ -625,6 +625,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("field".to_owned(), Value::String(field));
     }
+    if let Some(required_scope) = error.required_scope
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("required_scope".to_owned(), json!(required_scope));
+    }
     if let Some(native) = error.vault_read
         && let Some(object) = data.as_object_mut()
     {
