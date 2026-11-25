@@ -257,7 +257,7 @@ pub struct OrderAttempt {
     pub placed: SlotDecision,
     pub made_at_ms: u64,
     /// When the loop first saw the machine's word that the attempt's workload ran (a node's
-    /// receipt, or a provider's resource for an offer job). An attempt is made before its
+    /// receipt; for an offer's job, its provider's clock). An attempt is made before its
     /// create, so a made attempt may still end `NeverStarted`; `orders.wait` with
     /// `until: "started"` waits for this (14.2). A row written before the field reads `None`.
     #[serde(default)]

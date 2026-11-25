@@ -244,7 +244,8 @@ impl Vault {
 
     /// How the job of `attempt` stands, and whether the machine's word says its workload
     /// started: a node's receipt for a node's job; for an offer's job, which has no dispatch
-    /// row, the resource its provider made.
+    /// row, its provider's clock (run time reported, or an end by exit or at the maximum). A
+    /// resource the provider holds `Pending` has not started.
     fn attempt_standing(
         &self,
         order: &WorkOrder,
@@ -269,8 +270,15 @@ impl Vault {
         let started = match &dispatch {
             Some(_) => observation.as_ref().is_some_and(|row| row.started),
             None => {
-                job.chunk().is_some_and(|chunk| chunk.resource.is_some())
-                    && !matches!(job.state, GpuJobState::Reserved | GpuJobState::Held { .. })
+                job.chunk()
+                    .is_some_and(|chunk| chunk.used_secs > 0 || chunk.base_used_secs > 0)
+                    || matches!(
+                        job.state,
+                        GpuJobState::Stopped
+                            | GpuJobState::Ended {
+                                reason: GpuEndReason::Exited | GpuEndReason::AtMaximum
+                            }
+                    )
             }
         };
         let terminal = observation.and_then(|row| row.terminal);
