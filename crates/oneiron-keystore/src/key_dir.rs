@@ -15,16 +15,18 @@
 //!   under the exclusive lock every temporary file is one whose writer is gone.
 //!   Each write that puts a new value over an old one, and each erase, sweeps
 //!   the file's temporary files first or after and reports a copy it could
-//!   not remove. A write over an old value keeps its sweep's exclusive hold
-//!   until its new file is in place ([`sweep_and_hold`]), so no other writer's
-//!   copy can appear, and stay, between that sweep and that write.
+//!   not remove. Where the file system gives locks, a write over an old value
+//!   keeps its sweep's exclusive hold until its new file is in place
+//!   ([`sweep_and_hold`]), so no other writer's copy can appear, and stay,
+//!   between that sweep and that write.
 //!
-//! The directories above the key directory stay the owner's: every call
-//! after the open reaches the key files by the key directory's path, so one
-//! who could put a link in place of such a directory could send any later
-//! write anywhere, whatever the open checked. The checks here keep out a path
-//! that names a vault directory: by its name, through a link, past a `..`, or
-//! under the volume's own rules for names.
+//! The directories above the key directory stay the owner's, and stay put
+//! while the key directory is opened: every call after the open reaches the
+//! key files by the key directory's path, so one who could put a link in
+//! place of such a directory could send any later write anywhere, whatever
+//! the open checked. The checks here keep out a path that names a vault
+//! directory: by its name, through a link, past a `..`, or under the volume's
+//! own rules for names.
 
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -54,13 +56,14 @@ pub(crate) struct TempFile {
 /// The exclusive hold of one stem's sweep on the key directory's lock file
 /// ([`sweep_and_hold`]). A write over an old value hands it to
 /// [`write_temp`], whose [`TempFile`] keeps it until the new file is in
-/// place. `None` where the file system gives no lock, or the key directory is
-/// gone.
+/// place. `None` where the file system gives no lock, or the key directory
+/// was gone; then the writer takes its own shared hold, as any writer does.
 pub(crate) struct SweepHold(Option<File>);
 
 /// Makes the key directory `dir` and answers its canonical path. `make`
 /// makes one directory whose parent exists. A directory at or inside any of
-/// `vault_dirs` is refused, and a refusal leaves nothing behind:
+/// `vault_dirs` is refused, and a refusal leaves nothing behind, while the
+/// directories above `dir` stay put during the call (the module's note):
 ///
 /// - First `dir` is taken as it will resolve once made ([`resolved`]), and
 ///   each vault directory too ([`vault_resolved`]), so a directory refused by
@@ -76,9 +79,7 @@ pub(crate) struct SweepHold(Option<File>);
 /// ([`refuse_inside_vaults`]). So the volume's own rules for names decide:
 /// where it ignores case, `VAULT` is the vault directory `vault`, also one
 /// that this call's `VAULT` makes exist, even where the system's canonical
-/// path keeps the spelling it was given (Linux). The checks take the
-/// directories above the key directory as they stand; those stay the
-/// owner's (the module's note).
+/// path keeps the spelling it was given (Linux).
 ///
 /// A path may pass through a vault directory and leave it by `..`, as long
 /// as nothing is made inside it. A vault directory that does not resolve is
@@ -136,15 +137,22 @@ fn make_each(
 
 /// Refuses `dir` at or inside a vault directory: by path, each vault
 /// directory as it resolves ([`vault_resolved`]), or as a directory, when one
-/// of the directories of `dir` that exist is a vault directory that exists
-/// ([`directory_identity`]). The second sees one directory under two
-/// spellings that canonical paths keep apart: `VAULT` and `vault` on a Linux
-/// volume that ignores case.
+/// of the directories of `dir` that exist is a vault directory that exists,
+/// named as given or as it resolves ([`directory_identity`]). The second sees
+/// one directory under two spellings that canonical paths keep apart:
+/// `VAULT` and `vault` on a Linux volume that ignores case.
 fn refuse_inside_vaults(dir: &Path, vault_dirs: &[&Path]) -> Result<()> {
     let on_path: Vec<DirectoryIdentity> = dir.ancestors().filter_map(directory_identity).collect();
     for vault in vault_dirs {
-        let by_path = vault_resolved(vault).is_ok_and(|vault| dir.starts_with(vault));
-        let by_identity = directory_identity(vault).is_some_and(|vault| on_path.contains(&vault));
+        let resolved = vault_resolved(vault).ok();
+        let by_path = resolved
+            .as_ref()
+            .is_some_and(|vault| dir.starts_with(vault));
+        let by_identity = [Some(*vault), resolved.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter_map(directory_identity)
+            .any(|vault| on_path.contains(&vault));
         if by_path || by_identity {
             return Err(KeystoreError::Unavailable(INSIDE_A_VAULT));
         }
@@ -157,9 +165,10 @@ fn refuse_inside_vaults(dir: &Path, vault_dirs: &[&Path]) -> Result<()> {
 #[cfg(unix)]
 type DirectoryIdentity = (u64, u64);
 
-/// Windows answers no identity without opening a handle, and needs none
-/// here: its canonical path holds each part's name as the volume keeps it,
-/// so two spellings of one directory have one canonical path.
+/// Windows answers no identity without opening a handle: its canonical path
+/// holds each part's name as the volume keeps it, so two spellings that
+/// differ by case have one canonical path. Two shares or mounts that reach
+/// one directory are not seen as one there.
 #[cfg(not(unix))]
 type DirectoryIdentity = std::convert::Infallible;
 
@@ -260,9 +269,10 @@ fn temp_writers_lock(dir: &Path) -> io::Result<File> {
 /// `stem` is that file's name; a sweep removes a temporary file under any
 /// stem once no writer holds the directory. `swept` is the hold of the
 /// stem's sweep that a write over an old value keeps ([`sweep_and_hold`]);
-/// without it the writer takes a shared hold. On Unix the file is private
-/// (0600). `refuse_new` sees the new file before `bytes` reach it, and its
-/// error stops the write. The caller removes the file on every path.
+/// without it, or with a sweep that holds nothing, the writer takes a shared
+/// hold. On Unix the file is private (0600). `refuse_new` sees the new file
+/// before `bytes` reach it, and its error stops the write. The caller removes
+/// the file on every path.
 pub(crate) fn write_temp(
     dir: &Path,
     stem: &str,
@@ -271,8 +281,10 @@ pub(crate) fn write_temp(
     refuse_new: impl FnOnce(&File) -> io::Result<()>,
 ) -> (TempFile, io::Result<()>) {
     let hold = match swept {
-        Some(SweepHold(hold)) => hold,
-        None => match temp_writers_lock(dir) {
+        Some(SweepHold(Some(lock))) => Some(lock),
+        // A sweep that found no key directory, or no lock, holds nothing: a
+        // key directory made since then has a lock a sweep may hold.
+        _ => match temp_writers_lock(dir) {
             Ok(lock) if lock.lock_shared().is_ok() => Some(lock),
             _ => None,
         },
@@ -817,5 +829,48 @@ mod tests {
         );
         drop(tmp);
         assert!(writer_holds(), "the hold outlived the write");
+    }
+
+    /// Review of #10420, round 2 (Sol read of the fix): a vault directory is
+    /// compared as a directory also as it resolves, so one named past a
+    /// missing part and a `..` (`gap/../vault`, which the system cannot stat)
+    /// is still seen under another spelling of the key path.
+    #[cfg(unix)]
+    #[test]
+    fn the_vault_check_compares_a_vault_directory_as_it_resolves() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        let alias = base.join("alias");
+        std::os::unix::fs::symlink(&vault, &alias).expect("another name for the vault");
+        let named = base.join("gap").join("..").join("vault");
+        assert_eq!(
+            refuse_inside_vaults(&alias.join("keys"), &[&named]),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+    }
+
+    /// Review of #10420, round 2 (Sol read of the fix): a write handed a
+    /// sweep's hold that holds nothing, as one whose key directory was gone,
+    /// takes its own shared hold, so a sweep of a key directory made since
+    /// cannot run beside it.
+    #[test]
+    fn a_write_after_a_sweep_that_holds_nothing_takes_its_own_hold() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let dir = root.path().join("keys");
+        let swept = sweep_and_hold(&dir, "slot").expect("a key directory that is gone");
+        fs::create_dir(&dir).expect("the key directory is made again");
+        let (tmp, written) = write_temp(&dir, "slot", &[1; 32], Some(swept), |_| Ok(()));
+        written.expect("the temporary file is written");
+        let sweep_holds = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join(TEMP_WRITERS_LOCK))
+            .expect("the lock file opens")
+            .try_lock()
+            .is_ok();
+        assert!(!sweep_holds, "a sweep took its hold beside a writer");
+        fs::remove_file(&tmp.path).expect("the writer removes its file");
     }
 }
