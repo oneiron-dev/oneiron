@@ -1126,6 +1126,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0076 | `crates/oneiron/src/task_verb/highway.rs` | m |
 | ARCH-0076 | `crates/oneiron/src/training_pack/question_heads.rs` | m |
 | ARCH-0076 | `crates/oneiron/src/training_pack/question_trials.rs` | m |
+| ARCH-0076 | `crates/oneiron/src/work_order/decider.rs` | m |
 | ARCH-0076 | `crates/oneiron-model/src/llm/label_read.rs` | s |
 | ARCH-0076 | `crates/oneiron-server/src/ai_host/coach_host/judge_label_rechecks.rs` | m |
 | ARCH-0076 | `crates/oneiron-server/src/ai_host/coach_host/seal_checks.rs` | m |
@@ -1438,7 +1439,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | CROSS-ARCH-0023 | `crates/oneiron-run-budget/src/run_budget/job_maximum.rs` | m |
 | CROSS-ARCH-0023 | `crates/oneiron-server/src/api/facade/host_doors/gpu_jobs.rs` | m |
 | CROSS-ARCH-0023 | `crates/oneiron-server/src/config/gpu_jobs.rs` | m |
-| CROSS-ARCH-0023 | `crates/oneiron-server/src/gpu_host.rs` | s |
+| CROSS-ARCH-0023 | `crates/oneiron-server/src/gpu_host.rs` | m |
 | CROSS-ARCH-0024 | `crates/oneiron/src/authority/full_copy_mark.rs` | m |
 | CROSS-ARCH-0024 | `crates/oneiron/src/dispatch_byoa/continue_work.rs` | m |
 | CROSS-ARCH-0024 | `crates/oneiron/src/dreamer_runner/home.rs` | m |
