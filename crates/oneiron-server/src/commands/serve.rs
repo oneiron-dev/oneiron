@@ -628,9 +628,11 @@ pub(crate) fn joined_store_awaits_home(
     keystore: &crate::config::KeystoreConfig,
     vault: &oneiron::Vault,
 ) -> bool {
-    vault
-        .authority_fold()
-        .is_ok_and(|fold| fold.vault_id.is_none())
+    keystore.dir.is_none()
+        && keystore.dir.is_some()
+        && vault
+            .authority_fold()
+            .is_ok_and(|fold| fold.vault_id.is_none())
         && crate::device_sync::EnrolmentFiles::for_vault(keystore, vault)
             .is_ok_and(|files| files.record.exists())
 }
