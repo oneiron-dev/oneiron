@@ -16,6 +16,8 @@
 //! probe never lists processes ([`ComputeProcesses::NeverListed`]), and
 //! every Intel GPU is [`DeviceClosure::Admitted`].
 
+use std::collections::BTreeMap;
+
 use oneiron::job_workload::{
     DeviceClosure, DeviceFacts, DeviceIdSource, DeviceKind, DeviceMemory, DeviceState,
 };
@@ -50,29 +52,39 @@ pub struct XpuSmiProbe;
 
 impl DeviceProbe for XpuSmiProbe {
     fn list(&self) -> Result<Vec<DeviceFacts>, GpuProbeError> {
-        let mut devices = Vec::new();
-        for index in parse_xpu_smi_device_list(&run_device_tool(XPU_SMI, &["discovery", "-j"])?)? {
+        let mut devices: Vec<DeviceFacts> = Vec::new();
+        for (index, pci_bdf_address) in
+            parse_xpu_smi_device_list(&run_device_tool(XPU_SMI, &["discovery", "-j"])?)?
+        {
             let detail = run_device_tool(XPU_SMI, &["discovery", "-d", &index.to_string(), "-j"])?;
-            devices.extend(parse_xpu_smi_device_detail(&detail)?);
+            devices.extend(parse_xpu_smi_device_detail(&detail, &pci_bdf_address)?);
         }
+        // Two devices that give one id: which one a lease names is unknown.
+        let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        for device in &devices {
+            *seen.entry(device.id.clone()).or_default() += 1;
+        }
+        devices.retain(|device| seen.get(&device.id) == Some(&1));
         Ok(devices)
     }
 
+    /// Always [`ComputeProcesses::NeverListed`], a fact of the probe: it
+    /// does not say that `device_id` is present.
     fn processes_on(&self, _device_id: &str) -> Result<ComputeProcesses, GpuProbeError> {
         Ok(ComputeProcesses::NeverListed)
     }
 }
 
-/// Reads `xpu-smi discovery -j`: the device number of each GPU in its
-/// `device_list` (`null` when there is none) that Level Zero reached, in
-/// the tool's order. A device in survivability mode or found only through
-/// the management interface is left out.
+/// Reads `xpu-smi discovery -j`: the device number and PCI address of each
+/// GPU in its `device_list` (`null` when there is none) that Level Zero
+/// reached, in the tool's order. A device in survivability mode or found
+/// only through the management interface is left out.
 ///
 /// # Errors
 ///
 /// [`GpuProbeError::Unreadable`] for output that is not that JSON, or an
-/// entry with no device number.
-pub fn parse_xpu_smi_device_list(text: &str) -> Result<Vec<u32>, GpuProbeError> {
+/// entry with no device number, or a listed GPU with no PCI address.
+pub fn parse_xpu_smi_device_list(text: &str) -> Result<Vec<(u32, String)>, GpuProbeError> {
     let report = json(text, "discovery -j")?;
     let entries: &[Value] = match report.get("device_list") {
         Some(Value::Array(entries)) => entries.as_slice(),
@@ -97,27 +109,48 @@ pub fn parse_xpu_smi_device_list(text: &str) -> Result<Vec<u32>, GpuProbeError> 
                     text_field(entry, "device_type"),
                     Some(DISCRETE_GPU | INTEGRATED_GPU)
                 );
-            Ok(computes.then_some(index))
+            if !computes {
+                return Ok(None);
+            }
+            let pci_bdf_address = text_field(entry, "pci_bdf_address")
+                .filter(|address| !address.is_empty())
+                .ok_or_else(|| unreadable(format!("{XPU_SMI} discovery -j: entry {entry:?}")))?;
+            Ok(Some((index, pci_bdf_address.to_owned())))
         })
         .filter_map(Result::transpose)
         .collect()
 }
 
-/// Reads `xpu-smi discovery -d <device> -j`: the device found by the UUID
-/// Level Zero gives it, else by its serial number, with its physical memory:
-/// its own on a discrete GPU, the machine's on an integrated one. `None` for
-/// a device that gives neither id, which has none that survives a reboot,
-/// or that Level Zero did not reach. A serial of `unknown`, or of `N/A ...`
-/// (the tool may need root to read it), is none. The UUID comes first: every
-/// account reads the same one, so the id does not change with the server's
-/// account.
+/// Reads `xpu-smi discovery -d <device> -j` for the device the list gave at
+/// `pci_bdf_address`: the device found by the UUID Level Zero gives it
+/// (pass 34 2.1: the vendor's UUID first), else by its serial number, with
+/// its physical memory: its own on a discrete GPU, the machine's on an
+/// integrated one. `None` for a device that gives neither id, which has none
+/// that survives a reboot, that Level Zero did not reach, or whose memory
+/// size is 0. A serial of `unknown`, or of `N/A ...` (the tool may need root
+/// to read it), is none.
 ///
 /// # Errors
 ///
-/// [`GpuProbeError::Unreadable`] for output that is not that JSON, or a
-/// device with an id but no physical memory size this reader can read.
-pub fn parse_xpu_smi_device_detail(text: &str) -> Result<Option<DeviceFacts>, GpuProbeError> {
+/// [`GpuProbeError::Unavailable`] when the detail is of another device than
+/// the one listed at `pci_bdf_address`; [`GpuProbeError::Unreadable`] for
+/// output that is not that JSON, or a device with an id but no physical
+/// memory size this reader can read.
+pub fn parse_xpu_smi_device_detail(
+    text: &str,
+    pci_bdf_address: &str,
+) -> Result<Option<DeviceFacts>, GpuProbeError> {
     let detail = json(text, "discovery -d")?;
+    // The tool numbers devices afresh at each call: a device added between
+    // the list and this call moves the numbers.
+    if text_field(&detail, "pci_bdf_address") != Some(pci_bdf_address) {
+        return Err(GpuProbeError::Unavailable {
+            reason: format!(
+                "{XPU_SMI} discovery -d: device {:?} is not the listed {pci_bdf_address}",
+                text_field(&detail, "pci_bdf_address")
+            ),
+        });
+    }
     let serial = text_field(&detail, "serial_number")
         .map(str::trim)
         .filter(|serial| {
@@ -146,6 +179,10 @@ pub fn parse_xpu_smi_device_detail(text: &str) -> Result<Option<DeviceFacts>, Gp
             detail.get("memory_physical_size_byte")
         ))
     })?;
+    // The tool writes 0 when its memory query fails: no memory to lease.
+    if bytes_to_mib(memory_bytes) == 0 {
+        return Ok(None);
+    }
     Ok(Some(DeviceFacts {
         id,
         id_source,

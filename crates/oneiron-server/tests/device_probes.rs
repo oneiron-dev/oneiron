@@ -46,6 +46,9 @@ const APU_KFD_ID: u32 = 50809;
 const APU_VRAM_BYTES: u64 = 536_870_912;
 const APU_GTT_BYTES: u64 = 16_462_188_544;
 
+/// The PCI address of the Intel GPU the detail fixture describes.
+const XPU_BDF: &str = "0000:29:00.0";
+
 /// A discrete card's unique id, as the driver's `unique_id` file writes it.
 const CARD_UNIQUE_ID: &str = "52d10e8a52d4b1c3";
 
@@ -482,6 +485,73 @@ fn without_kfd_an_amd_card_has_no_rocm_feature_is_admitted_and_never_lists_proce
 }
 
 #[test]
+fn a_serial_comes_before_kfds_unique_id_so_the_id_does_not_change_with_kfd() {
+    let tree = SysfsTree::new();
+    tree.card(
+        "card1",
+        "0000:03:00.0",
+        129,
+        "0x1002",
+        "amdgpu",
+        &[
+            ("serial_number", "692214000123"),
+            ("mem_info_vram_total", "68702699520"),
+        ],
+    );
+    let unique_id = u64::from_str_radix(CARD_UNIQUE_ID, 16).expect("hex");
+    tree.kfd_node(
+        2,
+        41210,
+        &card_properties(0x0300, 129, unique_id),
+        Some(&frame_buffer_bank(68_702_699_520)),
+    );
+    let with_kfd = tree.probe().list().expect("list");
+    std::fs::remove_dir_all(tree.dir.path().join("class/kfd")).expect("unload KFD");
+    let without_kfd = tree.probe().list().expect("list");
+    assert_eq!(with_kfd.len(), 1);
+    assert_eq!(without_kfd.len(), 1);
+    assert_eq!(with_kfd[0].id, "692214000123");
+    assert_eq!(without_kfd[0].id, with_kfd[0].id);
+}
+
+#[test]
+fn a_card_with_no_memory_is_not_listed() {
+    let tree = SysfsTree::new();
+    discrete_card(
+        &tree,
+        &[("unique_id", CARD_UNIQUE_ID), ("mem_info_vram_total", "0")],
+        None,
+    );
+    assert_eq!(tree.probe().list().expect("list"), Vec::new());
+}
+
+#[test]
+fn a_listed_device_kfd_no_longer_lists_cannot_tell_and_is_never_read_as_unlisted() {
+    let tree = SysfsTree::new();
+    discrete_card(
+        &tree,
+        &[
+            ("unique_id", CARD_UNIQUE_ID),
+            ("mem_info_vram_total", "68702699520"),
+        ],
+        Some(68_702_699_520),
+    );
+    tree.mkdir("class/kfd/kfd/proc");
+    let probe = tree.probe();
+    assert_eq!(
+        probe.list().expect("list")[0].closure,
+        DeviceClosure::Closed
+    );
+    // KFD rebuilds its topology: the card's node is gone for a moment.
+    std::fs::remove_dir_all(tree.dir.path().join("class/kfd/kfd/topology/nodes/2"))
+        .expect("remove node");
+    assert!(matches!(
+        probe.processes_on(CARD_UNIQUE_ID),
+        Err(GpuProbeError::Unavailable { .. })
+    ));
+}
+
+#[test]
 fn cards_of_other_vendors_or_drivers_are_not_amd_devices() {
     let tree = SysfsTree::new();
     tree.card(
@@ -617,7 +687,7 @@ fn intel_detail(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value
 }
 
 fn parsed_intel(detail: &str) -> DeviceFacts {
-    parse_xpu_smi_device_detail(detail)
+    parse_xpu_smi_device_detail(detail, XPU_BDF)
         .expect("parse")
         .expect("a device")
 }
@@ -659,7 +729,7 @@ fn an_intel_gpu_with_no_uuid_is_found_by_its_serial_unless_it_has_none() {
             detail.insert("serial_number".to_owned(), serial.into());
         });
         assert_eq!(
-            parse_xpu_smi_device_detail(&detail).expect("parse"),
+            parse_xpu_smi_device_detail(&detail, XPU_BDF).expect("parse"),
             None,
             "{serial}"
         );
@@ -687,7 +757,10 @@ fn an_intel_gpu_level_zero_did_not_reach_is_not_listed() {
     let detail = intel_detail(|detail| {
         detail.insert("device_type".to_owned(), "".into());
     });
-    assert_eq!(parse_xpu_smi_device_detail(&detail).expect("parse"), None);
+    assert_eq!(
+        parse_xpu_smi_device_detail(&detail, XPU_BDF).expect("parse"),
+        None
+    );
 }
 
 #[test]
@@ -707,11 +780,11 @@ fn the_device_list_gives_each_compute_gpu_and_leaves_out_the_rest() {
     // is in survivability mode.
     assert_eq!(
         parse_xpu_smi_device_list(XPU_LIST).expect("parse"),
-        vec![0, 1]
+        vec![(0, XPU_BDF.to_owned()), (1, "0000:3a:00.0".to_owned())]
     );
     assert_eq!(
         parse_xpu_smi_device_list(r#"{"device_list": null}"#).expect("parse"),
-        Vec::<u32>::new()
+        Vec::new()
     );
 }
 
@@ -730,9 +803,30 @@ fn unreadable_xpu_smi_output_is_refused() {
         detail.remove("memory_physical_size_byte");
     });
     assert!(matches!(
-        parse_xpu_smi_device_detail(&detail),
+        parse_xpu_smi_device_detail(&detail, XPU_BDF),
         Err(GpuProbeError::Unreadable { .. })
     ));
+}
+
+#[test]
+fn a_detail_of_another_device_than_the_listed_one_cannot_tell() {
+    // A device added between the list and the detail moves the numbers.
+    assert!(matches!(
+        parse_xpu_smi_device_detail(XPU_DEVICE, "0000:3a:00.0"),
+        Err(GpuProbeError::Unavailable { .. })
+    ));
+}
+
+#[test]
+fn an_intel_gpu_whose_memory_query_failed_is_not_listed() {
+    // The tool writes 0 when its memory module query fails.
+    let detail = intel_detail(|detail| {
+        detail.insert("memory_physical_size_byte".to_owned(), 0.into());
+    });
+    assert_eq!(
+        parse_xpu_smi_device_detail(&detail, XPU_BDF).expect("parse"),
+        None
+    );
 }
 
 #[test]

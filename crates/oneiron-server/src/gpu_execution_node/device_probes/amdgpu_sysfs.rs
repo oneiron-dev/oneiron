@@ -15,15 +15,16 @@
 //! enough that KFD allocates from it alone reads as dedicated memory of
 //! that carve-out, which the machine's own memory does not hold.
 //!
-//! The id is the device's unique id (the driver's `unique_id`, else KFD's,
-//! one value in one form), else its serial number. A built-in GPU with
-//! neither is found by its PCI address, which the platform fixes for a
-//! built-in device. A discrete card with neither is not listed: its PCI
-//! address changes when the card moves. Nor is a device whose serial only
-//! root may read (it would change id with the server's account), a device
-//! whose id another device repeats, or a card split into compute
-//! partitions, which KFD lists as further nodes on the card's PCI device:
-//! each partition would be a device of its own.
+//! The id, in an order that does not change with KFD being loaded or with
+//! the server's account: the driver's `unique_id`; else the serial number;
+//! else KFD's unique id (the same value, in the driver file's form); else,
+//! for a built-in GPU, its PCI address, which the platform fixes for a
+//! built-in device. A discrete card with none is not listed: its PCI
+//! address changes when the card moves. Nor is a device whose serial this
+//! server's account may not read, a device whose id another device repeats,
+//! a device with no memory, or a card split into compute partitions, which
+//! KFD lists as further nodes on the card's PCI device: each partition would
+//! be a device of its own.
 //!
 //! Processes: KFD lists every user's process that holds a compute context
 //! on a device, so a device KFD lists is [`DeviceClosure::Closed`], to the
@@ -141,6 +142,13 @@ impl DeviceProbe for AmdgpuSysfsProbe {
             .find(|device| device.facts.id == device_id)
             .ok_or_else(|| not_found(device_id))?;
         let Some(gpu_id) = device.kfd_gpu_id else {
+            // With KFD loaded, a device it no longer lists may be one it
+            // listed a moment ago: nothing is known of what runs there.
+            if present(&self.kfd_root)? {
+                return Err(GpuProbeError::Unavailable {
+                    reason: format!("KFD lists no node for device {device_id}"),
+                });
+            }
             return Ok(ComputeProcesses::NeverListed);
         };
         let context_file = format!("vram_{gpu_id}");
@@ -225,24 +233,12 @@ impl AmdgpuSysfsProbe {
             },
             (_, None) => return Ok(None),
         };
-        let unique_id = match read_attribute(&device.join("unique_id"))? {
-            Attribute::Text(id) if has_value(&id) => Some(id.to_ascii_lowercase()),
-            _ => node
-                .map(|node| node.unique_id)
-                .filter(|id| *id != 0)
-                .map(|id| format!("{id:016x}")),
-        };
-        let (id, id_source) = match (unique_id, read_attribute(&device.join("serial_number"))?) {
-            (Some(id), _) => (id, DeviceIdSource::VendorUuid),
-            (None, Attribute::Text(serial)) if has_value(&serial) => {
-                (serial, DeviceIdSource::Serial)
-            }
-            (None, Attribute::Denied) => return Ok(None),
-            (None, _) if memory.is_unified() => (
-                format!("pci-{}", card.slot),
-                DeviceIdSource::PlatformRegistry,
-            ),
-            (None, _) => return Ok(None),
+        // A device with no memory to lease takes no claim.
+        if memory.mib() == 0 {
+            return Ok(None);
+        }
+        let Some((id, id_source)) = Self::stable_id(card, node, memory)? else {
+            return Ok(None);
         };
         let id = plain_device_id(&id).ok_or_else(|| GpuProbeError::Unreadable {
             line: format!("{}: device id {id:?}", device.display()),
@@ -278,6 +274,40 @@ impl AmdgpuSysfsProbe {
                 max_claimants: 1,
             },
             kfd_gpu_id: node.map(|node| node.gpu_id),
+        }))
+    }
+
+    /// `card`'s id, in this order, so that the id does not change with
+    /// KFD being loaded or with the server's account: the driver's
+    /// `unique_id`; else the serial number (read only then; a serial this
+    /// account may not read gives no id); else KFD's unique id, in the
+    /// driver file's form; else, for a built-in GPU, its PCI address.
+    /// `None`: no id that survives a reboot.
+    fn stable_id(
+        card: &AmdgpuCard,
+        node: Option<KfdNode>,
+        memory: DeviceMemory,
+    ) -> Result<Option<(String, DeviceIdSource)>, GpuProbeError> {
+        if let Attribute::Text(id) = read_attribute(&card.device.join("unique_id"))?
+            && has_value(&id)
+        {
+            return Ok(Some((id.to_ascii_lowercase(), DeviceIdSource::VendorUuid)));
+        }
+        match read_attribute(&card.device.join("serial_number"))? {
+            Attribute::Text(serial) if has_value(&serial) => {
+                return Ok(Some((serial, DeviceIdSource::Serial)));
+            }
+            Attribute::Denied => return Ok(None),
+            Attribute::Text(_) | Attribute::Absent => {}
+        }
+        if let Some(id) = node.map(|node| node.unique_id).filter(|id| *id != 0) {
+            return Ok(Some((format!("{id:016x}"), DeviceIdSource::VendorUuid)));
+        }
+        Ok(memory.is_unified().then(|| {
+            (
+                format!("pci-{}", card.slot),
+                DeviceIdSource::PlatformRegistry,
+            )
         }))
     }
 
@@ -322,14 +352,15 @@ impl AmdgpuSysfsProbe {
         let mut topology = KfdTopology::default();
         for (_, node) in sorted_entries(&self.kfd_root.join("topology").join("nodes"))? {
             let gpu_id_file = node.join("gpu_id");
-            let gpu_id = attribute(&gpu_id_file)?
-                .map(|text| {
-                    text.parse::<u32>().map_err(|_| GpuProbeError::Unreadable {
-                        line: format!("{}: {text}", gpu_id_file.display()),
-                    })
-                })
-                .transpose()?
-                .unwrap_or(0);
+            let gpu_id_text =
+                attribute(&gpu_id_file)?.ok_or_else(|| GpuProbeError::Unavailable {
+                    reason: format!("{} does not exist", gpu_id_file.display()),
+                })?;
+            let gpu_id = gpu_id_text
+                .parse::<u32>()
+                .map_err(|_| GpuProbeError::Unreadable {
+                    line: format!("{}: {gpu_id_text}", gpu_id_file.display()),
+                })?;
             // A CPU node has no gpu_id.
             if gpu_id == 0 {
                 continue;
@@ -418,10 +449,19 @@ fn entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, GpuProbeError> {
 
 /// The entries of `dir` by name, sorted; none when it does not exist.
 fn sorted_entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, GpuProbeError> {
-    if !dir.exists() {
+    if !present(dir)? {
         return Ok(Vec::new());
     }
     entries(dir)
+}
+
+/// Whether `path` exists; a path that cannot be looked up is an error, not
+/// absent.
+fn present(path: &Path) -> Result<bool, GpuProbeError> {
+    path.try_exists()
+        .map_err(|error| GpuProbeError::Unavailable {
+            reason: format!("{}: {error}", path.display()),
+        })
 }
 
 /// A sysfs attribute's text, trimmed.

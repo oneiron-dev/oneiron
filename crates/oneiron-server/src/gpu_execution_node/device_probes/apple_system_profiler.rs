@@ -54,6 +54,8 @@ impl DeviceProbe for SystemProfilerProbe {
         )?)
     }
 
+    /// Always [`ComputeProcesses::NeverListed`], a fact of the probe: it
+    /// does not say that `device_id` is present.
     fn processes_on(&self, _device_id: &str) -> Result<ComputeProcesses, GpuProbeError> {
         Ok(ComputeProcesses::NeverListed)
     }
