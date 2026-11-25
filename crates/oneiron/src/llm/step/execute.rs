@@ -742,7 +742,7 @@ const HOST_CHECK_PARK_REASON: &str = "durable step held by a host check";
 const RESIDENT_SHARE_PARK_REASON: &str = "durable step resident share spent";
 
 /// Why a step parks at its budget trap, or is refused at it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BudgetTrapCause {
     /// The step's budget is spent. `asked_units` is the reservation the
     /// refusing guard asked for, when the refusal names one.
@@ -759,6 +759,7 @@ pub(super) enum BudgetTrapCause {
     /// The owner's share write that fits it wakes the park.
     ResidentShare {
         resident: crate::entity_id::EntityId,
+        unit: String,
         needed_units: u64,
     },
 }
@@ -774,9 +775,11 @@ impl BudgetTrapCause {
             },
             BudgetDenied::ResidentShareSpent {
                 resident,
+                unit,
                 needed_units,
             } => Self::ResidentShare {
                 resident: *resident,
+                unit: unit.clone(),
                 needed_units: *needed_units,
             },
             BudgetDenied::Exhausted
@@ -787,7 +790,7 @@ impl BudgetTrapCause {
         }
     }
 
-    const fn reason(self) -> &'static str {
+    const fn reason(&self) -> &'static str {
         match self {
             // An unfunded step is refused before any park: the reason names
             // the budget it could not spend.
@@ -799,9 +802,9 @@ impl BudgetTrapCause {
 
     /// The units the step's spend scope walk asks: only a spent guard's.
     /// Neither the allocation nor a resident's share is a spend scope's.
-    const fn asked_units(self) -> Option<u64> {
+    const fn asked_units(&self) -> Option<u64> {
         match self {
-            Self::Spent { asked_units } => asked_units,
+            Self::Spent { asked_units } => *asked_units,
             Self::HostCheck | Self::Unfunded { .. } | Self::ResidentShare { .. } => None,
         }
     }
@@ -848,15 +851,17 @@ pub(super) fn budget_trap(
         // The owner's share write that landed after the run admission refused
         // the resident found no park to wake: a share that now fits wakes the
         // park in its own write, as a moved cap does (D3).
-        let share_fits = match cause {
+        let share_fits = match &cause {
             BudgetTrapCause::ResidentShare {
                 resident,
+                unit,
                 needed_units,
             } => crate::llm::budget::resident_share_fits_in_txn(
                 ctx.vault,
                 wtxn,
-                resident,
-                needed_units,
+                *resident,
+                unit,
+                *needed_units,
             )?,
             _ => false,
         };
@@ -953,6 +958,7 @@ fn budget_wait(
                 }
                 BudgetTrapCause::ResidentShare {
                     resident,
+                    unit,
                     needed_units,
                 } => {
                     if wakes_in_write {
@@ -961,6 +967,7 @@ fn budget_wait(
                     return Ok(Some(
                         crate::dreamer_runner::DreamerParkWait::ResidentShare {
                             resident,
+                            unit,
                             needed_units,
                         },
                     ));

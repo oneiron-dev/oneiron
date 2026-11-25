@@ -128,6 +128,9 @@ impl VaultMachineConnector {
         if closes_now {
             self.count_machine_end(row.machine, ended, &meter);
         }
+        // Row R4, EM-12 = A: the outputs land when the quote binds a result, then the node is
+        // told it may clean them. What does not finish here is owed to the housekeeping pass.
+        self.result_returns().return_outputs(&row, ended);
         Ok(GpuTermination::Confirmed { billed_secs })
     }
 

@@ -24,10 +24,14 @@ hold settles its original allocation, not the new grant.
 
 The same vault writer adjudicates a reservation and its resident's pinned or
 soft share. Resident charges are kept by exact original allocation reference,
-including its generation. A late old-generation charge cannot reset newer
-resident depletion. The existing owner presentation reports the newest charged
-generation; `resident_shares_on` reads an explicitly selected allocation.
-Neither presentation is admission authority.
+including its generation and unit. A late old-generation charge cannot reset
+newer resident depletion. The owner sets a share per walletless unit, and a
+share binds only the walletless allocation in its own unit; a share or charge
+stored with no unit is in `micro_usd` (Engine RESIDENT-SHARE-UNIT = A). The
+owner presentation shows one block per walletless allocation the host selects;
+an embedded vault shows one block per unit a share is set in, on each
+resident's newest charged generation in that unit. `resident_shares_on` reads
+an explicitly selected allocation. Neither presentation is admission authority.
 
 ## Producer integration contract
 

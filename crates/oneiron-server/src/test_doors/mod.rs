@@ -107,4 +107,5 @@ pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;
 pub mod wire_thresholds;
+pub mod work_order_host;
 pub mod workflow_park;
