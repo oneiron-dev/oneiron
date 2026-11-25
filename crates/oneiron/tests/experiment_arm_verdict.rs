@@ -1296,7 +1296,13 @@ fn a_verdict_without_a_measured_unit_is_refused() {
         ..live
     };
     put_claim(&fixture.vault, &released).expect("the test door ends the claim");
-    let lost = claim(&arm, 1, "check/shard-1", UnitPurpose::Work, ended(UnitEnd::BoxLost));
+    let lost = claim(
+        &arm,
+        1,
+        "check/shard-1",
+        UnitPurpose::Work,
+        ended(UnitEnd::BoxLost),
+    );
     put_claim(&fixture.vault, &lost).expect("the test door puts the claim");
     let check = claim(
         &arm,
@@ -1312,7 +1318,11 @@ fn a_verdict_without_a_measured_unit_is_refused() {
         ("box-lost", lost.id),
         ("review-check", check.id),
     ] {
-        refused_as(&kill(key, &[unit]), MEMORY_CODE_INVALID_STATE, "no_measured_unit");
+        refused_as(
+            &kill(key, &[unit]),
+            MEMORY_CODE_INVALID_STATE,
+            "no_measured_unit",
+        );
     }
     let measured = fixture.settle(
         &arm,
@@ -1364,13 +1374,25 @@ fn a_result_digest_backs_one_outcome() {
     fixture
         .verdict(
             None,
-            &verdict_ask("kill-first", &first, ArmDecision::Kill, &[unit_one.id], Some(&shared)),
+            &verdict_ask(
+                "kill-first",
+                &first,
+                ArmDecision::Kill,
+                &[unit_one.id],
+                Some(&shared),
+            ),
         )
         .expect("the first kill scores the result");
     let refused = fixture
         .verdict(
             None,
-            &verdict_ask("kill-second", &second, ArmDecision::Kill, &[unit_two.id], Some(&shared)),
+            &verdict_ask(
+                "kill-second",
+                &second,
+                ArmDecision::Kill,
+                &[unit_two.id],
+                Some(&shared),
+            ),
         )
         .expect_err("the result backs a scored rung");
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "result_scored");
@@ -1396,17 +1418,30 @@ fn a_result_digest_backs_one_outcome() {
     fixture
         .review(
             reviewer,
-            &review_ask("confirm-third", &waiting[0], ArmReviewVerdict::Confirmed, &pending),
+            &review_ask(
+                "confirm-third",
+                &waiting[0],
+                ArmReviewVerdict::Confirmed,
+                &pending,
+            ),
         )
         .expect("the first confirm");
     let refused = fixture
         .review(
             reviewer,
-            &review_ask("confirm-fourth", &waiting[1], ArmReviewVerdict::Confirmed, &pending),
+            &review_ask(
+                "confirm-fourth",
+                &waiting[1],
+                ArmReviewVerdict::Confirmed,
+                &pending,
+            ),
         )
         .expect_err("the result now backs a scored rung");
     refused_as(&refused, MEMORY_CODE_INVALID_STATE, "result_scored");
-    assert_eq!(fixture.arm(fourth.id).rungs[0].state, RungState::AwaitingReview);
+    assert_eq!(
+        fixture.arm(fourth.id).rungs[0].state,
+        RungState::AwaitingReview
+    );
 }
 
 /// T53.
@@ -1425,13 +1460,24 @@ fn a_confirm_at_the_last_rung_closes_the_arm() {
     let promoted = fixture
         .verdict(
             None,
-            &verdict_ask("promote", &arm, ArmDecision::Promote, &[unit.id], Some(&result)),
+            &verdict_ask(
+                "promote",
+                &arm,
+                ArmDecision::Promote,
+                &[unit.id],
+                Some(&result),
+            ),
         )
         .expect("the lead promotes");
     let confirmed = fixture
         .review(
             reviewer,
-            &review_ask("confirm", &promoted.arm, ArmReviewVerdict::Confirmed, &result),
+            &review_ask(
+                "confirm",
+                &promoted.arm,
+                ArmReviewVerdict::Confirmed,
+                &result,
+            ),
         )
         .expect("the confirm at the last rung");
     assert_eq!(confirmed.arm.state, ArmState::Succeeded);
