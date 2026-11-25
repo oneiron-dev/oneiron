@@ -21,6 +21,7 @@ use oneiron::work_order::{
     OrderAttemptRef, OrderCharge, OrderHost, PassReport, Room, TemplateFact, WorkOrder,
 };
 
+use crate::gpu_execution_node::issuer::node_status::node_answer;
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
@@ -89,17 +90,21 @@ pub fn facts_of_answer(machine: EntityId, answer: Option<&JobAnswer>, now_ms: u6
     facts
 }
 
+/// The facts `node` gives, read through the one view of a node's `Node` answer
+/// ([`node_answer`], the one `vault.machines.status` shows): the loop reads no field of the wire
+/// answer itself.
 fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
+    let node = node_answer(node.clone());
     facts.reach = MachineReach::Answered { at_ms: now_ms };
     facts.enabled = node.enabled;
-    facts.paused.clone_from(&node.paused);
-    facts.drained.clone_from(&node.drained);
+    facts.paused = node.paused;
+    facts.drained = node.drained;
     facts.templates = Some(
         node.templates
-            .iter()
+            .into_iter()
             .map(|template| TemplateFact {
-                name: template.name.clone(),
-                digest: template.digest.clone(),
+                name: template.name,
+                digest: template.digest,
             })
             .collect(),
     );
