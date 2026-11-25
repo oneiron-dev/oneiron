@@ -629,11 +629,6 @@ impl NodeJobs {
             quarantine(why, processes.pids, journal);
             return;
         }
-        // No process of the unit is left: its staged code goes before
-        // `released`, and a crash in between runs this check again. `out/`
-        // and `log/` stay until the `Ack` and the keep time (design 7.6).
-        let payload_dir = known.id.payload_dir(&self.paths().work_dir);
-        self.parts().stager.unstage(&known.key, &payload_dir);
         let event = JournalEvent::Released {
             other_compute_pids: processes.pids,
         };
