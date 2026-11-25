@@ -41,10 +41,12 @@ impl GpuSlotLease {
         &self.grant
     }
 
-    /// The launch recheck, just before the job's process starts: a fresh
-    /// reading shows its GPU still offered, not withheld, and running no
-    /// compute process, and the machine is not drained. Pause and
-    /// quarantine refuse confirmation, even if it succeeded before.
+    /// The launch recheck, just before each start of the job's process: a
+    /// fresh reading shows its GPU still offered, not withheld, and running
+    /// no compute process, and the machine is neither paused nor drained.
+    /// A retry is checked afresh, as the first attempt is, whatever an
+    /// earlier confirmation answered. A confirmation writes the GPU's kept
+    /// record, so the GPU stays the job's past this server's life.
     ///
     /// # Errors
     ///
@@ -60,9 +62,6 @@ impl GpuSlotLease {
         }
         let at = state.at(&self.grant.key).ok_or(GpuSlotRefusal::NotHeld)?;
         state.check_quarantine(&self.grant.device.device_id)?;
-        if state.slots[at].stage == Stage::Launched {
-            return Ok(());
-        }
         // The driver first, then the withheld list and the drain, so a
         // withhold or a drain written while the driver answered still counts.
         let reading = shared.read(&mut state).map_err(unmeasured)?;
@@ -79,6 +78,11 @@ impl GpuSlotLease {
         // The slot is this lease's own, so the GPU is judged as if untaken.
         match shared.state_of(&reading, &state, None, device) {
             GpuDeviceState::Free => {
+                shared
+                    .keep_record(&self.grant.device.device_id, &self.grant.key)
+                    .map_err(|error| GpuSlotRefusal::Unmeasured {
+                        reason: format!("the GPU's kept record could not be written: {error}"),
+                    })?;
                 state.slots[at].stage = Stage::Launched;
                 Ok(())
             }

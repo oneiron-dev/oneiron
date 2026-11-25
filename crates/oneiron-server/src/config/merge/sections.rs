@@ -378,11 +378,6 @@ impl PartialServeConfig {
         if let Some(value) = self.gpu_jobs {
             resolved.gpu_jobs = value.resolve()?;
         }
-        // After both sections, in whichever layer either came from.
-        crate::config::gpu_jobs::refuse_offered_worker_devices(
-            &resolved.gpu_jobs.devices,
-            resolved.models.as_ref(),
-        )?;
         // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = Some(value);

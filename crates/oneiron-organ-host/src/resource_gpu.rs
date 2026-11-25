@@ -134,10 +134,11 @@ pub trait GpuDeviceLease: Send {
     /// The GPU it holds, under which key, and since when.
     fn grant(&self) -> &GpuSlotGrant;
 
-    /// The launch recheck, just before the job's process starts on the GPU:
-    /// a fresh reading shows it still offered, not withheld, and running no
-    /// compute process. Pause and quarantine refuse confirmation, even if
-    /// it succeeded before. A first confirmation also checks for a drain.
+    /// The launch recheck, just before each start of the job's process on
+    /// the GPU: a fresh reading shows it still offered, not withheld, and
+    /// running no compute process, and the machine neither paused nor
+    /// drained. A retry is checked afresh, whatever an earlier confirmation
+    /// answered.
     ///
     /// # Errors
     ///
