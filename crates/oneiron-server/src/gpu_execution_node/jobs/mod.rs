@@ -35,6 +35,7 @@ pub mod journal_file;
 pub mod node_parts;
 pub mod readiness;
 pub mod receipt;
+pub mod staging;
 
 mod admission;
 mod end;
@@ -64,6 +65,7 @@ pub use node_parts::{
 };
 pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, drain_rule_default};
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
+pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 pub use status::KEYS_PAGE_MAX_BYTES;
 
 /// How long a `Busy` answer asks the issuer to wait before it asks again: a

@@ -78,7 +78,7 @@ impl NodeJobs {
     /// Runs the start-up reconciliation, once the gate is closed for it.
     pub(super) fn recover(&self) {
         let now = self.now();
-        let restage = {
+        let (restage, unstage) = {
             let mut guard = self.lock();
             let book: &mut NodeBook = &mut guard;
             if book.gate != NodeGate::Recovering {
@@ -102,17 +102,38 @@ impl NodeJobs {
                 return;
             }
             book.gate = NodeGate::Open;
-            book.journal.as_ref().map_or_else(Vec::new, |journal| {
+            let restage = book.journal.as_ref().map_or_else(Vec::new, |journal| {
                 journal
                     .table()
                     .iter()
                     .filter(|key| matches!(key.state, JobState::Accepted | JobState::Staging))
                     .map(|key| key.key.clone())
                     .collect::<Vec<_>>()
-            })
+            });
+            // A key that ended before its launch keeps no code on the node's
+            // disk: a staging the sweep ended, or an end recorded just before
+            // a crash took the stager's removal (row R3c). A key that
+            // launched has its code removed at its release check.
+            let unstage = book.journal.as_ref().map_or_else(Vec::new, |journal| {
+                let work_dir = &self.paths().work_dir;
+                journal
+                    .table()
+                    .iter()
+                    .filter(|known| known.is_ended() && known.launch.is_none())
+                    .map(|known| (known.key.clone(), known.id.payload_dir(work_dir)))
+                    .collect::<Vec<_>>()
+            });
+            (restage, unstage)
         };
         for key in restage {
             self.start_staging(key);
+        }
+        // The removal runs once the lock is dropped, so a large tree left by
+        // a crash holds no admission: an ended key never stages again (its
+        // key is answered from the journal), and its payload directory is
+        // its own.
+        for (key, payload_dir) in unstage {
+            self.parts().stager.unstage(&key, &payload_dir);
         }
     }
 

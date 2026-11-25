@@ -165,13 +165,20 @@ pub trait NodeAdmission: Send + Sync {
 
     /// The launch commit's fit of the pin's placement on this node (pass 34
     /// section 2.1, the sum rule): the host memory the placement leases is
-    /// within the template's memory ceiling.
+    /// within the template's memory ceiling; and, with the box file and the
+    /// owner's machine policy (row P0), every placed device is offered, the
+    /// memory with `held_mib` that launched keys hold fits the memory work
+    /// may hold, and the run's threads fit.
     ///
     /// # Errors
     ///
     /// The refusal reason, for the key's end.
-    fn admit_placement(&self, pin: &WorkloadPin, placement: &DevicePlacement)
-    -> Result<(), String>;
+    fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+        held_mib: u64,
+    ) -> Result<(), String>;
 
     /// Design 7.3 reserve step 6: the payload disk's free space, less what
     /// live keys booked (`booked_mib`), covers `request_mib` plus the disk
@@ -420,8 +427,9 @@ impl NodeAdmission for ExecutionNode {
         &self,
         pin: &WorkloadPin,
         placement: &DevicePlacement,
+        held_mib: u64,
     ) -> Result<(), String> {
-        ExecutionNode::admit_placement(self, pin, placement)
+        ExecutionNode::admit_placement(self, pin, placement, held_mib)
     }
 
     fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {

@@ -99,7 +99,19 @@ impl NodeJobs {
             Err(StageFailure::Closed) => Some("staging_limit".to_owned()),
             Err(StageFailure::Refused(reason)) => Some(reason),
         };
+        // A key that will not launch keeps no code on the node's disk: it is
+        // removed before the key's end is recorded, while its disk is still
+        // booked.
+        let refused = failure.is_some();
+        if refused {
+            self.parts().stager.unstage(key, &run.order.payload_dir);
+        }
         self.launch_commit(key, failure, deadline);
+        // A refusal of the launch commit itself (a device, the memory, the
+        // control file) ended the key after its code was staged.
+        if !refused && !self.key_launched(key) {
+            self.parts().stager.unstage(key, &run.order.payload_dir);
+        }
     }
 
     /// Records that staging began (an `accepted` key) or takes up a key
@@ -144,6 +156,15 @@ impl NodeJobs {
             authority_heads: submit.submit.authority_heads,
             deadline: Instant::now() + limit,
         })
+    }
+
+    /// Whether the key's launch commit is journaled.
+    fn key_launched(&self, key: &str) -> bool {
+        let book = self.lock();
+        book.journal
+            .as_ref()
+            .and_then(|journal| journal.table().get(key))
+            .is_some_and(|known| known.launch.is_some())
     }
 
     /// Whether the key is closed (or the node's history is lost).
@@ -205,6 +226,7 @@ impl NodeJobs {
             return;
         }
         let pin = &reserve.pin;
+        let held_mib = journal.table().held_host_memory_mib();
         // Step 4: every lease of the request, or none (pass 34 9.2 (a)): the
         // placement from a fresh reading, each placed device leased and
         // confirmed, then the host memory. A request with no device claim
@@ -214,7 +236,9 @@ impl NodeJobs {
             .and_then(|placed| {
                 // The sum rule against the template's memory ceiling, before
                 // any lease.
-                self.parts().admission.admit_placement(pin, &placed)?;
+                self.parts()
+                    .admission
+                    .admit_placement(pin, &placed, held_mib)?;
                 let mut leases = Vec::with_capacity(placed.devices.len());
                 for device in &placed.devices {
                     let Some(claim) = pin.request.devices.get(device.claim) else {
