@@ -46,8 +46,9 @@ mod user_service_args;
 mod wake_args;
 mod widen_proposal_args;
 pub use execution_node_args::{
-    ExecutionNodeCommand, ExecutionNodeDisableArgs, ExecutionNodeFileArgs, ExecutionNodePauseArgs,
-    ExecutionNodeResetHistoryArgs, ExecutionNodeServeArgs,
+    ExecutionNodeCommand, ExecutionNodeDisableArgs, ExecutionNodeFileArgs,
+    ExecutionNodeInstallArgs, ExecutionNodePauseArgs, ExecutionNodeResetHistoryArgs,
+    ExecutionNodeServeArgs, ExecutionNodeUnitControlArgs, ExecutionNodeUnitNameArgs,
 };
 pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,

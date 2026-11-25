@@ -190,10 +190,9 @@ impl NodeJobs {
         now: &ReceiptClock,
     ) -> JobAnswer {
         let parts = self.parts();
-        match sign_receipt(
-            receipt_of(key, parts.machine, epoch, now),
-            parts.signer.as_ref(),
-        ) {
+        let mut receipt = receipt_of(key, parts.machine, epoch, now);
+        receipt.scope = parts.units.scope_facts(&key.id);
+        match sign_receipt(receipt, parts.signer.as_ref()) {
             Ok(signed) => JobAnswer::Receipt(signed),
             Err(error) => {
                 tracing::warn!(key = %key.key, %error, "job receipt not signed; answering busy");
