@@ -19,9 +19,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mesh_machines::{Device, Home, TestResult, at, home};
-use oneiron::EntityId;
 use oneiron::authority::ActSurface;
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::job_dispatch::machine_records::{
+    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, MachineJobOutcome,
+    NodeDrainClear, clear_drain_as,
+};
 use oneiron::job_workload::BoundRequirement;
 use oneiron::job_workload::{DeviceKind, DeviceLease, DevicePlacement, Sharing};
 use oneiron::machine_policy::{CachePolicy, ExecutionState, machine_item, machine_part_item};
@@ -31,6 +34,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
+use oneiron::{EdgeActorClass, EntityId};
 use oneiron_server::gpu_execution_node::jobs::{
     IncidentKind, IssuerNotLive, NodeAdmission, NodeControls, NodeDevices, NodeJobSettings,
     NodeJobs, NodeKey, OWNER_CLEAR_RULE,
@@ -173,6 +177,12 @@ impl Rig {
 
     /// An agent on H whose live Grant lists `machines.execution`'s line and the setting door.
     fn agent(&self) -> TestResult<EntityId> {
+        let line = set_line(EXECUTION);
+        Ok(self.agent_listing(&["read", SET, line.as_str()])?.0)
+    }
+
+    /// An agent on H and its live Grant, which lists `verbs`.
+    fn agent_listing(&self, verbs: &[&str]) -> TestResult<(EntityId, EntityId)> {
         let vault = self.home.vault();
         let owner = self.home.owner();
         let agent = vault.new_entity_id().map_err(at("the agent's id"))?;
@@ -191,14 +201,8 @@ impl Rig {
             },
         )
         .map_err(at("the owner creates the agent"))?;
-        let line = set_line(EXECUTION);
         let mut scope = Scope::top();
-        scope.verbs = ScopeAxis::Some(
-            ["read", SET, line.as_str()]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        );
+        scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
         let minted = mint_agent_grant_as(
             vault,
             owner,
@@ -218,7 +222,7 @@ impl Rig {
         if !minted.grant.confers {
             return Err("FIXTURE: the agent's Grant confers".into());
         }
-        Ok(agent)
+        Ok((agent, minted.grant.grant_ref))
     }
 
     /// `machines.execution` for N as H's install reads it (the issuer's read).
@@ -866,13 +870,18 @@ struct DrainedNode {
 
 impl Rig {
     fn drained_node(&self) -> TestResult<DrainedNode> {
+        self.drained_node_at(NOW_MS)
+    }
+
+    /// [`Self::drained_node`] with the node's clock, and so its drain, starting at `start_ms`.
+    fn drained_node_at(&self, start_ms: u64) -> TestResult<DrainedNode> {
         let dir = tempfile::tempdir()?;
         let scripted = ScriptedNode::new(
             dir.path(),
             self.device.machine,
             STAGED_TEMPLATE,
             STAGED_DIGEST,
-            NOW_MS,
+            start_ms,
         );
         let mut parts = scripted.parts();
         parts.admission = Arc::new(PolicyAdmission {
@@ -902,6 +911,56 @@ impl Rig {
         )
         .map_err(at("a row written on N"))?;
         Ok(())
+    }
+}
+
+impl Rig {
+    /// H, N's issuer, counts three of N's own failures in a row and drains N on its side.
+    fn issuer_drains(&self) -> TestResult {
+        let vault = self.home.vault();
+        for _ in 0..3 {
+            vault
+                .count_machine_job_outcome(
+                    self.device.machine,
+                    &MachineJobOutcome::MachineFailure {
+                        why: "lost: node_reset".to_owned(),
+                    },
+                    NOW_MS,
+                )
+                .map_err(at("H counts N's failure"))?;
+        }
+        if vault.machine_job_drained(self.device.machine)?.is_none() {
+            return Err("FIXTURE: three failures in a row drain N on H".into());
+        }
+        Ok(())
+    }
+
+    /// Door 12 on H for N, called by the owner under their own proof, or by `agent` under its
+    /// own Grant.
+    fn door_12(&self, agent: Option<EntityId>) -> TestResult<MachineDrainCleared> {
+        let vault = self.home.vault();
+        let request = MachineDrainClearRequest {
+            machine: self.device.machine.to_hex(),
+        };
+        let cleared = match agent {
+            None => {
+                let owner = self.home.owner();
+                let actor = owner
+                    .actor_for_read(vault)
+                    .map_err(at("the owner's actor"))?;
+                clear_drain_as(
+                    &vault.memory(actor, EdgeActorClass::Human),
+                    Some(owner),
+                    &request,
+                )
+            }
+            Some(agent) => clear_drain_as(
+                &vault.memory(agent, EdgeActorClass::Agent),
+                None,
+                &request,
+            ),
+        };
+        cleared.map_err(at("door 12 on H"))
     }
 }
 
@@ -1190,5 +1249,63 @@ fn a_row_for_every_machine_does_not_take_the_owners_name_from_the_machines_row()
     node.tick_after(1_000);
     assert_eq!(node.drained(), None, "the owner's row for N decides and clears it");
     assert!(node.owner_cleared());
+    Ok(())
+}
+
+/// The same row, PR 2 (Engine ANSWER NODE-DRAIN-CLEAR-PR2-GRANT-HOLDER-REACH = C, the owner's
+/// path): under `owner`, door 12 (`vault.machines.execution.clear_drain`) called on H by the
+/// owner clears H's drain of N and writes the owner's `machines.drain.cleared_at` for N. Once N
+/// takes H's history, N's next tick clears its own drain. Under `grants`, the listed Grant's
+/// holder clears H's drain only: N keeps its own, and the answer says so.
+#[test]
+fn the_owners_clear_through_door_12_reaches_the_nodes_drain_and_a_grant_holders_does_not()
+-> TestResult {
+    let rig = Rig::new("")?;
+    rig.owner_sets(DRAIN_CLEAR_BY, None, json!({ "by": "owner" }))?;
+    // Door 12 dates its clear by the real clock: N's drain began a minute before.
+    let node = rig.drained_node_at(oneiron_base::unix_millis_now() - 60_000)?;
+    rig.issuer_drains()?;
+
+    let cleared = rig.door_12(None)?;
+    assert_eq!(cleared.node_drain, NodeDrainClear::OwnerClearSent);
+    assert_eq!(
+        rig.home.vault().machine_job_drained(rig.device.machine)?,
+        None,
+        "the owner's call clears H's drain"
+    );
+    node.tick_after(1_000);
+    assert_eq!(
+        node.drained().as_deref(),
+        Some(DRAIN_WHY),
+        "N keeps its drain until it has H's history"
+    );
+    rig.home.share_history(&[&rig.device])?;
+    node.tick_after(1_000);
+    assert_eq!(
+        node.drained(),
+        None,
+        "the owner's clear through door 12 clears N's own drain"
+    );
+    assert!(node.owner_cleared(), "the incident names the owner's clear");
+
+    let (agent, grant) = rig.agent_listing(&[CLEAR_DRAIN_VERB])?;
+    rig.owner_sets(DRAIN_CLEAR_BY, None, clear_by_grants(grant)?)?;
+    // A drain that began after the owner's clear, so that clear does not reach it.
+    let node = rig.drained_node_at(cleared.cleared_at_ms + 1_000)?;
+    rig.issuer_drains()?;
+    let by_agent = rig.door_12(Some(agent))?;
+    assert_eq!(by_agent.node_drain, NodeDrainClear::OwnerOrBox);
+    assert_eq!(
+        rig.home.vault().machine_job_drained(rig.device.machine)?,
+        None,
+        "the listed Grant's holder clears H's drain"
+    );
+    rig.home.share_history(&[&rig.device])?;
+    node.tick_after(1_000);
+    assert_eq!(
+        node.drained().as_deref(),
+        Some(DRAIN_WHY),
+        "the Grant holder's clear does not reach N's own drain"
+    );
     Ok(())
 }
