@@ -43019,9 +43019,23 @@
      "purpose": "`vault.arms.admit` (design pass 32 r2, section 5.2 row 4): the lane lead admits one arm into a seated family…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArmForecastRequest"
+     ],
+     "path": "src/experiment_arm/forecast.rs",
+     "purpose": "`vault.arms.forecast` (design pass 32 r2, sections 3.3 and 4.7; verb 5 of section 5.2): the lane lead writes…",
+     "surface": {
+      "const": 2,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -43056,7 +43070,7 @@
       "crate-vis": 5,
       "enum": 8,
       "fn": 6,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 12
      }
     },
@@ -43069,6 +43083,22 @@
      "surface": {
       "const": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalibrationBin",
+      "ForecastScore",
+      "ForecastScoreRow"
+     ],
+     "path": "src/experiment_arm/score.rs",
+     "purpose": "The forecast score view (design pass 32 r2, section 4.7): how well each declared runner model's rung…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -48769,7 +48799,7 @@
      "path": "src/gpu_line/claim/mod.rs",
      "purpose": "The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 6,
       "fn": 12,
       "re-export": 1,
@@ -98339,7 +98369,7 @@
      "path": "src/test_doors/experiment_arm_rows.rs",
      "purpose": "TEST-ONLY: an experiment arm row put as given, so a test can stand an arm in a state whose writer is a later…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -113718,6 +113748,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/experiment_arm_forecast.rs",
+     "purpose": "`vault.arms.forecast` and the forecast score view (design pass 32 r2, sections 3.3 and 4.7; row M2-D)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/expiry_boundaries.rs",
      "purpose": "UC-12 PR 3: the expiry rule is written once (`oneiron_store::expiry`) and each site keeps its verdict at the…",
      "surface": {}
@@ -122974,7 +123012,7 @@
     },
     "experiment_arm": {
      "entry": "crates/oneiron/src/experiment_arm/mod.rs",
-     "files": 5,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -124640,8 +124678,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8583,
-   "test_files": 2308
+   "source_files": 8585,
+   "test_files": 2309
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -167949,7 +167987,7 @@
      "path": "src/api/facade/host_doors/arms.rs",
      "purpose": "The experiment arm doors of the lane economy (design pass 32 section 5): `vault.arms.admit`…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -178205,11 +178243,66 @@
      "purpose": "The GPUs this machine has and what runs on them now, read live from the NVIDIA driver at each ask",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "re-export": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AmdgpuSysfsProbe"
+     ],
+     "path": "src/gpu_execution_node/device_probes/amdgpu_sysfs.rs",
+     "purpose": "AMD GPUs, read from the `amdgpu` driver's sysfs files: no tool needs to be installed (`rocm-smi` is…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SystemProfilerProbe"
+     ],
+     "path": "src/gpu_execution_node/device_probes/apple_system_profiler.rs",
+     "purpose": "The GPU built into a Mac with Apple silicon, read through `system_profiler -json SPDisplaysDataType…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ComputeProcesses",
+      "DeviceProbe"
+     ],
+     "path": "src/gpu_execution_node/device_probes/mod.rs",
+     "purpose": "Device probes behind one trait (pass 34, `34-compute-general/DESIGN.md` 2.1, row S5): what each device of…",
+     "surface": {
+      "enum": 1,
+      "mod": 3,
+      "re-export": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "XpuSmiProbe"
+     ],
+     "path": "src/gpu_execution_node/device_probes/xpu_smi.rs",
+     "purpose": "Intel GPUs, read through `xpu-smi`, the command-line tool of Intel's XPU Manager: `xpu-smi discovery -j`…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -178644,7 +178737,7 @@
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 13,
+      "mod": 14,
       "re-export": 7
      }
     },
@@ -189374,6 +189467,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/device_probes.rs",
+     "purpose": "Device probes for AMD, Intel and Apple GPUs (pass 34 row S5): each reports its devices as `DeviceFacts` by…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -192539,7 +192640,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 62,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -193087,8 +193188,8 @@
    },
    "over_bar": 67,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2193,
-   "test_files": 603
+   "source_files": 2197,
+   "test_files": 604
   },
   "oneiron-setting-contract": {
    "files": [

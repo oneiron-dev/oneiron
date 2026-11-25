@@ -461,7 +461,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hooks.rs` | src | m | 13 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
 | `src/api/facade/host_doors.rs` | src | m | 220 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | m | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
-| `src/api/facade/host_doors/arms.rs` | src | s | 3 crate-vis | — | The experiment arm doors of the lane economy (design pass 32 section 5): `vault.arms.admit`… |
+| `src/api/facade/host_doors/arms.rs` | src | s | 4 crate-vis | — | The experiment arm doors of the lane economy (design pass 32 section 5): `vault.arms.admit`… |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
 | `src/api/facade/host_doors/diary.rs` | src | s | 4 crate-vis | — | The caller's own diary query doors (`self.memory.diary.query` and `self.memory.diary.pinned`), and the… |
@@ -1430,7 +1430,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
 | `src/gpu_execution_node/availability.rs` | src | s | 4 struct · 1 enum · 1 trait · 6 fn · 1 const · 1 crate-vis | GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer, GpuDeviceState, GpuDiskReading, GpuJobDisk | What this machine offers the vault's GPU jobs, and what it answers when asked: the offer… |
-| `src/gpu_execution_node/device.rs` | src | m | 3 struct · 1 enum · 1 trait · 5 fn · 1 const · 1 re-export | DeviceSample, GpuComputeProcess, GpuDeviceProbe, GpuProbeError, NvidiaSmiProbe | The GPUs this machine has and what runs on them now, read live from the NVIDIA driver at each ask |
+| `src/gpu_execution_node/device.rs` | src | m | 3 struct · 1 enum · 1 trait · 5 fn · 1 const · 1 re-export · 2 crate-vis | DeviceSample, GpuComputeProcess, GpuDeviceProbe, GpuProbeError, NvidiaSmiProbe | The GPUs this machine has and what runs on them now, read live from the NVIDIA driver at each ask |
+| `src/gpu_execution_node/device_probes/amdgpu_sysfs.rs` | src | m | 1 struct | AmdgpuSysfsProbe | AMD GPUs, read from the `amdgpu` driver's sysfs files: no tool needs to be installed (`rocm-smi` is… |
+| `src/gpu_execution_node/device_probes/apple_system_profiler.rs` | src | s | 1 struct · 1 fn | SystemProfilerProbe | The GPU built into a Mac with Apple silicon, read through `system_profiler -json SPDisplaysDataType… |
+| `src/gpu_execution_node/device_probes/mod.rs` | src | s | 1 enum · 1 trait · 3 mod · 3 re-export | ComputeProcesses, DeviceProbe | Device probes behind one trait (pass 34, `34-compute-general/DESIGN.md` 2.1, row S5): what each device of… |
+| `src/gpu_execution_node/device_probes/xpu_smi.rs` | src | s | 1 struct · 2 fn | XpuSmiProbe | Intel GPUs, read through `xpu-smi`, the command-line tool of Intel's XPU Manager: `xpu-smi discovery -j`… |
 | `src/gpu_execution_node/issuer/billing.rs` | src | s | 2 struct · 3 fn | Billing, Bracket | What a vault machine job is billed (pass 33 section 8.4; pass 34, 9.2): the occupied time of the attempt's… |
 | `src/gpu_execution_node/issuer/clock.rs` | src | s | 1 struct · 1 trait · 2 fn | IssuerClock, SystemIssuerClock | The issuer's clocks (pass 33 section 8.4): the wall clock its job rows use, and the boot clock its billing… |
 | `src/gpu_execution_node/issuer/connector.rs` | src | m | 2 struct · 2 fn | VaultMachineConnector, VaultMachineParts | [`VaultMachineConnector`]: the GPU job backend `vault_machine`, which runs a chunk of a job on one of the… |
@@ -1460,7 +1464,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/jobs/staging/payload_dir.rs` | src | s | 1 crate-vis | — | The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory… |
 | `src/gpu_execution_node/jobs/status.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one… |
 | `src/gpu_execution_node/machine_policy.rs` | src | m | 15 fn | — | The two layers of a node's controls (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 = A, row… |
-| `src/gpu_execution_node/mod.rs` | src | s | 13 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
+| `src/gpu_execution_node/mod.rs` | src | s | 14 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
 | `src/gpu_execution_node/node.rs` | src | m | 3 struct · 2 enum · 29 fn · 3 const · 1 re-export | AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeSnapshot | The execution node (pass 33, `33-exec-node/DESIGN.md` sections 5.2, 7.1, 7.3 and 7.9): this machine's own… |
 | `src/gpu_execution_node/node/keys.rs` | src | s | 1 trait | NodeKeys | The node's keys ([`NodeKeys`]): what the job service and the authority tick hand row R3a's journal once the… |
 | `src/gpu_execution_node/node/owner_policy.rs` | src | s | 2 fn · 4 crate-vis | — | The node's reads of the owner's machine policy rows (row P0; pass 34 DESIGN 2.4), and the admissions that… |
@@ -2465,6 +2469,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/device_enrol_replace.rs` | test | s | — | — | An enrolled machine enrols again with a new link only through `oneiron device enrol --replace`, and keeps… |
 | `tests/device_home_dial_unreadable_enrolment.rs` | test | s | — | — | FIX-LIST [HOME-SELF-MARK-STALE-AS-DEVICE], case 2: a machine whose enrolment record is there but does not… |
 | `tests/device_only_rerank_on_device.rs` | test | L | — | — | L9-15 PR 2 (I2-LOCAL; ARCH-0004 `#rerank-door-built`): a recall at high sends its reranker the words of a… |
+| `tests/device_probes.rs` | test | L | — | — | Device probes for AMD, Intel and Apple GPUs (pass 34 row S5): each reports its devices as `DeviceFacts` by… |
 | `tests/device_sync_dial_gate_pinned_heads.rs` | test | m | — | — | Red/green test for #8722 review round 2, P1 2 (FIX [DOOR-HEADS-REVIEW2-P1-TESTS]): device sync's dial gate… |
 | `tests/direct_answer_proof_store_error.rs` | test | s | — | — | DIRECT-ANSWER-PROOF-STORE-ERROR: a store fault met while binding a direct request's proof fails the call… |
 | `tests/display_edit_doors.rs` | test | L | — | — | Display-edit proposals at their served doors (FIX [SECRETS-LABEL-PURPOSE-VERBS], [DEVICE-DISPLAY-NAME]… |
