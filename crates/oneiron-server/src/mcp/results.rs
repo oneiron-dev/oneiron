@@ -144,6 +144,10 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "present a registered MCP connector credential",
             "ask the vault owner to re-register or renew this connector",
         ],
+        "mcp_grant_missing" => &[
+            "this credential's tier does not hold the grant in required_scope; its reads still work",
+            "ask the vault owner for a credential whose tier holds that grant",
+        ],
         "mcp_actor_ceiling_missing" => {
             &["ask the vault owner to add a Gate actor ceiling row for this actor"]
         }

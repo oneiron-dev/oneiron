@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.orders.wait",
+  "input": "crate::work_order::WorkOrderWaitRequest",
+  "output": "crate::work_order::WorkOrderWaitAnswer",
+  "scope": "Read",
+  "act_class": "read",
+  "context": "run",
+  "effect": "JobsOrdersWait",
+  "host": {
+    "input": "crate::work_order::WorkOrderWaitRequest",
+    "description": "Waits on one work order you may read until its first started attempt (until started) or its end (the default). A code-mode run parks and resumes with the view; any other caller is answered at once, and reached says if it is there.",
+    "host_door_proof": "verb_grant_caller",
+    "host_door_session": false,
+    "host_door_lists": true
+  }
+}

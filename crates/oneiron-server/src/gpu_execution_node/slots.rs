@@ -54,7 +54,7 @@ pub use oneiron_organ_host::{
 use super::availability::{
     GpuAvailability, GpuDeviceAvailability, GpuDeviceOffer, GpuDeviceState, GpuJobDisk, admits_gpu,
 };
-use super::device::{GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
+use super::device::{DeviceSample, GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError};
 
 mod drain;
 mod lease;
@@ -208,6 +208,17 @@ impl GpuSlotTable {
     #[must_use]
     pub fn offer(&self) -> &GpuDeviceOffer {
         &self.shared.offer
+    }
+
+    /// Each device's temperature, power draw and memory in use now, where
+    /// the probe gives them: a reading for the breadcrumb lines (pass 34,
+    /// 7.3), not a hold.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver cannot be read.
+    pub fn samples(&self) -> Result<Vec<DeviceSample>, GpuProbeError> {
+        self.shared.probe.samples()
     }
 
     /// What each GPU is doing now, from a fresh driver reading, whether the
@@ -604,9 +615,13 @@ impl Shared {
     }
 
     /// One fresh reading: the GPUs and their processes, then the withheld
-    /// list and the GPUs this table owns.
+    /// list and the GPUs this table owns. A reading that lists one GPU id
+    /// twice is refused ([`GpuProbeError::RepeatedDevice`]).
     fn read(&self, state: &mut State) -> Result<Reading, GpuProbeError> {
         let devices = self.probe.devices()?;
+        if let Some(device_id) = repeated_device_id(&devices) {
+            return Err(GpuProbeError::RepeatedDevice { device_id });
+        }
         let processes = self.probe.compute_processes()?;
         let withheld = self.withheld()?;
         let owned = self.own_offered(state);
@@ -697,6 +712,15 @@ fn refusal(device: &GpuDevice, state: GpuDeviceState) -> GpuSlotRefusal {
         }
         GpuDeviceState::Free => GpuSlotRefusal::NoneFree,
     }
+}
+
+/// The first GPU id that `devices` lists on more than one line.
+fn repeated_device_id(devices: &[GpuDevice]) -> Option<String> {
+    let mut listed = BTreeSet::new();
+    devices
+        .iter()
+        .find(|device| !listed.insert(device.device_id.as_str()))
+        .map(|device| device.device_id.clone())
 }
 
 fn unmeasured(probe: GpuProbeError) -> GpuSlotRefusal {

@@ -26,17 +26,19 @@ pub enum GpuJobVerb {
     List,
     Cancel,
     Allow,
+    WriteOff,
 }
 
 impl GpuJobVerb {
     /// Every verb, in the order the verb table lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Quote,
         Self::Start,
         Self::Status,
         Self::List,
         Self::Cancel,
         Self::Allow,
+        Self::WriteOff,
     ];
 
     /// The verb's registered name.
@@ -49,6 +51,7 @@ impl GpuJobVerb {
             Self::List => "vault.gpu.jobs.list",
             Self::Cancel => "vault.gpu.jobs.cancel",
             Self::Allow => "vault.gpu.jobs.allow",
+            Self::WriteOff => "vault.gpu.jobs.write_off",
         }
     }
 
@@ -59,10 +62,19 @@ impl GpuJobVerb {
     }
 
     /// Whether only the owner's own proof admits it: setting the per-job
-    /// maximum an agent's Grant carries.
+    /// maximum an agent's Grant carries, and writing off a job's hold.
     #[must_use]
     pub const fn is_owner_act(self) -> bool {
-        matches!(self, Self::Allow)
+        matches!(self, Self::Allow | Self::WriteOff)
+    }
+
+    /// Why an owner act takes the owner's own proof.
+    const fn owner_act_reason(self) -> &'static str {
+        if matches!(self, Self::WriteOff) {
+            "writing off a GPU job's hold is the owner's own act"
+        } else {
+            "setting the GPU job maximum an agent's Grant carries is the owner's own act"
+        }
     }
 
     /// Whether it spends or ends the owner's money, so an agent's call is
@@ -80,6 +92,11 @@ pub enum GpuJobActor<'a> {
     Owner(&'a AuthenticatedOwner),
     /// An agent under its own Grant (RULING L10-31-STARTER = B).
     Agent(&'a GpuJobAgent),
+    /// The work-order loop, for the requester of the order the attempt belongs to (pass 34,
+    /// 1.1): the start checks the order's authority and revision in its own read and write
+    /// and writes the order's attempt entry beside the job; a cancel stops only the live
+    /// attempt of an order a cancel reached.
+    Order(&'a crate::work_order::OrderAttemptRef),
 }
 
 /// An agent caller of a paid GPU job act, as its own handle bound it. Only
@@ -168,10 +185,7 @@ impl Memory<'_> {
             return Ok(());
         }
         if verb.is_owner_act() {
-            return Err(refused(
-                verb,
-                "setting the GPU job maximum an agent's Grant carries is the owner's own act",
-            ));
+            return Err(refused(verb, verb.owner_act_reason()));
         }
         self.gpu_job_agent()
             .grant_in_txn(vault, &txn, verb)

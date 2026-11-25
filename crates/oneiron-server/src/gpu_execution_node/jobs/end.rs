@@ -25,9 +25,11 @@
 //!
 //! The tick also closes a `Held` key past its `not_after_ms`, restarts a
 //! staging worker that is not running, and writes each running key's tick
-//! file, the last boot-clock time a host reset can be dated by. While the
-//! history is lost, each tick asks the service manager again to stop every
-//! job unit.
+//! file, the last boot-clock time a host reset can be dated by, and its
+//! breadcrumb line (pass 34 row Q4, [`super::breadcrumb`]). Last, it runs
+//! the machine's readiness step ([`super::readiness`]). While the history
+//! is lost, each tick asks the service manager again to stop every job
+//! unit.
 
 use std::io::Read as _;
 use std::path::Path;
@@ -197,6 +199,8 @@ impl NodeJobs {
         }
         self.keep_missing_terminal_receipts();
         self.clean_acknowledged_payloads();
+        self.write_breadcrumbs();
+        self.readiness_tick();
     }
 
     /// Writes the signed terminal receipt again for each sealed key whose
@@ -438,6 +442,7 @@ impl NodeJobs {
             };
             Self::record_end_step(journal, known, now, event)?;
             self.quarantine_device(known, why);
+            self.quarantine_incidents(known, why);
         }
         Ok(())
     }
@@ -448,6 +453,17 @@ impl NodeJobs {
     pub(super) fn quarantine_device(&self, known: &NodeKey, why: &str) {
         for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
             self.parts().devices.quarantine(&lease.device_id, why);
+        }
+    }
+
+    /// One incident for each device a fresh quarantine put out (recovery's
+    /// replay of a quarantine writes none).
+    fn quarantine_incidents(&self, known: &NodeKey, why: &str) {
+        for lease in known.launch.iter().flat_map(|launch| &launch.devices) {
+            self.record_incident(super::IncidentKind::DeviceQuarantined {
+                device: lease.device_id.clone(),
+                why: why.to_owned(),
+            });
         }
     }
 
@@ -501,6 +517,7 @@ impl NodeJobs {
                     end: JobEnd::Lost {
                         reason: reason.to_owned(),
                         last_tick_boot_ns: self.last_tick_boot_ns(known),
+                        breadcrumbs: self.lost_breadcrumbs(known),
                     },
                     end_boot_ns: None,
                 })
@@ -589,7 +606,10 @@ impl NodeJobs {
                 other_compute_pids: pids,
             };
             match journal.record(&known.key, known.issuer, &now.boot_id, now.wall_ms, event) {
-                Ok(_) => self.quarantine_device(known, &why),
+                Ok(_) => {
+                    self.quarantine_device(known, &why);
+                    self.quarantine_incidents(known, &why);
+                }
                 Err(error) => log_write_error(&known.key, &error),
             }
         };

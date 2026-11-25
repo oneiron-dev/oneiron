@@ -27,6 +27,7 @@ pub(crate) fn self_call_inputs(vault: &Vault, call: &SelfCall) -> Result<Option<
                 | SelfEffect::Express
                 | SelfEffect::TasksWait
                 | SelfEffect::TasksWaitSet
+                | SelfEffect::JobsOrdersWait
                 | SelfEffect::Ask
                 | SelfEffect::TasksAsk
                 | SelfEffect::DestructiveFixture
