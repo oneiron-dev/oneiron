@@ -112,6 +112,10 @@ pub struct SyncServerConfig {
     /// The `[gpu_jobs]` offers customer GPU jobs start on, and how often the
     /// worker steps them; no offer by default.
     pub gpu_jobs: super::GpuJobsSettings,
+    /// This machine's `[execution_node]` file (pass 33), read fresh at each
+    /// admission. `None`, the default, runs no jobs; `oneiron serve` names
+    /// `ONEIRON_EXECUTION_NODE_FILE`, else `/etc/oneiron/execution-node.toml`.
+    pub execution_node_file: Option<PathBuf>,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
@@ -269,6 +273,7 @@ impl Default for SyncServerConfig {
             native_mail: None,
             connectors: std::collections::BTreeMap::new(),
             gpu_jobs: super::GpuJobsSettings::default(),
+            execution_node_file: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
             house_role: None,
@@ -658,6 +663,7 @@ impl ServeConfig {
                 })
                 .collect(),
             gpu_jobs: self.gpu_jobs.clone(),
+            execution_node_file: Some(crate::gpu_execution_node::execution_node_file(None)),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
             house_role: self.house_role,

@@ -23,6 +23,7 @@ pub mod continue_command;
 pub mod credential_file_network_fs;
 pub mod credential_write_actor;
 pub mod device_burst_drain;
+pub mod device_enrolment;
 pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;

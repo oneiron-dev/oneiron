@@ -7,8 +7,10 @@
 //! other.
 //!
 //! Three of the owner's servers run with their real mesh listeners
-//! (`support/mesh_machines.rs`). Each replica's grants, as the owner set them
-//! with `vault.mesh.set_alpn_grant`:
+//! (`support/mesh_machines.rs`). B and C are execution nodes whose one
+//! issuer is A (row R1: a machine serves the job protocols only when its
+//! `[execution_node]` file enables it). Each replica's grants, as the owner
+//! set them with `vault.mesh.set_alpn_grant`:
 //! - B grants A both job protocols, and C the status protocol alone;
 //! - C grants A the job protocol alone, and B both;
 //! - A grants B and C both, so A dials each on each.
@@ -19,12 +21,15 @@
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
+#[path = "support/execution_nodes.rs"]
+mod execution_nodes;
 #[path = "support/mesh_machines.rs"]
 mod mesh_machines;
 
 use std::time::Duration;
 
 use engine_stack::on_engine_stack;
+use execution_nodes::NodeFiles;
 use mesh_machines::{Machine, Machines, TestResult, eventually, inbound_path_receipts};
 use oneiron::sync::mesh_path::MeshPathOutcome;
 use oneiron_mesh_transport::MeshError;
@@ -80,7 +85,12 @@ fn a_machine_without_the_job_grant_is_refused_at_the_handshake() -> TestResult {
 }
 
 async fn machine_without_the_job_grant_is_refused() -> TestResult {
-    let mesh = Machines::start(3).await?;
+    let files = NodeFiles::new()?;
+    let mesh = Machines::start_with(3, |index, machines| match index {
+        B | C => files.enabled(index, machines[A]),
+        _ => NodeFiles::none(),
+    })
+    .await?;
     mesh.grant(B, A, &BOTH)?;
     mesh.grant(B, C, &[JOB_STATUS_ALPN])?;
     mesh.grant(C, A, &[JOB_ALPN])?;
@@ -89,11 +99,12 @@ async fn machine_without_the_job_grant_is_refused() -> TestResult {
     mesh.grant(A, C, &BOTH)?;
     let (a, b, c) = (mesh.machine(A), mesh.machine(B), mesh.machine(C));
 
-    // A holds both of B's grants: B answers it on each protocol. A node
-    // with no `[execution_node]` answers `Node` as not enabled and refuses
-    // the rest as such, so an answer is the proof the stream was admitted.
+    // A holds both of B's grants: B answers it on each protocol. B's node
+    // answers its issuer's `Node`, and refuses a status request as not
+    // enabled until row R4 answers it, so an answer is the proof the stream
+    // was admitted.
     match ask::<_, JobAnswer>(a, b, JOB_ALPN, &JobRequest::Node).await? {
-        Ok(JobAnswer::Node(node)) => assert!(!node.enabled, "B runs no jobs: {node:?}"),
+        Ok(JobAnswer::Node(node)) => assert!(node.enabled, "B is a node: {node:?}"),
         other => panic!("B must answer A's Node on oneiron/job/1: {other:?}"),
     }
     assert_eq!(
@@ -143,14 +154,15 @@ async fn machine_without_the_job_grant_is_refused() -> TestResult {
         )
         .await?
         .map_err(|error| format!("C's Keys on oneiron/job-status/1: {error:?}"))?,
-        JobStatusAnswer::Refused(JobRefusal::NotEnabled),
-        "B must answer C on oneiron/job-status/1, which it grants C"
+        JobStatusAnswer::Refused(JobRefusal::NotIssuer),
+        "B must answer C on oneiron/job-status/1, which it grants C: past the handshake, \
+         its gate refuses a machine its file does not name"
     );
 
     // A holds C's job grant and not its status grant: the other protocol id
     // is gated on its own.
     match ask::<_, JobAnswer>(a, c, JOB_ALPN, &JobRequest::Node).await? {
-        Ok(JobAnswer::Node(node)) => assert!(!node.enabled, "C runs no jobs: {node:?}"),
+        Ok(JobAnswer::Node(node)) => assert!(node.enabled, "C is a node: {node:?}"),
         other => panic!("C must answer A's Node on oneiron/job/1: {other:?}"),
     }
     let refused = ask::<_, JobStatusAnswer>(
