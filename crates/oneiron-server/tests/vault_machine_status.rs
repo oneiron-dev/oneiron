@@ -21,19 +21,24 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use oneiron::authority::ActSurface;
 use oneiron::blob_artifact::ArtifactCreateRequest;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
     GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobError,
-    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, MeterVerdict,
+    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, GpuJobVerb, MeterVerdict,
 };
 use oneiron::job_dispatch::machine_records::{
     MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase};
+use oneiron::job_workload::{WorkloadCaller, WorkloadRef};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
 use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::task_verb::TaskCreateSpec;
+use oneiron::test_doors::derive::expire_agent_grant;
+use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId};
 use oneiron_server::gpu_execution_node::issuer::{IssuerClock, JobOrphanKeys, UnattributedLedger};
 use oneiron_server::gpu_execution_node::wire::{
@@ -43,7 +48,8 @@ use oneiron_server::gpu_execution_node::wire::{
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use vault_machine_rig::{
-    Call, FAR_EXPIRY_MS, JobRun, NOW_MS, Rig, ScriptedNode, make_connector_with, with_rig,
+    Call, FAR_EXPIRY_MS, JobRun, MAXIMUM_SECS, NOW_MS, Rig, ScriptedNode, make_connector_with,
+    with_rig,
 };
 
 /// The host's job step the views are judged against.
@@ -1083,6 +1089,231 @@ fn a_returnable_output_is_fetched_and_checked_and_no_other_file_can_be() {
         let kinds = kinds_for(&calls, unbound.key());
         assert!(!kinds.contains(&"fetch"), "no binding, no fetch: {kinds:?}");
         assert!(kinds.contains(&"ack"), "and the node may clean: {kinds:?}");
+    });
+}
+
+/// RESULT-LANDING-LAPSED-STARTER = A (Engine 25 Nov 23:19; ARCH-0075): a job the issuer stopped
+/// because its workload approval was revoked lands nothing, though its starter (here the owner)
+/// still stands. Each returnable output is recorded refused `job_revoked` and never fetched,
+/// the node is told it may clean, and no return stays owed.
+#[test]
+fn a_job_stopped_for_a_revoke_lands_no_output_and_the_node_may_clean() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        let workload = rig.approve("result-revoked", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"partial"}"#;
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(10);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(10), None, true);
+        rig.step(&run).expect("poll the running job");
+        let revoked = vault
+            .revoke_job_workload(
+                WorkloadCaller::Owner(&rig.owner),
+                &WorkloadRef {
+                    workload: workload.clone(),
+                },
+                rig.clock.now_ms(),
+            )
+            .expect("the owner revokes the approval");
+        assert!(revoked.changed, "the revoke was written");
+        rig.step(&run).expect("step after the revoke");
+        assert_eq!(
+            rig.dispatch(&run).closed,
+            Some(DispatchClose::Revoked {
+                code: "workload_revoked".to_owned()
+            }),
+            "the issuer closed the key for the revoke",
+        );
+        rig.clock.advance_secs(2);
+        let at_ms = rig.clock.now_ms();
+        rig.node.revise(run.key(), |receipt| {
+            receipt.state = JobState::Ended;
+            receipt.started = true;
+            receipt.end = Some(JobEnd::Stopped);
+            receipt.measured_secs = Some(12);
+            receipt.device_id = Some("scripted-gpu".to_owned());
+            receipt.release = DeviceRelease::Confirmed { at_ms };
+            receipt.outputs = OutputsState::Hashed(vec![OutputDigest {
+                name: "verdict.json".to_owned(),
+                sha256: format!("{:x}", Sha256::digest(verdict)),
+                bytes: u64::try_from(verdict.len()).expect("a small output"),
+                returnable: true,
+            }]);
+        });
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.settle(&run);
+
+        let returned = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(
+            returned.refused,
+            vec![ReturnRefusal {
+                name: "verdict.json".to_owned(),
+                why: "job_revoked".to_owned(),
+            }],
+            "the revoked job's output is refused",
+        );
+        assert!(returned.landed.is_empty(), "nothing landed");
+        assert!(
+            returned.acknowledged_at_ms.is_some(),
+            "the node is told it may clean"
+        );
+        let calls = rig.node.calls();
+        assert!(
+            fetched(&calls, run.key()).is_empty(),
+            "no output of a revoked job is fetched: {calls:?}",
+        );
+        assert!(kinds_for(&calls, run.key()).contains(&"ack"));
+        assert!(
+            vault
+                .pending_proposals(&binding.artifact)
+                .expect("list the artifact's proposals")
+                .is_empty(),
+            "nothing waits on the artifact"
+        );
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .is_empty(),
+            "no return is owed"
+        );
+    });
+}
+
+/// RESULT-LANDING-LAPSED-STARTER = A (Engine 25 Nov 23:19; ARCH-0046): a job that ended by
+/// itself still returns its result when its starter stopped standing afterwards. An agent
+/// starts it under its own Grant, the job completes, the fetch does not arrive, and then the
+/// Grant expires. The next housekeeping pass lands the output in the owner's lane, written by
+/// the issuer, pending Keep: made_by still names the agent and the task, and the head does not
+/// move.
+#[test]
+fn a_finished_job_whose_starter_lapsed_lands_its_result_in_the_owners_lane() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        let agent_id = vault
+            .ensure_agent_principal("gpu-result-lapsed-starter")
+            .expect("a named agent on the issuer");
+        let mut authority_scope = Scope::top();
+        authority_scope.verbs = ScopeAxis::Some(
+            ["read", GpuJobVerb::Start.name()]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
+        let grant = mint_agent_grant_as(
+            vault,
+            &rig.owner,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent: agent_id,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: Default::default(),
+                wallet_ref: None,
+                working_view_bounds: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("the owner mints the agent's start Grant")
+        .grant;
+        assert!(grant.confers, "the Grant confers");
+        vault
+            .allow_gpu_jobs(
+                &rig.owner,
+                &grant.grant_ref,
+                MAXIMUM_SECS,
+                rig.clock.now_ms(),
+            )
+            .expect("set the Grant's per-job maximum")
+            .expect("the allowance row");
+        let workload = rig.approve_for_starters(
+            "result-lapsed-starter",
+            FAR_EXPIRY_MS,
+            vec![grant.grant_ref.to_hex()],
+        );
+        let agent = vault
+            .memory(agent_id, EdgeActorClass::Agent)
+            .gpu_job_agent();
+        let verdict: &[u8] = br#"{"verdict":"kept"}"#;
+        let run = rig.start_job_as(
+            GpuJobActor::Agent(&agent),
+            &workload,
+            bound_inputs(rig, &binding),
+            &rig.connector,
+        );
+        assert_eq!(
+            rig.job(&run).started_by,
+            Some(agent_id),
+            "the agent started it"
+        );
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &run, &[("verdict.json", verdict, true)]);
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.node.drop_next("fetch");
+        rig.settle(&run);
+        let dispatch = rig.dispatch(&run);
+        assert_eq!(dispatch.phase, DispatchPhase::Closed);
+        assert!(
+            !matches!(dispatch.closed, Some(DispatchClose::Revoked { .. })),
+            "the job ended by itself: {:?}",
+            dispatch.closed,
+        );
+        let owed = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert!(owed.landed.is_empty() && owed.refused.is_empty());
+        assert_eq!(owed.acknowledged_at_ms, None, "the output is still owed");
+
+        expire_agent_grant(vault, grant.grant_ref).expect("expire the starter's Grant");
+        assert!(
+            vault
+                .dispatch_starter(agent_id)
+                .expect("read the starter's standing")
+                .is_none(),
+            "the starter no longer stands"
+        );
+        let head = vault
+            .blob_artifact_head(&binding.artifact)
+            .expect("read the artifact's head");
+        rig.connector.housekeeping();
+
+        let done = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(
+            done.landed,
+            vec!["verdict.json".to_owned()],
+            "the paid result still returns: {done:?}",
+        );
+        assert!(done.refused.is_empty());
+        assert!(done.acknowledged_at_ms.is_some(), "then the node may clean");
+        let waiting = vault
+            .pending_proposals(&binding.artifact)
+            .expect("list the artifact's proposals");
+        assert_eq!(waiting.len(), 1, "one proposal waits");
+        assert_eq!(
+            waiting[0].retained_by, rig.issuer,
+            "the issuer writes the landing, not the lapsed starter",
+        );
+        let made_by = waiting[0].made_by.as_ref().expect("its made_by");
+        assert_eq!(made_by.process.actor, agent_id, "made_by names the starter");
+        assert_eq!(made_by.trigger, Some(MadeByTrigger::Task(binding.task)));
+        assert_eq!(
+            vault
+                .blob_artifact_head(&binding.artifact)
+                .expect("read the artifact's head"),
+            head,
+            "pending Keep: the head did not move",
+        );
     });
 }
 
