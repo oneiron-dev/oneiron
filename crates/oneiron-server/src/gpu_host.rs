@@ -268,12 +268,7 @@ pub(crate) fn spawn_gpu_job_steps(
             let server = Arc::clone(&server);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                crate::work_order_host::run_order_pass(&server, now_ms());
-                for (job, outcome) in step_live_jobs(&server, now_ms()) {
-                    if let Err(error) = outcome {
-                        tracing::warn!(job = %job.to_hex(), error = %error, "GPU job step failed");
-                    }
-                }
+                worker_pass(&server);
             })
             .await;
             if let Err(error) = pass {
@@ -281,4 +276,15 @@ pub(crate) fn spawn_gpu_job_steps(
             }
         }
     }))
+}
+
+/// One pass of the worker: one pass of the work-order loop (pass 34, section 0), then one step
+/// of every live job.
+pub(crate) fn worker_pass(server: &Arc<SyncServer>) {
+    crate::work_order_host::run_order_pass(server, now_ms());
+    for (job, outcome) in step_live_jobs(server, now_ms()) {
+        if let Err(error) = outcome {
+            tracing::warn!(job = %job.to_hex(), error = %error, "GPU job step failed");
+        }
+    }
 }
