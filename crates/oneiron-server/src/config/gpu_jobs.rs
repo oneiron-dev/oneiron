@@ -59,6 +59,28 @@
 //! drain_file = "/var/lib/oneiron/gpu-drained"
 //! owner_lock_dir = "/run/oneiron/gpu-owners"
 //! ```
+//!
+//! A CPU class is an offer like any other (pass 32 row M3-D; pass 34 9.2):
+//! its `cost_unit` is the CPU unit the host grants an allocation in, and its
+//! jobs claim no device. Nothing here or in the engine lists units or
+//! classes. A job holds only on an allocation in its offer's `cost_unit`, so a
+//! `cpu_seconds` allocation beside a `gpu_seconds` one on the same account
+//! funds CPU jobs alone. An offer carries no rates, so no CPU second ever
+//! converts into a GPU second or into money.
+//!
+//! ```toml
+//! [gpu_jobs.offers.cpu-16-us-east]
+//! class = "cpu-16"
+//! provider = "example-cloud"
+//! region = "us-east"
+//! backend = "skypilot"
+//! price_per_second = 1
+//! cost_unit = "cpu_seconds"
+//! catalog_revision = "cpu-prices-2026-11"
+//! startup_secs = 30
+//! teardown_secs = 10
+//! rounding_secs = 60
+//! ```
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -114,7 +136,7 @@ struct GpuOfferFile {
     provider: String,
     region: String,
     backend: String,
-    /// C3 A: a GPU class is priced at our list; any other shape refuses.
+    /// C3 A: an offer's class is priced at our list; any other shape refuses.
     #[serde(default)]
     price_shape: Option<PriceShape>,
     price_per_second: u64,
@@ -353,7 +375,7 @@ impl GpuOfferFile {
         let price_shape = self.price_shape.unwrap_or(PriceShape::AtOneironList);
         anyhow::ensure!(
             price_shape == PriceShape::AtOneironList,
-            "{at}.price_shape must be at_oneiron_list: a GPU class takes one posted price whichever provider serves it"
+            "{at}.price_shape must be at_oneiron_list: an offer's class takes one posted price whichever provider serves it"
         );
         anyhow::ensure!(
             self.price_per_second > 0,
