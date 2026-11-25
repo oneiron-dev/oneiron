@@ -314,7 +314,9 @@ pub(super) fn birth_value_in_txn(
         };
         rows.push((pack.clone(), value));
     }
-    Ok(match (explicit, fold_layer(source, &rows)) {
+    // A birth's copy names heads, not the rows a yes wrote here, so it reads the engine pack's
+    // row first as before ([BIRTH-COPY-PACK-YES-ROW]).
+    Ok(match (explicit, fold_layer(source, &rows, None)) {
         (None, Some(layer)) => decoded(layer, true),
         (None, None) => Ok((None, false)),
         // A bound beside a clear on the vault row: the clear gives the default.

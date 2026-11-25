@@ -92,6 +92,9 @@ pub(crate) use self::change::{
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
+pub(crate) use self::pack::{
+    close_pack_proposal_in_txn, pack_defaults_from_json, propose_installed_pack_defaults_in_txn,
+};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::pack::{
     delete_layer_row, head_version_and_digest, layer_row_revision, put_head_digest,
