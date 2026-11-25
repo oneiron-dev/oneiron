@@ -615,9 +615,13 @@ impl Shared {
     }
 
     /// One fresh reading: the GPUs and their processes, then the withheld
-    /// list and the GPUs this table owns.
+    /// list and the GPUs this table owns. A reading that lists one GPU id
+    /// twice is refused ([`GpuProbeError::RepeatedDevice`]).
     fn read(&self, state: &mut State) -> Result<Reading, GpuProbeError> {
         let devices = self.probe.devices()?;
+        if let Some(device_id) = repeated_device_id(&devices) {
+            return Err(GpuProbeError::RepeatedDevice { device_id });
+        }
         let processes = self.probe.compute_processes()?;
         let withheld = self.withheld()?;
         let owned = self.own_offered(state);
@@ -708,6 +712,15 @@ fn refusal(device: &GpuDevice, state: GpuDeviceState) -> GpuSlotRefusal {
         }
         GpuDeviceState::Free => GpuSlotRefusal::NoneFree,
     }
+}
+
+/// The first GPU id that `devices` lists on more than one line.
+fn repeated_device_id(devices: &[GpuDevice]) -> Option<String> {
+    let mut listed = BTreeSet::new();
+    devices
+        .iter()
+        .find(|device| !listed.insert(device.device_id.as_str()))
+        .map(|device| device.device_id.clone())
 }
 
 fn unmeasured(probe: GpuProbeError) -> GpuSlotRefusal {
