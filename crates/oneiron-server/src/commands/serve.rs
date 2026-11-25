@@ -93,7 +93,11 @@ pub(super) async fn serve_anchored(
         open_served_vault_anchored(&mut host, &config, anchor)?;
 
     let server_config = config.sync_server_config();
-    if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
+    if let Err(error) = sign_root_project(
+        &vault,
+        server_config.auth_secret.as_deref(),
+        &config.keystore,
+    ) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
     warn_genesis_fragile(&vault);
@@ -618,14 +622,33 @@ fn refuse_unauthenticated_public_bind(
 /// root unsigned. A root that is already signed is left alone. The root
 /// signs with this install's own issuer seed for the vault (FIX-LIST 3018),
 /// drawn here only for a vault no root has reached yet.
+///
+/// A store this install holds a device enrolment for, under `keystore`'s key
+/// directory, is a copy of its home's vault. Its authority arrives from the
+/// home by sync, and the pin waits in the enrolment record until the first
+/// sync adopts it. Until then its log is empty, and a root minted here would
+/// be a Genesis of the device's own, which its home never signed and which
+/// cuts it off from that home (R6 1.5, 26 Nov 01:22). So such a store is never
+/// rooted at a start.
 pub(crate) fn sign_root_project(
     vault: &oneiron::Vault,
     secret: Option<&str>,
+    keystore: &crate::config::KeystoreConfig,
 ) -> anyhow::Result<()> {
     if secret.is_none_or(str::is_empty) {
         return Ok(());
     }
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return Ok(());
+    }
+    if vault.authority_fold()?.vault_id.is_none()
+        && crate::device_sync::EnrolmentFiles::for_vault(keystore, vault)
+            .is_ok_and(|files| files.record.exists())
+    {
+        tracing::info!(
+            "this store joined its home and has not synced yet; its home's authority arrives by \
+             sync, so nothing is rooted here"
+        );
         return Ok(());
     }
     let root = vault.root_project()?;
