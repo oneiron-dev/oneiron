@@ -2,6 +2,12 @@
 //! output a vault machine ran becomes the bound artifact's next version, pending Keep, made by
 //! the bound task and proposed through the job starter's own lane. The issuer fetches and
 //! checks the bytes against the machine's signed receipt first; Keep is a separate act.
+//!
+//! A job that ended by itself still returns its result when its starter stopped standing
+//! afterwards (its Grant expired or was revoked, or the starter was erased): the proposal then
+//! waits in the owner's lane, written by the issuer as a System write, and Keep stays the
+//! owner's act (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov 23:19; ARCH-0046). A job the
+//! issuer stopped because a Grant or the approval was revoked never comes here (ARCH-0075).
 
 use oneiron_contracts::fingerprint::ContentHash;
 use schemars::JsonSchema;
@@ -13,6 +19,7 @@ use crate::authority::live_agent_principal_in;
 use crate::edit_settle::{NativeOutput, PendingProposalView};
 use crate::error::{Error, RecordError, Result};
 use crate::job_workload::WorkloadStarter;
+use crate::policy_model::owners_in_txn;
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess, MadeByTrigger};
 use crate::write_envelope::WriteActor;
 use crate::{EdgeActorClass, EntityId, Vault};
@@ -36,11 +43,17 @@ pub struct GpuJobResultFile {
 }
 
 impl Vault {
-    /// Lands `file` of `job` as a proposal on `binding.artifact`, under the
-    /// starter's own read lane, with `binding.task` as its made_by trigger.
+    /// Lands `file` of `job` as a proposal on `binding.artifact`, with
+    /// `binding.task` as its made_by trigger. While the starter stands, the
+    /// starter writes it under their own read lane. Once the starter no longer
+    /// stands, `issuer` (this install's MACHINE) writes it as a System write
+    /// under the owner's lane. made_by still names the starter, or the issuer
+    /// after the starter's erase (RESULT-LANDING-LAPSED-STARTER = A).
     /// [`Self::propose_native_output_with_reads`] takes the ordinary organ
-    /// landing path without an organ hold. Keep is a separate act. The caller
-    /// supplies the job's binding and a file it has verified against the receipt.
+    /// landing path without an organ hold. Keep is a separate act, and the
+    /// owner's. The caller supplies the job's binding and a file it has
+    /// verified against the receipt, and never calls this for a job it stopped
+    /// because a Grant or the approval was revoked.
     ///
     /// The consume-once ref is `gpu-job-<job hex>-<digest hex>`. The digest
     /// is BLAKE3 over the JSON array `[job hex, key, name]`. The digest keeps
@@ -48,45 +61,29 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// The starter is absent or no longer stands, the task is dead or
-    /// unreadable in the starter's lane, or the native output is refused (for
-    /// example, the file's media type differs from the artifact's or the
-    /// ref already waits or has settled). Store and lane errors propagate.
+    /// The starter no longer stands and the vault has no one live owner, the
+    /// task is dead or unreadable in the landing lane, or the native output is
+    /// refused (for example, the file's media type differs from the
+    /// artifact's or the ref already waits or has settled). Store and lane
+    /// errors propagate.
     pub fn propose_gpu_job_result(
         &self,
         job: &GpuJob,
         binding: &GpuJobResultBinding,
         file: &GpuJobResultFile,
+        issuer: EntityId,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        let starter_lapsed = || {
-            Error::Record(RecordError::AuthorityRefused(
-                "the GPU job's starter no longer stands",
-            ))
+        let (actor, lane) = match self.standing_gpu_job_starter(job)? {
+            Some(starter) => (starter, starter.entity_ref()),
+            None => (
+                WriteActor::new(issuer, EdgeActorClass::System),
+                self.gpu_job_result_owner()?,
+            ),
         };
-        let started_by = job.started_by.ok_or_else(starter_lapsed)?;
-        let class = match self.dispatch_starter(started_by)? {
-            Some(WorkloadStarter::Owner(_)) => EdgeActorClass::Human,
-            Some(WorkloadStarter::Grant(_)) => {
-                // Dispatch already resolved the Grant; it does not return the class.
-                let txn = self.store.env.read_txn()?;
-                if live_agent_principal_in(&self.store, &txn, started_by, EdgeActorClass::Agent)? {
-                    EdgeActorClass::Agent
-                } else if live_agent_principal_in(
-                    &self.store,
-                    &txn,
-                    started_by,
-                    EdgeActorClass::System,
-                )? {
-                    EdgeActorClass::System
-                } else {
-                    return Err(starter_lapsed());
-                }
-            }
-            None => return Err(starter_lapsed()),
-        };
-        let actor = WriteActor::new(started_by, class);
-        let reader = self.organ_landing_reader(Some(started_by))?;
+        let reader = self.organ_landing_reader(Some(lane))?;
+        // An erased starter is never named again: the issuer that writes the landing stands in.
+        let made_by_actor = job.started_by.unwrap_or(issuer);
 
         let job_hex = job.id.to_hex();
         let identity = json!([job_hex, file.key, file.name]).to_string();
@@ -112,7 +109,7 @@ impl Vault {
             made_by: Some(MadeBy {
                 inputs: Vec::new(),
                 process: MadeByProcess {
-                    actor: started_by,
+                    actor: made_by_actor,
                     class: MadeByClass::Concluded,
                     identity: "gpu_job.result_landing".into(),
                     version: "1".into(),
@@ -130,5 +127,54 @@ impl Vault {
             &[],
             None,
         )
+    }
+
+    /// The job's starter as the writer of its result while they stand: the
+    /// owner as Human, an agent under a live Grant as Agent or System. `None`
+    /// once they no longer stand, and after their erase.
+    fn standing_gpu_job_starter(&self, job: &GpuJob) -> Result<Option<WriteActor>> {
+        let Some(started_by) = job.started_by else {
+            return Ok(None);
+        };
+        let class = match self.dispatch_starter(started_by)? {
+            Some(WorkloadStarter::Owner(_)) => EdgeActorClass::Human,
+            Some(WorkloadStarter::Grant(_)) => {
+                // Dispatch already resolved the Grant; it does not return the class.
+                let txn = self.store.env.read_txn()?;
+                if live_agent_principal_in(&self.store, &txn, started_by, EdgeActorClass::Agent)? {
+                    EdgeActorClass::Agent
+                } else if live_agent_principal_in(
+                    &self.store,
+                    &txn,
+                    started_by,
+                    EdgeActorClass::System,
+                )? {
+                    EdgeActorClass::System
+                } else {
+                    return Ok(None);
+                }
+            }
+            None => return Ok(None),
+        };
+        Ok(Some(WriteActor::new(started_by, class)))
+    }
+
+    /// The owner whose lane holds a result whose starter no longer stands: the
+    /// vault's one live owner. No rule picks one of a shared vault's several
+    /// live owners, so such a result is refused, as is one with no live owner.
+    fn gpu_job_result_owner(&self) -> Result<EntityId> {
+        let owners = {
+            let txn = self.store.env.read_txn()?;
+            owners_in_txn(self, &txn)?
+        };
+        match owners.as_slice() {
+            [owner] => Ok(*owner),
+            [] => Err(Error::Record(RecordError::AuthorityRefused(
+                "the GPU job's starter no longer stands and no live owner holds its result",
+            ))),
+            _ => Err(Error::Record(RecordError::AuthorityRefused(
+                "the GPU job's starter no longer stands and no one owner's lane holds its result",
+            ))),
+        }
     }
 }

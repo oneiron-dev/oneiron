@@ -3,7 +3,7 @@
 //!
 //! - With a quote that binds a result (`inputs.result { artifact, task }`), each returnable
 //!   output the node hashed is fetched, checked against the signed sha256 and length, and
-//!   proposed as the artifact's next version through the starter's lane, pending Keep
+//!   proposed as the artifact's next version, pending Keep
 //!   ([`Vault::propose_gpu_job_result`]). An output the vault refuses, the node will not serve,
 //!   or whose bytes do not match is recorded as refused and never asked again.
 //! - Without one, nothing is fetched.
@@ -11,12 +11,20 @@
 //! Either way the node is then told it may clean the payload (`Ack`), once no output is owed.
 //! A fetch or an acknowledgement that did not arrive is asked again at the next housekeeping
 //! pass. `JOB_RETURN` keeps what landed, what never will, and the acknowledgement.
+//!
+//! Whose lane a landing waits in (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov 23:19):
+//! - A key the issuer closed because a Grant or the workload approval was revoked
+//!   (`DispatchClose::Revoked`) lands nothing (ARCH-0075: the host drops work after a revoke).
+//!   Each returnable output is recorded refused `job_revoked`, unfetched.
+//! - Any other ended key returns its result even when the starter stopped standing after the
+//!   end (ARCH-0046: a paid result still returns). Then the issuer writes the proposal in the
+//!   owner's lane, and Keep stays the owner's act.
 
 use std::sync::Arc;
 
 use oneiron::gpu_job::{GpuJobResultBinding, GpuJobResultFile};
-use oneiron::job_dispatch::JobDispatch;
 use oneiron::job_dispatch::machine_records::{JobReturn, ReturnRefusal};
+use oneiron::job_dispatch::{DispatchClose, JobDispatch};
 use oneiron::machine_signature::MachineSignatures;
 use oneiron::{EntityId, Vault};
 use sha2::{Digest, Sha256};
@@ -38,6 +46,9 @@ pub struct ResultReturns {
     pub signer: Arc<dyn MachineSignatures>,
     pub clock: Arc<dyn IssuerClock>,
 }
+
+/// Why each output of a key the issuer closed for a revoke was refused, unfetched.
+const JOB_REVOKED: &str = "job_revoked";
 
 /// How far one pass over a key's outputs came.
 enum Outputs {
@@ -144,12 +155,18 @@ impl ResultReturns {
                 None => return Outputs::Owed,
             },
         };
+        let revoked = matches!(row.closed, Some(DispatchClose::Revoked { .. }));
         let mut state = Outputs::Decided;
         for output in outputs
             .iter()
             .filter(|output| output.returnable && !owed.is_decided(&output.name))
         {
-            match self.land_one(row, &job, &binding, output) {
+            let landed = if revoked {
+                Some(Err(JOB_REVOKED.to_owned()))
+            } else {
+                self.land_one(row, &job, &binding, output)
+            };
+            match landed {
                 Some(Ok(())) => self.decide(row, |owed| owed.landed.push(output.name.clone())),
                 Some(Err(why)) => self.decide(row, |owed| {
                     owed.refused.push(ReturnRefusal {
@@ -207,7 +224,7 @@ impl ResultReturns {
         };
         Some(
             self.vault
-                .propose_gpu_job_result(job, binding, &file, self.clock.now_ms())
+                .propose_gpu_job_result(job, binding, &file, self.issuer, self.clock.now_ms())
                 .map(drop)
                 .map_err(|error| format!("proposal_refused: {error}")),
         )
