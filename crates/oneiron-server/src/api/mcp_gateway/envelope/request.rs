@@ -140,6 +140,21 @@ pub(crate) async fn handle_mcp_request(
                 )
                 .await;
             }
+            // A canonical verb under the wrong root is refused before any
+            // caller resolves (FIX 298): the name alone settles it (see
+            // `mcp_pre_resolution_wrong_root`), so resolving first could
+            // only lend the refusal an effect. Scope-less, as every
+            // pre-resolution failure is.
+            if let Some(name) = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("name"))
+                .and_then(Value::as_str)
+                && let Some(refusal) =
+                    super::admission::mcp_pre_resolution_wrong_root(server, mode, name)
+            {
+                return Err(refusal);
+            }
             // A stale owner sign-in's booking tool call is his (FIX 5327).
             let actor = super::booking_call::resolve_tool_caller(
                 mode,
@@ -191,7 +206,7 @@ pub(crate) async fn handle_mcp_request(
                     );
             // FIX 1085: the call counts once on the wire, under the caller
             // resolved above and the tool it names, before it is judged.
-            super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous);
+            super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous).await;
             // OF-568 L4: the attempt whose live run the call holds, as the
             // hold witnessed it.
             let (called, attempt): (Result<Value, McpGatewayError>, _) =

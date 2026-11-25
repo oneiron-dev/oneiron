@@ -34,11 +34,14 @@ use crate::skills_pack::{self, OutputMode};
 pub(crate) mod api;
 pub(crate) mod credential_file;
 mod credential_helper;
+pub(crate) mod oauth_sign_in;
 pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
 pub use self::host_re_root::host_re_root;
+mod host_recover_root;
+pub use self::host_recover_root::host_recover_root;
 mod host_recover_owner;
 pub use self::host_recover_owner::host_recover_shared_owner;
 mod token_operator;
@@ -53,8 +56,16 @@ mod hook;
 // The runtime files `serve` registers in and `oneiron hook` reads.
 #[cfg(unix)]
 mod local_servers;
+#[cfg(all(unix, oneiron_test_support))]
+pub(crate) use self::hook::continue_test_support;
 #[cfg(unix)]
-pub use self::hook::{hook, hosted};
+pub use self::hook::{continue_work, hook, hosted};
+// The user service runs the local vault the hook binds through its runtime
+// file, so it is Unix-only too.
+#[cfg(unix)]
+pub(crate) mod user_service;
+#[cfg(unix)]
+pub use self::user_service::user_service;
 
 /// `oneiron hook` binds through runtime files and queues through the import
 /// queue, both Unix-only: elsewhere it does nothing, and exits 0.
@@ -66,6 +77,20 @@ pub fn hook(_: crate::cli::HookArgs) {}
 #[cfg(not(unix))]
 pub fn hosted(_: crate::cli::HostedCommand) -> anyhow::Result<()> {
     anyhow::bail!("`oneiron hosted` publishes what `oneiron hook` binds, on Unix alone")
+}
+
+/// `oneiron continue --cloud` reads the hosted selection `oneiron hosted`
+/// publishes, which is Unix-only.
+#[cfg(not(unix))]
+pub fn continue_work(_: crate::cli::ContinueArgs) -> anyhow::Result<()> {
+    anyhow::bail!("`oneiron continue --cloud` reads what `oneiron hosted` publishes, on Unix alone")
+}
+
+/// `oneiron user-service` keeps running the local vault `oneiron hook`
+/// binds, and the hook runs on Unix alone.
+#[cfg(not(unix))]
+pub fn user_service(_: crate::cli::UserServiceCommand) -> anyhow::Result<()> {
+    anyhow::bail!("`oneiron user-service` runs the vault `oneiron hook` binds, on Unix alone")
 }
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
@@ -121,6 +146,8 @@ pub use files::files;
 mod history_import;
 #[cfg(unix)]
 pub(crate) use self::history_import::hosted_import;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::history_import::own_second;
 mod init;
 pub use init::init;
 pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};
@@ -128,6 +155,8 @@ mod reembed;
 pub use reembed::reembed;
 mod account;
 pub use account::account;
+mod link;
+pub use link::{link, unlink};
 mod device;
 pub use device::device_enrol;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -174,6 +203,8 @@ pub use self::seat::{
     seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
     seat_siwc_login, seat_siwc_revoke,
 };
+mod execution_node;
+pub use execution_node::execution_node;
 mod model_workers;
 pub use model_workers::model_workers;
 mod registry;
@@ -214,13 +245,48 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
 /// The command is intentionally not an HTTP route: possession of the host's
 /// local vault and issuer key is the admission. No bearer-only credential is
 /// revived and no root slip or signing key is printed.
+///
+/// It prints the owner's pairing link, which a client redeems at
+/// `/v1/core/pairing/redeem`. With `--redeem`, this process redeems the link
+/// itself at once with a fresh connection key, as `token read` does, and
+/// prints the owner's own credential in `token read`'s form instead: for an
+/// owner at the box with no client to redeem it. The link is then never
+/// printed, and the slip is logged and revoked by its id like every paired
+/// slip.
 pub fn token_bootstrap(args: TokenBootstrapArgs) -> anyhow::Result<()> {
-    let link = token_bootstrap_link(&args)?;
-    println!("{link}");
+    let BootstrapLink {
+        origin,
+        owner,
+        vault,
+        issuer,
+        link,
+    } = issue_bootstrap_link(&args)?;
+    let owner = owner.to_hex();
+    let printed = if args.redeem {
+        serde_json::to_string_pretty(&redeem_link_here(&vault, &issuer, &link, &owner, "human")?)?
+    } else {
+        oneiron::authority::format_pinned_pairing_link(
+            &origin,
+            &link.code,
+            &owner,
+            link.pin.as_ref(),
+        )
+    };
+    println!("{printed}");
     Ok(())
 }
 
-fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
+/// The first owner's pairing link, issued on the stopped vault, with what
+/// redeeming it here needs.
+struct BootstrapLink {
+    origin: String,
+    owner: oneiron::EntityId,
+    vault: oneiron::Vault,
+    issuer: oneiron::authority::HostSlipIssuer,
+    link: oneiron::authority::PairingLink,
+}
+
+fn issue_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<BootstrapLink> {
     anyhow::ensure!(
         !args.serve.managed_by_hypnos,
         "managed vaults pair through their supervisor; local bootstrap is self-host only"
@@ -272,12 +338,13 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             comm: None,
         },
     )?;
-    Ok(oneiron::authority::format_pinned_pairing_link(
-        &origin,
-        &link.code,
-        &owner.to_hex(),
-        link.pin.as_ref(),
-    ))
+    Ok(BootstrapLink {
+        origin,
+        owner,
+        vault,
+        issuer,
+        link,
+    })
 }
 
 /// What `token read` and `token agent` print: the credential in the SDK's
@@ -292,6 +359,11 @@ struct PairedCredential {
     /// The slip's signed comm reach (FIX 3899): `--comm`, or `vault` when
     /// the owner named none.
     comm: oneiron::agent_dispatch::CommReach,
+    /// The default read Grant the link minted for a named agent, when it
+    /// minted one: a mint that fails after the link takes it back beside
+    /// the slip. Never printed with the credential.
+    #[serde(skip_serializing)]
+    default_grant_ref: Option<oneiron::EntityId>,
     credential: String,
     token: String,
     binding_key: String,
@@ -513,8 +585,8 @@ fn mint_agent_credential(
     // then the grant: the latest mint is the agent's one credential, so no
     // earlier slip keeps a verb this tier lacks. A mint that fails anywhere
     // leaves the standing ceiling as it was, and one that fails after the
-    // slip takes the new slip back, so a failure leaves the agent with less,
-    // never more.
+    // slip takes the new slip and the default Grant its link minted back,
+    // so a failure leaves the agent with less, never more.
     let credential = mint_paired_credential(
         &vault,
         &issuer,
@@ -566,6 +638,27 @@ fn mint_agent_credential(
                         credential.slip_id
                     )
                 })?;
+            // The link already minted the agent's default read Grant in its
+            // writer; a failed mint takes it back beside the slip, so no
+            // failed mint keeps a Grant (AGENT-PAIR-GRANT-ORPHAN).
+            if let Some(grant) = credential.default_grant_ref {
+                let grant_hex = grant.to_hex();
+                oneiron::task_verb::sdk::revoke_agent_grant_as(
+                    &vault,
+                    &owner,
+                    oneiron::authority::ActSurface::ThisInstall,
+                    oneiron::task_verb::sdk::AgentGrantRevokeRequest {
+                        grant_ref: grant,
+                        seen: None,
+                    },
+                )
+                .map_err(|revoke| {
+                    anyhow::anyhow!(
+                        "agent {}: {error}; then revoking its default grant {grant_hex}: {revoke}",
+                        args.name
+                    )
+                })?;
+            }
             Err(error)
         }
     }
@@ -628,7 +721,6 @@ fn mint_paired_credential(
     lifetime_secs: u64,
     comm: Option<oneiron::agent_dispatch::CommReach>,
 ) -> anyhow::Result<PairedCredential> {
-    use ed25519_dalek::{Signer, SigningKey};
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
     let pairing_principal = oneiron::authority::PairingPrincipal {
@@ -653,6 +745,21 @@ fn mint_paired_credential(
             pairing_principal,
         )?,
     };
+    redeem_link_here(vault, issuer, &link, principal, actor_class)
+}
+
+/// Redeems `link` in this process at once with a fresh connection key, for
+/// `principal` as `actor_class`: the doors `/v1/core/pairing/redeem` uses,
+/// on the stopped vault. The credential holds the key's seed, so it is
+/// printed once and kept by the caller.
+fn redeem_link_here(
+    vault: &oneiron::Vault,
+    issuer: &oneiron::authority::HostSlipIssuer,
+    link: &oneiron::authority::PairingLink,
+    principal: &str,
+    actor_class: &str,
+) -> anyhow::Result<PairedCredential> {
+    use ed25519_dalek::{Signer, SigningKey};
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
     let transcript = oneiron::authority::pairing_binding_transcript_pinned(
@@ -680,6 +787,7 @@ fn mint_paired_credential(
         expires_at: slip.claims.expires_at,
         slip_id: hex(&slip.claims.slip_id),
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
+        default_grant_ref: link.default_grant_ref,
         credential,
         token,
         binding_key: seed,
@@ -749,7 +857,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
 /// revoking an already-revoked id succeeds and reports `false`.
 pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    init_tracing(&config.log_level);
+    init_tracing_stderr(&config.log_level);
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     let mut vault_config = config.vault_config();
@@ -955,7 +1063,7 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
 pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let client_id = parse_client_id_hex(&args.client)?;
     let config = resolve_serve_config(&args.serve)?;
-    init_tracing(&config.log_level);
+    init_tracing_stderr(&config.log_level);
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
@@ -1028,6 +1136,15 @@ pub(crate) fn init_tracing(log_level: &str) {
     use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
     let _ = crate::logging::subscriber(filter, io::stdout).try_init();
+}
+
+/// [`init_tracing`] for the commands whose stdout is their JSON answer
+/// (`token revoke`, `revoke`): the log lines go to stderr, so a caller
+/// parsing stdout reads JSON alone (FIX-LIST 23427).
+pub(crate) fn init_tracing_stderr(log_level: &str) {
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+    let _ = crate::logging::subscriber(filter, io::stderr).try_init();
 }
 
 pub fn resolve_dict_search_paths(configured_paths: &[PathBuf]) -> DictSearchResolution {

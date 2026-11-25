@@ -112,6 +112,14 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
+            // The row's own door proof is judged again for the waiter, as
+            // a fresh call meets it before its hooks (review-10395 P1): a
+            // saved reply never goes to a caller that door refuses now,
+            // such as an agent whose Grant naming the verb was revoked
+            // after the first call ran.
+            if let Err(refusal) = row_door_admits(&server, &auth, verb) {
+                return FacadeApiError::from(refusal).into_response();
+            }
             // The owner's own whole-vault export is released again as its
             // owner's, once the waiter's fresh proof admits him as that
             // owner now (owner ruling 1-EXPORT = B).
@@ -262,11 +270,85 @@ pub(crate) enum DoorClaim {
 /// `valid_until` (Engine ruling INQUIRE-SHAPE Q6). A kept reply would send
 /// them again past both, on a replay that runs no send and no eviction. A
 /// re-send of the inquiry's id gets its current answer instead (Q2).
-const UNKEPT_REPLY_VERBS: [&str; 1] = ["vault.inquire"];
+/// The inquiry edge's join (L7-04) answers the Connect half that carries the
+/// pact's scope opening key, which only the pact's custody holds: a kept
+/// reply would write it to this vault's invocation state. A same-id retry of
+/// one of those runs the verb again: the accept and the attach answer their
+/// exact repeat with the same counter and write nothing, and a prepare offers
+/// its unbound edge again under a fresh pact.
+/// A personal booking link's mint answers its raw token once
+/// (BK-PERSONAL-LINKS): the vault keeps only the token's digest, and a kept
+/// reply would write the bearer token itself to this vault's invocation
+/// state, for any later request naming the invocation to read again. A
+/// same-id retry mints again: a fresh link and token, beside the first link,
+/// which the owner's list shows and revokes as any other.
+/// An experiment arm's reads (`vault.arms.get`, `vault.arms.list`; design
+/// pass 32 section 5) answer only the arms of lines the caller's Grant
+/// reaches when the read runs. An arm is a side-table row, so a waiter's
+/// release has no entity row to judge again, and the row's door proof
+/// judges only the verb Grant: a kept reply would answer a same-id retry
+/// after the line left the Grant's reach. A same-id retry runs the read
+/// again, line cover included (FIX ARM-READS-REPLAY-SKIPS-LINE-GRANT).
+/// A GPU line's read (`vault.gpu.lines.get`) answers only a caller whose
+/// Grant holds a role on the line when the read runs, for the same reason: a
+/// same-id retry runs the read again, role included.
+/// A family's seat (`vault.gpu.lines.families.admit`) answers the line too,
+/// and its door judges the caller's role on the stored line before its intent
+/// replay: a kept reply would answer a same-id retry after the owner took the
+/// role away, with only the verb Grant judged. A same-id retry runs the admit
+/// again, role first; its intent key then replays the seat already made and
+/// writes nothing.
+/// An experiment arm's admission (`vault.arms.admit`) and its rung forecast
+/// (`vault.arms.forecast`) answer the arm, and each door judges the caller's
+/// lead role on the arm's line before its intent replay, as the seat's does:
+/// a same-id retry runs the door again, role first, and its intent key or the
+/// ask's logical key then replays the write already made (review round 2 of
+/// #10400).
+/// The pinned workload reads (review round 2 of #10412) answer only what
+/// their caller may read now: a starter stops seeing a workload once its
+/// approval is revoked or expired, and a kept reply carries no workload a
+/// replay could judge again. A same-id retry reads again and writes nothing.
+/// The machines' status (review round 1 of #10424) is a live read that the
+/// vault never stores: on `refresh` it holds what each execution node
+/// answers now, and a kept reply would write that answer to this vault's
+/// invocation state and replay it after the node went offline. A same-id
+/// retry reads, and on `refresh` asks the nodes, again.
+/// The machines' execution read (pass 33 door 11, review round 1 of
+/// #10458) is the same kind of live read: it holds what each machine's node
+/// answers now (its offer, its devices and its live keys), and a kept reply
+/// would write those answers to this vault's invocation state and replay
+/// them after the node went offline or changed its offer. A same-id retry
+/// asks the machines again.
+/// The jobs' history (`vault.jobs.history`, review round 1 of #10419) names
+/// who started or reserved each attempt, and an actor's erase takes that
+/// name off the rows: a kept reply would hand an erased requester's id to a
+/// same-id retry after the erase, and an agent's reply would outlive its
+/// Grant. A same-id retry reads again and writes nothing.
+const UNKEPT_REPLY_VERBS: [&str; 16] = [
+    "vault.inquire",
+    "vault.inquiry.edge.prepare_join",
+    "vault.members.accept_with_inquiry_edge",
+    "vault.members.inquiry_edge.attach",
+    "vault.booking.personal_link.mint",
+    oneiron::experiment_arm::ARMS_GET_VERB,
+    oneiron::experiment_arm::ARMS_LIST_VERB,
+    oneiron::experiment_arm::ARMS_ADMIT_VERB,
+    oneiron::experiment_arm::ARMS_FORECAST_VERB,
+    oneiron::gpu_line::VAULT_GPU_LINES_GET,
+    oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
+    "vault.jobs.workloads.get",
+    "vault.jobs.workloads.list",
+    oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
+    oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
+    oneiron::job_history::JOB_HISTORY_VERB,
+];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
-/// naming the same invocation: false only for [`UNKEPT_REPLY_VERBS`].
-fn verb_reply_is_kept(verb: &str) -> bool {
+/// naming the same invocation: false only for [`UNKEPT_REPLY_VERBS`]. A
+/// hook's ask on such a verb saves no credential to resume the call on
+/// either (`hooks::row_hooks_pre_decided`): the drain would save its answer
+/// for the retry.
+pub(crate) fn verb_reply_is_kept(verb: &str) -> bool {
     !UNKEPT_REPLY_VERBS.contains(&verb)
 }
 

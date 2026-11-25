@@ -1,6 +1,8 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+mod brief_delete_fence;
+pub(crate) use brief_delete_fence::{BriefDeleteFence, BriefDeleteFences, conclude_brief_delete};
 pub(crate) use oneiron_store::deletion::archive_role;
 mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;
@@ -31,9 +33,17 @@ mod receipt_final;
 mod receipt_grammar;
 mod receipt_origin;
 mod rendezvous;
+pub(crate) mod setting_keys;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+// The Kani model check of the tombstone decoder; only `cargo kani` sets `--cfg kani`.
+#[cfg(kani)]
+mod tombstone_kani;
+#[cfg(feature = "sync")]
+mod tombstone_publications_in_flight;
+#[cfg(feature = "sync")]
+pub(crate) use tombstone_publications_in_flight::TombstonePublicationsInFlight;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
 #[cfg(feature = "sync")]
@@ -41,8 +51,6 @@ pub(crate) use oneiron_store::deletion::window_document_format;
 // A withdrawn reply copy's Shell generation (FIX 931): the scope-summary
 // withdrawal stages it on this device (FIX 11804), and a carried cutoff on
 // another machine of the vault.
-// FIX [LIBTEST-QUARANTINE-DELETION-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod withdrawn;
@@ -55,10 +63,16 @@ pub use coop_delivery::{
     CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
     CooperativeDeletionRetention, CooperativeDeletionTry, CooperativeLocalRedaction,
-    CooperativeRestrictionLiftAttestation, IncomingCooperativeDeletion,
+    CooperativeRestrictionLiftAttestation, ERASE_REQUEST_REPLY_ROW_VERSION,
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    ERASE_REQUEST_SETTING_HONOUR_CODE, EraseRequestReply, EraseRequestReplyPolicy,
+    EraseRequestReplySetting, EraseRequestReplySource, IncomingCooperativeDeletion,
     cooperative_deletion_recipient_id, parse_hex,
 };
-pub(crate) use coop_delivery::{MAX_REASON_CODE_LEN, courtesy_retained_pacts_in};
+pub(crate) use coop_delivery::{
+    ERASE_REQUEST_REPLY_ROW_KEY, EraseRequestReplyRead, MAX_REASON_CODE_LEN,
+    courtesy_retained_pacts_in,
+};
 pub use coop_reply::{
     COOP_DELETION_REPLY_BODY_KEYS, COOP_DELETION_REPLY_DOMAIN, COOP_DELETION_REPLY_SCHEMA_VERSION,
     CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply,
@@ -90,12 +104,14 @@ pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection, HostLegalConn
 pub(crate) use legal_hold::prospective::{
     ProspectiveBatch, prospective_standing_in_txn, seal_prospective_message_in_txn,
 };
+// The hold-store door reads one hold's standing (`test_doors::legal_hold`).
+#[cfg(oneiron_test_support)]
+pub(crate) use legal_hold::prospective::outbox_in_txn;
 pub use legal_hold::{
-    ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
-    LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
-    LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
-    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
+    HoldCloneCapture, HostOrderHold, LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold,
+    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldFutureMessages, LegalHoldKind,
+    LegalHoldMaintenance, LegalHoldProduction, LegalHoldReason, LegalHoldTarget, MessageSelector,
+    ProducedHoldCapture,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
@@ -128,8 +144,7 @@ pub(crate) use actor_fields::{
     hard_erased_ids_in, rerun_actor_scrubs_in_txn, restore_erased_payload_targets_in_txn,
 };
 pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
-// A due owner-confirmed erase rechecks its pending row (FIX 6337).
-pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
+pub(crate) use delete::ConfirmedEraseOutcome;
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::{TombstoneScopeProbes, classified_corrupt_claim_in_txn};
 // The relayed ask intents a legal hold kept from their holder's erase (FIX 20468), and those
@@ -170,13 +185,24 @@ pub(crate) use sweep_queue::{
     raise_withdrawn_generation_fence_in_txn, withdrawn_generation_cutoffs_in_txn,
 };
 pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
+
+/// Whether `id` carries this install's permanent hard-delete marker, read
+/// from the store alone (`Vault::local_hard_delete_marker_exists_in_txn`
+/// for a caller with no vault at hand).
+pub(crate) fn hard_delete_marker_exists_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::entity_id::EntityId,
+) -> crate::error::Result<bool> {
+    tombstone::HARD_DELETE_MARKER.contains(store, txn, &crate::side_table::HexId(*id))
+}
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 #[cfg(test)]
 pub(crate) use tombstone::local_hard_delete_key;
 pub(crate) use tombstone::{
-    ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, PendingTombstoneKey,
-    ROW_DELETION_FENCE, archive_tombstone_key, stage_engine_row_hard_erasure_at_in_txn,
+    ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, ROW_DELETION_FENCE,
+    archive_tombstone_key, mark_torn_actor_row_in_txn, stage_engine_row_hard_erasure_at_in_txn,
     stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;

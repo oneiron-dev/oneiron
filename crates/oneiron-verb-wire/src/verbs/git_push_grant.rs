@@ -24,6 +24,11 @@ pub struct GitPushGrantMintInput {
     /// Omitted: it stands until revoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+    /// Another asker's approved check-in for this exact mint, 32 hex: the
+    /// owner applies it on their own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k7). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One `git_push` Grant.
@@ -54,6 +59,10 @@ pub struct GitPushGrantMintOutput {
     pub grant: GitPushGrantView,
     /// The signed authority entry that records the owner's mint (64 hex).
     pub act_ref: String,
+    /// The decision the mint ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// `vault.repo.git_push.revoke`'s input: the grant, by its id.
@@ -127,6 +136,12 @@ pub struct RepoRegistrationView {
     pub source: String,
     /// The editable whitelist, ascending. Empty: read-only.
     pub editable: Vec<String>,
+    /// The agent (32 hex) that registered the repo as the owner's delegate;
+    /// a later config update keeps it. Absent when the owner registered it.
+    /// A delegate's answer names it only when that delegate is the
+    /// registrant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registrant: Option<EntityId>,
 }
 
 /// `vault.repo.anchor.bind`'s answer: the CODE anchor and PROJECT a

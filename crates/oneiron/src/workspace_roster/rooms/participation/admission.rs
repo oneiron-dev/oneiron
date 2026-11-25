@@ -170,11 +170,14 @@ pub(in crate::workspace_roster::rooms) fn person_stands_in_txn(
 /// records nothing here, and its speech, claims and reads stand on
 /// [`agent_standing_in_txn`]. A write is no authority for an agent either
 /// (ARCH-0006a, ruled 2026-09-23): it must stand there now and be spoken to
-/// for the turn the write `answers`, by [`agent_spoken_to_in_txn`]. For any
-/// other cause an agent must stand there now.
+/// for the turn the write `answers`, by [`agent_spoken_to_in_txn`], or be
+/// addressed there by a Retry's press: `pressed` is the parent a proven room
+/// regeneration permit's claim, one a Retry took, holds for it
+/// (HOMERETRY-AUTHORITY = C). For any other cause an agent must stand there
+/// now.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the place, the writer, its cause, what it answers and paid scope, and the decision time"
+    reason = "the place, the writer, its cause, what it answers, a Retry's press, paid scope, and the decision time"
 )]
 pub(crate) fn admit_participation_in_txn(
     vault: &Vault,
@@ -184,6 +187,7 @@ pub(crate) fn admit_participation_in_txn(
     actor: WriteActor,
     cause: JoinCause,
     answers: Option<EntityId>,
+    pressed: Option<EntityId>,
     scope: Option<&SpendScopeId>,
     now: u64,
 ) -> Result<Admitted> {
@@ -209,7 +213,10 @@ pub(crate) fn admit_participation_in_txn(
             let standing = agent_standing_in_txn(vault, txn, room, branch, agent, scope)?
                 .ok_or_else(|| lacks("the agent has no Ready join in this room or thread"))?;
             if let JoinCause::Wrote { turn } = admitted.cause {
-                if !agent_spoken_to_in_txn(vault, txn, room, branch, agent, turn, answers)? {
+                let pressed = answers.is_some() && pressed == answers;
+                if !pressed
+                    && !agent_spoken_to_in_txn(vault, txn, room, branch, agent, turn, answers)?
+                {
                     return Err(lacks(
                         "an agent speaks only when it is addressed, holds a task there, or lands an accepted offer",
                     ));
@@ -244,9 +251,14 @@ pub(crate) fn admit_participation_in_txn(
 /// or its thread `branch` (ARCH-0006a, ruled 2026-09-23: an agent speaks
 /// only when it is addressed or holds a task there, and asks in by an offer
 /// card): it is named on the room turn `answers`, holds that turn's open
-/// thread TASK, or `record` is the turn an accepted offer bound to it.
-/// Standing alone never lets an agent speak, and none of these grants a
-/// seat or mints a task.
+/// thread TASK, or `record` is the turn an accepted offer bound to it. A
+/// project's current leader is also spoken to by a person's turn that names
+/// no agent in the project's home room ([`leader_answers_turn_in_txn`]), on
+/// the claim of that turn it holds: a person may hold that claim, and a live
+/// DAG reply takes none, so the leader answers here only what the claim door
+/// gave it, as the witness checks again (REVIEW-9956 round 2). Standing alone
+/// never lets an agent speak, and none of these grants a seat or mints a
+/// task.
 pub(super) fn agent_spoken_to_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -268,8 +280,112 @@ pub(super) fn agent_spoken_to_in_txn(
     if turn.room_id != room.to_hex() {
         return Ok(false);
     }
-    Ok(turn.addressed_agents.contains(&agent.to_hex())
-        || held_thread_task_in_txn(vault, txn, &turn, agent)?.is_some())
+    if turn.addressed_agents.contains(&agent.to_hex())
+        || held_thread_task_in_txn(vault, txn, &turn, agent)?.is_some()
+    {
+        return Ok(true);
+    }
+    Ok(leader_answers_turn_in_txn(vault, txn, room, agent, &turn)?
+        && super::super::CLAIMS
+            .get(&vault.store, txn, &answered)?
+            .is_some_and(|claim| claim.actor == agent.to_hex()))
+}
+
+/// Whether `agent` may answer `turn` in `room` as its project's leader
+/// (PROJECT-LEADER-WAKE-NO-REPLY-STANDING = B, canon ARCH-0067:485): `room`
+/// is a project's home room, `agent` is that project's current leader, read
+/// live in this transaction, and `turn` is a person's turn there that names
+/// no agent, on the trunk or in one of the room's threads. A replaced leader
+/// stands on nothing at once. A turn that names an agent stays that agent's,
+/// and an agent's turn never counts, so no two agents answer each other
+/// here. A turn that names only people names no agent (REVIEW-9956 P1-3).
+/// An erased speaker, or a speaker or name this vault does not read as a
+/// PERSON, is no person here, never an error (REVIEW-9956 P1-2). It adds no
+/// seat, task or scope: the leader still stands on its seat, and the claim
+/// and witness doors read this same rule.
+pub(in crate::workspace_roster::rooms) fn leader_answers_turn_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    agent: EntityId,
+    turn: &RoomTurn,
+) -> Result<bool> {
+    if turn.room_id != room.to_hex() {
+        return Ok(false);
+    }
+    let now = vault.store.clock.now_recorded_at();
+    let person = |actor: &str| -> Result<bool> {
+        let Ok(actor) = EntityId::from_hex(actor) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            participant_in_txn(vault, txn, actor, now)?,
+            Some(JoinSubject::Person(_))
+        ))
+    };
+    if !person(&turn.actor)? {
+        return Ok(false);
+    }
+    for named in &turn.addressed_agents {
+        if !person(named)? {
+            return Ok(false);
+        }
+    }
+    let Some(project) = super::hosting::room_project_in(vault, txn, room)? else {
+        return Ok(false);
+    };
+    Ok(vault
+        .effective_project_in_txn(txn, project)?
+        .is_some_and(|(_, effective)| effective.leader == agent.to_hex()))
+}
+
+/// Whether the claim `holder` of `turn` in `room` holds it for no one now
+/// (ROOM-CLAIM-TAKEOVER = A, Engine 21 Nov 03:04): the holder takes part as
+/// an agent, and the witness would refuse its answer now, each gate re-read
+/// in this transaction as the claim door reads an agent claimant: it is off
+/// the audience of the turn's private thread, it no longer stands there, it
+/// may not speak there, or the turn no longer speaks to it (it is not named
+/// on the turn, holds none of its thread's open TASKs, and does not answer
+/// it as the project's current leader). A name or a task keeps no claim for
+/// a holder the other gates refuse (REVIEW-9956 round 2). A person, and a
+/// holder this vault knows as neither, keep their claim: a person claims
+/// only a turn that names no agent, and a turn's names never change.
+pub(in crate::workspace_roster::rooms) fn claim_holder_released_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    turn: &RoomTurn,
+    holder: &str,
+) -> Result<bool> {
+    let Ok(holder) = EntityId::from_hex(holder) else {
+        return Ok(false);
+    };
+    let now = vault.store.clock.now_recorded_at();
+    if !matches!(
+        participant_in_txn(vault, txn, holder, now)?,
+        Some(JoinSubject::Agent(_))
+    ) {
+        return Ok(false);
+    }
+    let branch = super::turn_root_in_txn(vault, txn, turn)?;
+    if let Some(thread) = branch {
+        match super::audience::thread_audience_allows_in(vault, txn, room, thread, holder) {
+            Ok(true) => {}
+            Ok(false) | Err(Error::EntityNotFound) => return Ok(true),
+            Err(error) => return Err(error),
+        }
+    }
+    let Some(standing) = agent_standing_in_txn(vault, txn, room, branch, holder, None)? else {
+        return Ok(true);
+    };
+    match admit_speech_in(vault, txn, room, holder, Some(&standing)) {
+        Ok(()) => {}
+        Err(Error::Record(RecordError::RoomSpeakerIneligible { .. })) => return Ok(true),
+        Err(error) => return Err(error),
+    }
+    Ok(!turn.addressed_agents.contains(&holder.to_hex())
+        && held_thread_task_in_txn(vault, txn, turn, holder)?.is_none()
+        && !leader_answers_turn_in_txn(vault, txn, room, holder, turn)?)
 }
 
 /// Files the room join a person's first write in a room needs, in the

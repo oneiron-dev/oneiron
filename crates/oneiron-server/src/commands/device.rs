@@ -71,7 +71,7 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     // A vault with no authority root and no rows of its own joins from
     // empty; any other enrols as the copy of its home's vault it is.
     if vault.authority_fold()?.vault_id.is_some() {
-        let (files, shown, enrolled) = enrol_into(&config, &vault, &link, None)?;
+        let (files, shown, enrolled) = enrol_into(&config, &vault, &link, None, args.replace)?;
         return emit(files, shown, enrolled, None);
     }
     crate::device_sync::join::ensure_joinable(&vault)?;
@@ -90,7 +90,7 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     // join that does not finish leaves the vault as `device enrol` found it.
     // The fresh store's handle closes with the closure, before any restore.
     let joined = open_joining_store(&config, &join)
-        .and_then(|vault| enrol_into(&config, &vault, &link, Some(&join)));
+        .and_then(|vault| enrol_into(&config, &vault, &link, Some(&join), args.replace));
     match joined {
         Ok((files, shown, enrolled)) => emit(files, shown, enrolled, Some(&set_aside)),
         Err(error) => match restore_empty_store(&path, &set_aside) {
@@ -113,18 +113,20 @@ type EnrolledInto = (
 );
 
 /// Enrols `vault`'s machine from `link`, as the copy of its home's vault, or
-/// as a vault joining from empty under `join`.
+/// as a vault joining from empty under `join`; with `replace`, in place of
+/// an enrolment it holds already.
 fn enrol_into(
     config: &crate::config::ServeConfig,
     vault: &oneiron::Vault,
     link: &str,
     join: Option<&crate::device_sync::join::JoinPin>,
+    replace: bool,
 ) -> anyhow::Result<EnrolledInto> {
     let files = crate::device_sync::EnrolmentFiles::for_vault(&config.keystore, vault)?;
     // Read before the enrolment, as it reads it: nothing that can fail runs
     // after the link is spent.
     let shown = shown_request(vault, join)?;
-    let enrolled = crate::device_sync::enrol(vault, &files, link, join)?;
+    let enrolled = crate::device_sync::enrol(vault, &files, link, join, replace)?;
     Ok((files, shown, enrolled))
 }
 
@@ -222,7 +224,7 @@ fn shown_request(
     let vault_id = crate::device_sync::enrolment_vault_id(vault, join)?;
     let request =
         vault.machine_enrolment_request(vault_id, vault.machine_encryption_key(vault_id)?)?;
-    let enrolment = serde_json::json!({
+    let mut enrolment = serde_json::json!({
         "vault_id": hex(&request.vault_id),
         "machine": request.machine.to_hex(),
         "machine_key": hex(&request.machine_key),
@@ -232,5 +234,11 @@ fn shown_request(
             .encode(&request.encryption_key.key),
         "machine_proof": hex(&request.machine_proof),
     });
+    // Only a restored install names its image (row
+    // RESTORED-COPIES-ENROL-EACH-OTHER), so every other request keeps its
+    // seven keys.
+    if let Some(image) = &request.restored_from {
+        enrolment["restored_from"] = serde_json::Value::from(hex(image));
+    }
     Ok((request.code().to_text(), enrolment))
 }

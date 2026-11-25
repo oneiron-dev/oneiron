@@ -35,6 +35,9 @@ pub(super) struct CheckLend<'p> {
     /// The rubric the judge reads the summary against its span by (FIX
     /// 4814): the effective `DreamerSettings::compaction_check_rubric`.
     pub(super) rubric: &'p str,
+    /// The input the weaver's model holds (the pass's `dream_windows`): a
+    /// check whose judge input does not fit it settles unjudged.
+    pub(super) window: Option<u64>,
 }
 
 impl CheckLend<'_> {
@@ -74,6 +77,7 @@ impl CheckLend<'_> {
                 },
                 role: DREAMER_NARRATIVE_ROLE,
                 rubric: self.rubric,
+                window_tokens: self.window,
                 decisions,
             },
         )

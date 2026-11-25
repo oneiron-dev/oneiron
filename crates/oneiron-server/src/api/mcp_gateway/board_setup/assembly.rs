@@ -62,7 +62,12 @@ pub(super) async fn mcp_current_board_with_roster(
         .map_err(mcp_board_frame_error)?,
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
-    let laid_out = oneiron::context_board::apply_board_layout(&sections, &layout, cap_tok);
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &sections,
+        &layout,
+        cap_tok,
+        oneiron::context_board::fold_attention_rows(&server.vault),
+    );
     let layout_candidate =
         layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
     let mut state_rows = mcp_board_state_rows(&laid_out.sections);

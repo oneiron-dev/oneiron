@@ -4,8 +4,8 @@
 //! A delete keeps an instance's key, so a kept backup restores what it
 //! deleted; an erase retires it at once. Between the two, an instance no
 //! row names may still be needed: by a writer that minted it and has yet to
-//! name it, by a kept checkpoint image or parked archive that carries it, or
-//! by a standing customer hold. [`body_retention_policy`] is the one hook that says
+//! name it, or by a kept checkpoint image or parked archive that carries it.
+//! [`body_retention_policy`] is the one hook that says
 //! when none does: only then is a Retention retirement staged for it, and
 //! only then do its historical obligations (each owner's
 //! response-to-instance row, each digest's remembered instance) expire with
@@ -51,9 +51,6 @@ pub(crate) enum KeepReason {
     Leased,
     /// A kept image or a parked archive carries it.
     KeptCopy,
-    /// A standing customer hold keeps every kept copy. A host order keeps
-    /// none: its clone holds its own keys in the host's legal-hold store.
-    Hold,
     /// Another host minted it: who holds its copies is not known here.
     NotMintedHere,
 }
@@ -73,7 +70,6 @@ pub(crate) enum RetentionVerdict {
 pub(crate) struct RetentionContext {
     named: BTreeSet<[u8; 16]>,
     owed: BTreeSet<[u8; 16]>,
-    hold: bool,
 }
 
 /// What the policy decides on from custody, read once per pass: every
@@ -87,17 +83,15 @@ pub(crate) struct RetentionHolders {
 /// CALLS "BODY_INSTANCE_RETENTION": the one policy for both a Retention
 /// shred of a body instance (FIX 6022) and the expiry of its historical
 /// obligations (FIX 6228). It shreds only an instance no row names, no
-/// erase owes, no lease holds, no kept copy carries, no standing hold
-/// keeps, and that this host minted; anything else keeps it.
+/// erase owes, no lease holds, no kept copy carries, and that this host
+/// minted; anything else keeps it.
 pub(crate) fn body_retention_policy(
     context: &RetentionContext,
     holders: &RetentionHolders,
     instance: &[u8; 16],
     leased: bool,
 ) -> RetentionVerdict {
-    let keep = if context.hold {
-        KeepReason::Hold
-    } else if context.named.contains(instance) {
+    let keep = if context.named.contains(instance) {
         KeepReason::LiveUse
     } else if context.owed.contains(instance) {
         KeepReason::ErasePending
@@ -145,9 +139,6 @@ impl RetentionContext {
                 .scan_keys(store, txn, &[])?
                 .into_iter()
                 .collect(),
-            hold: crate::store::legal_hold::holds_in_txn(store, txn)?
-                .iter()
-                .any(crate::deletion::LegalHold::keeps_vault_data),
         }))
     }
 }
@@ -184,9 +175,9 @@ fn snapshots_see_last_commit(store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
 
 /// Whether a Retention intent for `instance` may still run, read again by
 /// the finisher under the custody write guard and the LMDB writer: no lease,
-/// kept copy, standing hold or older read snapshot needs it now. Its live
+/// kept copy or older read snapshot needs it now. Its live
 /// uses the caller reads. `kept` is the pass's holder snapshot (FIX 9067),
-/// read once per holder epoch under the same guard; the lease, hold and
+/// read once per holder epoch under the same guard; the lease and
 /// snapshot checks stay per intent.
 pub(super) fn retention_ready_in_txn(
     store: &Store,
@@ -197,11 +188,7 @@ pub(super) fn retention_ready_in_txn(
     if store.core.key_custody.local().is_none() || !snapshots_see_last_commit(store, txn)? {
         return Ok(false);
     }
-    if store.core.key_custody.body_leased(instance)
-        || crate::store::legal_hold::holds_in_txn(store, txn)?
-            .iter()
-            .any(crate::deletion::LegalHold::keeps_vault_data)
-    {
+    if store.core.key_custody.body_leased(instance) {
         return Ok(false);
     }
     Ok(!kept.contains(instance))
@@ -347,25 +334,61 @@ impl Store {
 
     /// Registers a holder of every body instance this vault's own rows name,
     /// before a swap parks it as an archive (FIX 6022): its rows and files
-    /// keep them until the archive's custodian releases it.
+    /// keep them until the archive's custodian releases it. Returns the
+    /// holder, `None` when it names nothing, so a swap refused before its
+    /// exchange began releases it ([`Self::release_parked_archive_hold`]).
     ///
     /// # Errors
     ///
     /// Storage and custody errors, and a row that does not decode.
-    pub(crate) fn hold_parked_archive_bodies(&self) -> Result<()> {
+    pub(crate) fn hold_parked_archive_bodies(
+        &self,
+    ) -> Result<Option<crate::store::key_custody::ImageHolder>> {
         let named = {
             let txn = self.env.read_txn()?;
             named_in_txn(self, &txn)?
         };
         let named = named.ok_or(crate::Error::CorruptedIndex("body response binding"))?;
         let Some(custody) = self.core.key_custody.local() else {
-            return Ok(());
+            return Ok(None);
         };
-        if !named.is_empty() {
-            custody.hold_image_instances(&named)?;
-            self.core.key_custody.bump_holders_epoch();
+        if named.is_empty() {
+            return Ok(None);
         }
+        let holder = custody.hold_image_instances(&named)?;
+        self.core.key_custody.bump_holders_epoch();
+        Ok(Some(holder))
+    }
+
+    /// Releases `holder`, which [`Self::hold_parked_archive_bodies`]
+    /// registered for a swap refused before its exchange began: that swap
+    /// parked no archive, so the instances only it kept may retire by
+    /// retention again (REVIEW-10247 round 2).
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn release_parked_archive_hold(
+        &self,
+        holder: crate::store::key_custody::ImageHolder,
+    ) -> Result<()> {
+        holder.release()?;
+        self.core.key_custody.bump_holders_epoch();
         Ok(())
+    }
+
+    /// How many holder records of kept body instances this vault's local
+    /// custody keeps; `0` without one (test doors).
+    ///
+    /// # Errors
+    ///
+    /// Custody faults, and a record that does not decode.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn image_holder_record_count(&self) -> Result<usize> {
+        match self.core.key_custody.local() {
+            Some(custody) => custody.image_holder_record_count(),
+            None => Ok(0),
+        }
     }
 }
 

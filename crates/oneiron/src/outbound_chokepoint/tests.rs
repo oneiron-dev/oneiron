@@ -40,6 +40,7 @@ fn register_scoped_key(
     key.retained_manifest = Some(
         crate::connector_key::ResolvedConnectorManifest::resolve(vec![
             crate::connector_key::ConnectorToolSchema {
+                output_schema: None,
                 name: "read_file".into(),
                 permissions: ["read".into()].into(),
                 triggers: Default::default(),
@@ -71,7 +72,13 @@ fn stamp_charter(vault: &Vault, key_id: &EntityId, text: &str) {
         .propose_connector_charter(key_id, text, 1_001)
         .expect("propose charter");
     vault
-        .approve_connector_charter(key_id, pending.compiled_hash, "owner", 1_002)
+        .approve_connector_charter(
+            key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            1_002,
+        )
         .expect("approve charter");
 }
 
@@ -94,6 +101,7 @@ fn charged_record(
     if let Some(capability) = capability {
         let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
             crate::connector_key::ConnectorToolSchema {
+                output_schema: None,
                 name: "read_file".into(),
                 permissions: ["read".into()].into(),
                 triggers: Default::default(),

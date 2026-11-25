@@ -62,8 +62,8 @@ side_tables! {
         [restore: live] [family: unclassified] [tier: canonical];
     /// Sweep refs a hard delete captured from a provenance Claim before its SoftErase emptied the
     /// body, and the ids of the rows an erase retired with the entity (FIX 7494), held until a
-    /// purge queues its sweep; and the relayed ask intents a legal hold kept from the entity's
-    /// erase, held until a due legal-hold pass retires them (FIX 20468). Key: hex32 (entity id).
+    /// purge queues its sweep; and the relayed ask intents a restriction kept from the entity's
+    /// erase, held until a settle pass retires them (FIX 20468). Key: hex32 (entity id).
     DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Configured thresholds for the wire call-volume observation counters. Key: ().
@@ -90,6 +90,27 @@ side_tables! {
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// A prediction's set body the home pushed for one machine, home-local and never synced:
+    /// only that machine fetches it, by digest, over its connection. Value: the canonical
+    /// `PredictedResidenceSet` body. Key: hex32 (machine) hex64 (digest).
+    SYNC_RESIDENCE_PREDICTED_BODY: SyncState b"pb:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// Recorded-clock seconds (u64be) of this machine's last `residence.predict` ask, written
+    /// before the ask goes out. Key: none (one row).
+    SYNC_RESIDENCE_PREDICTED_ASKED: SyncState b"pr:a" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// An entity document prediction this machine subscribed here; the predicted pass drops it
+    /// once the adopted set names it no longer and no `qd:e:` row waits. Value: empty. Key:
+    /// hex32 (entity id).
+    SYNC_RESIDENCE_PREDICTED_DOCUMENT: SyncState b"pr:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The canonical body of the predicted set this machine adopted. Key: none (one row).
+    SYNC_RESIDENCE_PREDICTED_TARGET: SyncState b"pr:t" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// A window prediction this machine fetched here; the predicted pass demotes it once the
+    /// adopted set names it no longer. Value: empty. Key: window key.
+    SYNC_RESIDENCE_PREDICTED_WINDOW: SyncState b"pr:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
     PROJECT_DEPTH_LOCAL_BIRTH: SyncState b"project:birth:local:" Raw
@@ -175,6 +196,13 @@ side_tables! {
         // its live connections owe, so it follows the live vault: a restore neither drops one owed
         // nor brings back an image's (FIX 19634).
         [restore: live] [family: structure] [tier: canonical];
+    /// The peer carriers the sync ingest dropped for a record a refused privacy erase keeps (C6)
+    /// or a cooperative review restricts (REVIEW-9881 round 1): each carrier's BLAKE3 (32 bytes),
+    /// one after another. The ingest drops these exact bytes again, after the limit lifts too, so
+    /// a window that still carries one never puts it over the kept copy; the row's erase forgets
+    /// them. Runtime: never imaged, a restore drops it. Key: hex32 (entity id).
+    SYNC_RESTRICTED_DROPPED_CARRIER: SyncState b"restricted:dropped:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
     SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw
@@ -228,6 +256,12 @@ side_tables! {
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The home's touch log of one proved machine, home-local and never synced: the seeds of
+    /// that machine's prediction (ARCH-0023b #predicted-residence). Value: recorded-clock
+    /// seconds (u64be) of the machine's last touch of the entity. Key: hex32 (machine) hex32
+    /// (entity).
+    SYNC_RESIDENCE_MACHINE_TOUCH: SyncState b"rt:m:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw
@@ -291,7 +325,7 @@ side_tables! {
     TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// ARCH-0023b document family: one durable pending CRDT update for a window, applied on top of
-    /// d:w:. Key: yyyy-mm ":" hex8 (sequence).
+    /// d:w:. Key: yyyy-mm ":" hex16 (sequence).
     SYNC_U_W: SyncState b"u:w:" Raw
         [restore: content] [family: mixed WindowUpdate] [tier: canonical];
     /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
@@ -322,8 +356,10 @@ side_tables! {
         [restore: content] [family: structure] [tier: canonical];
     /// The serve health check past a threshold (OF-520): one check per crossing subject, and
     /// how far the check has read each kind of kept crossing. Key: "check:" string (the
-    /// subject) | "cursor:" string (the crossing kind, and a limits row's key). An own-rate
-    /// subject ends in its actor, and that actor's erase takes the check.
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key) | "erased:"
+    /// string (an erased actor's hashed hex, a presence mark). An own-rate or spend subject
+    /// ends in its actor, and that actor's erase takes the check; a wire subject names no
+    /// actor, and that erase scrubs the actor out of its lists and a limit subject's owners.
     WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::own_rate::erase_health_check_actor_in_txn;

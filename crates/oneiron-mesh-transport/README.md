@@ -47,6 +47,17 @@ HTTP/WebSocket paths remain separate. There is no automatic production migration
   interleaves the meaning hits by each device's own rank. A machine that refused,
   failed or was late is listed in `unreached`.
 
+## One message each way (`message`)
+
+- `message::exchange` opens a fresh stream, sends one request and reads one answer, in the
+  organ protocol's codec (`encode_message`, `decode_message`). Organ calls
+  (`oneiron/organ/1`, OF-575) and the job protocols (`oneiron/job/1` for new work,
+  `oneiron/job-status/1` for the keys a node holds; pass 33, `oneiron-server`
+  `gpu_execution_node`) ride it. A message stays under the 1 MiB stream bound.
+- **Admission.** The live `mesh:alpn:<protocol>` grant on each side, checked by the
+  transport at every open, one grant per protocol: revoking `oneiron/job/1` stops new
+  work and leaves the status route.
+
 ## Trust boundary
 
 The device holds its pairing signing seed in platform protected custody. A

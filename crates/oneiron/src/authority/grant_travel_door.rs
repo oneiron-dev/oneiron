@@ -75,6 +75,9 @@ impl Vault {
     /// grant's revision the deciding surface showed him: it must be the
     /// current one, else the choice is a conflict, never a silent overwrite.
     /// `None` takes the current revision (a caller that showed none).
+    /// `owner_authored` is the owner's own write, by an undelegated proof:
+    /// the choice and its joins then carry the owner key's proof this
+    /// install holds ([`Vault::owner_act_proof_signer`]).
     ///
     /// The choice names the main-log heads alone. A choice is a main-log
     /// entry, so the grant's live choices and this machine's standing rows
@@ -90,6 +93,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         surface: ActSurface,
         grant: EntityId,
         choice: Option<TravelChoice>,
@@ -101,7 +105,12 @@ impl Vault {
         let key =
             crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(no_signer)?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(no_signer());
         }
         // Revision integrity (mesh contract §4): the owner chose on what the
@@ -112,8 +121,9 @@ impl Vault {
                 "the grant's travel choice changed since it was read",
             ));
         }
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -127,7 +137,7 @@ impl Vault {
                     .to_owned(),
             ));
         }
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -139,6 +149,7 @@ impl Vault {
                 choice,
             }),
             now,
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

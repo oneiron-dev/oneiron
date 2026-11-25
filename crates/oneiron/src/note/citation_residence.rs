@@ -14,7 +14,6 @@ use heed::{RoTxn, RwTxn};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::Store;
 use crate::store::document_frame_tags::{TAG_DOCUMENT, document_sub_tags};
-use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::{EntityId, Error, Result, Vault};
 
 /// The residence rows that hold a cached item's text document.
@@ -25,9 +24,9 @@ const BODY_ROWS: &str = "ri:b:";
 /// Drops the residence copy of every cached NOTE whose document pins an
 /// erased document or claim ([`super::citation_erase::pin_is_erased`]), or
 /// does not read as a NOTE state that could show it does not. A copy of a
-/// NOTE a legal hold names stays, as age eviction keeps it: a hold keeps
-/// every byte of the rows it names, a cached copy too (OF-470). Returns the
-/// NOTEs whose copy went.
+/// NOTE a cooperative restriction names stays, as age eviction keeps it: a
+/// restriction keeps every byte of the rows it names, a cached copy too
+/// (OF-470). Returns the NOTEs whose copy went.
 ///
 /// # Errors
 ///
@@ -132,13 +131,12 @@ pub(crate) fn refuse_erased_residence_copy_in_txn(
     Ok(())
 }
 
-/// Whether a standing customer legal hold names `item`.
+/// Whether a standing customer legal hold names `item`: none does any more
+/// (LEGAL-HOLD-USE = B). The restriction check still answers a cooperative
+/// restriction on `item` with absence, which fails the read.
 fn held(store: &Store, txn: &RoTxn<'_>, item: EntityId) -> Result<bool> {
-    match store.reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED) {
-        Ok(()) => Ok(false),
-        Err(error) if is_hold_refusal(&error) => Ok(true),
-        Err(error) => Err(error),
-    }
+    store.reject_restricted_records_in_txn(txn, &[item])?;
+    Ok(false)
 }
 
 /// Whether `item`'s cached body is a NOTE's.

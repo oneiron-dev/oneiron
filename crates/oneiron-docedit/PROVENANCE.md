@@ -38,7 +38,8 @@ The set_format-occurrence change (2026-10-17) touches `src/edit/verbs/run_format
 and `src/edit_v4.rs`. `set_format` takes an optional 1-based `occurrence` that formats the n-th copy of a
 repeated `expect`, counted the way the ambiguity check counts its matches. A copy the paragraph does not
 hold reads as an expect mismatch. Without `occurrence` a repeated `expect` still refuses. The suite's
-`EditStep::SetRunFormatting` literals do not carry the new field; the suite is outside the workspace.
+`EditStep::SetRunFormatting` literals carry the new field (the suite compiles from the fork's own manifest); the
+suite is outside the workspace.
 The DOCX parse-budget change (2026-10-20, scan C005) adds `src/parse_budget.rs` and touches `src/docx.rs`,
 `src/lib.rs`, `src/runtime.rs`, `src/import.rs`, `src/docx_validate.rs` and `src/redline_extract.rs`. Before any
 reader builds a tree, one pass streams every XML part of the package and charges what the tree builders keep:
@@ -938,3 +939,214 @@ each prefixed attribute and each `mc:Choice` `Requires` token now costs one
 hash, not a scan of the tag's declarations and of every open frame: one tag with
 d declarations and a prefixed attributes cost O(a*d). The innermost binding
 still wins, and the built tree, the refusals and their order are unchanged.
+
+
+## Main part with no relationships part (FIX DOCX-READER-REFUSES-A-DOCUMENT-WITH-NO-RELATIONSHIPS-PART, 2026-11-20)
+
+`src/import.rs`, `src/docx_package.rs` and `src/runtime.rs`. A package whose
+main document part has no relationships part (`word/_rels/document.xml.rels` in
+the usual layout) is read as a main part with no outgoing relationships.
+`parse_document_relationships` returns the empty `DocumentRelationships`, and
+`DocxPackage::from_archive` starts from an empty `RelationshipSet` based at the
+main part's directory, so a relationship the writer adds later resolves its
+relative target beside the main part. Both refused before (`missing
+word/_rels/document.xml.rels`, `missing package part: ...`), while the linker
+took the same bytes. A part that is present must still parse and carry `Id`,
+`Type` and `Target`. The package relationships part `_rels/.rels` and
+`[Content_Types].xml` stay required. A main part that references a relationship
+(`r:id`, `r:embed`, `r:link`, as the linker's I-REL-001 counts them) still needs
+its relationships part: `src/runtime.rs` (`import_and_anchor`, the import under
+`Document::parse`) refuses such a package when the part is absent, as before.
+The reference would dangle, and the writer numbers the relationships it adds
+from `rId1`, so one could take the dangling id. The read-only canonical build
+in `src/import.rs` does not refuse it; the linker reports each such reference.
+`DocxPackage::into_archive` in `src/docx_package.rs` now gives every
+relationships part it writes a content type: where the package has no `rels`
+Default and no Override for the part, it adds the Override, so the part it
+creates for a main part that had none is typed. A package with the correct
+`rels` Default and no conflicting Override is written as before. The fork's
+unit test of the absent case
+(`parse_document_relationships_missing_rels_file_returns_empty`) is rewritten to
+the new rule; no workspace run compiles it (`scripts/docedit/run_stemma_fork_unit_tests.sh`
+does), and the wrapper's `tests/contract.rs` holds the rule. `tests/stress_manifest.rs` names the text
+`missing word/_rels/document.xml.rels` as a failure class; the refusal of a
+referencing main part still starts with it.
+
+`src/runtime.rs` and `src/import.rs` own the revision identities part through
+an internal relationship of the main part. The writer reuses that target or
+chooses the first free name starting at `word/stemmaRevisionIds.xml`, then
+`word/stemmaRevisionIds2.xml` and onward. The reader adopts only the related
+part. Another producer's part at the conventional name stays untouched.
+
+`src/docx_package.rs`, `src/runtime.rs` and `src/package_ops/generated_people.rs`
+relate the generated people and revision identities parts by a bare name when
+beside the main part and a package-absolute name otherwise. The parts stay
+under `word/` when generated at their default names.
+
+`src/docx_package.rs` gives every relationships part it writes the relationships
+content type. It adds or replaces a part's Override when its declared type
+(the Override or `rels` Default) differs, ignoring ASCII case.
+
+`src/runtime.rs` and `src/docx_validate.rs` check every nonempty attribute in
+the relationships namespace when the main part has no relationships part.
+The linker's and writer's shared collector still knows only `id`, `embed` and
+`link`.
+
+`src/docx_validate.rs` trusts an attribute's resolved namespace over its
+prefix. The prefix and legacy qualified local name are fallbacks only when
+no namespace is recorded. The header/footer and hyperlink id checks use the
+same rule.
+
+## The fork's own tests (FIX STEMMA-FORK-UNIT-TESTS-RUN-BY-NO-JOB, 2026-11-20)
+
+No source file of the fork changes. Both packages are under `exclude` in the
+root `Cargo.toml`, and the workspace builds `stemma` only as a dependency of
+`oneiron-docedit`. So no workspace run compiles the `#[cfg(test)]` modules under
+`vendor/stemma-engine/src` and `vendor/stemma-diff/src`, or a target under
+either `tests/` directory. `scripts/docedit/run_stemma_fork_unit_tests.sh` runs
+the unit tests of both packages: `cargo test --locked --manifest-path
+<package>/Cargo.toml --lib`. Scoped CI calls it when a file of either package
+changes (the `stemma_fork` output of `scripts/ci/ci_scope.py`) and on every
+full run.
+
+Neither package has a lock file. For its run the script copies the workspace's
+`Cargo.lock` beside each manifest, so the tests use the dependency versions the
+product builds the fork with. It refuses a resolved lock that holds a package
+the workspace lock does not hold, apart from the fork's own two (`stemma` has
+`stemma-diff` as a dev-dependency, which the workspace never resolves), and it
+removes the copies when it ends. A lock file that is already beside a manifest,
+or that appears there during the run, refuses the run: the script makes each
+copy only as a new file and neither overwrites nor removes a lock file it did
+not make.
+
+With no arguments the script does not run the integration targets. As measured
+on 2026-11-20 from the fork's manifests: `stemma`'s `suite` (371 files)
+compiles and passes in about 12 minutes, and `element_fidelity` passes in
+about 17. `examples_reference` and `operations_reference` of `stemma` and
+`read_model_reference` of `stemma-diff` fail: each compares a generated page of
+the upstream repository (`docs/examples.md`, `docs/reference/operations.md`,
+`docs/reference/read-model.md`, one directory above the package) that the
+import did not copy. `untouched_block_fidelity` fails in one test,
+`single_tracked_edit_leaves_untouched_blocks_identical`, after about 17
+minutes: its ratchet counts 121 untouched blocks whose `w:pPr` a single tracked
+edit changes, against the 119 of `tests/untouched_block_fidelity_baseline.txt`
+(then unchanged since the import; the section "Untouched-block fidelity
+baseline regenerated" below regenerates it, and the target passes since).
+`redline_invariants` passes with one test and
+ignores five; `corpus_triage`, `redline_word_parity` and `stress_manifest` hold
+only ignored tests, which need an external corpus.
+
+## Untouched-block fidelity baseline regenerated (FIX STEMMA-FORK-UNTOUCHED-BLOCK-FIDELITY-RATCHET-IS-RED-ON-PPR, 2026-11-21)
+
+`tests/untouched_block_fidelity_baseline.txt` only. No source file and no test
+file of the fork changes. The file is regenerated by the test's own switch
+(`UPDATE_FIDELITY_BASELINE=1` on `--test untouched_block_fidelity`, run from
+`vendor/stemma-engine/Cargo.toml`), so each of its 45 lines holds the count
+measured at this commit. One line goes up: `w:pPr`, from 119 to 121. Seventeen
+go down, for example `w:rPr` from 499 to 174, `w:r` from 453 to 10, `w:sz` from
+320 to 2 and `w:t` from 120 to 1; seven of them reach zero (`w:noBreakHyphen`,
+`w:pPr/w:spacing`, `w:rFonts`, `w:rStyle`, `w:shd`, `w:tblpPr`,
+`w:tcBorders`). Twenty-seven stay.
+
+The imported file was not the measure of the imported sources. Measured on
+2026-11-21 with toolchain 1.100 and each commit's workspace lock: at the import
+commit `0968e50605f7` the ratchet test already counts 121 untouched blocks
+whose `w:pPr` a single tracked edit changes, and its list of class, fixture and
+block (385 lines in 29 classes) equals, line for line, the list at
+`41f913b920e2`, the newest commit that changed the fork's sources. So no local
+change of the fork moved a count, up or down: the imported file was already two
+below the measure of the imported sources. Which two blocks are above 119
+cannot be said, because the file pins one count for each class and names no
+block.
+
+The 121 blocks are one block in each of 121 fixtures, of the 655 the test
+gates. They stay what upstream lists them as, the known-open class `w:pPr`;
+this change mends none of them. What changes is the bar. A later change of the
+fork that makes a single edit rewrite one more untouched block, in any of the
+45 classes, now fails the test, where the imported file left room (443 blocks
+for `w:r`). The test prints the 16 classes that measure zero as candidates to
+leave `KNOWN_OPEN`; they stay listed, because the test file is kept as the
+import's bytes. No job runs the target: it takes about 12 to 18 minutes, and
+it can be run by hand with
+`scripts/docedit/run_stemma_fork_unit_tests.sh --test untouched_block_fidelity`.
+
+## The fork's suite and its other integration targets (FIX STEMMA-FORK-SUITE-PASSES-AND-IS-RUN-BY-NO-JOB, 2026-11-21)
+
+No file of the fork changes. The runner's `--test <target>` form runs one
+integration target of `stemma` from the checkout root:
+
+```sh
+cargo test --locked --manifest-path crates/oneiron-docedit/vendor/stemma-engine/Cargo.toml --test <target>
+```
+
+In this form the runner copies the workspace lock beside `stemma-engine`'s
+manifest alone. `stemma-diff` is a path dev-dependency of `stemma`, and cargo
+reads no lock beside a path dependency. A full run of
+`scripts/ci/run_scoped.sh test` calls the runner for `suite` after the unit
+tests; a scoped run does not. For a change of the fork's edit, diff or
+serialize code, run the suite by hand with
+`scripts/docedit/run_stemma_fork_unit_tests.sh --test suite`.
+
+Measured on 2026-11-21 at `944774530919` from the fork's manifest on the
+workspace's lock, on a 12-thread host: `suite` compiles in 45 seconds and runs
+in 740. 3,438 tests pass, none fails and 83 are ignored.
+
+The full run leaves the other integration targets out. The
+`untouched_block_fidelity` and `element_fidelity` targets pass and take about
+17 minutes each, so they stay by hand (`--test untouched_block_fidelity` and
+`--test element_fidelity`). The `examples_reference` and
+`operations_reference` targets fail because the import did not copy the
+upstream pages they compare. The `redline_invariants` target passes with one
+test and ignores five. The `corpus_triage`, `redline_word_parity` and
+`stress_manifest` targets hold only ignored tests. The `read_model_reference`
+target of `stemma-diff` fails for the same reason, and the `--test` form names
+targets of `stemma` only.
+
+## A relationship the writer adds takes no id the main part references without a binding (FIX DOCX-WRITER-GIVES-A-NEW-RELATIONSHIP-AN-ID-A-DANGLING-REFERENCE-HOLDS, 2026-11-21)
+
+`src/docx_package.rs`, `src/runtime.rs` and one doc comment in
+`src/docx_validate.rs`. This is the twin of the section "Main part with no
+relationships part", for a main part whose relationships part is present. A
+main part can reference a relationship id that its relationships part does not
+hold: the linker reports each such reference (I-REL-001) and the reader takes
+the package. The writer numbered the relationships it adds from the set's
+cursor alone, so a new relationship could take the dangling id and bind the
+reference to a part it never named. Measured on 2026-11-21 at `e5e990f992bc`
+through the wrapper's contract, on a main part that holds
+`<w:altChunk r:id="rId1"/>` beside an empty relationships part: `docx.revise`
+answered Ok, its output gave `rId1` to `people.xml` and `rId2` to
+`stemmaRevisionIds.xml`, and the linker checked that output. With `rId9` in
+the same place the revision was refused (`output main document references
+relationship "rId9", but neither source package supplies that binding`).
+
+`RelationshipSet` now keeps the ids that its owning part references and the
+set does not hold (`reserve_unbound`). They live in memory only: `serialize`
+writes none of them, and `Clone` and `rebased` keep them, so the generated
+people plan and its apply still agree on an id. No addition takes a reserved
+id: the automatic allocator skips it, a preferred id that is reserved falls
+back to the allocator, and `insert_exact` answers false.
+`serialize_canonical_docx` reserves once, before its first allocation
+(`reserve_unbound_main_document_relationship_references`). It reads every
+nonempty attribute in the relationships namespace, in the main part as
+normalized and, where the bytes differ, as it came. The revision of the `rId1`
+document is now refused with the text the `rId9` document gets. No reader
+refuses anything new, and a document whose references all resolve gets the ids
+it got before. The output reconciler keeps its refusal of a reference that
+neither source package binds and gains one: it does not import the target
+package's relationship for an id that the base main part references without a
+binding.
+
+The allocator returns the first `rId<n>`, from its cursor on, that the set
+neither holds nor reserves. After 4294967295 it goes on at 1, and it never
+returns `rId0`. `RelationshipSet::parse` no longer overflows on a set that
+holds `rId4294967295`. No signature changes.
+
+Three sites stay as they are, each with its own FIX row: the section reference
+remap (`remap_sect_pr_story_refs`), the two settings-only writers
+(`set_update_fields_on_open` and `project_default_tab_stop`), which number a
+relationship on a package this reservation never reaches, and the name of a
+new media part, taken from `max_rid_number() + 1`. Ten tests hold the rule:
+six unit tests of the fork (four in `src/docx_package.rs` from
+`relationship_set_skips_a_reserved_id` on, two in `src/runtime.rs`), which
+`scripts/docedit/run_stemma_fork_unit_tests.sh` runs, and four in the
+wrapper's `tests/contract.rs`.

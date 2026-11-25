@@ -5,7 +5,10 @@
 //!   Hello PIN. Windows draws it and answers; the engine sees no secret and
 //!   no key slot is read or changed. A desktop process asks through the
 //!   verifier's window interop, which Windows has from build 22000
-//!   (Windows 11); an older Windows has no prompt here and says so.
+//!   (Windows 11); an older Windows has no prompt here and says so. Only
+//!   Windows' own word that the interop is not there reads as "no prompt":
+//!   an activation that fails for any other cause is a fault of that one
+//!   confirm.
 //! - A device where Hello is not set up, or is turned off by policy, has no
 //!   prompt here: the account-password dialog is not built.
 //! - The screen lock is read from the session's own record (the Remote
@@ -15,7 +18,11 @@
 //!   headless host has not, so the presence gate asks: at each act, and on a
 //!   timer.
 //! - A process in the services session, or in a session that is not
-//!   connected to a screen, cannot show the prompt and says so.
+//!   connected to a screen, cannot show the prompt and says so. A process
+//!   in the services session can never ask, and a confirm there answers
+//!   `NoPrompt`. A session that is not connected to a screen, or whose
+//!   record cannot be read, reads as a locked screen, and a confirm asked
+//!   then answers `ScreenLocked`.
 
 use std::ptr;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
@@ -48,8 +55,6 @@ const AVAILABILITY_SECS: u64 = 5;
 const SERVICES_SESSION: &str = "this process runs in the services session, which has no screen";
 const SESSION_OFF_SCREEN: &str = "this user's session is not connected to a screen";
 const SESSION_UNREADABLE: &str = "the session's lock state cannot be read";
-const NO_DESKTOP_CONSENT_PROMPT: &str =
-    "this Windows has no unlock prompt a desktop process can show";
 const NO_AVAILABILITY_ANSWER: &str = "Windows Hello did not say whether it is available";
 
 /// What this process's session says of itself. A record that cannot be read
@@ -125,13 +130,13 @@ impl UserPresence for WindowsUserPresence {
             WindowsScreenSession::Services => {
                 return Err(PresenceError::NoPrompt(SERVICES_SESSION));
             }
-            WindowsScreenSession::OffScreen => {
-                return Err(PresenceError::NoPrompt(SESSION_OFF_SCREEN));
-            }
-            WindowsScreenSession::Unreadable => {
-                return Err(PresenceError::NoPrompt(SESSION_UNREADABLE));
-            }
-            WindowsScreenSession::Locked => return Err(PresenceError::ScreenLocked),
+            // Every reading the lock check takes as locked answers as locked
+            // here too. A session that left the screen after the gate read
+            // it is not a device that cannot ask: a caller lets an act stand
+            // on `NoPrompt`, and no act stands on a screen nobody is at.
+            WindowsScreenSession::Locked
+            | WindowsScreenSession::OffScreen
+            | WindowsScreenSession::Unreadable => return Err(PresenceError::ScreenLocked),
             WindowsScreenSession::Unlocked => {}
         }
         // The prompt must say what is confirmed, as on every platform.
@@ -161,8 +166,13 @@ fn consent_interop() -> Result<IUserConsentVerifierInterop, WinrtError> {
 
 /// Whether Windows Hello can ask this user on this device.
 fn hello_capability() -> PresenceCapability {
-    if consent_interop().is_err() {
-        return PresenceCapability::NoPrompt(NO_DESKTOP_CONSENT_PROMPT);
+    if let Err(error) = consent_interop() {
+        return match PresenceError::from_consent_interop_activation(error.code().0) {
+            PresenceError::NoPrompt(reason) => PresenceCapability::NoPrompt(reason),
+            // The activation failed for another cause, so Windows Hello was
+            // not asked. A confirm asked now answers that fault itself.
+            _ => PresenceCapability::NoPrompt(NO_AVAILABILITY_ANSWER),
+        };
     }
     let availability = UserConsentVerifier::CheckAvailabilityAsync()
         .map_err(|error| AsyncFault::Platform(hresult(&error)))
@@ -238,9 +248,11 @@ fn owner_window() -> Option<HWND> {
 /// Shows the consent dialog and waits for its answer, at most
 /// [`PRESENCE_PROMPT_SECS`].
 fn show_consent_prompt(reason: &str) -> Result<(), PresenceError> {
-    let Ok(interop) = consent_interop() else {
-        return Err(PresenceError::NoPrompt(NO_DESKTOP_CONSENT_PROMPT));
-    };
+    // A caller lets an act stand on `NoPrompt`, so only Windows' word that
+    // the interop is not there answers it. Any other failed activation is a
+    // fault of this confirm.
+    let interop = consent_interop()
+        .map_err(|error| PresenceError::from_consent_interop_activation(error.code().0))?;
     let Some(owner) = owner_window() else {
         return Err(PresenceError::Platform(
             "no window to show the unlock prompt over",

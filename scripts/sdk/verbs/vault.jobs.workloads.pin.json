@@ -1,0 +1,16 @@
+{
+  "name": "vault.jobs.workloads.pin",
+  "description": "Pins one exact workload to run on the vault's own machines, and the pin checks in: it goes inside the family's compute.pin grant or on a sure screen, else it waits on a check-in. The owner, or an agent whose Grant names it.",
+  "input": "crate::job_workload::WorkloadPinRequest",
+  "output": "crate::job_workload::WorkloadChange",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.jobs.workloads.pin\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "job_workload_caller"
+}

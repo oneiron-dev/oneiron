@@ -52,9 +52,11 @@ const fn range(at: u64) -> TimeRange {
 
 /// An owned vault with a device keystore and install signing, its embedded
 /// owner PERSON and that owner's proof, as the owner-verb fixtures open one
-/// (`tests/agent_definition_proposed_change.rs`).
+/// (`tests/agent_definition_proposed_change.rs`), and a legal hold store
+/// outside the vault directory, where an owner's hold writes its sealed copy.
 struct Owned {
     _dir: tempfile::TempDir,
+    _holds: tempfile::TempDir,
     vault: Vault,
     actor: EntityId,
     owner: AuthenticatedOwner,
@@ -62,7 +64,9 @@ struct Owned {
 
 fn owned() -> TestResult<Owned> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open_owned(dir.path(), VaultConfig::device()).map_err(at("open owned"))?;
+    let holds = tempfile::tempdir()?;
+    let config = VaultConfig::device().with_legal_hold_store(holds.path().to_path_buf());
+    let vault = Vault::open_owned(dir.path(), config).map_err(at("open owned"))?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault
         .prepare_install_signing()
@@ -75,6 +79,7 @@ fn owned() -> TestResult<Owned> {
         .map_err(at("owner proof"))?;
     Ok(Owned {
         _dir: dir,
+        _holds: holds,
         vault,
         actor,
         owner,
@@ -112,7 +117,8 @@ fn scoped_claim(
             scope_facet_id: facet.to_hex(),
             scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
             scope_project_id: project.to_hex(),
-        },
+        }
+        .into(),
         sensitivity: None,
         evidence_turn_refs: Vec::new(),
         valid_from: None,
@@ -213,7 +219,12 @@ fn g429_a_record_under_legal_hold_is_written_again() -> TestResult {
     let vault = &fixture.vault;
     let id = named_row(vault, ENTITY_TYPE_PERSON, "held person")?;
     vault
-        .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(id)], None)
+        .place_legal_hold(
+            &fixture.owner,
+            vec![LegalHoldTarget::Record(id)],
+            None,
+            None,
+        )
         .map_err(at("the owner's legal hold"))?;
     assert!(
         !vault

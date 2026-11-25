@@ -17,6 +17,7 @@ mod charter;
 mod codec;
 mod credential_binding;
 pub mod events;
+mod http_operation;
 mod lifecycle;
 mod manifest_drift;
 mod measure;
@@ -35,6 +36,7 @@ mod slate_setting;
 mod tool_effect;
 mod tool_remember;
 mod txn;
+pub mod typescript;
 
 pub(crate) mod tables;
 #[cfg(test)]
@@ -49,8 +51,8 @@ pub use self::codec::{
 };
 pub use self::credential_binding::{
     CONNECTOR_ISSUER_HOLD_REASON, ConnectorBindingDependent, ConnectorCredentialBinding,
-    ConnectorIssuerHaltView, ConnectorIssuerObservation, ConnectorIssuerTransition,
-    ConnectorIssuerTransitionState,
+    ConnectorIssuerDetection, ConnectorIssuerHaltView, ConnectorIssuerObservation,
+    ConnectorIssuerTransition, ConnectorIssuerTransitionState,
 };
 pub use self::lifecycle::{
     ActorConnectorRegistration, ConnectorCallRoute, ConnectorConsentRowView,
@@ -90,11 +92,12 @@ pub use self::txn::ConnectorKeyGeneration;
 
 pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
-    charter_never_list_matches_scoped_channel,
+    charter_never_list_matches_scoped_channel, iso_4217_exponent,
 };
 pub(crate) use self::credential_binding::{
     connector_issuer_hold_in_txn, connector_issuer_hold_reason_in_txn,
 };
+pub(crate) use self::lifecycle::PROXY_EXCHANGE_PREDICATE;
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, append_effector_steering_message,
@@ -110,7 +113,8 @@ pub(crate) use self::record::{
     normalize_connector_key,
 };
 pub(crate) use self::slate::{
-    erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn,
+    erase_grant_slate_holder_narrows_in_txn, land_archived_connector_slate_rows_in_txn,
+    read_connector_slate_in_txn,
 };
 pub(crate) use self::slate_holder::erase_holder_narrows_in_txn;
 pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
@@ -185,6 +189,7 @@ pub(crate) use slate_setting::{
     effect_slate_always_allows, governing_slate_in_txn,
 };
 
+pub use http_operation::{HttpMethod, HttpOperation, compile_reserved_pattern};
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };
@@ -196,4 +201,17 @@ pub(crate) fn read_key_for_pack_in_txn(
     id: &crate::EntityId,
 ) -> crate::Result<Option<ConnectorKeyRecord>> {
     txn::read_connector_key_in_txn(&vault.store, txn, id)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::txn::connector_index_key_pin_for_test;
+
+/// Every scope signal the vault holds, for the cfg test door
+/// `test_doors::slate_scope_signals`: the scan stays this module's.
+#[cfg(oneiron_test_support)]
+pub(crate) fn scope_signals_for_test(
+    vault: &crate::Vault,
+) -> crate::Result<Vec<ConnectorSlateScopeSignal>> {
+    let txn = vault.store.env.read_txn()?;
+    slate_scope_signal::scan_signals_in_txn(&vault.store, &txn)
 }

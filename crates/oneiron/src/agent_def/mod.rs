@@ -10,6 +10,7 @@
 //! skills/connectors/MCPs by id and grants nothing until a later dispatch layer
 //! (AGENT-3) resolves and authorizes them.
 
+pub(crate) mod archive_restore;
 mod byte_observation;
 mod codec;
 mod doors;
@@ -23,6 +24,7 @@ mod plan_mode;
 mod powers;
 mod proposed_change;
 mod refusal;
+pub(crate) mod restored_diary;
 mod tree_pause;
 mod types;
 mod widening;
@@ -50,7 +52,8 @@ pub use self::optional_memory_set::{
     OptionalMemoryView, set_agent_optional_memory_from_request_as,
 };
 pub use self::plan_mode::{
-    AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, set_agent_plan_mode_from_request_as,
+    AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, agent_plan_mode_set_effect_digest,
+    set_agent_plan_mode_from_request_as,
 };
 pub(crate) use self::plan_mode::{refuse_plan_from_off_agent_in_txn, refuse_unplanned_run_in_txn};
 pub use self::powers::{
@@ -89,10 +92,10 @@ pub(crate) use self::codec::{
 #[cfg(feature = "sync")]
 pub(crate) use self::id_pin::validate_put_at_seeded_id;
 pub(crate) use self::id_pin::{
-    AgentIdAnswer, agent_id_answer_in_txn, agent_id_pin_for_put_in_txn, agent_ids_in_txn,
-    bind_delegation_parent_in_txn, delegation_parent_in_txn, is_agent_id_in_txn,
-    pin_stored_row_in_txn, pin_stored_rows_in_txn, refuse_agent_id_retype_in_txn,
-    refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
+    AgentIdAnswer, BornLineage, agent_id_answer_in_txn, agent_id_pin_for_put_in_txn,
+    agent_id_pinned_in_txn, agent_ids_in_txn, bind_delegation_parent_in_txn, born_lineage_in_txn,
+    delegation_parent_in_txn, is_agent_id_in_txn, pin_stored_row_in_txn, pin_stored_rows_in_txn,
+    refuse_agent_id_retype_in_txn, refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
 };
 pub(crate) use self::manifest::{
     SEEDED_AGENT_DEFINITION_TIMESTAMP, ensure_seeded_agent_persons_in_txn,
@@ -128,8 +131,6 @@ use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
 
-// FIX [LIBTEST-QUARANTINE-AGENT-DEF-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

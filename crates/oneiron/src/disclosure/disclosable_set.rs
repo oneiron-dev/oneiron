@@ -56,6 +56,19 @@ impl DisclosableSet {
         once: &BTreeMap<EntityId, Scope>,
     ) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
+        Self::resolve_with_once_in(vault, &txn, roster, reader, once)
+    }
+
+    /// [`Self::resolve_with_once`] read in the caller's snapshot `txn`
+    /// (fix list row 17645): the same fold, opening no snapshot of its own,
+    /// for a caller that judges other rows in that one read.
+    pub(crate) fn resolve_with_once_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        roster: &InterlocutorSet,
+        reader: bool,
+        once: &BTreeMap<EntityId, Scope>,
+    ) -> Result<Self> {
         let mut terms = roster
             .entries()
             .iter()
@@ -65,7 +78,7 @@ impl DisclosableSet {
                     let contact = EntityId::from_hex(hex)?;
                     match once.get(&contact) {
                         Some(scope) => Ok(Some(scope.clone())),
-                        None => contact_clearance_in(vault, &txn, contact).map(Some),
+                        None => contact_clearance_in(vault, txn, contact).map(Some),
                     }
                 }
                 (_, None) => Ok(Some(Scope::default())),
@@ -115,14 +128,9 @@ pub(crate) fn discloses_raw(
     id: EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    word_closure_admitted(
-        vault,
-        txn,
-        id,
-        raw,
-        CarriedSummary::Skip,
-        |record, record_raw| room_row_discloses(vault, txn, scope, record, record_raw),
-    )
+    word_closure_admitted(vault, txn, id, raw, |record, record_raw| {
+        room_row_discloses(vault, txn, scope, record, record_raw)
+    })
 }
 
 /// Whether the stored revision `raw` of `id` and every record its words
@@ -130,12 +138,13 @@ pub(crate) fn discloses_raw(
 /// TURN's text and vector are its messages' (`embed::turn_text_in_txn`), so
 /// each live message `PartOf` it is judged too, and a scope summary, a TURN
 /// copying one, or a merge header naming one carries the words of every
-/// record and MESSAGE the summary came from (`scope_summary::word_sources_in`
-/// names each kind). Sources that no longer resolve pass nothing, nor does
-/// a closure that cycles. The room rule ([`discloses_raw`]) and the general
-/// clamp (`DisclosureContext::admits_in`) walk the same closure, each
-/// under its own row test; `carried` says whether the walk also enters the
-/// summary a reply or a merge header carries ([`CarriedSummary`]).
+/// record and MESSAGE the summary came from; the copy and the header carry
+/// the summary's own words too, so its row is judged with them
+/// (`scope_summary::word_sources_in` names each kind; FIX
+/// COPY-SUMMARY-ROW-UNJUDGED). Sources that no longer resolve pass nothing,
+/// nor does a closure that cycles. The room rule ([`discloses_raw`]) and the
+/// general clamp (`DisclosureContext::admits_in`) walk the same closure,
+/// each under its own row test.
 ///
 /// Every record of the closure is judged, however many (rule 5; FIX 9787):
 /// past its threshold row the walk asks whether everything is okay, counted
@@ -149,7 +158,6 @@ pub(crate) fn word_closure_admitted(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
-    carried: CarriedSummary,
     admit: impl FnMut(EntityId, &[u8]) -> Result<bool>,
 ) -> Result<bool> {
     let mut count = ScanCount::start(
@@ -162,7 +170,6 @@ pub(crate) fn word_closure_admitted(
         vault,
         txn,
         admit,
-        carried,
         path: BTreeSet::new(),
         judged: BTreeSet::new(),
         memory: WalkMemory::default(),
@@ -201,20 +208,6 @@ fn room_row_discloses(
         ),
         None => Ok(true),
     }
-}
-
-/// Whether a [`word_closure_admitted`] walk enters the summary whose words
-/// a reply TURN or a `merge.summary` header carries
-/// (`scope_summary::carried_summary`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CarriedSummary {
-    /// Only the records `scope_summary::word_sources_in` names: the room
-    /// rule (FIX-LIST COPY-SUMMARY-ROW-UNJUDGED).
-    Skip,
-    /// The carried summary as one more word source: its own row is judged,
-    /// and every record its words came from, its registered dependencies
-    /// included, is walked with the rest (Sol review rounds 1-2 of #7692).
-    Follow,
 }
 
 /// One record a revision's words may have come from, and how its row reads.
@@ -290,8 +283,6 @@ struct WordClosure<'a, A> {
     txn: &'a heed::RoTxn<'a>,
     /// The row test each record of the closure must pass on its own.
     admit: A,
-    /// Whether a reply's or a merge header's summary is walked too.
-    carried: CarriedSummary,
     /// The records on the way to the current one: meeting one again is a
     /// cycle.
     path: BTreeSet<EntityId>,
@@ -370,21 +361,6 @@ impl<A: FnMut(EntityId, &[u8]) -> Result<bool>> WordClosure<'_, A> {
                 }
                 WordSources::Unresolved => return Ok(None),
             };
-        // A reply or a merge header carries a summary's words: the summary
-        // is walked as one more word source. An association that does not
-        // decode names no summary a reader may hold.
-        if self.carried == CarriedSummary::Follow {
-            let Ok(carried) = crate::scope_summary::carried_summary(raw) else {
-                return Ok(None);
-            };
-            if let Some(summary) = carried {
-                let more = bytes_of::<WordSource>(1);
-                self.memory.grow(more)?;
-                bytes = bytes.saturating_add(more);
-                sources.reserve_exact(1);
-                sources.push(WordSource::Word(summary));
-            }
-        }
         if EntityMetadataHeader::parse(raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
         {

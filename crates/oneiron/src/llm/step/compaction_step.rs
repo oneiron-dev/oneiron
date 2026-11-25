@@ -31,6 +31,12 @@
 //! receipt names as unfiled; the compaction itself still answers. A base
 //! filing whose call read a live room row refuses as a tainted base write,
 //! as the base epoch mint does (FIX 6184), before any base liveness check.
+//!
+//! A filed step reads only while its sources read, as the summary does
+//! (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its claim and response
+//! artifact carry the compactor's words about every record the call read,
+//! so a reader takes either only while it takes each of those records
+//! ([`is_compaction_step_row`]).
 
 use rmpv::Value;
 
@@ -45,6 +51,7 @@ use super::types::{
     StepProgression,
 };
 use crate::attempt_queue::AttemptId;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, RoomResponseVersion, encode_blob_artifact_body,
 };
@@ -56,9 +63,9 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::{OffRecordSession, PreparedSessionRows};
 use crate::ports::EntityStoreRead as _;
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
-use crate::store::{ManifestDbs, Store};
+use crate::store::{ManifestDbs, Store, StoreRead};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use crate::{Vault, WriteActor};
@@ -185,11 +192,145 @@ impl FiledCall {
     }
 }
 
+/// Whether `body`, the stored body of a row of `entity_type`, is a filed
+/// compaction step's: a `dreamer.step` claim stamped with the compaction
+/// surface, or the artifact holding a response above the inline bound. Its
+/// words came from its `DerivedFrom` targets, the summary's own lineage
+/// (FIX 5977), so a reader takes it only while it takes each of them. A
+/// claim body that does not decode is an error; an artifact body that does
+/// not decode is no step's, as [`crate::blob_artifact`]'s byte gate reads it.
+pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<bool> {
+    let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    match entity_type {
+        ENTITY_TYPE_CLAIM if names(DREAMER_STEP_PREDICATE.as_bytes()) => {
+            let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+            Ok(claim.predicate == DREAMER_STEP_PREDICATE
+                && super::step_index::stamped_compaction_step(&claim))
+        }
+        ENTITY_TYPE_BLOB_ARTIFACT if names(COMPACTION_STEP_RESPONSE_NAME.as_bytes()) => {
+            Ok(crate::blob_artifact::decode_blob_artifact_body(body)
+                .is_ok_and(|artifact| artifact.name == COMPACTION_STEP_RESPONSE_NAME))
+        }
+        _ => Ok(false),
+    }
+}
+
+/// The filed compaction steps' response artifacts holding the bytes the
+/// stored row `raw` at `id` carries, when it is a content-addressed version
+/// ASSET: the response's bytes carry the compactor's words as each such
+/// artifact does, so a reader takes the ASSET only beside every one of them
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Any other holder is left
+/// out: a `blob.version` claim names a holder by hash alone, so another
+/// holder never widens who reads these bytes, and one more response holder
+/// only narrows it. Empty for every other row, and for an ASSET no response
+/// artifact holds.
+///
+/// Holders are read as `read` reads them (STEPREAD-OVERLAY-RESPONSE-ASSET): a
+/// room's off-record overlay stages a room step's response artifact, version
+/// and ASSET reference beside the ASSET itself, so a read through the room's
+/// view finds that holder as it finds the ASSET.
+///
+/// A room never takes a response away from base (Sol r1 on #8590): a room
+/// row at a base response's id, such as a same-type put that renames the
+/// artifact, leaves the base version and its ASSET as they were, and those
+/// bytes still carry the compactor's words. So through a room the holders
+/// are base's as well as the view's, and an artifact base files as a
+/// response while the room's row at its id does not stays a holder, judged
+/// by base's row ([`CompactionResponseHolder::base_row`]).
+pub(crate) fn compaction_response_holders_in(
+    read: &StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<CompactionResponseHolder>> {
+    let Some(hash) = crate::blob_artifact::carrier_content_hash(read, txn, id, raw)? else {
+        return Ok(Vec::new());
+    };
+    let mut holders = crate::blob_artifact::content_holders_in_txn(read, txn, &hash)?;
+    if read.is_union() {
+        holders.extend(crate::blob_artifact::content_holders_in_txn(
+            read.base(),
+            txn,
+            &hash,
+        )?);
+        holders.sort_unstable();
+        holders.dedup();
+    }
+    let mut responses = Vec::new();
+    for holder in holders {
+        if let Some(record) = read.port_entity_record(txn, &holder)?
+            && record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?
+        {
+            responses.push(CompactionResponseHolder {
+                id: holder,
+                base_row: None,
+            });
+            continue;
+        }
+        if !read.is_union() {
+            continue;
+        }
+        let Some(base_row) = read.base().port_entity_raw(txn, &holder)? else {
+            continue;
+        };
+        if base_row.len() >= ENTITY_METADATA_HEADER_LEN
+            && base_row.first() == Some(&ENTITY_TYPE_BLOB_ARTIFACT)
+            && is_compaction_step_row(
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                &base_row[ENTITY_METADATA_HEADER_LEN..],
+            )?
+        {
+            responses.push(CompactionResponseHolder {
+                id: holder,
+                base_row: Some(base_row),
+            });
+        }
+    }
+    Ok(responses)
+}
+
+/// One filed compaction step's response artifact holding a version ASSET's
+/// bytes ([`compaction_response_holders_in`]).
+pub(crate) struct CompactionResponseHolder {
+    /// The response artifact's id.
+    pub(crate) id: EntityId,
+    /// Base's stored row at [`Self::id`] (header and body) when base files
+    /// the artifact as a response and the room's row there does not: a
+    /// reader takes the bytes only while it reads that base row, which walks
+    /// the step's sources. `None` when the read's own row files it.
+    pub(crate) base_row: Option<Vec<u8>>,
+}
+
+impl Vault {
+    /// Whether `artifact_id` is a filed compaction step's response artifact
+    /// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its version bytes carry
+    /// the compactor's words about every record the step's call read, so a
+    /// door that serves them judges them through the reader's own lane first,
+    /// as it judges reminder wording (FIX 4997). An artifact that is gone
+    /// reads as no step's, as its bytes read absent.
+    ///
+    /// # Errors
+    ///
+    /// The store failed.
+    pub fn is_compaction_step_response_artifact(&self, artifact_id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some(record) = self.store.port_entity_record(&txn, artifact_id)? else {
+            return Ok(false);
+        };
+        Ok(record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?)
+    }
+}
+
 impl ExecutorStorage<'_> {
     /// Files each of `calls` as one terminal `dreamer.step` claim about and
     /// by `writer`, the run's authenticated actor, on the route this run's
     /// storage captured at entry, and returns their refs in order. Nothing is
-    /// settled: the run's meter settled each call once when it ran.
+    /// settled: the run's meter settled each call once when it ran. `now_ms`
+    /// is the pass's wall clock in milliseconds: the step claim's own `at`
+    /// keeps it, and every row the filing writes is stamped at its Unix
+    /// second (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS).
     pub(crate) fn file_compaction_steps(
         &self,
         run_ref: &str,
@@ -213,6 +354,7 @@ impl ExecutorStorage<'_> {
             run_ref,
             envelope: &envelope,
             now_ms,
+            now: now_ms / 1_000,
         };
         match self {
             Self::Canonical(vault) => {
@@ -241,14 +383,19 @@ struct StepFiling<'a> {
     writer: WriteActor,
     run_ref: &'a str,
     envelope: &'a WriteEnvelope,
+    /// The pass's wall clock in milliseconds, which the step claim's own
+    /// `at` keeps, as every `dreamer.step` claim's does.
     now_ms: u64,
+    /// The same instant in Unix seconds: the occurred range and learned time
+    /// of every row the filing writes, as of every claim and entity row.
+    now: u64,
 }
 
 impl StepFiling<'_> {
     fn occurred(&self) -> TimeRange {
         TimeRange {
-            start: self.now_ms,
-            end: self.now_ms,
+            start: self.now,
+            end: self.now,
         }
     }
 
@@ -291,7 +438,7 @@ impl StepFiling<'_> {
                     &artifact_id,
                     ENTITY_TYPE_BLOB_ARTIFACT,
                     occurred,
-                    self.now_ms,
+                    self.now,
                     &encoded,
                 );
                 for source in sources {
@@ -307,7 +454,7 @@ impl StepFiling<'_> {
                     },
                     self.writer,
                     occurred,
-                    self.now_ms,
+                    self.now,
                 )?;
                 Some(StepResponseRef {
                     artifact_id,
@@ -323,13 +470,9 @@ impl StepFiling<'_> {
                 &candidate,
                 &mut envelope,
             )?;
-            let mut batch = vault.batch_in().claim_candidate(
-                &claim_id,
-                candidate,
-                &envelope,
-                occurred,
-                self.now_ms,
-            );
+            let mut batch = vault
+                .batch_in()
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, self.now);
             for source in sources {
                 batch = batch.edge(&claim_id, EdgeKind::DerivedFrom, source, 1.0);
             }
@@ -405,7 +548,7 @@ impl StepFiling<'_> {
                     },
                     self.writer,
                     self.occurred(),
-                    self.now_ms,
+                    self.now,
                 )?)
             };
             (claim_id, response)
@@ -420,7 +563,7 @@ impl StepFiling<'_> {
             self.candidate(call, response_ref)?,
             self.envelope,
             self.occurred(),
-            self.now_ms,
+            self.now,
             sources,
         )?;
         Ok(RoomStep {
@@ -456,7 +599,7 @@ impl StepFiling<'_> {
                 conversation,
                 step.claim_id,
                 self.occurred(),
-                self.now_ms,
+                self.now,
                 step.call.sources()?,
                 ops,
             )?;

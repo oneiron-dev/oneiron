@@ -122,6 +122,7 @@ fn pack_count_fixture() -> PackCountFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a base-world read Grant");
@@ -177,7 +178,8 @@ fn write_owner_claim(
                 scope_facet_id: vault.default_facet().expect("owner default facet").to_hex(),
                 scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
                 scope_project_id: default_project_id().to_hex(),
-            },
+            }
+            .into(),
             sensitivity: Some(PUBLIC_BAND),
             evidence_turn_refs: Vec::new(),
             valid_from: None,

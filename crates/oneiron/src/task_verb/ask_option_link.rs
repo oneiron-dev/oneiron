@@ -429,6 +429,10 @@ impl Vault {
         super::ask_settlement::settle_in(self, &mut txn, row.group, now)?;
         super::ask_facade::signal_waiters(self, &mut txn, row.group, now.saturating_mul(1000))?;
         txn.commit().map_err(crate::Error::from)?;
+        // This answer settles its ask's TASK outside the write door: a
+        // task-held inquiry answer of that TASK leaves memory here (FIX
+        // INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE).
+        self.evict_inquiry_answers_after_raw_commit();
         Ok(answer)
     }
 
@@ -449,7 +453,11 @@ impl Vault {
         txn.commit().map_err(crate::Error::from)?;
         // The marker committed first. A crash here is recovered by the peer
         // wait binding's ordinary reconcile pass, including void-before-wait.
-        crate::llm::send_peer_result_signal(self, group, self.store.clock.now_recorded_at())?;
+        crate::llm::send_peer_result_signal(
+            self,
+            group,
+            self.store.clock.now_recorded_at().saturating_mul(1000),
+        )?;
         Ok(())
     }
 }
@@ -563,7 +571,5 @@ pub(crate) fn deliver_ask_change_in_txn(
         .map(drop)
 }
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-OPTION-LINK-TESTS]: the lib test target's type check fails here (9 errors: E0277 x7, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,7 @@
 //! `oneiron hosted`: the hosted vaults this user signed in to here and the
 //! one selected, which `oneiron hook` binds at its step 3. The surface the
-//! owner signed in on runs these to export his selection.
+//! owner signed in on runs these to export his selection; a person with a
+//! terminal alone signs in with `hosted login --origin <url>`.
 
 use std::path::PathBuf;
 
@@ -12,12 +13,15 @@ use super::McpAuthMode;
 pub enum HostedCommand {
     /// Record a hosted vault signed in to here, by its origin, its vault id
     /// and the credential that reaches it, once the origin admits that
-    /// credential over `oneiron mcp`; then select it.
+    /// credential over `oneiron mcp`; then select it. With no credential
+    /// file, sign in there first, through the vault's own OAuth sign-in in a
+    /// browser, which the owner allows in his inbox.
     Login(HostedLoginArgs),
     /// Select one recorded hosted vault for `oneiron hook`, or none.
     Select(HostedSelectArgs),
     /// Forget one recorded hosted vault, or every one. Never deletes a
-    /// credential file.
+    /// credential file another surface wrote; an OAuth sign-in `login` made
+    /// is revoked at the vault and its file removed.
     Logout(HostedLogoutArgs),
     /// Print where the hosted selection stands, as one JSON line.
     Status,
@@ -25,7 +29,8 @@ pub enum HostedCommand {
 
 #[derive(Args, Clone, Debug)]
 pub struct HostedLoginArgs {
-    /// The hosted vault's origin, as `oneiron mcp --url` takes it.
+    /// The hosted vault's origin, as `oneiron mcp --url` takes it. An OAuth
+    /// sign-in takes https, or http to this machine alone.
     #[arg(long)]
     pub origin: String,
 
@@ -37,9 +42,12 @@ pub struct HostedLoginArgs {
 
     /// How a client authenticates there, as for `oneiron mcp`: `slip`, a
     /// paired credential from `--credential-file`; `owner`, the owner's
-    /// sign-in from `--owner-upgrade-headers-file`.
-    #[arg(long, value_enum, default_value_t = McpAuthMode::Slip)]
-    pub auth_mode: McpAuthMode,
+    /// sign-in from `--owner-upgrade-headers-file`; `oauth`, a sign-in this
+    /// command makes now through the vault's OAuth server, at the `read`
+    /// tier. Without it, the file given names the mode, and no file means
+    /// `oauth`.
+    #[arg(long, value_enum)]
+    pub auth_mode: Option<McpAuthMode>,
 
     /// Slip mode's paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it.
@@ -55,6 +63,42 @@ pub struct HostedLoginArgs {
     /// Seconds the origin may take to admit the credential.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
     pub timeout_secs: u64,
+
+    /// OAuth mode: seconds to wait for the browser to come back from the
+    /// sign-in, the owner's answer in his inbox included.
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..))]
+    pub sign_in_timeout_secs: u64,
+
+    /// Let `oneiron continue --cloud` move sessions to the vault recorded at
+    /// `--origin` in OAuth mode: a second sign-in, `full` at the vault's MCP
+    /// and git door, which the owner allows in his inbox ("continue this
+    /// session in your hosted vault") and which only `continue --cloud`
+    /// reads. It starts the same step-up itself when none stands. Its calls
+    /// still need his Grants, and a push his git_push Grant on the repo.
+    /// The recorded sign-in stays `read`.
+    #[arg(long, conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file"])]
+    pub push: bool,
+
+    /// Let this machine's session hooks land each session's log in the vault
+    /// recorded at `--origin` in OAuth mode as the session ends: a second
+    /// sign-in, `full` at the vault's MCP alone (never its git door), which
+    /// the owner allows in his inbox ("land this machine's coding sessions in
+    /// your hosted vault as each ends") and which only the hooks' hand-over
+    /// reads. Until it stands, session logs wait on this machine, and they
+    /// land at the next session end once it does. The import still needs his
+    /// Grant naming the verb. The recorded sign-in stays `read`.
+    #[arg(
+        long,
+        conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file", "push"]
+    )]
+    pub hand_over: bool,
+
+    /// With --hand-over: file the request without a browser. The owner's
+    /// inbox asks for it as usual, and this command polls his answer for up
+    /// to --sign-in-timeout-secs. The session hooks start this themselves
+    /// at the first session end that finds no hand-over sign-in.
+    #[arg(long, requires = "hand_over")]
+    pub unattended: bool,
 }
 
 #[derive(Args, Clone, Debug)]

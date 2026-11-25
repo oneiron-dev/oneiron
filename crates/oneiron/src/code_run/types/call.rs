@@ -55,8 +55,13 @@ pub enum SelfCall {
     Speak(SelfSpeechCall),
     /// Public first-party `self.think(text)` (ONE-1686, RT-04).
     Think(SelfSpeechCall),
+    /// The `self.think.aloud` run row (L8-25): a thought the run publishes.
+    ThinkAloud(SelfSpeechCall),
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
+    /// A plain `say(result)` (L8-25): the run's own `self.speak`, its words
+    /// one of its results, said as its typed-result bubble.
+    SayResult(SelfSayResultCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
     /// Reusable definition authoring, independent of launching a child.
     AgentsPut(Box<SelfAgentDefinitionPutCall>),
@@ -97,6 +102,10 @@ pub enum SelfCall {
     WorkflowDispatch(Box<crate::code_run::workflow_operations::WorkflowBoundDispatchRequest>),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
+    /// `vault.jobs.orders.wait({order, until?})`: one wait on a work order the
+    /// run's actor may read, until its first started attempt or its end. It
+    /// parks the run while the order has not reached it.
+    JobsOrdersWait(crate::work_order::WorkOrderWaitRequest),
     /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
     /// results, made by a host job on the run's route and memoised by its
     /// members' occurrences and recipe.
@@ -138,7 +147,9 @@ impl SelfCall {
             Self::Context(_) => SelfEffect::Context,
             Self::Speak(_) => SelfEffect::Speak,
             Self::Think(_) => SelfEffect::Think,
+            Self::ThinkAloud(_) => SelfEffect::ThinkAloud,
             Self::Express(_) => SelfEffect::Express,
+            Self::SayResult(_) => SelfEffect::Speak,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
             Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
@@ -150,6 +161,7 @@ impl SelfCall {
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
+            Self::JobsOrdersWait(_) => SelfEffect::JobsOrdersWait,
             Self::Summarize(_) => SelfEffect::Summarize,
             Self::Leader(SelfLeaderCall::Split { .. }) => SelfEffect::LeaderSplit,
             Self::Leader(_) => SelfEffect::Leader,
@@ -196,7 +208,9 @@ impl SelfCall {
         match self {
             Self::Speak(call) => Self::Speak(call.with_bridge_stamp(order, occurred_at)),
             Self::Think(call) => Self::Think(call.with_bridge_stamp(order, occurred_at)),
+            Self::ThinkAloud(call) => Self::ThinkAloud(call.with_bridge_stamp(order, occurred_at)),
             Self::Express(call) => Self::Express(call.with_bridge_stamp(order, occurred_at)),
+            Self::SayResult(call) => Self::SayResult(call.with_bridge_stamp(order, occurred_at)),
             Self::ReportBlocked(call) => Self::ReportBlocked(call.stamped(order, occurred_at)),
             other => other,
         }

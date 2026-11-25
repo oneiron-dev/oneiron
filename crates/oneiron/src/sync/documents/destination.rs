@@ -46,6 +46,14 @@ fn text_withheld_for(
     if crate::settings::device_only_withholds(&vault.store, txn, &flagged, &id)? {
         return Ok(true);
     }
+    // A row a use limit keeps for storage only, or one whose words came from
+    // such a row, sends no text and takes no edit, an own device's included:
+    // a frame queued before the limit is withheld at release (Engine ANSWER
+    // SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B; FIX
+    // EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS).
+    if vault.row_or_word_source_use_limited_in(txn, &id)? {
+        return Ok(true);
+    }
     if vault.get_entity_type_in_txn(txn, &id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
         && crate::note::text_withheld_by_worlds(vault, txn, id, &flagged)?
     {

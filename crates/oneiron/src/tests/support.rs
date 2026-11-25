@@ -685,6 +685,7 @@ pub(super) fn assert_raced_delete_artifacts(
             receipt_id: None,
             sweep_key: None,
             turn_program_details: Vec::new(),
+            version_release: false,
         },
         "a raced-to-nothing delete must report missing() with no receipt/sweep"
     );

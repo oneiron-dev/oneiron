@@ -129,7 +129,8 @@ fn write_owner_claim(vault: &Vault, owner: EntityId, owner_proof: &Authenticated
                 scope_facet_id: vault.default_facet().expect("owner default facet").to_hex(),
                 scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
                 scope_project_id: default_project_id().to_hex(),
-            },
+            }
+            .into(),
             sensitivity: None,
             evidence_turn_refs: Vec::new(),
             valid_from: None,
@@ -399,6 +400,7 @@ fn backfill_does_not_restore_a_previously_revoked_grant() {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints yuki a base-world read Grant")

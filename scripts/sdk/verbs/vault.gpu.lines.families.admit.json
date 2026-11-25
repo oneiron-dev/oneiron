@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.lines.families.admit",
+  "description": "Seats one child project of a lane on its GPU line as a demand, interest or new-idea family. A lead seats within the line's caps for demand and pinned seats; a lead or planner seats a new idea; past a cap it is the owner's own act.",
+  "input": "crate::gpu_line::GpuLineFamilyAdmitRequest",
+  "output": "crate::gpu_line::GpuLineView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.families.admit\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

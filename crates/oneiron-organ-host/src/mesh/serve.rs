@@ -33,6 +33,12 @@ use crate::spec::{LentInput, OrganCall, OrganInput};
 /// decoded, each staged input leases under the call's own deadline instead.
 /// A wait that finds no room refuses the call, as an input's does.
 const STAGED_CALL_PROVISIONAL_WAIT: Duration = Duration::from_secs(5);
+/// How long a stream waits, after its reply is queued, for the asking node
+/// to acknowledge it, before the stream ends.
+const REPLY_DELIVERY_WAIT: Duration = Duration::from_secs(5);
+/// Under a mesh stop, how long a connection with no request in flight stays
+/// open for the asking node to take its replies and close it.
+const REPLY_PICKUP_WAIT: Duration = Duration::from_secs(5);
 
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
 /// node's host. The transport has already admitted the peer (its MACHINE
@@ -170,25 +176,43 @@ impl OrganService {
         self
     }
 
-    /// Serves one admitted connection until it closes, or until the stop
-    /// cancels its work. Each stream the peer opens is one request, a task
-    /// of the connection's own set; a call's asks go back on streams this
-    /// side opens. Every request it took is awaited before it returns, its
-    /// call's thread included. A connection on another ALPN is closed at
-    /// once.
+    /// Serves one admitted connection until it closes. Each stream the peer
+    /// opens is one request, a task of the connection's own set; a call's
+    /// asks go back on streams this side opens. Once the stop cancels its
+    /// work, the connection stays open for the asking node to take the
+    /// replies of the calls the cancel cut short: it still serves `Get` (a
+    /// staged reply is taken in pieces on new streams) and refuses a new
+    /// call, until the asking node closes it or no request was in flight for
+    /// `REPLY_PICKUP_WAIT`; the stop's own wait bounds it either way
+    /// (round-2 blind-review P1s on #10402: a close that came with the reply
+    /// could win the asking node's wait over it, and a staged reply could
+    /// not be taken at all). Every request it took is awaited before it
+    /// returns, its call's thread included. A connection on another ALPN is
+    /// closed at once.
     pub async fn serve_connection(&self, conn: Box<dyn MeshConnection>) {
         if conn.alpn() != ORGAN_ALPN {
             conn.close();
             return;
         }
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
+        // Open until the connection closes below: a mesh stop closes its
+        // endpoint only once every served connection closed, bounded.
+        let _served = self.cancel.serving();
         let staging = Arc::new(self.staging());
         let mut streams = JoinSet::new();
+        let mut stopping = false;
         loop {
+            // The pickup wait starts again whenever the last request in
+            // flight ends.
+            let idle = stopping && streams.is_empty();
             let stream = tokio::select! {
                 biased;
-                () = self.cancel.cancelled() => break,
+                () = self.cancel.cancelled(), if !stopping => {
+                    stopping = true;
+                    continue;
+                }
                 Some(_) = streams.join_next(), if !streams.is_empty() => continue,
+                () = tokio::time::sleep(REPLY_PICKUP_WAIT), if idle => break,
                 accepted = conn.accept_stream() => match accepted {
                     Ok(stream) => stream,
                     Err(_) => break,
@@ -305,7 +329,17 @@ impl OrganService {
             }
         };
         let message = track_bytes(encode(&reply.value)?, self.host.floor().as_ref());
-        stream.send(&message.value).await
+        stream.send(&message.value).await?;
+        // The reply is queued, not yet received. Under a stop the
+        // connection's pickup wait starts once its last stream ends, and a
+        // close that overtakes a queued reply drops it: a call the stop cut
+        // short would reach the asking node as a broken connection, without
+        // this node's word that the stop cut it (blind-review P1 on #10402).
+        // So the stream ends once the asking node acknowledged the reply, or
+        // the wait runs out; a reply that never reached it leaves it to
+        // retry or try another node.
+        drop(tokio::time::timeout(REPLY_DELIVERY_WAIT, stream.delivered()).await);
+        Ok(())
     }
 
     async fn call(
@@ -396,6 +430,7 @@ impl OrganService {
         };
         let cancel = self.cancel.clone();
         let answers = peer.answers;
+        let call_nonce = peer.call_nonce;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
             let _input_lease = input_lease;
             let fetch = GuardedFetch;
@@ -415,15 +450,30 @@ impl OrganService {
                 };
                 handlers = handlers.with(verb, handler);
             }
-            let outcome = host.call_for_peer(&vault, call, inputs, &handlers, &cancel);
+            // The receipt is final once the call returns: its output lines
+            // are the host's own hashes, which the staging below carries
+            // unchanged. This machine signs it, with the asking node's nonce
+            // for this call and the report beside it, as its word to the
+            // asking node (Engine ruling ORGAN-MESH-RECEIPT-SIGNATURE).
+            let outcome = host
+                .call_for_peer(&vault, call, inputs, &handlers, &cancel)
+                .map(|mut outcome| {
+                    let signed = outcome.receipt.sign(&*vault, &call_nonce, &outcome.report);
+                    (outcome, signed)
+                });
             (outcome, handlers.asked())
         })
         .await
         .map_err(|err| format!("the call's thread: {err}"))?;
         drop(held);
         Ok(match outcome {
-            Ok(outcome) => offered(outcome, staging, self.host.floor().as_ref())
+            Ok((outcome, Ok(()))) => offered(outcome, staging, self.host.floor().as_ref())
                 .unwrap_or_else(|detail| CallReply::failed(detail, asked)),
+            // Never an unsigned outcome: the asking node would refuse it.
+            Ok((_, Err(why))) => CallReply::failed(
+                format!("this node could not sign its receipt: {why}"),
+                asked,
+            ),
             Err(err) => CallReply {
                 result: PeerResult::Failed(failure(err, asked)),
                 _outputs: Vec::new(),
@@ -574,9 +624,14 @@ struct Forward {
 }
 
 impl Forward {
-    async fn ask(&self, peer: &PeerAsk) -> Result<PeerAnswer, MeshError> {
+    /// Sends an encoded ask back to the asking node and reads what it
+    /// answered. Neither rides as one message past the inline bound (FIX
+    /// 8023): an ask that large is offered from this connection's staging,
+    /// for the asking node to get in pieces, and its answer comes back as
+    /// bytes it staged here, taken once this machine holds their memory.
+    async fn ask(&self, ask: &Carried) -> Result<Carried, MeshError> {
         let mut stream = self.conn.open_stream().await?;
-        stream.send(&encode(peer)?).await?;
+        stream.send(&encode(ask)?).await?;
         decode(&stream.recv().await?)
     }
 }
@@ -596,18 +651,33 @@ impl AskHandler for Forward {
             max_bytes: ask.max_bytes,
         };
         let failed = |detail: String| AskRefusal::new(AskCode::Failed, detail).retryable();
+        let offered = encode(&peer)
+            .map_err(|err| err.to_string())
+            .and_then(|bytes| self.staging.offer(&bytes))
+            .map_err(|detail| failed(format!("the ask: {detail}")))?;
         let asked = async {
             tokio::select! {
-                answered = tokio::time::timeout(remaining, self.ask(&peer)) => Some(answered),
+                answered = tokio::time::timeout(remaining, self.ask(&offered)) => Some(answered),
                 () = self.cancel.cancelled() => None,
             }
         };
-        let answer = match self.runtime.block_on(asked) {
-            Some(Ok(Ok(answer))) => answer,
+        let carried = match self.runtime.block_on(asked) {
+            Some(Ok(Ok(carried))) => carried,
             Some(Ok(Err(err))) => return Err(failed(format!("the asking node: {err}"))),
             Some(Err(_)) => return Err(failed("the asking node did not answer in time".into())),
             None => return Err(failed("this node is stopping".into())),
         };
+        // An answer past the inline bound was staged here: this machine's
+        // memory holds it before it is read back and decoded (FIX 8023).
+        let _envelope = self
+            .service
+            .hold_taken(&carried, ask.deadline)
+            .map_err(failed)?;
+        let answer: PeerAnswer = self
+            .staging
+            .take(&carried)
+            .and_then(|bytes| decode(&bytes).map_err(|err| err.to_string()))
+            .map_err(|detail| failed(format!("the asking node: {detail}")))?;
         if let Some(signed) = answer.signed {
             ask.record_signing(signed);
         }

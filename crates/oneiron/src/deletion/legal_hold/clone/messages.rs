@@ -5,25 +5,33 @@
 //! its earlier stored rows) follow it, copied as stored, then the result body
 //! its result attachment names, when the message still holds it.
 //! Nothing here writes live-vault state or follows another reference: an
-//! asset or a model-call record is not part of this extent.
+//! asset or a model-call record is not part of this extent. An owner's hold
+//! copies stored records of any type through the same rows
+//! (`RowKind::Records`), with what an erase would take beside them: a NOTE's
+//! text plane, which NOTE storage keeps under no entity document head, and a
+//! file-plane ASSET's body file (review P1s on #8423).
 
 use std::io::{self, Read};
 use std::ops::Bound;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 use heed::RoTxn;
+#[cfg(unix)]
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::legal_clone::SourceComponent;
-use oneiron_vault_contract::host_legal::{CaptureExtent, CaptureRequest, CaptureSource};
+use oneiron_vault_contract::host_legal::CaptureSource;
+#[cfg(unix)]
+use oneiron_vault_contract::host_legal::{CaptureExtent, CaptureRequest};
 
-use super::collector::{Collector, SummaryCounts};
+use super::collector::{CaptureSink, Collector, SummaryCounts};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::MessageResultAttachment;
 use crate::ports::{DocumentSlot, DocumentUpdateKey};
-use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::store::owned_body::OwnedBody;
@@ -70,12 +78,29 @@ const REVISION_IDENTITIES: SideTable<[u8; 16], Vec<u8>, Raw> =
 /// The family label a held result body's stored key is digested under.
 pub(super) const RESULT_BODY_FAMILY: &str = "code_run:raw_output";
 
-/// One exact stored row of a selected message.
-struct MessageRow {
+/// The family label a held ASSET body file's source key, the ASSET's entity
+/// key, is digested under.
+const ASSET_BODY_FAMILY: &str = "asset:body_file";
+
+/// One exact stored row of a selected record.
+struct RecordRow {
     component: SourceComponent,
     family: &'static str,
     key: Vec<u8>,
     value: Vec<u8>,
+}
+
+/// Which stored rows a capture streams for its selected ids.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RowKind {
+    /// Stored MESSAGE rows only, as a host order names them.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "the host door that names it is Unix-only")
+    )]
+    Messages,
+    /// Stored records of any type, as an owner's hold names them.
+    Records,
 }
 
 /// Streams every selected message, in id order, under one source snapshot:
@@ -88,6 +113,7 @@ struct MessageRow {
 /// before its summary, so no ACK can claim it. A message whose attachment
 /// names a body it no longer holds, or that no row holds, is captured
 /// without it and named in the summary's absent list.
+#[cfg(unix)]
 pub(super) fn capture(
     stream: &mut UnixStream,
     vault: &Vault,
@@ -103,11 +129,35 @@ pub(super) fn capture(
     let txn = vault.store.env.read_txn()?;
     check()?;
     let mut collector = Collector::pinned(stream, public, request)?;
+    let counts = capture_rows_in_txn(&mut collector, vault, &txn, ids, RowKind::Messages, &check)?;
+    check()?;
+    collector.finish_counted(counts, CaptureExtent::Messages, &check)?;
+    // The snapshot ends after the exact durable HOST acknowledgement.
+    drop(txn);
+    Ok(())
+}
+
+/// Streams every selected id, in order, through `collector`: each record's
+/// stored rows, then the result body a MESSAGE still holds. The caller holds
+/// the snapshot the rows are read under: the host door its pinned one, an
+/// owner's hold its writer's own view. Nothing is followed beyond the order:
+/// no edge, reference or child. A missing id fails the capture before its
+/// summary. A message whose attachment names a body it no longer holds, or
+/// that no row holds, is captured without it and named in the returned
+/// absent list.
+pub(super) fn capture_rows_in_txn<S: CaptureSink>(
+    collector: &mut Collector<'_, S>,
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    ids: &[[u8; 16]],
+    kind: RowKind,
+    check: impl Fn() -> Result<()>,
+) -> Result<SummaryCounts> {
     let mut absent_result_bodies = Vec::new();
     for id in ids {
         check()?;
-        let rows = message_rows(vault, &txn, id)?;
-        // Every component of one message carries the revision of its row.
+        let rows = record_rows(vault, txn, id, kind)?;
+        // Every component of one record carries the revision of its row.
         let revision = *blake3::hash(&rows[0].value).as_bytes();
         for row in &rows {
             let fingerprint = *blake3::hash(&row.value).as_bytes();
@@ -123,7 +173,24 @@ pub(super) fn capture(
                 &check,
             )?;
         }
-        let output = match result_body(vault, &txn, id, &rows[0].value)? {
+        if kind == RowKind::Records {
+            asset_body_file(collector, vault, txn, id, &rows[0].value, revision, &check)?;
+        }
+        // Only a MESSAGE carries a result body: every id of a host capture,
+        // and the MESSAGE rows of an owner capture.
+        let carries_body = match kind {
+            RowKind::Messages => true,
+            RowKind::Records => {
+                EntityMetadataHeader::parse(&rows[0].value).map(|header| header.entity_type)
+                    == Some(ENTITY_TYPE_MESSAGE)
+            }
+        };
+        let named = if carries_body {
+            result_body(vault, txn, id, &rows[0].value)?
+        } else {
+            None
+        };
+        let output = match named {
             None => continue,
             Some(ResultBody::Released) => {
                 absent_result_bodies.push(*id);
@@ -136,7 +203,7 @@ pub(super) fn capture(
             len,
             digest,
             _pin,
-        }) = vault.code_run_result_body_reader_in_txn(&txn, &output)?
+        }) = vault.code_run_result_body_reader_in_txn(txn, &output)?
         else {
             absent_result_bodies.push(*id);
             continue;
@@ -162,36 +229,76 @@ pub(super) fn capture(
             &check,
         )?;
     }
-    check()?;
-    collector.finish_counted(
-        SummaryCounts {
-            messages: ids.len() as u64,
-            absent_result_bodies,
-            ..SummaryCounts::default()
-        },
-        CaptureExtent::Messages,
-        &check,
-    )?;
-    // The snapshot ends after the exact durable HOST acknowledgement.
-    drop(txn);
-    Ok(())
+    Ok(SummaryCounts {
+        messages: ids.len() as u64,
+        absent_result_bodies,
+        ..SummaryCounts::default()
+    })
 }
 
-/// The exact stored rows of message `id`: its entity row first, then its
-/// document head and that slot's rows and updates, then its outgoing edges,
-/// then its revision ledger.
-fn message_rows(vault: &Vault, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<Vec<MessageRow>> {
+/// Streams the body file of a file-plane ASSET whose stored row is `row`,
+/// under the snapshot that found the row: an erase releases that file, and
+/// the row keeps only its manifest (review P1 on #8423). The file is pinned
+/// while it streams, and checked against the manifest's length and BLAKE3 as
+/// its end is read, so a capture of other bytes fails before its summary. Any
+/// other record, an inline ASSET's included, has no body file.
+fn asset_body_file<S: CaptureSink>(
+    collector: &mut Collector<'_, S>,
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &[u8; 16],
+    row: &[u8],
+    revision: [u8; 32],
+    check: impl Fn() -> Result<()>,
+) -> Result<()> {
+    if EntityMetadataHeader::parse(row).map(|header| header.entity_type) != Some(ENTITY_TYPE_ASSET)
+    {
+        return Ok(());
+    }
+    let entity = EntityId::from_bytes(*id)?;
+    let Some(manifest) = crate::store::asset_file_of_raw_in_txn(&vault.store, txn, &entity, row)?
+    else {
+        return Ok(());
+    };
+    let _pin = vault.pin_result_body(manifest.facts.blake3);
+    let mut body = vault.admitted_asset_file_in_txn(txn, &manifest)?;
+    collector.component(
+        SourceComponent::AssetBodyFile,
+        CaptureSource::Message(*id),
+        ASSET_BODY_FAMILY,
+        &id[..],
+        revision,
+        manifest.facts.len,
+        manifest.facts.blake3,
+        &mut body,
+        &check,
+    )?;
+    body.finish()
+}
+
+/// The exact stored rows of record `id`: its entity row first, then its
+/// document head and that slot's rows and updates (a NOTE's: its text
+/// plane's head rows, then each of its head documents' rows), then its
+/// outgoing edges, then its revision ledger. A host capture takes MESSAGE
+/// rows only; an owner's hold takes a stored record of any type.
+fn record_rows(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &[u8; 16],
+    kind: RowKind,
+) -> Result<Vec<RecordRow>> {
     let store = &vault.store;
     let Some(value) = store.entities().get(txn, &id[..])? else {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "legal capture selected message unavailable",
-        )
-        .into());
+        let what = match kind {
+            RowKind::Messages => "legal capture selected message unavailable",
+            RowKind::Records => "legal capture selected record unavailable",
+        };
+        return Err(io::Error::new(io::ErrorKind::NotFound, what).into());
     };
     let value = value.to_vec();
-    if EntityMetadataHeader::parse(&value).map(|header| header.entity_type)
-        != Some(ENTITY_TYPE_MESSAGE)
+    if kind == RowKind::Messages
+        && EntityMetadataHeader::parse(&value).map(|header| header.entity_type)
+            != Some(ENTITY_TYPE_MESSAGE)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -199,45 +306,48 @@ fn message_rows(vault: &Vault, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<Vec<Mes
         )
         .into());
     }
-    let mut rows = vec![MessageRow {
+    let mut rows = vec![RecordRow {
         component: SourceComponent::MessageRow,
         family: "entities",
         key: id.to_vec(),
         value,
     }];
     let entity = EntityId::from_bytes(*id)?;
+    let mut slots = Vec::new();
     if let Some((key, value, slot)) =
         crate::entity_doc::record_head_row_in_txn(store, txn, &entity)?
     {
-        rows.push(MessageRow {
+        rows.push(RecordRow {
             component: SourceComponent::MessageDocument,
             family: "entity_doc:head",
             key,
             value,
         });
-        for (family, table) in SLOT_ROWS {
-            if let Some(value) = table.get_bytes(store, txn, &slot)? {
-                rows.push(MessageRow {
-                    component: SourceComponent::MessageDocument,
-                    family,
-                    key: table.key_bytes(&slot),
-                    value,
-                });
-            }
-        }
-        let mut prefix = slot.to_hex().into_bytes();
-        prefix.push(b':');
-        for row in UPDATES.iter_raw_from(store, txn, &prefix)? {
-            let (suffix, value) = row?;
-            let mut key = UPDATES.decl().prefix.to_vec();
-            key.extend_from_slice(&suffix);
-            rows.push(MessageRow {
+        slots.push(slot);
+    }
+    // A NOTE keeps its text in its head's document through NOTE storage,
+    // which no entity document head names (review P1 on #8423).
+    if EntityMetadataHeader::parse(&rows[0].value).map(|header| header.entity_type)
+        == Some(ENTITY_TYPE_NOTE)
+    {
+        let (plane, heads) = crate::note::documents::text_plane_rows_in_txn(store, txn, entity)?;
+        for (family, key, value) in plane {
+            rows.push(RecordRow {
                 component: SourceComponent::MessageDocument,
-                family: "document:update",
+                family,
                 key,
                 value,
             });
         }
+        for head in heads {
+            let slot = DocumentSlot::of(head);
+            if !slots.contains(&slot) {
+                slots.push(slot);
+            }
+        }
+    }
+    for slot in &slots {
+        slot_rows(store, txn, slot, &mut rows)?;
     }
     let edges = store
         .edges_out()
@@ -247,7 +357,7 @@ fn message_rows(vault: &Vault, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<Vec<Mes
         if !key.starts_with(&id[..]) {
             break;
         }
-        rows.push(MessageRow {
+        rows.push(RecordRow {
             component: SourceComponent::MessageEdge,
             family: "edges_out",
             key: key.to_vec(),
@@ -256,6 +366,40 @@ fn message_rows(vault: &Vault, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<Vec<Mes
     }
     revision_rows(store, txn, id, &entity, &mut rows)?;
     Ok(rows)
+}
+
+/// Document slot `slot`'s rows, as stored: each single-row family it holds,
+/// then its updates in key order.
+fn slot_rows(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    slot: &DocumentSlot,
+    rows: &mut Vec<RecordRow>,
+) -> Result<()> {
+    for (family, table) in SLOT_ROWS {
+        if let Some(value) = table.get_bytes(store, txn, slot)? {
+            rows.push(RecordRow {
+                component: SourceComponent::MessageDocument,
+                family,
+                key: table.key_bytes(slot),
+                value,
+            });
+        }
+    }
+    let mut prefix = slot.to_hex().into_bytes();
+    prefix.push(b':');
+    for row in UPDATES.iter_raw_from(store, txn, &prefix)? {
+        let (suffix, value) = row?;
+        let mut key = UPDATES.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        rows.push(RecordRow {
+            component: SourceComponent::MessageDocument,
+            family: "document:update",
+            key,
+            value,
+        });
+    }
+    Ok(())
 }
 
 /// Message `id`'s revision ledger rows, as stored: the history document that
@@ -269,10 +413,10 @@ fn revision_rows(
     txn: &RoTxn<'_>,
     id: &[u8; 16],
     entity: &EntityId,
-    rows: &mut Vec<MessageRow>,
+    rows: &mut Vec<RecordRow>,
 ) -> Result<()> {
     if let Some(value) = REVISION_DOC.get_bytes(store, txn, entity)? {
-        rows.push(MessageRow {
+        rows.push(RecordRow {
             component: SourceComponent::MessageRevision,
             family: "entity_revision:doc",
             key: REVISION_DOC.key_bytes(entity),
@@ -280,7 +424,7 @@ fn revision_rows(
         });
     }
     if let Some(value) = REVISION_STATE.get_bytes(store, txn, entity)? {
-        rows.push(MessageRow {
+        rows.push(RecordRow {
             component: SourceComponent::MessageRevision,
             family: "entity_revision:state",
             key: REVISION_STATE.key_bytes(entity),
@@ -301,7 +445,7 @@ fn revision_rows(
             })?;
         let mut key = REVISION_FRONTIERS.decl().prefix.to_vec();
         key.extend_from_slice(&suffix);
-        rows.push(MessageRow {
+        rows.push(RecordRow {
             component: SourceComponent::MessageRevision,
             family: "entity_revision:frontier",
             key,
@@ -317,7 +461,7 @@ fn revision_rows(
         if value.as_slice() != id.as_slice() {
             continue;
         }
-        rows.push(MessageRow {
+        rows.push(RecordRow {
             component: SourceComponent::MessageRevision,
             family: "entity_revision:identity",
             key: REVISION_IDENTITIES.key_bytes(&revision),

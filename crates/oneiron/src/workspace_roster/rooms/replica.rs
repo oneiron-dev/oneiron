@@ -16,6 +16,7 @@ use super::offers::{
 use super::*;
 use crate::workspace_roster::{JoinDecision, JoinReceipt, JoinSubject};
 
+mod claim_merge;
 mod shared;
 use self::shared::{fact_order, merge_shared_in_txn};
 pub(crate) use self::shared::{
@@ -556,8 +557,11 @@ fn side_refusal_in(
 
 /// Merges a side row another machine of this vault carried (FIX 1794). A
 /// host pin or handle is the window's cell, whose latest carrier write by
-/// Loro order the window chose, and is written as carried. A claim is
-/// written once: the lowest `(at, receipt_ref)` stands. A participation fact
+/// Loro order the window chose, and is written as carried. Of two claims of
+/// one turn, the one whose holder spoke the turn's held answer stands (an
+/// answer seals its claim), then the higher generation (a takeover replaces
+/// the claim it took over), then the lower `(at, receipt_ref)`. A
+/// participation fact
 /// is appended once under its key: a divergent payload keeps the earlier
 /// `(at, cause)`. A response is settled with its rivals by
 /// [`merge_replicated_responses_in_txn`], and a join or offer card merged by
@@ -607,50 +611,7 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             HANDLES.put(store, txn, &key, actor)?;
         }
         RoomSideRow::Claim { claim } => {
-            // FIX 4870: the carried claim names no one here for an actor
-            // this vault erased, as a carried turn's actor does (FIX 6543).
-            let mut carried = claim.clone();
-            if let Ok(actor) = EntityId::from_hex(&carried.actor)
-                && vault.carrier_actor_erased_in_txn(txn, &actor)?
-            {
-                carried.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
-            }
-            let claim = &carried;
-            let turn = EntityId::from_hex(&claim.turn_id)?;
-            if TURNS
-                .get_lenient(store, txn, &turn)?
-                .is_some_and(|held| held.room_id != claim.room_id)
-            {
-                return Ok(SideMerge::Refused(TurnMergeRefusal::FixedFieldsConflict));
-            }
-            if let Some(held) = CLAIMS.get_lenient(store, txn, &turn)? {
-                if held == *claim {
-                    return Ok(SideMerge::Held);
-                }
-                // REVIEW-4366 round 4: the same receipt's two actor
-                // forms meet here; the erased form wins where the copies
-                // meet, as a carried turn's actor does, whether or not
-                // this vault holds the actor's marker.
-                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref)
-                    && let Some(actor) = crate::deletion::carrier_actor_merged(
-                        held.actor.as_str(),
-                        claim.actor.as_str(),
-                        crate::receipt::ERASED_CALL_IDENTITY,
-                    )
-                    .map(str::to_owned)
-                    && actor != held.actor
-                {
-                    let mut merged = held.clone();
-                    merged.actor = actor;
-                    CLAIMS.put(store, txn, &turn, &merged)?;
-                    return Ok(SideMerge::Written);
-                }
-                if (held.at, &held.receipt_ref) > (claim.at, &claim.receipt_ref) {
-                    CLAIMS.put(store, txn, &turn, claim)?;
-                }
-                return Ok(SideMerge::Conflict);
-            }
-            CLAIMS.put(store, txn, &turn, claim)?;
+            return claim_merge::merge_carried_claim_in_txn(vault, txn, claim);
         }
         RoomSideRow::Participation {
             room,

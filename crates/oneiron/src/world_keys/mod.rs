@@ -16,18 +16,22 @@
 //! replicates is public keys and sealed envelopes (`oneiron-crypto`, purpose
 //! `WorldDek`). An unwrapped key or a seed never replicates.
 
+mod appoint_owner_root;
 mod bundle;
 mod content;
 #[cfg(feature = "sync")]
 mod content_landed;
 #[cfg(feature = "sync")]
 mod content_window;
+mod device_pin;
 mod doors;
 #[cfg(feature = "sync")]
 pub(crate) mod forward_version;
 mod kit;
 mod kit_piece;
 mod machine;
+mod owner_presence;
+pub(crate) mod owner_presence_reasons;
 mod owner_signing;
 mod owner_work;
 mod pad_custody;
@@ -50,8 +54,6 @@ mod vault_key;
 mod wrap;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-WORLD-KEYS-TESTS]: the lib test target's type check fails here (25 errors: E0061 x24, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -75,6 +77,9 @@ pub(crate) use self::content::purge_world_mirrors_in_txn;
 pub(crate) use self::content_landed::unland_window_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::content_window::{any_mirror_in, rewrite_mirrors_in_txn};
+pub use self::device_pin::{
+    DEVICE_PIN_MIN_CHARS, DEVICE_PIN_SHORT_MIN_CHARS, DevicePin, DevicePinTier, OwnerKeyRest,
+};
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{
@@ -83,7 +88,9 @@ pub use self::kit::{
 };
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
+pub use self::owner_presence::{OwnerActImportance, OwnerPresenceBasis, OwnerPresenceWitness};
 pub use self::owner_signing::OwnerRootSigner;
+pub(crate) use self::owner_signing::{FreshOwnerKey, OwnerSigningSlot, SlotRenewal};
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
@@ -124,8 +131,7 @@ pub use self::pads::PromotedWorldPad;
 pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub(crate) use self::pads::{
     ERASED_WORLD_BACKUP_KEEP_DAYS, destroy_world_keys_in_txn, held_pad_world_in_txn,
-    is_erasable_world_in_txn, late_pad_in_txn, legal_hold_pad_world_in_txn,
-    note_world_deleted_in_txn, pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
+    is_erasable_world_in_txn, late_pad_in_txn, pad_body_world, pad_world_in_body,
     reject_held_pad_world_in_txn, world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn,
     world_pad_windows_in_txn,
 };
@@ -142,11 +148,12 @@ pub use self::page_seal::{
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{
-    RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin,
+    RecoveryAuthoritySeed, RecoveryAuthoritySigner, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
+    SeedOrigin,
 };
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
-pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
+pub use self::root_work::{ListedRootRequest, RootMaterial, RootSecret, RootWorkDone};
 pub(crate) use self::sealed_update::{
     OpenedWorldUpdate, SEALED_UPDATE_PART_BYTES, SealedUpdateKind, open_world_update,
     seal_world_message,
@@ -159,10 +166,14 @@ pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
-    EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey, NewVaultKeyWrap, RecoveryPreset,
-    RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
-    VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind,
-    escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
+    DataKeyGenerationKeptWays, DataKeyGenerationOutcome, DataKeyGenerationProposal,
+    DataKeyGenerationWays, EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey,
+    NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL, NewVaultKeyWrap, NoRecoveryBox,
+    RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryBoxKitOnlyFact,
+    RecoveryBoxRelease, RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange,
+    RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock,
+    VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

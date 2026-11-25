@@ -1,7 +1,7 @@
 //! The setting keys `maintain` declares (restriction wave 17): the crate's build script lists
 //! each row in the setting catalogue.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// How many held facet-stamp receipts a maintenance report names unless the owner sets it.
 const DEFAULT_FACET_RECEIPTS_SHOWN: u32 = 100;
@@ -14,7 +14,7 @@ crate::setting::setting_keys! {
     /// How many held facet-stamp receipts a maintenance report names: 100 unless the owner sets
     /// it; 0 names none. The total beside them is always counted whole.
     pub(crate) REPORT_FACET_RECEIPTS_SHOWN: u32 = "maintain.report.facet_receipts_shown" {
-        kind: Kind::new(default_facet_receipts_shown).tighter(lower_is_tighter),
+        kind: Kind::new(default_facet_receipts_shown).lower(),
     };
 }
 

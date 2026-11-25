@@ -48,12 +48,12 @@ enum HolderAuthority {
 }
 
 impl HolderAuthority {
-    /// The owner proof the word is admitted under, as a direct `tasks.answer`
-    /// carries it: the owner's, and none for anyone else.
-    fn owner(&self) -> Option<&AuthenticatedOwner> {
+    /// The proof the word is admitted under, as a direct `tasks.answer`
+    /// carries it: the owner's at the owner tier, anyone else's own at the
+    /// person tier (UC-05).
+    const fn proof(&self) -> &AuthenticatedOwner {
         match self {
-            Self::Owner(owner) => Some(owner),
-            Self::Person(_) => None,
+            Self::Owner(proof) | Self::Person(proof) => proof,
         }
     }
 
@@ -95,7 +95,7 @@ pub(super) fn consume_intent(vault: &Vault, id: EntityId) -> Result<Standing> {
                 && let Err(error) = crate::llm::send_peer_result_signal(
                     vault,
                     intent.group,
-                    vault.store.clock.now_recorded_at(),
+                    vault.store.clock.now_recorded_at().saturating_mul(1000),
                 )
             {
                 tracing::warn!(%error, "a relayed ask word's peer-result signal was not sent");
@@ -287,7 +287,7 @@ fn act_in_txn(
     }
     let outcome = match &intent.act {
         AskForwardAct::Word(word) => {
-            let owner = authority.owner();
+            let owner = Some(authority.proof());
             let answer = ask_record::admit_word(
                 vault,
                 txn,

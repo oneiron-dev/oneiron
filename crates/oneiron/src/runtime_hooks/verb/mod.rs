@@ -41,10 +41,12 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
 pub(super) use ask::scrub_erased_asks_in_txn;
+pub(crate) use ask::word_release::verb_ask_word_releases_in;
 pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
 pub(super) use chain::admit_verb_outcome;
 pub(super) use chain::projection::merge_withheld;
+pub(crate) use chain::view::TextView;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
@@ -53,6 +55,7 @@ pub use credential::{
 };
 pub(crate) use held_member::hold_member;
 pub use held_member::with_held_member;
+pub(crate) use paced::PACED_VERB_LINE_JOB;
 pub(super) use paced::scrub_erased_paced_in_txn;
 pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{
@@ -296,6 +299,21 @@ impl Vault {
         ask::saved_producers(self, invocation)
     }
 
+    /// The args a hook's ask saved under `call`'s invocation in `storage`,
+    /// when the saved call is `call`'s own, for its host to rebuild its retry
+    /// from (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT; [`ask::saved_args`]).
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub(crate) fn verb_hook_saved_args(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: &VerbCall,
+    ) -> Result<Option<Value>> {
+        ask::saved_args(self, storage, call)
+    }
+
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
     /// priority order, each outcome validated. `Err(stop)` when a hook
     /// skipped or asked, or a blocking one failed safe. At hook depth 1 it
@@ -430,6 +448,22 @@ impl Vault {
         chain::post(self, VerbHookStorage::Canonical, pre, result)
     }
 
+    /// [`Self::post_verb_hooks`] over a skill answer's view held as JSON
+    /// text, never read into a value (SKILL-ANSWER-DEEP-JSON-STACK-SAFE):
+    /// each hook's input carries the text verbatim, and a Redact narrows the
+    /// text itself.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::post_verb_hooks`].
+    pub(crate) fn post_verb_hooks_text(
+        &self,
+        pre: VerbHookPre,
+        view: TextView,
+    ) -> Result<std::result::Result<TextView, VerbHookStop>> {
+        chain::post(self, VerbHookStorage::Canonical, pre, view)
+    }
+
     /// The pre chain, the verb and the post chain for one call. `run` gets
     /// the args after every Rewrite; an error from it skips the post chain.
     /// A call its settled ask already ran answers what it returned.
@@ -490,3 +524,35 @@ impl Vault {
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::record::hooks_verb_run_accepts_masked;
+
+// Door seams for `test_doors::typed_reply_handle`: one Redact applied to a
+// value view and to the same view held as JSON text
+// ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn redact_value_for_test(view: &mut Value, paths: &[String]) {
+    for path in paths {
+        redact::hide(view, path);
+    }
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn redact_text_for_test(text: &str, paths: &[String]) -> Result<Option<String>> {
+    redact::hide_in_text(text, paths)
+}
+
+// Door seam for `test_doors::typed_reply_handle`: the rows a verb run's saved
+// input names for erase ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn rows_named_by_input_for_test(input: &str) -> Vec<EntityId> {
+    super::store::rows_named_by_call(input, None)
+}
+
+// Door seam for `test_doors::typed_reply_handle`: what an erase does to a
+// verb run's saved input that does not decode (REVIEW-9897 round 2).
+#[cfg(oneiron_test_support)]
+pub(crate) fn erase_deep_input_for_test(
+    input: &str,
+    ids: &[EntityId],
+) -> (&'static str, Option<String>) {
+    super::store::erase_deep_input_for_test(input, ids)
+}

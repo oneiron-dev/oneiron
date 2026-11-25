@@ -98,6 +98,7 @@ impl Vault {
             person_credential: None,
             request_credential: None,
             host_action: None,
+            owner_key: None,
         })
     }
 
@@ -130,9 +131,116 @@ impl Vault {
             person_credential: None,
             request_credential: None,
             host_action: Some(Box::new(action.guard().clone())),
+            owner_key: None,
         };
         self.recheck_owner(&owner)?;
         Ok(owner)
+    }
+
+    /// Produces an [`AuthenticatedOwner`] for one ask word `actor` gives in
+    /// person on this install, proved by the owner key this install holds
+    /// (UC-05 PR 2b; Engine RULING UC05-2B-PRESENCE = A). The key
+    /// [`Vault::owner_proof_signer`] picks, the one the authority fold trusts
+    /// as the owner's, signs a fresh transcript in
+    /// [`crate::authority::ASK_WORD_PROOF_DOMAIN`], and the signature must
+    /// verify under that key. The proof then carries the key, so every
+    /// revalidation also requires the fold to still trust it, and `actor`
+    /// to be a live owner of this vault.
+    ///
+    /// This is the one call that mints an owner key's proof for an ask word.
+    /// The key signs on `ground` (row OWNER-CONFIRM-SHEET): the answer door
+    /// checks the person at this device first, at the importance of the act
+    /// the word approves ([`Vault::owner_presence`]), and hands the ground of
+    /// that check. This call asks nobody and reads no importance.
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::OwnerKeyRequired`](crate::error::RecordError::OwnerKeyRequired)
+    /// when this install holds no key the fold trusts as the owner's (none
+    /// enrolled here, or the owner's key held on another install);
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the signature does not verify or `actor` is no live owner of
+    /// this vault; the key's own refusal to sign.
+    pub fn authenticate_owner_device(
+        &self,
+        actor: EntityId,
+        decision_id: GateDecisionId,
+        ground: &crate::authority::OwnerProofGround,
+    ) -> Result<AuthenticatedOwner> {
+        // The read transaction ends before the key signs: the signer reads
+        // the roster from the fold it was picked on and opens none.
+        let (fold, signer) = {
+            let txn = self.store.env.read_txn()?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            let signer = self.ask_word_proof_signer(&fold, ground);
+            (fold, signer)
+        };
+        let signer = signer.ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
+        let key = signer.key();
+        let decision = decision_id.as_bytes();
+        let parts: [&[u8]; 4] = [
+            crate::authority::ASK_WORD_PROOF_DOMAIN,
+            &self.store.open_nonce,
+            actor.as_bytes(),
+            &decision,
+        ];
+        let transcript = parts.concat();
+        let signature = crate::authority::AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: signer.sign(&fold, &transcript)?,
+        };
+        if !crate::authority::verify_authority_signature(&signature, &transcript) {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the owner key's proof of the ask word did not verify",
+            )));
+        }
+        let mut owner = self.authenticate_owner(actor, &actor.to_hex(), true, decision_id)?;
+        owner.owner_key = Some(key);
+        self.recheck_owner(&owner)?;
+        Ok(owner)
+    }
+
+    /// `actor` as [`Self::authenticate_owner_device`] authenticates the
+    /// person who gives an ask word, with no owner key in the proof and
+    /// nothing signed: a live person who owns this vault. An answer door
+    /// runs the word's admission checks under it on the read it makes
+    /// before it asks for the person (`task_verb::ask_word_presence`), so a
+    /// word the admission refuses raises no prompt. It never reaches a
+    /// write: the word is admitted and cut only under the proof the key
+    /// signs after the ask.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when `actor` is no live owner of this vault.
+    pub(crate) fn owner_device_answerer(
+        &self,
+        actor: EntityId,
+        decision_id: GateDecisionId,
+    ) -> Result<AuthenticatedOwner> {
+        let owner = self.authenticate_owner(actor, &actor.to_hex(), true, decision_id)?;
+        self.recheck_owner(&owner)?;
+        Ok(owner)
+    }
+
+    /// Refuses where [`Self::authenticate_owner_device`] would find no key
+    /// to sign an ask word with now, and signs nothing. For the preview of
+    /// an answer alone (`can`): a door that asks for the person never reads
+    /// this before its ask, because a key that rests under a device PIN
+    /// proves only inside the window the ask's PIN step opens.
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::OwnerKeyRequired`](crate::error::RecordError::OwnerKeyRequired).
+    pub(crate) fn require_ask_word_proof_key(&self) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if self.holds_proving_owner_key(&fold) {
+            Ok(())
+        } else {
+            Err(Error::Record(crate::error::RecordError::OwnerKeyRequired))
+        }
     }
 
     /// Binds `owner` to the verified, full owner-grade capability its request
@@ -350,6 +458,14 @@ fn slip_reaches_verb(credential: &crate::authority::VerifiedSlip, verb: &str) ->
 }
 
 impl AuthenticatedOwner {
+    /// The owner key this install holds that proved this owner
+    /// ([`Vault::authenticate_owner_device`]), or `None` for a proof no owner
+    /// key made: a door that revokes owner keys never revokes the one its
+    /// own act stands on.
+    pub(crate) const fn proving_owner_key(&self) -> Option<&crate::authority::AuthorityKey> {
+        self.owner_key.as_ref()
+    }
+
     /// The slip this proof is bound to, for a persisted delegation that
     /// rechecks it at redemption (a Slack install): its slip id, or `None`
     /// for a proof bound to no credential.

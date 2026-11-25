@@ -23,6 +23,9 @@ oneiron-mesh-transport = { version = "0.1.0", path = "../oneiron-mesh-transport"
 # An organ starts with its socket on fd 3 and stdio only.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 blake3 = { workspace = true }
+# The nonce the asking node draws for each mesh call, which the serving
+# node's receipt signature names; the engine's own pin.
+getrandom = "=0.4.3"
 # The file-backed seal key (OF-415): its PEM files, and the RSA or P-256
 # signer, at the seal organ's exact pins.
 base64 = "0.22"
@@ -38,8 +41,8 @@ der = { version = "=0.7.10", features = ["alloc", "oid", "std"] }
 # crates, and the DSS read with the engine's own PDF parser. Not the organ.
 lopdf = { version = "=0.44.0", default-features = false }
 pkix-chain = { version = "=0.4.1", features = ["crl", "ocsp"] }
-# The DSS OCSP response's unsigned `certs`, extended with the responders the
-# organ may name from the DSS and the anchors.
+# The DSS's OCSP responses, which the host checks itself with the material's
+# time and producedAt kept apart (pkix's checker weighs both at producedAt).
 x509-ocsp = { version = "=0.2.1", default-features = false }
 x509-tsp = "=0.1.0"
 ipnet = "2"
@@ -49,6 +52,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }
+# SHA-1 names an OCSP responder by key and may hash a CertID (RFC 6960).
+sha1 = "=0.10.6"
 sha2 = "=0.10.9"
 thiserror = { workspace = true }
 # reqwest's own runtime, driven here so one deadline bounds a whole fetch.
@@ -67,6 +72,10 @@ oneiron-container = { path = "../oneiron-container" }
 [dev-dependencies]
 # Unseeded test vaults keep the blob write door open without a policy fixture.
 oneiron = { path = "../oneiron", features = ["test-support"] }
+# The mesh tests enrol a serving device as `oneiron device enrol` does: its
+# keystore holds its machine key, and a holder key signs the pairing.
+ed25519-dalek = { workspace = true }
+oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 tempfile = "3"
 toml = "0.8"
 

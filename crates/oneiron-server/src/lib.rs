@@ -31,6 +31,8 @@ pub mod ai_host;
 mod api;
 mod auth;
 mod big_rung;
+mod board_seed_report;
+mod booking_deposit;
 mod broadcast;
 mod builtin_host;
 mod byte_line;
@@ -45,6 +47,7 @@ mod connector_admission_host;
 pub mod connector_call_host;
 mod connector_call_settle;
 mod connector_elicitation;
+mod connector_translate;
 pub mod control_keys;
 mod conversation_training;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -62,7 +65,11 @@ pub mod error;
 pub mod feedback_delivery;
 mod feedback_redaction;
 mod files_intake;
+pub mod gpu_execution_node;
+mod gpu_host;
 mod handler;
+#[cfg(feature = "mesh")]
+pub use handler::mesh::SERVED_MESH_ALPNS;
 mod home_candidacy;
 mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -77,11 +84,13 @@ mod ladder_poll;
 mod lens_frames;
 mod libreoffice;
 mod linear_host;
+mod linked_peer;
 mod livequery;
 pub mod logging;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
 mod machine;
+pub mod machine_capacity;
 mod mail_host;
 pub mod managed;
 mod managed_owner_check;
@@ -92,12 +101,15 @@ mod oauth_relay;
 mod oneironer;
 mod owner;
 mod pipe_proof;
+pub mod process_readiness;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
 mod residence_machines;
 pub mod runtime;
+mod sandbox_vendor;
 mod saved_query_sweep;
+mod selector_release;
 pub mod server;
 mod shared_envs;
 mod skills_pack;
@@ -113,6 +125,7 @@ pub mod web_client;
 mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
+pub mod work_order_host;
 mod xlsx_recalc;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.
@@ -195,6 +208,27 @@ pub fn build_app_for_position(
         .merge(web_client::routes(web_client::EndpointDescriptor::engine(
             position, mode,
         )))
+        // A process whose watchdog sheds intake takes no new work while its
+        // event loop is hung or recovering (L8-11); ahead of auth, as it reads
+        // no vault.
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(server.process_readiness()),
+            process_readiness::refuse_new_work_while_not_ready,
+        ))
+        // Outermost, so a hatch server's off-device caller reaches no route.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            auth::refuse_off_device_hatch_callers,
+        ))
+}
+
+/// The `/ws` route alone, for a listener that serves sync and nothing else
+/// (the macOS app's mesh listener, L7-47); every slip, machine proof and
+/// grant check of `ws_routes` runs unchanged.
+#[cfg(feature = "mesh")]
+pub(crate) fn build_sync_router(server: Arc<SyncServer>) -> Router {
+    Router::new()
+        .merge(handler::ws_routes(server.clone()))
         // Outermost, so a hatch server's off-device caller reaches no route.
         .layer(axum::middleware::from_fn_with_state(
             server,
@@ -217,4 +251,9 @@ pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
 #[path = "../tests/support/fake_llm.rs"]
 mod fake_llm;
 #[cfg(test)]
+#[path = "../tests/support/owner_only_file.rs"]
+mod owner_only_file;
+#[cfg(test)]
 mod test_credentials;
+#[cfg(test)]
+mod test_engine_stack;

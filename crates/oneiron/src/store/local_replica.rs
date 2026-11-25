@@ -64,7 +64,7 @@ use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_bi
 use crate::store::loro_tombstones::TombstoneIndex;
 use crate::store::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
-    WINDOW_UPDATE, WindowEntityKey,
+    WINDOW_UPDATE, WindowEntityHexKey,
 };
 use crate::sync::residence::residence_window_for_blob;
 use crate::window_key::WindowKey;
@@ -174,10 +174,8 @@ pub(crate) enum KeepReason {
     Pending,
     /// An engine delete guard refuses it.
     Guarded,
-    /// A standing legal hold names it (OF-470).
-    LegalHold,
-    /// A TURN that is the origin of a provisional entity a kept tag set or a
-    /// legal hold still needs, which no kept turn's text can take over: its
+    /// A TURN that is the origin of a provisional entity a kept tag set still
+    /// needs, which no kept turn's text can take over: its
     /// tag set is that entity's only readable source here.
     ProvisionalOrigin,
     /// A content-addressed byte carrier ASSET whose bytes a holder this call
@@ -376,9 +374,9 @@ fn release_local_work(
     window: &WindowKey,
     id: &EntityId,
 ) -> Result<()> {
-    let pickup = WindowEntityKey {
+    let pickup = WindowEntityHexKey {
         window: window.as_str().to_owned(),
-        entity: *id,
+        id: *id,
     };
     OFF_RECORD_PROMOTE_PICKUP.delete(store, txn, &pickup)?;
     let prefix = format!("{}:", id.to_hex());
@@ -546,12 +544,6 @@ impl<'a> Census<'a> {
         let kind = header.entity_type;
         let reason = if self.keep.kinds.contains(&kind) {
             KeepReason::Kind(kind)
-        } else if crate::store::legal_hold::legal_hold_held_in_txn(self.store, txn, id.as_bytes())?
-            || crate::world_keys::legal_hold_pad_world_in_txn(self.store, txn, raw)?
-        {
-            // A pad whose world or sealed claim is held stays too, whatever
-            // kinds the caller keeps (OF-470).
-            KeepReason::LegalHold
         } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
             || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
             || (self.keep.release_local_members
@@ -624,10 +616,7 @@ impl<'a> Census<'a> {
     /// pickup, document frames or NOTE requests.
     fn pending_work(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let window = self.window.as_str().to_owned();
-        let pickup = WindowEntityKey {
-            window,
-            entity: *id,
-        };
+        let pickup = WindowEntityHexKey { window, id: *id };
         if OFF_RECORD_PROMOTE_PICKUP.contains(self.store, txn, &pickup)? {
             return Ok(true);
         }

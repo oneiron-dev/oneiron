@@ -1,19 +1,18 @@
 //! Public and gated delete entry points plus the headerful orchestration state machine.
 
 use crate::Vault;
-use crate::edge::EdgeActorClass;
+use crate::batch::EntityMetadataHeader;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::legal_hold::pending_erase_in_txn;
 
 use super::super::gate::{
-    DeletionGateContext, GatedDeletion, reverify_deletion_authority_before_publication,
+    GatedDeletion, reverify_deletion_authority_before_publication,
+    reverify_owner_proof_before_publication,
 };
 use super::super::tombstone::DeleteReason;
 use super::guard::DeleteGuard;
-use super::{
-    ConfirmedEraseOutcome, DeleteEntityOptions, DeleteEntityOutcome, PendingConfirmedErase,
-};
+use super::{DeleteEntityOptions, DeleteEntityOutcome};
 
 impl Vault {
     /// Plain deletion retains a tombstone shell. Use `delete_entity_with_options`
@@ -39,16 +38,34 @@ impl Vault {
     }
 
     /// Deletes an entity according to the pinned ARCH-0038 reason behavior.
-    /// A refusal a hold made in any of its writers is logged before it
-    /// returns, whatever it returns.
     pub fn delete_entity_with_reason(
         &self,
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let deleted = self.delete_entity_through_dependents(id, reason, None, None);
-        self.store.flush_legal_hold_refusals_settled();
-        deleted
+        self.delete_entity_through_dependents(id, reason, None, None)
+    }
+
+    /// [`Self::delete_entity_with_reason`] as the vault owner's own act: the
+    /// same delete, ungated as before, whose every writer before publication
+    /// (and, when nothing publishes, the first destructive one) re-proves
+    /// `owner` against its own view, where a gated delete re-proves its gate;
+    /// a soft delete's publication re-proves it after its scrub, and the
+    /// owner's delete of their own PERSON there takes that PERSON as live.
+    /// A request admitted on an owner credential that is revoked, or whose
+    /// person stops owning this vault, before a writer re-proves it gets the
+    /// owner door's refusal from that writer, which tears and publishes
+    /// nothing (FIX MEMORY-DELETE-OWNER-PROOF-NOT-REVALIDATED-AT-COMMIT). The
+    /// carrier marks a sync publication commits before its publish
+    /// transaction re-prove nothing, for this delete as for a gated one (FIX
+    /// PUBLISH-REFUSAL-KEEPS-CARRIER-SUPPRESSION).
+    pub fn delete_entity_with_reason_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        self.delete_entity_through_dependents(id, reason, None, Some(owner))
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.
@@ -63,101 +80,34 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let deleted = self.delete_entity_through_dependents(id, reason, Some(gate), None);
-        self.store.flush_legal_hold_refusals_settled();
-        deleted
+        self.delete_entity_through_dependents(id, reason, Some(gate), None)
     }
 
-    /// The delete of an owner erase come due (FIX 6337), under the reason
-    /// its request `generation` keeps (FIX 1465): run as the owner's own
-    /// delete runs, under the owner gate of the owner its row records as
-    /// confirming it (FIX 10402), so a goal CLAIM is decided as that
-    /// owner's plain delete decides it and the gate decision record is
-    /// appended. Each writer before publication re-proves that owner's
-    /// deletion authority as the owner's delete re-proves it. A row naming
-    /// no owner, or an owner whose deletion authority no longer holds, runs
-    /// ungated, as before. The first writer that would publish or tear the
-    /// record re-proves that this request still waits, and a hold's
-    /// refusal names the owner its row records. None waiting, or a newer
-    /// request, cancels it: nothing is published or torn.
-    pub(crate) fn delete_confirmed_erase(
-        &self,
-        id: &EntityId,
-        reason: DeleteReason,
-        generation: EntityId,
-    ) -> Result<ConfirmedEraseOutcome> {
-        let due = PendingConfirmedErase::new(generation);
-        let confirmed = self.confirmed_erase_gate(id, &generation)?;
-        let owner = confirmed.as_ref().map(|(_, owner)| *owner);
-        let reverify = |txn: &heed::RoTxn<'_>| -> Result<()> {
-            owner.map_or(Ok(()), |owner| {
-                confirming_owner_authority_in_txn(self, txn, owner)
-            })
-        };
-        let gate = confirmed.map(|(context, _)| GatedDeletion::new(context, &reverify));
-        let deleted = self.delete_entity_through_dependents(id, reason, gate, Some(&due));
-        self.store.flush_legal_hold_refusals_settled();
-        due.outcome(deleted)
-    }
-
-    /// The owner gate of the waiting erase of `id` at request `generation`
-    /// (FIX 10402): the owner its row records as confirming it, with the
-    /// decision evidence the owner's own delete mints before its first
-    /// writer. `None` when no such request waits, its row names no owner,
-    /// or that owner's deletion authority no longer holds.
-    fn confirmed_erase_gate(
-        &self,
-        id: &EntityId,
-        generation: &EntityId,
-    ) -> Result<Option<(DeletionGateContext, EntityId)>> {
-        let txn = self.store.env.read_txn()?;
-        let Some(owner) = pending_erase_in_txn(&self.store, &txn, id)?
-            .filter(|pending| pending.generation == *generation)
-            .and_then(|pending| pending.confirmed_by)
-            .and_then(|by| EntityId::from_hex(&by).ok())
-        else {
-            return Ok(None);
-        };
-        // Only an explicit denial means the confirming owner's authority no
-        // longer holds, and only then does the erase run ungated as before.
-        // A storage or decode failure is not a denial: it propagates and
-        // the erase does not run, rather than silently dropping the gate
-        // (the same split archive_delete_wire makes of this predicate).
-        match crate::memory::verify_deletion_authority_in_txn(
-            self,
-            &txn,
-            owner,
-            EdgeActorClass::Human,
-        ) {
-            Ok(()) => {}
-            Err(error)
-                if error.code == crate::memory::MEMORY_CODE_FORBIDDEN
-                    || error.code == crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED =>
-            {
-                return Ok(None);
-            }
-            Err(error) => return Err(Error::Refused(error.message)),
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-        let context = DeletionGateContext::new(
-            owner,
-            EdgeActorClass::Human,
-            crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
-            policy.read_frontier_hash()?,
-        );
-        Ok(Some((context, owner)))
-    }
-
-    /// One delete and its dependent walks. Its caller logs the refusals once
-    /// every writer here has ended.
+    /// One delete and its dependent walks.
     fn delete_entity_through_dependents(
         &self,
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false, due);
+        self.delete_entity_through_dependents_across(id, reason, gate, owner, || {})
+    }
+
+    /// [`Self::delete_entity_through_dependents`] with `between` run in the
+    /// gap between the guard phase's dropped read snapshot and the plan's
+    /// first write: the deterministic race point the last-bound-owner
+    /// regression drives a binding change through (round-1 P1 of #7900).
+    fn delete_entity_through_dependents_across(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<GatedDeletion<'_>>,
+        owner: Option<&AuthenticatedOwner>,
+        between: impl FnOnce(),
+    ) -> Result<DeleteEntityOutcome> {
+        let outcome =
+            self.delete_entity_with_reason_impl_across(id, reason, gate, false, owner, between);
         // A fence its erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         let outcome = outcome?;
@@ -197,6 +147,8 @@ impl Vault {
         crate::code_view::collect_after_delete(self);
         // An erased mail message's opened attachments go with it (FIX 12559).
         crate::mail_pack::collect_after_delete(self);
+        // An erased AG-UI capture's asset goes with it (L2-15-CAPTURE-SUBJECT).
+        crate::ingest::collect_capture_asset_erases(self);
         #[cfg(unix)]
         if let Err(error) = self.collect_released_result_bodies(256) {
             keep_error(error, "released result bodies");
@@ -279,19 +231,24 @@ impl Vault {
 
     /// Under the single LMDB writer, refuse live grants and fence the target
     /// before either headerful or headerless tombstone publication. Fully
-    /// absent IDs never reach this method.
+    /// absent IDs never reach this method. A user delete gets its hold on the
+    /// fence, which [`crate::deletion::conclude_brief_delete`] ends with the
+    /// delete's outcome.
     pub(super) fn reserve_user_brief_delete(
         &self,
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<&GatedDeletion<'_>>,
-    ) -> Result<()> {
+        owner: Option<&AuthenticatedOwner>,
+    ) -> Result<Option<crate::deletion::BriefDeleteFence<'_>>> {
         if matches!(
             reason,
             DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) {
-            let mut txn = self.store.env.write_txn()?;
+            self.retract_brief_shares_unconfirmed(id, gate)?;
+            let txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
+            reverify_owner_proof_before_publication(self, owner, &txn)?;
             self.store.delete_guards.precheck_goal_delete(
                 &self.store,
                 &txn,
@@ -310,8 +267,59 @@ impl Vault {
                     "active brief share requires confirmed delete",
                 ));
             }
-            crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
-            txn.commit()?;
+            return self
+                .store
+                .brief_delete_fences
+                .reserve(&self.store, txn, id)
+                .map(Some);
+        }
+        Ok(None)
+    }
+
+    /// With the owner's `deletion.brief_share.require_confirmed` off, the owner's own delete first
+    /// revokes `id`'s live brief shares, each in its own write as the confirmed door does, so the
+    /// reservation that follows finds none and the delete goes on. The default keeps every share,
+    /// and the reservation sends the delete to the confirmed door. So does a delete by anyone the
+    /// owner rule of [`Vault::revoke_share`] does not admit for every share (an agent may stop
+    /// only a share it issued), and a proof-free delete, which names no actor to revoke as. A
+    /// revoke stands if a later phase of the delete fails, as the confirmed door's does; each
+    /// revoke's writer reads the delete's authority again first.
+    fn retract_brief_shares_unconfirmed(
+        &self,
+        id: &EntityId,
+        gate: Option<&GatedDeletion<'_>>,
+    ) -> Result<()> {
+        let Some(gate) = gate else {
+            return Ok(());
+        };
+        let actor = gate.write_actor();
+        let now = self.store.clock.now_recorded_at();
+        let shares = {
+            let txn = self.store.env.read_txn()?;
+            // The key first: at its default no grant is scanned twice.
+            if super::super::setting_keys::BRIEF_SHARE_REQUIRES_CONFIRMED
+                .read_in_txn(self, &txn, &[], None)?
+                .value
+            {
+                return Ok(());
+            }
+            let shares = crate::share::active_brief_shares_for(&self.store, &txn, id, now)?;
+            if shares.is_empty()
+                || !crate::share::owner_revokes_every_share_in_txn(self, &txn, &actor)?
+            {
+                return Ok(());
+            }
+            reverify_deletion_authority_before_publication(Some(gate), &txn)?;
+            shares
+        };
+        // Each retraction reads the delete's authority again in its own
+        // writer: a check that changed since the read above (an honour
+        // setting's answer the owner replaced) stops it before the grant
+        // changes (review round 2 of #9902).
+        for (share_id, _) in shares {
+            self.revoke_share_checked(&share_id, &actor, now, |txn| {
+                reverify_deletion_authority_before_publication(Some(gate), txn)
+            })?;
         }
         Ok(())
     }
@@ -325,24 +333,86 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteEntityOutcome> {
-        let guard = self.delete_guard_phase(id, reason, &gate, allow_replay_test, due)?;
+        self.delete_entity_with_reason_impl_across(
+            id,
+            reason,
+            gate,
+            allow_replay_test,
+            owner,
+            || {},
+        )
+    }
+
+    /// [`Self::delete_entity_with_reason_impl`] with `between` run after the
+    /// guard phase's read snapshot and before the plan's first write, or the
+    /// headerless leg's scope probe. No writer is held at the gap, so
+    /// `between` may commit (a binding change the write transactions below
+    /// must then see). Production passes an empty step; the `test_doors` race
+    /// door passes the test's.
+    fn delete_entity_with_reason_impl_across(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
+        owner: Option<&AuthenticatedOwner>,
+        between: impl FnOnce(),
+    ) -> Result<DeleteEntityOutcome> {
+        let guard = self.delete_guard_phase(id, reason, &gate, allow_replay_test, owner)?;
+        between();
         let (requested_at, header) = match guard {
             DeleteGuard::Done(outcome) => return Ok(outcome),
+            DeleteGuard::Headerless { requested_at } => {
+                return self.delete_entity_without_header(
+                    id,
+                    reason,
+                    requested_at,
+                    gate.as_ref(),
+                    owner,
+                );
+            }
             DeleteGuard::Proceed {
                 requested_at,
                 header,
             } => (requested_at, header),
         };
-        let plan = self.delete_plan_phase(id, reason, &gate, requested_at, header)?;
+        let fence = self.delete_reserve_phase(id, reason, &gate, owner)?;
+        let outcome = self.delete_entity_reserved(
+            id,
+            reason,
+            &gate,
+            allow_replay_test,
+            owner,
+            requested_at,
+            header,
+        );
+        crate::deletion::conclude_brief_delete(fence, &self.store, outcome)
+    }
+
+    /// [`Self::delete_entity_with_reason_impl_across`] past its reservation:
+    /// plans the delete, then runs its soft arm, or its hard setup and its
+    /// receipt. Its outcome concludes the reservation's hold.
+    #[expect(clippy::too_many_arguments)]
+    fn delete_entity_reserved(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: &Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
+        owner: Option<&AuthenticatedOwner>,
+        requested_at: u64,
+        header: EntityMetadataHeader,
+    ) -> Result<DeleteEntityOutcome> {
+        let plan = self.delete_plan_phase(id, reason, gate, requested_at, header)?;
         if !reason.active_store_hard_purge_v1() {
             return self.delete_soft_arm_phase(
                 id,
                 reason,
-                &gate,
+                gate,
                 allow_replay_test,
-                due,
+                owner,
                 header,
                 plan.tombstone,
                 &plan.gate_decision,
@@ -354,9 +424,9 @@ impl Vault {
         let hard = self.delete_hard_setup_phase(
             id,
             reason,
-            &gate,
+            gate,
             allow_replay_test,
-            due,
+            owner,
             header,
             plan.tombstone,
             &plan.gate_decision,
@@ -366,9 +436,9 @@ impl Vault {
         self.delete_receipt_phase(
             id,
             reason,
-            &gate,
+            gate,
             allow_replay_test,
-            due,
+            owner,
             requested_at,
             header,
             plan.request_uuid,
@@ -382,16 +452,24 @@ impl Vault {
             hard.soft_complete_at,
         )
     }
-}
 
-/// The deletion authority of `owner`, the owner a due erase's row records
-/// as confirming it, read in `txn` by the one predicate the owner's own
-/// delete re-proves in its writers (FIX 10402).
-fn confirming_owner_authority_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    owner: EntityId,
-) -> Result<()> {
-    crate::memory::verify_deletion_authority_in_txn(vault, txn, owner, EdgeActorClass::Human)
-        .map_err(|_| Error::ConcurrentWrite("deletion authority changed before commit"))
+    /// [`Self::delete_entity`] with `between` run in the gap between the
+    /// guard phase's dropped read snapshot and the plan's first write (the
+    /// `_across` split's test entry; round-1 P1 of #7900). The `test_doors`
+    /// race door is its only caller.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn delete_entity_across(
+        &self,
+        id: &EntityId,
+        between: impl FnOnce(),
+    ) -> Result<bool> {
+        self.delete_entity_through_dependents_across(
+            id,
+            DeleteReason::UserDelete,
+            None,
+            None,
+            between,
+        )
+        .map(|outcome| outcome.existed)
+    }
 }

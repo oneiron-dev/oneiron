@@ -496,8 +496,11 @@ async fn act(
         Answer {
             vault: Arc::clone(vault),
             agent: context.agent,
-            session_key: None,
-            activity: None,
+            // The sitting the reply joined, which the engine read from its
+            // TURN (FIX 1034): the answer binds it, as a live chat binds its
+            // caller's, and its end signals activity there.
+            session_key: context.sitting,
+            activity: context.sitting,
             open,
             mode: MessageWriteMode::Atomic,
             admitted,
@@ -525,6 +528,9 @@ async fn act(
             // Continue and Retry gather evidence of their own, never the
             // earlier reply's (FIX 3416).
             assertions: ReplyAssertionCollector::default(),
+            // A turn action names no deadline: its call keeps the vault's
+            // wait row.
+            clock: Default::default(),
         },
         sources,
         today_sources,
@@ -533,6 +539,7 @@ async fn act(
         AnswerRefused::WaitedOut(reason)
         | AnswerRefused::Engine(reason)
         | AnswerRefused::NotAdmitted(reason) => reason,
+        AnswerRefused::Model(failure) => failure.reason(),
     })?;
     let answering = after_turn(Arc::clone(vault), generating, answering);
     // FIX 7145: the answer's context records, kept once it is handed on.

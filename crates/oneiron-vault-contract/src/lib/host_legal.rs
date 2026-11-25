@@ -33,6 +33,8 @@ pub enum CaptureSource {
     LiveSession(LiveSessionTarget),
     /// One stored on-record MESSAGE entity, by its 16-byte id.
     Message([u8; 16]),
+    /// One inquiry this vault sent, by its id (ARCH-0038 #company-hold).
+    Inquiry([u8; 16]),
 }
 
 /// Exact native source family chosen by the already admitted HOST order.
@@ -46,6 +48,16 @@ pub enum CaptureScope {
     /// must be a stored MESSAGE row; it is copied with its document rows and
     /// its outgoing edge rows. Messages stored later are never included.
     Messages(Vec<[u8; 16]>),
+    /// Exact stored records of any type, strictly increasing ids, each with
+    /// its document rows, its outgoing edge rows and its revision ledger
+    /// rows, copied as stored; a MESSAGE also carries its result body as
+    /// `Messages` does. Only an owner hold names it; a host request never
+    /// does, and one that decodes it is refused at the host channel.
+    Records(Vec<[u8; 16]>),
+    /// Exact inquiries this vault sent, strictly increasing ids. Only an
+    /// owner hold names it; a host request never does, and one that decodes
+    /// it is refused at the host channel (ARCH-0038 #company-hold).
+    Inquiries(Vec<[u8; 16]>),
     /// New on-record messages, the order's explicit prospective permission:
     /// each new base MESSAGE row the selector covers is sealed to this order
     /// when it lands, while the order stands and before its `ends_at`. No
@@ -131,6 +143,8 @@ impl CaptureScope {
             Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
             Self::LiveSession(_)
             | Self::Messages(_)
+            | Self::Records(_)
+            | Self::Inquiries(_)
             | Self::ProspectiveMessages(_)
             | Self::ArtifactMessages(_) => false,
         }
@@ -161,6 +175,20 @@ impl CaptureScope {
                     return Err(invalid("legal capture message order"));
                 }
                 out.write_all(&[4])?;
+                write_ids(out, ids)
+            }
+            Self::Records(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture record order"));
+                }
+                out.write_all(&[7])?;
+                write_ids(out, ids)
+            }
+            Self::Inquiries(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture inquiry order"));
+                }
+                out.write_all(&[8])?;
                 write_ids(out, ids)
             }
             Self::ProspectiveMessages(MessageSelector::Vault) => out.write_all(&[5, 1]),
@@ -218,6 +246,14 @@ impl CaptureScope {
                 1 => Ok(Self::ProspectiveMessages(MessageSelector::Vault)),
                 _ => Err(invalid("legal capture message selector")),
             },
+            7 => Ok(Self::Records(read_ids(
+                input,
+                "legal capture record order",
+            )?)),
+            8 => Ok(Self::Inquiries(read_ids(
+                input,
+                "legal capture inquiry order",
+            )?)),
             6 => {
                 let artifact = ArtifactIdentity {
                     vault_id: read_array(input)?,
@@ -336,6 +372,10 @@ impl ReleaseLiveOrder {
 
 /// Accepted only over the manager's kernel-authenticated native connection.
 /// This enum is framing, not an authorization token.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one request is read per connection and matched at once, never kept in a collection"
+)]
 pub enum HostLegalRequest {
     Capture(CaptureRequest),
     ReleaseLiveOrder(ReleaseLiveOrder),
@@ -531,6 +571,19 @@ pub enum CaptureExtent {
     /// frontiers, then each frontier's reverse identity naming it) and the
     /// result body it still holds (component 11), in one source snapshot.
     Messages,
+    /// The selected stored records of any type, in id order and the
+    /// `Messages` extent's per-record order: row 8, document 9, edges 10,
+    /// ledger 12, then the result body 11 when the record is a MESSAGE
+    /// whose attachment still holds it. Only an owner's hold writes it, to
+    /// its own hold store; a host capture never carries it. `messages`
+    /// counts the copied records.
+    Records,
+    /// The named inquiries' receipt rows and the kept copy CLAIMs' delivery
+    /// ledger rows, in inquiry id order, each inquiry's receipts first, then
+    /// each kept copy CLAIM's ledger rows. The CLAIMs themselves are in the
+    /// hold's Records capture. `messages` is 0 and `components` counts the
+    /// rows (ARCH-0038 #company-hold).
+    Inquiries,
     /// One batch of a prospective order, in ordinal order: each new MESSAGE
     /// row sealed when it landed (component 8), and each outgoing edge row
     /// its birth batch wrote, sealed at that batch's end under the row's
@@ -577,7 +630,7 @@ pub struct CaptureSummary {
     pub live_bodies: u64,
     /// Selected messages copied; zero for gate and live-session captures.
     /// In a prospective batch, the sealed message rows it carries (edge rows
-    /// not counted).
+    /// not counted). In a `Records` capture, the records copied.
     pub messages: u64,
     /// A prospective batch's first outbox ordinal; zero otherwise.
     pub batch_first_ordinal: u64,

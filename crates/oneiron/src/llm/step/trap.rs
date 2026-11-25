@@ -28,6 +28,9 @@ use crate::write_envelope::{
 };
 use rmpv::Value;
 
+mod decoded_claim;
+pub(super) use decoded_claim::{DecodedTrapClaim, decode_trap_claim_value};
+
 // ---------------------------------------------------------------------------
 // Trap record: ONE claim kind, supersession-based state machine (design D4)
 // ---------------------------------------------------------------------------
@@ -97,14 +100,22 @@ pub(super) fn open_trap_in_txn(
     );
     let mut envelope = dreamer_runtime_envelope(ctx)?;
     vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
+    // The anchor row is stamped in Unix seconds, as every claim row is; the
+    // claim's own `at` keeps the pass clock's milliseconds (FIX
+    // MODEL-STEP-ROW-TIMES-IN-MILLISECONDS).
+    let now = ctx.now_ms / 1_000;
     let occurred = TimeRange {
-        start: ctx.now_ms,
-        end: ctx.now_ms,
+        start: now,
+        end: now,
     };
     vault
         .batch_in()
-        .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
+        .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
         .apply(wtxn)?;
+    // The trap's anchor is a new mention of its context subject: about a
+    // PERSON under a cleanup archive, it restores her in this write
+    // (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(ctx.subject))?;
     trap_binding_put_in_txn(
         vault,
         wtxn,
@@ -143,7 +154,8 @@ pub fn trap_for_durable_wait(
 
 /// Registers the runner's wait on an open trap (`created→waiting`).
 /// Signal-before-wait: if the signal already landed, returns `Sent` without
-/// writing; the caller proceeds straight to consume.
+/// writing; the caller proceeds straight to consume. `now` is the trap's
+/// clock in milliseconds, as every trap door takes it.
 pub fn register_wait(vault: &Vault, trap: &TrapRef, now: u64) -> Result<DreamerTrapState> {
     vault.with_write_txn_grouped(|wtxn| register_wait_in_txn(vault, wtxn, trap, now))
 }
@@ -180,7 +192,8 @@ pub(super) fn register_wait_in_txn(
 /// step's hash; a mismatched hash is rejected here (defense in depth) and
 /// again independently at consume (the security boundary, ruling L8). A
 /// matching duplicate on a `Sent` or `Consumed` trap returns its head id
-/// unchanged (FIX 9931); a step-only trap still refuses this door.
+/// unchanged (FIX 9931); a step-only trap still refuses this door. `now` is
+/// the trap's clock in milliseconds.
 pub fn send_trap_signal(
     vault: &Vault,
     trap_claim_id: &EntityId,
@@ -493,99 +506,6 @@ pub(super) fn encode_trap_claim_value(claim: &EncodedTrapClaim) -> Value {
     ])
 }
 
-pub(super) struct DecodedTrapClaim {
-    pub(super) at: u64,
-    pub(crate) kind: DreamerTrapKind,
-    pub(crate) attempt_id: AttemptId,
-    pub(crate) step_hash: [u8; 32],
-    pub(crate) state: DreamerTrapState,
-    pub(crate) note: String,
-}
-
-/// Fail-closed `dreamer.trap` claim value decode: pinned keys only, no
-/// duplicates, schema-version checked, every field mandatory.
-pub(super) fn decode_trap_claim_value(value: &Value) -> Result<DecodedTrapClaim> {
-    let entries = expect_map(value, "dreamer trap value must be a MessagePack map")?;
-    let mut schema_version = None;
-    let mut trap_kind = None;
-    let mut attempt_id = None;
-    let mut step_hash = None;
-    let mut state = None;
-    let mut at = None;
-    let mut note = None;
-    let mut seen = [false; DREAMER_TRAP_VALUE_KEYS.len()];
-
-    for (key, value) in entries {
-        let key = expect_key(key, "dreamer trap value keys must be strings")?;
-        let index = pinned_key_index(key, &DREAMER_TRAP_VALUE_KEYS)
-            .ok_or(invalid_trap("dreamer trap value key is not pinned"))?;
-        if seen[index] {
-            return Err(invalid_trap("duplicate dreamer trap value key"));
-        }
-        seen[index] = true;
-
-        match DREAMER_TRAP_VALUE_KEYS[index] {
-            KEY_SCHEMA_VERSION => {
-                schema_version = Some(expect_u64(
-                    value,
-                    "dreamer trap value schema_version must be an integer",
-                )?);
-            }
-            KEY_TRAP_KIND => {
-                let parsed = expect_string(value, "dreamer trap value trap_kind must be a string")?;
-                trap_kind = Some(
-                    DreamerTrapKind::parse(&parsed)
-                        .ok_or(invalid_trap("unknown dreamer trap value trap_kind"))?,
-                );
-            }
-            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
-            KEY_STEP_HASH => {
-                let hex = expect_string(value, "dreamer trap value step_hash must be a string")?;
-                step_hash = Some(decode_hash_hex(&hex)?);
-            }
-            KEY_STATE => {
-                let parsed = expect_string(value, "dreamer trap value state must be a string")?;
-                state = Some(
-                    DreamerTrapState::parse(&parsed)
-                        .ok_or(invalid_trap("unknown dreamer trap value state"))?,
-                );
-            }
-            KEY_AT => {
-                at = Some(expect_u64(
-                    value,
-                    "dreamer trap value at must be an integer",
-                )?);
-            }
-            KEY_NOTE => {
-                note = Some(expect_string(
-                    value,
-                    "dreamer trap value note must be a string",
-                )?);
-            }
-            _ => unreachable!("index resolved from DREAMER_TRAP_VALUE_KEYS"),
-        }
-    }
-
-    let schema_version =
-        schema_version.ok_or(invalid_trap("missing dreamer trap value schema_version"))?;
-    if schema_version != DREAMER_TRAP_VALUE_SCHEMA_VERSION {
-        return Err(invalid_trap(
-            "unsupported dreamer trap value schema_version",
-        ));
-    }
-
-    let at = at.ok_or(invalid_trap("missing dreamer trap value at"))?;
-
-    Ok(DecodedTrapClaim {
-        at,
-        kind: trap_kind.ok_or(invalid_trap("missing dreamer trap value trap_kind"))?,
-        attempt_id: attempt_id.ok_or(invalid_trap("missing dreamer trap value job_id"))?,
-        step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap value step_hash"))?,
-        state: state.ok_or(invalid_trap("missing dreamer trap value state"))?,
-        note: note.ok_or(invalid_trap("missing dreamer trap value note"))?,
-    })
-}
-
 /// Walks forward from any claim in a trap chain to the current head by
 /// following inbound `Supersedes` edges (superseder → superseded).
 pub(super) fn trap_head(vault: &Vault, anchor: &EntityId) -> Result<(EntityId, DecodedTrapClaim)> {
@@ -658,7 +578,7 @@ pub(super) fn append_trap_transition_in_txn(
     head_id: &EntityId,
     head: &DecodedTrapClaim,
     next: DreamerTrapState,
-    now: u64,
+    now_ms: u64,
     note_override: Option<&str>,
 ) -> Result<EntityId> {
     if !head.state.may_transition_to(next) {
@@ -681,7 +601,7 @@ pub(super) fn append_trap_transition_in_txn(
         attempt_id: head.attempt_id,
         step_hash: head.step_hash,
         state: next,
-        at: now,
+        at: now_ms,
         note: note_override.map_or_else(|| head.note.clone(), str::to_owned),
     });
     let candidate = ClaimCandidate::new(
@@ -690,6 +610,10 @@ pub(super) fn append_trap_transition_in_txn(
         value,
         1.0,
     );
+    // The transition's row, and the close of the head it supersedes, are
+    // stamped in Unix seconds; the claim's own `at` keeps `now_ms`, the
+    // pass clock's milliseconds (FIX MODEL-STEP-ROW-TIMES-IN-MILLISECONDS).
+    let now = now_ms / 1_000;
     let occurred = TimeRange {
         start: now,
         end: now,
@@ -699,6 +623,9 @@ pub(super) fn append_trap_transition_in_txn(
         .batch_in()
         .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
         .apply(wtxn)?;
+    // Each transition is a new mention of the trap's subject: about a PERSON
+    // under a cleanup archive, it restores her in this write (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(subject))?;
     vault.supersede_claim_in_txn(wtxn, &claim_id, head_id, now)?;
     Ok(claim_id)
 }

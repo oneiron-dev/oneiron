@@ -2,19 +2,20 @@
 //!
 //! An actor's erase forgets the actor's stamp tokens, so a document whose
 //! commit messages, birth or authorship entries name one names no one from
-//! then on. A legal hold keeps a held record's history as it stands, so a
-//! token a held record's document names keeps its claim until the hold
-//! lifts. This index finds those documents without a history walk of every
-//! document: each write of a document records the tokens its new changes and
-//! entries name, in the write's own transaction, and the erase's hold check
-//! reads the rows of each held record.
+//! then on. A cooperative restriction keeps a restricted record's history as
+//! it stands, so a token a restricted record's document names keeps its
+//! claim until the restriction lifts. No legal hold keeps one (LEGAL-HOLD-USE
+//! = B, ARCH-0038 #legal-hold-clone-ruling). This index finds those
+//! documents without a history walk of every document: each write of a
+//! document records the tokens its new changes and entries name, in the
+//! write's own transaction, and the erase's check reads the rows of each
+//! restricted record.
 
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 use loro::{ID, LoroDoc, VersionVector};
 
-use crate::deletion::LegalHoldTarget;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
@@ -105,25 +106,22 @@ pub(crate) fn erase_actor_stamp_uses_in_txn(
 }
 
 /// The tokens a held record's document names (FIX 11965): the rows of each
-/// record a standing legal hold names. A vault that keeps no hold row holds
-/// none.
+/// record a cooperative restriction keeps, whether or not any hold row
+/// exists. No legal hold keeps a token any more (LEGAL-HOLD-USE = B,
+/// ARCH-0038 #legal-hold-clone-ruling), so the records come from the
+/// restriction rows, not from the holds' targets (review P1 on #8421).
 ///
 /// # Errors
 ///
-/// Storage errors, or a hold or index row that does not decode.
+/// Storage errors, or a restriction or index row that does not decode.
 pub(super) fn tokens_of_held_documents_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {
-    let records: BTreeSet<EntityId> = crate::store::legal_hold::holds_in_txn(store, txn)?
-        .iter()
-        .flat_map(|hold| hold.targets.iter().filter_map(LegalHoldTarget::id))
-        .collect();
+    let records =
+        crate::store::legal_hold::records_under_cooperative_restriction_in_txn(store, txn)?;
     let mut tokens = BTreeSet::new();
     for record in records {
-        if !crate::store::legal_hold::held_in_txn(store, txn, record.as_bytes())? {
-            continue;
-        }
         let uses = ACTOR_STAMP_TOKEN_USE.scan_keys(store, txn, record.as_bytes())?;
         tokens.extend(uses.into_iter().map(|(_, token)| token));
     }

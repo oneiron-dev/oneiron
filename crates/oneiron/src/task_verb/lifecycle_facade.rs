@@ -364,12 +364,25 @@ impl Memory<'_> {
     /// The after-commit half of a settlement. The terminal record is
     /// committed before the signal goes out, so a crash in this gap loses
     /// nothing: `reconcile_peer_result_signals` replays the edge from the
-    /// local binding index.
+    /// local binding index. `at` is the settlement's Unix second; the trap
+    /// signal takes it in milliseconds.
+    ///
+    /// The replay over every other binding runs at the vault's own second,
+    /// not at `at`: `at` is this TASK's settling time, which may lie before
+    /// the moment another handle settles in that replay, and a handle's
+    /// signal never predates its own settlement.
     pub(super) fn signal_task_settled(&self, task_ref: EntityId, at: u64) -> MemoryResult<()> {
-        send_peer_result_signal(self.vault(), task_ref, at)?;
+        send_peer_result_signal(self.vault(), task_ref, at.saturating_mul(1000))?;
         // A sibling's answer settles the HANDLE, without rewriting siblings.
         // The local wait index is also re-driven at registration/startup.
-        crate::llm::reconcile_peer_result_signals(self.vault(), at)?;
+        crate::llm::reconcile_peer_result_signals(
+            self.vault(),
+            self.vault()
+                .store
+                .clock
+                .now_recorded_at()
+                .saturating_mul(1000),
+        )?;
         Ok(())
     }
 
@@ -448,10 +461,23 @@ impl Memory<'_> {
         ) {
             return answer;
         }
-        // The owner proof the host bound for a direct request. An attendee
-        // ask admits a word, and cuts on it, only under that proof; every
-        // other ask ignores it.
-        let owner = self.answer_owner_proof();
+        // An ask that asks one party admits a word, and cuts on it, only
+        // under that party's proof: the one the host bound, or the one this
+        // install's owner key signs after the word's read (`ask_word_presence`).
+        let proof = self.word_owner_proof(handle, word)?;
+        self.answer_under(handle, word, &proof)
+    }
+
+    /// The write of [`Self::tasks_answer`] under the word's `proof`, and
+    /// what follows its commit. A proof an owner key signed here is held to
+    /// the importance its ground was checked at, after the admission.
+    pub(super) fn answer_under(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+        proof: &super::ask_word_presence::WordProof<'_>,
+    ) -> MemoryResult<super::TaskAskAnswer> {
+        let owner = proof.owner();
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = self
                 .ask_group_named_in(txn, handle.group_ref)?
@@ -467,6 +493,7 @@ impl Memory<'_> {
                 owner,
                 now,
             )?;
+            proof.refuse_risen_importance_in(self.vault(), txn, handle.group_ref, &group, word)?;
             if word.inform_for.is_none() && word.companion_for.is_none() {
                 complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
             }
@@ -492,16 +519,66 @@ impl Memory<'_> {
         send_peer_result_signal(
             self.vault(),
             handle.group_ref,
-            self.vault().store.clock.now_recorded_at(),
+            self.vault()
+                .store
+                .clock
+                .now_recorded_at()
+                .saturating_mul(1000),
         )?;
         Ok(answer)
     }
 
+    /// Admits `word` on `handle`'s ask and completes the addressed member,
+    /// exactly as [`Self::tasks_answer`] does, but settles nothing: the ask
+    /// waits for a later cut. Test door only
+    /// (`test_doors::ask_answer_proof::admit_word_unsettled`): it pins that a
+    /// first-word cut of an ask that asks one party needs that party's proof
+    /// in the cutting transaction. No verb-hook session answers here, and no
+    /// peer-result signal is sent.
+    ///
+    /// # Errors
+    ///
+    /// The admission's, as `tasks_answer` answers it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn admit_ask_word_unsettled(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+    ) -> MemoryResult<super::TaskAskAnswer> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .admit_ask_word_unsettled(handle, word);
+        }
+        self.require_answers_in_own_name()?;
+        let owner = self.answer_owner_proof();
+        self.with_verified_actor_write_txn(|txn| {
+            let group = self
+                .ask_group_named_in(txn, handle.group_ref)?
+                .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+            let now = self.vault().store.clock.now_recorded_at();
+            let answer = super::ask_record::admit_word(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                &group,
+                self.write_actor(),
+                word,
+                owner,
+                now,
+            )?;
+            if word.inform_for.is_none() && word.companion_for.is_none() {
+                complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
+            }
+            Ok(answer)
+        })
+    }
+
     /// The checks [`Self::tasks_answer`] meets before it records `word`, in
-    /// one read transaction: nothing is recorded, no member completes and no
-    /// ask settles. `Ok(false)` for an ask a verb hook's session holds, which
-    /// that session answers rather than the vault, so `can({verb})` leaves
-    /// it unchecked (FIX [UI-GATE-PREVIEW]).
+    /// one read transaction: nothing is recorded or signed, nobody is asked,
+    /// no member completes and no ask settles. `Ok(false)` for an ask a verb
+    /// hook's session holds, which that session answers rather than the
+    /// vault, so `can({verb})` leaves it unchecked (FIX [UI-GATE-PREVIEW]).
     pub(crate) fn tasks_answer_admission(
         &self,
         handle: &super::TaskAskHandle,
@@ -516,6 +593,11 @@ impl Memory<'_> {
         {
             return Ok(false);
         }
+        if self.owner_device_key_proves_words() {
+            self.owner_device_word_admission(handle, word)?;
+            return Ok(true);
+        }
+        let owner = self.answer_owner_proof();
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         self.verify_actor_write_in_txn(&txn)?;
         let group = self
@@ -528,7 +610,7 @@ impl Memory<'_> {
             &group,
             self.write_actor(),
             word,
-            self.answer_owner_proof(),
+            owner,
             self.vault().store.clock.now_recorded_at(),
         )?;
         Ok(true)
@@ -536,7 +618,7 @@ impl Memory<'_> {
 
     /// A person's word is theirs to give: a human connector running
     /// generated code does not make that code's answer the person's.
-    fn require_answers_in_own_name(&self) -> MemoryResult<()> {
+    pub(super) fn require_answers_in_own_name(&self) -> MemoryResult<()> {
         if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,

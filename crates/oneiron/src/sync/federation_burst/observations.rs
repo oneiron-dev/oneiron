@@ -1,6 +1,6 @@
 //! Transactional per-principal/grant observations, independent of connections.
 
-use super::{FederationPeer, corrupt, peer_health::PeerHealth};
+use super::{BurstPeer, corrupt, peer_health::PeerHealth};
 use crate::{Result, Vault};
 use oneiron_model::llm::normalized_burst_inputs;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ struct Observation {
     streak_total: u64,
 }
 
-fn key(peer: &FederationPeer) -> Vec<u8> {
+fn key(peer: BurstPeer<'_>) -> Vec<u8> {
     let mut key = b"m:federation-observation:v1:".to_vec();
     key.extend_from_slice(&peer.digest());
     key
@@ -38,7 +38,7 @@ fn save(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &[u8], row: &Observation)
 pub(super) fn observe_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     writes: u64,
     now: u64,
 ) -> Result<PeerHealth> {
@@ -72,7 +72,7 @@ pub(super) fn observe_in_txn(
 pub(super) fn baseline_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     now: u64,
 ) -> Result<super::FederationBurstBaselineState> {
     let row = load(vault, txn, &key(peer))?;
@@ -82,7 +82,7 @@ pub(super) fn baseline_in_txn(
 fn baseline_from_row(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     now: u64,
     row: &Observation,
 ) -> Result<super::FederationBurstBaselineState> {
@@ -118,7 +118,7 @@ fn baseline_from_row(
 pub(super) fn replay_ready_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     now: u64,
 ) -> Result<bool> {
     Ok(baseline_in_txn(vault, txn, peer, now)?.rate_ratio <= 1.0)
@@ -127,7 +127,7 @@ pub(super) fn replay_ready_in_txn(
 pub(super) fn outcome_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     structural_failure: bool,
 ) -> Result<()> {
     let key = key(peer);
@@ -146,7 +146,7 @@ pub(super) fn outcome_in_txn(
 
 pub(super) fn record_outcome(
     vault: &Vault,
-    peer: &FederationPeer,
+    peer: BurstPeer<'_>,
     structural_failure: bool,
 ) -> Result<()> {
     peer.revalidate(vault)?;

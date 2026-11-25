@@ -86,6 +86,11 @@ crate::side_table::side_tables! {
     /// id16 (change event id).
     PROJECT_ROOM_CHANGES: VaultMeta b"project.room_changes.v1/" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A room whose project now reads less, queued by the write that narrowed it until that
+    /// write's batch marks stale the standing answers the room left wider than their rows, with
+    /// the rows a delete detached from it. Emptied in the same transaction. Key: id16 (room).
+    PROJECT_ROOM_NARROWING: VaultMeta b"project.room_narrowing.v1/" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Index from a project's derived home room back to the project that owns it. Key: id16 (derived
     /// home-room id).
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw
@@ -104,7 +109,8 @@ crate::side_table::side_tables! {
     /// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16
     /// (turn id).
     ROOMS_CLAIM: VaultMeta b"rooms.claim.v1/" LegacyJson
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::store::actor_scrubs::erase_claim_actor_in_txn;
     /// Chronological index of non-branch (thread-root) turns, walked in reverse for the canonical
     /// room head. Key: id16 (room) + u64be (at) + id16 (turn).
     ROOMS_HEADS: VaultMeta b"rooms.heads.v1/" Raw
@@ -170,6 +176,12 @@ crate::side_table::side_tables! {
     /// (THREAD-TASK-EVERY-ROOM P2). Key: id16 (room).
     ROOMS_TURN_BACKFILL: VaultMeta b"rooms.turn_backfill.v1/" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Registers one work-talk conversation's immutable binding under one-vault mode: the
+    /// binding's msgpack bytes, which the conversation body's `work_talk.v1` field must equal
+    /// before it admits a writer or opens a read. Written once by the open door, as a leader
+    /// chat registers its own binding. Key: id16 (conversation).
+    WORK_TALK_REGISTRATION: VaultMeta b"work_talk.v1/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw

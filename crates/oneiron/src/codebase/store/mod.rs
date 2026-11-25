@@ -18,10 +18,11 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::secret_snapshot::SnapshotCustodyReport;
-use crate::side_table::{self, FixedSideKey, Raw, SideKey, SideTable};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
+use oneiron_store::side_table::key::TextIdKey;
 
 mod capture;
 pub(crate) mod checkpoint;
@@ -50,11 +51,10 @@ const CUSTODY_REPORTS: SideTable<String, SnapshotCustodyReport, Raw> =
     SideTable::new(&side_table::SECRET_SNAPSHOT_CODEBASE_CUSTODY);
 
 /// Index from a repo reference's canonical text to the codebase snapshots recorded against it.
-const REPO_INDEX: SideTable<TextIndexKey, (), Raw> =
-    SideTable::new(&side_table::CODEBASE_REPO_INDEX);
+const REPO_INDEX: SideTable<TextIdKey, (), Raw> = SideTable::new(&side_table::CODEBASE_REPO_INDEX);
 
 /// Index from a project id to the codebase snapshots recorded against it.
-const PROJECT_INDEX: SideTable<TextIndexKey, (), Raw> =
+const PROJECT_INDEX: SideTable<TextIdKey, (), Raw> =
     SideTable::new(&side_table::CODEBASE_PROJECT_INDEX);
 
 /// Index from a fork hash to the codebase snapshots sharing it.
@@ -66,60 +66,34 @@ const FORK_INDEX: SideTable<HashIndexKey, (), Raw> =
 const SCOPE_INDEX: SideTable<HashIndexKey, (), Raw> =
     SideTable::new(&side_table::CODEBASE_SCOPE_INDEX);
 
-/// `<text>` + `\0` + id16 — the shape every text-keyed codebase index row (repo-ref, project id)
-/// has always spelled.
-struct TextIndexKey {
-    value: String,
+/// One [`REPO_INDEX`] or [`PROJECT_INDEX`] key for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn text_index_key_pin_for_test(
+    value: &str,
     id: EntityId,
-}
-
-impl SideKey for TextIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.value.as_bytes());
-        out.push(0);
-        self.id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let id_start = bytes.len().checked_sub(<EntityId as FixedSideKey>::WIDTH)?;
-        let (rest, id) = bytes.split_at(id_start);
-        let (&separator, value) = rest.split_last()?;
-        if separator != 0 {
-            return None;
-        }
-        Some(Self {
-            value: String::from_utf8(value.to_vec()).ok()?,
-            id: EntityId::decode_key(id)?,
-        })
-    }
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&TextIdKey {
+        text: value.to_owned(),
+        id,
+    })
 }
 
 /// `<hash32>` + `\0` + id16 — the shape every hash-keyed codebase index row (fork hash, scope
 /// key) has always spelled.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 struct HashIndexKey {
     value: [u8; 32],
     id: EntityId,
 }
 
-impl SideKey for HashIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.value);
-        out.push(0);
-        self.id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let id_start = bytes.len().checked_sub(<EntityId as FixedSideKey>::WIDTH)?;
-        let (rest, id) = bytes.split_at(id_start);
-        let (&separator, value) = rest.split_last()?;
-        if separator != 0 {
-            return None;
-        }
-        Some(Self {
-            value: value.try_into().ok()?,
-            id: EntityId::decode_key(id)?,
-        })
-    }
+/// One [`HashIndexKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hash_index_key_pin_for_test(
+    value: [u8; 32],
+    id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HashIndexKey { value, id })
 }
 
 /// The `EntityId` half of a codebase index key, common to every index shape.
@@ -127,7 +101,7 @@ trait IndexRowId {
     fn id(&self) -> EntityId;
 }
 
-impl IndexRowId for TextIndexKey {
+impl IndexRowId for TextIdKey {
     fn id(&self) -> EntityId {
         self.id
     }
@@ -139,6 +113,85 @@ impl IndexRowId for HashIndexKey {
     }
 }
 
+/// Puts a repo-index row for the checkpoint-pins door: `value` names the
+/// snapshot `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_repo_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &str,
+    id: &EntityId,
+) -> Result<()> {
+    REPO_INDEX.put(
+        store,
+        txn,
+        &TextIdKey {
+            text: value.to_owned(),
+            id: *id,
+        },
+        &(),
+    )
+}
+
+/// Puts a project-index row for the checkpoint-pins door: `value` names the
+/// snapshot `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_project_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &str,
+    id: &EntityId,
+) -> Result<()> {
+    PROJECT_INDEX.put(
+        store,
+        txn,
+        &TextIdKey {
+            text: value.to_owned(),
+            id: *id,
+        },
+        &(),
+    )
+}
+
+/// Puts a fork-index row for the checkpoint-pins door: `value` names the
+/// snapshot `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_fork_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &[u8; 32],
+    id: &EntityId,
+) -> Result<()> {
+    FORK_INDEX.put(
+        store,
+        txn,
+        &HashIndexKey {
+            value: *value,
+            id: *id,
+        },
+        &(),
+    )
+}
+
+/// Puts a scope-index row for the checkpoint-pins door: `value` names `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_scope_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &[u8; 32],
+    id: &EntityId,
+) -> Result<()> {
+    SCOPE_INDEX.put(
+        store,
+        txn,
+        &HashIndexKey {
+            value: *value,
+            id: *id,
+        },
+        &(),
+    )
+}
+
 pub(crate) fn codebase_candidate_matches_filters(
     store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
@@ -147,8 +200,8 @@ pub(crate) fn codebase_candidate_matches_filters(
     project_id: Option<&str>,
 ) -> Result<bool> {
     if let Some(repo_ref) = repo_ref {
-        let key = TextIndexKey {
-            value: repo_ref.canonical(),
+        let key = TextIdKey {
+            text: repo_ref.canonical(),
             id: *id,
         };
         if !REPO_INDEX.contains(store, rtxn, &key)? {
@@ -157,8 +210,8 @@ pub(crate) fn codebase_candidate_matches_filters(
     }
     if let Some(project_id) = project_id {
         validate_project_id(project_id)?;
-        let key = TextIndexKey {
-            value: project_id.to_owned(),
+        let key = TextIdKey {
+            text: project_id.to_owned(),
             id: *id,
         };
         if !PROJECT_INDEX.contains(store, rtxn, &key)? {
@@ -397,8 +450,8 @@ impl Vault {
         REPO_INDEX.put(
             &self.store,
             wtxn,
-            &TextIndexKey {
-                value: filtered_snapshot.repo_ref.canonical(),
+            &TextIdKey {
+                text: filtered_snapshot.repo_ref.canonical(),
                 id: *code_artifact_id,
             },
             &(),
@@ -406,8 +459,8 @@ impl Vault {
         PROJECT_INDEX.put(
             &self.store,
             wtxn,
-            &TextIndexKey {
-                value: filtered_snapshot.project_id.clone(),
+            &TextIdKey {
+                text: filtered_snapshot.project_id.clone(),
                 id: *code_artifact_id,
             },
             &(),

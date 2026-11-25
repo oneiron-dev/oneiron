@@ -19,11 +19,6 @@ use std::collections::{HashMap, HashSet};
 /// aborted: a bad later entity/edge cannot publish an earlier valid record.
 /// The real forward pass repeats the same admission before committing.
 ///
-/// The writer it takes stays the parent of that transaction, for the
-/// preflight's legal-hold refusals alone: once the speculative transaction
-/// and the materializer lock ended, they are logged in it and committed
-/// before this returns, and nothing else of the attempt is (FIX 2433). With
-/// none, the parent aborts too.
 /// The source is the same immutable snapshot whose canonical validation groups
 /// completed before rebuild. The rebuilt document is checked independently below.
 pub(crate) fn preflight_validated_canonical_recovery(
@@ -44,13 +39,11 @@ pub(crate) fn preflight_validated_canonical_recovery(
     }
     let guard = materializer.lock();
     let mut parent = vault.store.env.write_txn()?;
-    let refusals = vault.store.begin_refusal_attempt();
     let preflight = match vault.store.env.nested_write_txn(&mut parent) {
         Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn),
         Err(err) => Err(err.into()),
     };
     drop(guard);
-    refusals.finish().settle_in(parent);
     preflight
 }
 

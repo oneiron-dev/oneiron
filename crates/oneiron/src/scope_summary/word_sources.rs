@@ -3,7 +3,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::store::{ManifestDbs, StoreRead};
 use crate::{EntityId, Vault};
@@ -22,8 +22,10 @@ pub(crate) enum WordSources {
 /// The word sources of the stored revision `raw` of `id`: an epoch summary,
 /// a scope summary, a TURN that copies one, a claim whose merge header names
 /// one, a `conversation.summary` claim's typed coverage, a native conflict
-/// pair's two claims, the MESSAGE an owner's stated intent cites, or the
-/// finding and subject a Dreamer finding's notice points at.
+/// pair's two claims, the MESSAGE an owner's stated intent cites, the
+/// finding and subject a Dreamer finding's notice points at, the records
+/// a filed compaction step's call read, or those a compaction intent NOTE's
+/// epoch was written from.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -48,6 +50,19 @@ pub(crate) fn word_sources_through_in(
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    // A machine birth control's words are those of the signed body it
+    // embeds (FIX MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE).
+    if header.entity_type == ENTITY_TYPE_CLAIM
+        && names(crate::claim::history_store::MACHINE_BIRTH_PREDICATE.as_bytes())
+    {
+        match carried_machine_birth(raw, body) {
+            CarriedBirth::Revision(birth) => {
+                return word_sources_through_in(vault, dbs, txn, id, &birth);
+            }
+            CarriedBirth::Unjudged => return Ok(WordSources::Unresolved),
+            CarriedBirth::NotBirth => {}
+        }
+    }
     let epoch = match header.entity_type {
         ENTITY_TYPE_SUMMARY => {
             match crate::compaction::stored_epoch_in(&vault.store, txn, id, body)? {
@@ -64,6 +79,55 @@ pub(crate) fn word_sources_through_in(
             crate::ports::dependency_sources_in(read, txn, id)
         })
     };
+    let derived_from = || {
+        base_and_view(vault, dbs, |read| {
+            read.port_edges(
+                txn,
+                id,
+                EdgeDirection::Out,
+                Some(EdgeKind::DerivedFrom),
+                None,
+            )?
+            .map(|edge| edge.map(|edge| edge.target))
+            .collect::<Result<Vec<_>>>()
+        })
+    };
+    // A filed compaction step's claim and response artifact carry its call's
+    // words: their `DerivedFrom` targets, the summary's own lineage (FIX
+    // 5977; COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). A call that read
+    // no record wrote only its own.
+    if crate::llm::is_compaction_step_row(header.entity_type, body)? {
+        let sources = derived_from()?;
+        return Ok(if sources.is_empty() {
+            WordSources::Own
+        } else {
+            WordSources::From(sources)
+        });
+    }
+    // A compaction epoch's intent NOTE holds the pass's note and the lines it
+    // keeps word for word from its window: its words came from its
+    // `DerivedFrom` targets, the epoch's own live sources, so it reads only
+    // beside them, as the epoch does (Engine RULING REACH-INTENT-NOTE-SOURCES
+    // = A, 16 Nov 07:19). A NOTE naming the kind whose core does not decode
+    // is no proof of words of its own.
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+        && names(crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND.as_bytes())
+    {
+        match crate::store::note_body::decode_note_core(body) {
+            Ok(core)
+                if core.kind.as_str() == crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND =>
+            {
+                let sources = derived_from()?;
+                return Ok(if sources.is_empty() {
+                    WordSources::Own
+                } else {
+                    WordSources::From(sources)
+                });
+            }
+            Ok(_) => {}
+            Err(_) => return Ok(WordSources::Unresolved),
+        }
+    }
     let sources = match header.entity_type {
         // A pointer no head stands for may be an epoch summary's, whose
         // sources this read cannot name (Astra 1384e).
@@ -75,17 +139,7 @@ pub(crate) fn word_sources_through_in(
         // epoch among them carries its own. A run that had read and said
         // nothing yet wrote one from its own steps alone.
         ENTITY_TYPE_SUMMARY if epoch == crate::compaction::StoredEpoch::Yes => {
-            let sources = base_and_view(vault, dbs, |read| {
-                read.port_edges(
-                    txn,
-                    id,
-                    EdgeDirection::Out,
-                    Some(EdgeKind::DerivedFrom),
-                    None,
-                )?
-                .map(|edge| edge.map(|edge| edge.target))
-                .collect::<Result<Vec<_>>>()
-            })?;
+            let sources = derived_from()?;
             if sources.is_empty() {
                 return Ok(WordSources::Own);
             }
@@ -97,16 +151,18 @@ pub(crate) fn word_sources_through_in(
         // A reply carries its summary under the `summary` key, in any
         // string encoding; the decoder below decides. Its words are the
         // summary's as it landed, so the sources its landing registered
-        // stay its sources whatever the summary covers now.
+        // stay its sources whatever the summary covers now, and the summary
+        // it copies is one of them.
         ENTITY_TYPE_TURN if names(b"summary") => {
             super::body_covers_through_in(vault, dbs, txn, id, header.entity_type, body).and_then(
                 |covers| {
                     covers
                         .map(|mut covers| {
                             covers.extend(dependencies()?);
-                            covers.sort_unstable();
-                            covers.dedup();
-                            Ok(covers)
+                            Ok(with_carried_summary(
+                                covers,
+                                super::codec::reply_summary(body)?,
+                            ))
                         })
                         .transpose()
                 },
@@ -128,6 +184,14 @@ pub(crate) fn word_sources_through_in(
                     Ok(None) => {
                         crate::store::conversation_summary::conversation_summary_covers(&claim)
                     }
+                    // A merge header serves the words of the summary it
+                    // names, so that summary is one of its sources.
+                    Ok(Some(sources)) => super::merge_summary_ref(&claim).map(|named| {
+                        Some(with_carried_summary(
+                            sources,
+                            named.map(|(_, summary)| summary),
+                        ))
+                    }),
                     merged => merged,
                 };
                 if claim.predicate == PROFILE_INTENT_PREDICATE {
@@ -141,6 +205,9 @@ pub(crate) fn word_sources_through_in(
             if names(crate::inbox::NOTIFICATION_PRODUCER_FINDING.as_bytes()) =>
         {
             return Ok(finding_notice_sources(body));
+        }
+        crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
+            return profile_word_sources_through_in(vault, dbs, txn, body);
         }
         _ => return Ok(WordSources::Own),
     };
@@ -165,14 +232,64 @@ pub(crate) fn word_sources_through_in(
     })
 }
 
+/// What a machine birth control carries for a reader of its words.
+enum CarriedBirth {
+    /// The revision is no machine birth control (or does not decode as a
+    /// CLAIM): its words are judged as before.
+    NotBirth,
+    /// A birth control whose signed birth or embedded body does not decode,
+    /// or whose embedded body is itself a machine history control: it names
+    /// nothing a reader can judge.
+    Unjudged,
+    /// The control's own metadata header, then the signed initial body it
+    /// embeds: the revision its words are those of.
+    Revision(Vec<u8>),
+}
+
+/// [`CarriedBirth`] of the stored CLAIM revision `raw`, whose body is `body`.
+fn carried_machine_birth(raw: &[u8], body: &[u8]) -> CarriedBirth {
+    let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true) else {
+        return CarriedBirth::NotBirth;
+    };
+    let Some(initial) = crate::claim::history_store::machine_birth_initial_body(&claim) else {
+        return CarriedBirth::NotBirth;
+    };
+    let Ok(initial) = initial else {
+        return CarriedBirth::Unjudged;
+    };
+    let judged =
+        crate::write_envelope::claim_body::decode_claim_body(&initial, true).is_ok_and(|birth| {
+            crate::claim::history_store::machine_history_kind(&birth.predicate).is_none()
+        });
+    if !judged {
+        return CarriedBirth::Unjudged;
+    }
+    let mut revision = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    revision.extend_from_slice(&initial);
+    CarriedBirth::Revision(revision)
+}
+
+/// `sources`, a reply TURN's or a merge header's word sources, with
+/// `carried`, the summary whose words it carries: the summary is one more
+/// source, so every reader of the copy judges the summary's own row (its
+/// stamp, its Tier A) and walks every record its words came from, its
+/// registered dependencies included (Sol review rounds 1-2 of #7692; FIX
+/// COPY-SUMMARY-ROW-UNJUDGED). An empty `sources` stays empty: a copy whose
+/// summary names no source is unresolved, whatever the summary's own row.
+fn with_carried_summary(mut sources: Vec<EntityId>, carried: Option<EntityId>) -> Vec<EntityId> {
+    if !sources.is_empty() {
+        sources.extend(carried);
+    }
+    sources.sort_unstable();
+    sources.dedup();
+    sources
+}
+
 /// The summary whose words the stored revision `raw` carries: the summary a
 /// reply TURN copies, or the one a `merge.summary` header names. Its words
-/// are that summary's, so the general clamp walks the summary itself: its
-/// own row (its Tier A, its stamp) and every record its words came from,
-/// its registered dependencies included, beyond the records
-/// [`word_sources_in`] names for the copy (Sol review rounds 1-2 of #7692).
-/// `None` for every other row; an association that does not decode is an
-/// error.
+/// are that summary's, so [`word_sources_in`] names it among the copy's
+/// sources. `None` for every other row; an association that does not decode
+/// is an error.
 pub(crate) fn carried_summary(raw: &[u8]) -> Result<Option<EntityId>> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
@@ -231,6 +348,71 @@ fn finding_notice_sources(body: &[u8]) -> WordSources {
         }
         _ => WordSources::Unresolved,
     }
+}
+
+/// The word sources of a PSYCH_PROFILE body (FIX
+/// PSYCH-PROFILE-DERIVED-SOURCE-CONJUNCT-MISSES-CITED-CLAIMS): the record each
+/// typed source names, whose words the profile was built from (FIX 11766),
+/// and every record those words came from in turn (review round 1 of #9923):
+/// a cited intent quotes the MESSAGE it cites, so the profile carries that
+/// MESSAGE's words too. Profile landing names its sources in the body and the
+/// dependency index, never as a `DerivedFrom` edge, so a reader reads the
+/// profile only while it reads each one, and a C6 use limit on one withholds
+/// it from the owner too (FIX 1496 S8). A body of an earlier schema, or one
+/// that does not decode, names no source a reader can judge, and neither
+/// does a cited record whose own sources no longer resolve; a profile with no
+/// source is its own. A cited id with no stored row stays named: a reader
+/// refuses it.
+fn profile_word_sources_through_in(
+    vault: &Vault,
+    dbs: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    body: &[u8],
+) -> Result<WordSources> {
+    let Some(mut pending) = profile_typed_sources(body) else {
+        return Ok(WordSources::Unresolved);
+    };
+    let mut named = std::collections::BTreeSet::new();
+    while let Some(source) = pending.pop() {
+        if !named.insert(source) {
+            continue;
+        }
+        let Some(raw) = dbs.port_entity_raw_wiped(txn, &source)? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // A cited profile adds its typed sources to this one walk, so one
+        // visited set holds however profiles cite each other.
+        let carried = if header.entity_type == crate::registry::ENTITY_TYPE_PSYCH_PROFILE {
+            profile_typed_sources(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .map_or(WordSources::Unresolved, WordSources::From)
+        } else {
+            word_sources_through_in(vault, dbs, txn, &source, &raw)?
+        };
+        match carried {
+            WordSources::Own => {}
+            WordSources::From(sources) => pending.extend(sources),
+            WordSources::Unresolved => return Ok(WordSources::Unresolved),
+        }
+    }
+    if named.is_empty() {
+        return Ok(WordSources::Own);
+    }
+    Ok(WordSources::From(named.into_iter().collect()))
+}
+
+/// The record each typed source of the PSYCH_PROFILE body `body` names;
+/// `None` for a body that does not decode as the current schema.
+fn profile_typed_sources(body: &[u8]) -> Option<Vec<EntityId>> {
+    let profile = crate::psych_profile::decode_psych_profile_body(body).ok()?;
+    Some(
+        profile
+            .sources
+            .iter()
+            .map(|source| source.document_ref)
+            .collect(),
+    )
 }
 
 /// The predicate an owner's stated intent is kept under

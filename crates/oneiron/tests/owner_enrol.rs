@@ -31,7 +31,13 @@
 //! 16:23; KEY-ORIGIN = A, the lead 16:2x). Red before it:
 //! `an_added_owners_first_owner_key_binds_them` (the added Owner's owner verb
 //! answers OWNER_BINDING_REQUIRED). Guard: an Owner a binding names already,
-//! the embedded owner included, gains no second one.
+//! the embedded owner included, gains no second one. That binding is the
+//! last-owner delete guard's second way out (FIX OWNER-DELETE-GUARD-RECOVERY):
+//! `a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard`, a guard
+//! that passes on its base too. With the co-Owner bound, the owner deletes
+//! their own PERSON through their own door, whose writes re-prove the owner
+//! census with that PERSON taken as live (#7900 after main's census, a guard):
+//! `with_a_co_owner_bound_the_owner_deletes_their_own_person`.
 //!
 //! Part 3 (REVOKED-OWNER-ROOT-SIBLING-ENROL, Engine RULING 14 Nov 19:50): a
 //! revoked key's rows count only inside its revocation's own ancestry. A
@@ -346,6 +352,64 @@ fn an_added_owners_first_owner_key_binds_them() {
     );
 }
 
+/// The way out the last-owner delete guard names: while the owner holds the
+/// vault's only `human` binding, their PERSON is not deleted; once the
+/// co-Owner's first owner key binds them, the same delete passes.
+#[test]
+fn a_co_owners_first_owner_key_lifts_the_last_owner_delete_guard() {
+    let shared = shared();
+    let refused = shared
+        .vault
+        .delete_entity(&shared.owner)
+        .expect_err("the owner holds the vault's last owner binding");
+    assert_eq!(refused.kind(), ErrorKind::LastBoundOwnerDelete, "{refused}");
+
+    shared.bound_co_owner_key();
+    assert!(
+        shared.passes_owner_verbs(shared.owner),
+        "the owner keeps their own binding, so the co-Owner's is the second one"
+    );
+
+    assert!(
+        shared
+            .vault
+            .delete_entity(&shared.owner)
+            .expect("with the co-Owner bound, the owner's person is deleted"),
+        "the owner's person existed"
+    );
+    assert!(
+        shared
+            .vault
+            .is_deleted_shell(&shared.owner)
+            .expect("shell read"),
+        "the owner's person is a deleted shell"
+    );
+}
+
+/// The owner's own delete of their PERSON re-proves its authority in its
+/// writes after its own scrub: the binding, and the owner census with that
+/// PERSON taken as live, so the scrub does not refuse the delete it made.
+#[test]
+fn with_a_co_owner_bound_the_owner_deletes_their_own_person() {
+    let shared = shared();
+    shared.bound_co_owner_key();
+    shared
+        .vault
+        .memory(shared.owner, EdgeActorClass::Human)
+        .safe_delete(
+            &shared.owner.to_hex(),
+            oneiron::memory::SafeDeleteReason::UserDelete,
+        )
+        .expect("with the co-Owner bound, the owner deletes their own person");
+    assert!(
+        shared
+            .vault
+            .is_deleted_shell(&shared.owner)
+            .expect("shell read"),
+        "the owner's person is a deleted shell"
+    );
+}
+
 #[test]
 fn the_embedded_owners_enrolled_key_binds_no_one() {
     let shared = shared();
@@ -552,6 +616,60 @@ fn a_revoked_keys_concurrent_enrolment_synced_late_lands_refused() {
         arrival.is_err(),
         "the sync door refuses a row the revoked key signed outside its revocation's ancestry"
     );
+}
+
+#[test]
+fn a_plain_revocation_refuses_a_late_row_without_a_handoff_alarm() {
+    let shared = shared();
+    let co_owner_key = AuthorityKey::Ed25519(shared.bound_co_owner_key());
+    let withheld = shared.withheld_co_owner_row(enrol_agent(31));
+    let late = decode_authority_log_entry_body(&withheld).expect("the withheld row");
+    let mut replica = Replica::holding(shared.history());
+    replica.take(vec![withheld]);
+    assert!(replica.on_roster_live(public_key(31)));
+
+    shared.remove_owner(shared.co_owner);
+    let history = shared.history();
+    let ops: Vec<_> = history
+        .iter()
+        .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row").op)
+        .collect();
+    assert!(ops.iter().any(|op| matches!(
+        op,
+        AuthorityOp::RevokeDevice { revoked_key } if revoked_key == &co_owner_key
+    )));
+    assert!(!ops.iter().any(|op| matches!(
+        op,
+        AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+    )));
+    let fold = shared.vault.authority_fold().expect("the fold");
+    assert!(fold.retired_keys.contains(&co_owner_key));
+    assert!(shared.vault.authority_handoff_equivocations().is_empty());
+    assert!(
+        shared
+            .vault
+            .authority_handoff_alarms()
+            .expect("alarms")
+            .is_empty()
+    );
+
+    let now = now_secs();
+    let error = shared
+        .vault
+        .put_authority_log_entry(
+            &late,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect_err("the append door refuses the revoked signer");
+    assert_eq!(error.kind(), ErrorKind::InvalidAuthorityLogBody);
+    assert_eq!(shared.history(), history);
+    assert!(!shared.on_roster_live(public_key(31)));
+    assert!(shared.vault.authority_handoff_equivocations().is_empty());
+    assert_eq!(shared.vault.authority_handoff_equivocations_dropped(), 0);
 }
 
 /// The removed co-Owner's key revokes the owner's second owner key on the

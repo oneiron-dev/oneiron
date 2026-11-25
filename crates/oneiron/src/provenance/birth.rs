@@ -35,14 +35,75 @@ pub(crate) use crate::store::birth_record::{
     trigger_is_live_in_txn,
 };
 
+/// Stamps `row`'s birth in the write that births it
+/// ([`stamp_row_birth_in_txn`]), then raises the row's floor over what its
+/// words came from (READ-LINEAGE L1 hook 1): the door for a write that holds
+/// the vault.
+///
+/// # Errors
+///
+/// As [`stamp_row_birth_in_txn`], and storage failures.
+pub(crate) fn stamp_birth_with_floor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    birth: &RowBirth,
+) -> crate::Result<()> {
+    stamp_row_birth_in_txn(&vault.store, txn, row, birth)?;
+    crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
+/// Seals the row `row`, which arrived with its birth (sync, an archive), when
+/// the write that stamped that birth here names an input this vault erased,
+/// as a local birth is sealed; then raises its floor, as
+/// [`stamp_birth_with_floor_in_txn`] does. `before` is the row's birth as it
+/// stood before the stamp: a birth already here is not stamped again, and
+/// seals nothing (#9289 Opus review 3 P2-4).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn raise_landed_birth_floor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    before: Option<&RowBirth>,
+) -> crate::Result<()> {
+    if row_birth_in_txn(&vault.store, txn, row)?.as_ref() != before {
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    }
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
+/// [`stamp_birth_if_absent_in_txn`], then the row's floor, as
+/// [`stamp_birth_with_floor_in_txn`] raises it.
+///
+/// # Errors
+///
+/// As [`stamp_birth_if_absent_in_txn`], and storage failures.
+pub(crate) fn stamp_birth_with_floor_if_absent_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    birth: &RowBirth,
+) -> crate::Result<()> {
+    let born = !ROW_BIRTH.contains(&vault.store, txn, row)?;
+    stamp_birth_if_absent_in_txn(&vault.store, txn, row, birth)?;
+    if born {
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    }
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
 /// Erasing `actor` (FIX 6074): every birth that names it as its process
 /// actor goes, with its born-from index row, in the erase's own transaction,
 /// and so does every window carrier of one this vault keeps (FIX 6279). A
 /// birth has no erased form (its process names one actor), so the born rows
 /// and their content stay and their births read unknown, as a KS-7 restore
-/// leaves out a birth whose actor does not open. A born row a legal hold
-/// keeps keeps its birth and its carrier (FIX 6280, ARCH-0038: every
-/// destructive path checks) until the hold lifts:
+/// leaves out a birth whose actor does not open. A born row a restriction
+/// names keeps its birth and its carrier (FIX 6280, ARCH-0038: every
+/// destructive path checks) until the restriction lifts:
 /// [`release_held_births_in_txn`] drops them then.
 ///
 /// # Errors
@@ -60,12 +121,13 @@ pub(crate) fn erase_birth_actor_in_txn(
     Ok(())
 }
 
-/// The births a legal hold kept from the scrubs of the hard-erased ids
+/// The births a restriction kept from the scrubs of the hard-erased ids
 /// `erased`, once nothing holds their rows (FIX 6280): each goes, with its
 /// born-from index row, and so does every window carrier of a birth one of
-/// them made whose row no hold keeps, whether or not its birth landed here
-/// (FIX 6386): a carrier whose row was never born here, or whose stamp was
-/// refused, has no local birth to drop first. A row still held keeps both.
+/// them made whose row no restriction keeps, whether or not its birth
+/// landed here (FIX 6386): a carrier whose row was never born here, or
+/// whose stamp was refused, has no local birth to drop first. A row still
+/// held keeps both.
 ///
 /// # Errors
 ///
@@ -82,7 +144,7 @@ pub(crate) fn release_held_births_in_txn(
 }
 
 /// Drops each birth whose process actor is in `actors`, but for a born row a
-/// legal hold keeps.
+/// restriction keeps.
 fn drop_actor_births_in_txn(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
@@ -98,10 +160,10 @@ fn drop_actor_births_in_txn(
     Ok(())
 }
 
-/// Whether a birth one of `actors` made is still stored here: one a legal
-/// hold kept from its actor's scrub, or one a lifted hold kept until the
-/// next due pass drops it (FIX 6386). An erase of one of `actors` is not
-/// complete while one is.
+/// Whether a birth one of `actors` made is still stored here: one a
+/// restriction kept from its actor's scrub, or one a lifted restriction kept
+/// until the next settle pass drops it (FIX 6386). An erase of one of `actors`
+/// is not complete while one is.
 ///
 /// # Errors
 ///
@@ -120,11 +182,11 @@ pub(crate) fn births_made_by_in_txn(
     Ok(false)
 }
 
-/// Whether a legal hold keeps `row`'s birth: a hold on the row itself or,
-/// for a key pad, on its world or a claim its key seals. These are the holds
-/// the row's own erase refuses on (`erase_row_provenance_in_txn`), read here
-/// as a bool, so an actor's scrub leaves the birth rather than refusing the
-/// whole erase (OF-470).
+/// Whether a cooperative restriction keeps `row`'s birth: a restriction on
+/// the row itself or, for a key pad, on its world or a claim its key seals.
+/// These are the restrictions the row's own erase refuses on
+/// (`erase_row_provenance_in_txn`), read here as a bool, so an actor's scrub
+/// leaves the birth rather than refusing the whole erase.
 ///
 /// # Errors
 ///

@@ -1,11 +1,13 @@
 //! Terminal dreamer.step claim write and step-claim codec. The memo index
-//! moved to `step_index` (FIX 4816); its names stay reachable here.
+//! moved to `step_index` (FIX 4816) and the value decoder to `decode`; their
+//! names stay reachable here.
 
-use super::super::{CallPurpose, LlmRequest, LlmResponse, canonical_json_bytes};
-use super::codec::{
-    decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
-    expect_string, expect_u64, invalid_step, pinned_key_index,
+mod decode;
+
+use super::super::{
+    CallPurpose, ContentPart, LlmMessage, LlmRequest, LlmResponse, canonical_json_bytes,
 };
+use super::request_hash_step::step_input_records;
 use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
 use super::source::StepSource;
 use super::step_state::{
@@ -13,7 +15,7 @@ use super::step_state::{
     step_state_read,
 };
 use super::types::{
-    DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
+    DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
     KEY_AT, KEY_ATTEMPT_ID, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION, KEY_PURPOSE,
@@ -43,6 +45,8 @@ pub(crate) use super::step_index::{
     index_dreamer_step_claim_for_put, terminal_step_identity,
 };
 
+pub(super) use decode::{DecodedStepClaim, decode_step_claim_value};
+
 // ---------------------------------------------------------------------------
 // Terminal step claim (checkpoint-in-append)
 // ---------------------------------------------------------------------------
@@ -71,6 +75,49 @@ fn call_audience(
 /// The claim scope key the record-scope codec reads as the audience.
 const STEP_SCOPE_PROJECT_KEY: &str = "scopeProjectId";
 
+/// The reply a step keeps while an
+/// [`UncapturedSteps`](crate::self_heal::blocked_reports::UncapturedSteps)
+/// guard holds its attempt: the request quoted words the step's owners would
+/// not retire on their erase (fix list row 20501, the mail claim re-check's
+/// judge), so the kept reply is the verdict alone, with no reasoning about
+/// those words (FIX CLAIM-RECHECK-REPLY-PARTS; RULING RECHECK-REPLY-ERASE =
+/// A, which names Reasoning parts, signatures and token scores). Only Text
+/// parts stay, each without its provider signature, so tool and media parts,
+/// which a verdict never carries, go as well. Role, usage, finish reason and
+/// the host's reply assertions stay. Rows filed before this keep what they
+/// hold (M-1 keep). Every other step keeps its whole reply (ARCH-0026
+/// #llm-backend-seam).
+pub(super) fn verdict_only_reply(response: LlmResponse) -> LlmResponse {
+    let LlmResponse {
+        message,
+        usage,
+        finish_reason,
+        reply_assertions,
+        token_scores: _,
+    } = response;
+    let content = message
+        .content
+        .into_iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text, .. } => Some(ContentPart::Text {
+                text,
+                signature: None,
+            }),
+            _ => None,
+        })
+        .collect();
+    LlmResponse {
+        message: LlmMessage {
+            role: message.role,
+            content,
+        },
+        usage,
+        finish_reason,
+        reply_assertions,
+        token_scores: None,
+    }
+}
+
 /// Persists the terminal `dreamer.step` claim (checkpoint-in-append).
 /// `payload` MUST be the serialized JSON bytes of `response` — the fresh path
 /// passes the one serialization it already wrote to the ResponseReceived row;
@@ -82,7 +129,9 @@ const STEP_SCOPE_PROJECT_KEY: &str = "scopeProjectId";
 /// was filed, keeps the row's erased skeleton, and files nothing. An agent
 /// run's step commits only while its machine holds the run (FIX 4747): a
 /// stale executor's write files nothing and fails with
-/// `Error::AgentRunExecutorMoved`.
+/// `Error::AgentRunExecutorMoved`. Each input fact `request` names in its host
+/// provider options (the source versions, the call labels, the TURN ranges,
+/// the source rows) is kept under its own key.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     binding: crate::model_step_effect::StepEffectBinding,
@@ -95,11 +144,17 @@ pub(super) fn log_terminal_step(
 ) -> DurableStepResult<Option<EntityId>> {
     let step_hash = &binding.step_hash;
     let params_hash = request_params_hash(request)?;
+    let input_records = step_input_records(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
+    // The rows this step files are stamped in Unix seconds, as every claim
+    // and entity row is (FIX MODEL-STEP-ROW-TIMES-IN-MILLISECONDS): the
+    // source's `at` and the pass clock are milliseconds, which the claim's
+    // own `at` and the step's private row keep.
     let occurred = TimeRange {
-        start: source.at,
-        end: source.at,
+        start: source.at / 1_000,
+        end: source.at / 1_000,
     };
+    let now = ctx.now_ms / 1_000;
     let envelope = runtime_envelope(binding.attempt_id, source.actor, source.run_id.as_deref())?;
     let inline = payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES;
     let inline_response = if inline {
@@ -166,7 +221,7 @@ pub(super) fn log_terminal_step(
                         &artifact_id,
                         ENTITY_TYPE_BLOB_ARTIFACT,
                         occurred,
-                        ctx.now_ms,
+                        now,
                         &encoded,
                     )
                     .apply(wtxn)?;
@@ -181,7 +236,7 @@ pub(super) fn log_terminal_step(
                     &BlobVersionProvenance::AgentRun { run_ref },
                     source.actor,
                     occurred,
-                    ctx.now_ms,
+                    now,
                 )?;
                 Some(StepResponseRef {
                     artifact_id,
@@ -190,7 +245,7 @@ pub(super) fn log_terminal_step(
                 })
             };
 
-            let value = encode_step_claim_value(&EncodedStepClaim {
+            let mut value = encode_step_claim_value(&EncodedStepClaim {
                 attempt_id: binding.attempt_id,
                 step_hash: *step_hash,
                 progression: StepProgression::Finished,
@@ -203,6 +258,11 @@ pub(super) fn log_terminal_step(
                 response_ref,
                 at: source.at,
             });
+            if let Value::Map(entries) = &mut value {
+                for (key, record) in &input_records {
+                    entries.push((Value::from(*key), Value::from(record.as_str())));
+                }
+            }
             let candidate = call_audience(
                 ClaimCandidate::new(
                     DREAMER_STEP_PREDICATE,
@@ -221,8 +281,13 @@ pub(super) fn log_terminal_step(
             )?;
             ctx.vault
                 .batch_in()
-                .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
                 .apply(wtxn)?;
+            // The step claim is a new mention of its context subject: about
+            // a PERSON under a cleanup archive, which the owner-gone fence
+            // lets through, it restores her in this write (ARCH-0073 §6).
+            ctx.vault
+                .restore_mentioned_subject_in_txn(wtxn, ClaimSubject::Entity(source.subject))?;
             // The claim holds the exact version its response lives in, so
             // its erase reaches that version (FIX 6225).
             if let Some(pin) = &response_ref {
@@ -475,191 +540,4 @@ pub(super) fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
     }
     entries.push((Value::from(KEY_AT), Value::from(claim.at)));
     Value::Map(entries)
-}
-
-/// Consumed fields of a decoded `dreamer.step` claim value. The decoder
-/// validates EVERY pinned key fail-closed and stores what production readers
-/// use: the memo-index key pair, the response location, and the WITH-WHAT
-/// provenance triple the memo-hit check and the index admission gate compare
-/// against the live request (ONE-1344).
-pub(super) struct DecodedStepClaim {
-    pub(crate) attempt_id: AttemptId,
-    pub(crate) step_hash: [u8; 32],
-    pub(crate) model_id: String,
-    pub(crate) purpose: String,
-    pub(crate) params_hash: String,
-    // Usage totals are an audit surface on the durable record; no production
-    // reader consumes them yet.
-    #[allow(dead_code)]
-    pub(crate) usage_in: u64,
-    #[allow(dead_code)]
-    pub(crate) usage_out: u64,
-    pub(crate) response: Option<String>,
-    pub(crate) response_ref: Option<StepResponseRef>,
-}
-
-/// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
-/// duplicates, schema-version checked, and EXACTLY ONE of
-/// `response`/`response_ref` present (both or neither is a typed error).
-pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
-    let entries = expect_map(value, "dreamer step value must be a MessagePack map")?;
-    let mut schema_version = None;
-    let mut attempt_id = None;
-    let mut step_hash = None;
-    let mut progression = None;
-    let mut model_id = None;
-    let mut purpose = None;
-    let mut params_hash = None;
-    let mut usage_in = None;
-    let mut usage_out = None;
-    let mut response = None;
-    let mut response_ref = None;
-    let mut response_version = None;
-    let mut response_hash = None;
-    let mut at = None;
-    let mut seen = [false; DREAMER_STEP_VALUE_KEYS.len()];
-
-    for (key, value) in entries {
-        let key = expect_key(key, "dreamer step value keys must be strings")?;
-        let index = pinned_key_index(key, &DREAMER_STEP_VALUE_KEYS)
-            .ok_or(invalid_step("dreamer step value key is not pinned"))?;
-        if seen[index] {
-            return Err(invalid_step("duplicate dreamer step value key"));
-        }
-        seen[index] = true;
-
-        match DREAMER_STEP_VALUE_KEYS[index] {
-            KEY_SCHEMA_VERSION => {
-                schema_version = Some(expect_u64(
-                    value,
-                    "dreamer step value schema_version must be an integer",
-                )?);
-            }
-            KEY_ATTEMPT_ID => attempt_id = Some(decode_attempt_id_value(value)?),
-            KEY_STEP_HASH => {
-                let hex = expect_string(value, "dreamer step value step_hash must be a string")?;
-                step_hash = Some(decode_hash_hex(&hex)?);
-            }
-            KEY_PROGRESSION => {
-                let parsed =
-                    expect_string(value, "dreamer step value progression must be a string")?;
-                progression = Some(parse_progression_str(&parsed)?);
-            }
-            KEY_MODEL_ID => {
-                model_id = Some(expect_string(
-                    value,
-                    "dreamer step value model_id must be a string",
-                )?);
-            }
-            KEY_PURPOSE => {
-                purpose = Some(expect_string(
-                    value,
-                    "dreamer step value purpose must be a string",
-                )?);
-            }
-            KEY_PARAMS_HASH => {
-                params_hash = Some(expect_string(
-                    value,
-                    "dreamer step value params_hash must be a string",
-                )?);
-            }
-            KEY_USAGE_IN => {
-                usage_in = Some(expect_u64(
-                    value,
-                    "dreamer step value usage_in must be an integer",
-                )?);
-            }
-            KEY_USAGE_OUT => {
-                usage_out = Some(expect_u64(
-                    value,
-                    "dreamer step value usage_out must be an integer",
-                )?);
-            }
-            KEY_RESPONSE => {
-                response = Some(expect_string(
-                    value,
-                    "dreamer step value response must be a string",
-                )?);
-            }
-            KEY_RESPONSE_REF => response_ref = Some(decode_entity_id_value(value)?),
-            KEY_RESPONSE_VERSION => {
-                response_version = Some(expect_u64(
-                    value,
-                    "dreamer step value response_version must be an integer",
-                )?);
-            }
-            KEY_RESPONSE_HASH => {
-                let Value::Binary(bytes) = value else {
-                    return Err(invalid_step("dreamer step response_hash must be binary"));
-                };
-                response_hash =
-                    Some(<[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
-                        invalid_step("dreamer step response_hash must be 32 bytes")
-                    })?);
-            }
-            KEY_AT => {
-                at = Some(expect_u64(
-                    value,
-                    "dreamer step value at must be an integer",
-                )?);
-            }
-            _ => unreachable!("index resolved from DREAMER_STEP_VALUE_KEYS"),
-        }
-    }
-
-    let schema_version =
-        schema_version.ok_or(invalid_step("missing dreamer step value schema_version"))?;
-    if schema_version != DREAMER_STEP_VALUE_SCHEMA_VERSION {
-        return Err(invalid_step(
-            "unsupported dreamer step value schema_version",
-        ));
-    }
-    let response_ref = match (response_ref, response_version, response_hash) {
-        (Some(artifact_id), Some(version), Some(content_hash)) => Some(StepResponseRef {
-            artifact_id,
-            version,
-            content_hash,
-        }),
-        (None, None, None) => None,
-        _ => {
-            return Err(invalid_step(
-                "dreamer step response_ref must carry its version and content hash",
-            ));
-        }
-    };
-    if response.is_some() == response_ref.is_some() {
-        return Err(invalid_step(
-            "dreamer step value must carry exactly one of response/response_ref",
-        ));
-    }
-
-    progression.ok_or(invalid_step("missing dreamer step value progression"))?;
-    let model_id = model_id.ok_or(invalid_step("missing dreamer step value model_id"))?;
-    let purpose = purpose.ok_or(invalid_step("missing dreamer step value purpose"))?;
-    let params_hash = params_hash.ok_or(invalid_step("missing dreamer step value params_hash"))?;
-    let usage_in = usage_in.ok_or(invalid_step("missing dreamer step value usage_in"))?;
-    let usage_out = usage_out.ok_or(invalid_step("missing dreamer step value usage_out"))?;
-    at.ok_or(invalid_step("missing dreamer step value at"))?;
-
-    Ok(DecodedStepClaim {
-        attempt_id: attempt_id.ok_or(invalid_step("missing dreamer step value job_id"))?,
-        step_hash: step_hash.ok_or(invalid_step("missing dreamer step value step_hash"))?,
-        model_id,
-        purpose,
-        params_hash,
-        usage_in,
-        usage_out,
-        response,
-        response_ref,
-    })
-}
-
-fn parse_progression_str(value: &str) -> Result<StepProgression> {
-    match value {
-        "started" => Ok(StepProgression::Started),
-        "response_received" => Ok(StepProgression::ResponseReceived),
-        "logged" => Ok(StepProgression::Logged),
-        "finished" => Ok(StepProgression::Finished),
-        _ => Err(invalid_step("unknown dreamer step value progression")),
-    }
 }

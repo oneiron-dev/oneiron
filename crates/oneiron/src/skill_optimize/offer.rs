@@ -298,6 +298,26 @@ pub(crate) fn pending_training_offer_in_txn(
     OFFER.get(&vault.store, txn, offer)
 }
 
+/// Refuses where the stock switch `offer` proposes would not bind now, read
+/// in `txn` with nothing written: the refusals an owner's switch approval
+/// meets in [`settle_training_offer_in_txn`] after the offer's own checks
+/// and before the switch's first write. An offer of a training recipe
+/// passes: its approval records an intent and binds nothing. The training
+/// offer ask's answer door reads it before a device asks for the person.
+/// # Errors
+/// A switch the seat's binding, the registry or the manifest no longer
+/// admits; storage errors.
+pub(crate) fn training_offer_switch_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: &TrainingOffer,
+) -> Result<()> {
+    let OfferCandidate::Stock { model, .. } = &offer.candidate else {
+        return Ok(());
+    };
+    super::offer_switch::switch_stands_in_txn(vault, txn, &offer.seat, &offer.incumbent, model)
+}
+
 /// The vault owner's answer to the exact offer they saw, in `txn`. A switch
 /// approval needs a stock candidate and binds it to the seat's role in this
 /// transaction, keeping the old binding for undo; a train approval needs a

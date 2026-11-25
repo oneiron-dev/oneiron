@@ -8,7 +8,7 @@
 //! erase (FIX 2405) never reached them. A hard erase of anyone the job
 //! names soft-erases both, as the actor sweep erases a contribution pair's
 //! copies: the MESSAGEs first, then each TURN that holds only erased
-//! MESSAGEs. A legal hold keeps its row, logged, and with it the TURN that
+//! MESSAGEs. A restriction keeps its row, logged, and with it the TURN that
 //! holds it; the conversation and its other turns stay.
 
 use std::collections::BTreeSet;
@@ -46,7 +46,7 @@ pub(super) fn erase_connector_witness_of_in_txn(
 /// nothing twice.
 ///
 /// # Errors
-/// Storage errors, or a refusal the soft erase raises other than a hold.
+/// Storage errors, or a refusal the soft erase raises other than a restriction.
 pub(super) fn erase_connector_witness_rows_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -84,7 +84,8 @@ fn row_erased_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Res
 }
 
 /// Soft-erases one witnessed row of `entity_type`, returning whether its
-/// vectors went. A hold keeps it, logged, and the rest of the erase goes on.
+/// vectors went. A restriction keeps it, logged, and the rest of the erase
+/// goes on.
 fn erase_witness_row_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -100,7 +101,10 @@ fn erase_witness_row_in_txn(
     {
         return Ok(false);
     }
-    if let Err(error) = vault.store.reject_legal_hold_in_txn(wtxn, id.as_bytes()) {
+    if let Err(error) = vault
+        .store
+        .reject_restricted_record_in_txn(wtxn, id.as_bytes())
+    {
         if !crate::store::legal_hold::held_in_txn(&vault.store, wtxn, id.as_bytes())? {
             return Err(error);
         }

@@ -13,10 +13,11 @@
 //! transaction, from that word's option alone; a replay never resolves
 //! again. Other asks are unchanged.
 
+use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskEvidenceReason, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskWord,
+    TaskAskDecision, TaskAskEvidenceReason, TaskAskOptionId, TaskAskResult,
+    TaskAskSettlementReason, TaskAskSource, TaskAskWord,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimLifecycleStatus;
@@ -36,10 +37,6 @@ fn attendee_intent(group: &AskGroup) -> Option<&str> {
         .intent_key
         .strip_prefix(PREDICATE_DISCLOSURE_ATTENDEE_ASK)?
         .strip_prefix('/')
-}
-
-fn owner_not_authenticated(reason: &'static str) -> Error {
-    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
 }
 
 /// The candidates the attendee ask CLAIM `ask_ref` froze, once the ask that
@@ -105,26 +102,69 @@ fn frozen_candidates_in(
         .collect()
 }
 
-/// Refuses a word on an attendee ask unless it is the owner's own act; any
-/// other ask passes untouched. Runs in shared word admission, before the
-/// word is recorded, for `tasks_answer`, a consult answer and a redeemed
-/// option link alike.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one admission check over the word, its writer and the owner proof"
-)]
-pub(super) fn guard_word(
+/// Who an attendee ask asks: any live owner of this vault; `None` for every
+/// other ask ([`super::ask_guard`]).
+pub(super) fn asked_in(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+    _id: EntityId,
+    group: &AskGroup,
+) -> Result<Option<AskedParty>> {
+    Ok(attendee_intent(group).map(|_| AskedParty::VaultOwner))
+}
+
+/// Whether `option` approves what an attendee ask asks for: it names a
+/// contact as the speaker, an identity act. "None of these" names nobody
+/// ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    matches!(
+        AttendeeIdentityChoice::from_option(option),
+        Some(AttendeeIdentityChoice::Contact(_))
+    )
+}
+
+/// Refuses an approving `word` that names a contact no longer live and
+/// active, from a read: the refusal the identity's own writer gives the
+/// same word on its cut (`Vault::resolve_attendee_identity_in_txn`), made
+/// before a device asks for the person
+/// ([`super::ask_guard::approved_act_stands_in`]). The other checks of that
+/// writer are the word's admission's ([`offered_in`]).
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] for a contact that is gone,
+/// [`Error::InvalidClaimBody`] for one no longer active; storage errors.
+pub(super) fn approved_act_stands_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
+    _id: EntityId,
+    _group: &AskGroup,
     word: &TaskAskWord,
-    owner: Option<&AuthenticatedOwner>,
 ) -> Result<()> {
+    match word
+        .option
+        .as_ref()
+        .and_then(AttendeeIdentityChoice::from_option)
+    {
+        Some(AttendeeIdentityChoice::Contact(contact)) => {
+            crate::disclosure::require_live_contact_in_txn(vault, txn, &contact)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// [`asked_in`], once `word` names one option the ask CLAIM froze, in its
+/// canonical form; a word that names none is refused. Shared word admission
+/// then asks the owner's own proof of it ([`super::ask_guard`]).
+pub(super) fn offered_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    _id: EntityId,
+    group: &AskGroup,
+    word: &TaskAskWord,
+) -> Result<Option<AskedParty>> {
     let Some(hex) = attendee_intent(group) else {
-        return Ok(());
+        return Ok(None);
     };
     let ask_ref = EntityId::from_hex(hex).map_err(|_| ask_record::invalid())?;
     if ask_ref.to_hex() != hex {
@@ -143,52 +183,7 @@ pub(super) fn guard_word(
     {
         return Err(ask_record::invalid());
     }
-    // Only the admission node settles the ask, so a word anywhere else
-    // could never settle under the proof that admitted it.
-    if !ask_record::owns_revision(vault, txn, id, group)? {
-        return Err(owner_not_authenticated(
-            "an attendee answer is given on the node that admitted the ask",
-        ));
-    }
-    let Some(owner) = owner else {
-        return Err(owner_not_authenticated(
-            "an attendee answer needs the owner's own authenticated word",
-        ));
-    };
-    if source != TaskAskSource::Human || owner.revalidate_in_txn(vault, txn)? != actor {
-        return Err(owner_not_authenticated(
-            "an attendee answer is the authenticated owner's own word",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether settlement may cut `group` for `reason` with `decision` under
-/// `owner`. An attendee ask's first word decides an identity only under the
-/// live proof of the owner who gave it; without that proof the ask stays
-/// open, and only its deadline or staleness closes it, on the hold default.
-pub(super) fn may_cut(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    group: &AskGroup,
-    reason: TaskAskSettlementReason,
-    decision: &TaskAskDecision,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<bool> {
-    if matches!(
-        reason,
-        TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
-    ) || attendee_intent(group).is_none()
-    {
-        return Ok(true);
-    }
-    let TaskAskDecision::First(answer) = decision else {
-        return Ok(true);
-    };
-    match owner {
-        Some(owner) => Ok(owner.revalidate_in_txn(vault, txn)? == answer.actor_ref),
-        None => Ok(false),
-    }
+    Ok(Some(AskedParty::VaultOwner))
 }
 
 /// Resolves the speaker's identity from the word `result` selected, in the
@@ -249,9 +244,10 @@ pub(super) fn resolve_answer_in(
 }
 
 impl Memory<'_> {
-    /// The owner proof a word this surface writes carries: the proof the
-    /// host bound for the owner's direct request, and only there. Generated
-    /// code and a room turn answer for no one in person, so theirs is none.
+    /// The proof a word this surface writes carries: the proof the host bound
+    /// for the caller's direct request, the owner's or a person's own at the
+    /// person tier (UC-05), and only there. Generated code and a room turn
+    /// answer for no one in person, so theirs is none.
     pub(super) fn answer_owner_proof(&self) -> Option<&AuthenticatedOwner> {
         if self.writes_generated() || self.room_turn().is_some() {
             return None;

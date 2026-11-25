@@ -61,7 +61,7 @@ pub(super) fn run_loop_findings(
             if (streak.len() as u64) < repeats
                 || matches!(
                     first.effect,
-                    SelfEffect::TasksWait | SelfEffect::TasksWaitSet
+                    SelfEffect::TasksWait | SelfEffect::TasksWaitSet | SelfEffect::JobsOrdersWait
                 )
             {
                 continue;

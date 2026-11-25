@@ -3,9 +3,11 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Instant;
 
 use oneiron::{EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -207,6 +209,14 @@ pub(crate) fn run_bench(settings: &BenchSettings) -> Result<VectorBenchReport, S
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let vault = Vault::open(dir.path(), bench_config(settings.n, settings.dim))
         .map_err(|e| format!("vault open: {e}"))?;
+    // A host installs a keystore after each open: the delete-churn step's
+    // deletes sign their receipts with this install's key (FIX
+    // [BENCH-VECTOR-RUN-KEYSTORE]). The vault is a temp dir dropped with the
+    // run, so a keystore in process memory holds the whole of its custody.
+    vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .map_err(|e| format!("install signing: {e}"))?;
 
     // [build] new-node inserts — entity + vector + edge in ONE write txn,
     // matching the contract row "Insert (entity + vector + edges) — single

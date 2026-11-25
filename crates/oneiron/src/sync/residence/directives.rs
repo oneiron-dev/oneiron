@@ -18,10 +18,10 @@
 use std::collections::BTreeMap;
 
 use crate::authority::{
-    AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, RESIDENCE_REASON_MAX,
-    ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus, authority_entry_hash,
-    decode_authority_log_entry_body, invalid_authority, next_sequence, sign_side_entry,
-    standing_rows,
+    AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, OwnerProofSigner,
+    RESIDENCE_REASON_MAX, ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus,
+    authority_entry_hash, decode_authority_log_entry_body, invalid_authority, next_sequence,
+    sign_side_entry_with_owner_proof, standing_rows,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
@@ -61,8 +61,9 @@ impl Vault {
     /// anything else it is refused.
     ///
     /// # Errors
-    /// [`Error::InvalidConfig`] when `machine` is not one of the owner's
-    /// linked machines whose proof stands here, mine or not (FIX 8888), when
+    /// [`Error::InvalidConfig`] when `machine` is not a linked machine whose
+    /// roster head is live and answered, mine or not (FIX 8888; this
+    /// install's pin alone is not enough), when
     /// it is this install and this install is the elected
     /// home (which always syncs every window it may read), when an open names
     /// a window key that does not parse, or when `id` names another
@@ -86,15 +87,17 @@ impl Vault {
         let home_here = super::local_is_elected_home(self)?;
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        // A linked machine whose answered proof stands here, mine or not:
-        // a work, school or rented machine takes directives too (FIX 8888).
+        // A machine whose residence result can stand: its live, answered
+        // roster head names a key, mine or not (a work, school or rented
+        // machine takes directives too, FIX 8888). This install's pin alone
+        // names none (Fable pass 29, K3): its result would never stand.
         if self
             .authority_view_readonly_in_txn(&txn)?
-            .machine_proof_key(machine)
+            .residence_signer_key(machine)
             .is_none()
         {
             return Err(refused(
-                "a residence directive names one of the owner's machines",
+                "a residence directive names a machine the roster links and the owner answered",
             ));
         }
         if home_here && crate::identity::read_machine_id_in_txn(self, &txn)? == Some(machine) {
@@ -170,7 +173,7 @@ impl Vault {
 /// covered ones the image carries whole (FIX 5412), or the stored ones alone
 /// where it dropped them for the residence-body overflow (FIX 11400), as
 /// before #4095 carried them.
-fn directive_states_in_txn(
+pub(crate) fn directive_states_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<ResidenceDirectiveState>> {
@@ -238,9 +241,9 @@ fn directive_states_in_txn(
 }
 
 /// The accepted directives naming this install's machine that it has no
-/// result for yet, oldest first. None on a machine whose proof does not
-/// stand here on this install's key, mine or not (FIX 8888): its results
-/// would not stand.
+/// result for yet, oldest first. None unless this install's key is its
+/// machine's live, answered roster head's, mine or not (FIX 8888): only
+/// that key's results stand (Fable pass 29, K3).
 pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<ResidenceDirectiveState>> {
     let Some(local) = vault.local_machine()? else {
         return Ok(Vec::new());
@@ -248,9 +251,9 @@ pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<Residenc
     let txn = vault.store.env.read_txn()?;
     let key = crate::identity::read_machine_signing_key_in_txn(vault, &txn)?
         .map(|key| key.verifying_key().to_bytes());
-    let stands = local.mine || {
+    let stands = key.is_some() && {
         let fold = vault.authority_view_readonly_in_txn(&txn)?;
-        key.is_some_and(|key| fold.machine_proof_key(local.id) == Some(key))
+        fold.residence_signer_key(local.id) == key
     };
     if !stands {
         return Ok(Vec::new());
@@ -258,6 +261,22 @@ pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<Residenc
     let mut states = directive_states_in_txn(vault, &txn)?;
     states.retain(|state| state.directive.machine == local.id && state.result.is_none());
     Ok(states)
+}
+
+/// Whether `pending`'s directive still counts in the fold: one the fold took
+/// out after the run read it as pending (a forked directive whose signer or
+/// a cosigner was revoked since, row SEQ-FLOOR-S-WITHHELD-COSIGN) is pending
+/// no longer, and its act committed nothing
+/// ([`finish_residence_directive_in_txn`] refuses its result).
+pub(crate) fn residence_directive_counts(
+    vault: &Vault,
+    pending: &ResidenceDirectiveState,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .authority_view_readonly_in_txn(&txn)?
+        .valid_entries
+        .contains(&pending.entry))
 }
 
 /// A refusal's reason as a result carries it: one line, at most
@@ -278,7 +297,10 @@ pub(crate) fn residence_refusal_reason(text: &str) -> String {
 
 /// Records this machine's result for `pending` in the caller's transaction,
 /// beside whatever the act committed there, signed by this install's machine
-/// key. Refused unless the fold accepts it.
+/// key. Refused unless the fold accepts it. The result carries the owner
+/// key's proof this install holds when the directive is the owner's own
+/// signed word ([`residence_result_proof_in_txn`], LIMIT-1), on each
+/// parent set the merge takes that proof at.
 pub(crate) fn finish_residence_directive_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -296,6 +318,13 @@ pub(crate) fn finish_residence_directive_in_txn(
     let key = crate::identity::read_machine_signing_key_in_txn(vault, txn)?
         .ok_or_else(|| refused("this install has no machine key"))?;
     let fold = vault.authority_view_readonly_in_txn(txn)?;
+    // The directive must still count in this transaction's fold. The fold
+    // takes a forked directive out once a key it rests on is revoked (row
+    // SEQ-FLOOR-S-WITHHELD-COSIGN), which may land after the run read it as
+    // pending: then neither its result nor the act beside it commits.
+    if !fold.valid_entries.contains(&pending.entry) {
+        return Err(refused("the residence directive no longer counts"));
+    }
     let now = vault.instant_in_txn(txn)?.secs();
     let result = ResidenceResult {
         directive: pending.directive.id,
@@ -314,30 +343,69 @@ pub(crate) fn finish_residence_directive_in_txn(
     // that result does not stand, the explicit parents are tried, as before.
     let mut parents = standing_rows(&fold, machine);
     parents.insert(pending.entry);
+    let proven = crate::authority::proven_residence_result_parents_in_txn(
+        &vault.store,
+        txn,
+        &fold,
+        &parents,
+    );
+    // The rows a result names lie off the main frontier the proof key was
+    // picked on: each set takes the proof only where its own state does, so
+    // the merge never judges the cosign forged; a set that does not carries
+    // the result unproven, as before.
+    let proof = residence_result_proof_in_txn(vault, txn, &fold, pending)?;
+    let mut sets = vec![parents.clone()];
+    sets.extend(proven.iter().cloned());
+    let taken = match &proof {
+        Some(proof) => vault.owner_proof_taken_at_in_txn(txn, &proof.key(), &sets)?,
+        None => vec![false; sets.len()],
+    };
     let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
     let seq = next_sequence(&fold, &signer)?;
-    let signed = |parents| {
-        sign_side_entry(
+    let signed = |parents, proved: bool| {
+        sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
             parents,
             AuthorityOp::ResidenceResult(result.clone()),
             now,
+            proof.as_ref().filter(|_| proved),
         )
     };
-    if let Some(proven) =
-        crate::authority::proven_residence_result_parents_in_txn(&vault.store, txn, &fold, &parents)
-    {
+    if let Some(proven) = proven {
         let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-        if let Ok(entry) = signed(proven)
+        if let Ok(entry) = signed(proven, taken.get(1).copied().unwrap_or(false))
             && let Ok(hash) = put_result_in_txn(vault, &mut savepoint, entry, now)
         {
             savepoint.commit()?;
             return Ok(hash);
         }
     }
-    put_result_in_txn(vault, txn, signed(parents)?, now)
+    let proved = taken.first().copied().unwrap_or(false);
+    put_result_in_txn(vault, txn, signed(parents, proved)?, now)
+}
+
+/// The owner key this install proves `pending`'s result with on `fold` (row
+/// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, LIMIT-1
+/// RESULT-NEEDS-EXECUTOR-KEY): the directive is the owner's own signed word
+/// and this install holds a key that proves now
+/// ([`Vault::result_proof_signer_in_txn`]). Never for the home's prediction
+/// ([`ResidenceAct::Predicted`]): the home signs it with the issuer the
+/// owner's directives carry, under the budget of the owner's
+/// [`ResidenceAct::SyncPredicted`] directive, as automatic upkeep, so its
+/// result is carried unproven, and so is the result of any directive that
+/// carries that act, whoever issued it.
+fn residence_result_proof_in_txn<'vault>(
+    vault: &'vault Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
+    pending: &ResidenceDirectiveState,
+) -> Result<Option<OwnerProofSigner<'vault>>> {
+    if matches!(pending.directive.act, ResidenceAct::Predicted { .. }) {
+        return Ok(None);
+    }
+    vault.result_proof_signer_in_txn(txn, fold, &pending.entry)
 }
 
 /// Stores the signed result `entry` in `txn`. Refused unless the fold

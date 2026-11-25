@@ -7,13 +7,13 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
-use super::delete::PendingConfirmedErase;
-use super::gate::GatedDeletion;
+use super::gate::{GatedDeletion, OwnerAtPublication};
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
 #[cfg(feature = "sync")]
 use super::gate::{
-    claim_in_txn, reverify_deletion_authority_before_publication, revoke_guest_grants_in_txn,
+    claim_in_txn, reverify_deletion_authority_before_publication, reverify_owner_at_publication,
+    revoke_guest_grants_in_txn,
 };
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
@@ -31,11 +31,13 @@ use super::topology_delete_intent::{
 };
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
-use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
+use super::tombstone::PENDING_TOMBSTONE;
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
 #[cfg(feature = "sync")]
 use crate::ports::{WindowAddress, WindowDeletionRows};
+#[cfg(feature = "sync")]
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed
@@ -51,6 +53,10 @@ struct TombstonePersistence<'a> {
     /// A history-free cut that failed its proof (FIX 6520): stored as
     /// before, and this txn owes the erasure sweep the window.
     owes_compaction: bool,
+    /// Whether `snapshot` was exported history-free, as
+    /// [`Vault::resolve_window_snapshot_mode`] resolved it: the window's pin
+    /// read before the export (census L6-05).
+    history_free: bool,
 }
 
 /// What a write does when the pad tombstones it staged fail to publish after
@@ -67,8 +73,10 @@ const PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY: PadTombstonePublishFailure =
     PadTombstonePublishFailure::KeepPendingAndWarn;
 
 impl Vault {
-    /// [`Self::write_crdt_tombstone_due`] for a delete that is no due
-    /// owner-confirmed erase.
+    /// Publishes the tombstone of a delete. The vault owner's own delete
+    /// re-proves `owner` in the publish transaction.
+    #[cfg(feature = "sync")]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn write_crdt_tombstone(
         &self,
         id: &EntityId,
@@ -77,32 +85,7 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
-    ) -> Result<bool> {
-        self.write_crdt_tombstone_due(
-            id,
-            window_ts,
-            window_label,
-            value,
-            gate_decision,
-            gate,
-            None,
-        )
-    }
-
-    /// Publishes the tombstone of a delete; a due owner-confirmed erase
-    /// (`due`) re-proves in the publish transaction that it still waits
-    /// (FIX 6337).
-    #[cfg(feature = "sync")]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn write_crdt_tombstone_due(
-        &self,
-        id: &EntityId,
-        window_ts: u64,
-        window_label: &str,
-        value: &TombstoneValueV2,
-        gate_decision: Option<&GateDecisionRecord>,
-        gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
+        owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         let mut doc_mutated = false;
         let outcome = self.write_crdt_tombstone_impl(
@@ -112,7 +95,7 @@ impl Vault {
             value,
             gate_decision,
             gate,
-            due,
+            owner,
             &mut doc_mutated,
         );
         crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
@@ -191,14 +174,14 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
+        owner: Option<OwnerAtPublication<'_>>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use super::delete_bearing_update::export_tombstone_commit_delta;
         use crate::store::loro_document::{doc_version_vector, entity_carriers};
         use crate::store::window_protocol::DELETION_TOMBSTONE_ORIGIN;
-        use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
+        use crate::sync::manager::PublicationWindow;
         use crate::sync::schema::create_window_doc;
         use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
         use crate::window_key::WindowKey;
@@ -206,7 +189,18 @@ impl Vault {
 
         let window_key = WindowKey::new(window_label);
 
-        if let Some((window, materializer, manager)) = self.live_window(&window_key) {
+        // A closed window stays held closed from this lookup through the
+        // transient publish txn's commit: a replacement that read its state
+        // before that commit would install over the tombstone the state from
+        // before it, and delete its `u:w:` row with the window's other
+        // pending updates.
+        let publication = self.publication_window(&window_key);
+        if let PublicationWindow::Live {
+            window,
+            materializer,
+            manager,
+        } = &publication
+        {
             // Live path: merge the on-disk record first (clobber guard —
             // a tombstone persisted transiently while this window was open
             // must survive the snapshot export below), then commit the
@@ -244,7 +238,7 @@ impl Vault {
             // therefore ordered strictly before this delete (seen — nothing
             // is published) or strictly after it (LMDB's single writer makes
             // it wait for this commit). The steps that need their own write
-            // txn — the mode scrub, the gate staging and the carrier mark —
+            // txn — the mode scrub, the gate staging and the suppression mark —
             // run before it opens, since LMDB admits no nested writer. Lock order
             // materializer → LMDB txn matches every other holder; the registry
             // lock is NOT held here (manager lock-order pin).
@@ -262,14 +256,14 @@ impl Vault {
                     gate_decision.map(|decision| decision.decision_id),
                 );
                 super::tombstone_scope::capture_deleted_scope(self, id, value);
-                // Marked before the publish txn opens, which LMDB cannot nest:
-                // a failed publish keeps the mutated live doc, and a later
-                // persist would make its removal durable without the mark.
-                self.store.sync_hooks.mark_removed_carriers_first(
-                    self,
-                    CarrierRemoval::LocalPublication,
-                    &entity_carriers(&window.doc, &[*id]),
-                )?;
+                // Suppressed before the publish txn opens, which LMDB cannot
+                // nest: a failed publish keeps the mutated live doc, and a
+                // later persist would make its removal durable without the
+                // mark. The carrier's records leave in the publish txn.
+                let removed_carriers = entity_carriers(&window.doc, &[*id]);
+                self.store
+                    .sync_hooks
+                    .suppress_published_carriers_first(self, &removed_carriers)?;
                 let mut wtxn = self.begin_tombstone_publish_txn(
                     id,
                     window_ts,
@@ -277,8 +271,12 @@ impl Vault {
                     value,
                     gate_decision,
                     gate,
-                    due,
+                    owner,
+                    &removed_carriers,
                 )?;
+                // The live document changes next, which linearizes this
+                // delete: its brief fence settles under the publish writer.
+                self.store.brief_delete_fences.settle(id);
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
@@ -302,7 +300,7 @@ impl Vault {
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
                         let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
                         let snapshot =
-                            Self::export_window_snapshot_in_mode(&window.doc, history_free)?;
+                            self.export_window_snapshot_in_mode(&wtxn, &window.doc, history_free)?;
                         let vv = doc_version_vector(&window.doc);
                         Ok((delete_update, snapshot, vv))
                     })?;
@@ -320,6 +318,7 @@ impl Vault {
                         delete_update: delete_update.as_ref(),
                         scrubbed_update_keys: &merged_update_keys,
                         owes_compaction,
+                        history_free,
                     },
                 )?;
                 wtxn.commit()?;
@@ -360,11 +359,10 @@ impl Vault {
             gate_decision.map(|decision| decision.decision_id),
         );
         super::tombstone_scope::capture_deleted_scope(self, id, value);
-        self.store.sync_hooks.mark_removed_carriers_first(
-            self,
-            CarrierRemoval::LocalPublication,
-            &entity_carriers(&doc, &[*id]),
-        )?;
+        let removed_carriers = entity_carriers(&doc, &[*id]);
+        self.store
+            .sync_hooks
+            .suppress_published_carriers_first(self, &removed_carriers)?;
         // Same authority boundary as the live path: the transient doc is
         // mutated only after this txn's re-fold passes, and its bytes reach
         // `d:w:`/`u:w:`/`q:` in that same txn.
@@ -375,7 +373,8 @@ impl Vault {
             value,
             gate_decision,
             gate,
-            due,
+            owner,
+            &removed_carriers,
         )?;
         let vv_before = doc.oplog_vv();
         self.store
@@ -387,7 +386,8 @@ impl Vault {
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
-        let (snapshot, owes_compaction) = Self::export_window_snapshot_in_mode(&doc, history_free)?;
+        let (snapshot, owes_compaction) =
+            self.export_window_snapshot_in_mode(&wtxn, &doc, history_free)?;
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist_in_txn(
             &mut wtxn,
@@ -399,9 +399,14 @@ impl Vault {
                 delete_update: delete_update.as_ref(),
                 scrubbed_update_keys: &merged_update_keys,
                 owes_compaction,
+                history_free,
             },
         )?;
+        // This commit linearizes the delete: its brief fence settles under
+        // the publish writer.
+        self.store.brief_delete_fences.settle(id);
         wtxn.commit()?;
+        drop(publication);
         self.notify_tombstone_publication(id, &window_key, value);
         Ok(true)
     }
@@ -547,9 +552,11 @@ impl Vault {
     /// wire value a sync-enabled boot would replay into exactly the publication
     /// this refusal denied). Nothing replayable survives a refusal.
     ///
-    /// A due owner-confirmed erase (`due`) re-proves here that it still
-    /// waits, and a hold's refusal names the owner its row records. None
-    /// waiting cancels it, withdrawn as a refusal is (FIX 6337).
+    /// The records of who brought or wrote each of `removed_carriers`, the
+    /// carriers this publication takes out of the document, leave in this
+    /// txn once its refusals pass: a refused publication keeps the carrier, so
+    /// a peer's row it brought must still read as the peer's. Only their
+    /// task-authority suppression committed before this txn opened.
     #[cfg(feature = "sync")]
     #[allow(clippy::too_many_arguments)]
     fn begin_tombstone_publish_txn(
@@ -560,13 +567,24 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
+        owner: Option<OwnerAtPublication<'_>>,
+        removed_carriers: &[(EntityId, Vec<u8>)],
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
-                .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
+                .and_then(|()| reverify_owner_at_publication(self, owner, id, &wtxn))
+                // The last-bound-owner guard at this delete's linearizing
+                // commit (round-1 P1 of #7900): a hard delete publishes before
+                // it purges, so the publish decides the guard and the later
+                // purge must not re-decide a call peers already obey. A soft
+                // publication runs it too (round-2 P1): the headerless leg
+                // publishes before its purge, so a PERSON put and bound as
+                // the last owner under the id since the guard phase is
+                // refused here. A headerful soft delete's scrub decided it
+                // already and left a shell, which the guard passes.
+                .and_then(|()| self.refuse_last_bound_owner_delete_in(&wtxn, id))
                 .and_then(|()| {
                     self.store.delete_guards.precheck_goal_delete(
                         &self.store,
@@ -590,12 +608,19 @@ impl Vault {
                 })
                 .and_then(|()| {
                     if value.reason.is_hard() {
-                        let requester = due.map(PendingConfirmedErase::requester);
-                        self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
+                        self.store
+                            .reject_restricted_record_in_txn(&wtxn, id.as_bytes())?;
                         crate::world_keys::reject_held_pad_world_in_txn(
                             &self.store,
                             &wtxn,
                             &[*id],
+                        )?;
+                        // The purge refuses a project with a live child, so
+                        // its publication refuses it first, before the fence.
+                        crate::workspace_roster::reject_project_with_live_children(
+                            &self.store,
+                            &wtxn,
+                            id,
                         )?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
@@ -644,6 +669,9 @@ impl Vault {
                 &Vec::new(),
             )?;
         }
+        self.store
+            .sync_hooks
+            .forget_removed_carrier_records_in_txn(self, &mut wtxn, removed_carriers)?;
         Ok(wtxn)
     }
 
@@ -667,7 +695,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = PendingTombstoneKey {
+        let key = WindowEntityHexKey {
             window: window_label.to_owned(),
             id: *id,
         };
@@ -761,14 +789,27 @@ impl Vault {
     }
 
     /// Exports the window snapshot under a mode already resolved by
-    /// [`Self::resolve_window_snapshot_mode`] — a pure document operation,
-    /// safe to run inside the publish transaction — and whether it is a
-    /// history-free cut that failed its proof (FIX 6520).
+    /// [`Self::resolve_window_snapshot_mode`] — a document operation and a
+    /// hold read, safe to run inside the publish transaction `txn` — and
+    /// whether the window owes the erasure sweep a compaction for it: a
+    /// history-free cut that failed its proof (FIX 6520), or a cut not taken
+    /// because a legal hold keeps a row the doc's history carries (OF-470,
+    /// census L6-05 round 1). That snapshot keeps all the history, and the
+    /// compaction it owes defers while the hold stands.
     #[cfg(feature = "sync")]
     fn export_window_snapshot_in_mode(
+        &self,
+        txn: &heed::RoTxn<'_>,
         doc: &loro::LoroDoc,
         history_free: bool,
     ) -> Result<(Vec<u8>, bool)> {
+        if history_free
+            && crate::sync::carrier_holds::CarrierInventory::of_window(doc)
+                .held_in_txn(&self.store, txn)?
+        {
+            tracing::warn!("tombstone publish: a legal hold keeps the window's history");
+            return crate::store::loro_document::export_snapshot(doc).map(|bytes| (bytes, true));
+        }
         if history_free {
             let cut = crate::sync::window::tip_window_cut(doc)?;
             Ok((cut.bytes, !cut.proved))
@@ -894,6 +935,7 @@ impl Vault {
             window_key,
             persistence.snapshot,
             persistence.version_vector,
+            persistence.history_free,
         )?;
         if persistence.owes_compaction {
             crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
@@ -954,7 +996,7 @@ impl Vault {
 
     #[cfg(not(feature = "sync"))]
     #[allow(clippy::unnecessary_wraps, clippy::too_many_arguments)]
-    pub(super) fn write_crdt_tombstone_due(
+    pub(super) fn write_crdt_tombstone(
         &self,
         _id: &EntityId,
         _window_ts: u64,
@@ -962,7 +1004,7 @@ impl Vault {
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
-        _due: Option<&PendingConfirmedErase>,
+        _owner: Option<OwnerAtPublication<'_>>,
     ) -> Result<bool> {
         // No CRDT in this build — nothing is published, so there is no publish
         // commit and therefore NO linearization point here. `false` is the
@@ -1053,6 +1095,7 @@ mod live_query_publication_tests {
                 1_772_000_000,
                 tee.window.as_str(),
                 &value,
+                None,
                 None,
                 None,
             );
