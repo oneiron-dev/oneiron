@@ -10,14 +10,17 @@ use oneiron::code_run::model_call::{ModelCallBoard, ModelCallContext, ModelCallH
 use oneiron::compaction::ChatLog;
 
 /// The earlier lines of a self agent's turn: its retained log, read as its
-/// caller reads it. A log with no line is a first turn.
+/// caller reads it. A log with no line is a first turn. Its raw turns are
+/// every turn whose lines the request carried, pinned or not: a reply cut
+/// at the token limit keeps its saved text in the next request, and no
+/// projection pins it.
 pub(super) fn retained_log(log: &ChatLog) -> ModelCallHistory {
     if log.lines.is_empty() {
         return ModelCallHistory::Cold;
     }
     ModelCallHistory::RetainedLog {
         summaries: log.summaries.clone(),
-        raw_turns: log.sources.iter().map(|span| span.turn).collect(),
+        raw_turns: log.raw_turns.clone(),
     }
 }
 

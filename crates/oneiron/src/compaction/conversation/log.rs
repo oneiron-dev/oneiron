@@ -90,6 +90,11 @@ pub struct ChatLog {
     pub message_ids: Vec<Option<EntityId>>,
     /// Each retained turn the lines hold, in order, by revision.
     pub sources: Vec<ConversationTurnSpan>,
+    /// Each raw TURN the lines hold, in order, pinned or not: what the
+    /// request carried. A turn no projection pins (a reply still generating,
+    /// or one cut at the token limit, whose saved text the lines keep) is
+    /// here and not in `sources`.
+    pub raw_turns: Vec<EntityId>,
     /// The summaries standing in the lines.
     pub summaries: Vec<EntityId>,
     /// Whether every turn the lines hold was pinned by its projection: a
@@ -148,6 +153,7 @@ impl ChatLog {
             lines: Vec::new(),
             message_ids: Vec::new(),
             sources: spans.clone(),
+            raw_turns: spans.iter().map(|span| span.turn).collect(),
             summaries: Vec::new(),
             pinned: true,
             session: Some(session),
@@ -258,6 +264,7 @@ pub fn read_first_chat_log(
         lines: Vec::new(),
         message_ids: Vec::new(),
         sources: Vec::new(),
+        raw_turns: Vec::new(),
         summaries: Vec::new(),
         pinned: true,
         session: None,
@@ -401,6 +408,7 @@ fn read_log(
             }
         }
     }
+    let raw_turns = held.iter().map(|&index| raws[index].id).collect();
     let mut pinned = true;
     let mut sources = Vec::new();
     for &index in &held {
@@ -437,6 +445,7 @@ fn read_log(
         lines,
         message_ids,
         sources,
+        raw_turns,
         summaries,
         pinned,
         session,
@@ -558,12 +567,14 @@ pub fn read_action_pinned_log(
                 .and_then(|sources| sources.get(1).copied()),
         );
     }
+    let raw_turns = sources.iter().map(|span| span.turn).collect();
     Ok(Some(ChatLog {
         conversation,
         branch: selection.branch,
         lines,
         message_ids,
         sources,
+        raw_turns,
         summaries: Vec::new(),
         pinned: true,
         session,
