@@ -25,7 +25,9 @@ use oneiron::llm::run_admission::{
     BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferRoute, PaidConnector, Payer,
     RunAdmission, RunDeclaration,
 };
-use oneiron::test_doors::work_order::{put_approved_workload, put_order, settled_order_wait};
+use oneiron::test_doors::work_order::{
+    put_approved_workload, put_order, settled_order_wait, settled_order_wait_erased,
+};
 use oneiron::work_order::{
     AfterPick, AttemptOutcome, AttemptRefused, AttemptToMake, Blocker, CancelWhy, DeviceFact,
     EndKind, GiveUpWhy, MachineFacts, MachineReach, OrderCharge, OrderClass, OrderHost,
@@ -1168,6 +1170,198 @@ fn a_terminal_wait_settles_in_the_write_that_ends_the_order_with_its_view() {
     assert_eq!(answer.view.receipt, None);
     // The started wait settled in the same write, with the same answer.
     assert_eq!(settled(&rig, &order, WaitUntil::Started), Some(answer));
+}
+
+#[test]
+fn a_requesters_erase_leaves_the_settled_wait_replies_of_their_orders_erased() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    // Two orders end cancelled before any attempt, each by its own requester: the owner's,
+    // and one another requester made. Each reaches both milestones, and the settled reply
+    // of each wait copies its order as its requester reads it.
+    let mine = rig.order(&digest, 0, WaitRule::Open);
+    let other = EntityId::now();
+    let theirs = rig.order_by(
+        &digest,
+        0,
+        WaitRule::Open,
+        OrderedBy::Owner { owner: Some(other) },
+        OrderClass::Normal,
+    );
+    for (order, by) in [(&mine, rig.owner_actor), (&theirs, other)] {
+        rig.vault
+            .cancel_work_order(&order.id, Some(by), NOW + 1_000)
+            .expect("cancel write")
+            .expect("cancel");
+    }
+    let until_both = [WaitUntil::Started, WaitUntil::Terminal];
+    for until in until_both {
+        let reply = settled(&rig, &mine, until).expect("the wait settled at the end");
+        assert_eq!(
+            reply.view.order.ordered_by,
+            OrderedBy::Owner {
+                owner: Some(rig.owner_actor)
+            }
+        );
+        assert!(!settled_order_wait_erased(&rig.vault, &mine.id, until));
+    }
+    let before = rig.stored(&mine);
+    let theirs_before = rig.stored(&theirs);
+    let theirs_replies = until_both.map(|until| settled(&rig, &theirs, until));
+
+    let ran = oneiron::test_doors::inquiry::erase_actor_in_tables_in_order(
+        &rig.vault,
+        &rig.owner_actor,
+        &["WORK_ORDER"],
+    )
+    .expect("the owner's erase");
+    assert_eq!(ran, 1);
+
+    // The scrub takes the requester out of the order and bumps its revision, and each
+    // settled reply, which copied the requester, is left its erased form.
+    let after = rig.stored(&mine);
+    assert_eq!(after.ordered_by, OrderedBy::Owner { owner: None });
+    assert_eq!(
+        after.state,
+        OrderState::Cancelled {
+            why: CancelWhy::Asked { by: None }
+        }
+    );
+    assert_eq!(after.revision, before.revision + 1);
+    for until in until_both {
+        assert!(settled_order_wait_erased(&rig.vault, &mine.id, until));
+    }
+    // The other requester's order and its replies stay as they were.
+    assert_eq!(rig.stored(&theirs), theirs_before);
+    for (until, reply) in until_both.into_iter().zip(theirs_replies) {
+        assert!(!settled_order_wait_erased(&rig.vault, &theirs.id, until));
+        assert_eq!(settled(&rig, &theirs, until), reply);
+    }
+}
+
+/// Writes the issuer's dispatch row for the live chunk of `job` on `machine`, as the
+/// vault_machine connector writes it before its first call: from then on the attempt's job is
+/// a node's, and its start is the node's word (the observation's `started`), not the
+/// provider's clock. Returns the chunk's key.
+fn dispatch_to_node(rig: &Rig, job: &EntityId, machine: EntityId, workload: &str) -> String {
+    let key = rig
+        .vault
+        .gpu_job(job)
+        .expect("job read")
+        .expect("job row")
+        .chunk()
+        .expect("live chunk")
+        .idempotency_key
+        .clone();
+    rig.vault
+        .insert_job_dispatch(oneiron::job_dispatch::JobDispatch {
+            key: key.clone(),
+            job: *job,
+            chunk: 0,
+            workload: workload.to_owned(),
+            machine,
+            submit: Vec::new(),
+            issued_at_ms: NOW,
+            not_after_ms: NOW + 60_000,
+            phase: oneiron::job_dispatch::DispatchPhase::Submitted,
+            held: None,
+            sent_boot: None,
+            closed: None,
+            history_lost_at_ms: None,
+        })
+        .expect("dispatch row");
+    key
+}
+
+/// Stores the node's receipt number `seq` for `key`, which shows the workload running when
+/// `started` is true.
+fn observe(rig: &Rig, key: &str, machine: EntityId, seq: u64, started: bool, at_ms: u64) {
+    rig.vault
+        .put_job_observation(&oneiron::job_dispatch::JobObservation {
+            key: key.to_owned(),
+            machine,
+            device_id: None,
+            receipt: vec![0x5A],
+            epoch: "fixture".to_owned(),
+            seq,
+            last_measured_secs: Some(seq),
+            observed_at_ms: at_ms,
+            end_seen: None,
+            meter: None,
+            terminal: None,
+            started,
+        })
+        .expect("observation write");
+}
+
+#[test]
+fn a_node_jobs_attempt_starts_on_the_nodes_receipt_and_never_on_the_providers_clock() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    let job = rig.stored(&order).attempts[0].job;
+    let key = dispatch_to_node(&rig, &job, free, &digest);
+    // The provider's clock runs, which starts an offer's attempt (the started wait test
+    // above); a node's attempt waits for the node's own word.
+    rig.gpu.state().status = Some(GpuResourceStatus::Running {
+        used_secs: 3,
+        checkpoint: None,
+    });
+    host.step(&job, NOW + 1_000);
+    rig.vault.work_order_pass(&host, NOW + 2_000).expect("pass");
+    assert_eq!(rig.stored(&order).attempts[0].started_at_ms, None);
+    assert!(settled(&rig, &order, WaitUntil::Started).is_none());
+    // A receipt that does not show the workload running starts nothing either.
+    observe(&rig, &key, free, 1, false, NOW + 3_000);
+    rig.vault.work_order_pass(&host, NOW + 3_000).expect("pass");
+    assert_eq!(rig.stored(&order).attempts[0].started_at_ms, None);
+    assert!(settled(&rig, &order, WaitUntil::Started).is_none());
+    // The node's receipt shows it running: the next pass records the start, and the started
+    // wait settles in that write.
+    observe(&rig, &key, free, 2, true, NOW + 4_000);
+    rig.vault.work_order_pass(&host, NOW + 5_000).expect("pass");
+    let running = rig.stored(&order);
+    assert_eq!(running.attempts[0].started_at_ms, Some(NOW + 5_000));
+    assert_eq!(running.state, OrderState::Running { attempt: 1 });
+    let started = settled(&rig, &order, WaitUntil::Started).expect("the started wait settled");
+    assert!(started.reached);
+    assert_eq!(
+        started.view.order.attempts[0].started_at_ms,
+        Some(NOW + 5_000)
+    );
+    assert!(settled(&rig, &order, WaitUntil::Terminal).is_none());
+}
+
+#[test]
+fn a_node_jobs_attempt_that_ends_with_no_started_receipt_ends_unstarted() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    let order = rig.order(&digest, 0, WaitRule::Open);
+    let host = TestHost::new(&rig, vec![machine(free, None)]);
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    let job = rig.stored(&order).attempts[0].job;
+    let key = dispatch_to_node(&rig, &job, free, &digest);
+    observe(&rig, &key, free, 1, false, NOW + 500);
+    // The provider reports an exit, which for an offer's job is its word that it ran (the
+    // terminal wait test above); for a node's job only the node's receipt says so, and none
+    // showed the workload running.
+    rig.gpu.state().status = Some(GpuResourceStatus::Exited { used_secs: 7 });
+    host.step(&job, NOW + 1_000);
+    rig.vault.work_order_pass(&host, NOW + 2_000).expect("pass");
+    let ended = rig.stored(&order);
+    assert!(ended.state.is_terminal());
+    assert_eq!(ended.attempts[0].started_at_ms, None);
+    assert!(ended.attempts[0].end.is_some());
+    // The started wait settles at the end, in the same write as the terminal one, and its
+    // view shows the attempt with no start.
+    let terminal = settled(&rig, &order, WaitUntil::Terminal).expect("the terminal wait settled");
+    assert_eq!(terminal.view.order, ended);
+    assert_eq!(settled(&rig, &order, WaitUntil::Started), Some(terminal));
 }
 
 #[test]

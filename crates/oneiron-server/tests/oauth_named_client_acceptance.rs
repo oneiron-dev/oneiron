@@ -784,9 +784,14 @@ fn named_client_propose_lands_under_the_ceiling() {
                 ),
             )
             .await;
-        assert_eq!(rewrite.body["error"]["code"], -32001, "{}", rewrite.body);
-        assert!(
-            rewrite.body.to_string().contains("mcp_auth_required"),
+        assert_eq!(rewrite.body["error"]["code"], -32020, "{}", rewrite.body);
+        assert_eq!(
+            rewrite.body["error"]["data"]["error_code"], "mcp_grant_missing",
+            "{}",
+            rewrite.body
+        );
+        assert_eq!(
+            rewrite.body["error"]["data"]["required_scope"], "core:write",
             "{}",
             rewrite.body
         );
