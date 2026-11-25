@@ -36,6 +36,9 @@ pub const JOB_RECEIPT_DOMAIN: &[u8] = b"oneiron/job-receipt/v1\0";
 /// The most bytes one [`JobStatusRequest::Fetch`] answers: one transport
 /// piece under the 1 MiB message bound.
 pub const FETCH_MAX_BYTES: u64 = 1_044_480;
+/// The most log bytes one [`JobStatusRequest::Tail`] answers, whatever its
+/// `max`: one transport piece, as [`FETCH_MAX_BYTES`].
+pub const TAIL_MAX_BYTES: u32 = 1_044_480;
 
 /// Who started a job, as the submit states it and the receipt repeats it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -268,6 +271,9 @@ pub enum JobRefusal {
     OutputNotFetchable { why: String },
     /// `Ack` of a key that has not ended: nothing changed.
     NotAcknowledgeable { state: JobState },
+    /// `Tail` of a log the node does not read: the payload is cleaned, or
+    /// the file or its drop record is not what the unit writes, with why.
+    LogNotReadable { why: String },
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is
@@ -295,6 +301,65 @@ pub enum JobStatusRequest {
     /// The issuer holds every returnable output it wants; only then may the
     /// node clean the key's `out/`.
     Ack { key: String },
+    /// Bytes of a key's log from an offset (pass 34, 7.2).
+    Tail(LogTailRequest),
+}
+
+/// A [`JobStatusRequest::Tail`]: at most `max` bytes (and at most
+/// [`TAIL_MAX_BYTES`]) of the key's `stream` from the logical `offset`,
+/// while the key runs and after it ended, until its payload is cleaned. The
+/// reader keeps its own offset: after a dropped connection it asks again
+/// from the last `next_offset` it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTailRequest {
+    pub key: String,
+    pub stream: LogStream,
+    pub offset: u64,
+    pub max: u32,
+}
+
+/// One of a key's two log files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogStream {
+    Stdout,
+    Stderr,
+}
+
+impl LogStream {
+    /// The file's name under the payload's `log/`.
+    #[must_use]
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+/// The answer to a [`JobStatusRequest::Tail`]. Offsets are logical: they
+/// count every byte the workload wrote to the stream, also the bytes the
+/// cap dropped later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTail {
+    /// The stream's bytes from `offset` plus the bytes `truncated` skipped.
+    #[serde(with = "serde_bytes")]
+    pub bytes: Vec<u8>,
+    /// Where the next `Tail` asks from: `offset`, plus the bytes skipped,
+    /// plus `bytes`' length. Never past the stream's end.
+    pub next_offset: u64,
+    /// The key ended and nothing follows `next_offset`: the stream is
+    /// whole.
+    pub ended: bool,
+    /// The cap dropped bytes the reader asked for: `bytes` begin after them.
+    pub truncated: Option<LogTruncation>,
+}
+
+/// The bytes the log cap removed between the asked offset and the first
+/// byte answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTruncation {
+    pub dropped: u64,
 }
 
 /// The answer on [`JOB_STATUS_ALPN`].
@@ -322,6 +387,8 @@ pub enum JobStatusAnswer {
     /// The signal or the acknowledgement is recorded.
     Acknowledged,
     Refused(JobRefusal),
+    /// The bytes of a `Tail`.
+    Tail(LogTail),
 }
 
 /// One page of a [`JobStatusRequest::Keys`] listing. A page stays under the

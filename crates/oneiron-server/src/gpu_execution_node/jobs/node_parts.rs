@@ -43,8 +43,8 @@ pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
-    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, ScopeReport,
-    SignedJobSubmit, WorkloadPin,
+    FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
+    ScopeReport, SignedJobSubmit, WorkloadPin,
 };
 
 /// The `jobs.*` settings this service reads (pass 34, section 6), each with
@@ -602,6 +602,11 @@ impl NodeKeys for NodeJobsAttachment {
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         self.service()
             .map_or_else(status_not_enabled, |jobs| jobs.acknowledge(peer, key))
+    }
+
+    fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
+        self.service()
+            .map_or_else(status_not_enabled, |jobs| jobs.tail(peer, request))
     }
 }
 
