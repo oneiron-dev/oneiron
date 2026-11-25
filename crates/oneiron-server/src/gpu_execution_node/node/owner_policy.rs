@@ -70,19 +70,21 @@ impl ExecutionNode {
         ))
     }
 
-    /// The readiness check's period and who clears the node's drain, from the box's file
-    /// `settings` and the owner's rows in one read: the shorter period, and the stricter clear.
-    /// Rows that do not read keep the box's period and leave the drain to the person at the box.
+    /// The readiness check's period, who clears the node's drain, and the time of the owner's
+    /// clear the node acts on, from the box's file `settings` and the owner's rows in one read:
+    /// the shorter period, the stricter clear, and [`machine_policy::drain_cleared_at_ms`]. Rows
+    /// that do not read keep the box's period and leave the drain to the person at the box.
     pub(crate) fn readiness_settings(
         &self,
         settings: &ExecutionNodeSettings,
-    ) -> (u64, DrainClearBy) {
+    ) -> (u64, DrainClearBy, Option<u64>) {
         match self.owner_policy(settings) {
             Ok(policy) => (
                 machine_policy::readiness_every_secs(settings, policy.as_ref()),
                 machine_policy::drain_clear_by(settings, policy.as_ref()),
+                machine_policy::drain_cleared_at_ms(settings, policy.as_ref()),
             ),
-            Err(_) => (settings.readiness_every_secs, DrainClearBy::PersonAtBox),
+            Err(_) => (settings.readiness_every_secs, DrainClearBy::PersonAtBox, None),
         }
     }
 

@@ -615,6 +615,28 @@ impl<T: SettingValue> Setting<T> {
         })
     }
 
+    /// Who set the row that decides [`Self::read_in_txn`] at the vault with `item`: in which
+    /// capacity, and whether the row counts as the owner's ([`StoredRow::by_owner`]). `None` where
+    /// no stored row someone set decides: the default, a learned fit, a meet, a copy of a pack's
+    /// default, or a row that does not decode.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(crate) fn deciding_setter_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        item: Option<&str>,
+    ) -> Result<Option<(Setter, bool)>> {
+        let slot = self.deciding_slot_in_txn(vault, txn, item)?;
+        Ok(table_of(self.spec)
+            .get_bytes(&vault.store, txn, &slot.encode())?
+            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(&bytes).ok())
+            .filter(|row| !row.seeded)
+            .map(|row| (row.setter, row.by_owner())))
+    }
+
     /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`
     /// (a store, or any other holder of its side databases), for a reader that holds no
     /// [`Vault`].
@@ -1247,6 +1269,45 @@ pub(crate) fn put_stored_bytes(
     };
     let mut txn = vault.store.env.write_txn()?;
     table_of(spec).put_undecodable(&vault.store, &mut txn, &key.encode(), bytes)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Stores `value` as `name`'s value row at the vault for `item`, set by `by` in the capacity
+/// `setter`, as a write in that capacity leaves the row, with no change row and no act: a row of a
+/// writer the test's fixture cannot act as on this install.
+///
+/// # Errors
+///
+/// An unknown key; an item the key does not admit; a value it does not take; storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn put_stored_row(
+    vault: &Vault,
+    name: &str,
+    item: Option<&str>,
+    value: serde_json::Value,
+    (setter, by): (Setter, Option<EntityId>),
+) -> Result<()> {
+    let spec = super::spec_named(name)?;
+    spec.check_item(item)?;
+    let key = RowKey {
+        name: spec.name.to_owned(),
+        item: item.map(str::to_owned),
+        mode: SettingMode::Value,
+        scope: SettingScope::Vault,
+    };
+    let mut txn = vault.store.env.write_txn()?;
+    let row = StoredRow {
+        value: spec.kind.from_json(value)?,
+        by,
+        setter,
+        set_at: crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?,
+        change: 0,
+        weight_runs: None,
+        local: None,
+        seeded: false,
+    };
+    table_of(spec).put(&vault.store, &mut txn, &key.encode(), &row)?;
     txn.commit()?;
     Ok(())
 }

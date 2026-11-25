@@ -22,6 +22,7 @@
 //! - [`TemplateNetwork`]: fewer network modes;
 //! - [`FreeForm`]: `grants`, then `owner`, then `off`;
 //! - [`DrainClearBy`]: towards `person_at_box`;
+//! - `machines.drain.cleared_at`: an earlier time ([`DrainCleared`]);
 //! - the five `placement.cache.*` keys of [`CachePolicy`]: a smaller figure;
 //! - `jobs.readiness.every_secs`: a shorter period.
 //!
@@ -38,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::job_workload::NetworkMode;
-use crate::setting::{ChainOrder, SettingValue};
+use crate::setting::{ChainOrder, Setter, SettingValue};
 use crate::vault::Vault;
 
 /// The hours in a week: [`MachineWindows::hours`] holds a subset of `0..HOURS_PER_WEEK`.
@@ -449,6 +450,62 @@ impl SettingValue for DrainClearBy {
     }
 }
 
+impl DrainClearBy {
+    /// Whether a clear of the machine's drain by `by` counts under this value, as door 12
+    /// (`vault.machines.execution.clear_drain`) judges its caller: the owner's unless only a person
+    /// at the box may clear it, and an agent's only through a Grant that `grants` lists.
+    #[must_use]
+    pub fn admits(&self, by: DrainClearer) -> bool {
+        match (self, by) {
+            (Self::PersonAtBox, _) | (_, DrainClearer::Other) => false,
+            (_, DrainClearer::Owner) => true,
+            (Self::Grants { grants }, DrainClearer::Grant(grant)) => grants.contains(&grant),
+            (Self::AfterReadinessCheck | Self::Owner, DrainClearer::Grant(_)) => false,
+        }
+    }
+}
+
+/// Who wrote the row of `machines.drain.cleared_at` that decides it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainClearer {
+    /// The owner: his own act, the engine applying his answer, or a request he approved.
+    Owner,
+    /// An agent, through this Grant.
+    Grant(EntityId),
+    /// Anyone else: a subject on its own row, or the pack door.
+    Other,
+}
+
+impl DrainClearer {
+    /// The writer of a row set in the capacity `setter`; `by_owner` when the row counts as the
+    /// owner's (`crate::setting::StoredRow::by_owner`).
+    fn of(setter: Setter, by_owner: bool) -> Self {
+        if by_owner {
+            return Self::Owner;
+        }
+        match setter {
+            Setter::Holder { grant } | Setter::KeyGrant { grant } | Setter::Standing { grant } => {
+                Self::Grant(grant)
+            }
+            Setter::Owner
+            | Setter::Subject
+            | Setter::Approved { .. }
+            | Setter::Engine { .. }
+            | Setter::Pack => Self::Other,
+        }
+    }
+}
+
+/// `machines.drain.cleared_at` where a row someone wrote decides it: the time of the last clear
+/// of the machine's drain from the panel, and who wrote it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrainCleared {
+    /// The clear's time, in Unix milliseconds.
+    pub at_ms: u64,
+    /// Who wrote the row.
+    pub by: DrainClearer,
+}
+
 /// The comparator of `machines.drain.clear_by`: nearer to `person_at_box`, or the same Grants or
 /// fewer.
 pub(crate) fn drain_clear_by_no_wider(a: &DrainClearBy, b: &DrainClearBy) -> bool {
@@ -549,6 +606,9 @@ pub struct MachinePolicy {
     pub free_form: FreeForm,
     /// `machines.drain.clear_by`.
     pub drain_clear_by: DrainClearBy,
+    /// `machines.drain.cleared_at`, with its row's writer; `None` while it reads 0 or no row
+    /// someone wrote for this machine decides it (a row for every machine clears no drain).
+    pub drain_cleared: Option<DrainCleared>,
     /// The five `placement.cache.*` keys.
     pub cache: CachePolicy,
     /// `jobs.readiness.every_secs`.
@@ -593,12 +653,23 @@ pub fn machine_policy_in_txn(
 ) -> Result<MachinePolicy> {
     use setting_keys::{
         CACHE_CAP_GIB, CACHE_IDLE_DAYS, CACHE_KEYS_MAX, CACHE_PROTECT_HOURS,
-        CACHE_WANTED_HOLD_SECS, DEVICES_OFFERED, DRAIN_CLEAR_BY, EXECUTION, FREE_FORM,
-        KEEP_HEADROOM, MACHINE_ACCEPTS, READINESS_EVERY_SECS, TEMPLATES_NETWORK, WINDOWS,
-        WORK_ROLES,
+        CACHE_WANTED_HOLD_SECS, DEVICES_OFFERED, DRAIN_CLEAR_BY, DRAIN_CLEARED_AT, EXECUTION,
+        FREE_FORM, KEEP_HEADROOM, MACHINE_ACCEPTS, READINESS_EVERY_SECS, TEMPLATES_NETWORK,
+        WINDOWS, WORK_ROLES,
     };
     let item = machine_item(machine);
     let item = Some(item.as_str());
+    let cleared_at_ms = DRAIN_CLEARED_AT.read_in_txn(vault, txn, &[], item)?.value;
+    let drain_cleared = if cleared_at_ms == 0 {
+        None
+    } else {
+        DRAIN_CLEARED_AT
+            .deciding_setter_in_txn(vault, txn, item)?
+            .map(|(setter, by_owner)| DrainCleared {
+                at_ms: cleared_at_ms,
+                by: DrainClearer::of(setter, by_owner),
+            })
+    };
     let cache = CachePolicy {
         cap_gib: CACHE_CAP_GIB.read_in_txn(vault, txn, &[], item)?.value,
         idle_days: CACHE_IDLE_DAYS.read_in_txn(vault, txn, &[], item)?.value,
@@ -618,6 +689,7 @@ pub fn machine_policy_in_txn(
         work_roles: WORK_ROLES.read_in_txn(vault, txn, &[], item)?.value,
         free_form: FREE_FORM.read_in_txn(vault, txn, &[], item)?.value,
         drain_clear_by: DRAIN_CLEAR_BY.read_in_txn(vault, txn, &[], item)?.value,
+        drain_cleared,
         cache,
         readiness_every_secs: READINESS_EVERY_SECS
             .read_in_txn(vault, txn, &[], item)?

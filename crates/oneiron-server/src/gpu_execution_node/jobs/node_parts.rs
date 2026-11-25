@@ -87,6 +87,12 @@ pub struct NodeJobSettings {
     /// 2.4), the stricter of the box's and the owner's. Default: the
     /// machine, once its readiness check passes.
     pub drain_clear_by: DrainClearBy,
+    /// `machines.drain.cleared_at`: the time, in Unix milliseconds, of the
+    /// owner's clear of the node's drain from the panel, where his
+    /// `clear_by` gives the clear to him or his Grants and the row's writer
+    /// is one it names. A readiness tick clears a drain the node first saw
+    /// before it. Default `None`: no such clear.
+    pub drain_cleared_at_ms: Option<u64>,
     /// `jobs.incidents.keep`: how many incident records the node keeps.
     /// Default 200.
     pub incidents_keep: u64,
@@ -107,6 +113,7 @@ impl Default for NodeJobSettings {
             readiness_every_secs: READINESS_EVERY_SECS_DEFAULT,
             readiness_results_kept: 5,
             drain_clear_by: DrainClearBy::AfterReadinessCheck,
+            drain_cleared_at_ms: None,
             incidents_keep: 200,
             breadcrumbs_keep: 20,
         }
@@ -442,8 +449,12 @@ impl NodeAdmission for ExecutionNode {
     fn job_settings(&self) -> NodeJobSettings {
         let file = ExecutionNode::settings(self).ok().flatten();
         let defaults = NodeJobSettings::default();
-        let (readiness_every_secs, drain_clear_by) = file.as_ref().map_or(
-            (defaults.readiness_every_secs, defaults.drain_clear_by),
+        let (readiness_every_secs, drain_clear_by, drain_cleared_at_ms) = file.as_ref().map_or(
+            (
+                defaults.readiness_every_secs,
+                defaults.drain_clear_by,
+                defaults.drain_cleared_at_ms,
+            ),
             |file| ExecutionNode::readiness_settings(self, file),
         );
         NodeJobSettings {
@@ -451,6 +462,7 @@ impl NodeAdmission for ExecutionNode {
             receipt_keep_days: ExecutionNode::receipt_keep_days(self),
             readiness_every_secs,
             drain_clear_by,
+            drain_cleared_at_ms,
             ..defaults
         }
     }

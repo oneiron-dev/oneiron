@@ -20,6 +20,9 @@
 //! The readiness check (row Q4) runs at the shorter of the box's `readiness_every_secs` and the
 //! owner's `jobs.readiness.every_secs`, and a passed check clears the node's drain only when the
 //! box's `drain_clear_by` and the owner's `machines.drain.clear_by` both leave it to the check.
+//! Where the owner's row is `owner` or `grants`, his clear from the panel reaches the node as his
+//! `machines.drain.cleared_at` row, which the node acts on only when its writer is one `clear_by`
+//! names and the box's file does not keep the clear for the person at the box.
 
 use std::path::Path;
 
@@ -215,9 +218,10 @@ pub fn readiness_every_secs(
 
 /// Who clears the node's drain: the box's `drain_clear_by`, unless the owner's
 /// `machines.drain.clear_by` is stricter. A passed readiness check clears the drain only when both
-/// leave it to the check. An owner row of `owner`, `grants` or `person_at_box` keeps the drain for
-/// the person at the box, because no act of the owner's or of a Grant reaches the node's own drain
-/// yet (the issuer's `vault.machines.execution.clear_drain` clears the issuer's guard only).
+/// leave it to the check. An owner row of `owner`, `grants` or `person_at_box` keeps the drain from
+/// the check: under `owner` or `grants` the clear from the panel reaches the node as
+/// `machines.drain.cleared_at` ([`drain_cleared_at_ms`]), and under `person_at_box` only the person
+/// at the box clears it.
 #[must_use]
 pub fn drain_clear_by(
     settings: &ExecutionNodeSettings,
@@ -234,6 +238,29 @@ pub fn drain_clear_by(
     } else {
         DrainClearBy::PersonAtBox
     }
+}
+
+/// The time of the owner's clear of the node's drain that the node acts on, in Unix milliseconds:
+/// the owner's `machines.drain.cleared_at`, when his `machines.drain.clear_by` is `owner` or
+/// `grants`, the box's `drain_clear_by` does not keep the clear for the person at the box, and the
+/// deciding row's writer is one `clear_by` names, as door 12 judges its caller (the owner, or under
+/// `grants` an agent through a listed Grant). `None` otherwise.
+#[must_use]
+pub fn drain_cleared_at_ms(
+    settings: &ExecutionNodeSettings,
+    policy: Option<&MachinePolicy>,
+) -> Option<u64> {
+    let policy = policy?;
+    let cleared = policy.drain_cleared?;
+    let clear_from_the_panel = matches!(
+        policy.drain_clear_by,
+        oneiron::machine_policy::DrainClearBy::Owner
+            | oneiron::machine_policy::DrainClearBy::Grants { .. }
+    );
+    (clear_from_the_panel
+        && settings.drain_clear_by != DrainClearBy::PersonAtBox
+        && policy.drain_clear_by.admits(cleared.by))
+    .then_some(cleared.at_ms)
 }
 
 /// The launch commit's check of a placement against both layers: every placed device is one the

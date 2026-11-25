@@ -71,7 +71,7 @@ pub use node_parts::{
     NodeJobPaths, NodeJobSettings, NodeJobsAttachment, StageFailure, StageOrder, Stager,
     StagingNotBuilt,
 };
-pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, drain_rule_default};
+pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, OWNER_CLEAR_RULE, drain_rule_default};
 pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 #[cfg(target_os = "linux")]
 pub use serving::ServedNodeJobs;
