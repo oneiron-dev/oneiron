@@ -75,12 +75,19 @@ every quote refuses and no worker starts.
   machine, line, family and line period. It reads the job rows and the lane
   economy's unit claims and keeps nothing of its own: a period's charged total
   is what the line's own fold charges that period for the same ended attempts
-  (open claims and open holds are not history). A lost machine's occupancy
-  shows as unknown, never as zero.
+  (open claims and open holds are not history). An occupancy is shown only
+  where a machine measured it or a provider reported a chunk's final run time
+  (its exit); a stop, a cancel and a lost machine or resource show it as
+  unknown, never as zero. A chunk the provider refused before anything ran
+  charged nothing and returned its whole quote. A stopped job that the
+  customer cancels keeps its last chunk's end at its maximum. The reply is
+  never kept for a same-id retry, which reads again.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
-verb. History admits the same callers; an agent sees only the attempts it
-started or reserved, and totals over those. Start and cancel admit the owner, or an agent whose own Grant names the
+verb. History admits the same callers, judged in the snapshot it reads; an
+agent sees only the line units it reserved and the first chunk of each job it
+started (a resumed chunk's starter is not stored), and totals over those.
+Start and cancel admit the owner, or an agent whose own Grant names the
 verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 
 - a start passes only when the owner set a maximum beside the Grant that

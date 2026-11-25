@@ -302,7 +302,12 @@ pub(crate) enum DoorClaim {
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 11] = [
+/// The jobs' history (`vault.jobs.history`, review round 1 of #10419) names
+/// who started or reserved each attempt, and an actor's erase takes that
+/// name off the rows: a kept reply would hand an erased requester's id to a
+/// same-id retry after the erase, and an agent's reply would outlive its
+/// Grant. A same-id retry reads again and writes nothing.
+const UNKEPT_REPLY_VERBS: [&str; 12] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -314,6 +319,7 @@ const UNKEPT_REPLY_VERBS: [&str; 11] = [
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
+    oneiron::job_history::JOB_HISTORY_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request

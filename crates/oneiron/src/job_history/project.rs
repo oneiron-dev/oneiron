@@ -30,7 +30,8 @@ pub struct HistoryInputs<'a> {
 pub enum HistoryViewer {
     /// The vault owner: every attempt.
     Owner,
-    /// An agent: the attempts this actor started or reserved.
+    /// An agent: the line units this actor reserved and the first chunks of the offer jobs it
+    /// started (a resumed chunk's starter is not stored).
     Requester(EntityId),
 }
 
@@ -229,35 +230,105 @@ fn unit_end(terminal: &UnitTerminal) -> (&'static str, Option<String>) {
     }
 }
 
+/// How an offer chunk ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OfferEnd {
+    Exited,
+    AtMaximum,
+    Cancelled,
+    Gone,
+    /// Refused before any resource existed: nothing ran and nothing was charged.
+    Held(String),
+}
+
+impl OfferEnd {
+    fn of(reason: GpuEndReason) -> Self {
+        match reason {
+            GpuEndReason::Exited => Self::Exited,
+            GpuEndReason::AtMaximum => Self::AtMaximum,
+            GpuEndReason::Cancelled => Self::Cancelled,
+            GpuEndReason::Gone => Self::Gone,
+        }
+    }
+
+    /// The last chunk's end, or `None` while the job still runs. A cancel of a stopped job
+    /// gives up its resume and leaves its maximum stopped; the chunk had ended at its maximum.
+    fn last(job: &GpuJob) -> Option<Self> {
+        match &job.state {
+            GpuJobState::Reserved | GpuJobState::Running | GpuJobState::Ending { .. } => None,
+            GpuJobState::Stopped => Some(Self::AtMaximum),
+            GpuJobState::Ended {
+                reason: GpuEndReason::Cancelled,
+            } if job.maximum.is_stopped() => Some(Self::AtMaximum),
+            GpuJobState::Ended { reason } => Some(Self::of(*reason)),
+            GpuJobState::Held { reason } => Some(Self::Held(reason.clone())),
+        }
+    }
+
+    fn spell(&self) -> (String, Option<String>) {
+        let end = match self {
+            Self::Exited => "exited",
+            Self::AtMaximum => "at_maximum",
+            Self::Cancelled => "cancelled",
+            Self::Gone => "gone",
+            Self::Held(reason) => return ("held".to_owned(), Some(reason.clone())),
+        };
+        (end.to_owned(), None)
+    }
+}
+
 /// A plain offer job's ended chunks. Every chunk before the last stopped at its maximum (a
 /// resume starts only from a stop); the last has ended when the job no longer runs, and its end
-/// is the job's (a stop that the customer cancelled later reads `cancelled`). The row keeps no
-/// chunk's own end time (the job's last write moves at every later write, a resume or a cancel),
-/// so none is shown, and no offer chunk names a machine: an offer's inputs are the customer's,
-/// not a placement. A chunk whose provider lost the resource has an unknown occupancy, and the
-/// run time last reported is its lost lower bound.
+/// is the job's, except that a stopped job the customer cancelled keeps its `at_maximum`. The
+/// row keeps no chunk's own end time (the job's last write moves at every later write, a resume
+/// or a cancel), so none is shown, and no offer chunk names a machine: an offer's inputs are the
+/// customer's, not a placement. Only the first chunk names its starter: a resume's is not stored
+/// (an agent resumes only its own job, the owner any). The run time a chunk last reported is
+/// final only for an exit, which the provider reports with it; a stop or a cancel terminates
+/// after the last report, so its occupancy is unknown, and a lost resource's is a lower bound,
+/// shown as lost. A chunk held before any resource existed ran for nothing and charged nothing,
+/// and its whole quote went back.
 fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
     let last = job.chunks.len().saturating_sub(1);
     job.chunks
         .iter()
         .enumerate()
         .filter_map(|(index, chunk)| {
-            let (end, end_reason) = if index < last {
-                ("at_maximum".to_owned(), None)
+            let end = if index < last {
+                OfferEnd::AtMaximum
             } else {
-                offer_end(&job.state)?
+                OfferEnd::last(job)?
             };
-            let gone = end == "gone";
+            let held = matches!(end, OfferEnd::Held(_));
             // The settled units are the charged seconds times the quote's price of one second.
-            let charged_secs = chunk
-                .settled_units
-                .zip((chunk.quote.unit_cost > 0).then_some(chunk.quote.unit_cost))
-                .map(|(units, cost)| units / cost);
+            let charged_secs = if held {
+                Some(0)
+            } else {
+                chunk
+                    .settled_units
+                    .zip((chunk.quote.unit_cost > 0).then_some(chunk.quote.unit_cost))
+                    .map(|(units, cost)| units / cost)
+            };
+            let occupied_secs = match end {
+                OfferEnd::Exited => Some(chunk.used_secs),
+                OfferEnd::Held(_) => Some(0),
+                OfferEnd::AtMaximum | OfferEnd::Cancelled | OfferEnd::Gone => None,
+            };
+            let lost_secs = if end == OfferEnd::Gone {
+                chunk.used_secs
+            } else {
+                0
+            };
+            let (end, end_reason) = end.spell();
             Some(JobHistoryAttempt {
                 key: chunk.idempotency_key.clone(),
                 job: job.id.to_hex(),
                 chunk: u32::try_from(index).unwrap_or(u32::MAX),
-                requester: job.started_by.map(|actor| actor.to_hex()),
+                requester: if index == 0 {
+                    job.started_by.map(|actor| actor.to_hex())
+                } else {
+                    None
+                },
                 grant: None,
                 workload: None,
                 line: None,
@@ -271,12 +342,12 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                 reserved_at_ms: (index == 0).then_some(job.created_at_ms),
                 ended_at_ms: None,
                 reserved_secs: chunk.quote.quantity,
-                occupied_secs: (!gone).then_some(chunk.used_secs),
+                occupied_secs,
                 billed_secs: chunk.billed_secs,
                 charged_secs,
                 returned_secs: charged_secs
                     .map(|charged| chunk.quote.quantity.saturating_sub(charged)),
-                lost_secs: if gone { chunk.used_secs } else { 0 },
+                lost_secs,
                 settled_units: chunk.settled_units,
                 unit: Some(chunk.quote.unit.as_str().to_owned()),
                 end,
@@ -288,25 +359,6 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
             })
         })
         .collect()
-}
-
-/// A job's end, or `None` while it still runs.
-fn offer_end(state: &GpuJobState) -> Option<(String, Option<String>)> {
-    let reason = |reason: &GpuEndReason| {
-        match reason {
-            GpuEndReason::Exited => "exited",
-            GpuEndReason::AtMaximum => "at_maximum",
-            GpuEndReason::Cancelled => "cancelled",
-            GpuEndReason::Gone => "gone",
-        }
-        .to_owned()
-    };
-    match state {
-        GpuJobState::Reserved | GpuJobState::Running | GpuJobState::Ending { .. } => None,
-        GpuJobState::Stopped => Some(("at_maximum".to_owned(), None)),
-        GpuJobState::Ended { reason: end } => Some((reason(end), None)),
-        GpuJobState::Held { reason } => Some(("held".to_owned(), Some(reason.clone()))),
-    }
 }
 
 /// A job's chunk key, as the job's start writes it.

@@ -13,10 +13,13 @@
 //!
 //! The caller is the vault owner under their own proof, who reads every attempt, or an agent
 //! whose own live Grant lists the verb ([`crate::memory::verb_grant_caller`]), who reads the
-//! attempts it started or reserved, and totals over those.
+//! line units it reserved and the first chunks of the offer jobs it started, and totals over
+//! those. The caller is judged in the snapshot the answer is read from.
 //!
 //! What the rows do not keep, history does not invent: a plain offer chunk has no end time and
-//! no machine of its own, and a lost machine's or a lost resource's occupancy is unknown, never
+//! no machine of its own, a resumed chunk's starter is not stored (the job's starter or the
+//! owner), and an occupancy is known only where a machine measured it or a provider reported a
+//! chunk's final run time; a lost machine's or a lost resource's occupancy is unknown, never
 //! zero.
 
 use std::collections::BTreeSet;
@@ -130,8 +133,9 @@ pub struct JobHistoryAttempt {
     /// The job (hex) and the chunk's index in it.
     pub job: String,
     pub chunk: u32,
-    /// Who reserved the line unit, or who started the offer job (an actor id, hex; a resumed
-    /// chunk's own starter is not stored, so it reads as the job's); absent after their erase.
+    /// Who reserved the line unit, or who started the offer job's first chunk (an actor id,
+    /// hex); absent after their erase, and for a resumed chunk, whose starter no row keeps (the
+    /// job's starter or the owner), so only the owner reads a resumed chunk.
     pub requester: Option<String>,
     /// The Grant it was reserved under (hex), where the row keeps it; absent for the owner.
     pub grant: Option<String>,
@@ -150,8 +154,10 @@ pub struct JobHistoryAttempt {
     pub ended_at_ms: Option<u64>,
     /// The seconds it held: the reservation, or the chunk's quote.
     pub reserved_secs: u64,
-    /// The machine's occupied seconds (a provider's run time for an offer); absent when
-    /// unknown.
+    /// The machine's occupied seconds; for an offer chunk the provider's final run time, known
+    /// only from the exit it reported (and 0 for a chunk held before anything ran); absent when
+    /// unknown, as for a stop, a cancel or a lost resource, whose last reported run time is
+    /// only a sample.
     pub occupied_secs: Option<u64>,
     /// The seconds billed, where a row keeps them.
     pub billed_secs: Option<u64>,
@@ -159,7 +165,8 @@ pub struct JobHistoryAttempt {
     /// reserved)` for a run that ended, else 0); for an offer chunk its settled units over its
     /// quote's price of one second. Absent where no settlement is recorded.
     pub charged_secs: Option<u64>,
-    /// What went back: the reservation less the charge.
+    /// What went back: the reservation less the charge (the whole quote for a chunk held
+    /// before anything ran).
     pub returned_secs: Option<u64>,
     /// For a lost machine, the run time last seen (a lower bound); else 0.
     pub lost_secs: u64,
@@ -167,7 +174,8 @@ pub struct JobHistoryAttempt {
     pub settled_units: Option<u64>,
     pub unit: Option<String>,
     /// How it ended: `settled`, `released`, `box_lost` or `written_off` for a line unit;
-    /// `exited`, `at_maximum`, `cancelled`, `gone` or `held` for an offer chunk.
+    /// `exited`, `at_maximum`, `cancelled`, `gone` or `held` for an offer chunk (a chunk that
+    /// stopped at its maximum stays `at_maximum` when the customer cancels the stopped job).
     pub end: String,
     /// Why it was released or held, where a row says.
     pub end_reason: Option<String>,
@@ -267,14 +275,18 @@ pub fn job_history_as(
     owner: Option<&AuthenticatedOwner>,
     input: &JobHistoryRequest,
 ) -> MemoryResult<JobHistory> {
-    let viewer = match memory.verb_grant_caller_admits(owner, JOB_HISTORY_VERB)? {
+    let vault = memory.vault();
+    // One snapshot judges the caller and holds the rows it reads: an attempt that ended after
+    // the caller's Grant was revoked is in no snapshot that admits the caller.
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let viewer = match memory.verb_grant_caller_admits_in_txn(&txn, owner, JOB_HISTORY_VERB)? {
         VerbGrantCaller::Owner => HistoryViewer::Owner,
         VerbGrantCaller::Agent { actor, .. } => HistoryViewer::Requester(actor),
     };
     let filter = input
         .filter()
         .map_err(|why| MemoryError::new(MEMORY_CODE_BAD_REQUEST, why, &[]))?;
-    Ok(read_job_history(memory.vault(), &filter, viewer)?)
+    Ok(read_job_history_in_txn(vault, &txn, &filter, viewer)?)
 }
 
 /// `vault.jobs.history` on a bound handle: the embedded owner reads under its own proof, any
@@ -303,8 +315,18 @@ pub fn read_job_history(
     viewer: HistoryViewer,
 ) -> crate::Result<JobHistory> {
     let txn = vault.store.env.read_txn()?;
-    let jobs = vault.gpu_jobs_in_txn(&txn)?;
-    let claims = claims_in_txn(vault, &txn)?;
+    read_job_history_in_txn(vault, &txn, filter, viewer)
+}
+
+/// [`read_job_history`] in `txn`.
+fn read_job_history_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    filter: &JobHistoryFilter,
+    viewer: HistoryViewer,
+) -> crate::Result<JobHistory> {
+    let jobs = vault.gpu_jobs_in_txn(txn)?;
+    let claims = claims_in_txn(vault, txn)?;
     let windows: BTreeSet<(EntityId, u32)> = claims
         .iter()
         .filter(|claim| !claim.is_open())
@@ -312,7 +334,7 @@ pub fn read_job_history(
         .collect();
     let mut periods = Vec::with_capacity(windows.len());
     for (line, index) in windows {
-        if let Some(period) = stored_period_in_txn(vault, &txn, &line, index)? {
+        if let Some(period) = stored_period_in_txn(vault, txn, &line, index)? {
             periods.push(period);
         }
     }
