@@ -25,6 +25,8 @@
 //! - Review round 1: a caller off the line neither replays a seat nor mints
 //!   a period; a lead's cap is the minted period's, so an edit waits for the
 //!   next mint.
+//! - A two-rule mint commits its cohort seed and hides it until the period
+//!   ends; a one-rule mint stores neither.
 //!
 //! On the base the r2 shapes do not exist, so every test fails there.
 //!
@@ -41,8 +43,9 @@ use oneiron::federation::{Scope, ScopeAxis, WalletRef};
 use oneiron::gpu_line::{
     BudgetPolicy, Draw, DrawAsk, DrawPurpose, DrawSource, GpuLine, GpuLineError,
     GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineSetRequest, GpuLineView, LineInvalid,
-    MintError, PeriodRoom, Side, Track, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET,
-    VAULT_GPU_LINES_SET, gpu_seconds, line_allocation_id, mint_period, period_balances, plan_draws,
+    MintError, PeriodRoom, RuleRef, Side, Track, VAULT_GPU_LINES_FAMILIES_ADMIT,
+    VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET, cohort_seed_commit, gpu_seconds, line_allocation_id,
+    mint_period, period_balances, plan_draws,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError,
@@ -1053,4 +1056,51 @@ fn every_floor_fits_its_own_side_of_the_allowance() {
         "{refused:?}"
     );
     assert_eq!(code(refused), MEMORY_CODE_BAD_REQUEST);
+}
+
+/// A two-rule mint draws a cohort seed and stores its sha256 commit; the get
+/// view withholds the seed until the period ends. A one-rule mint stores
+/// neither.
+#[test]
+fn a_two_rule_mint_commits_its_cohort_seed_and_hides_it() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    let mut two = policy();
+    two.budget.rules = vec![RuleRef::PAYOFF_SHARE_1, RuleRef::EVEN_SPLIT_1];
+    fixture.owner_set("set", lane, two, NOW_MS);
+    let stored = fixture
+        .vault
+        .gpu_line_period(&lane, 0)
+        .expect("read")
+        .expect("period 0");
+    let seed = stored.cohort_seed.expect("a two-rule mint draws a seed");
+    let commit = stored
+        .cohort_seed_commit
+        .clone()
+        .expect("a two-rule mint commits it");
+    assert_eq!(commit, cohort_seed_commit(&seed));
+    assert_eq!(commit.len(), 64, "a sha256 in lower hex");
+    assert!(
+        commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "lower hex: {commit}"
+    );
+    let shown = fixture
+        .view(lane, NOW_MS)
+        .period
+        .expect("the view has period 0");
+    assert_eq!(shown.cohort_seed, None, "the get view withholds the seed");
+    assert_eq!(shown.cohort_seed_commit, Some(commit));
+
+    let single = fixture();
+    let other = single.project_under(single.root(), 2);
+    single.owner_set("set", other, policy(), NOW_MS);
+    let stored = single
+        .vault
+        .gpu_line_period(&other, 0)
+        .expect("read")
+        .expect("period 0");
+    assert_eq!(stored.cohort_seed, None);
+    assert_eq!(stored.cohort_seed_commit, None);
 }
