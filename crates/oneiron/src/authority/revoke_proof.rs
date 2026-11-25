@@ -31,6 +31,9 @@ struct VerifiedRestriction {
     kind: Restriction,
     /// The rows its proven branch folded through an owner anchor's branch.
     routed: BTreeSet<AuthorityEntryHash>,
+    /// The Grants whose line its proven branch's fold ended at this row (pass 28 R1): a
+    /// dropped end still ends its Grant's line, as its slip withdrawal still withdraws.
+    ended_grants: BTreeSet<EntityId>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -67,6 +70,9 @@ enum Restriction {
     /// so the key stays revoked. A confirmation collision refuses no row
     /// (RULING COLLISION-SETTLEMENT-SHAPE = A).
     DeviceRevoke(AuthorityKey),
+    /// A verified grant act that ends a Grant's line and withdraws no slip: the owner's
+    /// agent Grant revoke (pass 28 R1). Its end is the fact's `ended_grants`.
+    GrantEnd,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -114,6 +120,10 @@ impl RevokeFacts {
                     super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
                 Restriction::DeviceRevoke(key) => super::op_apply::revoke_key(state, key),
+                Restriction::GrantEnd => {}
+            }
+            for grant in &fact.ended_grants {
+                state.grant_lines.end(*grant, fact.entry_hash);
             }
         }
     }
@@ -265,6 +275,7 @@ pub(super) fn derive_revoke_facts(
                 entry_hash: *hash,
                 kind,
                 routed,
+                ended_grants: BTreeSet::new(),
             },
         );
     }
@@ -315,7 +326,11 @@ impl RevokeFacts {
     /// record's Grant withdrawals (FIX 12335) among them, and a revoked or
     /// spent slip would live again. An entry in `survivors` already applied
     /// its restriction through the ordinary fold; each dropped one is proved
-    /// on its own signed branch, as an actor revocation is.
+    /// on its own signed branch, as an actor revocation is. So is each end of
+    /// a Grant's line (pass 28 R1): a dropped `SlipGrantRevoke`, membership
+    /// execution record or owner's agent Grant revoke ends each Grant its
+    /// proven branch's fold ended at it, or a withdrawn Grant's row put back
+    /// would stand again.
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -345,11 +360,20 @@ impl RevokeFacts {
                 AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
                     Restriction::SlipBurn(BTreeSet::new())
                 }
+                AuthorityOp::AgentGrantAct(record)
+                    if matches!(record.change, AgentGrantChange::Revoke { .. }) =>
+                {
+                    Restriction::GrantEnd
+                }
                 _ => continue,
             };
             let Some(state) = proofs.verify(*hash) else {
                 continue;
             };
+            let ended_grants = state.grant_lines.ended_by(hash);
+            if matches!(restriction, Restriction::GrantEnd) && ended_grants.is_empty() {
+                continue;
+            }
             let kind = match restriction {
                 Restriction::SlipBurn(_) => {
                     Restriction::SlipBurn(state.slips.consumed.to_btree_set())
@@ -363,6 +387,7 @@ impl RevokeFacts {
                     entry_hash: *hash,
                     kind,
                     routed: state.anchor_entries.to_btree_set(),
+                    ended_grants,
                 },
             );
         }
@@ -406,6 +431,7 @@ impl RevokeFacts {
                         epoch: *epoch,
                     },
                     routed: state.anchor_entries.to_btree_set(),
+                    ended_grants: BTreeSet::new(),
                 },
             );
         }

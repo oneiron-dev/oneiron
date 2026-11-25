@@ -195,6 +195,7 @@ pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
 pub mod grant_sealed_file;
+pub mod grant_standing;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;

@@ -41,6 +41,7 @@ mod weak_keys;
 
 mod anchor_independence;
 mod causal_claim;
+mod grant_end_arrival;
 mod handoff_arrival_order;
 mod handoff_settlement;
 mod history_transfer;
