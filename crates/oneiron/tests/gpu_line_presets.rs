@@ -1,0 +1,338 @@
+//! Design pass 34, sections 3.2 and 3.3 (row L1): `vault.gpu.lines.set { preset }`. A capability
+//! pack carries a lane's line policy document in `knowledge/line-presets/<name>.json`; the owner
+//! sets a line from it by naming the pack, the preset and the document's digest, and states only
+//! the wallet, the anchor and the fields that differ:
+//! - the line stores the full values (the document, his fields laid over it, the engine's neutral
+//!   defaults for what neither states) and the preset's reference;
+//! - a preset that is not installed, or a digest that is not the installed document's, is
+//!   refused and sets nothing;
+//! - a later version of the pack changes no line in force;
+//! - a policy stated whole sets as before and keeps no preset.
+//!
+//! The document holds the open-models lane's values of pass 34, 3.3.
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test gpu_line_presets`
+#![cfg(oneiron_test_support)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::sync::Arc;
+
+use oneiron::authority::{HostSlipIssuer, MachineRole};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::WalletRef;
+use oneiron::gpu_line::{
+    BudgetPolicy, GpuLineError, GpuLinePolicyFields, GpuLineSetRequest, GpuLineView, LinePresetRef,
+    RuleRef, gpu_seconds,
+};
+use oneiron::skill_hub::HubFile;
+use oneiron::skill_hub::pack_catalog::{PackInstallDisposition, PackSource};
+use oneiron::store::GateDecisionId;
+use oneiron::test_doors::room_facet_set::create_owner_project;
+use oneiron::workspace_roster::ProjectRecord;
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use serde_json::{Map, Value, json};
+
+const PACK: &str = "example.lanepreset";
+const PRESET: &str = "open-models";
+const PRESET_FILE: &str = "knowledge/line-presets/open-models.json";
+const PERIOD_SECS: u64 = 1_209_600;
+const ANCHOR_MS: u64 = 1_000_000;
+/// A moment inside period 0.
+const NOW_MS: u64 = ANCHOR_MS + 60_000;
+
+/// The open-models lane's line policy document (pass 34, 3.3).
+fn open_models_document(allowance_units: u64) -> Value {
+    json!({
+        "unit": "gpu_seconds",
+        "period_secs": PERIOD_SECS,
+        "budget": {
+            "allowance_units": allowance_units,
+            "rung_caps_secs": [1_800, 10_800, 172_800],
+            "pinned_track": "interest",
+            "pinned_parts": [1, 3],
+            "pinned_mode": "floor_plus_market",
+            "floor_arms": 2,
+            "seat_cap": 6,
+            "seat_reserve_floors": 1,
+            "new_idea_slots_per_period": 4,
+            "pinned_seat_cap": 0,
+            "review_check_secs": 600,
+            "hold_ttl_secs": 259_200,
+            "window_periods": 3,
+            "forecast_required": true,
+            "forecast_score_after": 20,
+            "max_running_per_family": 1,
+            "rules": [{ "rule": "payoff_share", "version": 1 }],
+            "invalid_cost": "counts_as_cost",
+            "draw_orders": [
+                { "track": "demand", "first_rung": ["first_allowance", "floor", "market"], "later_rungs": ["market"] },
+                { "track": "interest", "first_rung": ["first_allowance", "floor", "pinned", "market"], "later_rungs": ["pinned", "market"] },
+                { "track": "new_idea", "first_rung": ["first_allowance", "floor"], "later_rungs": [] }
+            ]
+        }
+    })
+}
+
+/// The preset pack at `version`, whose one preset is `document`.
+fn preset_pack(version: &str, document: &Value) -> Vec<HubFile> {
+    vec![
+        HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: {PACK}\ndescription: A lane's line preset.\nversion: {version}\nkind: capability\n---\nA data-only pack: one line preset.\n"
+            ),
+        ),
+        HubFile::new(PRESET_FILE, document.to_string()),
+    ]
+}
+
+/// The reference to the preset as `files` carry it: its document's digest.
+fn reference(files: Vec<HubFile>) -> LinePresetRef {
+    let source = PackSource::from_files(files).expect("the preset pack reads");
+    let preset = source
+        .line_presets()
+        .iter()
+        .find(|preset| preset.name == PRESET)
+        .expect("the pack carries the preset");
+    LinePresetRef {
+        pack: PACK.to_owned(),
+        name: PRESET.to_owned(),
+        digest: preset.digest.clone(),
+    }
+}
+
+fn wallet() -> WalletRef {
+    WalletRef {
+        issuer: "host".to_owned(),
+        id: "gpu".to_owned(),
+    }
+}
+
+/// What the owner states over the preset: the wallet, the anchor, and one budget field.
+fn stated(allowance_units: u64) -> GpuLinePolicyFields {
+    let mut fields = Map::new();
+    fields.insert("wallet".to_owned(), serde_json::to_value(wallet()).unwrap());
+    fields.insert("period_anchor_ms".to_owned(), json!(ANCHOR_MS));
+    fields.insert(
+        "budget".to_owned(),
+        json!({ "allowance_units": allowance_units }),
+    );
+    GpuLinePolicyFields(fields)
+}
+
+/// The budget the line holds when set from the 3.3 document with `allowance_units` stated: the
+/// document's values, his allowance, and the engine's defaults for what neither states.
+fn expected_budget(allowance_units: u64) -> BudgetPolicy {
+    BudgetPolicy {
+        allowance_units,
+        pinned_parts: (1, 3),
+        floor_arms: 2,
+        rung_caps_secs: vec![1_800, 10_800, 172_800],
+        seat_cap: 6,
+        seat_reserve_floors: 1,
+        new_idea_slots_per_period: 4,
+        review_check_secs: 600,
+        max_running_per_family: 1,
+        forecast_required: true,
+        window_periods: 3,
+        rules: vec![RuleRef::PAYOFF_SHARE_1],
+        ..BudgetPolicy::default()
+    }
+}
+
+struct Fixture {
+    vault: Vault,
+    owner: EntityId,
+    issuer: HostSlipIssuer,
+    owner_proof: AuthenticatedOwner,
+    _dir: tempfile::TempDir,
+}
+
+fn fixture() -> Fixture {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("owner bound to host");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner_proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("owner proof");
+    vault
+        .sign_owner_project(
+            &owner_proof,
+            &vault
+                .owner_project_signer(&issuer)
+                .expect("owner project signer"),
+            vault.root_project().expect("root project"),
+        )
+        .expect("the owner signs the root project");
+    Fixture {
+        vault,
+        owner,
+        issuer,
+        owner_proof,
+        _dir: dir,
+    }
+}
+
+impl Fixture {
+    /// An owner-born lane project under the root.
+    fn lane(&self) -> EntityId {
+        let id = EntityId::now();
+        let root = self.vault.root_project().expect("root project");
+        let mut record = ProjectRecord::new(id, Some(root), root, self.owner).expect("record");
+        record.depth_remaining = 2;
+        create_owner_project(
+            &self.vault,
+            &self.issuer,
+            &self.owner_proof,
+            &self
+                .vault
+                .owner_project_signer(&self.issuer)
+                .expect("owner project signer"),
+            self.owner,
+            id,
+            &record,
+        )
+        .expect("the owner bears the lane project");
+        id
+    }
+
+    /// The owner's put of the preset pack; it lands Active.
+    fn put(&self, files: Vec<HubFile>) {
+        match self.vault.put_pack(&self.owner_proof, files) {
+            Ok(PackInstallDisposition::Installed(receipt)) => assert_eq!(receipt.pack_name, PACK),
+            other => panic!("the owner's put installs the preset pack: {other:?}"),
+        }
+    }
+
+    fn set(
+        &self,
+        key: &str,
+        lane: EntityId,
+        preset: Option<LinePresetRef>,
+        policy: GpuLinePolicyFields,
+    ) -> Result<GpuLineView, GpuLineError> {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .set_gpu_line(
+                Some(&self.owner_proof),
+                &GpuLineSetRequest {
+                    intent_key: key.to_owned(),
+                    project: lane,
+                    preset,
+                    policy,
+                },
+                NOW_MS,
+            )
+    }
+}
+
+#[test]
+fn a_line_set_from_a_preset_stores_full_values_and_the_presets_reference() {
+    let fx = fixture();
+    let lane = fx.lane();
+    let files = preset_pack("1.0.0", &open_models_document(345_600));
+    let preset = reference(files.clone());
+    fx.put(files);
+
+    let view = fx
+        .set("from-preset", lane, Some(preset.clone()), stated(300_000))
+        .expect("the owner sets the line from the preset");
+    let line = &view.line;
+    assert_eq!(line.budget, expected_budget(300_000));
+    assert_eq!(line.unit, gpu_seconds());
+    assert_eq!(line.period_secs, PERIOD_SECS);
+    assert_eq!(line.period_anchor_ms, ANCHOR_MS);
+    assert_eq!(line.wallet, wallet());
+    assert_eq!(line.preset, Some(preset.clone()));
+    let stored = fx.vault.gpu_line(&lane).expect("read").expect("the line");
+    assert_eq!(stored.budget, expected_budget(300_000));
+    assert_eq!(stored.preset, Some(preset));
+}
+
+#[test]
+fn a_preset_must_be_installed_and_named_by_the_digest_of_its_installed_document() {
+    let fx = fixture();
+    let lane = fx.lane();
+    let files = preset_pack("1.0.0", &open_models_document(345_600));
+    let preset = reference(files.clone());
+
+    let refused = fx.set("not-installed", lane, Some(preset.clone()), stated(300_000));
+    assert!(
+        matches!(refused, Err(GpuLineError::PresetNotInstalled)),
+        "{refused:?}"
+    );
+
+    fx.put(files);
+    let mut wrong = preset.clone();
+    wrong.digest = "0".repeat(64);
+    match fx.set("wrong-digest", lane, Some(wrong), stated(300_000)) {
+        Err(GpuLineError::PresetDigestMismatch { installed }) => {
+            assert_eq!(
+                installed, preset.digest,
+                "the refusal names the installed digest"
+            );
+        }
+        other => panic!("a digest that is not the installed document's is refused: {other:?}"),
+    }
+    assert!(
+        fx.vault.gpu_line(&lane).expect("read").is_none(),
+        "a refused preset sets nothing"
+    );
+}
+
+#[test]
+fn a_pack_update_changes_no_line_in_force() {
+    let fx = fixture();
+    let lane = fx.lane();
+    let first = preset_pack("1.0.0", &open_models_document(345_600));
+    let preset = reference(first.clone());
+    fx.put(first);
+    fx.set("from-preset", lane, Some(preset.clone()), stated(300_000))
+        .expect("the owner sets the line from the preset");
+
+    let update = preset_pack("1.1.0", &open_models_document(100_000));
+    let updated = reference(update.clone());
+    assert_ne!(updated.digest, preset.digest);
+    fx.put(update);
+    let line = fx.vault.gpu_line(&lane).expect("read").expect("the line");
+    assert_eq!(
+        line.budget,
+        expected_budget(300_000),
+        "the update moved no value"
+    );
+    assert_eq!(line.preset, Some(preset.clone()));
+
+    // The old document is no longer installed: naming it is refused.
+    assert!(matches!(
+        fx.set("old-preset", lane, Some(preset), stated(300_000)),
+        Err(GpuLineError::PresetDigestMismatch { .. })
+    ));
+}
+
+#[test]
+fn a_policy_stated_whole_sets_as_before_and_keeps_no_preset() {
+    let fx = fixture();
+    let lane = fx.lane();
+    let mut fields = stated(345_600).0;
+    fields.insert("period_secs".to_owned(), json!(PERIOD_SECS));
+    fields.insert(
+        "budget".to_owned(),
+        json!({ "allowance_units": 345_600, "rung_caps_secs": [1_800] }),
+    );
+    let view = fx
+        .set("whole", lane, None, GpuLinePolicyFields(fields))
+        .expect("a whole policy sets");
+    assert_eq!(view.line.preset, None);
+    assert_eq!(view.line.budget.rung_caps_secs, vec![1_800]);
+    assert_eq!(
+        view.line.budget.pinned_parts,
+        (0, 1),
+        "the engine's neutral default"
+    );
+}
