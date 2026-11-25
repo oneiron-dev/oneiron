@@ -1,12 +1,12 @@
-//! A vault machine that runs GPU jobs and pinned workloads for the vault's
-//! issuer (pass 33, `33-exec-node/DESIGN.md`): what its GPUs are and what
-//! runs on them now ([`device`]), what it offers and answers when asked
-//! ([`availability`]), the slots it leases on them, beside its memory floor
-//! ([`slots`]), a read that picks a machine's GPU before a quote
-//! ([`selection`]), the job protocols' messages ([`wire`]), the node's own
-//! configuration and templates ([`node_settings`]), the node's gate,
-//! controls and authority tick ([`node`]), its two mesh services
-//! ([`service`]), and the node's keys with their journal ([`jobs`]).
+//! A vault machine that runs pinned workloads for the vault's issuer (pass
+//! 33, `33-exec-node/DESIGN.md`): the job protocols' messages ([`wire`]),
+//! the node's own configuration and templates ([`node_settings`]), the
+//! node's gate, controls and authority tick ([`node`]), its two mesh
+//! services ([`service`]), and the node's keys with their journal
+//! ([`jobs`]). Its GPUs: what they are and what runs on them now
+//! ([`device`]), what it offers and answers when asked ([`availability`]),
+//! the slots it leases on them, beside its memory floor ([`slots`]), and a
+//! read that picks a machine's GPU before a quote ([`selection`]).
 
 pub mod availability;
 pub mod device;

@@ -522,6 +522,7 @@ fn refused_with_run(denied: RunDenied) -> oneiron::Error {
         RunDenied::Budget { .. }
             | RunDenied::NoAllocation
             | RunDenied::AllocationExhausted
+            | RunDenied::AllocationAmbiguous { .. }
             | RunDenied::ResidentShareSpent { .. }
             | RunDenied::AllocationRefused {
                 reason: AllocationRefusal::HostCheck,

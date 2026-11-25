@@ -9,7 +9,9 @@
 //! protocol the engine does not serve is still refused: the grant check
 //! stays exact. A machine bound under a narrower ceiling takes the served one
 //! when it re-enrols, and the pairing it leaves stays standing for every
-//! other replica that bound the machine on it.
+//! other replica that bound the machine on it. The re-enrolment names the
+//! new pairing, and another replica's owner binds the machine again on it,
+//! which keeps the grants that replica holds for it.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -99,5 +101,45 @@ fn a_re_enrolment_leaves_standing_the_pairing_another_replica_binds_on() -> Test
         b.admits(&a, SYNC_ALPN)?,
         "a re-enrolment on H never ends B's binding of A"
     );
+    Ok(())
+}
+
+#[test]
+fn another_replica_binds_a_re_enrolled_machine_again_on_its_new_pairing_and_keeps_its_grants()
+-> TestResult {
+    let home = home()?;
+    let a = home.enrol_with(0x10, &[SYNC_ALPN])?;
+    let b = home.enrol(0x11)?;
+    home.share_history(&[&a, &b])?;
+    b.bind_at(&a, Vec::new())?;
+    b.grant(&a, SYNC_ALPN)?;
+
+    // A re-enrols on H, whose answer names the pairing H's binding moved to.
+    let pairing = match home.re_enrol(&a, 0x12, &SERVED_MESH_ALPNS)? {
+        Some(MeshEnrolment::AlreadyGranted {
+            re_paired: Some(pairing),
+            ..
+        }) => pairing,
+        other => panic!("a re-enrolment that moves the binding names its new pairing: {other:?}"),
+    };
+    home.share_history(&[&b])?;
+    assert!(
+        b.grant(&a, JOB_ALPN).is_err(),
+        "B's binding of A still stands on A's first pairing, which covers sync alone"
+    );
+    assert!(
+        b.bind_at(&a, Vec::new()).is_err(),
+        "a second bind on the pairing the binding stands on moves nothing"
+    );
+
+    // B's owner binds A again on the new pairing: B's binding moves to it,
+    // keeps its sync grant, and takes the job grant.
+    b.bind_on(&a, Vec::new(), pairing)?;
+    assert!(
+        b.admits(&a, SYNC_ALPN)?,
+        "a re-bind keeps the grants B holds for A"
+    );
+    b.grant(&a, JOB_ALPN)?;
+    assert!(b.admits(&a, JOB_ALPN)?, "B admits A on the job protocol");
     Ok(())
 }

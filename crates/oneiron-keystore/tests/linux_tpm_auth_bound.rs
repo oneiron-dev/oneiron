@@ -640,7 +640,7 @@ fn the_chip_opens_the_device_pin_key_for_its_auth_value_and_counts_a_wrong_one()
     assert_eq!(mode & 0o777, 0o600);
     assert_eq!(
         file_names(&chip.key_dir()),
-        ["CACHEDIR.TAG", "device-pin-key.tpm2"]
+        ["CACHEDIR.TAG", "device-pin-key.tpm2", "temp-writers.lock"]
     );
 
     // The questions that need no chip ask it nothing.
@@ -901,6 +901,7 @@ fn the_tpm_tier_keeps_caller_sealed_bytes_beside_its_slots_and_asks_the_chip_not
             "CACHEDIR.TAG".to_owned(),
             "device-pin-key.sealed".to_owned(),
             "device-pin-key.tpm2".to_owned(),
+            "temp-writers.lock".to_owned(),
         ]
     );
     home.delete_sealed(&device)

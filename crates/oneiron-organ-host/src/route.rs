@@ -321,10 +321,19 @@ impl MeshLeg {
                     call.organ, call.verb
                 )));
             }
+            // The machine the handshake proved: the one dialed, whose
+            // signature its receipt must carry (Engine ruling
+            // ORGAN-MESH-RECEIPT-SIGNATURE), and the destination its vault
+            // inputs are judged toward.
+            let peer = vault
+                .mesh_peer_machine(conn.endpoint_key(), ORGAN_ALPN)
+                .map_err(|error| PeerError::Failed(error.into()))?;
+            if !matches!(peer, PeerMachine::Proven { machine: proven, .. } if proven == machine) {
+                return Err(PeerError::Absent(
+                    "its endpoint is not proven here as the machine dialed".into(),
+                ));
+            }
             if !call.inputs.is_empty() {
-                let peer = vault
-                    .mesh_peer_machine(conn.endpoint_key(), ORGAN_ALPN)
-                    .map_err(|error| PeerError::Failed(error.into()))?;
                 if let Some(hold) =
                     input_destination_hold(vault, call, peer).map_err(PeerError::Failed)?
                 {
@@ -340,7 +349,7 @@ impl MeshLeg {
             let inputs = inputs.staged.as_deref().expect("inputs just staged");
             let longest = Duration::from_millis(u64::from(u32::MAX));
             let wait = call.deadline.min(longest) + REPLY_GRACE;
-            let called = mesh::call_on(&*conn, machine, call, inputs, asks, floor);
+            let called = mesh::call_on(&*conn, machine, vault, call, inputs, asks, floor);
             match tokio::time::timeout(wait, called).await {
                 Ok(ran) => ran,
                 Err(_) => Err(PeerError::Failed(HostError::DeadlineExceeded)),

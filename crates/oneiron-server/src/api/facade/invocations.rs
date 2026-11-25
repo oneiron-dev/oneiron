@@ -112,6 +112,14 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
+            // The row's own door proof is judged again for the waiter, as
+            // a fresh call meets it before its hooks (review-10395 P1): a
+            // saved reply never goes to a caller that door refuses now,
+            // such as an agent whose Grant naming the verb was revoked
+            // after the first call ran.
+            if let Err(refusal) = row_door_admits(&server, &auth, verb) {
+                return FacadeApiError::from(refusal).into_response();
+            }
             // The owner's own whole-vault export is released again as its
             // owner's, once the waiter's fresh proof admits him as that
             // owner now (owner ruling 1-EXPORT = B).
@@ -274,12 +282,18 @@ pub(crate) enum DoorClaim {
 /// state, for any later request naming the invocation to read again. A
 /// same-id retry mints again: a fresh link and token, beside the first link,
 /// which the owner's list shows and revokes as any other.
-const UNKEPT_REPLY_VERBS: [&str; 5] = [
+/// The pinned workload reads (review round 2 of #10412) answer only what
+/// their caller may read now: a starter stops seeing a workload once its
+/// approval is revoked or expired, and a kept reply carries no workload a
+/// replay could judge again. A same-id retry reads again and writes nothing.
+const UNKEPT_REPLY_VERBS: [&str; 7] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
     "vault.members.inquiry_edge.attach",
     "vault.booking.personal_link.mint",
+    "vault.jobs.workloads.get",
+    "vault.jobs.workloads.list",
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
