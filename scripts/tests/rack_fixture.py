@@ -1,7 +1,7 @@
 """A stand-in box for the rack harness tests (scripts/rack): stub programs, a fake /proc, a config.
 
 Each read-only program the harness calls (findmnt, ss, systemctl, journalctl,
-getent, oneiron) is a small shell stub first on PATH. It prints the file
+getent, sshd, oneiron) is a small shell stub first on PATH. It prints the file
 `out/<program>.<key>` and exits with `out/<program>.<key>.rc` when that file
 exists, where the key is picked from its arguments; it writes the names of
 its environment to `out/<program>.<key>.env` and its arguments, one a line,
@@ -46,6 +46,33 @@ esac""",
 esac""",
     "getent": 'key="$1-$2"',
 }
+
+# `sshd -T [-f <dir>/<file>] ... -C user=<name>,...` prints the most specific of out/sshd.T-<file>-<name>,
+# out/sshd.T-<file>, out/sshd.T-<name> and out/sshd.T that exists; every call's arguments are appended
+# to out/sshd.calls.
+_SSHD_PICK = """spec=; cfg=; prev=
+for a in "$@"; do
+  [ "$prev" = -C ] && spec=$a
+  [ "$prev" = -f ] && cfg=$(basename "$a")
+  prev=$a
+done
+user=$(printf '%s\\n' "$spec" | sed -n 's/^user=\\([^,]*\\).*/\\1/p')
+printf '%s\\n' "$*" >> "@OUT@/sshd.calls"
+key=T
+for k in "T-$user" "T-$cfg" "T-$cfg-$user"; do [ -f "@OUT@/sshd.$k" ] && key=$k; done"""
+
+
+def sshd_settings(**changed: str) -> str:
+    """`sshd -T` output for one login: sshd's defaults, with `changed` keywords replaced."""
+    settings = {
+        "loglevel": "INFO",
+        "authorizedkeysfile": ".ssh/authorized_keys .ssh/authorized_keys2",
+        "authorizedkeyscommand": "none",
+        "trustedusercakeys": "none",
+        **changed,
+    }
+    return "port 22\n" + "".join(f"{name} {value}\n" for name, value in settings.items()) + "pubkeyauthentication yes\n"
+
 
 TCP_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
 UNIX_HEADER = "Num       RefCount Protocol Flags    Type St Inode Path"
@@ -111,6 +138,9 @@ class Box:
             directory.mkdir(parents=True, exist_ok=True)
         for program, pick in _STUBS.items():
             self.stub(program, pick)
+        self.stub("sshd", _SSHD_PICK.replace("@OUT@", str(self.out)))
+        # sshd as the readback reads it, for every login from every rack connection.
+        self.output("sshd", "T", sshd_settings())
         self.output("findmnt", "fstype", "ext4\n")
         # The sshd journal reaches back before the fixtures' freeze (1000).
         self.output("journalctl", "coverage", "500.000000 box sshd[600]: Server listening on :: port 22.\n")
@@ -142,6 +172,7 @@ class Box:
                 "client_key_globs": [str(self.home / ".ssh/*.pub")],
                 "rack_client_keys_dir": str(self.rack_keys),
                 "owner_devices": ["mac"],
+                "rack_connections": ["addr=192.0.2.40,host=kel"],
                 "freeze_unix": 1000,
             },
         }

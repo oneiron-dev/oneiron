@@ -28,6 +28,18 @@ running user). The units must be where sshd logs: every running sshd
 listener (an sshd whose parent is not one) must run in one of them, by its
 cgroup; a listener elsewhere, none found, or a process table not read in
 full is no proof.
+
+sshd must run as the readback reads it. For each running listener's own
+`-f` and `-o` options, for root and every login account, and from every rack
+machine's connection (`keys.rack_connections`, as this box's sshd sees it:
+`sshd -T -C` applies only the Match blocks whose fields the test names),
+`sshd -T` must log an accepted key (LogLevel INFO or more), read no
+AuthorizedKeysFile outside `keys.authorized_keys_file_patterns`, and take no
+key from an AuthorizedKeysCommand or a TrustedUserCAKeys authority, whose
+keys no authorized_keys file lists. The program run is `keys.sshd_program`,
+never a path read from a process. No rack connection, one sshd's test cannot
+take, a listener command line that cannot be read as sshd reads it, or an
+sshd that does not print its settings (a run that is not root) is no proof.
 """
 
 from __future__ import annotations
@@ -51,6 +63,19 @@ ACCEPTED = re.compile(
     r"Accepted publickey for (?P<user>\S+) from (?P<addr>\S+) port (?P<port>\d+) \S+: \S+ (?P<fp>SHA256:\S+)"
 )
 
+# The `sshd -T` keywords the readback judges (sshd prints each, lower case, with its value).
+SSHD_SETTINGS = ("loglevel", "authorizedkeysfile", "authorizedkeyscommand", "trustedusercakeys")
+# sshd logs an accepted key at INFO (auth.c auth_log): these levels keep that line.
+ACCEPT_LOG_LEVELS = frozenset({"INFO", "VERBOSE", "DEBUG", "DEBUG1", "DEBUG2", "DEBUG3"})
+# The fields of sshd's connection test besides user= (sshd.c parse_server_match_testspec).
+CONNECTION_FIELDS = ("addr", "host", "laddr", "lport", "rdomain")
+# A field value or an account name in that test: no comma, `=` or space, which would add or end a field.
+TEST_WORD = re.compile(r"^[A-Za-z0-9._:%\[\]-]+$")
+ACCOUNT_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*\$?$")
+# sshd's command-line options (sshd.c getopt): the letters that take an argument, and the flags.
+SSHD_OPTION_ARGS = frozenset("CEbcfghkopu")
+SSHD_FLAGS = frozenset("46DGQRTdeiqrtV")
+
 
 @dataclass
 class AuthorizedKey:
@@ -69,6 +94,17 @@ class Accept:
 
 
 @dataclass
+class SshdView:
+    """sshd's settings for one rack login: `sshd -T -C user=<account>,<connection>`."""
+
+    account: str
+    connection: str
+    # The listener's own -f and -o options, as `sshd -T` was given them.
+    options: tuple[str, ...]
+    settings: dict[str, list[str]]
+
+
+@dataclass
 class KeyReading:
     authorized: dict[str, list[AuthorizedKey]] = field(default_factory=dict)
     unread_files: list[str] = field(default_factory=list)
@@ -84,6 +120,9 @@ class KeyReading:
     # The systemd unit of each running sshd listener, and why that could not be told.
     sshd_listener_units: list[str] = field(default_factory=list)
     sshd_source_problems: list[str] = field(default_factory=list)
+    # sshd's settings for each rack login, and why a login could not be asked about.
+    sshd_views: list[SshdView] = field(default_factory=list)
+    sshd_view_problems: list[str] = field(default_factory=list)
 
 
 def fingerprint(blob_b64: str) -> str | None:
@@ -274,9 +313,13 @@ def expand_authorized_keys_file(pattern: str, account: Account) -> Path | None:
     return path if path.is_absolute() else account.home / path
 
 
-def login_account_files(section: dict, timeout: int) -> tuple[list[Path], list[str], list[str]]:
-    """(files, problems, unread) for root and every rack login account, as sshd names their files."""
+def login_account_files(section: dict, timeout: int) -> tuple[list[Path], list[str], list[str], list[str]]:
+    """(files, accounts, problems, unread) for root and every rack login account, as sshd names their files.
+
+    `accounts` are the names the password database knows.
+    """
     files: list[Path] = []
+    accounts: list[str] = []
     problems: list[str] = []
     unread: list[str] = []
     if not section["login_accounts"]:
@@ -290,6 +333,7 @@ def login_account_files(section: dict, timeout: int) -> tuple[list[Path], list[s
         if account is None:
             problems.append("a login account the password database does not know (keys.login_accounts)")
             continue
+        accounts.append(name)
         for pattern in section["authorized_keys_file_patterns"]:
             try:
                 path = expand_authorized_keys_file(pattern, account)
@@ -298,7 +342,109 @@ def login_account_files(section: dict, timeout: int) -> tuple[list[Path], list[s
                 continue
             if path is not None and path not in files:
                 files.append(path)
-    return files, sorted(set(problems)), sorted(set(unread))
+    return files, accounts, sorted(set(problems)), sorted(set(unread))
+
+
+def _connection_field_ok(name: str, sep: str, value: str) -> bool:
+    if not sep or name not in CONNECTION_FIELDS or not TEST_WORD.match(value):
+        return False
+    return name != "lport" or value.isdigit()
+
+
+def rack_connection_problems(connections: list[str]) -> list[str]:
+    """Why `keys.rack_connections` cannot be handed to sshd's connection test."""
+    if not connections:
+        return ["no rack connections (keys.rack_connections)"]
+    for connection in connections:
+        fields = [part.partition("=") for part in connection.split(",")]
+        names = [name for name, _, _ in fields]
+        if "addr" not in names or len(set(names)) != len(names) or not all(_connection_field_ok(*f) for f in fields):
+            return [
+                "keys.rack_connections: each is addr=<address>, then host=, laddr=, lport= or rdomain= "
+                "as this box's sshd sees the login"
+            ]
+    return []
+
+
+def parse_sshd_settings(text: str) -> dict[str, list[str]]:
+    """The judged keywords of `sshd -T` output: keyword -> its value's words."""
+    settings: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        words = line.split()
+        if words and words[0] in SSHD_SETTINGS:
+            settings.setdefault(words[0], words[1:])
+    return settings
+
+
+def listener_words(proc: Process) -> list[str] | None:
+    """A listener's command line as words: its argv, or the title sshd gives a listener; None for a cut title."""
+    if len(proc.argv) == 1 and proc.argv[0].startswith("sshd: "):
+        title, listener, _ = proc.argv[0][len("sshd: ") :].partition(" [listener]")
+        return title.split() if listener else None
+    return proc.argv
+
+
+def sshd_test_options(words: list[str]) -> list[str] | None:
+    """The -f and -o options of an sshd command line, for `sshd -T`; None when it is not read as sshd reads it.
+
+    sshd takes no operand, so a word that is neither an option nor its argument
+    (a title split inside a spaced value, say) means the line is not known.
+    """
+    options: list[str] = []
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            return options if index == len(words) - 1 else None
+        if not word.startswith("-") or word == "-":
+            return None
+        for at, letter in enumerate(word[1:], start=1):
+            if letter in SSHD_FLAGS:
+                continue
+            if letter not in SSHD_OPTION_ARGS:
+                return None
+            value = word[at + 1 :]
+            if not value:
+                index += 1
+                if index == len(words):
+                    return None
+                value = words[index]
+            if letter in "fo":
+                options += [f"-{letter}", value]
+            break
+        index += 1
+    return options
+
+
+def read_sshd_views(
+    section: dict, accounts: list[str], listeners: list[Process], timeout: int
+) -> tuple[list[SshdView], list[str], list[str]]:
+    """(views, problems, unread): sshd's settings for each listener's options, account and rack connection."""
+    problems = rack_connection_problems(section["rack_connections"])
+    if problems:
+        return [], problems, []
+    option_sets: list[tuple[str, ...]] = []
+    for proc in listeners:
+        words = listener_words(proc)
+        options = sshd_test_options(words) if words else None
+        if options is None:
+            problems.append("an sshd listener's command line cannot be read as sshd reads it, so its -f and -o are unknown")
+        elif tuple(options) not in option_sets:
+            option_sets.append(tuple(options))
+    views: list[SshdView] = []
+    for account in accounts:
+        if not ACCOUNT_NAME.match(account):
+            problems.append("a login account name sshd's connection test cannot carry (keys.login_accounts)")
+            continue
+        for options in option_sets:
+            for connection in section["rack_connections"]:
+                argv = [section["sshd_program"], "-T", *options, "-C", f"user={account},{connection}"]
+                try:
+                    settings = parse_sshd_settings(read_output(argv, timeout))
+                except CommandError:
+                    return views, sorted(set(problems)), ["sshd effective configuration"]
+                views.append(SshdView(account=account, connection=connection, options=options, settings=settings))
+    return views, sorted(set(problems)), []
 
 
 def cgroup_unit(text: str) -> str | None:
@@ -315,14 +461,17 @@ def cgroup_unit(text: str) -> str | None:
     return services[-1] if services else None
 
 
-def sshd_listener_units(processes: list[Process], proc_root: Path) -> tuple[list[str], list[str]]:
-    """(units, problems): the systemd service each running sshd listener (an sshd whose parent is not one) runs in."""
+def sshd_listeners(processes: list[Process]) -> list[Process]:
+    """The running sshd listeners: an sshd whose parent is not one."""
     names = {proc.pid: proc.name for proc in processes}
+    return [proc for proc in processes if proc.name == "sshd" and names.get(proc.ppid) != "sshd"]
+
+
+def sshd_listener_units(processes: list[Process], proc_root: Path) -> tuple[list[str], list[str]]:
+    """(units, problems): the systemd service each running sshd listener runs in."""
     units: list[str] = []
     problems: list[str] = []
-    for proc in processes:
-        if proc.name != "sshd" or names.get(proc.ppid) == "sshd":
-            continue
+    for proc in sshd_listeners(processes):
         try:
             text = (proc_root / str(proc.pid) / "cgroup").read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:
@@ -342,7 +491,7 @@ def read_keys(section: dict, proc_root: Path, timeout: int, privileged: bool | N
     reading = KeyReading()
     privileged = os.geteuid() == 0 if privileged is None else privileged
     paths, reading.path_problems = authorized_keys_paths(section["authorized_keys_files"], privileged)
-    account_paths, account_problems, account_unread = login_account_files(section, timeout)
+    account_paths, accounts, account_problems, account_unread = login_account_files(section, timeout)
     reading.path_problems = sorted(set(reading.path_problems + account_problems))
     reading.unread += account_unread
     for path in account_paths + [p for p in paths if p not in account_paths]:
@@ -390,6 +539,10 @@ def read_keys(section: dict, proc_root: Path, timeout: int, privileged: bool | N
         reading.unread.append("processes")
     else:
         reading.sshd_listener_units, reading.sshd_source_problems = sshd_listener_units(processes, proc_root)
+        reading.sshd_views, reading.sshd_view_problems, sshd_unread = read_sshd_views(
+            section, accounts, sshd_listeners(processes), timeout
+        )
+        reading.unread += sshd_unread
 
     try:
         out = read_output(["ss", "-tnH", "state", "established", "( sport = :22 )"], timeout)
@@ -424,6 +577,34 @@ def sshd_source_problems(reading: KeyReading, section: dict) -> list[str]:
     return problems
 
 
+def sshd_config_problems(reading: KeyReading, section: dict) -> list[str]:
+    """Why sshd, as it runs for a rack login, is not the sshd this readback reads."""
+    found: dict[str, list[str]] = {}
+    declared = set(section["authorized_keys_file_patterns"])
+    for view in reading.sshd_views:
+        login = f"user={view.account},{view.connection}" + (f" with {' '.join(view.options)}" if view.options else "")
+        settings = view.settings
+        missing = [name for name in SSHD_SETTINGS if not settings.get(name)]
+        if missing:
+            found.setdefault(f"sshd -T printed no {', '.join(missing)}", []).append(login)
+            continue
+        level = settings["loglevel"][0].upper()
+        if level not in ACCEPT_LOG_LEVELS:
+            found.setdefault(f"sshd logs at LogLevel {level}, so an accepted key leaves no record", []).append(login)
+        unlisted = [p for p in settings["authorizedkeysfile"] if p.lower() != "none" and p not in declared]
+        if unlisted:
+            text = f"sshd reads AuthorizedKeysFile {' '.join(unlisted)}, not in keys.authorized_keys_file_patterns"
+            found.setdefault(text, []).append(login)
+        for name, label in (("authorizedkeyscommand", "AuthorizedKeysCommand"), ("trustedusercakeys", "TrustedUserCAKeys")):
+            if [word.lower() for word in settings[name]] != ["none"]:
+                found.setdefault(f"sshd takes keys from {label}, which no authorized_keys file lists", []).append(login)
+    problems = list(reading.sshd_view_problems)
+    for text, logins in found.items():
+        more = f" and {len(logins) - 1} more" if len(logins) > 1 else ""
+        problems.append(f"{text} ({logins[0]}{more})")
+    return problems
+
+
 def judge(reading: KeyReading, section: dict, phase: str) -> tuple[bool, str, dict]:
     """(passed, reason, facts) for one box."""
     freeze = section["freeze_unix"]
@@ -444,6 +625,7 @@ def judge(reading: KeyReading, section: dict, phase: str) -> tuple[bool, str, di
             "(rotated, volatile, or not readable by this user)"
         )
     problems += sshd_source_problems(reading, section)
+    problems += sshd_config_problems(reading, section)
     if not reading.rack_keys:
         problems.append("no rack client key list (keys.rack_client_keys_dir)")
     if problems:

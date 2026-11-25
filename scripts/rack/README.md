@@ -67,8 +67,15 @@ process and root's authorized_keys need the Orchestrator's privileged run):
   account, or one the password database does not know, fails. The sshd journal must reach back to the freeze:
   `keys.journal_since_unix` later than `keys.freeze_unix` fails, and so does an sshd journal (`keys.sshd_units`) with
   no record from before the freeze. Every running sshd listener must run in one of `keys.sshd_units` (by its
-  cgroup): a listener in another unit, none found, or a process table not read in full fails. The readback takes
-  sshd's accepts as logged at its default LogLevel (INFO); `sshd -T` is not read.
+  cgroup): a listener in another unit, none found, or a process table not read in full fails. sshd must run as the
+  readback reads it: with each listener's own `-f` and `-o` options, for root and every login account, from every
+  connection of `keys.rack_connections` (each rack machine's `addr=`, with `host=`, `laddr=`, `lport=` or `rdomain=`
+  when sshd_config matches on them, since `sshd -T -C` applies only the Match blocks whose fields it is given),
+  `sshd -T` must log an accepted key (LogLevel INFO or more), read no AuthorizedKeysFile outside
+  `keys.authorized_keys_file_patterns`, and take no key from an AuthorizedKeysCommand or TrustedUserCAKeys. The
+  program run is `keys.sshd_program`, never a path read from a process. No rack connection, one sshd's test cannot
+  take, a listener command line that cannot be read as sshd reads it, or an sshd that does not print its settings
+  (it needs root) fails.
 
 Canaries through Oneiron alone, each answering for the box it runs on:
 

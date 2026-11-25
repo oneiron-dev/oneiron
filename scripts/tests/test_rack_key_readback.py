@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from rack_fixture import HOST, Box, key_blob
+from rack_fixture import HOST, Box, key_blob, sshd_settings
 
 from rack.readback.keys import (
     Account,
@@ -309,3 +309,138 @@ def test_the_coverage_probe_reads_the_sshd_units_the_accepts_are_read_from(rack)
     probe = rack.box.argv_of("journalctl", "coverage")
     assert probe[-len(units) :] == units and "--until" in probe and "--system" not in probe
     assert rack.box.argv_of("journalctl", "journal")[-len(units) :] == units
+
+
+def test_sshd_is_asked_about_root_and_every_login_account_from_every_rack_connection(rack):
+    rack.box.config["keys"]["rack_connections"] = ["addr=192.0.2.40,host=kel", "addr=192.0.2.41,lport=22"]
+    done = rack.run()
+    assert done.returncode == 0, done.stderr
+    assert (rack.box.out / "sshd.calls").read_text().splitlines() == [
+        "-T -C user=root,addr=192.0.2.40,host=kel",
+        "-T -C user=root,addr=192.0.2.41,lport=22",
+        "-T -C user=owen,addr=192.0.2.40,host=kel",
+        "-T -C user=owen,addr=192.0.2.41,lport=22",
+    ]
+
+
+def test_an_sshd_that_logs_below_info_for_a_rack_login_is_no_proof(rack):
+    # A Match block quiets sshd for owen: a rack key's accept would leave no journal record.
+    rack.box.output("sshd", "T-owen", sshd_settings(loglevel="ERROR"))
+    done = rack.run()
+    assert done.returncode == 1
+    assert "LogLevel ERROR" in done.stderr and "user=owen,addr=192.0.2.40,host=kel" in done.stderr
+    rack.box.output("sshd", "T-owen", sshd_settings(loglevel="VERBOSE"))
+    assert rack.run().returncode == 0
+
+
+def test_an_authorized_keys_file_sshd_reads_outside_the_patterns_is_no_proof(rack):
+    # kel's key sits in a file only sshd's Match block names: the readback never opens it.
+    rack.authorize(rack.mac)
+    rack.box.output("sshd", "T-owen", sshd_settings(authorizedkeysfile=".ssh/authorized_keys /etc/ssh/rack-keys/%u"))
+    done = rack.run(phase="after")
+    assert done.returncode == 1
+    assert "AuthorizedKeysFile /etc/ssh/rack-keys/%u, not in keys.authorized_keys_file_patterns" in done.stderr
+    rack.box.output("sshd", "T-owen", sshd_settings(authorizedkeysfile=".ssh/authorized_keys"))
+    assert rack.run(phase="after").returncode == 0
+    rack.box.output("sshd", "T-owen", sshd_settings(authorizedkeysfile="none"))
+    assert rack.run(phase="after").returncode == 0
+
+
+def test_keys_from_an_authorized_keys_command_or_a_user_certificate_authority_are_no_proof(rack):
+    rack.authorize(rack.mac)
+    rack.box.output("sshd", "T-root", sshd_settings(authorizedkeyscommand="/usr/local/bin/rack-keys %u"))
+    done = rack.run(phase="after")
+    assert done.returncode == 1
+    assert "AuthorizedKeysCommand" in done.stderr and "user=root," in done.stderr
+    rack.box.output("sshd", "T-root", sshd_settings(trustedusercakeys="/etc/ssh/user_ca.pub"))
+    done = rack.run(phase="after")
+    assert done.returncode == 1
+    assert "TrustedUserCAKeys" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "connections",
+    [
+        [],
+        ["host=kel"],
+        ["addr=192.0.2.40,user=root"],
+        ["addr=192.0.2.40,lport=ssh"],
+        ["addr=192.0.2.40,addr=192.0.2.41"],
+        ["addr=192.0.2.40 host=kel"],
+        ["addr=192.0.2.40,"],
+    ],
+)
+def test_no_rack_connection_or_one_sshds_test_cannot_take_is_no_proof(rack, connections):
+    rack.box.config["keys"]["rack_connections"] = connections
+    done = rack.run()
+    assert done.returncode == 1
+    assert "keys.rack_connections" in done.stderr
+    assert not (rack.box.out / "sshd.calls").exists()
+
+
+def test_a_login_account_name_that_would_add_a_connection_field_is_never_handed_to_sshd(rack):
+    rack.box.config["keys"]["login_accounts"] = ["owen", "owen,addr=192.0.2.9"]
+    rack.box.account("owen,addr=192.0.2.9", 1001, rack.box.home)
+    done = rack.run()
+    assert done.returncode == 1
+    assert "connection test cannot carry" in done.stderr
+    assert not any("192.0.2.9" in call for call in (rack.box.out / "sshd.calls").read_text().splitlines())
+
+
+def test_sshd_is_asked_with_each_listeners_own_config_file_and_options(rack):
+    # A second listener in its own unit, and a third whose argv sshd rewrote into its listener title.
+    rack.box.config["keys"]["sshd_units"] = ["sshd.service", "rack-ssh.service"]
+    rack.box.process(
+        610,
+        ["/usr/sbin/sshd", "-D", "-f", "/etc/ssh/sshd_config_rack", "-oLogLevel=VERBOSE"],
+        name="sshd",
+        cgroup="0::/system.slice/rack-ssh.service\n",
+    )
+    rack.box.process(
+        611,
+        ["sshd: /usr/sbin/sshd -De -f/etc/ssh/sshd_config_two [listener] 0 of 10-100 startups"],
+        name="sshd",
+        cgroup="0::/system.slice/rack-ssh.service\n",
+    )
+    done = rack.run()
+    assert done.returncode == 0, done.stderr
+    calls = (rack.box.out / "sshd.calls").read_text().splitlines()
+    assert "-T -C user=owen,addr=192.0.2.40,host=kel" in calls
+    assert "-T -f /etc/ssh/sshd_config_rack -o LogLevel=VERBOSE -C user=owen,addr=192.0.2.40,host=kel" in calls
+    assert "-T -f /etc/ssh/sshd_config_two -C user=root,addr=192.0.2.40,host=kel" in calls
+    assert len(calls) == 6
+    # Only the rack listener's own configuration quiets sshd: that listener's logins are no proof.
+    rack.box.output("sshd", "T-sshd_config_rack", sshd_settings(loglevel="QUIET"))
+    done = rack.run()
+    assert done.returncode == 1
+    assert "LogLevel QUIET" in done.stderr and "with -f /etc/ssh/sshd_config_rack -o LogLevel=VERBOSE" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        ["sshd: /usr/sbin/sshd -D -o LogLevel QUIET [listener] 0 of 10-100 startups"],
+        ["sshd: /usr/sbin/sshd -D -f /etc/ssh/sshd_config_rack"],
+        ["/usr/sbin/sshd", "-D", "-Z"],
+        ["/usr/sbin/sshd", "-D", "-f"],
+    ],
+)
+def test_a_listener_command_line_not_read_as_sshd_reads_it_is_no_proof(rack, title):
+    rack.box.config["keys"]["sshd_units"] = ["sshd.service", "rack-ssh.service"]
+    rack.box.process(610, title, name="sshd", cgroup="0::/system.slice/rack-ssh.service\n")
+    done = rack.run()
+    assert done.returncode == 1
+    assert "its -f and -o are unknown" in done.stderr
+
+
+def test_an_sshd_that_does_not_print_its_settings_is_no_proof(rack):
+    # A run that is not root: sshd loads no host key and exits before it prints.
+    rack.box.output("sshd", "T-owen", "", rc=255)
+    done = rack.run()
+    assert done.returncode == 1
+    assert "sshd effective configuration" in done.stderr
+    (rack.box.out / "sshd.T-owen.rc").unlink()
+    rack.box.output("sshd", "T-owen", "port 22\nloglevel INFO\n")
+    done = rack.run()
+    assert done.returncode == 1
+    assert "sshd -T printed no authorizedkeysfile, authorizedkeyscommand, trustedusercakeys" in done.stderr
