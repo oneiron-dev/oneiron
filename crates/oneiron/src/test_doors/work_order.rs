@@ -47,6 +47,8 @@ pub fn put_approved_workload(
             at_ms: now_ms,
         }),
         revoked: None,
+        project: None,
+        check_in: None,
     };
     vault
         .with_write_txn_grouped(|txn| JOB_WORKLOADS.put(&vault.store, txn, &key, &row))
