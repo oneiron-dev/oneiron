@@ -1581,6 +1581,208 @@ fn a_job_the_node_ended_for_its_own_revoke_lands_no_output() {
     });
 }
 
+/// Shares the rig's vault with a second live owner, who accepts its founding invitation, and
+/// answers the co-owner's PERSON id. Call it before any agent Grant is minted: a vault that
+/// already holds an owner's agent Grant does not become shared.
+fn share_with_co_owner(rig: &Rig) -> EntityId {
+    const SHARED_VAULT: u64 = 42;
+    let vault = rig.vault();
+    let co_owner = EntityId::now();
+    vault
+        .put_entity(
+            &co_owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a live person");
+    let owner = rig.owner.revalidate(vault).expect("the owner's id");
+    let founding = |member_ref| oneiron::federation::InitialSharedMember {
+        member_ref,
+        role: Some(oneiron::federation::FederationGrantRole::Owner),
+    };
+    vault
+        .initialize_shared_vault(
+            &rig.owner,
+            SHARED_VAULT,
+            None,
+            &[founding(owner), founding(co_owner)],
+            1,
+        )
+        .expect("a shared vault with two owners");
+    let proof = vault
+        .authenticate_owner(
+            co_owner,
+            &co_owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("the co-owner's proof");
+    let invitation = vault
+        .shared_invitations(&proof, SHARED_VAULT)
+        .expect("the co-owner's invitations")
+        .into_iter()
+        .find(|open| open.role == oneiron::federation::FederationGrantRole::Owner)
+        .expect("the co-owner's founding invitation");
+    vault
+        .accept_shared_invitation(&proof, SHARED_VAULT, &invitation.id)
+        .expect("the co-owner accepts");
+    for id in [owner, co_owner] {
+        assert!(
+            matches!(
+                vault.dispatch_starter(id).expect("read the owner's standing"),
+                Some(WorkloadStarter::Owner(found)) if found == id
+            ),
+            "both are live owners",
+        );
+    }
+    co_owner
+}
+
+/// An agent of a shared vault starts a bound job under a Grant `rig.owner` mints; the job
+/// completes and the fetch does not arrive, so its output is owed. Answers the job's run and
+/// its binding, and the Grant's id.
+fn shared_vault_owed_result(rig: &Rig, tag: &str) -> (JobRun, GpuJobResultBinding, EntityId) {
+    let vault = rig.vault();
+    share_with_co_owner(rig);
+    let binding = result_binding(rig);
+    let (agent_id, grant_ref) =
+        agent_with_grant(rig, &format!("gpu-result-{tag}"), &["read", START_VERB]);
+    let workload = rig.approve_for_starters(
+        &format!("result-{tag}"),
+        FAR_EXPIRY_MS,
+        vec![grant_ref.to_hex()],
+    );
+    let agent = vault
+        .memory(agent_id, EdgeActorClass::Agent)
+        .gpu_job_agent();
+    let verdict: &[u8] = br#"{"verdict":"shared"}"#;
+    let run = rig.start_job_as(
+        GpuJobActor::Agent(&agent),
+        &workload,
+        bound_inputs(rig, &binding),
+        &rig.connector,
+    );
+    assert!(
+        vault
+            .job_dispatch(run.key())
+            .expect("read the dispatch table")
+            .is_some(),
+        "the agent's binding was dispatched in the shared vault",
+    );
+    rig.clock.advance_secs(30);
+    end_with_outputs(rig, &run, &[("verdict.json", verdict, true)]);
+    rig.node.put_output(run.key(), "verdict.json", verdict);
+    rig.node.drop_next("fetch");
+    rig.settle(&run);
+    let owed = vault
+        .job_return(run.key())
+        .expect("read JOB_RETURN")
+        .expect("the key's return");
+    assert!(
+        owed.landed.is_empty() && owed.refused.is_empty(),
+        "{owed:?}"
+    );
+    assert_eq!(owed.acknowledged_at_ms, None, "the output is still owed");
+    (run, binding, grant_ref)
+}
+
+/// #10517 review round 2 P1-5 (ARCH-0046): in a shared vault with two live owners, a lapsed
+/// starter's result lands in the lane of the owner who granted the submit's Grant; it is never
+/// refused for want of a sole owner. The Grant expires while the output is owed, and the next
+/// housekeeping pass lands it, written by the issuer, pending Keep.
+#[test]
+fn a_lapsed_starters_result_lands_in_its_granting_owners_lane_in_a_shared_vault() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let (run, binding, grant_ref) = shared_vault_owed_result(rig, "shared-granting-owner");
+        expire_agent_grant(vault, grant_ref).expect("expire the starter's Grant");
+        rig.connector.housekeeping();
+
+        let done = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(
+            done.landed,
+            vec!["verdict.json".to_owned()],
+            "the paid result returns in a shared vault: {done:?}",
+        );
+        assert!(done.refused.is_empty(), "{done:?}");
+        assert!(done.acknowledged_at_ms.is_some(), "then the node may clean");
+        let waiting = vault
+            .pending_proposals(&binding.artifact)
+            .expect("list the artifact's proposals");
+        assert_eq!(waiting.len(), 1, "one proposal waits");
+        assert_eq!(
+            waiting[0].retained_by, rig.issuer,
+            "the issuer writes the landing, not the lapsed starter",
+        );
+    });
+}
+
+/// #10517 review round 2 P1-5: a lapsed starter's result that no owner's lane is resolved for
+/// stays owed, and is never refused or cleaned. In a shared vault with two live owners, the
+/// owner revokes the agent's Grant while its job's output is owed: no Grant names a granting
+/// owner and the vault has no sole owner. The housekeeping passes fetch nothing, refuse
+/// nothing and acknowledge nothing; the node keeps the payload.
+#[test]
+fn a_lapsed_starters_result_stays_owed_while_no_owners_lane_is_resolved() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let (run, binding, grant_ref) = shared_vault_owed_result(rig, "shared-no-owner");
+        oneiron::verbs::revoke_agent_grant_as(
+            vault,
+            &rig.owner,
+            ActSurface::ThisInstall,
+            oneiron::verbs::AgentGrantRevokeRequest {
+                grant_ref,
+                seen: None,
+            },
+        )
+        .expect("the owner revokes the agent's Grant");
+        let fetches_before = fetched(&rig.node.calls(), run.key()).len();
+        rig.connector.housekeeping();
+        rig.connector.housekeeping();
+
+        let owed = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert!(
+            owed.landed.is_empty() && owed.refused.is_empty(),
+            "nothing landed or refused: {owed:?}",
+        );
+        assert_eq!(owed.acknowledged_at_ms, None, "the node keeps the result");
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .iter()
+                .any(|owed| owed.key == run.key()),
+            "the result stays owed",
+        );
+        let calls = rig.node.calls();
+        assert_eq!(
+            fetched(&calls, run.key()).len(),
+            fetches_before,
+            "nothing is fetched while no lane holds the result: {calls:?}",
+        );
+        assert!(
+            !kinds_for(&calls, run.key()).contains(&"ack"),
+            "no Ack: {calls:?}"
+        );
+        assert!(
+            vault
+                .pending_proposals(&binding.artifact)
+                .expect("list the artifact's proposals")
+                .is_empty(),
+            "nothing waits on the artifact",
+        );
+    });
+}
+
 /// #10517 review P1-6: a key whose terminal receipt left its outputs pending, and whose node
 /// then failed to hash them, has nothing to fetch. The next housekeeping pass reads the node's
 /// checked `Failed` receipt as a finished return and tells the node it may clean; no return
