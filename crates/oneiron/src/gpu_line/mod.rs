@@ -42,8 +42,8 @@ pub(crate) use intent::erase_intent_asker_in_txn;
 pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 pub use mint::{
     BUILT_RULES, GPU_SECONDS, LineInvalid, MintError, PAYOFF_WEIGHT_SHIFT, Pools, SettledTally,
-    economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
-    pools, posterior_sampling,
+    economic_digest, even_split, mint_period, payoff_share, period_balances, pools,
+    posterior_sampling,
 };
 pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
 pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};
@@ -53,7 +53,8 @@ pub use store::{
     settled_tallies_in_txn, stored_period_in_txn,
 };
 pub use wire::{
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,
+    GpuLineAllocationView, GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest,
+    GpuLineView,
 };
 
 pub use fold::{

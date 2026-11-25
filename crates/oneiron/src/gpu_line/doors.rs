@@ -16,6 +16,7 @@
 //!   the next mint; it takes a floor at once from its side's reserve while
 //!   one is left, and a new idea takes a free slot of the new-idea pool or is
 //!   refused.
+use super::claim::allocation_standing_in_txn;
 use super::doors_caller::{admit_in_txn, refused_owner_act};
 use super::fold::{
     BudgetPolicy, FamilySeat, GpuLine, LineRole, PeriodClockError, PeriodRoom, Side, Track,
@@ -26,7 +27,9 @@ use super::store::{
     MintedLine, line_in_txn, mint_first_in_txn, newest_minted_in_txn, other_line_in_txn,
     period_view_in_txn, put_line_in_txn, seated_elsewhere_in_txn,
 };
-use super::wire::{GpuLineFamilyAdmitRequest, GpuLineSetRequest, GpuLineView};
+use super::wire::{
+    GpuLineAllocationView, GpuLineFamilyAdmitRequest, GpuLineSetRequest, GpuLineView,
+};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{
@@ -101,8 +104,8 @@ impl From<GpuLineError> for MemoryError {
     }
 }
 
-/// The view of `line` at `now_ms` in `txn`: its period record, minted or
-/// previewed, with the cohort seed withheld until the period ends.
+/// The view of `line` at `now_ms` in `txn`: its minted or previewed period record (with
+/// the cohort seed withheld until the period ends) and the standing of its allocation.
 fn view_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -111,17 +114,31 @@ fn view_in_txn(
     replayed: bool,
 ) -> crate::Result<Result<GpuLineView, GpuLineError>> {
     Ok(match period_view_in_txn(vault, txn, &line, now_ms)? {
-        Ok(period) => Ok(GpuLineView {
-            preview: period.as_ref().is_some_and(|(_, preview)| *preview),
-            period: period.map(|(mut record, _)| {
-                if now_ms < record.end_ms {
-                    record.cohort_seed = None;
-                }
-                record
-            }),
-            line,
-            replayed,
-        }),
+        Ok(period) => {
+            let allocation = if let Some((record, _)) = &period {
+                let standing = allocation_standing_in_txn(
+                    vault,
+                    txn,
+                    &record.allocation.allocation(line.unit.clone()),
+                    &line.machines,
+                )?;
+                Some(GpuLineAllocationView::from(&standing))
+            } else {
+                None
+            };
+            Ok(GpuLineView {
+                preview: period.as_ref().is_some_and(|(_, preview)| *preview),
+                period: period.map(|(mut record, _)| {
+                    if now_ms < record.end_ms {
+                        record.cohort_seed = None;
+                    }
+                    record
+                }),
+                allocation,
+                line,
+                replayed,
+            })
+        }
         Err(refusal) => Err(GpuLineError::Mint(refusal)),
     })
 }

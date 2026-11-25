@@ -14,6 +14,7 @@ use crate::gpu_line::fold::{
     AllowanceRule, AllowanceTable, BudgetPolicy, FamilyFloor, FamilyPayoff, FamilySeat, GpuLine,
     GpuLinePeriod, PeriodAllocation, PinnedMode, RuleRef, SeatAtMint, Side, Track,
 };
+use crate::llm::run_admission::gpu_line_allocation_id;
 
 /// What one family's rows inside the window say (section 4.3). Row M2-E
 /// fills it from the line's arm rows and claims.
@@ -50,13 +51,6 @@ pub enum MintError {
     /// a valid line this cannot happen.
     #[error("the period's pools do not sum to its allowance")]
     Unbalanced,
-}
-
-/// The id of the host allocation a line's wallet is installed as; its
-/// generation is the period index plus one.
-#[must_use]
-pub fn line_allocation_id(project: &EntityId) -> String {
-    format!("gpu-line:{}", project.to_hex())
 }
 
 /// Every field of a record the economic digest covers: all but the cohort
@@ -276,7 +270,7 @@ pub fn mint_period(
         cohort_seed: None,
         allocation: PeriodAllocation {
             wallet: line.wallet.clone(),
-            id: line_allocation_id(&line.project),
+            id: gpu_line_allocation_id(&line.project),
             generation: u64::from(index) + 1,
             units: policy.allowance_units,
         },

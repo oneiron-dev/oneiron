@@ -41,12 +41,14 @@ use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, WalletRef};
 use oneiron::gpu_line::{
-    BudgetPolicy, Draw, DrawAsk, DrawPurpose, DrawSource, GpuLine, GpuLineError,
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineSetRequest, GpuLineView, LineInvalid,
-    MintError, PeriodRoom, RuleRef, Side, Track, VAULT_GPU_LINES_FAMILIES_ADMIT,
-    VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET, cohort_seed_commit, gpu_seconds, line_allocation_id,
-    mint_period, period_balances, plan_draws,
+    BudgetPolicy, ClaimState, Draw, DrawAsk, DrawPurpose, DrawSource, GpuLine,
+    GpuLineAllocationView, GpuLineError, GpuLineFamilyAdmitRequest, GpuLinePolicy,
+    GpuLineSetRequest, GpuLineView, LineInvalid, MintError, PeriodRoom, RuleRef, Side, Track,
+    UnitClaim, UnitPurpose, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET,
+    VAULT_GPU_LINES_SET, cohort_seed_commit, gpu_seconds, mint_period, open_claim_in_txn,
+    period_balances, plan_draws,
 };
+use oneiron::llm::run_admission::gpu_line_allocation_id;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryError,
 };
@@ -400,10 +402,84 @@ fn a_new_period_opens_with_exactly_its_allowance() {
     assert_eq!(record.index, 3);
     assert!(period_balances(&record), "exactly its allowance");
     assert_eq!(record.floor_of(&demand), FLOOR);
-    assert_eq!(record.allocation.id, line_allocation_id(&lane));
+    assert_eq!(record.allocation.id, gpu_line_allocation_id(&lane));
     assert_eq!(record.allocation.generation, 4, "one generation per period");
     assert_eq!(record.allocation.units, 345_600);
     assert_eq!(record.allocation.wallet, set.line.wallet);
+}
+
+/// The line view shows the period's grant and how an open claim reduces its room.
+#[test]
+fn the_line_view_shows_its_allocations_standing() {
+    let fixture = fixture();
+    let lane = fixture.project_under(fixture.root(), 2);
+    let now_ms = in_period(0);
+    fixture.owner_set("set", lane, policy(), now_ms);
+    let demand = fixture.project_under(lane, 0);
+    fixture
+        .admit_at(None, "seat", lane, demand, Track::Demand, now_ms)
+        .expect("the owner seats a demand family");
+
+    let view = fixture.view(lane, now_ms);
+    let record = view.period.expect("period 0 has begun");
+    let granted_units = record.allocation.units;
+    assert_eq!(
+        view.allocation,
+        Some(GpuLineAllocationView {
+            granted_units,
+            charged_secs: 0,
+            unattributed_secs: 0,
+            held_secs: 0,
+            open_claims: 0,
+            room_secs: granted_units,
+            unanswered_machines: Vec::new(),
+        }),
+    );
+
+    let allocation = record.allocation.allocation(gpu_seconds());
+    let reserved_secs = 3_600;
+    let claim = UnitClaim {
+        id: EntityId::now(),
+        arm: EntityId::now(),
+        rung: 1,
+        unit_key: "inkling-check/shard-1".to_owned(),
+        attempt: 1,
+        line: lane,
+        family: demand,
+        period: 0,
+        purpose: UnitPurpose::Work,
+        workload: "ab".repeat(32),
+        machine: None,
+        code_sha: "c0de".repeat(10),
+        contract_sha256: "cd".repeat(32),
+        reserved_secs,
+        draws: vec![Draw {
+            source: DrawSource::Floor,
+            units: reserved_secs,
+        }],
+        wallet: record.allocation.wallet,
+        allocation: allocation.reference.clone(),
+        grant: Some(EntityId::now()),
+        reserved_by: Some(EntityId::now()),
+        reserved_at_ms: now_ms,
+        ask_digest: "ad".repeat(32),
+        state: ClaimState::Claimed,
+        revision: 1,
+    };
+    fixture
+        .vault
+        .with_write_txn(|txn| open_claim_in_txn(&fixture.vault, txn, &allocation, &[], &claim))
+        .expect("claim writer")
+        .expect("the claim is admitted");
+
+    let standing = fixture
+        .view(lane, now_ms)
+        .allocation
+        .expect("period 0 has an allocation");
+    assert_eq!(standing.held_secs, reserved_secs);
+    assert_eq!(standing.open_claims, 1);
+    assert_eq!(standing.room_secs, granted_units - reserved_secs);
+    assert_eq!(standing.charged_secs, 0);
 }
 
 /// T5b.

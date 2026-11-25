@@ -29,10 +29,10 @@ use oneiron::federation::WalletRef;
 use oneiron::gpu_line::{
     AllowanceRule, BudgetPolicy, DrawStep, FamilyPayoff, FamilySeat, GpuLine, Graduation,
     InvalidCost, LineInvalid, MintError, PeriodClockError, PinnedMode, RuleRef, SettledTally, Side,
-    Track, cohort_rule, defaults, economic_digest, gpu_seconds, line_allocation_id, mint_period,
-    payoff_share, period_balances, posterior_sampling,
+    Track, cohort_rule, defaults, economic_digest, gpu_seconds, mint_period, payoff_share,
+    period_balances, posterior_sampling,
 };
-use oneiron::llm::run_admission::LeaseUnit;
+use oneiron::llm::run_admission::{LeaseUnit, gpu_line_allocation_id};
 
 const ANCHOR_MS: u64 = 1_000;
 const PERIOD_SECS: u64 = 1_209_600;
@@ -282,7 +282,7 @@ fn the_record_carries_its_policy_and_its_allocation() {
     assert_eq!(record.line_revision, lane.revision);
     assert_eq!(record.inputs_cutoff_ms, record.start_ms);
     assert_eq!(record.allocation.wallet, lane.wallet);
-    assert_eq!(record.allocation.id, line_allocation_id(&lane.project));
+    assert_eq!(record.allocation.id, gpu_line_allocation_id(&lane.project));
     assert_eq!(record.allocation.generation, 4);
     assert_eq!(record.allocation.units, 345_600);
     assert_eq!(record.cohort_seed, None, "one rule: no cohort");

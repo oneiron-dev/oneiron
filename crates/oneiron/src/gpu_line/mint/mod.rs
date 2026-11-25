@@ -7,8 +7,6 @@ mod period;
 mod policy;
 mod rules;
 
-pub use period::{
-    MintError, SettledTally, economic_digest, line_allocation_id, mint_period, period_balances,
-};
+pub use period::{MintError, SettledTally, economic_digest, mint_period, period_balances};
 pub use policy::{BUILT_RULES, GPU_SECONDS, LineInvalid, Pools, pools};
 pub use rules::{PAYOFF_WEIGHT_SHIFT, even_split, payoff_share, posterior_sampling};
