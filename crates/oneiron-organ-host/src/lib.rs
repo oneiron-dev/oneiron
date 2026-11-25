@@ -84,7 +84,8 @@ pub use outcome::{OrganOutcome, OrganOutput};
 #[cfg(unix)]
 pub use pin::{install_pinned_binary, pack_spec};
 pub use receipt::{
-    AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
+    AskReceipt, CALL_RECEIPT_SIGNATURE_DOMAIN, CallReceipt, FetchTarget, ReceiptInput,
+    ReceiptOutput, ReceiptSignature, SignedReceipt, Unanswered,
 };
 pub use resource_gpu::{
     GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotGrant, GpuSlotRefusal, GpuSlotRequest,

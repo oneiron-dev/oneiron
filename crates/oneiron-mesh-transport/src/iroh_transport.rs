@@ -808,4 +808,15 @@ impl MeshStream for IrohStream {
             Ok(bytes)
         })
     }
+    fn delivered(&mut self) -> MeshFuture<'_, ()> {
+        // The finished write half's end: the peer acknowledged all of it,
+        // or stopped the stream.
+        Box::pin(async move {
+            self.send
+                .stopped()
+                .await
+                .map(drop)
+                .map_err(|e| MeshError::Io(e.to_string()))
+        })
+    }
 }
