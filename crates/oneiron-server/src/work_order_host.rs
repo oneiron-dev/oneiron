@@ -8,7 +8,6 @@
 //! The pass runs on the built job worker (`gpu_host.rs`, OPUS-LE-FLEET's file), on its tick and
 //! on each wake: one worker.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
@@ -22,10 +21,9 @@ use oneiron::work_order::{
     OrderAttemptRef, OrderCharge, OrderHost, PassReport, Room, TemplateFact, WorkOrder,
 };
 
-use crate::gpu_execution_node::issuer::guard::observe_node_readiness;
 use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer, NodeReadiness,
+    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
 };
 use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
 use crate::server::SyncServer;
@@ -468,7 +466,7 @@ pub(crate) struct OrderLoop {
     /// The readiness sample each machine last showed a pass: its check's time, its failed
     /// checks in a row and whether its own drain stood. An answer that repeats it is not acted on
     /// again (CG-2 row 9).
-    readiness_seen: Mutex<HashMap<EntityId, (Option<u64>, u32, bool)>>,
+    readiness_seen: Mutex<std::collections::HashMap<EntityId, (Option<u64>, u32, bool)>>,
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -479,7 +477,7 @@ impl std::fmt::Debug for OrderLoop {
 
 impl OrderLoop {
     /// The worker pass's reading of `machine`'s readiness fact, with the node's own drain from the
-    /// same answer ([`observe_node_readiness`]), once per sample: an answer that repeats the
+    /// same answer (`issuer::guard::observe_node_readiness`), once per sample: an answer that repeats the
     /// sample this loop last read changes nothing and takes no write. A sample whose write failed
     /// waits for the machine's next check.
     pub(crate) fn observe_readiness(
@@ -487,7 +485,7 @@ impl OrderLoop {
         vault: &oneiron::Vault,
         machine: EntityId,
         node_drained: Option<&str>,
-        readiness: &NodeReadiness,
+        readiness: &crate::gpu_execution_node::wire::NodeReadiness,
         now_ms: u64,
     ) {
         let sample = (
@@ -505,7 +503,13 @@ impl OrderLoop {
             }
             seen.insert(machine, sample);
         }
-        observe_node_readiness(vault, machine, node_drained, readiness, now_ms);
+        crate::gpu_execution_node::issuer::guard::observe_node_readiness(
+            vault,
+            machine,
+            node_drained,
+            readiness,
+            now_ms,
+        );
     }
 
     /// Wakes the worker for a pass now: a new order, a cancel, an end.
