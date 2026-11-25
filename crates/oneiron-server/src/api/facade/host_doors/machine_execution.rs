@@ -1,11 +1,21 @@
-//! `vault.machines.execution.get` (pass 33 door 11): what each machine the vault holds a job
-//! grant for offers its GPU jobs now, asked of the machine itself by the vault's issuer. Its row
-//! proves `verb_grant_caller`: the owner under their own proof, or an agent whose own live Grant
-//! lists the verb, judged again by the engine's read. It writes nothing; it lists no row; its
-//! reply is never kept for a same-id retry (`invocations::UNKEPT_REPLY_VERBS`).
+//! The machines' execution doors (pass 33).
+//!
+//! `vault.machines.execution.get` (door 11): what each machine the vault holds a job grant for
+//! offers its GPU jobs now, asked of the machine itself by the vault's issuer. Its row proves
+//! `verb_grant_caller`: the owner under their own proof, or an agent whose own live Grant lists
+//! the verb, judged again by the engine's read. It writes nothing; it lists no row; its reply is
+//! never kept for a same-id retry (`invocations::UNKEPT_REPLY_VERBS`).
+//!
+//! `vault.machines.execution.clear_drain` (row R4, door 12): clears the issuer's drain of one
+//! machine. The owner under their own proof, or an agent whose own Grant lists the verb
+//! (`verb_grant_caller`); the engine's act then judges the caller against the machine's setting
+//! `machines.drain.clear_by` (`oneiron::machine_policy`).
 
 use std::sync::Arc;
 
+use oneiron::job_dispatch::machine_records::{
+    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, clear_drain_as,
+};
 use oneiron::task_verb::sdk::{
     MACHINES_EXECUTION_GET_VERB, MachineExecutionReply, MachineExecutionRequest,
     machine_execution_targets_as,
@@ -41,5 +51,17 @@ pub(crate) async fn vault_machines_execution_get(
             ))
         },
     )
+    .await
+}
+
+/// `vault.machines.execution.clear_drain`: the issuer takes new jobs on `input.machine` again.
+pub(crate) async fn vault_machines_execution_clear_drain(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MachineDrainClearRequest,
+) -> Listed<MachineDrainCleared> {
+    verb_grant_door(server, auth, CLEAR_DRAIN_VERB, move |_, memory, owner| {
+        clear_drain_as(memory, owner, &input)
+    })
     .await
 }
