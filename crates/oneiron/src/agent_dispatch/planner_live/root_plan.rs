@@ -59,6 +59,7 @@ impl AgentDispatcher<'_> {
         let (_, project) = self.owner_root_in_txn(owner, &self.vault.store.env.read_txn()?)?;
         request.need.validate()?;
         let team_shape = self.root_skill_pack(&request.skills.team_shape)?;
+        let call_knobs = crate::team::spawn_need::SpawnCallKnobs::of(&request.need);
         let (request, owner_choices) = request.with_owner_choices(self.vault, Some(project))?;
         let (evidence, root_lookup) = self.planner_evidence_sourced_for(
             Some(project),
@@ -73,6 +74,7 @@ impl AgentDispatcher<'_> {
                 self.root_skill_pack(skill)
             })?;
         receipt.owner_choices = owner_choices;
+        receipt.call_knobs = call_knobs;
         receipt.type_tree_root_lookup = root_lookup;
         Ok(receipt)
     }

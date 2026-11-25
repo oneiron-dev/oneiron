@@ -176,6 +176,7 @@ fn admit_connector(vault: &Vault) {
         read_only: false,
         idempotent: false,
         price: None,
+        http: None,
     }];
     let slate = vault
         .store_connector_slate(
@@ -270,7 +271,7 @@ impl CancelFixture {
             TASK_CONNECTOR.to_owned(),
             ConnectorHostConfig {
                 transport: ConnectorTransport::McpHttp,
-                endpoint: endpoint.clone(),
+                endpoint: Some(endpoint.clone()),
                 document: None,
                 command: Vec::new(),
                 env: BTreeMap::new(),

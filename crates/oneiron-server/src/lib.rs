@@ -65,8 +65,11 @@ pub mod error;
 pub mod feedback_delivery;
 mod feedback_redaction;
 mod files_intake;
+pub mod gpu_execution_node;
 mod gpu_host;
 mod handler;
+#[cfg(feature = "mesh")]
+pub use handler::mesh::SERVED_MESH_ALPNS;
 mod home_candidacy;
 mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]

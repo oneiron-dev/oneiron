@@ -4,8 +4,8 @@
 A Register (Fable pass 25; `oneiron_contracts::register`) declares a closed list of names
 once: a plain enum with `#[derive(Register)]` and `#[register("lower.dotted")]`. A hand
 name table spells such a name a second time. Three shapes count, in .rs files under
-crates/*/src with check.sh's file rule (no `tests` directory component; the name is not
-tests.rs, *_tests.rs or tests_*.rs), outside what scripts/ratchet/hand_name_tables_allowlist.txt
+crates/*/src with check.sh's file rule (no `tests` or `tests_*` directory component; the name
+is not tests.rs, *_tests.rs or tests_*.rs), outside what scripts/ratchet/hand_name_tables_allowlist.txt
 lists:
 
   forward  a fn returning `&str` (any lifetime) with two or more arms `Type::Variant => "name"`
@@ -128,7 +128,7 @@ def counted_file(relative):
     if len(parts) < 4 or parts[0] != "crates" or parts[2] != "src":
         return False
     return not (
-        "tests" in parts[:-1]
+        any(part == "tests" or part.startswith("tests_") for part in parts[:-1])
         or name == "tests.rs"
         or name.endswith("_tests.rs")
         or name.startswith("tests_")

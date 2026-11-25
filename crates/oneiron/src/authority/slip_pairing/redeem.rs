@@ -147,10 +147,11 @@ impl Vault {
         )
     }
     /// [`Self::redeem_pairing_link_with_possession`] with the joining machine's
-    /// mesh `identity` beside its `request` (FIX 3374, L02 04:5x): the
-    /// machine the redemption enrols has that endpoint bound and `alpn`
-    /// granted in the same transaction ([`MeshEnrolment`]); an identity
-    /// that does not bind leaves the pairing as it stands without one.
+    /// mesh identity beside its `request` (FIX 3374, L02 04:5x): the machine
+    /// the redemption enrols has that endpoint bound and `mesh.granted`
+    /// granted in the same transaction ([`MeshEnrolment`]), on a pairing
+    /// whose ceiling is `mesh.ceiling`; an identity that does not bind leaves
+    /// the pairing as it stands without one.
     #[allow(clippy::too_many_arguments)]
     pub fn redeem_pairing_link_with_mesh(
         &self,
@@ -161,7 +162,7 @@ impl Vault {
         signature: &[u8],
         request: &MachineEnrolmentRequest,
         possession: Option<&[u8; 64]>,
-        mesh: (&MeshBindingIdentity, &[u8]),
+        mesh: MeshEnrolmentAsk<'_>,
     ) -> Result<PairingRedeemed> {
         self.redeem_pairing_link_in(
             issuer,
@@ -237,7 +238,7 @@ impl Vault {
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
         possession: Option<&[u8; 64]>,
-        mesh: Option<(&MeshBindingIdentity, &[u8])>,
+        mesh: Option<MeshEnrolmentAsk<'_>>,
     ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
@@ -408,8 +409,8 @@ impl Vault {
         // endpoint bound with the pairing, or not at all (FIX 3374). A machine
         // whose answer is held is not enrolled yet: it binds none.
         let mesh = match (mesh, request, &machine) {
-            (Some((identity, alpn)), Some(request), Some(_)) if held_answer.is_none() => {
-                Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, identity, alpn))
+            (Some(ask), Some(request), Some(_)) if held_answer.is_none() => {
+                Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, ask))
             }
             _ => None,
         };

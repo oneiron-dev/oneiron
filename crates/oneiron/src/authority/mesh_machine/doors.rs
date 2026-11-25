@@ -62,6 +62,9 @@ impl Vault {
 
     /// Host binding: both pairing and transport keys prove the same binding.
     /// Address and authority commit atomically, initially with no ALPN grants.
+    /// A MACHINE this vault has bound already is bound again only on a newer
+    /// pairing that covers its old one, at the same endpoint under the same
+    /// machine key, and keeps its grants (after a re-enrolment).
     pub fn bind_mesh_machine(
         &self,
         issuer: &HostSlipIssuer,
@@ -149,7 +152,7 @@ impl Vault {
         parse_address(&encoded).ok_or_else(invalid_authority)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
-        let claims = MeshAuthorityClaims {
+        let mut claims = MeshAuthorityClaims {
             version: 1,
             machine,
             endpoint_key: address.endpoint_key,
@@ -159,10 +162,11 @@ impl Vault {
             revoked: false,
             host_key: issuer.binding_key(),
         };
-        if !self.mesh_pairing_live(&fold, txn, &claims)?
-            || MESH_AUTHORITY.contains(&self.store, txn, &HexId(machine))?
-        {
+        if !self.mesh_pairing_live(&fold, txn, &claims)? {
             return Err(invalid_authority());
+        }
+        if MESH_AUTHORITY.contains(&self.store, txn, &HexId(machine))? {
+            claims.alpns = self.re_bound_grants_in_txn(txn, &claims)?;
         }
         let visibility = TombstoneStoreRead::port_deletion_state(&self.store, txn, &machine)?;
         if visibility.deleted || visibility.archived || visibility.stale {
@@ -212,6 +216,42 @@ impl Vault {
         )?;
         self.write_mesh_authority_in_txn(txn, issuer, claims)?;
         Ok(count)
+    }
+
+    /// The grants a binding keeps when the owner binds its MACHINE again,
+    /// on a newer pairing (`rebound`): a re-enrolment on the home moved the
+    /// home's binding to a new pairing, and this replica's binding follows
+    /// it. The binding this host signed stands unrevoked, at the same
+    /// endpoint under the same machine key, on a pairing no revoke or
+    /// removal ended; the new pairing is another slip, covers the old one's
+    /// scope and ends no earlier, so every grant still narrows it and none
+    /// outlives it. The old pairing is left to its expiry. Anything else
+    /// refuses, as every second bind did before.
+    fn re_bound_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        rebound: &MeshAuthorityClaims,
+    ) -> Result<BTreeMap<Vec<u8>, [u8; 32]>> {
+        let (fold, held) = self
+            .mesh_authority_signed_in_txn(txn, rebound.machine)?
+            .ok_or_else(invalid_authority)?;
+        let (Some(old), Some(new)) = (
+            mesh_pairing_standing(&fold, &held),
+            mesh_pairing_standing(&fold, rebound),
+        ) else {
+            return Err(invalid_authority());
+        };
+        if held.revoked
+            || held.endpoint_key != rebound.endpoint_key
+            || held.device_key != rebound.device_key
+            || held.host_key != rebound.host_key
+            || held.pairing_slip_id == rebound.pairing_slip_id
+            || new.expires_at < old.expires_at
+            || !old.scope.is_narrowing_of(&new.scope)
+        {
+            return Err(invalid_authority());
+        }
+        Ok(held.alpns)
     }
 
     /// Authorized ALPN grant or revocation. A revoked MACHINE stays revoked.

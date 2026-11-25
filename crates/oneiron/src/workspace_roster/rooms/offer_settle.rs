@@ -31,11 +31,11 @@ use serde::{Deserialize, Serialize};
 
 use super::offer_history::live_offer;
 use super::offers::{
-    OFFER_CURRENT, OFFERS, OfferCard, OfferState, StoredOffer, current_key, is_offer_id,
+    OFFER_CURRENT, OFFERS, OfferCard, OfferState, StoredOffer, current_key, digest, is_offer_id,
     join_refused,
 };
 use super::participation::{JoinCause, record_participation_in_txn};
-use crate::check_in::DoorCheckIn;
+use crate::check_in::{CheckInDecision, DoorCheckIn};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
 use crate::memory::{
@@ -82,6 +82,50 @@ pub(super) struct RecordedOfferAnswer {
     pub(super) intent_key: String,
     /// Unix seconds.
     pub(super) at: u64,
+    /// The check-in decision the join answer's admission yes recorded, and
+    /// the join it recorded it on, so an exact replay answers the same join.
+    /// Absent on a not now, and for a host with no role on the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) check_in: Option<AnsweredCheckIn>,
+}
+
+/// A join answer's check-in decision, bound to the join it was given on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnsweredCheckIn {
+    /// [`answered_join_digest`] of the join the answer returned. A replay
+    /// carries the decision only while the card's join is still that join:
+    /// a join whose synced copy kept another host's admission, or one an
+    /// erase rewrote, reads as it stands, with no check-in. It is a digest,
+    /// so the answer names no party of the join.
+    pub(super) join_digest: String,
+    pub(super) decision: CheckInDecision,
+}
+
+impl RecordedOfferAnswer {
+    /// Takes `actor` out of this answer: the host who gave it, and the
+    /// asker its check-in decision names. Whether it named the actor.
+    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
+        let mut named = self.by.forget(actor);
+        if let Some(check_in) = &mut self.check_in
+            && check_in.decision.requester.as_deref() == Some(actor.to_hex().as_str())
+        {
+            check_in.decision.requester = None;
+            named = true;
+        }
+        named
+    }
+}
+
+const ANSWERED_JOIN_DOMAIN: &str = "oneiron.rooms.offer.answered-join.v1";
+
+/// The digest of `join` as a host's answer returned it, its check-in aside.
+fn answered_join_digest(join: &JoinOutcome) -> Result<String> {
+    let join = JoinOutcome {
+        check_in: None,
+        ..join.clone()
+    };
+    digest(&(ANSWERED_JOIN_DOMAIN, &join))
 }
 
 /// The verb whose door answers an offer card.
@@ -117,6 +161,35 @@ impl Settled {
             card: stored.into_card(),
             join,
         })
+    }
+
+    /// A stored answer replayed to `caller`: the host who gave it, under
+    /// the same intent key, gets the join it was answered, its check-in
+    /// decision included (the join's receipt keeps none: the answer stored
+    /// it) while the card's join is still the join that answer returned.
+    /// Any other call, or a join that is no longer that join, reads the card
+    /// as it stands, with no check-in.
+    fn answer_replayed(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        stored: StoredOffer,
+        caller: EntityId,
+        intent_key: &str,
+    ) -> Result<Self> {
+        let check_in = stored
+            .answer
+            .as_ref()
+            .filter(|answer| {
+                answer.by == RosterActor::Actor(caller) && answer.intent_key == intent_key
+            })
+            .and_then(|answer| answer.check_in.clone());
+        let mut settled = Self::replayed(vault, txn, stored)?;
+        if let (Some(join), Some(check_in)) = (settled.join.as_mut(), check_in)
+            && answered_join_digest(join)? == check_in.join_digest
+        {
+            join.check_in = Some(check_in.decision);
+        }
+        Ok(settled)
     }
 
     fn settlement(self) -> OfferSettlement {
@@ -381,7 +454,13 @@ fn answer_in_txn(
                 "this offer was already answered the other way",
             ));
         }
-        return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
+        return Ok(Step::Done(Settled::answer_replayed(
+            vault,
+            txn,
+            stored,
+            caller.entity_ref(),
+            &request.intent_key,
+        )?));
     }
     // Joined at its mint, replaced or aged out: nothing is left to answer.
     if !matches!(stored.card.state, OfferState::Open { .. }) {
@@ -442,12 +521,20 @@ fn answer_in_txn(
         caller,
         now,
     )?;
+    let answered_check_in = match &check_in {
+        Some(decision) => Some(AnsweredCheckIn {
+            join_digest: answered_join_digest(&join)?,
+            decision: decision.clone(),
+        }),
+        None => None,
+    };
     join.check_in = check_in;
     let answer = RecordedOfferAnswer {
         action: request.action,
         by: RosterActor::Actor(caller.entity_ref()),
         intent_key: request.intent_key.clone(),
         at: now,
+        check_in: answered_check_in,
     };
     match request.action {
         OfferAnswer::NotNow => {

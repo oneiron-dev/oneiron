@@ -354,6 +354,11 @@ struct ChipState {
     unseal_passwords: Vec<Vec<u8>>,
     /// The code the next unseal answers, once.
     next_unseal_code: Option<u32>,
+    /// The key directory's lock file, when set: at each object it makes, the
+    /// chip tries a writer's shared hold on it (review of #10420, round 2).
+    lock_probe: Option<PathBuf>,
+    /// Whether each of those tries took the hold, in order.
+    probe_held: Vec<bool>,
 }
 
 impl ChipState {
@@ -392,6 +397,20 @@ impl ChipState {
         push_sized(&mut body, public);
         self.created.push(object);
         response(0x8002, 0, &body)
+    }
+
+    /// Tries, as a writer in flight would, a shared hold on the key
+    /// directory's lock file, and records whether it took it; a hold taken
+    /// ends at once.
+    fn probe_writer_hold(&mut self) {
+        if let Some(lock) = &self.lock_probe {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(lock)
+                .expect("the lock file opens");
+            self.probe_held.push(file.try_lock_shared().is_ok());
+        }
     }
 
     fn load_object(&mut self, mut fields: Fields<'_>) -> Vec<u8> {
@@ -460,7 +479,10 @@ impl ChipState {
                 assert!(fields.password().is_empty());
                 self.load(None)
             }
-            CC_CREATE => self.create(fields),
+            CC_CREATE => {
+                self.probe_writer_hold();
+                self.create(fields)
+            }
             CC_LOAD => self.load_object(fields),
             CC_UNSEAL => self.unseal(fields),
             CC_FLUSH_CONTEXT => {
@@ -640,7 +662,7 @@ fn the_chip_opens_the_device_pin_key_for_its_auth_value_and_counts_a_wrong_one()
     assert_eq!(mode & 0o777, 0o600);
     assert_eq!(
         file_names(&chip.key_dir()),
-        ["CACHEDIR.TAG", "device-pin-key.tpm2"]
+        ["CACHEDIR.TAG", "device-pin-key.tpm2", "temp-writers.lock"]
     );
 
     // The questions that need no chip ask it nothing.
@@ -816,6 +838,31 @@ fn a_slot_stays_uncounted_and_neither_file_is_read_as_the_other() {
     );
 }
 
+/// Review of #10420, round 2: a replace keeps the key directory from its
+/// sweep until its new file is in place. While the chip seals the new value,
+/// between the two, no writer takes its shared hold, so no other writer's
+/// copy of a value can appear and stay. The device PIN key's put does the
+/// same.
+#[test]
+fn a_replace_and_a_put_hold_the_key_directory_from_their_sweep_until_their_file_is_in_place() {
+    let chip = ScriptedChip::start(8, Some(600));
+    let keys = chip.keystore();
+    let store = keys.auth_bound_secret().expect("an auth-bound secret");
+    let slot = owner_slot(7);
+    keys.create(&slot, &SECRET).expect("the slot fills");
+    chip.state().lock_probe = Some(chip.key_dir().join("temp-writers.lock"));
+    assert_eq!(keys.replace(&slot, &OTHER_SECRET), Ok(true));
+    store
+        .put_auth_bound(&AUTH, &SECRET)
+        .expect("the secret is sealed");
+    assert_eq!(
+        chip.state().probe_held,
+        [false, false],
+        "a writer took its hold between a sweep and the write after it"
+    );
+    assert_eq!(keys.get(&slot), Ok(Some(held(OTHER_SECRET))));
+}
+
 #[test]
 fn only_the_unseal_answers_a_wrong_auth_value() {
     let chip = ScriptedChip::start(8, Some(600));
@@ -901,6 +948,7 @@ fn the_tpm_tier_keeps_caller_sealed_bytes_beside_its_slots_and_asks_the_chip_not
             "CACHEDIR.TAG".to_owned(),
             "device-pin-key.sealed".to_owned(),
             "device-pin-key.tpm2".to_owned(),
+            "temp-writers.lock".to_owned(),
         ]
     );
     home.delete_sealed(&device)

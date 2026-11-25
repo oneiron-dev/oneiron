@@ -27,12 +27,69 @@
 //! teardown_secs = 30
 //! rounding_secs = 60
 //! ```
-use std::collections::BTreeMap;
+//!
+//! `[gpu_jobs.devices]` names the GPUs of this machine that it offers to the
+//! vault's GPU jobs, by the driver's device id (`nvidia-smi -L` shows each
+//! UUID). There is none by default, so a machine offers no GPU until its
+//! owner lists one. `withheld_file` names a file of the GPUs another booker
+//! holds now, one device id per line, read at every ask: such a GPU is never
+//! offered, and once the file is named, a file that cannot be read offers
+//! nothing. Once `drain_after_failures` jobs in a row (3 by default; 0
+//! never) finish failed, the machine takes no new GPU job until a person
+//! clears the drain. `drain_file` keeps the drain across a restart, and
+//! deleting it clears the drain. `owner_lock_dir` is where the server takes
+//! one lock file per offered GPU while it runs, and where a launched job's
+//! record keeps its GPU past a restart of its server, so no other Oneiron
+//! server on the machine offers that GPU. A machine that offers a GPU names
+//! it, and the directory must already exist. It is one directory of the
+//! host, named by every server that sees these GPUs; a server in a container
+//! names a bind mount of that host directory, since a container's own
+//! `/dev/shm` or `/tmp` is not the host's.
+//!
+//! While a GPU is offered, every managed model worker names its CUDA device
+//! (`[models.workers.<id>].device`) by device id, and never an offered one:
+//! a worker with no device would see every GPU. A worker that runs on no
+//! GPU names `"-1"`.
+//!
+//! ```toml
+//! [gpu_jobs.devices]
+//! offered = ["GPU-0b3c5f52-6e1d-4a8e-9f0a-2d7c1e4b8a61"]
+//! withheld_file = "/var/lib/oneiron/gpu-withheld"
+//! drain_after_failures = 3
+//! drain_file = "/var/lib/oneiron/gpu-drained"
+//! owner_lock_dir = "/run/oneiron/gpu-owners"
+//! ```
+//!
+//! A CPU class is an offer like any other (pass 32 row M3-D; pass 34 9.2):
+//! its `cost_unit` is the CPU unit the host grants an allocation in, and its
+//! jobs claim no device. Nothing here or in the engine lists units or
+//! classes. A job holds only on an allocation in its offer's `cost_unit`, so a
+//! `cpu_seconds` allocation beside a `gpu_seconds` one on the same account
+//! funds CPU jobs alone. An offer carries no rates, so no CPU second ever
+//! converts into a GPU second or into money.
+//!
+//! ```toml
+//! [gpu_jobs.offers.cpu-16-us-east]
+//! class = "cpu-16"
+//! provider = "example-cloud"
+//! region = "us-east"
+//! backend = "skypilot"
+//! price_per_second = 1
+//! cost_unit = "cpu_seconds"
+//! catalog_revision = "cpu-prices-2026-11"
+//! startup_secs = 30
+//! teardown_secs = 10
+//! rounding_secs = 60
+//! ```
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use oneiron::ModelLocality;
 use oneiron::gpu_job::{GpuOffer, PriceShape};
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use serde::Deserialize;
+
+use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GpuDeviceOffer};
 
 /// The maximum a job takes when its request names none: one hour.
 pub const GPU_JOB_DEFAULT_MAXIMUM_SECS: u64 = 3600;
@@ -51,6 +108,24 @@ pub(crate) struct GpuJobsFile {
     step_secs: Option<u64>,
     #[serde(default)]
     offers: BTreeMap<String, GpuOfferFile>,
+    #[serde(default)]
+    devices: Option<GpuDevicesFile>,
+}
+
+/// `[gpu_jobs.devices]` as written.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GpuDevicesFile {
+    #[serde(default)]
+    offered: Vec<String>,
+    #[serde(default)]
+    withheld_file: Option<PathBuf>,
+    #[serde(default)]
+    drain_after_failures: Option<u32>,
+    #[serde(default)]
+    drain_file: Option<PathBuf>,
+    #[serde(default)]
+    owner_lock_dir: Option<PathBuf>,
 }
 
 /// `[gpu_jobs.offers.<name>]` as written.
@@ -61,7 +136,7 @@ struct GpuOfferFile {
     provider: String,
     region: String,
     backend: String,
-    /// C3 A: a GPU class is priced at our list; any other shape refuses.
+    /// C3 A: an offer's class is priced at our list; any other shape refuses.
     #[serde(default)]
     price_shape: Option<PriceShape>,
     price_per_second: u64,
@@ -82,6 +157,8 @@ pub struct GpuJobsSettings {
     /// How often the worker steps each live job, in seconds.
     pub step_secs: u64,
     pub offers: BTreeMap<String, GpuOfferSettings>,
+    /// The GPUs of this machine it offers to the vault's GPU jobs.
+    pub devices: GpuDeviceOffer,
 }
 
 impl Default for GpuJobsSettings {
@@ -90,6 +167,7 @@ impl Default for GpuJobsSettings {
             default_maximum_secs: GPU_JOB_DEFAULT_MAXIMUM_SECS,
             step_secs: GPU_JOB_STEP_SECS,
             offers: BTreeMap::new(),
+            devices: GpuDeviceOffer::default(),
         }
     }
 }
@@ -138,6 +216,140 @@ impl GpuJobsFile {
             default_maximum_secs,
             step_secs,
             offers,
+            devices: self.devices.unwrap_or_default().resolve()?,
+        })
+    }
+}
+
+/// Refuses a GPU `[gpu_jobs.devices]` offers that a managed model worker's
+/// launch device names (`[models.workers.<id>].device`), or could use
+/// because it names none, so one GPU has one booker inside Oneiron too. A
+/// worker this server does not launch takes no GPU from it.
+pub(crate) fn refuse_offered_worker_devices(
+    devices: &GpuDeviceOffer,
+    models: Option<&super::ModelsConfig>,
+) -> anyhow::Result<()> {
+    let Some(models) = models else {
+        return Ok(());
+    };
+    refuse_worker_device_overlap(
+        &devices.offered,
+        models.workers.iter().filter_map(|worker| {
+            Some((
+                worker.id.as_str(),
+                worker.launch.as_ref()?.device.as_deref(),
+            ))
+        }),
+    )
+}
+
+/// Refuses an offered GPU that one of `workers` (each its id and its
+/// `CUDA_VISIBLE_DEVICES` entry, `None` when it names none) names or could
+/// use. A worker that names no device sees every GPU, so while any GPU is
+/// offered each worker names its own. CUDA takes a unique prefix of a UUID,
+/// and the older MIG form `MIG-GPU-<uuid>/<gi>/<ci>` holds its GPU's id, so
+/// an entry names an offered GPU when it is a prefix of the GPU's id or
+/// holds it, in any letter case. An index (`0`) names no device id until
+/// the driver is read, and CUDA may number the cards otherwise, so while
+/// any GPU is offered a worker names its GPU by device id. `-1` names no
+/// GPU.
+///
+/// # Errors
+///
+/// The worker and the GPU that overlap, the worker that names no device,
+/// or the worker that names a GPU by index.
+pub fn refuse_worker_device_overlap<'a>(
+    offered: &BTreeSet<String>,
+    workers: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+) -> anyhow::Result<()> {
+    if offered.is_empty() {
+        return Ok(());
+    }
+    for (worker, named) in workers {
+        let Some(named) = named else {
+            anyhow::bail!(
+                "the model worker {worker} names no device while gpu_jobs.devices offers GPUs, so it would see every GPU, offered ones too: name its GPU by device id (nvidia-smi -L), or \"-1\" for none"
+            );
+        };
+        for entry in named
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            let lower = entry.to_ascii_lowercase();
+            if let Some(gpu) = offered.iter().find(|gpu| {
+                let gpu = gpu.to_ascii_lowercase();
+                gpu.starts_with(&lower) || lower.contains(&gpu)
+            }) {
+                anyhow::bail!(
+                    "gpu_jobs.devices.offered names GPU {gpu}, which the model worker {worker} runs on ({entry}): a GPU has one booker"
+                );
+            }
+            anyhow::ensure!(
+                !entry.chars().all(|c| c.is_ascii_digit()),
+                "the model worker {worker} names its GPU by index ({entry}) while gpu_jobs.devices offers GPUs: name it by device id (nvidia-smi -L), so no offered GPU is one it runs on"
+            );
+        }
+    }
+    Ok(())
+}
+
+impl GpuDevicesFile {
+    fn resolve(self) -> anyhow::Result<GpuDeviceOffer> {
+        let mut offered = BTreeSet::new();
+        for device in self.offered {
+            anyhow::ensure!(
+                plain_name(&device),
+                "gpu_jobs.devices.offered: {device:?} is not a device id (it has whitespace or control characters, or is empty)"
+            );
+            anyhow::ensure!(
+                offered.insert(device.clone()),
+                "gpu_jobs.devices.offered names {device} twice"
+            );
+        }
+        for (field, file) in [
+            ("withheld_file", &self.withheld_file),
+            ("drain_file", &self.drain_file),
+            ("owner_lock_dir", &self.owner_lock_dir),
+        ] {
+            if let Some(file) = file {
+                anyhow::ensure!(
+                    file.is_absolute(),
+                    "gpu_jobs.devices.{field} must be an absolute path: {}",
+                    file.display()
+                );
+            }
+        }
+        // A drain written nowhere would be cleared by the next restart.
+        if let Some(file) = &self.drain_file {
+            anyhow::ensure!(
+                file.parent().is_some_and(std::path::Path::is_dir),
+                "gpu_jobs.devices.drain_file's directory must exist, or a drain would not outlast a restart: {}",
+                file.display()
+            );
+        }
+        // No default: only the owner knows which directory every server that
+        // sees these GPUs shares (a container's /dev/shm is its own).
+        if !offered.is_empty() {
+            let Some(dir) = &self.owner_lock_dir else {
+                anyhow::bail!(
+                    "gpu_jobs.devices.owner_lock_dir must be named while GPUs are offered: one host directory that every Oneiron server seeing these GPUs names (in a container, a bind mount of it), so one server owns each GPU"
+                );
+            };
+            anyhow::ensure!(
+                dir.is_dir(),
+                "gpu_jobs.devices.owner_lock_dir must be an existing directory, the one every server seeing these GPUs shares: {}",
+                dir.display()
+            );
+        }
+        Ok(GpuDeviceOffer {
+            withheld_file: self.withheld_file,
+            drain_after_failures: self
+                .drain_after_failures
+                .unwrap_or(GPU_DRAIN_AFTER_FAILURES),
+            drain_file: self.drain_file,
+            owner_lock_dir: self.owner_lock_dir,
+            offered,
         })
     }
 }
@@ -163,7 +375,7 @@ impl GpuOfferFile {
         let price_shape = self.price_shape.unwrap_or(PriceShape::AtOneironList);
         anyhow::ensure!(
             price_shape == PriceShape::AtOneironList,
-            "{at}.price_shape must be at_oneiron_list: a GPU class takes one posted price whichever provider serves it"
+            "{at}.price_shape must be at_oneiron_list: an offer's class takes one posted price whichever provider serves it"
         );
         anyhow::ensure!(
             self.price_per_second > 0,

@@ -203,7 +203,7 @@ pub(super) fn room_wide_prefix(room: EntityId) -> String {
     format!("{}/-/", room.to_hex())
 }
 
-fn digest<T: Serialize>(value: &T) -> Result<String> {
+pub(super) fn digest<T: Serialize>(value: &T) -> Result<String> {
     let bytes =
         serde_json::to_vec(value).map_err(|_| Error::InvariantViolation("offer draft encode"))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())

@@ -212,15 +212,13 @@ impl Fixture {
         let receipt = self
             .vault
             .memory(self.agent, EdgeActorClass::Agent)
-            .set_expression_preference(
-                &ExpressionPreferenceInput {
-                    subject_ref: self.subject.to_hex(),
-                    value: ExpressionPreferenceValue::Language("en-US".to_owned()),
-                    origin: ExpressionPreferenceOrigin::Inferred,
-                    valid_from: now,
-                },
-                now,
-            )
+            .set_expression_preference(&ExpressionPreferenceInput {
+                subject_ref: self.subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+                origin: ExpressionPreferenceOrigin::Inferred,
+                valid_from: now,
+                occurred_at: Some(now),
+            })
             .expect("the agent's preference lands");
         self.claim_id(&receipt.claim_short_id)
     }
@@ -230,15 +228,13 @@ impl Fixture {
     fn owner_replaces_language(&self, slip: &VerifiedSlip) -> Result<String, String> {
         let now = self.vault.now_recorded_at();
         self.owner_memory(slip)
-            .set_expression_preference(
-                &ExpressionPreferenceInput {
-                    subject_ref: self.subject.to_hex(),
-                    value: ExpressionPreferenceValue::Language("en-GB".to_owned()),
-                    origin: ExpressionPreferenceOrigin::ExplicitUser,
-                    valid_from: now,
-                },
-                now,
-            )
+            .set_expression_preference(&ExpressionPreferenceInput {
+                subject_ref: self.subject.to_hex(),
+                value: ExpressionPreferenceValue::Language("en-GB".to_owned()),
+                origin: ExpressionPreferenceOrigin::ExplicitUser,
+                valid_from: now,
+                occurred_at: Some(now),
+            })
             .map(|receipt| receipt.superseded_short_ids.join(","))
             .map_err(|error| format!("{}: {}", error.code, error.message))
     }
