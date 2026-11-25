@@ -50,6 +50,16 @@ crate::side_table::side_tables! {
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// An Owner's request for one member's personal mailbox in their next whole-vault export
+    /// (fix list row 15416): the request, the mailbox's person, the Owner, the member's typed
+    /// Ask and whether an export used it; no address, no mail. Key: id16(source) + id16(the
+    /// requesting Owner's PERSON).
+    MAIL_PACK_EXPORT_REQUEST: VaultMeta b"mail_pack:export_request:v1:" Named Engine
+        // Restore class: A request stands only where it was made: no image brings back an open
+        // or approved request, so a restore drops it and the Owner asks again (fix list row
+        // 15416).
+        [restore: not_imaged] [family: not_imaged] [tier: runtime]
+        => crate::mail_pack::erase_export_request_actor_in_txn;
     /// The "Forget too" provider deletes a mail source still owes (fix list row 18084): the
     /// rows of each forgotten message not yet deleted and its thread's CONVERSATION, recorded
     /// before the first row goes. Key: id16(source) + blake3 (32) of the provider id.
