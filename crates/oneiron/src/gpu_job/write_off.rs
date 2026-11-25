@@ -3,7 +3,8 @@
 //! nothing is sent for the key again; then the job ends `unconfirmed` and its chunk settles
 //! zero. The write-off is final. A receipt that arrives later is evidence only: it never
 //! settles the job again. It says nothing about a process, and it never lets the key start
-//! again.
+//! again. When a work order made the job, the same write ends the order's attempt
+//! `written_off` (pass 34, Q1), so the order starts nothing more on its own.
 
 use crate::consent::AuthenticatedOwner;
 use crate::llm::run_admission::CallOutcome;
@@ -71,6 +72,8 @@ impl Vault {
                 reason: GpuEndReason::Unconfirmed,
             };
             self.put_gpu_job_in_txn(txn, &mut job, now_ms)?;
+            // A job no order made leaves every order alone.
+            self.order_attempt_written_off_in_txn(txn, id, now_ms)?;
             Ok(Ok(job))
         })??;
         // Settled after the write, as an end settles: a settled chunk is never admitted again.
