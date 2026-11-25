@@ -308,7 +308,6 @@ impl Vault {
         };
         match &guard.drained {
             None => return Ok(Err(ClearDrainRefusal::NotDrained)),
-            Some(drained) if drained != was => return Ok(Err(ClearDrainRefusal::DrainedAgain)),
             Some(_) => {}
         }
         guard.drained = None;

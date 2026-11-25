@@ -221,7 +221,8 @@ pub fn clear_drain_as(
             NodeDrainClear::AfterReadinessCheck
         }
         (_, VerbGrantCaller::Owner, Some(owner)) => {
-            clear_both_as_owner(vault, owner, machine, &was, now_ms)?;
+            let _ = owner;
+            clear_issuer_drain(vault, machine, &was, now_ms)?;
             NodeDrainClear::OwnerClearSent
         }
         _ => {
