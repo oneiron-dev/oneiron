@@ -177436,8 +177436,8 @@
       "const": 1,
       "enum": 1,
       "fn": 9,
-      "mod": 5,
-      "re-export": 6,
+      "mod": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -177490,6 +177490,44 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MirrorStager",
+      "StagingRefusal",
+      "TemplateMirrors"
+     ],
+     "path": "src/gpu_execution_node/jobs/staging.rs",
+     "purpose": "Staging (design pass 33, `33-exec-node/DESIGN.md` section 7.4; row R3c): the code of a key's pin, exported…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/staging/git_process.rs",
+     "purpose": "The git a staging runs (row R3c): the git directory the stager writes for one staging, the fenced command on…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/jobs/staging/payload_dir.rs",
+     "purpose": "The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -189092,6 +189130,14 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/node_job_staging.rs",
+     "purpose": "Pass 33 row R3c (`33-exec-node/DESIGN.md` section 7.4, tests T24 and T25): staging",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/node_job_status.rs",
      "purpose": "Pass 33 row R4, the node's half (`33-exec-node/DESIGN.md` 7.1, 7.6 step 5, 7.9; tests T27-T33d): the node…",
      "surface": {}
@@ -191032,7 +191078,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 24,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191571,8 +191617,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2148,
-   "test_files": 594
+   "source_files": 2151,
+   "test_files": 595
   },
   "oneiron-setting-contract": {
    "files": [
