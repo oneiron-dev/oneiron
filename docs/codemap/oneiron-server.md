@@ -1066,7 +1066,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar_host/transcript_drain.rs` | src | s | 1 crate-vis | — | The host's drain of retained transcript uploads (FIX 9654): an upload that met its caller's open local… |
 | `src/calendar_host/xml.rs` | src | s | 8 crate-vis | — | Namespace-aware DAV multistatus decoding |
 | `src/campaign_enrollment.rs` | src | m | 2 crate-vis | — | Campaign enrollment from saved queries (ARCH-0059, decide-host 1193) |
-| `src/cli.rs` | src | L | 22 struct · 11 enum · 4 fn · 25 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, CredentialHelperArgs, DeviceCommand, DeviceEnrolArgs +25 | — |
+| `src/cli.rs` | src | L | 22 struct · 11 enum · 4 fn · 26 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, CredentialHelperArgs, DeviceCommand, DeviceEnrolArgs +25 | — |
 | `src/cli/account_args.rs` | src | s | 4 struct · 1 enum | AccountCommand, AccountLoginArgs, AccountLogoutArgs, AccountServeArgs, AccountStatusArgs | `oneiron account`: the owner links a stopped vault to the Oneiron cloud account and manages that link (G7) |
 | `src/cli/continue_args.rs` | src | s | 1 struct | ContinueArgs | `oneiron continue --cloud`: the Claude Code session working in this repo goes on in the selected hosted… |
 | `src/cli/deployment_args.rs` | src | s | 1 struct | HostRelayArgs | Host-only deployment commands; neither opens a local vault |
@@ -1077,6 +1077,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/hosted_args.rs` | src | s | 3 struct · 1 enum | HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs | `oneiron hosted`: the hosted vaults this user signed in to here and the one selected, which `oneiron hook`… |
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
 | `src/cli/link_args.rs` | src | s | 2 struct · 1 enum | LinkArgs, LinkCommand, UnlinkArgs | `oneiron link`, `oneiron link status` and `oneiron unlink` (L10-16): the owner's hosted peer, asked of a… |
+| `src/cli/measure_path_args.rs` | src | s | 4 struct · 1 enum | ExecutionNodeMeasurePathArgs, MeasurePathCommand, MeasurePathDialArgs, MeasurePathKeyArgs, MeasurePathListenArgs | `oneiron execution-node measure-path`: the path measurement of the first job's step 2 (pass 33… |
 | `src/cli/model_workers_args.rs` | src | s | 1 struct | ModelWorkersArgs | — |
 | `src/cli/owner_args.rs` | src | XL | 58 struct · 20 enum | ArchiveSpeakers, BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs +70 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/recovery_kit_args.rs` | src | m | 12 struct · 1 enum | KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs +5 | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key… |
@@ -1114,6 +1115,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/embedder_serve.rs` | src | s | 1 fn | — | `oneiron-server embedder serve`: resolves which model to serve, then hands it to the endpoint… |
 | `src/commands/embedder_serve/tests.rs` | test | s | — | — | Which section `embedder serve` serves, and at what width |
 | `src/commands/execution_node.rs` | src | s | 1 fn | — | `oneiron execution-node`: this machine's execution node, at the box (pass 33, `33-exec-node/DESIGN.md`… |
+| `src/commands/execution_node/measure_path.rs` | src | s | 4 crate-vis | — | `oneiron execution-node measure-path` (pass 33 section 12, R6 step 2): the control round trip and a result… |
 | `src/commands/files.rs` | src | s | 1 fn | — | `oneiron files attach\|rescan\|detach\|list\|files`: the Files world on a stopped vault (FIX 6942) |
 | `src/commands/history_import.rs` | src | L | 8 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
 | `src/commands/history_import/hosted_import.rs` | src | L | 16 crate-vis | — | The hosted import's job (ARCH-0027 #hosted-import, CROSS-ARCH-0024 #onboarding-import): an export staged… |
@@ -1442,10 +1444,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/jobs/staging/payload_dir.rs` | src | s | 1 crate-vis | — | The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory… |
 | `src/gpu_execution_node/jobs/status.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one… |
 | `src/gpu_execution_node/machine_policy.rs` | src | s | 13 fn | — | The two layers of a node's controls (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 = A, row… |
-| `src/gpu_execution_node/mod.rs` | src | s | 10 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
+| `src/gpu_execution_node/mod.rs` | src | s | 11 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
 | `src/gpu_execution_node/node.rs` | src | L | 3 struct · 2 enum · 1 trait · 29 fn · 3 const | AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, NodeSnapshot | The execution node (pass 33, `33-exec-node/DESIGN.md` sections 5.2, 7.1, 7.3 and 7.9): this machine's own… |
 | `src/gpu_execution_node/node/owner_policy.rs` | src | s | 2 fn · 3 crate-vis | — | The node's reads of the owner's machine policy rows (row P0; pass 34 DESIGN 2.4), and the admissions that… |
 | `src/gpu_execution_node/node_settings.rs` | src | m | 2 struct · 9 fn · 12 const | ExecutionNodeSettings, NodeTemplate | The node's own configuration (pass 33, `33-exec-node/DESIGN.md` section 5.2): the `[execution_node]` file… |
+| `src/gpu_execution_node/path_measure.rs` | src | m | 9 struct · 3 enum · 14 fn · 1 const | ListenOutcome, MeasureAnswer, MeasureError, MeasurePlan, MeasureReport, MeasureRequest, MeasurerKey, PathReceiptLog +4 | The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, "R6 in five… |
 | `src/gpu_execution_node/selection.rs` | src | s | 3 struct · 2 enum · 1 trait · 3 fn | GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement, LocalGpuSlotPeer | A read that picks a machine's GPU for a GPU job, before its quote |
 | `src/gpu_execution_node/service.rs` | src | s | 2 struct · 4 fn · 2 const | JobService, JobStatusService | The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on… |
 | `src/gpu_execution_node/slots.rs` | src | m | 1 struct · 13 fn · 2 re-export | GpuSlotTable | This machine's GPU slots: one job per offered GPU, beside the machine's memory floor |
@@ -2441,6 +2444,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/eval_authoring_execute_served.rs` | test | s | — | — | `vault.evals.authoring.execute` served over the real facade route (FIX EVAL-AUTHORING-EXECUTE-SERVER-CASE)… |
 | `tests/eval_authoring_execute_unrecorded_end.rs` | test | s | — | — | `vault.evals.authoring.execute` when the writes that end the execution record fail (FIX… |
 | `tests/execution_node_gate.rs` | test | m | — | — | The execution node's opt-in and its gate (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T3, T4, T5… |
+| `tests/execution_node_path_measure.rs` | test | s | — | — | The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, "R6 in five… |
 | `tests/execution_node_templates.rs` | test | m | — | — | An execution node's template check (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T6, T7, T8; section… |
 | `tests/facade_live_run_status.rs` | test | s | — | — | Live-run guard refusals keep their status through the real facade router |
 | `tests/facade_repo_refusal_status.rs` | test | s | — | — | A repo door's typed refusal keeps its own status through the real facade router (NO-DOOR… |

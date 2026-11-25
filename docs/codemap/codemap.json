@@ -173120,7 +173120,7 @@
      "surface": {
       "enum": 11,
       "fn": 4,
-      "re-export": 25,
+      "re-export": 26,
       "struct": 22
      }
     },
@@ -173281,6 +173281,23 @@
      "surface": {
       "enum": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExecutionNodeMeasurePathArgs",
+      "MeasurePathCommand",
+      "MeasurePathDialArgs",
+      "MeasurePathKeyArgs",
+      "MeasurePathListenArgs"
+     ],
+     "path": "src/cli/measure_path_args.rs",
+     "purpose": "`oneiron execution-node measure-path`: the path measurement of the first job's step 2 (pass 33…",
+     "surface": {
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -173798,6 +173815,16 @@
      "purpose": "`oneiron execution-node`: this machine's execution node, at the box (pass 33, `33-exec-node/DESIGN.md`…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/execution_node/measure_path.rs",
+     "purpose": "`oneiron execution-node measure-path` (pass 33 section 12, R6 step 2): the control round trip and a result…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -177603,7 +177630,7 @@
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 10,
+      "mod": 11,
       "re-export": 7
      }
     },
@@ -177652,6 +177679,32 @@
       "const": 12,
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ListenOutcome",
+      "MeasureAnswer",
+      "MeasureError",
+      "MeasurePlan",
+      "MeasureReport",
+      "MeasureRequest",
+      "MeasurerKey",
+      "PathReceiptLog",
+      "Sample",
+      "SampleKind",
+      "SampleSummary",
+      "ServeTally"
+     ],
+     "path": "src/gpu_execution_node/path_measure.rs",
+     "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 14,
+      "struct": 9
      }
     },
     {
@@ -188170,6 +188223,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/execution_node_path_measure.rs",
+     "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -190886,7 +190947,7 @@
     },
     "cli": {
      "entry": "crates/oneiron-server/src/cli.rs",
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -190913,7 +190974,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -191151,7 +191212,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -191690,8 +191751,8 @@
    },
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2153,
-   "test_files": 596
+   "source_files": 2156,
+   "test_files": 597
   },
   "oneiron-setting-contract": {
    "files": [
