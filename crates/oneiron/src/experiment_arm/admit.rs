@@ -11,8 +11,10 @@
 //! ([`ExperimentArm::hold_ended_at`]); the fold then charges its pools only
 //! what the arm's units took. A re-run of an experiment (the same contract
 //! sha256 as a closed arm it supersedes) gets no hold and keeps its
-//! predecessor's cohort. A refusal discards the whole write: no arm, no
-//! intent, no period record.
+//! predecessor's cohort. A precondition refusal discards the whole write:
+//! no arm, no intent, no period record. A budget refusal (`budget_denied`)
+//! writes one `GPU_LINE_REFUSAL` row (design pass 32 r2, 3.5 and 5.2), with
+//! the period record a first touch minted, and nothing else.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -20,7 +22,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::gpu_line::doors_caller;
 use crate::gpu_line::{
     AllowanceHold, BudgetDenied, DrawAsk, DrawPurpose, GpuLinePeriod, IntentAsk, IntentStand,
-    LineRole, PeriodRoom, SpendRow, claims_at_rung_in_txn, mint_first_in_txn, plan_draws,
+    LineRefusal, LineRole, PeriodRoom, SpendRow, claims_at_rung_in_txn, mint_first_in_txn,
+    plan_draws, record_line_refusal_in_txn,
 };
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE,
@@ -169,7 +172,8 @@ impl ArmAdmitRequest {
 /// `supersedes`, a supersedes target that is open, in another family or
 /// already superseded, a contract NOTE that is not sealed or whose text
 /// does not hash to the pin, or an intent key that names another ask;
-/// `budget_spent` (`budget_denied`) when no first allowance fits now; a
+/// `budget_spent` (`budget_denied`) when no first allowance fits now, after
+/// its `GPU_LINE_REFUSAL` row is written; a
 /// store failure.
 pub fn arm_admit_as(
     memory: &Memory<'_>,
@@ -179,11 +183,12 @@ pub fn arm_admit_as(
 ) -> MemoryResult<ArmView> {
     request.check_shape()?;
     let vault = memory.vault();
-    // An `Err` discards the write, the period record the mint wrote at this
-    // first touch included.
+    // An outer `Err` discards the write, the period record the mint wrote at
+    // this first touch included; an inner one commits it: a budget refusal
+    // keeps its refusal row (and that period record).
     vault.try_with_write_txn_grouped(|wtxn| {
         admit_in_txn(vault, wtxn, memory, owner, request, now_ms)
-    })
+    })?
 }
 
 fn admit_in_txn(
@@ -193,7 +198,7 @@ fn admit_in_txn(
     owner: Option<&AuthenticatedOwner>,
     request: &ArmAdmitRequest,
     now_ms: u64,
-) -> MemoryResult<ArmView> {
+) -> MemoryResult<MemoryResult<ArmView>> {
     let caller = doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_ADMIT_VERB, request.line)?;
     let minted = match mint_first_in_txn(vault, wtxn, &request.line, now_ms)? {
         Ok(Some(minted)) => minted,
@@ -219,7 +224,7 @@ fn admit_in_txn(
             None => None,
         }
         .ok_or_else(|| not_found("the arm this intent key admitted is gone"))?;
-        return Ok(ArmView::of(arm, true));
+        return Ok(Ok(ArmView::of(arm, true)));
     }
     let family_arms: Vec<ExperimentArm> = vault
         .experiment_arms_in_txn(wtxn)?
@@ -239,7 +244,7 @@ fn admit_in_txn(
             ));
         }
         intent.keep_in_txn(vault, wtxn, open.id.as_bytes().to_vec(), now_ms)?;
-        return Ok(ArmView::of(open.clone(), true));
+        return Ok(Ok(ArmView::of(open.clone(), true)));
     }
     // The live seat: the mint above marked a new idea it no longer funds as
     // lapsed. A seat that counts from a later mint and took no late floor
@@ -276,7 +281,7 @@ fn admit_in_txn(
             let rows = vault.spend_rows_in_txn(wtxn, &request.line, &period, now_ms)?;
             let room = PeriodRoom::fold(&period, &line.families, &rows);
             let units = period.policy.first_rung_secs();
-            let draws = plan_draws(
+            let draws = match plan_draws(
                 &room,
                 &DrawAsk {
                     arm: id,
@@ -285,8 +290,31 @@ fn admit_in_txn(
                     purpose: DrawPurpose::FirstAllowanceHold,
                     units,
                 },
-            )
-            .map_err(|denied| budget_denied(units, &denied))?;
+            ) {
+                Ok(draws) => draws,
+                Err(denied) => {
+                    // Unmet demand (3.5): one row, at admission, with no arm.
+                    record_line_refusal_in_txn(
+                        vault,
+                        wtxn,
+                        request.line,
+                        period.index,
+                        &LineRefusal {
+                            family: request.family,
+                            arm: None,
+                            rung: 1,
+                            cohort: None,
+                            asked_secs: units,
+                            short: denied.short,
+                            room: denied.fits,
+                            reason: "budget_denied".to_owned(),
+                            by: Some(asker),
+                            at_ms: now_ms,
+                        },
+                    )?;
+                    return Ok(Err(budget_denied(units, &denied)));
+                }
+            };
             let hold = AllowanceHold {
                 period: period.index,
                 units,
@@ -327,7 +355,7 @@ fn admit_in_txn(
     };
     EXPERIMENT_ARMS.put(&vault.store, wtxn, &id, &arm)?;
     intent.keep_in_txn(vault, wtxn, id.as_bytes().to_vec(), now_ms)?;
-    Ok(ArmView::of(arm, false))
+    Ok(Ok(ArmView::of(arm, false)))
 }
 
 /// The arm `id` a request supersedes: a closed arm of the request's own
