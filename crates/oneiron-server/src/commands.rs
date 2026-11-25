@@ -171,8 +171,8 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 pub(crate) use self::serve::{
-    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, sign_root_project,
-    start_desktop_workers,
+    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, joined_store_awaits_home,
+    sign_root_project, start_desktop_workers, withhold_secret_until_first_sync,
 };
 pub use self::serve::{OpenedServedVault, open_served_vault};
 mod dreamer;

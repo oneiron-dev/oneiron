@@ -4,8 +4,10 @@
 //! root-project signing (`commands::sign_root_project`) minted a Genesis of mel's own. kel then
 //! could not verify mel's machine proofs, and sync, renewal and the checkpoint all failed.
 //!
-//! A store this install holds a device enrolment for is never rooted at a start. A store no
-//! enrolment names is rooted as before.
+//! A store this install holds a device enrolment for is never rooted at a start. Both serve
+//! paths withhold the start's `auth_secret` until the store's first sync, so neither the root
+//! project's signature nor the server's host issuer bootstrap (`SyncServer::new`) roots it. A
+//! store no enrolment names is rooted as before.
 //!
 //! Red: the guard taken out of `sign_root_project` (scratch branch); the first test fails.
 //!
@@ -15,7 +17,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron_server::test_doors::root_project_signing::{
-    fresh_store, sign_root_project, write_join_record,
+    fresh_store, sign_root_project, start_withholds_secret, write_join_record,
 };
 
 const SECRET: &str = "joined-store-roots-nothing-secret";
@@ -46,5 +48,34 @@ fn a_store_no_enrolment_names_is_rooted_at_a_start_with_a_secret() {
     assert!(
         vault.authority_fold().unwrap().vault_id.is_some(),
         "an install's own first start roots its store"
+    );
+}
+
+/// A start on a joined store before its first sync withholds its secret, which keeps
+/// `SyncServer::new` from bootstrapping a host issuer and a Genesis too (review round 1 of
+/// #10532). A store no enrolment names keeps the secret, and so does a joined store whose log
+/// holds authority.
+#[test]
+fn a_start_on_a_joined_store_withholds_its_secret_until_the_first_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let (vault, config) = fresh_store(dir.path()).unwrap();
+    assert!(
+        !start_withholds_secret(&config, &vault),
+        "no enrolment: the start keeps its secret"
+    );
+    write_join_record(&config, &vault).unwrap();
+    assert!(
+        start_withholds_secret(&config, &vault),
+        "a joined store before its first sync: the start withholds its secret"
+    );
+
+    let rooted_dir = tempfile::tempdir().unwrap();
+    let (rooted, rooted_config) = fresh_store(rooted_dir.path()).unwrap();
+    let _ = sign_root_project(&rooted, &rooted_config, Some(SECRET));
+    assert!(rooted.authority_fold().unwrap().vault_id.is_some());
+    write_join_record(&rooted_config, &rooted).unwrap();
+    assert!(
+        !start_withholds_secret(&rooted_config, &rooted),
+        "a store whose log holds authority keeps its secret"
     );
 }

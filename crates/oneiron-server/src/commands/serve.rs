@@ -91,6 +91,7 @@ pub(super) async fn serve_anchored(
 
     let OpenedServedVault { vault, owner_host } =
         open_served_vault_anchored(&mut host, &config, anchor)?;
+    withhold_secret_until_first_sync(&mut config, &vault);
 
     let server_config = config.sync_server_config();
     if let Err(error) = sign_root_project(
@@ -616,6 +617,40 @@ fn refuse_unauthenticated_public_bind(
     Ok(())
 }
 
+/// Whether `vault` is a store this install enrolled with its home that has
+/// not synced yet. Its authority log is still empty, and this install holds
+/// a device enrolment record for it under `keystore`'s key directory. Such a
+/// store takes its root from its home by sync. A start that signs with a
+/// secret would mint a Genesis of its own instead, through the root
+/// project's signature or the server's host issuer (R6 1.5, 26 Nov 01:22).
+/// A record that cannot be located counts as none.
+pub(crate) fn joined_store_awaits_home(
+    keystore: &crate::config::KeystoreConfig,
+    vault: &oneiron::Vault,
+) -> bool {
+    vault
+        .authority_fold()
+        .is_ok_and(|fold| fold.vault_id.is_none())
+        && crate::device_sync::EnrolmentFiles::for_vault(keystore, vault)
+            .is_ok_and(|files| files.record.exists())
+}
+
+/// A start on a store that awaits its home's authority
+/// ([`joined_store_awaits_home`]) serves without its `auth_secret`. So neither
+/// the root project's signature nor the server's host issuer bootstrap roots
+/// it, and its device link adopts the home's pinned checkpoint first. The
+/// next start takes the secret. It answers no request this start, and logs
+/// so.
+pub(crate) fn withhold_secret_until_first_sync(config: &mut ServeConfig, vault: &oneiron::Vault) {
+    if joined_store_awaits_home(&config.keystore, vault) && config.auth_secret.take().is_some() {
+        tracing::warn!(
+            "this store joined its home and has not synced yet, so this start serves without its \
+             auth_secret and roots nothing; restart it once its journal shows 'pinned authority \
+             checkpoint adopted'"
+        );
+    }
+}
+
 /// The root project the vault seeds at its first open takes the owner's first
 /// signature here, through the host's project.write slip (OF-497). A host
 /// with no secret has no issuer, and a relay signs nothing; either leaves the
@@ -641,10 +676,7 @@ pub(crate) fn sign_root_project(
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return Ok(());
     }
-    if vault.authority_fold()?.vault_id.is_none()
-        && crate::device_sync::EnrolmentFiles::for_vault(keystore, vault)
-            .is_ok_and(|files| files.record.exists())
-    {
+    if joined_store_awaits_home(keystore, vault) {
         tracing::info!(
             "this store joined its home and has not synced yet; its home's authority arrives by \
              sync, so nothing is rooted here"

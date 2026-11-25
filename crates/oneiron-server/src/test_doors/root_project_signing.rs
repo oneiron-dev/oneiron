@@ -64,3 +64,11 @@ pub fn sign_root_project(
 ) -> anyhow::Result<()> {
     crate::commands::sign_root_project(vault, secret, &config.keystore)
 }
+
+/// Whether a start on `vault` under `config` withholds its `auth_secret` until the store's
+/// first sync ([`crate::commands::joined_store_awaits_home`]), as both serve paths ask before
+/// the root project's signature and the server's construction.
+#[must_use]
+pub fn start_withholds_secret(config: &ServeConfig, vault: &Vault) -> bool {
+    crate::commands::joined_store_awaits_home(&config.keystore, vault)
+}

@@ -144,6 +144,7 @@ async fn serve_prepared<A: AppHost>(
         config.auth_secret = Some(String::from_utf8(secret.to_vec())?);
     }
     apply_host_limits(&mut config, host.limits());
+    crate::commands::withhold_secret_until_first_sync(&mut config, &vault);
     // The app's channel, taken once, before any worker starts.
     let connections = host.listener()?;
     let server_config = config.sync_server_config();
