@@ -48,7 +48,8 @@ pub use gate::GatedBackend;
 pub use host::{
     AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount,
     KeyCustody, OfferBinding, OfferRoute, OfferRouteError, PaidConnector, Payer, PayerAccount,
-    PayerPerson, SelectedAllocation, UnitRate, offer_id, offer_place,
+    PayerPerson, SelectedAllocation, UnitRate, gpu_line_allocation_id, is_gpu_line_allocation,
+    offer_id, offer_place,
 };
 pub use job_maximum::{
     AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused,
