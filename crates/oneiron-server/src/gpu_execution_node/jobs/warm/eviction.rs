@@ -3,20 +3,21 @@
 //! the engine's alone (walked from `/` as the work directory is: [`trusted_work_dir`]), the
 //! engine's or the job account owns the entry, the engine's account can empty it, no mount lies
 //! at it or beneath it, and no other warm key's path lies in it where the file system resolves
-//! that path.
+//! that path, by name or by what each directory is (its file system and inode).
 //!
 //! It is first moved into [`EVICTED_DIR_NAME`] inside the cache directory ([`Trash`]), under the
-//! admission lock, so no launch finds it half removed, to a name nothing holds there (the move
-//! never replaces an entry), and the warm-key table records what was moved (its name there, its
-//! inode, and that directory's inode). Only a recorded entry is ever deleted from that
-//! directory, and only once the table that records it is on disk: anything else found there is
-//! left. The files go after the lock is dropped, by a walk from open directories that follows no
-//! symbolic link and crosses no mount (Linux's `openat2` with `RESOLVE_NO_XDEV`, so a bind mount
-//! made during the walk stops it too; the removed caches' directory itself is opened that way).
-//! Where that open does not exist (not Linux, or a kernel or filter that refuses it), the pass
-//! moves nothing. A deletion that did not complete is tried again by the next pass.
+//! admission lock, so no launch finds it half removed, to a name nothing holds there and no
+//! record names (the move never replaces an entry), and the warm-key table records what was
+//! moved (its name there, its inode, and that directory's file system and inode). Only a
+//! recorded entry is ever deleted from that directory, and only once the table that records it
+//! is on disk: anything else found there is left. The files go after the lock is dropped, by a
+//! walk from open directories that follows no symbolic link and crosses no mount (Linux's
+//! `openat2` with `RESOLVE_NO_XDEV`, so a bind mount made during the walk stops it too; the
+//! removed caches' directory itself is opened that way). Where that open does not exist (not
+//! Linux, or a kernel or filter that refuses it), the pass moves nothing. A deletion that did not
+//! complete is tried again by the next pass.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -100,6 +101,14 @@ pub(super) fn trusted_cache_dir(cache_dir: &Path) -> Option<PathBuf> {
     }
 }
 
+/// What an entry is, whatever its name: its file system and its inode.
+pub(super) type Identity = (u64, u64);
+
+/// The identity of the entry `found` describes.
+fn identity(found: &std::fs::Metadata) -> Identity {
+    (found.dev(), found.ino())
+}
+
 /// Where the file system resolves a warm path, and every real path its lookup passes through.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Lookup {
@@ -107,15 +116,25 @@ pub(super) struct Lookup {
     real: PathBuf,
     /// Each directory the lookup enters and each symbolic link it reads, where it lies.
     through: Vec<PathBuf>,
+    /// The identity of each entry the lookup finds that is not a symbolic link: each directory
+    /// it enters, and what it ends at.
+    entered: Vec<Identity>,
+    /// The identity of what the path names, when that exists.
+    end: Option<Identity>,
 }
 
 impl Lookup {
-    /// Whether removing the resolved path `dir` would change what this path names: the path
-    /// lies in it, its lookup passes through it, or `dir` lies in the path.
-    pub(super) fn overlaps(&self, dir: &Path) -> bool {
+    /// Whether removing the directory `dir` (where the file system resolves it; `own` its
+    /// identity, `above` that of each directory above it) would change what this path names:
+    /// the path lies in it or its lookup passes through it, or it lies in the path. Each is
+    /// checked by name and by identity, so another name for the same directory (a bind mount, or
+    /// a name that differs in case alone where the file system folds case) overlaps too.
+    pub(super) fn overlaps(&self, dir: &Path, own: Identity, above: &[Identity]) -> bool {
         self.real.starts_with(dir)
             || dir.starts_with(&self.real)
             || self.through.iter().any(|passed| passed.starts_with(dir))
+            || self.entered.contains(&own)
+            || self.end.is_some_and(|end| above.contains(&end))
     }
 }
 
@@ -136,8 +155,8 @@ fn steps(path: &Path) -> impl Iterator<Item = Step> + '_ {
 
 /// Looks `path` (absolute) up as the file system does, one name at a time, following each
 /// symbolic link (a dangling one to where its target would be), and records each directory it
-/// enters and each link it reads. Past the first name that does not exist, the rest is kept as
-/// written.
+/// enters and each link it reads, by name and by identity. Past the first name that does not
+/// exist, the rest is kept as written.
 ///
 /// # Errors
 ///
@@ -147,6 +166,7 @@ pub(super) fn lookup(path: &Path) -> std::io::Result<Lookup> {
     let mut pending: VecDeque<Step> = steps(path).collect();
     let mut at = PathBuf::from("/");
     let mut through = Vec::new();
+    let mut entered = Vec::new();
     let mut links = 0;
     let mut missing = false;
     while let Some(step) = pending.pop_front() {
@@ -180,7 +200,8 @@ pub(super) fn lookup(path: &Path) -> std::io::Result<Lookup> {
                     pending.push_front(step);
                 }
             }
-            Ok(_) => {
+            Ok(found) => {
+                entered.push(identity(&found));
                 through.push(next.clone());
                 at = next;
             }
@@ -191,13 +212,26 @@ pub(super) fn lookup(path: &Path) -> std::io::Result<Lookup> {
             Err(error) => return Err(error),
         }
     }
-    Ok(Lookup { real: at, through })
+    // Every name in `at` is an entry found, none a link: what it names is read once more, as a
+    // `..` may have taken the lookup up from the last entry it found.
+    let end = if missing {
+        None
+    } else {
+        Some(identity(&std::fs::symlink_metadata(&at)?))
+    };
+    Ok(Lookup {
+        real: at,
+        through,
+        entered,
+        end,
+    })
 }
 
 /// What a cache path holds, as [`measure`] reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Measured {
-    /// The disk it uses: its own entry and everything beneath it on the same file system.
+    /// The disk it uses: its own entry and everything beneath it on the same file system, a
+    /// mount's tree left out (it is not the cache's; 0 for a mount at the path itself).
     pub(super) bytes: u64,
     /// The engine's account could empty every directory in it when it was read: the engine runs
     /// as root, or its account owns each of them with write and search permission; every entry
@@ -206,7 +240,8 @@ pub(super) struct Measured {
     pub(super) emptiable: bool,
 }
 
-/// What `path` holds, with no symbolic link followed. `None` when the path does not exist.
+/// What `path` holds, with no symbolic link followed and no mount read into. `None` when the
+/// path does not exist.
 pub(super) fn measure(path: &Path) -> Option<Measured> {
     let top = std::fs::symlink_metadata(path).ok()?;
     let device = top.dev();
@@ -218,13 +253,27 @@ pub(super) fn measure(path: &Path) -> Option<Measured> {
         bytes: top.blocks().saturating_mul(512),
         emptiable: !top.is_dir() || can_empty(&top),
     };
+    if !top.is_dir() {
+        return Some(measured);
+    }
+    // The walk goes where the file system resolves the path, as the mount list names mounts.
+    let (Ok(real), Some(mounts)) = (std::fs::canonicalize(path), mount_points()) else {
+        measured.emptiable = false;
+        return Some(measured);
+    };
+    if mounts.contains(&real) {
+        return Some(Measured {
+            bytes: 0,
+            emptiable: false,
+        });
+    }
+    let beneath: BTreeSet<&PathBuf> = mounts
+        .iter()
+        .filter(|point| point.starts_with(&real))
+        .collect();
     let mut seen = 1_u64;
     // Each directory with its depth, the cache path's own at 0, as a removal counts it.
-    let mut pending = if top.is_dir() {
-        vec![(path.to_path_buf(), 0_usize)]
-    } else {
-        Vec::new()
-    };
+    let mut pending = vec![(real, 0_usize)];
     while let Some((dir, depth)) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             measured.emptiable = false;
@@ -242,6 +291,11 @@ pub(super) fn measure(path: &Path) -> Option<Measured> {
                 measured.emptiable = false;
                 continue;
             };
+            // A mount beneath it: neither read into nor counted.
+            if beneath.contains(&inner) {
+                measured.emptiable = false;
+                continue;
+            }
             measured.bytes = measured
                 .bytes
                 .saturating_add(found.blocks().saturating_mul(512));
@@ -258,20 +312,27 @@ pub(super) fn measure(path: &Path) -> Option<Measured> {
     Some(measured)
 }
 
-/// Whether a mount lies at `path` or beneath it. Where the system does not list its mounts
-/// (not Linux), nothing is moved anyway ([`open_beneath`]).
+/// The mount points this process sees; `None` when the list does not read on Linux. Where the
+/// system does not list its mounts (not Linux), none: nothing is moved there anyway
+/// ([`open_beneath`]).
+fn mount_points() -> Option<BTreeSet<PathBuf>> {
+    match std::fs::read_to_string(MOUNT_INFO_PATH) {
+        Ok(mounts) => Some(
+            mounts
+                .lines()
+                .filter_map(|line| line.split(' ').nth(4))
+                .map(|point| PathBuf::from(OsStr::from_bytes(&unescape_mount_point(point))))
+                .collect(),
+        ),
+        Err(_) if cfg!(target_os = "linux") => None,
+        Err(_) => Some(BTreeSet::new()),
+    }
+}
+
+/// Whether a mount lies at `path` or beneath it; on Linux, also when the mount list does not
+/// read.
 fn mount_at_or_beneath(path: &Path) -> bool {
-    let mounts = match std::fs::read_to_string(MOUNT_INFO_PATH) {
-        Ok(mounts) => mounts,
-        // The list cannot be read on Linux: take a mount to be there.
-        Err(_) => return cfg!(target_os = "linux"),
-    };
-    mounts
-        .lines()
-        .filter_map(|line| line.split(' ').nth(4))
-        .any(|point| {
-            Path::new(std::ffi::OsStr::from_bytes(&unescape_mount_point(point))).starts_with(path)
-        })
+    mount_points().is_none_or(|points| points.iter().any(|point| point.starts_with(path)))
 }
 
 /// A mount point as the mount list writes it: a space, a tab, a newline and a backslash as
@@ -307,8 +368,10 @@ pub(super) struct Trash {
     dir: OwnedFd,
     /// The file system the cache directory and this directory lie on.
     device: Dev,
-    /// This directory's inode: a record of another one is never acted on here.
-    ino: u64,
+    /// This directory's identity: a record made in another one is never acted on here.
+    identity: Identity,
+    /// The identity of the cache directory and of each directory above it.
+    above_entries: Vec<Identity>,
     /// The cache directory where the file system resolves it.
     cache_real: PathBuf,
     path: PathBuf,
@@ -347,26 +410,40 @@ impl Trash {
         if found.st_dev != device || mount_at_or_beneath(&path) {
             return Err(format!("a mount lies at {} or beneath it", path.display()));
         }
+        let opened = std::fs::File::from(dir.try_clone().map_err(|error| error.to_string())?)
+            .metadata()
+            .map_err(|error| error.to_string())?;
         let cache_real = std::fs::canonicalize(cache_dir).map_err(|error| error.to_string())?;
+        let above_entries = cache_real
+            .ancestors()
+            .map(|above| std::fs::symlink_metadata(above).map(|found| identity(&found)))
+            .collect::<std::io::Result<Vec<Identity>>>()
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             cache,
             dir,
             device,
-            ino: found.st_ino,
+            identity: identity(&opened),
+            above_entries,
             cache_real,
             path,
         })
     }
 
-    /// Whether `record` names an entry of this directory, not of one an earlier cache
-    /// directory had.
+    /// Whether `record` names an entry of this directory, not of one another cache directory
+    /// had (on this file system or another).
     pub(super) fn holds(&self, record: &EvictedRecord) -> bool {
-        record.trash_ino == self.ino
+        (record.trash_dev, record.trash_ino) == self.identity
     }
 
-    /// This directory where the file system resolves it: no warm path may lie in it.
-    pub(super) fn real_path(&self) -> PathBuf {
-        self.cache_real.join(EVICTED_DIR_NAME)
+    /// Whether removing what this directory holds would change what `lookup` names: no warm
+    /// path may lie in it.
+    pub(super) fn overlapped_by(&self, lookup: &Lookup) -> bool {
+        lookup.overlaps(
+            &self.cache_real.join(EVICTED_DIR_NAME),
+            self.identity,
+            &self.above_entries,
+        )
     }
 
     /// Moves the cache path `path` out of use, into this directory, and answers what to record.
@@ -375,13 +452,15 @@ impl Trash {
     ///
     /// Why it was left: it is not a directory directly in the cache directory, neither the
     /// engine's nor the job account owns it, a mount lies at it or beneath it, a path of
-    /// `protected` (other warm keys' lookups) overlaps it, or the move failed.
+    /// `protected` (other warm keys' lookups) overlaps it, or the move failed. The move takes no
+    /// name `recorded` (the moves not deleted yet) holds.
     pub(super) fn take(
         &self,
         cache_dir: &Path,
         path: &Path,
         owners: EntryOwners,
         protected: &[&Lookup],
+        recorded: &BTreeMap<String, EvictedRecord>,
         now_ms: u64,
     ) -> Result<EvictedRecord, String> {
         let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
@@ -402,11 +481,17 @@ impl Trash {
         if !owners.admit(found.st_uid) {
             return Err("neither the engine's nor the job account owns it".to_owned());
         }
-        if mount_at_or_beneath(&cache_dir.join(name)) {
+        if found.st_dev != self.device || mount_at_or_beneath(&cache_dir.join(name)) {
             return Err("a mount lies at it or beneath it".to_owned());
         }
+        // On the cache directory's file system (checked above): its identity is that file
+        // system's and its inode.
+        let own = (self.identity.0, found.st_ino);
         let real = self.cache_real.join(name);
-        if protected.iter().any(|other| other.overlaps(&real)) {
+        if protected
+            .iter()
+            .any(|other| other.overlaps(&real, own, &self.above_entries))
+        {
             return Err("another warm key's path lies in it or passes through it".to_owned());
         }
         let base = name.to_string_lossy();
@@ -416,7 +501,12 @@ impl Trash {
                 0 => format!("{base}-{now_ms}"),
                 _ => format!("{base}-{now_ms}-{attempt}"),
             };
-            match rename_no_replace(self.cache.as_fd(), name, self.dir.as_fd(), &taken) {
+            let moved = if recorded.contains_key(&taken) {
+                Err(rustix::io::Errno::EXIST)
+            } else {
+                rename_no_replace(self.cache.as_fd(), name, self.dir.as_fd(), &taken)
+            };
+            match moved {
                 Ok(()) => break taken,
                 Err(rustix::io::Errno::EXIST) if attempt < MOVE_NAMES_MAX => attempt += 1,
                 Err(error) => return Err(error.to_string()),
@@ -427,14 +517,16 @@ impl Trash {
         Ok(EvictedRecord {
             name: taken,
             ino: moved.st_ino,
-            trash_ino: self.ino,
+            trash_dev: self.identity.0,
+            trash_ino: self.identity.1,
         })
     }
 
     /// Deletes the entry `record` names when the entry there is the one the pass moved: a
     /// directory with what it holds, walked from open directories with no symbolic link
     /// followed and no mount crossed, then this directory synced. An entry already gone counts
-    /// as deleted. The walk stops when `stop` answers true; the next pass goes on.
+    /// as deleted once this directory is synced (an earlier pass may have unlinked it and failed
+    /// that sync). The walk stops when `stop` answers true; the next pass goes on.
     ///
     /// # Errors
     ///
@@ -446,41 +538,38 @@ impl Trash {
         record: &EvictedRecord,
         stop: &dyn Fn() -> bool,
     ) -> Result<(), String> {
-        let mut parts = Path::new(&record.name).components();
-        if !self.holds(record)
-            || !matches!(
-                (parts.next(), parts.next()),
-                (Some(Component::Normal(_)), None)
-            )
-        {
+        // The name exactly as recorded is one entry's: no `/`, no `.` or `..`, nothing a path's
+        // reading would tidy away.
+        let single = !matches!(record.name.as_str(), "" | "." | "..") && !record.name.contains('/');
+        if !self.holds(record) || !single {
             return Err("the record names no single entry of this directory".to_owned());
         }
         let name = CString::new(record.name.as_bytes()).map_err(|error| error.to_string())?;
-        let found = match rustix::fs::statat(&self.dir, name.as_c_str(), AtFlags::SYMLINK_NOFOLLOW)
-        {
-            Ok(found) => found,
-            Err(rustix::io::Errno::NOENT) => return Ok(()),
+        match rustix::fs::statat(&self.dir, name.as_c_str(), AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(found) => {
+                if found.st_ino != record.ino
+                    || found.st_dev != self.device
+                    || FileType::from_raw_mode(found.st_mode) != FileType::Directory
+                {
+                    return Err("the entry there is not the directory the pass moved".to_owned());
+                }
+                if mount_at_or_beneath(&self.path.join(&record.name)) {
+                    return Err("a mount lies at it or beneath it".to_owned());
+                }
+                match remove_at(
+                    self.dir.as_fd(),
+                    &name,
+                    self.device,
+                    0,
+                    Some(record.ino),
+                    stop,
+                ) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    done => done.map_err(|error| error.to_string())?,
+                }
+            }
+            Err(rustix::io::Errno::NOENT) => {}
             Err(error) => return Err(error.to_string()),
-        };
-        if found.st_ino != record.ino
-            || found.st_dev != self.device
-            || FileType::from_raw_mode(found.st_mode) != FileType::Directory
-        {
-            return Err("the entry there is not the directory the pass moved".to_owned());
-        }
-        if mount_at_or_beneath(&self.path.join(&record.name)) {
-            return Err("a mount lies at it or beneath it".to_owned());
-        }
-        match remove_at(
-            self.dir.as_fd(),
-            &name,
-            self.device,
-            0,
-            Some(record.ino),
-            stop,
-        ) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            done => done.map_err(|error| error.to_string())?,
         }
         rustix::fs::fsync(&self.dir).map_err(|error| error.to_string())
     }

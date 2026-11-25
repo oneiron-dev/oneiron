@@ -41,12 +41,15 @@ pub struct WarmKeyRecord {
 }
 
 /// A cache path a pass moved into the removed caches' directory and has not deleted yet: its
-/// name there and its inode, as the move left it, and that directory's inode (a record made in
-/// another cache directory's is never acted on).
+/// name there and its inode, as the move left it, and that directory's file system and inode (a
+/// record made in another cache directory's, on this file system or another, is never acted
+/// on). A file system numbered anew (after a restart, say) leaves its records' entries on disk,
+/// never deletes another.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvictedRecord {
     pub name: String,
     pub ino: u64,
+    pub trash_dev: u64,
     pub trash_ino: u64,
 }
 

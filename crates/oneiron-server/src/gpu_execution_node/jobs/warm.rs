@@ -372,10 +372,17 @@ impl NodeJobs {
         }
         let jobs = self.clone();
         let cache = *cache;
+        // `cache` was made from this tick's file: a reading whose cache figures or owner opt-in
+        // differ from it is no reading, and the pass then removes nothing.
+        let (tick_cache, tick_owner_policy) = (settings.cache, settings.owner_policy);
+        let read = move || {
+            settings_now()
+                .filter(|now| now.cache == tick_cache && now.owner_policy == tick_owner_policy)
+        };
         let spawned = std::thread::Builder::new()
             .name("node-cache-pass".to_owned())
             .spawn(move || {
-                let report = jobs.cache_pass(&*settings_now, &cache);
+                let report = jobs.cache_pass(&read, &cache);
                 if !report.removed.is_empty()
                     || !report.left.is_empty()
                     || !report.not_deleted.is_empty()
@@ -482,10 +489,9 @@ impl NodeJobs {
                 }
                 None => None,
             };
-            let trash_real = trash.real_path();
-            let sweep = resolved.as_ref().is_some_and(|resolved| {
-                !resolved.values().any(|found| found.overlaps(&trash_real))
-            });
+            let sweep = resolved
+                .as_ref()
+                .is_some_and(|resolved| !resolved.values().any(|found| trash.overlapped_by(found)));
             if resolved.is_some() && !sweep {
                 report.deferred = Some("a warm key's path lies where removed caches go".to_owned());
             }
@@ -542,8 +548,7 @@ impl NodeJobs {
             // next candidate is tried. Each round holds one more key, so the rounds end.
             let mut closed = false;
             loop {
-                let (plan, kept_bytes) = cache_plan(&entries, budget, now_ms);
-                report.kept_bytes = kept_bytes;
+                let (plan, _) = cache_plan(&entries, budget, now_ms);
                 let mut refused = None;
                 for chosen in plan {
                     if self.service_closed() {
@@ -560,9 +565,14 @@ impl NodeJobs {
                         (Some(_), found) if !found.is_some_and(|found| found.emptiable) => {
                             Err("the engine's account cannot empty a directory in it".to_owned())
                         }
-                        (Some(warm_path), _) => {
-                            trash.take(&cache_dir, &warm_path.path, owners, &protected, now_ms)
-                        }
+                        (Some(warm_path), _) => trash.take(
+                            &cache_dir,
+                            &warm_path.path,
+                            owners,
+                            &protected,
+                            warm.table.evicted_records(),
+                            now_ms,
+                        ),
                     };
                     match taken {
                         Ok(record) => {
@@ -586,11 +596,16 @@ impl NodeJobs {
                     entry.busy |= entry.key == refused;
                 }
             }
+            // What stays: every measured cache not moved, the plan's rest too when a close
+            // stopped it.
+            report.kept_bytes = entries
+                .iter()
+                .fold(0_u64, |kept, entry| kept.saturating_add(entry.bytes));
             let keys_max = usize::try_from(cache.keys_max).unwrap_or(usize::MAX);
             warm.table.bound(keys_max, |key| paths.contains_key(key));
             // Nothing is deleted while anything is deferred: what lies where removed caches go
             // is then not known for sure.
-            let sweep = sweep && report.deferred.is_none() && !closed;
+            let sweep = sweep && report.deferred.is_none() && !closed && !self.service_closed();
             let evicted: BTreeMap<String, EvictedRecord> = if sweep {
                 warm.table
                     .evicted_records()
@@ -618,6 +633,9 @@ impl NodeJobs {
         let stop = || self.service_closed();
         let mut deleted = Vec::new();
         for record in evicted.values() {
+            if stop() {
+                break;
+            }
             match trash.delete(record, &stop) {
                 Ok(()) => deleted.push(record.name.clone()),
                 Err(why) => {
@@ -626,7 +644,7 @@ impl NodeJobs {
                 }
             }
         }
-        if sweep {
+        if sweep && !stop() {
             let unrecorded = trash.unrecorded(&evicted);
             if unrecorded > 0 {
                 tracing::warn!(

@@ -687,6 +687,9 @@ caches = ["target:x"]
     }
 }
 
+// It needs the removed caches' directory: off Linux that does not open (no `openat2`), and the
+// pass ends before it decides anything.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_cache_pass_removes_nothing_while_what_is_busy_is_not_known() {
     let fixture = fixture();
@@ -729,6 +732,9 @@ fn a_cache_pass_removes_nothing_while_what_is_busy_is_not_known() {
     }
 }
 
+// It needs the removed caches' directory: off Linux that does not open (no `openat2`), and the
+// pass ends before it reads the file again.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_cache_pass_removes_nothing_when_the_file_changed_while_it_measured() {
     let fixture = fixture();
