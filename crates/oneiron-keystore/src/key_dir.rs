@@ -863,9 +863,12 @@ mod tests {
         fs::create_dir(&dir).expect("the key directory is made again");
         let (tmp, written) = write_temp(&dir, "slot", &[1; 32], Some(swept), |_| Ok(()));
         written.expect("the temporary file is written");
+        // The lock file as a sweep opens it, made if no writer made it.
         let sweep_holds = OpenOptions::new()
             .read(true)
             .write(true)
+            .create(true)
+            .truncate(false)
             .open(dir.join(TEMP_WRITERS_LOCK))
             .expect("the lock file opens")
             .try_lock()
