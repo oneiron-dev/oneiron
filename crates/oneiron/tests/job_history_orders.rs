@@ -599,6 +599,7 @@ fn an_agent_sees_only_its_own_order_among_the_rank_options_of_its_attempt() {
         periods: &[],
         orders: &orders,
         observations: &[],
+        unattributed: &[],
     };
     let filter = JobHistoryRequest::default()
         .filter()

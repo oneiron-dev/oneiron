@@ -28,6 +28,13 @@
 //! that answered, its device, the machine's end cause, when the issuer received it, the seconds
 //! the machine measured and a lost key's last seen run time.
 //!
+//! A machine that ran jobs for this vault that no row of it names (an issuer restored from an
+//! older backup, pass 33 8.5 and EM-15) has their seconds recorded against the allocation
+//! generation their submit named, as unattributed (`GPU_ALLOCATION_NODE`). The totals show
+//! them on their own sum fields: by machine and, for a line's generation, by line and period,
+//! never by family, since no family pays them. Only the owner reads them: no row names who
+//! started those jobs.
+//!
 //! What the rows do not keep, history does not invent: a plain offer chunk on a provider has no
 //! end time and no machine of its own, a resumed chunk's starter is not stored (the job's
 //! starter or the owner), and an occupancy is known only where a machine measured it or a
@@ -41,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::gpu_line::{UnitClaim, claims_in_txn, stored_period_in_txn};
+use crate::gpu_line::{UnitClaim, claims_in_txn, stored_period_in_txn, unattributed_in_txn};
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
 use crate::work_order::{AttemptEnd, OrderClass, OrderedBy, SlotDecision};
@@ -267,7 +274,8 @@ pub struct JobHistoryOrder {
 }
 
 /// The seconds of a set of ended attempts. Sums count the known figures; `occupied_unknown`
-/// counts the attempts whose occupancy no row knows.
+/// counts the attempts whose occupancy no row knows. The unattributed seconds are no attempt's
+/// and enter no other figure.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobHistorySum {
     pub attempts: u32,
@@ -282,6 +290,13 @@ pub struct JobHistorySum {
     /// `queued_attempts` attempts whose wait the order's row keeps.
     pub queued_ms: u64,
     pub queued_attempts: u32,
+    /// The device seconds machines ran for this vault on jobs no row of the vault names, as the
+    /// allocation records them (pass 33 8.5, EM-15): no family pays them, and only the owner
+    /// sees them.
+    pub unattributed_secs: u64,
+    /// The unattributed jobs whose machine holds no terminal receipt yet: their seconds can
+    /// still grow.
+    pub unattributed_running: u32,
 }
 
 /// Totals of one machine; `machine` absent for the attempts no row places.
@@ -366,10 +381,10 @@ pub fn job_history_embedded(
     job_history_as(memory, owner.as_ref(), input)
 }
 
-/// Reads the rows history projects, the jobs, the claims, their periods, the work orders and the
-/// issuer's observations of their attempt keys, in one snapshot (a claim's terminal and its
-/// job's terminal row are one write, and an order's attempt entry is written with its job), and
-/// projects them.
+/// Reads the rows history projects, the jobs, the claims, their periods, the work orders, the
+/// issuer's observations of their attempt keys and the allocation's unattributed records, in one
+/// snapshot (a claim's terminal and its job's terminal row are one write, and an order's attempt
+/// entry is written with its job), and projects them.
 ///
 /// # Errors
 ///
@@ -393,17 +408,21 @@ fn read_job_history_in_txn(
     let jobs = vault.gpu_jobs_in_txn(txn)?;
     let claims = claims_in_txn(vault, txn)?;
     let orders = vault.work_orders_in_txn(txn)?;
+    let unattributed = unattributed_in_txn(vault, txn)?;
     let mut observations = Vec::new();
     for key in project::attempt_keys(&jobs, &claims) {
         if let Some(observation) = vault.job_observation_in_txn(txn, &key)? {
             observations.push(observation);
         }
     }
-    let windows: BTreeSet<(EntityId, u32)> = claims
+    let mut windows: BTreeSet<(EntityId, u32)> = claims
         .iter()
         .filter(|claim| !claim.is_open())
         .map(|claim: &UnitClaim| (claim.line, claim.period))
         .collect();
+    for record in &unattributed {
+        windows.extend(record.line_period());
+    }
     let mut periods = Vec::with_capacity(windows.len());
     for (line, index) in windows {
         if let Some(period) = stored_period_in_txn(vault, txn, &line, index)? {
@@ -417,6 +436,7 @@ fn read_job_history_in_txn(
             periods: &periods,
             orders: &orders,
             observations: &observations,
+            unattributed: &unattributed,
         },
         filter,
         viewer,
