@@ -185700,9 +185700,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/gpu_backend.rs",
-     "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31): the `[gpu_jobs]` section as `serve` resolves it…",
+     "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row…",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -187832,6 +187832,14 @@
      "notable": [],
      "path": "tests/credential_file_network_fs.rs",
      "purpose": "A credential file on a Linux network file system is judged by the server's own list (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/customer_cpu_job_seconds.rs",
+     "purpose": "CPU-only units (pass 32 row M3-D; pass 34 9.2, \"the first proof that nothing in the rig needs a GPU\"): a…",
      "surface": {}
     },
     {
@@ -191564,7 +191572,7 @@
    "over_bar": 69,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2148,
-   "test_files": 593
+   "test_files": 594
   },
   "oneiron-setting-contract": {
    "files": [
