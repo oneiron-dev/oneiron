@@ -289,7 +289,10 @@ pub(crate) enum DoorClaim {
 /// judges only the verb Grant: a kept reply would answer a same-id retry
 /// after the line left the Grant's reach. A same-id retry runs the read
 /// again, line cover included (FIX ARM-READS-REPLAY-SKIPS-LINE-GRANT).
-const UNKEPT_REPLY_VERBS: [&str; 7] = [
+/// A GPU line's read (`vault.gpu.lines.get`) answers only a caller whose
+/// Grant holds a role on the line when the read runs, for the same reason: a
+/// same-id retry runs the read again, role included.
+const UNKEPT_REPLY_VERBS: [&str; 8] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -297,6 +300,7 @@ const UNKEPT_REPLY_VERBS: [&str; 7] = [
     "vault.booking.personal_link.mint",
     oneiron::experiment_arm::ARMS_GET_VERB,
     oneiron::experiment_arm::ARMS_LIST_VERB,
+    oneiron::gpu_line::VAULT_GPU_LINES_GET,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
