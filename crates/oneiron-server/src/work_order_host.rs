@@ -12,6 +12,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
 use oneiron::gpu_job::{GpuJobActor, GpuJobError, GpuJobRequest, GpuJobStart};
+use oneiron::llm::decision::{DecisionAnswer, DecisionRung, HumanAskReason};
+use oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE;
+use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest};
+use oneiron::work_order::decider::{DeciderReceipt, DeciderReply, SlotAsk, SlotAskWindow};
 use oneiron::work_order::{
     AttemptOutcome, AttemptRefused, AttemptToMake, Blocker, MachineFacts, MachineReach,
     OrderAttemptRef, OrderCharge, OrderHost, PassReport, Room, TemplateFact, WorkOrder,
@@ -273,6 +277,120 @@ impl OrderHost for ServerOrderHost<'_> {
             .map(drop)
             .map_err(|error| error.to_string())
     }
+
+    /// The slot's decider (row P1), asked through this host's decision ladder as one
+    /// `ai.verdict` read of the decider's agent: a Choice over the options, inside the slot's
+    /// deadline, metered on that agent's own read line. Counted against the slot's hourly
+    /// ceiling first. Every model rung blocks on the runtime; the pass runs on a blocking
+    /// thread.
+    fn decide(&self, ask: &SlotAsk) -> DeciderReply {
+        let admitted = self
+            .server
+            .gpu_jobs
+            .orders()
+            .asks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .admit(ask.slot, ask.grant, ask.max_asks_per_hour, self.now_ms);
+        if !admitted {
+            return DeciderReply::Ceiling;
+        }
+        let request = match slot_verdict_request(ask) {
+            Ok(request) => request,
+            Err(why) => {
+                return DeciderReply::Failed {
+                    why: why.to_owned(),
+                    receipt: None,
+                };
+            }
+        };
+        let memory = self.server.vault.memory(ask.agent, ask.class);
+        let mut evidence_read = Vec::new();
+        let answered = crate::decision_verdict::run_verdict_reasoned(
+            self.server,
+            ask.agent,
+            ask.class,
+            &memory,
+            None,
+            None,
+            &request,
+            None,
+            &mut evidence_read,
+            None,
+        );
+        match answered {
+            Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => DeciderReply::NoModel,
+            Err(error) => DeciderReply::Failed {
+                why: error.to_string(),
+                receipt: None,
+            },
+            Ok((verdict, no_answer)) => {
+                let receipt = decider_receipt(&verdict);
+                match (verdict.answer, no_answer) {
+                    (DecisionAnswer::Choice(label), _) => DeciderReply::Answered { label, receipt },
+                    (DecisionAnswer::Abstain, Some(HumanAskReason::ProviderUnavailable))
+                        if no_model_read(&verdict.receipt.providers) =>
+                    {
+                        DeciderReply::NoModel
+                    }
+                    (DecisionAnswer::Abstain, Some(HumanAskReason::Deadline)) => {
+                        DeciderReply::Silent {
+                            receipt: Some(receipt),
+                        }
+                    }
+                    (DecisionAnswer::Abstain, _) => DeciderReply::Abstained {
+                        receipt: Some(receipt),
+                    },
+                    (_, _) => DeciderReply::Failed {
+                        why: "the decider's read gave no choice".to_owned(),
+                        receipt: Some(receipt),
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// The `ai.verdict` request of one slot ask: the slot's question, a Choice over its options,
+/// the facts it shows as the state, and the slot's deadline as the read's clock.
+fn slot_verdict_request(ask: &SlotAsk) -> Result<AiVerdictRequest, &'static str> {
+    serde_json::from_value(serde_json::json!({
+        "question": ask.question(),
+        "contract": { "kind": "choice", "options": ask.options },
+        "state": ask.facts,
+        "deadline_ms": ask.deadline_ms.max(1),
+    }))
+    .map_err(|_| "the slot's verdict request does not decode")
+}
+
+/// Whether only the rule rung (or none) read the question: no model on this host takes it.
+fn no_model_read(providers: &[oneiron::llm::decision::ProviderPin]) -> bool {
+    providers
+        .iter()
+        .all(|pin| matches!(pin.rung, DecisionRung::Rule | DecisionRung::Human))
+}
+
+/// What a slot decision keeps of the read's receipt: the question, the providers tried, the
+/// rung that answered, the probability and the cost, and no model text.
+fn decider_receipt(verdict: &AiVerdict) -> DeciderReceipt {
+    let rung_name = |rung: &DecisionRung| {
+        serde_json::to_value(rung)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
+    DeciderReceipt::of_read(
+        verdict.receipt.question.to_hex(),
+        verdict
+            .receipt
+            .providers
+            .iter()
+            .map(|pin| format!("{}:{}@{}", rung_name(&pin.rung), pin.model, pin.version))
+            .collect(),
+        verdict.rung.as_ref().map(rung_name),
+        verdict.p,
+        verdict.receipt.cost_per_thousand,
+    )
 }
 
 /// Whether this server dispatches orders charged to the offer `name`: the offer is posted
@@ -314,6 +432,9 @@ pub(crate) struct OrderLoop {
     wake: tokio::sync::Notify,
     pass: Mutex<()>,
     nodes: OnceLock<Arc<dyn JobNodeClient>>,
+    /// The slot deciders' asks this hour (row P1): the ceiling `policy.slots.max_asks_per_hour`
+    /// counts them here, so an issuer that restarts opens a new window.
+    asks: Mutex<SlotAskWindow>,
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -333,9 +454,18 @@ impl OrderLoop {
         self.wake.notified().await;
     }
 
-    /// The node client passes call through, made at first use.
-    fn nodes(&self, server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
-        Arc::clone(self.nodes.get_or_init(|| node_client(server)))
+    /// The node client passes call through. Only a client that calls machines is kept, made at
+    /// the first call with a runtime at hand; a call with none answers through [`NoNodes`] and
+    /// leaves the next call to make it, so an early call off the runtime never cuts the loop
+    /// off from every machine.
+    pub(crate) fn nodes(&self, server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
+        if let Some(client) = self.nodes.get() {
+            return Arc::clone(client);
+        }
+        match node_client(server) {
+            Some(client) => Arc::clone(self.nodes.get_or_init(|| client)),
+            None => Arc::new(NoNodes),
+        }
     }
 
     /// Answers node calls through `nodes` from now on, as a test's scripted machines do.
@@ -367,21 +497,24 @@ impl JobNodeClient for NoNodes {
     }
 }
 
+/// A client of `server`'s mesh listener whose calls run on the runtime at hand, or `None` where
+/// no runtime is at hand.
 #[cfg(feature = "mesh")]
-fn node_client(server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
-    match tokio::runtime::Handle::try_current() {
-        Ok(runtime) => Arc::new(crate::gpu_execution_node::issuer::MeshJobNodeClient::new(
+fn node_client(server: &Arc<SyncServer>) -> Option<Arc<dyn JobNodeClient>> {
+    let runtime = tokio::runtime::Handle::try_current().ok()?;
+    Some(Arc::new(
+        crate::gpu_execution_node::issuer::MeshJobNodeClient::new(
             Arc::downgrade(server),
             runtime,
             std::time::Duration::from_secs(server.config.gpu_jobs.vault_machine.call_timeout_secs),
-        )),
-        Err(_) => Arc::new(NoNodes),
-    }
+        ),
+    ))
 }
 
+/// A server built without the mesh calls no machines.
 #[cfg(not(feature = "mesh"))]
-fn node_client(_server: &Arc<SyncServer>) -> Arc<dyn JobNodeClient> {
-    Arc::new(NoNodes)
+fn node_client(_server: &Arc<SyncServer>) -> Option<Arc<dyn JobNodeClient>> {
+    None
 }
 
 /// One pass of the loop at `now_ms` under the loop's lock, so a door's pass and the worker's

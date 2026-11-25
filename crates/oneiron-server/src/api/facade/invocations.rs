@@ -308,6 +308,17 @@ pub(crate) enum DoorClaim {
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
+/// The machines' status (review round 1 of #10424) is a live read that the
+/// vault never stores: on `refresh` it holds what each execution node
+/// answers now, and a kept reply would write that answer to this vault's
+/// invocation state and replay it after the node went offline. A same-id
+/// retry reads, and on `refresh` asks the nodes, again.
+/// The machines' execution read (pass 33 door 11, review round 1 of
+/// #10458) is the same kind of live read: it holds what each machine's node
+/// answers now (its offer, its devices and its live keys), and a kept reply
+/// would write those answers to this vault's invocation state and replay
+/// them after the node went offline or changed its offer. A same-id retry
+/// asks the machines again.
 /// An attempt's log tail (`vault.jobs.logs.tail`, pass 34 row Q3) answers
 /// bytes that stay on the attempt's machine: a kept reply would write up to
 /// a page of the log to this vault's invocation state, and would answer a
@@ -315,7 +326,7 @@ pub(crate) enum DoorClaim {
 /// without asking the machine again (review round 1 of #10466). A same-id
 /// retry finds its admission intent settled (`admission_doors::call_verb`)
 /// and is refused with none of those bytes; a new read asks the machine.
-const UNKEPT_REPLY_VERBS: [&str; 14] = [
+const UNKEPT_REPLY_VERBS: [&str; 16] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -329,6 +340,8 @@ const UNKEPT_REPLY_VERBS: [&str; 14] = [
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
+    oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
+    oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
     oneiron::work_order::LOGS_TAIL_VERB,
 ];
 
