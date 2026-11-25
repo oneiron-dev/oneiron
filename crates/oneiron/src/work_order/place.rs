@@ -48,7 +48,7 @@ fn score(order: &WorkOrder, needs: &Needs, machine: &MachineFacts) -> Score {
     } else {
         1
     };
-    let wanted = &order.wishes.warm;
+    let wanted = crate::warm_key::attempt_warm_keys(&order.wishes.warm);
     let present = wanted
         .iter()
         .filter(|key| machine.warm.contains(key))
@@ -93,7 +93,10 @@ fn reason(first: &Score, second: Option<&Score>, order: &WorkOrder) -> String {
     if first.role != second.role {
         "its role".to_owned()
     } else if first.warm != second.warm {
-        format!("already holds {}", order.wishes.warm.join(", "))
+        format!(
+            "already holds {}",
+            crate::warm_key::attempt_warm_keys(&order.wishes.warm).join(", ")
+        )
     } else if (first.waste_devices, first.waste_memory_mib)
         != (second.waste_devices, second.waste_memory_mib)
     {

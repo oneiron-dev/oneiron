@@ -68,6 +68,14 @@ pub fn usable_warm_keys<'a>(
     (usable, false)
 }
 
+/// The warm keys an attempt of an order with the wishes `wishes` lists: the usable ones, at most
+/// [`ATTEMPT_WARM_KEYS_MAX`]. FIT, PLACE and the submit all read this one list, so an order
+/// stored before row P2 is placed by the keys its attempt carries.
+#[must_use]
+pub fn attempt_warm_keys<'a>(wishes: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    usable_warm_keys(wishes, ATTEMPT_WARM_KEYS_MAX).0
+}
+
 /// Why a list of warm keys is refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WarmKeyInvalid {

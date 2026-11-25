@@ -6,6 +6,10 @@
 //! (a new file, synced, renamed over the old one, the directory synced). The table is encoded
 //! under the warm lock and written after it is dropped ([`TableWrite`]): writes land in the order
 //! of the changes, and a write older than the file on disk is skipped.
+//!
+//! The table also records each cache path a pass moved into the removed caches' directory and
+//! has not deleted yet ([`EvictedRecord`]): only a recorded entry is ever deleted from there. A
+//! lost record leaves its entry on disk, never deletes another.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -35,6 +39,14 @@ pub struct WarmKeyRecord {
     pub uses: u64,
 }
 
+/// A cache path a pass moved into the removed caches' directory and has not deleted yet: its
+/// name there and its inode, as the move left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvictedRecord {
+    pub name: String,
+    pub ino: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct TableFile {
     version: u32,
@@ -42,6 +54,9 @@ struct TableFile {
     /// The job keys of the journal whose exit-0 end is counted in `keys`.
     #[serde(default)]
     counted: BTreeSet<String>,
+    /// The moved cache paths not deleted yet.
+    #[serde(default)]
+    evicted: Vec<EvictedRecord>,
 }
 
 /// The table, as read from and written to the state directory.
@@ -50,6 +65,7 @@ pub struct WarmKeyTable {
     path: PathBuf,
     records: BTreeMap<String, WarmKeyRecord>,
     counted: BTreeSet<String>,
+    evicted: BTreeMap<String, EvictedRecord>,
     /// The number of the table's newest change.
     generation: u64,
     /// The number of the change the file on disk holds.
@@ -71,7 +87,9 @@ impl TableWrite {
     ///
     /// # Errors
     ///
-    /// The write, sync or rename failed; the file on disk is then the one before.
+    /// The write, sync or rename failed, and the file on disk is the one before; or the
+    /// directory's sync after the rename failed, and the file holds this change, which may not
+    /// survive a crash. No older change replaces it either way.
     pub fn write(self) -> std::io::Result<()> {
         let mut written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         if *written >= self.generation {
@@ -84,10 +102,12 @@ impl TableWrite {
             out.sync_all()?;
         }
         std::fs::rename(&staging, &self.path)?;
+        // The file holds this change from the rename on: an older one must not replace it, even
+        // when the directory's sync fails.
+        *written = self.generation;
         if let Some(dir) = self.path.parent() {
             std::fs::File::open(dir)?.sync_all()?;
         }
-        *written = self.generation;
         Ok(())
     }
 }
@@ -98,8 +118,8 @@ impl WarmKeyTable {
     #[must_use]
     pub fn open(state_dir: &Path) -> Self {
         let path = state_dir.join(WARM_KEYS_FILE_NAME);
-        let empty = || (BTreeMap::new(), BTreeSet::new());
-        let (records, counted) = match std::fs::read(&path) {
+        let empty = || (BTreeMap::new(), BTreeSet::new(), BTreeMap::new());
+        let (records, counted, evicted) = match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<TableFile>(&bytes) {
                 Ok(file) if file.version == WARM_KEYS_FILE_VERSION => (
                     file.keys
@@ -107,6 +127,10 @@ impl WarmKeyTable {
                         .map(|record| (record.key.clone(), record))
                         .collect(),
                     file.counted,
+                    file.evicted
+                        .into_iter()
+                        .map(|record| (record.name.clone(), record))
+                        .collect(),
                 ),
                 Ok(file) => {
                     tracing::warn!(path = %path.display(), version = file.version, "warm keys: the table's form is not this engine's; it starts empty");
@@ -127,6 +151,7 @@ impl WarmKeyTable {
             path,
             records,
             counted,
+            evicted,
             generation: 0,
             written: Arc::new(Mutex::new(0)),
         }
@@ -228,6 +253,22 @@ impl WarmKeyTable {
         forgotten
     }
 
+    /// A pass moved a cache path into the removed caches' directory as `record`.
+    pub fn evicted(&mut self, record: EvictedRecord) {
+        self.evicted.insert(record.name.clone(), record);
+    }
+
+    /// The moved cache paths not deleted yet, by name.
+    #[must_use]
+    pub fn evicted_records(&self) -> &BTreeMap<String, EvictedRecord> {
+        &self.evicted
+    }
+
+    /// The moved cache path `name` is deleted. Returns whether it was recorded.
+    pub fn deleted(&mut self, name: &str) -> bool {
+        self.evicted.remove(name).is_some()
+    }
+
     /// The table as it is now, to write after the warm lock is dropped.
     ///
     /// # Errors
@@ -238,6 +279,7 @@ impl WarmKeyTable {
             version: WARM_KEYS_FILE_VERSION,
             keys: self.records.values().cloned().collect(),
             counted: self.counted.clone(),
+            evicted: self.evicted.values().cloned().collect(),
         };
         let bytes = serde_json::to_vec(&file).map_err(std::io::Error::other)?;
         self.generation = self.generation.saturating_add(1);

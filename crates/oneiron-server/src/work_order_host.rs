@@ -187,15 +187,26 @@ impl OrderHost for ServerOrderHost<'_> {
         asks.iter()
             .map(|(machine, wanted)| {
                 let request = JobRequest::NodeWanting(wanted.clone());
-                let answer = match self.nodes.job(*machine, &request) {
+                let (answer, before_warm) = match self.nodes.job(*machine, &request) {
                     // A node before row P2 cannot read NodeWanting and closes the stream
                     // unanswered: it is asked Node once, as before.
                     Err(NodeCallError::Unreachable { .. }) => {
-                        self.nodes.job(*machine, &JobRequest::Node).ok()
+                        (self.nodes.job(*machine, &JobRequest::Node).ok(), true)
                     }
-                    answered => answered.ok(),
+                    answered => (answered.ok(), false),
                 };
-                facts_of_answer(*machine, answer.as_ref(), self.now_ms)
+                let mut facts = facts_of_answer(*machine, answer.as_ref(), self.now_ms);
+                // Such a node checks no warm key before a launch and cannot verify a submit
+                // signed with one: each key asked counts as absent there, so an order that
+                // lists one waits for a node that checks it; an order with none runs as before.
+                if before_warm && answer.is_some() {
+                    for key in &wanted.keys {
+                        if !facts.warm_absent.contains(key) {
+                            facts.warm_absent.push(key.clone());
+                        }
+                    }
+                }
+                facts
             })
             .collect()
     }
@@ -220,11 +231,9 @@ impl OrderHost for ServerOrderHost<'_> {
         if let [device] = attempt.devices.as_slice() {
             inputs["device_id"] = serde_json::Value::String(device.clone());
         }
-        // Row P2: the order's usable warm keys; an order stored before P2 may hold others.
-        let (warm, _) = oneiron::warm_key::usable_warm_keys(
-            &attempt.order.wishes.warm,
-            oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX,
-        );
+        // Row P2: the order's usable warm keys, as FIT and PLACE read them; an order stored
+        // before P2 may hold others.
+        let warm = oneiron::warm_key::attempt_warm_keys(&attempt.order.wishes.warm);
         if !warm.is_empty() {
             inputs["warm"] = serde_json::json!(warm);
         }

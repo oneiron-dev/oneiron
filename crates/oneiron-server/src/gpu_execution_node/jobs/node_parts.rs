@@ -585,9 +585,14 @@ impl NodeKeys for NodeJobsAttachment {
             .unwrap_or_default()
     }
 
-    fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings, cache: &NodeCacheSettings) {
+    fn cache_pass_if_due(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+        settings_now: super::warm::SettingsRead,
+    ) {
         if let Some(jobs) = self.service() {
-            jobs.cache_pass_if_due(settings, cache);
+            jobs.cache_pass_if_due(settings, cache, settings_now);
         }
     }
 

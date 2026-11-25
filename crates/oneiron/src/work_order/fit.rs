@@ -342,9 +342,9 @@ pub fn fit(order: &WorkOrder, template: (&str, &str), machine: &MachineFacts) ->
             Some(_) => {}
         }
     }
-    for key in &order.wishes.warm {
-        if machine.warm_absent.contains(key) {
-            blocked.push(Blocker::WarmKeyMissing { key: key.clone() });
+    for key in crate::warm_key::attempt_warm_keys(&order.wishes.warm) {
+        if machine.warm_absent.contains(&key) {
+            blocked.push(Blocker::WarmKeyMissing { key });
         }
     }
     let needs = Needs::of(&order.request);

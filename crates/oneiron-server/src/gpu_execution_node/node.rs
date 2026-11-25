@@ -285,9 +285,15 @@ pub trait NodeKeys: Send + Sync {
         Vec::new()
     }
 
-    /// Starts a cache pass when one is due (row P2); it never waits for it.
-    fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings, cache: &NodeCacheSettings) {
-        let _ = (settings, cache);
+    /// Starts a cache pass when one is due (row P2); it never waits for it. The pass reads the
+    /// node's file again through `settings_now`.
+    fn cache_pass_if_due(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+        settings_now: crate::gpu_execution_node::jobs::warm::SettingsRead,
+    ) {
+        let _ = (settings, cache, settings_now);
     }
 
     /// `Tail` from `peer`: the key's log from an offset (pass 34, 7.2).
@@ -786,17 +792,26 @@ impl ExecutionNode {
             keys.stop_live_keys();
         }
         // Row P2: the cache pass removes files, so it runs only under figures read now. With
-        // the owner's rows accepted but not readable, it waits for a tick where they read.
+        // the owner's rows accepted but not readable, or this machine's own id not readable
+        // (its rows cannot be found then), it waits for a tick where they read.
         if let Some(settings) = snapshot.settings() {
             let owner = match &snapshot.policy {
                 Some(policy) => Ok(Some(policy.cache)),
-                None => self
-                    .owner_policy(settings)
-                    .map(|policy| policy.map(|policy| policy.cache)),
+                None => match self.shared.vault.local_machine() {
+                    Err(error) => Err(format!("this machine's MACHINE id does not read: {error}")),
+                    Ok(_) => self
+                        .owner_policy(settings)
+                        .map(|policy| policy.map(|policy| policy.cache)),
+                },
             };
             match owner {
                 Ok(owner) => {
-                    keys.cache_pass_if_due(settings, &settings.cache.tightened(owner.as_ref()));
+                    let file = self.shared.file.clone();
+                    keys.cache_pass_if_due(
+                        settings,
+                        &settings.cache.tightened(owner.as_ref()),
+                        Arc::new(move || ExecutionNodeSettings::read(&file).ok().flatten()),
+                    );
                 }
                 Err(why) => {
                     tracing::debug!(%why, "warm keys: no cache pass while the owner's policy does not read")

@@ -202,6 +202,12 @@ impl Fixture {
     /// The node's file: `open-models` maps `weights:aa` (an input) and the cache `target:h`;
     /// `builds` maps the caches `target:a`, `target:b` and `target:c`.
     fn settings(&self, cache_dir: &Path) -> ExecutionNodeSettings {
+        self.settings_with(cache_dir, "")
+    }
+
+    /// [`Self::settings`] with `extra` (`, "<key>" = "<path>"` pairs) added to `open-models`'s
+    /// map.
+    fn settings_with(&self, cache_dir: &Path, extra: &str) -> ExecutionNodeSettings {
         let at = |name: &str| self.path(name).display().to_string();
         let cache = |name: &str| cache_dir.join(name).display().to_string();
         let text = format!(
@@ -218,7 +224,7 @@ interpreter = ["/usr/bin/bash"]
 max_secs = 3600
 memory_gib = 32
 disk_gib = 10
-warm = {{ "weights:aa" = "{weights}", "target:h" = "{h}" }}
+warm = {{ "weights:aa" = "{weights}", "target:h" = "{h}"{extra} }}
 caches = ["target:h"]
 
 [execution_node.templates.builds]
@@ -429,6 +435,13 @@ disk_gib = 10
     )
 }
 
+/// The node's file as the cache pass reads it: `settings` at every reading.
+fn unchanged_file(
+    settings: &ExecutionNodeSettings,
+) -> impl Fn() -> Option<ExecutionNodeSettings> + '_ {
+    move || Some(settings.clone())
+}
+
 fn budget(cap_bytes: u64) -> CacheBudget {
     CacheBudget {
         cap_bytes,
@@ -463,7 +476,7 @@ fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
     // Four caches of about 1 MiB under a cap that holds `target:a` and `target:h` as the disk
     // measures them: the plan goes in last use, then key order.
     let cap = allocated(&cache_dir.join("a")) + allocated(&cache_dir.join("h"));
-    let first = jobs.cache_pass_under(&settings, &settings.cache, &budget(cap));
+    let first = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(cap));
     let removed: Vec<&str> = first.removed.iter().map(|gone| gone.key.as_str()).collect();
     assert_eq!(removed, ["target:b", "target:c"], "{first:?}");
     assert_eq!(first.deferred, None);
@@ -493,7 +506,13 @@ fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
     // it is a cache like any other; the held key still protects its own.
     node.clock
         .advance_ms(settings.cache.wanted_hold_secs * 1000 + 1000);
-    let second = jobs.cache_pass_under(&settings, &settings.cache, &budget(MIB / 2));
+    // A cap that holds `target:h` alone: `target:a` takes disk, so it goes.
+    assert!(
+        allocated(&cache_dir.join("a")) > 0,
+        "target:a takes no disk"
+    );
+    let cap = allocated(&cache_dir.join("h"));
+    let second = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(cap));
     let removed: Vec<&str> = second
         .removed
         .iter()
@@ -659,7 +678,7 @@ caches = ["target:x"]
     std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o777))
         .expect("cache dir mode");
     let jobs = fixture.node.open();
-    let report = jobs.cache_pass_under(&settings, &settings.cache, &budget(0));
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
     assert!(report.removed.is_empty(), "{report:?}");
     for name in ["a", "b", "c", "h"] {
         assert!(cache_dir.join(name).exists(), "{name} was removed");
@@ -678,7 +697,7 @@ fn a_cache_pass_removes_nothing_while_what_is_busy_is_not_known() {
         receipt(jobs.reserve(fixture.issuer, fixture.reserve("job-held", &pin(DIGEST)))).state,
         JobState::Held
     );
-    let report = jobs.cache_pass_under(&settings, &settings.cache, &budget(0));
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
     assert!(
         report.removed.is_empty() && report.deferred.is_some(),
         "{report:?}"
@@ -698,7 +717,7 @@ fn a_cache_pass_removes_nothing_while_what_is_busy_is_not_known() {
             overflow: true,
         },
     );
-    let report = jobs.cache_pass_under(&settings, &settings.cache, &budget(0));
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
     assert!(
         report.removed.is_empty() && report.deferred.is_some(),
         "{report:?}"
@@ -706,6 +725,122 @@ fn a_cache_pass_removes_nothing_while_what_is_busy_is_not_known() {
     for name in ["a", "b"] {
         assert!(cache_dir.join(name).exists(), "{name} was removed");
     }
+}
+
+#[test]
+fn a_cache_pass_removes_nothing_when_the_file_changed_while_it_measured() {
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
+    let first = fixture.settings(&cache_dir);
+    // The second reading maps one key more.
+    let input = fixture.path("data/weights-bb");
+    let second = fixture.settings_with(
+        &cache_dir,
+        &format!(r#", "weights:bb" = "{}""#, input.display()),
+    );
+    let readings = std::cell::Cell::new(0_u32);
+    let read = || {
+        readings.set(readings.get() + 1);
+        Some(if readings.get() == 1 {
+            first.clone()
+        } else {
+            second.clone()
+        })
+    };
+    let jobs = fixture.node.open();
+    let report = jobs.cache_pass_under(&read, &first.cache, &budget(0));
+    assert!(
+        report.removed.is_empty()
+            && report
+                .deferred
+                .as_deref()
+                .is_some_and(|why| why.contains("changed while the pass measured")),
+        "{report:?}"
+    );
+    assert!(readings.get() >= 2, "the file was read once");
+    for name in ["a", "b", "c", "h"] {
+        assert!(cache_dir.join(name).exists(), "{name} was removed");
+    }
+}
+
+#[test]
+fn a_cache_pass_never_moves_a_cache_another_keys_path_resolves_into() {
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
+    // `weights:al` names a file in cache `b` through another spelling of the cache directory:
+    // the file's check compares spellings, the pass resolves them.
+    let alias = fixture.path("caches-alias");
+    std::os::unix::fs::symlink(&cache_dir, &alias).expect("alias");
+    let settings = fixture.settings_with(
+        &cache_dir,
+        &format!(
+            r#", "weights:al" = "{}""#,
+            alias.join("b/blob.bin").display()
+        ),
+    );
+    let jobs = fixture.node.open();
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
+    assert_eq!(report.deferred, None, "{report:?}");
+    let removed: Vec<&str> = report
+        .removed
+        .iter()
+        .map(|gone| gone.key.as_str())
+        .collect();
+    assert!(!removed.contains(&"target:b"), "{report:?}");
+    assert!(
+        report
+            .left
+            .iter()
+            .any(|(key, why)| key == "target:b" && why.contains("another warm key's path")),
+        "{report:?}"
+    );
+    assert!(
+        cache_dir.join("b/blob.bin").exists(),
+        "the input in b was removed"
+    );
+    for name in ["a", "c", "h"] {
+        assert!(!cache_dir.join(name).exists(), "{name} was kept");
+    }
+}
+
+#[test]
+fn the_removed_caches_directory_deletes_only_what_a_pass_moved() {
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a"], 1);
+    let settings = fixture.settings(&cache_dir);
+    // An entry no pass moved, in a removed caches' directory the engine alone may enter.
+    let trash = cache_dir.join(EVICTED_DIR_NAME);
+    std::fs::create_dir_all(trash.join("stranger")).expect("stranger");
+    std::fs::write(trash.join("stranger/kept.bin"), b"kept").expect("stranger file");
+    std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o700)).expect("trash mode");
+    let jobs = fixture.node.open();
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
+    let removed: Vec<&str> = report
+        .removed
+        .iter()
+        .map(|gone| gone.key.as_str())
+        .collect();
+    assert_eq!(removed, ["target:a"], "{report:?}");
+    assert!(report.not_deleted.is_empty(), "{report:?}");
+    assert!(!cache_dir.join("a").exists());
+    let left: Vec<String> = std::fs::read_dir(&trash)
+        .expect("trash reads")
+        .flatten()
+        .map(|found| found.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        left,
+        ["stranger"],
+        "the moved cache was left or the stranger deleted"
+    );
+    assert!(trash.join("stranger/kept.bin").exists());
+
+    // A removed caches' directory others may enter: the pass removes nothing.
+    std::fs::create_dir_all(cache_dir.join("b")).expect("cache b");
+    std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o755)).expect("trash mode");
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(cache_dir.join("b").exists());
 }
 
 #[test]
