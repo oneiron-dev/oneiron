@@ -17,7 +17,9 @@
 //!   one is left, and a new idea takes a free slot of the new-idea pool or is
 //!   refused.
 use super::doors_caller::{admit_in_txn, refused_owner_act};
-use super::fold::{FamilySeat, GpuLine, LineRole, PeriodClockError, PeriodRoom, Side, Track};
+use super::fold::{
+    BudgetPolicy, FamilySeat, GpuLine, LineRole, PeriodClockError, PeriodRoom, Side, Track,
+};
 use super::intent::{IntentAsk, IntentRefused, IntentStand};
 use super::mint::{LineInvalid, MintError};
 use super::store::{
@@ -124,6 +126,17 @@ fn view_in_txn(
     })
 }
 
+/// The period the next mint of `minted`'s line makes: the one after the
+/// period that holds now, or period 0 before it starts.
+fn next_mint_index(minted: &MintedLine) -> Result<u32, GpuLineError> {
+    minted.period.as_ref().map_or(Ok(0), |period| {
+        period
+            .index
+            .checked_add(1)
+            .ok_or(GpuLineError::Mint(MintError::PeriodOutOfRange))
+    })
+}
+
 /// Where a seat asked now takes its first floor: `None` before period 0
 /// (the seat is listed from period 0's mint), else from the next mint, with
 /// a floor taken at once from the period's reserve, or for a new idea its
@@ -134,13 +147,10 @@ fn seat_timing(
     family: &EntityId,
     track: Track,
 ) -> Result<(u32, Option<(u32, u64)>), GpuLineError> {
+    let next = next_mint_index(minted)?;
     let Some(period) = &minted.period else {
-        return Ok((0, None));
+        return Ok((next, None));
     };
-    let next = period
-        .index
-        .checked_add(1)
-        .ok_or(GpuLineError::Mint(MintError::PeriodOutOfRange))?;
     let room = PeriodRoom::fold(period, &line.families, &[]);
     let floor = period.floor_secs();
     if track == Track::NewIdea {
@@ -158,16 +168,16 @@ fn seat_timing(
     Ok((next, Some((period.index, floor))))
 }
 
-/// The seats of `track` a lead may fill without the owner's proof: the
-/// pinned track's `pinned_seat_cap`, demand's `seat_cap`, none on an interest
-/// track the line does not pin (LE-6: interest seats are the owner's), and
-/// no cap for new ideas, which the period's slots bound.
-fn lead_seat_cap(line: &GpuLine, track: Track) -> Option<u32> {
-    let budget = &line.budget;
+/// The seats of `track` a lead may fill without the owner's proof under
+/// `policy`, the policy in force now: the pinned track's `pinned_seat_cap`,
+/// demand's `seat_cap`, none on an interest track the line does not pin
+/// (LE-6: interest seats are the owner's), and no cap for new ideas, which
+/// the period's slots bound.
+fn lead_seat_cap(policy: &BudgetPolicy, track: Track) -> Option<u32> {
     match track {
         Track::NewIdea => None,
-        track if track == budget.pinned_track => Some(budget.pinned_seat_cap),
-        Track::Demand => Some(budget.seat_cap),
+        track if track == policy.pinned_track => Some(policy.pinned_seat_cap),
+        Track::Demand => Some(policy.seat_cap),
         Track::Interest => Some(0),
     }
 }
@@ -245,9 +255,15 @@ impl Memory<'_> {
             }
             // The current period is minted first, from the line as it stood.
             let current = match mint_first_in_txn(vault, txn, &request.project, now_ms)? {
-                Ok(minted) => minted.map(|minted| minted.line),
+                Ok(minted) => minted,
                 Err(refusal) => return Ok(Err(GpuLineError::Mint(refusal))),
             };
+            // The policy applies from the next mint; a new line holds no seat.
+            let next_period = match current.as_ref().map_or(Ok(0), next_mint_index) {
+                Ok(index) => index,
+                Err(refusal) => return Ok(Err(refusal)),
+            };
+            let current = current.map(|minted| minted.line);
             let policy = &request.policy;
             let line = GpuLine {
                 project: request.project,
@@ -269,7 +285,7 @@ impl Memory<'_> {
                 set_at_ms: now_ms,
                 revision: current.as_ref().map_or(1, |line| line.revision + 1),
             };
-            if let Err(invalid) = line.validate() {
+            if let Err(invalid) = line.validate(next_period) {
                 return Ok(Err(GpuLineError::Invalid(invalid)));
             }
             if let Some(current) = &current
@@ -362,13 +378,25 @@ impl Memory<'_> {
                 Ok(caller) => caller,
                 Err(refusal) => return Ok(Err(GpuLineError::Caller(refusal))),
             };
+            // The role is judged on the stored line before anything else: a
+            // replay answers, and a mint writes, only for a caller who holds
+            // it now. A mint keeps the role lists as they are.
+            let Some(stored) = line_in_txn(vault, txn, &request.project)? else {
+                return Ok(Err(GpuLineError::NoLine));
+            };
+            let roles: &[LineRole] = match request.track {
+                Track::NewIdea => &[LineRole::Lead, LineRole::Planner],
+                Track::Demand | Track::Interest => &[LineRole::Lead],
+            };
+            if let Err(refusal) =
+                caller.require_role(&stored, roles, VAULT_GPU_LINES_FAMILIES_ADMIT)
+            {
+                return Ok(Err(GpuLineError::Caller(refusal)));
+            }
             match ask.stand_in_txn(vault, txn)? {
                 Err(refused) => return Ok(Err(GpuLineError::Intent(refused))),
                 Ok(IntentStand::Replayed(_)) => {
-                    let Some(line) = line_in_txn(vault, txn, &request.project)? else {
-                        return Ok(Err(GpuLineError::NoLine));
-                    };
-                    return view_in_txn(vault, txn, line, now_ms, true);
+                    return view_in_txn(vault, txn, stored, now_ms, true);
                 }
                 Ok(IntentStand::New) => {}
             }
@@ -378,14 +406,6 @@ impl Memory<'_> {
                 Err(refusal) => return Ok(Err(GpuLineError::Mint(refusal))),
             };
             let mut line = minted.line.clone();
-            let roles: &[LineRole] = match request.track {
-                Track::NewIdea => &[LineRole::Lead, LineRole::Planner],
-                Track::Demand | Track::Interest => &[LineRole::Lead],
-            };
-            if let Err(refusal) = caller.require_role(&line, roles, VAULT_GPU_LINES_FAMILIES_ADMIT)
-            {
-                return Ok(Err(GpuLineError::Caller(refusal)));
-            }
             // The seat's logical key is its family: the same ask answers
             // with the seat already made, under any intent key.
             if let Some(seat) = line.seat(&request.family) {
@@ -404,8 +424,14 @@ impl Memory<'_> {
             if seated_elsewhere_in_txn(vault, txn, &request.project, &request.family)? {
                 return Ok(Err(GpuLineError::SeatTaken));
             }
+            // A lead's cap is the policy in force: the minted period's, or
+            // the line's before period 0. An edit applies from the next mint.
+            let in_force = minted
+                .period
+                .as_ref()
+                .map_or(&line.budget, |period| &period.policy);
             if caller.owner().is_none()
-                && let Some(cap) = lead_seat_cap(&line, request.track)
+                && let Some(cap) = lead_seat_cap(in_force, request.track)
                 && live_seats(&line, request.track) >= cap as usize
             {
                 return Ok(Err(GpuLineError::Caller(refused_owner_act(
@@ -434,7 +460,8 @@ impl Memory<'_> {
                 admitted_by: Some(caller.owner().unwrap_or_else(|| self.actor())),
                 admitted_at_ms: now_ms,
             });
-            match line.validate() {
+            // The new seat is listed from the next mint: it must fund it.
+            match line.validate(effective_from_period) {
                 Ok(()) => {}
                 Err(LineInvalid::Unfunded { side }) => {
                     return Ok(Err(GpuLineError::SeatFloorUnfunded { side }));

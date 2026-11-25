@@ -28,8 +28,12 @@ a 16 GiB source install were not demonstrated.
   selects/downloads it when Cargo runs in the checkout.
 
 On macOS, pass `--binary` with a build from this checkout signed with a keychain
-access group. A plain `cargo install` binary cannot mint the agent credential:
-macOS uses the data-protection keychain, with no file fallback.
+access group. With the default `backend = "platform"`, a plain `cargo install`
+binary cannot mint the agent credential: macOS uses the data-protection
+keychain, with no automatic file fallback. Such a build can opt into
+`[keystore] backend = "file"` in its own config, which keeps the key slots as
+0600 files in `dir`, guarded by file modes only (see the `[keystore]` section of
+`crates/oneiron-server/README.md`). The demo does not choose that for you.
 
 On Debian/Ubuntu, the source-build dependencies include `build-essential`,
 `clang`, `cmake`, `pkg-config`, `git`, `curl`, and `python3`. The example never

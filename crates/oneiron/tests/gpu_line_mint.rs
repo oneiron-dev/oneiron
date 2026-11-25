@@ -16,7 +16,8 @@
 //!   the anchor is refused.
 //! - The bounds of section 3.1, and a policy the seats cannot fund, are
 //!   refused before a line is stored.
-//! - A new idea is funded in its first period and the next, then lapses.
+//! - A new idea is funded in its first period and the next, then lapses;
+//!   the bounds count only the seats the next mint funds.
 //! - The record carries the policy it was minted under and the allocation the
 //!   installer installs; its economic digest leaves out the mint time.
 use std::collections::BTreeMap;
@@ -375,16 +376,16 @@ fn a_period_is_fourteen_days_of_milliseconds() {
 #[test]
 fn a_line_keeps_its_bounds() {
     let base = line(five_families(), PinnedMode::FloorPlusMarket);
-    base.validate().expect("the lane's line is valid");
+    base.validate(0).expect("the lane's line is valid");
     let refused = |change: &dyn Fn(&mut GpuLine), expected: LineInvalid| {
         let mut lane = base.clone();
         change(&mut lane);
-        assert_eq!(lane.validate(), Err(expected.clone()), "{expected}");
+        assert_eq!(lane.validate(0), Err(expected.clone()), "{expected}");
     };
     let accepted = |change: &dyn Fn(&mut GpuLine)| {
         let mut lane = base.clone();
         change(&mut lane);
-        lane.validate().expect("inside the bounds");
+        lane.validate(0).expect("inside the bounds");
     };
     refused(&|lane| lane.period_secs = 3_599, LineInvalid::Period);
     accepted(&|lane| lane.period_secs = 3_600);
@@ -545,11 +546,11 @@ fn the_engines_own_defaults_fund_no_pinned_share_no_floor_and_no_slot() {
         PinnedMode::FloorPlusMarket,
     );
     lane.budget = neutral;
-    assert_eq!(lane.validate(), Err(LineInvalid::Allowance));
+    assert_eq!(lane.validate(0), Err(LineInvalid::Allowance));
     lane.budget.allowance_units = 100_000;
-    assert_eq!(lane.validate(), Err(LineInvalid::RungCaps));
+    assert_eq!(lane.validate(0), Err(LineInvalid::RungCaps));
     lane.budget.rung_caps_secs = vec![3_600];
-    lane.validate()
+    lane.validate(0)
         .expect("the period, allowance and caps are all a line must state");
     let record = mint_period(&lane, 0, &BTreeMap::new(), ANCHOR_MS).expect("mint");
     assert_eq!((record.pinned_units, record.pinned_pool), (0, 0));
@@ -576,7 +577,7 @@ fn every_floor_fits_its_own_side_of_the_allowance() {
     lane.budget.pinned_parts = (25, 960);
     assert_eq!(lane.budget.pinned_units(), 9_000);
     assert_eq!(
-        lane.validate(),
+        lane.validate(0),
         Err(LineInvalid::Unfunded { side: Side::Pinned })
     );
     assert_eq!(
@@ -590,11 +591,31 @@ fn every_floor_fits_its_own_side_of_the_allowance() {
     lane.budget.rung_caps_secs = vec![1_800, 10_800, 60_000];
     lane.budget.new_idea_slots_per_period = 8;
     assert_eq!(
-        lane.validate(),
+        lane.validate(0),
         Err(LineInvalid::Unfunded {
             side: Side::Unpinned
         })
     );
+}
+
+/// Review round 1 of #10398: the bounds a policy keeps count the seats of the
+/// first mint it applies to. A new idea seated for period 0 is funded in
+/// periods 0 and 1, so in period 1 a policy with no new-idea slots is valid
+/// from period 2 on, which lists the seat no more.
+#[test]
+fn the_slot_bound_counts_only_the_seats_the_next_mint_funds() {
+    let mut lane = line(vec![seat(30, Track::NewIdea)], PinnedMode::FloorPlusMarket);
+    lane.budget.new_idea_slots_per_period = 1;
+    lane.validate(1).expect("one slot holds the one new idea");
+    assert_eq!((lane.new_idea_seats(1), lane.new_idea_seats(2)), (1, 0));
+    lane.budget.new_idea_slots_per_period = 0;
+    assert_eq!(
+        lane.validate(1),
+        Err(LineInvalid::NewIdeaSlots),
+        "period 1 still lists the seat"
+    );
+    lane.validate(2)
+        .expect("the seat lapses before period 2's mint");
 }
 
 /// LE-6: a new idea is funded in the period it was seated and the next one;
