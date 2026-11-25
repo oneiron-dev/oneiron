@@ -5,7 +5,11 @@
 //! the placed machine takes it at once, and the home takes it after
 //! `policy.slots.place_grace_ms` when the placed machine does not. With no
 //! machine tagged, nothing is placed and the run runs where it was
-//! dispatched.
+//! dispatched. Review round 1 of #10505: a run a claim already took is never
+//! placed; a pick of the dispatching machine orders no taker; a placed
+//! machine that takes no new work at its turn leaves the run; every other
+//! machine waits past the home's turn; the grace runs from the placement's
+//! write, after the decider's ask.
 //!
 //! Three machines of one vault, each with its own live window manager, as
 //! `handover_budget_custody.rs` runs two: A dispatches, B is tagged with
@@ -18,7 +22,7 @@
 #![cfg(all(feature = "sync", oneiron_test_support))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -543,7 +547,7 @@ fn a_placed_run_the_machine_does_not_take_goes_to_the_home_after_the_grace() {
     );
     assert!(
         !a_claims(&r.a, x, T0 + HANDOVER_GRACE_SECS - 1),
-        "the dispatching machine, neither placed nor home, waits the handover grace"
+        "the dispatching machine, neither placed nor home, waits past the home's turn"
     );
     assert_eq!(
         reap(&r.h, T0 + PLACE_GRACE_SECS, true),
@@ -695,5 +699,173 @@ fn a_named_place_decider_picks_among_the_rule_s_candidates_and_the_pick_is_kept(
         matches!(&decision.by, DecidedBy::Grant { grant: by, .. } if *by == grant),
         "the decision names the decider: {:?}",
         decision.by
+    );
+}
+
+/// The owner of `vault` sets how long the home leaves a placed run,
+/// `policy.slots.place_grace_ms` for the PLACE slot, to `grace_ms`.
+fn set_place_grace(vault: &Vault, grace_ms: u64) {
+    let change = SetSetting {
+        item: Some("place".to_owned()),
+        ..SetSetting::vault_value("policy.slots.place_grace_ms", json!(grace_ms))
+    };
+    let outcome = vault
+        .set_setting(SettingCaller::Owner(&owner_proof(vault)), change)
+        .expect("FIXTURE: the owner's place grace");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "FIXTURE: the place grace applies: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_run_claimed_before_any_machine_is_tagged_is_not_placed_at_a_later_claim() {
+    let r = rack();
+    let x = dispatch_on(&r.a);
+    assert!(
+        a_claims(&r.a, x, T0),
+        "with no machine tagged, the run runs where it was dispatched"
+    );
+    tag_b_and_h(&r);
+    assert!(
+        !a_claims(&r.a, x, T0 + 1),
+        "the try is leased here: no second claim takes it"
+    );
+    assert_eq!(
+        placement(&r.a.vault, x).unwrap(),
+        None,
+        "a run a claim already took is never placed, so it is not moved mid-run"
+    );
+}
+
+#[test]
+fn a_run_placed_on_its_own_machine_hands_over_in_the_reaper_s_order() {
+    let r = rack();
+    set_machine_policy(
+        &r.a.vault,
+        machine_id(&r.a),
+        "machines.work_roles",
+        json!([AGENTS_ROLE]),
+    );
+    record_capacity_of(&r.a.vault, machine_id(&r.a), &capacity(8))
+        .expect("FIXTURE: A's capacity record");
+    let x = dispatch_on(&r.a);
+    assert!(
+        a_claims(&r.a, x, T0),
+        "the rule picks A, the dispatching machine, which runs it"
+    );
+    let (placed, _) = placement(&r.a.vault, x).unwrap().expect("the pick is kept");
+    assert_eq!(placed, machine_id(&r.a));
+
+    // A closes: nothing was released to another machine, so the home takes
+    // the run at expiry, by the reaper's own order.
+    assert_eq!(r.a.vault.release_agent_run_leases().unwrap(), 1);
+    reload_window(&r.a);
+    exchange(&r.a.doc(), &r.h.doc());
+    assert_eq!(
+        reap(&r.h, T0 + 2, true),
+        (1, 0),
+        "a pick of the dispatching machine orders no taker"
+    );
+}
+
+#[test]
+fn a_placed_machine_the_owner_pauses_before_its_take_leaves_the_run_to_the_home() {
+    let r = rack();
+    tag_b_and_h(&r);
+    let x = dispatch_on(&r.a);
+    assert!(!a_claims(&r.a, x, T0));
+    let (placed, _) = placement(&r.a.vault, x).unwrap().expect("placed");
+    assert_eq!(placed, machine_id(&r.b), "the rule places the run on B");
+    set_machine_policy(
+        &r.a.vault,
+        machine_id(&r.b),
+        "machines.execution",
+        json!({ "state": "paused" }),
+    );
+    sync_authority(&r.a.vault, &r.b.vault);
+    sync_from_a(&r);
+
+    assert_eq!(
+        reap(&r.b, T0 + 1, true),
+        (0, 1),
+        "B, paused after the placement, takes no new work and leaves the run"
+    );
+    assert_eq!(
+        reap(&r.h, T0 + PLACE_GRACE_SECS, true),
+        (1, 0),
+        "the home takes it after the grace"
+    );
+}
+
+#[test]
+fn other_machines_take_a_placed_run_only_after_the_home_s_turn() {
+    const GRACE_SECS: u64 = 600;
+    let r = rack();
+    tag_b_and_h(&r);
+    set_place_grace(&r.a.vault, GRACE_SECS * 1_000);
+    sync_authority(&r.a.vault, &r.h.vault);
+    let x = dispatch_on(&r.a);
+    assert!(!a_claims(&r.a, x, T0), "A places the run on B");
+    sync_from_a(&r);
+
+    assert!(
+        !a_claims(&r.a, x, T0 + HANDOVER_GRACE_SECS),
+        "the dispatching machine does not take it back before the home's longer grace"
+    );
+    assert_eq!(
+        reap(&r.h, T0 + GRACE_SECS - 1, true),
+        (0, 1),
+        "the home waits its grace"
+    );
+    assert_eq!(
+        reap(&r.h, T0 + GRACE_SECS, true),
+        (1, 0),
+        "the home takes it at the end of its grace, before any other machine"
+    );
+}
+
+#[test]
+fn the_time_a_decider_takes_is_not_taken_from_the_home_s_grace() {
+    const DECIDER_SECS: u64 = 50;
+    let r = rack();
+    tag_b_and_h(&r);
+    name_place_decider(&r.a.vault);
+    let x = dispatch_on(&r.a);
+    let b = machine_id(&r.b).to_hex();
+    let asked = Cell::new(false);
+    let decide = |_: &SlotAsk| {
+        asked.set(true);
+        r.a.clock.set(T0 + DECIDER_SECS);
+        DeciderReply::Answered {
+            label: b.clone(),
+            receipt: DeciderReceipt::of_read(
+                "0".repeat(32),
+                vec!["big:fixture-model@1".to_owned()],
+                Some("big".to_owned()),
+                Some(0.9),
+                Some(0.002),
+            ),
+        }
+    };
+    r.a.clock.set(T0);
+    let claimed = AgentDispatcher::new(&r.a.vault)
+        .claim_agent_run_placed(x, "native-run-placement-pump", T0, &decide)
+        .expect("A's claim");
+    assert!(claimed.is_none(), "A leaves the run for B");
+    assert!(asked.get(), "FIXTURE: the decider was asked");
+    let (placed, _) = placement(&r.a.vault, x).unwrap().expect("placed");
+    assert_eq!(placed, machine_id(&r.b));
+    sync_from_a(&r);
+
+    assert_eq!(
+        reap(&r.h, T0 + PLACE_GRACE_SECS, true),
+        (0, 1),
+        "the grace runs from the placement's write, after the ask"
+    );
+    assert_eq!(
+        reap(&r.h, T0 + DECIDER_SECS + PLACE_GRACE_SECS, true),
+        (1, 0),
+        "the home takes it a full grace after the placement"
     );
 }

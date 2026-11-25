@@ -31,17 +31,24 @@
 //! rule's first [`PLACE_OPTIONS_MAX`] (`super::agent_run`); a run never
 //! waits, as the home is always its fallback.
 //!
-//! The pick is kept on the run TASK ([`RunPlacement`]). A pick of another
-//! machine releases the lease in the same write, and the takers of that
-//! lease go in order ([`placed_take_due`]): the placed machine at once, the
-//! home after `policy.slots.place_grace_ms`, every other machine after the
-//! handover grace. The taking machine's own check (`agent_run_runs_here`:
-//! the agent is dispatchable, a model route exists there, the host runs
-//! agent runs, the world is readable there) is the one that counts: a run
-//! the placed machine does not take, the home takes after the grace (item
-//! 03). Only the lease the placement released is ordered: the first take
-//! ends it, and a later handover follows the reaper's order as before. The
-//! reaper (`super::run_handover`) asks this module for both orders
+//! Only a run's first claim places it: a try no claim has taken yet, so a
+//! run that already ran a step (a resumed or retaken try) is never moved.
+//! The pick is kept on the run TASK ([`RunPlacement`]), with its time read
+//! after the ask, so the time a decider takes is not taken from the
+//! takers' graces. A pick of another machine releases the lease in the
+//! same write, and the takers of that lease go in order
+//! ([`placed_take_due`]): the placed machine at once, the home after
+//! `policy.slots.place_grace_ms`, every other machine the handover grace
+//! after the home's turn. The taking machine's own check
+//! (`agent_run_runs_here`: the agent is dispatchable, a model route exists
+//! there, the host runs agent runs, the world is readable there) is the one
+//! that counts, and the placed machine takes only while it takes new work
+//! ([`takes_new_work_in`]): a run the placed machine does not take, the
+//! home takes after the grace (item 03). Only the lease the placement
+//! released is ordered: a pick of the dispatching machine itself releases
+//! nothing and orders no one, the first take ends the order, and a later
+//! handover follows the reaper's order as before. The reaper
+//! (`super::run_handover`) asks this module for both orders
 //! ([`take_due_in`]).
 
 use std::cmp::Reverse;
@@ -57,13 +64,13 @@ use super::run_task::{
     update_agent_run_task_body_in_txn,
 };
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::authority::{Destination, home_candidacies_by_machine_in_txn};
 use crate::dreamer_runner::{DreamerHomeNodeClass, DreamerRunnerStore};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::machine_capacity::{MachineCapacity, MachinePower, machine_capacity_in_txn};
-use crate::machine_policy::{ExecutionState, machine_policy_in_txn};
+use crate::machine_policy::{ExecutionState, MachinePolicy, machine_policy_in_txn};
 use crate::work_order::decider::setting_keys::place_grace_secs_in_txn;
 use crate::work_order::decider::{PassAsks, SlotQuestion, SlotScope, SlotSubject, rule_fact};
 use crate::work_order::record::{DecidedBy, SlotDecision, SlotName};
@@ -86,7 +93,12 @@ pub(crate) struct RunPlacement {
     /// The generation of the lease the placement ordered: only that lease's
     /// takers go in the placement's order, and its first take ends it.
     pub(crate) lease_generation: u64,
-    /// When it was placed, in the lease's unit (unix seconds).
+    /// Whether the placement released that lease to another machine. A
+    /// pick of the dispatching machine itself releases nothing and orders
+    /// no taker: its later handover follows the reaper's order.
+    pub(crate) released: bool,
+    /// When it was placed, in the lease's unit (unix seconds): after the
+    /// PLACE ask, the time the release stamps on the lease.
     pub(crate) at: u64,
     /// The PLACE slot's decision: the options, the pick, who made it, why.
     pub(crate) decision: SlotDecision,
@@ -94,9 +106,9 @@ pub(crate) struct RunPlacement {
 
 impl RunPlacement {
     /// Whether this placement orders the takers of `lease`: the lease it
-    /// was made for, not yet taken by any machine.
+    /// released to another machine, not yet taken by any machine.
     pub(super) const fn orders(&self, lease: AgentRunExecutorLease) -> bool {
-        self.lease_generation == lease.generation
+        self.released && self.lease_generation == lease.generation
     }
 }
 
@@ -111,19 +123,22 @@ pub(super) enum PlacedTaker {
     Other,
 }
 
-/// When `taker` may take a placed run whose lease expired at
+/// When `taker` may take a placed run whose lease the placement released at
 /// `lease.held_until` (row P4): the placed machine at once, the home after
-/// `place_grace_secs`, any other machine after `handover_grace_secs`.
+/// `place_grace_secs`, any other machine `handover_grace_secs` after the
+/// home's turn, as the reaper's own order puts the home first, whatever
+/// grace the owner sets.
 pub(super) const fn placed_take_due(
     lease: AgentRunExecutorLease,
     taker: PlacedTaker,
     place_grace_secs: u64,
     handover_grace_secs: u64,
 ) -> u64 {
+    let home_due = lease.held_until.saturating_add(place_grace_secs);
     match taker {
         PlacedTaker::Placed => lease.held_until,
-        PlacedTaker::Home => lease.held_until.saturating_add(place_grace_secs),
-        PlacedTaker::Other => lease.held_until.saturating_add(handover_grace_secs),
+        PlacedTaker::Home => home_due,
+        PlacedTaker::Other => home_due.saturating_add(handover_grace_secs),
     }
 }
 
@@ -340,6 +355,9 @@ fn placing_in(
     let Some(row) = AttemptQueue::new(vault).get_in_txn(txn, id)? else {
         return Ok(None);
     };
+    if !unclaimed_try(&row) {
+        return Ok(None);
+    }
     let Some(link) = agent_run_task_ref_in(vault, txn, &row)? else {
         return Ok(None);
     };
@@ -404,22 +422,7 @@ fn placing_in(
     for (machine, _, home, policy) in machines {
         let capacity = machine_capacity_in_txn(vault, txn, machine)?;
         let open_runs = open.get(&machine).copied().unwrap_or(0);
-        let mut blockers = Vec::new();
-        match policy.execution.state {
-            ExecutionState::On => {}
-            ExecutionState::Paused => blockers.push(Blocker::Paused {
-                why: "machines.execution".to_owned(),
-            }),
-            ExecutionState::Draining => blockers.push(Blocker::Drained {
-                why: "machines.execution".to_owned(),
-            }),
-        }
-        let on_battery = capacity
-            .as_ref()
-            .is_some_and(|capacity| capacity.power == MachinePower::Battery);
-        if !policy.windows.covers(now_ms) || (policy.windows.mains_only && on_battery) {
-            blockers.push(Blocker::OutsideWindow { opens_ms: None });
-        }
+        let mut blockers = new_work_blockers(&policy, capacity.as_ref(), now_ms);
         if let Some(world) = world
             && !world_readable_on(vault, txn, world, machine)
         {
@@ -455,6 +458,58 @@ fn placing_in(
     }))
 }
 
+/// Whether the queue row `row` is a try no claim has taken yet: queued or
+/// scheduled, at its first attempt (a claim advances `attempt_count`). Only
+/// such a try is placed, so a run that already ran a step, whose resumed
+/// try is queued again as the same try, is never moved.
+fn unclaimed_try(row: &AttemptRecord) -> bool {
+    matches!(row.state, AttemptState::Queued | AttemptState::Scheduled) && row.attempt_count == 0
+}
+
+/// What keeps a machine from new work at `now_ms` (unix milliseconds) under
+/// its `policy` and its last `capacity` record: paused or draining
+/// (`machines.execution`), outside its window, or on battery in a
+/// mains-only window (`machines.windows`).
+fn new_work_blockers(
+    policy: &MachinePolicy,
+    capacity: Option<&MachineCapacity>,
+    now_ms: u64,
+) -> Vec<Blocker> {
+    let mut blockers = Vec::new();
+    match policy.execution.state {
+        ExecutionState::On => {}
+        ExecutionState::Paused => blockers.push(Blocker::Paused {
+            why: "machines.execution".to_owned(),
+        }),
+        ExecutionState::Draining => blockers.push(Blocker::Drained {
+            why: "machines.execution".to_owned(),
+        }),
+    }
+    let on_battery = capacity.is_some_and(|capacity| capacity.power == MachinePower::Battery);
+    if !policy.windows.covers(now_ms) || (policy.windows.mains_only && on_battery) {
+        blockers.push(Blocker::OutsideWindow { opens_ms: None });
+    }
+    blockers
+}
+
+/// Whether `machine` takes new work at `now` (unix seconds), read in `txn`
+/// as the placement's limits read a candidate ([`new_work_blockers`]): the
+/// placed machine's own check when its turn comes, since the owner may have
+/// paused it, or its window closed, after the placement.
+///
+/// # Errors
+/// Storage errors.
+pub(super) fn takes_new_work_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    machine: EntityId,
+    now: u64,
+) -> Result<bool> {
+    let policy = machine_policy_in_txn(vault, txn, machine, &[], &[])?;
+    let capacity = machine_capacity_in_txn(vault, txn, machine)?;
+    Ok(new_work_blockers(&policy, capacity.as_ref(), now.saturating_mul(1_000)).is_empty())
+}
+
 /// Whether `world` may be read on `machine` under its world privacy, as the
 /// reaper judges it for itself (`run_handover::world_readable_here_in`); a
 /// fold that cannot judge reads as no.
@@ -472,11 +527,12 @@ impl AgentDispatcher<'_> {
     /// Places the run of the try `id` at its first claim here (row P4): the
     /// rule's pick among the fitting candidates, or the PLACE decider's
     /// among the rule's first [`PLACE_OPTIONS_MAX`], asked through `asks`
-    /// outside every transaction. One write keeps the placement on the run
-    /// TASK and, for another machine, releases the lease, while the TASK
-    /// still holds the lease the read saw. Nothing is placed for a child, a
-    /// retry, a run already placed or taken, or a vault with no machine
-    /// tagged [`AGENTS_ROLE`].
+    /// outside every transaction. One write, stamped after the ask, keeps
+    /// the placement on the run TASK and, for another machine, releases the
+    /// lease, while the TASK still holds the lease the read saw and no claim
+    /// has taken the try. Nothing is placed for a child, a retry, a try a
+    /// claim already took (a resumed one included), a run already placed or
+    /// taken, or a vault with no machine tagged [`AGENTS_ROLE`].
     ///
     /// # Errors
     /// Storage errors.
@@ -532,27 +588,48 @@ impl AgentDispatcher<'_> {
             return Ok(());
         };
         let elsewhere = placing.here != Some(machine);
-        self.vault.with_write_txn_grouped(|wtxn| {
-            update_agent_run_task_body_in_txn(self.vault, wtxn, placing.task_ref, now, |body| {
-                if body.placement.is_some()
-                    || body.outcome.is_some()
-                    || body.executor != placing.lease
-                {
-                    return Ok(());
-                }
-                if elsewhere {
-                    body.executor.held_until = now;
-                }
-                body.placement = Some(RunPlacement {
-                    machine,
-                    lease_generation: body.executor.generation,
-                    at: now,
-                    decision,
-                });
-                Ok(())
-            })
+        // The clock is read after the ask: the release and the record carry
+        // the time of this write, so the time the decider took is not taken
+        // from the takers' graces.
+        let placed_at = self.vault.now_recorded_at().max(now);
+        let released = self.vault.with_write_txn_grouped(|wtxn| {
+            // A claim that took the try since the read keeps the run.
+            let unclaimed = AttemptQueue::new(self.vault)
+                .get_in_txn(&*wtxn, id)?
+                .is_some_and(|row| unclaimed_try(&row));
+            if !unclaimed {
+                return Ok(false);
+            }
+            let mut released = false;
+            update_agent_run_task_body_in_txn(
+                self.vault,
+                wtxn,
+                placing.task_ref,
+                placed_at,
+                |body| {
+                    if body.placement.is_some()
+                        || body.outcome.is_some()
+                        || body.executor != placing.lease
+                    {
+                        return Ok(());
+                    }
+                    if elsewhere {
+                        body.executor.held_until = placed_at;
+                    }
+                    body.placement = Some(RunPlacement {
+                        machine,
+                        lease_generation: body.executor.generation,
+                        released: elsewhere,
+                        at: placed_at,
+                        decision,
+                    });
+                    released = elsewhere;
+                    Ok(())
+                },
+            )?;
+            Ok(released)
         })?;
-        if elsewhere {
+        if released {
             tracing::info!(
                 task = %placing.task_ref.to_hex(),
                 machine = %machine.to_hex(),

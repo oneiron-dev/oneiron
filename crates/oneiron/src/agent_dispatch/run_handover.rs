@@ -64,7 +64,7 @@
 
 use std::collections::BTreeMap;
 
-use super::run_placement::{elected_home_here_in, take_due_in};
+use super::run_placement::{elected_home_here_in, take_due_in, takes_new_work_in};
 use super::run_task::{
     AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
     agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
@@ -112,6 +112,9 @@ const DEDUPE_KEY_HELD_HERE: &str = "dedupe_key_held_here";
 const NOT_THE_AGENT_PUMPS: &str = "not_the_agent_pumps";
 /// This machine cannot fund the run as its launch was stated.
 const LAUNCH_UNFUNDED_HERE: &str = "launch_unfunded_here";
+/// The run was placed on this machine, which takes no new work now (row
+/// P4): paused, draining, or outside its window.
+const PLACED_MACHINE_TAKES_NO_NEW_WORK: &str = "placed_machine_takes_no_new_work";
 
 /// What one reaper pass came to (FIX 4747 slice 6).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -359,7 +362,9 @@ impl Vault {
                     }
                     let mut done = false;
                     update_agent_run_task_body_in_txn(self, wtxn, task_ref, now, |body| {
-                        if body.outcome.is_none() && body.executor.same_holding(lease) {
+                        // The whole lease the read saw, its hold included: a
+                        // placement that released it since (row P4) stands.
+                        if body.outcome.is_none() && body.executor == lease {
                             body.executor.held_until = held_until;
                             done = true;
                         }
@@ -607,6 +612,15 @@ fn take_expired_agent_run_in_txn(
     };
     if body.outcome.is_some() || body.executor != run.lease {
         return Ok(AgentRunTake::Moved);
+    }
+    // The machine a run was placed on takes it only while it takes new work
+    // (row P4): paused, draining or outside its window since the placement,
+    // it leaves the run, and the home takes it after the grace.
+    if let Some(placement) = body.placement.as_ref().filter(|p| p.orders(body.executor))
+        && crate::identity::read_machine_id_in_txn(vault, &*wtxn)? == Some(placement.machine)
+        && !takes_new_work_in(vault, &*wtxn, placement.machine, now)?
+    {
+        return Ok(AgentRunTake::Waits(PLACED_MACHINE_TAKES_NO_NEW_WORK));
     }
     let (Some(live), Some(original)) = (
         attempt_id_from_hex(&body.live_attempt_ref),
