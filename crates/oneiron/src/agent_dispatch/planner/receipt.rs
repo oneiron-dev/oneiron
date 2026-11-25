@@ -11,6 +11,14 @@ pub struct SpawnPlanReceipt {
     /// values were selected. Call-only fields name no owner row.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub owner_choices: Vec<crate::learning_setting_choice::SpawnChoiceSource>,
+    /// The four knobs as the spawn's own call set them, before the owner
+    /// rows in `owner_choices` filled or replaced any. `asked` holds what
+    /// the planner read.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::team::spawn_need::SpawnCallKnobs::is_unset"
+    )]
+    pub call_knobs: crate::team::spawn_need::SpawnCallKnobs,
     pub plan: TeamPlan,
     /// The runner-up candidates with payoff and cost, best first — the
     /// CEO's top-shapes view rides the same rows.

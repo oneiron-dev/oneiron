@@ -6,7 +6,9 @@
 //! owner's share setting stays.
 use std::sync::Arc;
 
-use crate::llm::run_admission::{AllocationRef, ResidentLedger, ResidentShare, ResidentStanding};
+use crate::llm::run_admission::{
+    AllocationRef, ResidentLedger, ResidentShare, ResidentShareScope, ResidentStanding,
+};
 use crate::store::resident_budget_rows::{RESIDENTS, ResidentAllocationUsage, ResidentRow};
 use crate::{EntityId, Result, Vault};
 
@@ -23,12 +25,23 @@ impl ResidentRow {
     }
 }
 
+/// Under [`ResidentShareScope::DefaultSplit`] no owner's setting counts:
+/// every resident on record for the allocation splits all of it, softly.
 fn standing_from_rows(
     rows: &[(EntityId, ResidentRow)],
     resident: EntityId,
     allocation: &AllocationRef,
     allocation_units: u64,
+    scope: ResidentShareScope,
 ) -> ResidentStanding {
+    let owner_setting = scope == ResidentShareScope::OwnerSetting;
+    let setting = |row: &ResidentRow| {
+        if owner_setting {
+            row.share
+        } else {
+            ResidentShare::default()
+        }
+    };
     let own = rows
         .iter()
         .find(|(id, _)| *id == resident)
@@ -36,21 +49,21 @@ fn standing_from_rows(
         .unwrap_or_default();
     let set: u64 = rows
         .iter()
-        .filter_map(|(_, row)| row.share.units)
+        .filter_map(|(_, row)| setting(row).units)
         .fold(0, u64::saturating_add);
     let unset = rows
         .iter()
         .filter(|(id, row)| {
-            *id != resident && row.share.units.is_none() && row.usage_on(allocation).is_some()
+            *id != resident && setting(row).units.is_none() && row.usage_on(allocation).is_some()
         })
         .count();
-    let share_units = own.share.units.unwrap_or_else(|| {
+    let share_units = setting(&own).units.unwrap_or_else(|| {
         let residents = u64::try_from(unset).unwrap_or(u64::MAX).saturating_add(1);
         allocation_units.saturating_sub(set) / residents
     });
     ResidentStanding {
         share_units,
-        pinned: own.share.pinned,
+        pinned: setting(&own).pinned,
         used_units: own.used_on(allocation),
     }
 }
@@ -82,6 +95,7 @@ impl VaultResidentLedger {
         resident: EntityId,
         allocation: &AllocationRef,
         allocation_units: u64,
+        scope: ResidentShareScope,
     ) -> Result<ResidentStanding> {
         let rows = RESIDENTS.scan(&self.vault.store, txn)?;
         Ok(standing_from_rows(
@@ -89,6 +103,7 @@ impl VaultResidentLedger {
             resident,
             allocation,
             allocation_units,
+            scope,
         ))
     }
 
@@ -150,12 +165,15 @@ impl ResidentLedger for VaultResidentLedger {
     /// A resident's own share is the owner's; every resident with none
     /// splits what the owner's shares leave of the allocation equally with
     /// the others on record for it (CALLS: the default share), this one
-    /// counted too.
+    /// counted too. Under [`ResidentShareScope::DefaultSplit`] (an
+    /// allocation the host named a wallet for) every resident on record
+    /// splits all of it, and none is pinned.
     fn standing(
         &self,
         resident: EntityId,
         allocation: &AllocationRef,
         allocation_units: u64,
+        scope: ResidentShareScope,
     ) -> ResidentStanding {
         let rows = match self.rows() {
             Ok(rows) => rows,
@@ -164,7 +182,7 @@ impl ResidentLedger for VaultResidentLedger {
                 Vec::new()
             }
         };
-        standing_from_rows(&rows, resident, allocation, allocation_units)
+        standing_from_rows(&rows, resident, allocation, allocation_units, scope)
     }
 
     fn charge(

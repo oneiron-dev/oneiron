@@ -139,7 +139,7 @@ impl OfferHistory {
         }
         named |= self.minted_by.forget(actor);
         if let Some(answer) = &mut self.answer {
-            named |= answer.by.forget(actor);
+            named |= answer.forget(actor);
         }
         named |= self.votes.remove(&actor).is_some();
         named
