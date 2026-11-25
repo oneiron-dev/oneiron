@@ -159,6 +159,10 @@ pub(crate) struct McpGatewayError {
     /// `error.data.bound` and `error.data.self_hosted` as the managed HTTP
     /// body carries them. Boxed for size, as `effective_scope` is.
     pub(super) reap_pause: Option<Box<crate::managed::ReapPauseBound>>,
+    /// The grant a call needed and the credential does not hold (`core:write`,
+    /// `core:propose`), surfaced as `error.data.required_scope` as the HTTP
+    /// door's `forbidden_scope` names it.
+    pub(super) required_scope: Option<&'static str>,
 }
 
 impl McpGatewayError {
@@ -185,6 +189,7 @@ impl McpGatewayError {
             room_join_hold: None,
             pending: None,
             reap_pause: None,
+            required_scope: None,
         }
     }
 
@@ -212,6 +217,11 @@ impl McpGatewayError {
 
     pub(super) fn with_hook_notice(mut self, notice: Option<String>) -> Self {
         self.hook_notice = notice.or(self.hook_notice);
+        self
+    }
+
+    pub(super) fn with_required_scope(mut self, required_scope: &'static str) -> Self {
+        self.required_scope = Some(required_scope);
         self
     }
 

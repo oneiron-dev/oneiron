@@ -140,6 +140,13 @@ pub enum Blocker {
     AttemptUnconfirmed {
         key: String,
     },
+    /// The PLACE slot's decider (row P1), the Grant `decider` in lower hex, chose to wait for
+    /// a better machine; the loop places the order again, and asks again, from `until_ms`
+    /// (`policy.slots.wait_reask_ms` after the pick).
+    DeciderWait {
+        decider: String,
+        until_ms: u64,
+    },
 
     // Faults of one key on the node: the issuer's own record disagrees with the node's, or a
     // read of the key's output or log was refused. An operator reads them; they say nothing
@@ -232,6 +239,7 @@ impl Blocker {
             Self::CapFull { .. } => "cap_full",
             Self::RetryNotBefore { .. } => "retry_not_before",
             Self::AttemptUnconfirmed { .. } => "attempt_unconfirmed",
+            Self::DeciderWait { .. } => "decider_wait",
             Self::NotReleasable => "not_releasable",
             Self::KeyConflict => "key_conflict",
             Self::NotTheKeysIssuer => "not_the_keys_issuer",
@@ -291,7 +299,8 @@ impl Blocker {
             Self::After { .. }
             | Self::CapFull { .. }
             | Self::RetryNotBefore { .. }
-            | Self::AttemptUnconfirmed { .. } => Clearing::Condition,
+            | Self::AttemptUnconfirmed { .. }
+            | Self::DeciderWait { .. } => Clearing::Condition,
             Self::NotReleasable
             | Self::KeyConflict
             | Self::NotTheKeysIssuer
@@ -317,7 +326,7 @@ impl Blocker {
             | Self::MemoryBusy { free_at_ms }
             | Self::ThreadsBusy { free_at_ms } => *free_at_ms,
             Self::OutsideWindow { opens_ms } => *opens_ms,
-            Self::RetryNotBefore { ms } => Some(*ms),
+            Self::RetryNotBefore { ms } | Self::DeciderWait { until_ms: ms, .. } => Some(*ms),
             _ => None,
         }
     }
