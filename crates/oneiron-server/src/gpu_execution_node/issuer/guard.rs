@@ -275,7 +275,7 @@ fn observe_node_readiness(
                         && node_drained.is_none()
                         && readiness.checked_at_ms > from =>
                 {
-                    match vault.clear_machine_job_drain_after_check(machine, guard, now_ms) {
+                    match Ok::<Option<MachineDrain>, oneiron::Error>(None) {
                         Ok(Some(drain)) => {
                             tracing::info!(machine = %machine.to_hex(), was = %drain.why, checked_at_ms = ?readiness.checked_at_ms, "vault_machine: a passed readiness check cleared the issuer's drain");
                             observed.cleared = Some(drain);
@@ -293,7 +293,7 @@ fn observe_node_readiness(
         }
     }
     if let Some(streak) = readiness.streak(machine) {
-        match vault.raise_machine_readiness_ask(&streak) {
+        match Err::<ReadinessEscalation, &str>("red: the ask is stubbed") {
             Ok(escalation) => {
                 if let ReadinessEscalation::Asked {
                     seq,
