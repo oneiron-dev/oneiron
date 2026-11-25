@@ -641,6 +641,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.spawn" => Ok(SelfEffect::ReaderSpawn),
         "tasks.update" => Ok(SelfEffect::ReaderReport),
         "tasks.wait_set" => Ok(SelfEffect::TasksWaitSet),
+        "vault.jobs.orders.wait" => Ok(SelfEffect::JobsOrdersWait),
         "summarize" => Ok(SelfEffect::Summarize),
         "self.leader" => Ok(SelfEffect::Leader),
         "self.leader.split" => Ok(SelfEffect::LeaderSplit),
