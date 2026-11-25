@@ -5,6 +5,11 @@
 //! it to the node ([`ExecutionNode::attach_keys`]), and steps it on its
 //! tick ([`NodeJobs::tick`]).
 //!
+//! Beside the tick, a thread of its own runs the disk check
+//! ([`NodeJobs::check_payload_disk`]) every `disk_check_secs` of the node's
+//! file (design 7.9: the listener's tick is 30 s, the check 5 s). It ends
+//! once this service is dropped.
+//!
 //! The parts are the server's own: the node is the admission and the
 //! authority, the server's GPU slot table leases the devices, the machine's
 //! one memory line is the floor, the systemd unit runs each job (row R3b),
@@ -20,7 +25,9 @@
 //! machine is outside that design; the control socket refuses every caller
 //! but the engine's account and root.
 
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron_organ_host::MachineFloor;
@@ -44,6 +51,9 @@ pub struct ServedNodeJobs {
     floor: Arc<dyn MachineFloor>,
     /// The service, once it opened.
     jobs: Mutex<Option<NodeJobs>>,
+    /// Held while the disk check's thread may run: dropping it, with this
+    /// service, ends the thread at once.
+    disk_check: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 impl std::fmt::Debug for ServedNodeJobs {
@@ -72,6 +82,7 @@ impl ServedNodeJobs {
             slots,
             floor,
             jobs: Mutex::new(None),
+            disk_check: Mutex::new(None),
         }
     }
 
@@ -105,6 +116,7 @@ impl ServedNodeJobs {
             .map_err(|error| format!("this install's MACHINE id does not read: {error}"))?
             .ok_or_else(|| "this install has no MACHINE id yet".to_owned())?
             .id;
+        let disk_check_every = Duration::from_secs(settings.disk_check_secs.max(1));
         let paths = NodeJobPaths {
             state_dir: settings.state_dir,
             work_dir: settings.work_dir,
@@ -129,8 +141,37 @@ impl ServedNodeJobs {
         self.node
             .attach_keys(opened.attachment())
             .map_err(|_| "the node already holds other keys".to_owned())?;
+        self.start_disk_check(&opened, disk_check_every);
         *jobs = Some(opened);
         Ok(())
+    }
+
+    /// Starts the disk check's thread on `jobs`: one pass every `every`,
+    /// until this service is dropped. A thread that did not start is
+    /// logged; the jobs still run, unchecked for disk.
+    fn start_disk_check(&self, jobs: &NodeJobs, every: Duration) {
+        let (keep, kept) = mpsc::channel::<()>();
+        let jobs = jobs.clone();
+        let started = std::thread::Builder::new()
+            .name("oneiron-node-disk-check".to_owned())
+            .spawn(move || {
+                // Only a timeout runs a pass: the sender's drop, at this
+                // service's, ends the thread.
+                while let Err(RecvTimeoutError::Timeout) = kept.recv_timeout(every) {
+                    jobs.check_payload_disk();
+                }
+            });
+        match started {
+            Ok(_) => {
+                *self
+                    .disk_check
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(keep);
+            }
+            Err(error) => {
+                tracing::error!(%error, "the execution node's disk check did not start; running jobs are not checked for disk");
+            }
+        }
     }
 
     /// One pass of the listener's tick. It blocks. A service that has not
@@ -164,5 +205,11 @@ impl Drop for ServedNodeJobs {
         if let Some(jobs) = jobs {
             jobs.close();
         }
+        // The disk check's thread ends at once, and drops its handle of the
+        // service once a pass it is in returns.
+        self.disk_check
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 }
