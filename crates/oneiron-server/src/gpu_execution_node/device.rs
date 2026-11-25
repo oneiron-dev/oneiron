@@ -72,6 +72,12 @@ pub enum GpuProbeError {
     DrainUnreadable { reason: String },
     #[error("gpu_probe.disk_unreadable: the GPU jobs' disk could not be read: {reason}")]
     DiskUnreadable { reason: String },
+    /// A lease and its launch recheck find their GPU by id, so a reading
+    /// that lists one id on two lines cannot say which line is that GPU.
+    #[error(
+        "gpu_probe.repeated_device: the GPU driver listed device {device_id} on more than one line"
+    )]
+    RepeatedDevice { device_id: String },
 }
 
 /// What the slot table asks of this machine's GPU driver, at each ask.
@@ -277,7 +283,7 @@ fn milli_units(text: &str) -> Option<u64> {
 
 /// A device id as the driver writes it: not empty, no whitespace or
 /// control characters.
-fn plain_device_id(id: &str) -> Option<String> {
+pub(super) fn plain_device_id(id: &str) -> Option<String> {
     let id = id.trim();
     (!id.is_empty() && !id.chars().any(|c| c.is_whitespace() || c.is_control()))
         .then(|| id.to_owned())
@@ -287,20 +293,25 @@ fn plain_device_id(id: &str) -> Option<String> {
 /// whole process: every probe's queries refuse while there is one.
 static UNREAPED_QUERIES: AtomicUsize = AtomicUsize::new(0);
 
-/// Runs one driver query and answers its output, within
-/// [`GPU_QUERY_TIMEOUT`]. The output is read without blocking on this
-/// thread while the query runs, so a long answer never fills the pipe. At
-/// the deadline the pipe's read end is closed, the query is killed with its
-/// process group and reaped off the caller's path; no thread waits on the
-/// pipe, whoever holds its write end.
+/// Runs one [`NVIDIA_SMI`] query: [`run_device_tool`].
 fn query(args: &[&str]) -> Result<String, GpuProbeError> {
+    run_device_tool(NVIDIA_SMI, args)
+}
+
+/// Runs one query of `program`, a device driver's command-line tool, and
+/// answers its output, within [`GPU_QUERY_TIMEOUT`]. The output is read
+/// without blocking on this thread while the query runs, so a long answer
+/// never fills the pipe. At the deadline the pipe's read end is closed, the
+/// query is killed with its process group and reaped off the caller's path;
+/// no thread waits on the pipe, whoever holds its write end.
+pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
     if UNREAPED_QUERIES.load(Ordering::Acquire) > 0 {
-        return Err(unavailable(format!(
-            "an earlier {NVIDIA_SMI} query was killed and has not ended yet"
-        )));
+        return Err(unavailable(
+            "an earlier device tool query was killed and has not ended yet".to_owned(),
+        ));
     }
-    let mut command = oneiron_spawn::command(NVIDIA_SMI);
+    let mut command = oneiron_spawn::command(program);
     command
         .args(args)
         .stdin(std::process::Stdio::null())
@@ -311,22 +322,22 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command
         .spawn()
-        .map_err(|error| unavailable(format!("{NVIDIA_SMI} did not start: {error}")))?;
+        .map_err(|error| unavailable(format!("{program} did not start: {error}")))?;
     let Some(mut stdout) = child.stdout.take() else {
         abandon(child);
-        return Err(unavailable(format!("{NVIDIA_SMI} gave no output pipe")));
+        return Err(unavailable(format!("{program} gave no output pipe")));
     };
     #[cfg(unix)]
     if let Err(error) = rustix::io::ioctl_fionbio(&stdout, true) {
         abandon(child);
         return Err(unavailable(format!(
-            "{NVIDIA_SMI}'s output pipe could not be read without blocking: {error}"
+            "{program}'s output pipe could not be read without blocking: {error}"
         )));
     }
     #[cfg(not(unix))]
     {
         abandon(child);
-        return Err(unavailable(format!("{NVIDIA_SMI} is queried on Unix only")));
+        return Err(unavailable(format!("{program} is queried on Unix only")));
     }
     let deadline = Instant::now() + GPU_QUERY_TIMEOUT;
     let mut output = Vec::new();
@@ -350,7 +361,7 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
                 Err(error) => {
                     drop(stdout);
                     abandon(child);
-                    return Err(unavailable(format!("{NVIDIA_SMI}'s output: {error}")));
+                    return Err(unavailable(format!("{program}'s output: {error}")));
                 }
             }
         }
@@ -361,7 +372,7 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
                     drop(stdout);
                     abandon(child);
                     return Err(unavailable(format!(
-                        "{NVIDIA_SMI} could not be waited on: {error}"
+                        "{program} could not be waited on: {error}"
                     )));
                 }
             }
@@ -375,7 +386,7 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
             drop(stdout);
             abandon(child);
             return Err(unavailable(format!(
-                "{NVIDIA_SMI} did not answer within {} s",
+                "{program} did not answer within {} s",
                 GPU_QUERY_TIMEOUT.as_secs()
             )));
         }
@@ -384,9 +395,9 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
         }
     };
     let text = String::from_utf8(output)
-        .map_err(|error| unavailable(format!("{NVIDIA_SMI}'s output: {error}")))?;
+        .map_err(|error| unavailable(format!("{program}'s output: {error}")))?;
     if !status.success() {
-        return Err(unavailable(format!("{NVIDIA_SMI} exited with {status}")));
+        return Err(unavailable(format!("{program} exited with {status}")));
     }
     Ok(text)
 }

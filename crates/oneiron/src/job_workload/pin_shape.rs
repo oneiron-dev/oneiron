@@ -1,5 +1,6 @@
 //! The pin door's shape check (pass 33, door 2's refusals): what a pin must
-//! look like before it is hashed and stored. The node judges the rest
+//! look like before it is hashed and stored, and again before an execution
+//! node places it ([`WorkloadPin::check_shape`]). The node judges the rest
 //! against its own template: the allow-list, the ceilings, the scope.
 
 use super::{
@@ -122,4 +123,20 @@ pub(super) fn check_pin_shape(pin: &WorkloadPin) -> Result<(), String> {
         return Err("output names are distinct".into());
     }
     Ok(())
+}
+
+impl WorkloadPin {
+    /// Why this pin has the wrong shape, if it does: door 2's refusals, the
+    /// same check the issuer's pin door runs before it stores a pin. An
+    /// execution node runs it again before it places a pin, so a node never
+    /// places a pin whose shape only its sender checked: at most
+    /// [`REQUEST_DEVICE_CLAIMS_MAX`] device claims, each of at least one
+    /// device, names in their grammar, digests in lower hex.
+    ///
+    /// # Errors
+    ///
+    /// The first rule the pin breaks, in words.
+    pub fn check_shape(&self) -> Result<(), String> {
+        check_pin_shape(self)
+    }
 }

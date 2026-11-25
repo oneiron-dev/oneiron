@@ -239,6 +239,20 @@ impl ActionRegistry {
         registry.register_live_run_verbs()?;
         Ok(registry)
     }
+    /// Keeps, of the verb-table rows, only those `offered` names; every run
+    /// and factory action stays. A host withdraws here each row whose answer
+    /// it never keeps (FIX ACTION-REPLAY-SERVES-UNKEPT-VERB-ANSWERS): an
+    /// action keeps its row's answer in its replay record and answers the same
+    /// key from that record again, with no row door judging the caller anew,
+    /// as it keeps its whole input (`CUSTODY_VALUE_ROWS`). A withdrawn row is
+    /// an unknown action verb before any record is read; its direct row is
+    /// unchanged.
+    pub fn retain_verb_rows(&mut self, offered: impl Fn(&str) -> bool) {
+        self.verbs.retain(|_, registered| match registered.build {
+            ActionBuild::Verb(verb) => offered(verb.as_str()),
+            ActionBuild::Factory(_) | ActionBuild::Run(_) => true,
+        });
+    }
     /// Offers every row of the SDK verb table a host door answers, under the
     /// row's own name. Each takes the row's whole JSON input as one text
     /// argument and runs as [`SelfCall::AgentVerb`] through the door the host
