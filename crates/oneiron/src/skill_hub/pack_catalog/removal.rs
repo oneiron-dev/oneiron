@@ -60,6 +60,8 @@ impl Vault {
                 None
             };
             admission::PACK_INSTALL.delete(&self.store, txn, &name)?;
+            // No yes lands a default of a pack that is gone; what the owner accepted stays.
+            crate::setting::close_pack_proposal_in_txn(self, txn, pack)?;
             // Removing a model pack may change the pack the vault follows;
             // the version an update of it replaced goes with it (FIX 20192).
             if receipt.kind == super::PackKind::Model {
