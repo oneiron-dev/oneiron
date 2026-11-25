@@ -45,6 +45,9 @@ impl From<&JobRefusal> for Blocker {
             JobRefusal::NotTheKeysIssuer => Self::NotTheKeysIssuer,
             JobRefusal::SubmitSignatureInvalid => Self::SubmitSignatureInvalid,
             JobRefusal::DevicesUnreadable { why } => Self::DevicesUnreadable { why: why.clone() },
+            JobRefusal::OutputNotFetchable { why } => Self::OutputNotFetchable { why: why.clone() },
+            JobRefusal::NotAcknowledgeable { .. } => Self::NotAcknowledgeable,
+            JobRefusal::LogNotReadable { why } => Self::LogNotReadable { why: why.clone() },
         }
     }
 }

@@ -45,8 +45,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, ScopeReport,
-    SignedJobSubmit, TemplateOffer, WarmKeyFact,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeAnswer,
+    ScopeReport, SignedJobSubmit, TemplateOffer, WarmKeyFact,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -285,6 +285,12 @@ pub trait NodeKeys: Send + Sync {
     /// Starts a cache pass when one is due (row P2); it never waits for it.
     fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings, cache: &NodeCacheSettings) {
         let _ = (settings, cache);
+    }
+
+    /// `Tail` from `peer`: the key's log from an offset (pass 34, 7.2).
+    fn tail(&self, peer: EntityId, request: &LogTailRequest) -> JobStatusAnswer {
+        let _ = (peer, request);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
     }
 
     /// The launch scopes the keys' job unit starts runs in, each with what

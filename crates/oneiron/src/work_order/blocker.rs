@@ -146,12 +146,23 @@ pub enum Blocker {
         key: String,
     },
 
-    // Faults of one key on the node: the issuer's own record disagrees with the node's. An
-    // operator reads them; they say nothing about the order's fit.
+    // Faults of one key on the node: the issuer's own record disagrees with the node's, or a
+    // read of the key's output or log was refused. An operator reads them; they say nothing
+    // about the order's fit.
     NotReleasable,
     KeyConflict,
     NotTheKeysIssuer,
     SubmitSignatureInvalid,
+    /// A fetch of an output the node does not hand out, with why.
+    OutputNotFetchable {
+        why: String,
+    },
+    /// An acknowledgement of a key that has not ended.
+    NotAcknowledgeable,
+    /// A log tail the node does not read, with why.
+    LogNotReadable {
+        why: String,
+    },
 }
 
 /// How a blocker clears, which decides whether an order waits on it.
@@ -231,6 +242,9 @@ impl Blocker {
             Self::KeyConflict => "key_conflict",
             Self::NotTheKeysIssuer => "not_the_keys_issuer",
             Self::SubmitSignatureInvalid => "submit_signature_invalid",
+            Self::OutputNotFetchable { .. } => "output_not_fetchable",
+            Self::NotAcknowledgeable => "not_acknowledgeable",
+            Self::LogNotReadable { .. } => "log_not_readable",
         }
     }
 
@@ -288,7 +302,10 @@ impl Blocker {
             Self::NotReleasable
             | Self::KeyConflict
             | Self::NotTheKeysIssuer
-            | Self::SubmitSignatureInvalid => Clearing::Fault,
+            | Self::SubmitSignatureInvalid
+            | Self::OutputNotFetchable { .. }
+            | Self::NotAcknowledgeable
+            | Self::LogNotReadable { .. } => Clearing::Fault,
         }
     }
 
@@ -335,6 +352,9 @@ impl Blocker {
             "key_conflict" => Self::KeyConflict,
             "not_the_keys_issuer" => Self::NotTheKeysIssuer,
             "submit_signature_invalid" => Self::SubmitSignatureInvalid,
+            "output_not_fetchable" => Self::OutputNotFetchable { why },
+            "not_acknowledgeable" => Self::NotAcknowledgeable,
+            "log_not_readable" => Self::LogNotReadable { why },
             "warm_key_missing" => Self::WarmKeyMissing { key: why },
             code if code == TEMPLATE_CHANGED => Self::TemplateChanged,
             code if code == TEMPLATE_NOT_OFFERED => Self::TemplateNotOffered,

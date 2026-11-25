@@ -150,6 +150,15 @@ fn the_node_the_gate_and_the_order_name_a_refusal_with_one_code() {
         JobRefusal::DevicesUnreadable {
             why: "nvml".to_owned(),
         },
+        JobRefusal::OutputNotFetchable {
+            why: "not a returnable output".to_owned(),
+        },
+        JobRefusal::NotAcknowledgeable {
+            state: JobState::Running,
+        },
+        JobRefusal::LogNotReadable {
+            why: "payload cleaned".to_owned(),
+        },
     ];
     for refusal in &node_refusals {
         assert_eq!(
