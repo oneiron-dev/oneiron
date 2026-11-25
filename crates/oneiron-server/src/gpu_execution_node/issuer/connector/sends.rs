@@ -225,8 +225,24 @@ impl VaultMachineConnector {
             self.close(&row.key, DispatchClose::StartWindowPassed)?;
             return Ok(GpuResourceStatus::Pending);
         }
-        if let Gate::Answer(status) = self.gate(row, &signed.submit)? {
-            return Ok(status);
+        // The gate of a first send, with no stop on a refusal: the key closes unsent.
+        if let Err(refusal) = self.recheck(row, &signed.submit)? {
+            self.close(
+                &row.key,
+                DispatchClose::RefusedBeforeSend {
+                    code: refusal.code().to_owned(),
+                },
+            )?;
+            return Ok(GpuResourceStatus::Pending);
+        }
+        if let Err(error) = self.reconciled.ensure(
+            row.machine,
+            self.vault(),
+            self.parts.client.as_ref(),
+            self.parts.orphans.as_ref(),
+        ) {
+            tracing::info!(node = %row.machine.to_hex(), error = %error, "vault_machine: the node is not reconciled yet");
+            return Ok(GpuResourceStatus::Pending);
         }
         Ok(match self.send_submit(row, signed)? {
             Sent::Receipt(receipt) if receipt.state == JobState::Ended => {
@@ -236,6 +252,36 @@ impl VaultMachineConnector {
                 GpuResourceStatus::Pending
             }
         })
+    }
+
+    /// `status` of a session's next chunk the issuer closed before the run reached it: the
+    /// node's receipt when it holds the key (a send that was already on its way), with no stop
+    /// and no send.
+    pub(super) fn read_closed_renewal(
+        &self,
+        row: &JobDispatch,
+        signed: &SignedJobSubmit,
+    ) -> Result<GpuResourceStatus, GpuConnectorError> {
+        let answer = self
+            .parts
+            .client
+            .job_status(
+                row.machine,
+                &JobStatusRequest::Status {
+                    key: row.key.clone(),
+                },
+            )
+            .map_err(call_error)?;
+        match answer {
+            JobStatusAnswer::Known(receipt) => {
+                let receipt = self.admit(row, receipt)?;
+                match receipt.state {
+                    JobState::Ended => self.ended_or_status(row, &signed.submit, &receipt),
+                    _ => Ok(receipt_status(&receipt)),
+                }
+            }
+            _ => Ok(GpuResourceStatus::Pending),
+        }
     }
 
     /// `status` on the key's newest receipt, which [`Self::admit`] stored.

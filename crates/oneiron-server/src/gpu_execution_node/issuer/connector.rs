@@ -406,10 +406,21 @@ impl VaultMachineConnector {
                 billed_secs: terminal.billed_secs,
             });
         }
+        let signed = decode::<SignedJobSubmit>(&row.submit)?;
         if row.phase >= DispatchPhase::Closing {
+            // A session's next chunk that closed before any send could reach the node (its
+            // window, a refused recheck, the node's refusal) is only read: a stop of a chunk the
+            // run has not reached would end the run inside the chunk paid (row W1).
+            let read_only = signed.submit.continues.is_some()
+                && !matches!(
+                    row.closed,
+                    Some(DispatchClose::Revoked { .. } | DispatchClose::Ended)
+                );
+            if read_only {
+                return self.read_closed_renewal(&row, &signed);
+            }
             return self.stop_and_read(&row);
         }
-        let signed = decode::<SignedJobSubmit>(&row.submit)?;
         if let Some(refusal) = self.revoked(&row, &signed.submit)? {
             let closed = self.close(
                 &row.key,
