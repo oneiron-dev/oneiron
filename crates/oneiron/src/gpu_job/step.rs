@@ -1,14 +1,13 @@
 //! The host's step over one live job: one bounded round of provider calls,
 //! then one write (CROSS-ARCH-0023 lifecycle 04-05, C2 02-04).
-use crate::gpu_line::{UnitEndReport, settle_unit_in_txn};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::run_admission::{CallOutcome, JobSignal, PaidConnector, RunAdmission, StopRefused};
 use crate::{EntityId, Vault};
 
 use super::{
     GPU_JOB_STOPPED_PRODUCER, GPU_JOB_WARNING_PRODUCER, GpuEndReason, GpuJob, GpuJobConnector,
-    GpuJobEnd, GpuJobError, GpuJobPermits, GpuJobSignal, GpuJobState, GpuJobStepReport,
-    GpuJobTerminal, GpuOffer, GpuOverrun, GpuResourceStatus, GpuTermination, MeterVerdict,
+    GpuJobError, GpuJobPermits, GpuJobSignal, GpuJobState, GpuJobStepReport, GpuOffer, GpuOverrun,
+    GpuResourceStatus, GpuTermination,
 };
 
 impl Vault {
@@ -240,10 +239,7 @@ impl Vault {
     /// its billed time plus overhead, never above its quote; the rest of the
     /// reservation goes back (lifecycle 05-06). A stop at the maximum then
     /// writes the add-funds notice, whose resume is the next chunk (C2 04,
-    /// 05). A unit's job holds no permit: its claim is its hold, and the
-    /// claim's terminal is written in the same write as the job's, so no
-    /// crash leaves an ended job whose hold stays open (design pass 32 r2,
-    /// 7.2 point 6; pass 33, 8.4 fault 1).
+    /// 05).
     pub(super) fn end_gpu_chunk(
         &self,
         mut job: GpuJob,
@@ -284,7 +280,6 @@ impl Vault {
             chunk.settled_units = Some(charged_secs.saturating_mul(chunk.quote.unit_cost));
         }
         let settled_units = chunk.settled_units;
-        let used_secs = chunk.base_used_secs.saturating_add(chunk.used_secs);
         job.state = if reason == GpuEndReason::AtMaximum {
             GpuJobState::Stopped
         } else {
@@ -293,12 +288,6 @@ impl Vault {
         let notices = self.with_write_txn_grouped(|txn| {
             if !self.put_gpu_job_in_txn(txn, &mut job, now_ms)? {
                 return Ok(None);
-            }
-            if let Some(claim) = &job.claim {
-                let report = self.unit_end_in_txn(txn, &key, reason, billed_secs, used_secs)?;
-                // A claim that already ended keeps its terminal: the owner's
-                // write-off came first.
-                let _ = settle_unit_in_txn(self, txn, claim, &job.id, &report, now_ms)?;
             }
             let Some(stop) = job
                 .stop
@@ -379,65 +368,6 @@ impl Vault {
             )?);
         }
         Ok(ids)
-    }
-
-    /// What ends the unit whose job's chunk under `key` ended for `reason`,
-    /// read in the job's terminal write. With no resource ever made
-    /// (`billed_secs` is `None`) nothing ran, and the unit is released. Else
-    /// it is the typed terminal the job's machine established, which its
-    /// backend stored beside the receipt at the confirmed end (pass 33, 8.4),
-    /// or, for a backend that keeps none, the step's own end
-    /// ([`generic_terminal`]).
-    fn unit_end_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        key: &str,
-        reason: GpuEndReason,
-        billed_secs: Option<u64>,
-        used_secs: u64,
-    ) -> crate::Result<UnitEndReport> {
-        let Some(billed_secs) = billed_secs else {
-            return Ok(UnitEndReport::Refused {
-                reason: GpuJobEnd::Withdrawn.label(),
-            });
-        };
-        let terminal = self
-            .job_observation_in_txn(txn, key)?
-            .and_then(|observation| observation.terminal)
-            .unwrap_or_else(|| generic_terminal(reason, billed_secs, used_secs));
-        Ok(UnitEndReport::Machine(terminal))
-    }
-}
-
-/// The typed terminal of a chunk whose backend keeps none, from the step's
-/// own end, read as the work-order pass reads such an end: an exit is a clean
-/// exit, the stop at the maximum the time limit, a cancel a stop. A lost
-/// resource has no measured seconds and costs nobody (lead ruling LE-2 = A);
-/// `used_secs`, the run time last seen, is kept as its lower bound.
-fn generic_terminal(reason: GpuEndReason, billed_secs: u64, used_secs: u64) -> GpuJobTerminal {
-    let end = match reason {
-        GpuEndReason::Exited => GpuJobEnd::Exited { code: 0 },
-        GpuEndReason::AtMaximum => GpuJobEnd::TimeLimit,
-        GpuEndReason::Cancelled => GpuJobEnd::Stopped,
-        // `Gone`: no other reason ends a chunk through a step.
-        _ => GpuJobEnd::Lost {
-            reason: "gone".to_owned(),
-            last_seen_secs: used_secs,
-        },
-    };
-    let lost = matches!(end, GpuJobEnd::Lost { .. });
-    GpuJobTerminal {
-        end,
-        measured_secs: (!lost).then_some(billed_secs),
-        billed_secs: if lost { 0 } else { billed_secs },
-        meter: if lost {
-            MeterVerdict::Unknown
-        } else {
-            MeterVerdict::Agreed
-        },
-        machine: None,
-        device_id: None,
-        outputs: Vec::new(),
     }
 }
 
