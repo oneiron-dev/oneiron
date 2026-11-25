@@ -44,8 +44,8 @@ use super::node_settings::{
 };
 use super::slots::GpuSlotTable;
 use super::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, NodeAnswer, ScopeReport, SignedJobSubmit,
-    TemplateOffer, WorkloadPin,
+    JOB_ALPN, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, NodeAnswer, ScopeReport,
+    SignedJobSubmit, TemplateOffer, WorkloadPin,
 };
 use super::{GpuAvailability, GpuDiskReading};
 
@@ -220,6 +220,45 @@ pub trait NodeKeys: Send + Sync {
     /// `disable --stop` at the box: every key that has not ended ends; a
     /// launched one is stopped.
     fn stop_live_keys(&self);
+
+    /// `Find` and `Status` from the proven issuer `peer` (row R4): the key's
+    /// newest receipt.
+    fn find(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Stop` from `peer`: closes a key that has not launched (also one the
+    /// node never saw), ends one that has.
+    fn stop(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Keys` from `peer`: one page of its keys after `after`.
+    fn keys_page(&self, peer: EntityId, after: Option<&str>) -> JobStatusAnswer {
+        let _ = (peer, after);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Signal` from `peer`: a checkpoint notice to the key's workload.
+    fn signal(&self, peer: EntityId, key: &str, signal: &str) -> JobStatusAnswer {
+        let _ = (peer, key, signal);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Fetch` from `peer`: the bytes of one returnable output.
+    fn fetch(&self, peer: EntityId, key: &str, name: &str) -> JobStatusAnswer {
+        let _ = (peer, key, name);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `Ack` from `peer`: it holds every returnable output of the key it
+    /// wants.
+    fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
+        let _ = (peer, key);
+        JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
 
     /// The launch scopes the keys' job unit starts runs in, each with what
     /// it can enforce now, as its probe reads them (pass 34, section 2.2):
@@ -542,6 +581,29 @@ impl ExecutionNode {
             return Err("state_disk_full".to_owned());
         }
         Ok(())
+    }
+
+    /// `receipt_keep_days` of the node's file: how long an acknowledged
+    /// key's payload stays before it is cleaned.
+    #[must_use]
+    pub fn receipt_keep_days(&self) -> u64 {
+        self.settings().ok().flatten().map_or(
+            u64::from(super::node_settings::RECEIPT_KEEP_DAYS_DEFAULT),
+            |settings| u64::from(settings.receipt_keep_days),
+        )
+    }
+
+    /// The operating-system signal `template` delivers as a checkpoint
+    /// notice; `None` when it names none (the notice is then a no-op).
+    #[must_use]
+    pub fn template_signal(&self, template: &str) -> Option<String> {
+        self.settings()
+            .ok()
+            .flatten()?
+            .templates
+            .get(template)?
+            .checkpoint_signal
+            .clone()
     }
 
     /// The longest staging may take before the launch, in seconds.

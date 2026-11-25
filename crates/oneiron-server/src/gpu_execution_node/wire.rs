@@ -262,6 +262,12 @@ pub enum JobRefusal {
     SubmitSignatureInvalid,
     /// The node's GPUs could not be read now, with why.
     DevicesUnreadable { why: String },
+    /// `Fetch` of an output the node does not hand out: not one of the
+    /// key's hashed returnable outputs, cleaned, or changed since it was
+    /// hashed, with why. Nothing was read for the issuer.
+    OutputNotFetchable { why: String },
+    /// `Ack` of a key that has not ended: nothing changed.
+    NotAcknowledgeable { state: JobState },
 }
 
 /// A request on [`JOB_STATUS_ALPN`]. Every request that names a key is

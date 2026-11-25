@@ -1,7 +1,9 @@
 //! The node's job service: the journal, the states of a key, admission
 //! (`Reserve`, `Release`, `Submit`, and the stop of a key), the launch
-//! commit, the end handling with its release check, recovery at start, and
-//! the signed receipt (design pass 33, sections 5.2, 5.3 and 7.2 to 7.7).
+//! commit, the end handling with its release check, recovery at start, the
+//! signed receipt (design pass 33, sections 5.2, 5.3 and 7.2 to 7.7), and the
+//! status side's answers (`Keys`, `Signal`, `Fetch`, `Ack`) with the cleaning
+//! of an acknowledged payload (row R4, 7.1 and 7.6 step 5).
 //!
 //! One lock, the admission lock, serialises every change of a key's state
 //! and every read of the local controls. A reply is built only after its
@@ -37,6 +39,7 @@ mod admission;
 mod end;
 mod launch;
 mod recovery;
+mod status;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -60,6 +63,7 @@ pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
 #[cfg(target_os = "linux")]
 pub use serving::ServedNodeJobs;
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
+pub use status::KEYS_PAGE_MAX_BYTES;
 
 /// How long a `Busy` answer asks the issuer to wait before it asks again: a
 /// protocol hint, not a policy.
