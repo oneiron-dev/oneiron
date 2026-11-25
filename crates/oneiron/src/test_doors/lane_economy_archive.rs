@@ -101,6 +101,27 @@ pub fn put_running_gpu_job(
     started_by: EntityId,
     now_ms: u64,
 ) -> crate::Result<GpuJob> {
+    put_running_gpu_job_with_inputs(
+        vault,
+        started_by,
+        now_ms,
+        serde_json::json!({ "dataset": "owen-notes" }),
+    )
+}
+
+/// [`put_running_gpu_job`] with `inputs` as its quote's inputs: the JSON its starter gave the
+/// quote, stored as given.
+///
+/// # Errors
+///
+/// As [`put_running_gpu_job`].
+#[doc(hidden)]
+pub fn put_running_gpu_job_with_inputs(
+    vault: &Vault,
+    started_by: EntityId,
+    now_ms: u64,
+    inputs: serde_json::Value,
+) -> crate::Result<GpuJob> {
     const MAXIMUM_SECS: u64 = 600;
     const OVERHEAD_SECS: u64 = 20;
     let id = EntityId::now();
@@ -122,7 +143,7 @@ pub fn put_running_gpu_job(
         offer: "h100-fixture".to_owned(),
         job_type: "fine-tune".to_owned(),
         image: "registry.example.com/trainer@sha256:00".to_owned(),
-        inputs: serde_json::json!({ "dataset": "owen-notes" }),
+        inputs,
         maximum_secs: MAXIMUM_SECS,
         overhead_secs: OVERHEAD_SECS,
         quantity: MAXIMUM_SECS + OVERHEAD_SECS,

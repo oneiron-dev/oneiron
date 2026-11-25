@@ -10,6 +10,10 @@
 //! None of the seven holds a field its read view keeps back until a time or a state, so no row
 //! is held home under LE-ARCHIVE-PERIOD-SEED = A; every row travels.
 //!
+//! A job's quote inputs are its starter's own JSON, stored inside the job's MessagePack row. A
+//! job whose inputs name a password stays home: the export reads the row's map keys as field
+//! names, as the release doors read a body (blind review round 1 of #10515, P1).
+//!
 //! Red on #10489's head: the seven tables are unclassified
 //! (tests/archive_side_catalogue_unclassified.txt), so the export carries no row of them.
 //!
@@ -29,6 +33,7 @@ use oneiron::llm::run_admission::{AllocationRef, gpu_line_allocation_id};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::lane_economy_archive::{
     SIBLING_TABLES, exported_rows, live_rows, put_gpu_job_allowance, put_running_gpu_job,
+    put_running_gpu_job_with_inputs,
 };
 use oneiron::test_doors::work_order::{put_approved_workload, put_order};
 use oneiron::work_order::{
@@ -247,6 +252,42 @@ fn the_export_carries_every_sibling_table_byte_for_byte() {
             "the export carries every {table} row byte for byte"
         );
     }
+}
+
+/// The password a second job's quote inputs name: a text the release text rules alone do not
+/// read as a credential, so only its field name marks it.
+const INPUTS_PASSWORD: &str = "quartz-harbor-2026";
+
+#[test]
+fn a_job_whose_quote_inputs_name_a_password_stays_home() {
+    let fixture = fixture();
+    let owner = fixture.job.started_by.expect("the fixture job's starter");
+    put_running_gpu_job_with_inputs(
+        &fixture.vault,
+        owner,
+        NOW_MS,
+        serde_json::json!({ "dataset": "owen-notes", "password": INPUTS_PASSWORD }),
+    )
+    .expect("the second job's row");
+    let (named, clean): (Vec<_>, Vec<_>) =
+        live(&fixture.vault, "GPU_JOB")
+            .into_iter()
+            .partition(|(_, value)| {
+                value
+                    .windows(INPUTS_PASSWORD.len())
+                    .any(|window| window == INPUTS_PASSWORD.as_bytes())
+            });
+    assert_eq!(
+        named.len(),
+        1,
+        "the second job's row holds the password as given"
+    );
+    assert_eq!(clean.len(), 1, "the fixture's job is the other live row");
+    assert_eq!(
+        exported(&fixture.vault, "GPU_JOB"),
+        clean,
+        "the export carries the clean job byte for byte and leaves the password's job home"
+    );
 }
 
 #[test]
