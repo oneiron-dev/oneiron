@@ -64,6 +64,21 @@ pub const WRITE_MIB_PER_SEC_DEFAULT: u64 = 200;
 /// of every kind together.
 pub const MAX_DEVICES_DEFAULT: u32 = 1;
 
+/// Default of `stop_grace_secs`: the job unit's stop grace (TERM, then KILL
+/// after it), inside each maximum (section 7.6).
+pub const STOP_GRACE_SECS_DEFAULT: u64 = 10;
+
+/// Default of `unit_start_timeout_secs`: the longest a job unit's start (the
+/// prepare step, the proofs from inside, the gate) may take.
+pub const UNIT_START_TIMEOUT_SECS_DEFAULT: u64 = 60;
+
+/// Default of `disk_check_secs`: how often the engine compares each running
+/// key's payload directory with its disk request (section 7.9).
+pub const DISK_CHECK_SECS_DEFAULT: u64 = 5;
+
+/// Default of a template's `tasks_max`: the job unit's task ceiling.
+pub const TASKS_MAX_DEFAULT: u64 = 4_096;
+
 /// Default of a template's `cpu_threads`: the threads a run may use at once,
 /// which a request's 0 takes and no request exceeds.
 pub const CPU_THREADS_DEFAULT: u32 = 4;
@@ -135,6 +150,18 @@ pub struct ExecutionNodeSettings {
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
+    #[serde(default = "stop_grace_secs_default")]
+    pub stop_grace_secs: u64,
+    #[serde(default = "unit_start_timeout_secs_default")]
+    pub unit_start_timeout_secs: u64,
+    #[serde(default = "disk_check_secs_default")]
+    pub disk_check_secs: u64,
+    /// The files of each device a job may lease, by the device's id: the
+    /// job unit's device policy opens these and no others. A card the NVIDIA
+    /// driver lists needs no entry (its node and the driver's control nodes
+    /// are found by its UUID).
+    #[serde(default)]
+    pub device_files: BTreeMap<String, Vec<PathBuf>>,
     /// Whether the node obeys the owner's machine policy rows (pass 34 2.4, row P0) as well as
     /// this file, the stricter of the two applying. Default true; false keeps the node to this
     /// file alone.
@@ -217,6 +244,9 @@ pub struct NodeTemplate {
     /// The devices one pin may claim, the counts of all its claims together.
     #[serde(default = "max_devices_default")]
     pub max_devices: u32,
+    /// The job unit's task ceiling.
+    #[serde(default = "tasks_max_default")]
+    pub tasks_max: u64,
     /// The operating-system signal a checkpoint notice delivers to the
     /// workload (design 7.1 `Signal`), one of [`CHECKPOINT_SIGNALS`]. None:
     /// the notice is a no-op. Absent from the digest when unset, so a
@@ -262,6 +292,18 @@ fn require_default() -> Vec<BoundRequirement> {
 }
 fn cpu_threads_default() -> u32 {
     CPU_THREADS_DEFAULT
+}
+fn stop_grace_secs_default() -> u64 {
+    STOP_GRACE_SECS_DEFAULT
+}
+fn unit_start_timeout_secs_default() -> u64 {
+    UNIT_START_TIMEOUT_SECS_DEFAULT
+}
+fn disk_check_secs_default() -> u64 {
+    DISK_CHECK_SECS_DEFAULT
+}
+fn tasks_max_default() -> u64 {
+    TASKS_MAX_DEFAULT
 }
 fn owner_policy_default() -> bool {
     true

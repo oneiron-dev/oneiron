@@ -264,6 +264,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Machine destinations and folded read-location values | `crates/oneiron/src/machine_destination.rs` | s | — |
 | The names the owner's machine list shows (FIX [DEVICE-DISPLAY-NAME]; Engine TASK SECRETS-VIEW-ROWS, Mon 16… | `crates/oneiron/src/machine_names/mod.rs` | m | — |
 | The owner's policy for each of his machines (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 =… | `crates/oneiron/src/machine_policy/mod.rs` | m | — |
+| The issuer's half of a machine's readiness (pass 34, `34-compute-general/DESIGN.md` sections 7.3 and 16… | `crates/oneiron/src/machine_readiness.rs` | s | — |
 | A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and… | `crates/oneiron/src/machine_signature.rs` | s | OF-575 |
 | The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and… | `crates/oneiron/src/mail_pack/mod.rs` | XL | ARCH-0027, ARCH-0060, ARCH-0063 |
 | — | `crates/oneiron/src/maintain/mod.rs` | m | — |
