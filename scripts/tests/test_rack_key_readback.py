@@ -54,7 +54,7 @@ class Rack:
 
     def accept(self, when: int, fp: str, addr: str, port: int) -> None:
         self.journal.append(
-            f"{when}.000000 box sshd-session[{port}]: Accepted publickey for lexi from {addr} port {port} ssh2: ED25519 {fp}\n"
+            f"{when}.000000 box sshd-session[{port}]: Accepted publickey for owen from {addr} port {port} ssh2: ED25519 {fp}\n"
         )
 
     def live(self, peer: str) -> None:
@@ -161,7 +161,7 @@ def test_the_owners_own_device_is_never_a_rack_key(rack):
 
 
 def test_the_export_writes_this_boxs_fingerprints_privately_and_prints_nothing_on_stdout(rack):
-    (rack.box.home / ".ssh/id_ed25519.pub").write_text(f"ssh-ed25519 {KNOWN_KEY} lexi@box\n")
+    (rack.box.home / ".ssh/id_ed25519.pub").write_text(f"ssh-ed25519 {KNOWN_KEY} owen@box\n")
     (rack.box.home / ".ssh/id_ed25519").write_text("not read: a private key file is never opened\n")
     done = rack.box.run("--export-client-keys", HOST)
     assert done.returncode == 0, done.stderr
