@@ -235,6 +235,7 @@ impl Vault {
             ranked: attempt.ranked.clone(),
             placed: attempt.placed.clone(),
             made_at_ms: now_ms,
+            started_at_ms: None,
             end: None,
         });
         order.state = OrderState::Running { attempt: attempt.n };

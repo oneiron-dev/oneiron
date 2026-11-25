@@ -161,14 +161,21 @@ fn judge_receipt(
     if !newer {
         return (None, Judged::Admitted);
     }
-    let (last_measured_secs, end_seen, meter, terminal) = match stored {
+    let (last_measured_secs, end_seen, meter, terminal, started) = match stored {
         Some(stored) => (
             stored.last_measured_secs,
             stored.end_seen,
             stored.meter,
             stored.terminal,
+            stored.started,
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, false),
+    };
+    // The node's word that the workload process ran: it runs now, or it ended after it ran.
+    let ran = match receipt.state {
+        JobState::Running => true,
+        JobState::Ending | JobState::Ended => receipt.started,
+        JobState::Held | JobState::Accepted | JobState::Staging | JobState::Launching => false,
     };
     let observation = JobObservation {
         key: row.key.clone(),
@@ -182,6 +189,7 @@ fn judge_receipt(
         end_seen: end_seen.or(end_mark),
         meter,
         terminal,
+        started: started || ran,
     };
     (Some(observation), Judged::Admitted)
 }

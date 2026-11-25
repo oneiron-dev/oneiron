@@ -1544,6 +1544,7 @@ fn an_absent_key_after_a_stored_receipt_is_history_lost_even_with_no_held_mark()
                 end_seen: None,
                 meter: None,
                 terminal: None,
+                started: false,
             })
             .expect("write the observation without the dispatch's Held mark");
         let row = rig.dispatch(&run);

@@ -8,7 +8,8 @@
 //! list of [`Blocker`]s, the same words the start gate and the node use.
 //!
 //! Orders live on the issuer; the doors are `vault.jobs.order`, `vault.jobs.orders.get`,
-//! `.list` and `.cancel`, and the read `vault.machines.place`.
+//! `.list`, `.cancel` and `.wait` ([`wait`]: in code mode it parks the run until the order's
+//! writer settles it), and the read `vault.machines.place`.
 
 pub mod after;
 pub mod blocker;
@@ -21,13 +22,14 @@ pub mod record;
 pub(crate) mod setting_keys;
 pub mod start_check;
 pub(crate) mod tables;
+pub mod wait;
 mod wire;
 
 pub use after::{AFTER_RULE, AfterPick, RetryPolicy, RetryRule, after_rule};
 pub use blocker::{BlockedOn, Blocker, Clearing};
 pub use doors::{
     CancelRefused, ORDER_INTENT_KEY_MAX, machines_place_as, order_refusal, order_work_as,
-    work_order_cancel_as, work_order_get_as, work_order_list_as,
+    ordered_view_as, work_order_cancel_as, work_order_get_as, work_order_list_as,
 };
 pub use fit::{
     DeviceFact, MachineFacts, MachineReach, Needs, Room, TemplateFact, WindowFact, fit,
@@ -42,9 +44,11 @@ pub use record::{
     SlotName, WaitRule, WorkOrder, attempt_job_id,
 };
 pub use start_check::{AttemptRefused, OrderAttemptRef, OrderStarter};
+pub use wait::{order_wait_id, work_order_wait_as};
 pub use wire::{
-    MachinesPlaceRequest, MachinesPlaceView, WorkOrderList, WorkOrderListRequest, WorkOrderRef,
-    WorkOrderRequest, WorkOrderView,
+    AttemptReceipt, MachinesPlaceRequest, MachinesPlaceView, WaitUntil, WorkOrderList,
+    WorkOrderListRequest, WorkOrderRef, WorkOrderRequest, WorkOrderView, WorkOrderWaitAnswer,
+    WorkOrderWaitRequest,
 };
 
 use crate::{EntityId, Vault};
@@ -57,6 +61,8 @@ pub const ORDERS_GET_VERB: &str = "vault.jobs.orders.get";
 pub const ORDERS_LIST_VERB: &str = "vault.jobs.orders.list";
 /// `vault.jobs.orders.cancel`.
 pub const ORDERS_CANCEL_VERB: &str = "vault.jobs.orders.cancel";
+/// `vault.jobs.orders.wait`.
+pub const ORDERS_WAIT_VERB: &str = "vault.jobs.orders.wait";
 /// `vault.machines.place`.
 pub const MACHINES_PLACE_VERB: &str = "vault.machines.place";
 
@@ -99,6 +105,7 @@ pub(crate) fn erase_order_actor_in_txn(
         if changed {
             order.revision += 1;
             record::WORK_ORDERS.put(&vault.store, wtxn, &id, &order)?;
+            vault.erase_order_wait_replies_in_txn(wtxn, &id)?;
         }
     }
     Ok(())
