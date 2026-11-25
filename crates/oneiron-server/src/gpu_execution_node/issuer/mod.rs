@@ -20,6 +20,7 @@ pub mod clock;
 pub mod connector;
 pub mod guard;
 pub mod node_client;
+pub mod node_status;
 pub mod orphans;
 pub mod reconcile;
 pub mod register;

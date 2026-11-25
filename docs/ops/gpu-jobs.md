@@ -166,6 +166,19 @@ template under the pinned digest and must not refuse. A refusal names
 `workload_expired`, `starter_not_named`, `request_above_pin`,
 `machine_not_approved`, `machine_unreachable` or `machine_refuses`.
 
+## Machine status (`vault.machines.status`)
+
+The owner's read of every machine of his: the fields `vault.machines.list`
+shows, the machine's latest capacity claim (cores, memory, GPU memory, disk,
+power and the agents it can run) with the time the machine measured it and
+its age, and, with `refresh: true`, what each machine's execution node
+answers to `Node` now. Only the vault's issuer of vault machine jobs asks the
+nodes, each within `[gpu_jobs.vault_machine] call_timeout_secs`, all at once.
+A node that answers shows `answered` (enabled, paused, drained, templates,
+disk); one that refuses this issuer shows `refused` with the refusal; one that
+gives no answer shows `unknown`, never idle, and its capacity claim stays its
+last sample. Nothing is stored: a node's answer is a sample.
+
 ## Restart
 
 A permit cannot be stored. When the server stops, each live chunk's permit is
