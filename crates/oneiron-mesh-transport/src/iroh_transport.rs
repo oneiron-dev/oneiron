@@ -748,6 +748,9 @@ impl StreamGrant {
         Ok(())
     }
 }
+/// The application error code of a stream this side abandoned
+/// ([`MeshStream::reset`]).
+const STREAM_ABANDONED: iroh::endpoint::VarInt = iroh::endpoint::VarInt::from_u32(0);
 struct IrohStream {
     send: iroh::endpoint::SendStream,
     recv: iroh::endpoint::RecvStream,
@@ -792,5 +795,11 @@ impl MeshStream for IrohStream {
                 .map(drop)
                 .map_err(|e| MeshError::Io(e.to_string()))
         })
+    }
+    fn reset(&mut self) {
+        // A half that has already ended answers ClosedStream: nothing is
+        // left to abandon on it.
+        drop(self.send.reset(STREAM_ABANDONED));
+        drop(self.recv.stop(STREAM_ABANDONED));
     }
 }

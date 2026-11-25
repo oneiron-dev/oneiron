@@ -4,7 +4,8 @@
 //! stops reading its answer, costs only that stream, and the next stream on
 //! the same connection is still answered. A stream whose request never
 //! finishes is dropped at the read deadline, which frees its slot among the
-//! connection's streams (review round 2).
+//! connection's streams (review round 2). A stream whose answer the peer
+//! never takes is reset at the write deadline (review round 1 of #10431).
 //!
 //! The connection is an in-process stand-in for the mesh seam
 //! (`MeshConnection`), so the test needs no vault and no grant: each stream
@@ -65,12 +66,12 @@ impl MeshStream for ScriptedStream {
 
 /// A connection on [`JOB_ALPN`] whose peer opens the streams the test
 /// queues, in order.
-struct ScriptedConnection {
+struct ScriptedConnection<S = ScriptedStream> {
     machine: MachineId,
-    streams: Mutex<mpsc::UnboundedReceiver<ScriptedStream>>,
+    streams: Mutex<mpsc::UnboundedReceiver<S>>,
 }
 
-impl MeshConnection for ScriptedConnection {
+impl<S: MeshStream + 'static> MeshConnection for ScriptedConnection<S> {
     fn machine(&self) -> MachineId {
         self.machine
     }
@@ -106,7 +107,7 @@ impl MeshConnection for ScriptedConnection {
     fn close(&self) {}
 }
 
-fn scripted_connection() -> (mpsc::UnboundedSender<ScriptedStream>, ScriptedConnection) {
+fn scripted_connection<S>() -> (mpsc::UnboundedSender<S>, ScriptedConnection<S>) {
     let (opens, streams) = mpsc::unbounded_channel();
     let machine = EntityId::from_bytes([0x4d; 16]).expect("machine id");
     (
@@ -221,6 +222,61 @@ async fn a_request_that_never_finishes_is_dropped_at_the_read_deadline() {
     assert!(
         matches!(waited, Ok(Err(_))),
         "the unfinished stream is dropped by the read deadline, freeing its slot",
+    );
+    drop(opens);
+}
+
+/// A stream whose request is read and whose answer the peer never takes:
+/// sending it waits for flow-control credit that never comes.
+struct UnreadAnswerStream {
+    request: Option<Vec<u8>>,
+    /// Sent when the service resets the stream; closed if it only drops it.
+    reset_signal: Option<oneshot::Sender<()>>,
+}
+
+impl MeshStream for UnreadAnswerStream {
+    fn send<'a>(&'a mut self, _bytes: &'a [u8]) -> MeshFuture<'a, ()> {
+        Box::pin(std::future::pending())
+    }
+
+    fn recv(&mut self) -> MeshFuture<'_, Vec<u8>> {
+        Box::pin(async move {
+            match self.request.take() {
+                Some(bytes) => Ok(bytes),
+                None => std::future::pending().await,
+            }
+        })
+    }
+
+    fn reset(&mut self) {
+        if let Some(signal) = self.reset_signal.take() {
+            drop(signal.send(()));
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_answer_the_peer_never_takes_is_reset_at_the_write_deadline() {
+    let (opens, connection) = scripted_connection();
+    let (reset_signal, reset) = oneshot::channel::<()>();
+    opens
+        .send(UnreadAnswerStream {
+            request: Some(node_request()),
+            reset_signal: Some(reset_signal),
+        })
+        .expect("queue the stream whose answer is never taken");
+
+    let service = JobService;
+    let write_deadline = oneiron_server::gpu_execution_node::service::REPLY_WRITE_DEADLINE;
+    let waited = tokio::select! {
+        served = service.serve(Box::new(connection)) => {
+            panic!("the service closed the connection while the peer kept it: {served:?}")
+        }
+        waited = tokio::time::timeout(write_deadline + ANSWER_WAIT, reset) => waited,
+    };
+    assert!(
+        matches!(waited, Ok(Ok(()))),
+        "the answer the peer never takes is reset by the write deadline, freeing its slot",
     );
     drop(opens);
 }
