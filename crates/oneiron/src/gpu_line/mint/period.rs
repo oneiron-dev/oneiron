@@ -14,6 +14,7 @@ use crate::gpu_line::fold::{
     AllowanceRule, AllowanceTable, BudgetPolicy, FamilyFloor, FamilyPayoff, FamilySeat, GpuLine,
     GpuLinePeriod, PeriodAllocation, PinnedMode, RuleRef, SeatAtMint, Side, Track,
 };
+use crate::gpu_line::{ProposalMiss, TableProposal, TableSource, check_proposal};
 
 /// What one family's rows inside the window say (section 4.3). Row M2-E
 /// fills it from the line's arm rows and claims.
@@ -162,6 +163,22 @@ pub fn mint_period(
     tallies: &BTreeMap<EntityId, SettledTally>,
     minted_at_ms: u64,
 ) -> Result<GpuLinePeriod, MintError> {
+    mint_period_with_proposal(line, index, tallies, None, minted_at_ms)
+}
+
+/// Mints a period, checking its standing proposal against the market pool
+/// and seats. A missing or invalid proposal uses the line's fallback rule.
+///
+/// # Errors
+///
+/// The same [`MintError`]s as [`mint_period`].
+pub fn mint_period_with_proposal(
+    line: &GpuLine,
+    index: u32,
+    tallies: &BTreeMap<EntityId, SettledTally>,
+    proposal: Option<&TableProposal>,
+    minted_at_ms: u64,
+) -> Result<GpuLinePeriod, MintError> {
     let (start_ms, end_ms) = line
         .period_bounds(index)
         .ok_or(MintError::PeriodOutOfRange)?;
@@ -232,24 +249,19 @@ pub fn mint_period(
         if !BUILT_RULES.contains(rule) {
             return Err(MintError::RuleNotBuilt(*rule));
         }
-        let (ceilings, unallocated) = match rule.rule {
-            AllowanceRule::PayoffShare => payoff_share(
-                share,
-                &market_inputs,
-                policy.first_rung_secs(),
-                policy.invalid_cost,
-            ),
-            AllowanceRule::EvenSplit => even_split(share, &market_inputs),
-            AllowanceRule::PosteriorSampling => {
-                posterior_sampling(share, &market_inputs, policy, &line.project, index, *rule)
-            }
-        };
-        tables.push(AllowanceTable {
-            rule: *rule,
-            pool_units: share,
-            ceilings,
-            unallocated,
-        });
+        if rule.rule == AllowanceRule::Proposed {
+            tables.push(proposed_table(share, &market_inputs, line, index, proposal));
+        } else {
+            let (ceilings, unallocated) =
+                deterministic_table(*rule, share, &market_inputs, policy, line, index);
+            tables.push(AllowanceTable {
+                rule: *rule,
+                pool_units: share,
+                ceilings,
+                unallocated,
+                source: None,
+            });
+        }
     }
     let mut record = GpuLinePeriod {
         project: line.project,
@@ -286,4 +298,72 @@ pub fn mint_period(
     }
     record.economic_digest = economic_digest(&record);
     Ok(record)
+}
+
+fn deterministic_table(
+    rule: RuleRef,
+    share: u64,
+    market_inputs: &[&FamilyPayoff],
+    policy: &BudgetPolicy,
+    line: &GpuLine,
+    index: u32,
+) -> (Vec<(EntityId, u64)>, u64) {
+    match rule.rule {
+        AllowanceRule::PayoffShare => payoff_share(
+            share,
+            market_inputs,
+            policy.first_rung_secs(),
+            policy.invalid_cost,
+        ),
+        AllowanceRule::EvenSplit => even_split(share, market_inputs),
+        AllowanceRule::PosteriorSampling => {
+            posterior_sampling(share, market_inputs, policy, &line.project, index, rule)
+        }
+        // A stored line cannot name proposed@1 as its deterministic fallback.
+        AllowanceRule::Proposed => (Vec::new(), share),
+    }
+}
+
+fn proposed_table(
+    share: u64,
+    market_inputs: &[&FamilyPayoff],
+    line: &GpuLine,
+    index: u32,
+    proposal: Option<&TableProposal>,
+) -> AllowanceTable {
+    let (cause, note) = if let Some(proposal) =
+        proposal.filter(|proposal| proposal.project == line.project && proposal.period == index)
+    {
+        let market: Vec<_> = market_inputs.iter().map(|input| input.family).collect();
+        match check_proposal(proposal, share, &market) {
+            Ok((ceilings, unallocated)) => {
+                return AllowanceTable {
+                    rule: RuleRef::PROPOSED_1,
+                    pool_units: share,
+                    ceilings,
+                    unallocated,
+                    source: Some(TableSource::Proposed {
+                        proposal: proposal.note.clone(),
+                    }),
+                };
+            }
+            Err(cause) => (cause, Some(proposal.note.clone())),
+        }
+    } else {
+        (ProposalMiss::NoneSubmitted, None)
+    };
+    let fallback = line.budget.proposal_fallback;
+    let (ceilings, unallocated) =
+        deterministic_table(fallback, share, market_inputs, &line.budget, line, index);
+    AllowanceTable {
+        rule: RuleRef::PROPOSED_1,
+        pool_units: share,
+        ceilings,
+        unallocated,
+        source: Some(TableSource::Replaced {
+            by_rule: fallback,
+            cause,
+            proposal: note,
+        }),
+    }
 }

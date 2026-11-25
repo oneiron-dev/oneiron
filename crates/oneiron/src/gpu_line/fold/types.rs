@@ -131,6 +131,9 @@ pub enum AllowanceRule {
     PosteriorSampling,
     /// The pool divided evenly over the families.
     EvenSplit,
+    /// A table of ceilings the line's planner proposed before the mint,
+    /// checked for conservation; else the line's `proposal_fallback`.
+    Proposed,
 }
 
 impl AllowanceRule {
@@ -141,6 +144,7 @@ impl AllowanceRule {
             Self::PayoffShare => "payoff_share",
             Self::PosteriorSampling => "posterior_sampling",
             Self::EvenSplit => "even_split",
+            Self::Proposed => "proposed",
         }
     }
 }
@@ -176,6 +180,10 @@ impl RuleRef {
     };
     pub const EVEN_SPLIT_1: Self = Self {
         rule: AllowanceRule::EvenSplit,
+        version: 1,
+    };
+    pub const PROPOSED_1: Self = Self {
+        rule: AllowanceRule::Proposed,
         version: 1,
     };
 }
@@ -278,11 +286,26 @@ pub struct BudgetPolicy {
     pub posterior_max_slots: u32,
     /// posterior_sampling@1's most wins plus losses per family; more are scaled down together.
     pub posterior_max_evidence: u32,
+    /// The rule whose table replaces a `proposed@1` table that fails its check or
+    /// was not submitted before the mint.
+    #[serde(skip_serializing_if = "is_default_proposal_fallback")]
+    pub proposal_fallback: RuleRef,
+    /// The longest reason a proposal may carry, in bytes.
+    #[serde(skip_serializing_if = "is_default_proposal_why_max_bytes")]
+    pub proposal_why_max_bytes: u32,
     pub invalid_cost: InvalidCost,
     /// Outcomes older than this many periods leave the mint's inputs.
     pub window_periods: u32,
     /// The pools each track draws, in order: one entry per track.
     pub draw_orders: Vec<TrackDrawOrder>,
+}
+
+fn is_default_proposal_fallback(rule: &RuleRef) -> bool {
+    *rule == defaults::PROPOSAL_FALLBACK
+}
+
+fn is_default_proposal_why_max_bytes(bytes: &u32) -> bool {
+    *bytes == defaults::PROPOSAL_WHY_MAX_BYTES
 }
 
 /// The engine's neutral defaults. The allowance is 0 and the rung caps are
@@ -311,6 +334,8 @@ impl Default for BudgetPolicy {
             rules: defaults::RULES.to_vec(),
             posterior_max_slots: defaults::POSTERIOR_MAX_SLOTS,
             posterior_max_evidence: defaults::POSTERIOR_MAX_EVIDENCE,
+            proposal_fallback: defaults::PROPOSAL_FALLBACK,
+            proposal_why_max_bytes: defaults::PROPOSAL_WHY_MAX_BYTES,
             invalid_cost: InvalidCost::default(),
             window_periods: defaults::WINDOW_PERIODS,
             draw_orders: defaults::draw_orders(),
@@ -621,6 +646,9 @@ pub struct AllowanceTable {
     pub ceilings: Vec<(EntityId, u64)>,
     /// What the rule gave nobody; it stays unspent.
     pub unallocated: u64,
+    /// Where a `proposed@1` table came from; `None` for every other rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::gpu_line::TableSource>,
 }
 
 /// The host allocation that funds one period (section 4.1): the record
