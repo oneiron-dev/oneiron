@@ -45,8 +45,9 @@ pub enum ExecutionNodeCommand {
     /// Print the job unit of a job key (`oneiron-job@<id>.service`), for
     /// `systemctl` and `journalctl`.
     UnitName(ExecutionNodeUnitNameArgs),
-    /// Start or stop the job unit of a job key through the job control
-    /// socket, as the engine does: as the engine's account or root.
+    /// Start or stop the job unit of a job key, or send it a checkpoint
+    /// notice, through the job control socket, as the engine does: as the
+    /// engine's account or root.
     UnitControl(ExecutionNodeUnitControlArgs),
 }
 
@@ -76,10 +77,13 @@ pub struct ExecutionNodeUnitNameArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct ExecutionNodeUnitControlArgs {
-    /// `start` or `stop`.
+    /// `start`, `stop` or `signal`.
     pub verb: String,
     /// The job key.
     pub key: String,
+    /// For `signal`: the checkpoint signal's name (HUP, INT, USR1, USR2 or
+    /// WINCH).
+    pub signal: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

@@ -148,6 +148,7 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
         hidden_pids: vec![1],
         host_network_namespace: safe_fs::host_network_namespace(),
         require: Vec::new(),
+        log_max_bytes: u64::from(super::super::node_settings::LOG_MAX_MIB_DEFAULT) << 20,
     };
     let exchange = Path::new(EXCHANGE_ROOT).join(&instance);
     let outcome = probe_in_unit(settings, &unit_text, &binary, &exec, &exchange, job_gid);

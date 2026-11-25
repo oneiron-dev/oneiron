@@ -229,6 +229,7 @@ fn runs_callable(effect: SelfEffect) -> bool {
         | SelfEffect::ReaderSpawn
         | SelfEffect::ReaderReport
         | SelfEffect::TasksWaitSet
+        | SelfEffect::JobsOrdersWait
         | SelfEffect::Summarize
         | SelfEffect::Leader
         | SelfEffect::LeaderSplit

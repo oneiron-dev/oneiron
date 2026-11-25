@@ -420,6 +420,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // A reader child reads its parent's own result and answers inside
         // the run's route: nothing of it leaves the vault.
         SelfEffect::ReaderSpawn | SelfEffect::ReaderReport | SelfEffect::TasksWaitSet => false,
+        // A wait on a work order reads the vault's own order and the node's
+        // receipt the issuer holds (pass 34 row Q1).
+        SelfEffect::JobsOrdersWait => false,
         // A summary's model call reads only the run's own results, and its
         // text stays a result of the run's route.
         SelfEffect::Summarize => false,

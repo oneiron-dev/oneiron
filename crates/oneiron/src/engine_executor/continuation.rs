@@ -653,6 +653,7 @@ pub(crate) fn continuation_tail_effect(call: &CodeRunBridgeCall) -> bool {
         | SelfEffect::Leader
         | SelfEffect::TasksWait
         | SelfEffect::TasksWaitSet
+        | SelfEffect::JobsOrdersWait
         | SelfEffect::Fold => false,
         SelfEffect::AgentVerb => recorded_verb_call(call)
             .and_then(|(verb, _)| AgentVerb::from_name(verb))

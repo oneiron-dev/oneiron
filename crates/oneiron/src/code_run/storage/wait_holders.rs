@@ -526,6 +526,23 @@ fn erase_settled_unheld_in_txn(
     erase_settled_in_txn(store, wtxn, wait_id)
 }
 
+/// Leaves `wait_id`'s settled row its erased form in `wtxn`, when it has one:
+/// its settler scrubbed the row the reply copied, so the reply's own copy
+/// goes too (a work order whose requester was erased, pass 34 row Q1). Each
+/// run delivered the reply holds its own copy, which that run's actor's
+/// erase scrubs.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_settled_wait_reply_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+) -> Result<()> {
+    erase_settled_in_txn(&vault.store, wtxn, wait_id)
+}
+
 /// Leaves code consent wait `wait_id`'s settled row its erased form in
 /// `wtxn` when `run`, the one run bound to it, reads as erased (FIX 5718): a
 /// settle that lands after that run's actor was erased keeps its outcome,

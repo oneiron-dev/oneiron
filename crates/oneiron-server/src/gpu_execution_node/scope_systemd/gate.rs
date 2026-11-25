@@ -5,14 +5,18 @@
 //! whether the workload was let start is never the workload's word.
 //!
 //! The report is one line, and `job-exec` keeps the pipe open after it
-//! (close-on-exec) until it becomes the workload (review r2 R2-02). A
-//! successful `execve` closes the pipe with nothing more said, while the
-//! process lives on; a failed one writes why before `job-exec` exits. The
-//! gate unlinks both pipes' names before its go, so the workload cannot open
-//! them again (review r3 R3-04), and then waits for one end or the other. A
-//! go that did not reach `job-exec`, a `job-exec` that ended before its
-//! exec, or no exec in time is recorded as the record's `exec_failed` (r3
-//! R3-02), so the end record says the workload never started.
+//! (close-on-exec) until it becomes the workload (review r2 R2-02). Just
+//! before its `execve` it writes [`EXEC_MARK`]; a successful `execve` then
+//! closes the pipe with nothing more said, and a failed one writes why
+//! before `job-exec` exits. The gate unlinks both pipes' names before its
+//! go, so the workload cannot open them again (review r3 R3-04), and then
+//! reads until the pipe closes. A go that did not reach `job-exec`, a close
+//! with no mark (`job-exec` ended before its exec), words after the mark (a
+//! failed exec), or no mark in time is recorded as the record's
+//! `exec_failed` (r3 R3-02), so the end record says the workload never
+//! started. The judgment reads only the pipe, never the process after the
+//! close, so a workload that ends at once still counts as started (FIX
+//! EXEC-UNIT-GATE-EXEC-RACE).
 
 use std::io::{self, Write as _};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -24,7 +28,8 @@ use super::records::{
 use super::safe_fs::{self, boot_ns, borrow, open_dir_path, read_beneath, remove_beneath};
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::{
-    EXEC_FILE_NAME, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END, REPORT_PIPE_NAME, SCOPE_FILE_NAME,
+    EXEC_FILE_NAME, EXEC_MARK, GATE_GO, GO_PIPE_NAME, REPORT_FRAME_END, REPORT_PIPE_NAME,
+    SCOPE_FILE_NAME,
 };
 
 /// How long the gate waits after its go for `job-exec` to become the
@@ -86,30 +91,6 @@ fn unlink_pipes(context: &StepContext) -> Result<(), String> {
     Ok(())
 }
 
-/// A pidfd of the unit's main process, `job-exec`: the service manager
-/// names it in `MAINPID` for `ExecStartPost=`. `None` when it does not.
-fn main_process() -> Option<OwnedFd> {
-    let pid: libc::pid_t = std::env::var("MAINPID").ok()?.trim().parse().ok()?;
-    // SAFETY: pidfd_open takes a process id and no flags, and returns a new
-    // descriptor or -1.
-    let opened = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0_u32) };
-    let fd = libc::c_int::try_from(opened).ok().filter(|fd| *fd >= 0)?;
-    // SAFETY: fd is the descriptor pidfd_open just returned.
-    Some(unsafe { OwnedFd::from_raw_fd(fd) })
-}
-
-/// Whether the process a pidfd holds has ended: its pidfd reads ready.
-fn has_ended(pidfd: &OwnedFd) -> bool {
-    let mut poll = libc::pollfd {
-        fd: pidfd.as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    // SAFETY: one valid pollfd; a zero timeout only looks.
-    let ready = unsafe { libc::poll(&raw mut poll, 1, 0) };
-    ready > 0 && poll.revents & libc::POLLIN != 0
-}
-
 fn finish(
     context: &StepContext,
     report: Option<ScopeReport>,
@@ -117,8 +98,6 @@ fn finish(
     go: Option<OwnedFd>,
     pipe: Option<OwnedFd>,
 ) -> i32 {
-    // Held before the go, so the process it names is `job-exec` itself.
-    let main = go.as_ref().and_then(|_| main_process());
     let released = refusal.is_none() && go.is_some();
     let mut record = ScopeRecord {
         instance: context.args.instance.clone(),
@@ -146,7 +125,7 @@ fn finish(
     let outcome = match file.write_all(GATE_GO) {
         Err(error) => AfterGo::Failed(format!("go_not_delivered: {error}")),
         Ok(()) => match &pipe {
-            Some(pipe) => after_go(pipe, EXEC_WAIT, main.as_ref()),
+            Some(pipe) => after_go(pipe, EXEC_WAIT),
             None => AfterGo::Became,
         },
     };
@@ -168,52 +147,80 @@ fn finish(
 }
 
 /// What came on the report pipe after the go.
+#[derive(Debug, PartialEq, Eq)]
 enum AfterGo {
-    /// The pipe closed with nothing said while `job-exec`'s process lives
-    /// on: it became the workload.
+    /// The exec mark and then nothing more: `job-exec` became the workload.
     Became,
     /// Why the workload never started: `job-exec`'s words on its exec, its
     /// end before the exec, or no exec in time.
     Failed(String),
 }
 
-/// Waits for `job-exec`'s exec. `main` is `job-exec`'s pidfd: a pipe that
-/// closes when the process has ended was closed by its exit, not its exec.
-/// Without it, a quiet close counts as the exec.
-fn after_go(pipe: &OwnedFd, wait: Duration, main: Option<&OwnedFd>) -> AfterGo {
+/// Waits for `job-exec`'s exec: reads what it says after the go until the
+/// pipe closes or the wait runs out, then judges it ([`judge_after_go`]).
+/// When the wait runs out, the gate looks at the pipe once more without
+/// waiting, so a mark that came as the wait ended still counts as the exec
+/// (review r5 R5-03). The window left is the gate's own exit after that
+/// look, and only after `job-exec` stalled the whole wait.
+fn after_go(pipe: &OwnedFd, wait: Duration) -> AfterGo {
     let started = Instant::now();
     let mut said = Vec::new();
     let mut buffer = [0_u8; 512];
-    let failed = |said: &[u8]| {
-        let text = String::from_utf8_lossy(said);
-        AfterGo::Failed(text.trim().to_owned())
-    };
     loop {
         let left = wait.saturating_sub(started.elapsed());
         if left.is_zero() {
-            return if said.is_empty() {
-                AfterGo::Failed(format!("no_exec_in_time: {} s", wait.as_secs()))
-            } else {
-                failed(said.as_slice())
-            };
+            let closed = drain_now(pipe, &mut said, &mut buffer);
+            return judge_after_go(&said, closed, wait);
         }
         match read_some(pipe, &mut buffer, left) {
-            Ok(PipeRead::Bytes(count)) => {
-                let room = EXEC_FAILURE_MAX_BYTES.saturating_sub(said.len());
-                said.extend_from_slice(&buffer[..count.min(room)]);
-            }
-            Ok(PipeRead::End) => {
-                return if !said.is_empty() {
-                    failed(said.as_slice())
-                } else if main.is_some_and(has_ended) {
-                    AfterGo::Failed("job-exec ended before the workload's exec".to_owned())
-                } else {
-                    AfterGo::Became
+            Ok(PipeRead::Bytes(count)) => keep_said(&mut said, &buffer[..count]),
+            Ok(PipeRead::End) => return judge_after_go(&said, true, wait),
+            Ok(PipeRead::Nothing) => {}
+            Err(why) => {
+                return match judge_after_go(&said, false, wait) {
+                    AfterGo::Failed(_) if said.is_empty() => {
+                        AfterGo::Failed(format!("report pipe: {why}"))
+                    }
+                    judged => judged,
                 };
             }
-            Ok(PipeRead::Nothing) => {}
-            Err(why) => return failed(format!("report pipe: {why}").as_bytes()),
         }
+    }
+}
+
+/// Keeps what `job-exec` said, up to [`EXEC_FAILURE_MAX_BYTES`].
+fn keep_said(said: &mut Vec<u8>, bytes: &[u8]) {
+    let room = EXEC_FAILURE_MAX_BYTES.saturating_sub(said.len());
+    said.extend_from_slice(&bytes[..bytes.len().min(room)]);
+}
+
+/// Reads what the pipe holds now, without waiting. Returns whether it
+/// closed.
+fn drain_now(pipe: &OwnedFd, said: &mut Vec<u8>, buffer: &mut [u8]) -> bool {
+    // job-exec says at most the mark and one line, so a few reads empty it.
+    for _ in 0..16 {
+        match read_some(pipe, buffer, Duration::ZERO) {
+            Ok(PipeRead::Bytes(count)) => keep_said(said, &buffer[..count]),
+            Ok(PipeRead::End) => return true,
+            Ok(PipeRead::Nothing) | Err(_) => return false,
+        }
+    }
+    false
+}
+
+/// Judges what `job-exec` wrote after the go. `closed`: the pipe closed;
+/// otherwise the wait ran out. Words without the mark are a failure before
+/// the exec, words after it a failed exec. The mark alone is the exec, also
+/// when the wait ran out before the close: the exec was under way, and the
+/// workload may run, so the record must not say it never started.
+fn judge_after_go(said: &[u8], closed: bool, wait: Duration) -> AfterGo {
+    let words = |bytes: &[u8]| String::from_utf8_lossy(bytes).trim().to_owned();
+    match said.strip_prefix(EXEC_MARK) {
+        Some([]) => AfterGo::Became,
+        Some(after) => AfterGo::Failed(words(after)),
+        None if !said.is_empty() => AfterGo::Failed(words(said)),
+        None if closed => AfterGo::Failed("job-exec ended before the workload's exec".to_owned()),
+        None => AfterGo::Failed(format!("no_exec_in_time: {} s", wait.as_secs())),
     }
 }
 
@@ -384,4 +391,81 @@ fn open_go(context: &StepContext) -> Result<OwnedFd, String> {
     }
     // SAFETY: open returned a new descriptor.
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AfterGo, EXEC_MARK, after_go, judge_after_go};
+    use std::io::Write as _;
+    use std::os::fd::{FromRawFd as _, OwnedFd};
+    use std::time::Duration;
+
+    const WAIT: Duration = Duration::from_secs(10);
+
+    fn failed(why: &str) -> AfterGo {
+        AfterGo::Failed(why.to_owned())
+    }
+
+    #[test]
+    fn a_close_after_the_mark_alone_is_the_exec() {
+        assert_eq!(judge_after_go(EXEC_MARK, true, WAIT), AfterGo::Became);
+    }
+
+    #[test]
+    fn a_close_with_no_mark_is_an_end_before_the_exec() {
+        assert_eq!(
+            judge_after_go(b"", true, WAIT),
+            failed("job-exec ended before the workload's exec")
+        );
+    }
+
+    #[test]
+    fn words_after_the_mark_are_a_failed_exec() {
+        let said = [EXEC_MARK, b"/usr/bin/bash: No such file or directory\n"].concat();
+        assert_eq!(
+            judge_after_go(&said, true, WAIT),
+            failed("/usr/bin/bash: No such file or directory")
+        );
+    }
+
+    #[test]
+    fn words_without_the_mark_are_a_failure_before_the_exec() {
+        assert_eq!(
+            judge_after_go(b"exec.json names no program\n", true, WAIT),
+            failed("exec.json names no program")
+        );
+    }
+
+    #[test]
+    fn a_wait_that_ran_out_without_the_mark_is_no_exec_in_time() {
+        assert_eq!(
+            judge_after_go(b"", false, WAIT),
+            failed("no_exec_in_time: 10 s")
+        );
+    }
+
+    #[test]
+    fn a_wait_that_ran_out_after_the_mark_counts_as_started() {
+        assert_eq!(judge_after_go(EXEC_MARK, false, WAIT), AfterGo::Became);
+    }
+
+    /// Review r5 R5-03: the mark is in the pipe when the wait has run out.
+    #[test]
+    fn a_mark_that_came_as_the_wait_ran_out_counts_as_started() {
+        let mut ends = [0; 2];
+        // SAFETY: ends has room for the two descriptors.
+        let made = unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_NONBLOCK | libc::O_CLOEXEC) };
+        assert_eq!(made, 0);
+        // SAFETY: pipe2 returned two new descriptors.
+        let (read_end, write_end) =
+            unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+        let mut writer = std::fs::File::from(write_end);
+        writer.write_all(EXEC_MARK).expect("the mark fits the pipe");
+        assert_eq!(after_go(&read_end, Duration::ZERO), AfterGo::Became);
+        drop(writer);
+        assert_eq!(
+            after_go(&read_end, Duration::ZERO),
+            failed("job-exec ended before the workload's exec")
+        );
+    }
 }

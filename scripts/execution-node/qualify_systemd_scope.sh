@@ -233,6 +233,9 @@ EOF
   fi
 }
 
+# A 64 MiB request: the unit's own steps count against its cap, so it gets the 256 MiB floor (FIX
+# EXEC-UNIT-STEPS-IN-MEMORY-CAP; q3 at 062b3440 saw a 64 MiB cap OOM-kill the unit before the gate's record). The
+# workload holds 400 MiB, over the floor.
 a_job_over_its_memory_request_ends_as_memory_limit() {
   launch t18 qual 120 64 "" <<'EOF'
 head -c 400M /dev/zero | tail -n 1 > /dev/null
@@ -240,10 +243,33 @@ exit 0
 EOF
   start
   wait_ended 60 || { result "$FUNCNAME" FAIL "no end record in 60 s"; return; }
-  if [ "$(ended .service_result)" = oom-kill ] && [ "$(ended .workload_started)" = true ] && gone; then
-    result "$FUNCNAME" PASS "MemoryMax 64 MiB; service result oom-kill; cgroup empty"
+  local cap; cap=$(jq -r '.properties[] | select(startswith("MemoryMax="))' "$C/prepared.json")
+  if [ "$cap" = "MemoryMax=$((256 << 20))" ] && [ "$(ended .service_result)" = oom-kill ] && [ "$(ended .workload_started)" = true ] && gone; then
+    result "$FUNCNAME" PASS "64 MiB request, $cap (the floor); the workload started; service result oom-kill; cgroup empty"
   else
-    result "$FUNCNAME" FAIL "$(cat "$C/ended.json" | tr -d '\n')"
+    local scope=absent; [ -f "$C/scope.json" ] && scope=present
+    result "$FUNCNAME" FAIL "${cap:-no MemoryMax in prepared.json}; scope.json $scope; $(tr -d '\n' < "$C/ended.json")"
+  fi
+}
+
+# A workload that ends at once is recorded as started: the gate judges the exec by job-exec's exec mark on the report
+# pipe, never by the process after the pipe closed (FIX EXEC-UNIT-GATE-EXEC-RACE). Three runs.
+a_workload_that_ends_at_once_is_recorded_as_started() {
+  local run why=
+  for run in 1 2 3; do
+    launch t17c qual 120 256 "" <<'EOF'
+exit 3
+EOF
+    start
+    wait_ended 60 || { why="run $run: no end record in 60 s"; break; }
+    if [ "$(ended .workload_started)" != true ] || [ "$(ended .exit_code)" != exited ] || [ "$(ended .exit_status)" != 3 ]; then
+      why="run $run: $(tr -d '\n' < "$C/ended.json")"; break
+    fi
+  done
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "3 workloads that exit 3 at once: each recorded started, exit 3"
+  else
+    result "$FUNCNAME" FAIL "$why"
   fi
 }
 
@@ -480,6 +506,128 @@ EOF
   fi
 }
 
+# The template the log and notice cases use: a 1 MiB log cap and USR1 as its checkpoint notice. It is in the node file
+# only while one of those cases runs; a build without the two fields refuses the node file then, and the case fails.
+# The saved node file is put back on the case's own path and on any exit or signal of this script, and a save or a
+# restore that fails fails the case (review r6 R6-05).
+with_quallog_template() {
+  cp -p "$NODE_FILE" "$NODE_FILE.saved" || return 1
+  trap 'without_quallog_template' EXIT
+  trap 'without_quallog_template; exit 130' INT TERM
+  cat >> "$NODE_FILE" <<'EOF' || { without_quallog_template; return 1; }
+
+[execution_node.templates.quallog]
+repo = "/srv/git/qual.git"
+entries = ["units/*.sh"]
+interpreter = ["/usr/bin/bash"]
+max_secs = 600
+memory_gib = 2
+disk_gib = 1
+log_max_mib = 1
+checkpoint_signal = "USR1"
+EOF
+}
+without_quallog_template() {
+  [ -e "$NODE_FILE.saved" ] || return 0
+  mv "$NODE_FILE.saved" "$NODE_FILE" || return 1
+  trap - EXIT INT TERM
+}
+
+# The stream the log case's workload writes to stdout: 400,000 numbered lines of 14 bytes, 5,600,000 bytes.
+numbered_lines() { awk 'BEGIN { for (i = 1; i <= 400000; i++) printf "line %08d\n", i }'; }
+
+# Pass 34, 7.2 and R4's Q3-LOG-CONTRACT (02:07, with the 12:02 additions): the unit's log writer keeps log/<stream> at
+# most the template's log_max_mib. Past it the file is the stream's first half-cap of bytes, then its newest bytes, and
+# log/<stream>.dropped says {"at": <head bytes>, "dropped": <bytes between>}, not rotating once the writer is done.
+a_log_past_its_cap_keeps_its_head_and_its_newest_tail() {
+  with_quallog_template || { result "$FUNCNAME" FAIL "the quallog template was not installed"; return; }
+  launch t72 quallog 120 256 "" <<'EOF'
+awk 'BEGIN { for (i = 1; i <= 400000; i++) printf "line %08d\n", i }'
+echo stderr-ok >&2
+exit 0
+EOF
+  start
+  wait_ended 120 || { without_quallog_template; result "$FUNCNAME" FAIL "no end record in 120 s"; return; }
+  without_quallog_template || { result "$FUNCNAME" FAIL "the node file was not restored"; return; }
+  local log=$P/log/stdout record=$P/log/stdout.dropped expected=/tmp/qual-t72-expected
+  if [ "$(ended .workload_started)" != true ] || [ "$(ended .exit_status)" != 0 ]; then
+    result "$FUNCNAME" FAIL "the workload did not run to exit 0: $(tr -d '\n' < "$C/ended.json")"; return
+  fi
+  if [ ! -f "$log" ] || [ ! -f "$record" ]; then
+    result "$FUNCNAME" FAIL "log/stdout or its drop record is missing: $(ls -la "$P/log" 2>&1 | tr '\n' ';')"; return
+  fi
+  numbered_lines > "$expected"
+  local at dropped len total cap=$((1 << 20)) why=
+  # The record's types as R4's reader reads them, before any arithmetic: whole numbers, and rotating the JSON false
+  # (review r6 R6-07).
+  if ! jq -e '(.at | type == "number" and . == floor and . >= 0) and (.dropped | type == "number" and . == floor and . >= 0) and .rotating == false' "$record" > /dev/null 2>&1; then
+    rm -f "$expected"
+    result "$FUNCNAME" FAIL "the drop record is not {at: whole number, dropped: whole number, rotating: false}: $(head -c 200 "$record")"; return
+  fi
+  at=$(jq -r .at "$record"); dropped=$(jq -r .dropped "$record")
+  len=$(stat -c %s "$log"); total=$(stat -c %s "$expected")
+  [ "$at" = $((cap / 2)) ] || why="at $at, not half the cap $((cap / 2))"
+  [ -z "$why" ] && [ "$len" -gt "$cap" ] && why="the file is $len bytes, over the cap $cap"
+  [ -z "$why" ] && [ $((len + dropped)) != "$total" ] && why="file $len + dropped $dropped is not the stream's $total bytes"
+  [ -z "$why" ] && ! cmp -s <(head -c "$at" "$log") <(head -c "$at" "$expected") && why="the head is not the stream's first $at bytes"
+  [ -z "$why" ] && ! cmp -s <(tail -c $((len - at)) "$log") <(tail -c $((len - at)) "$expected") && why="the tail is not the stream's newest $((len - at)) bytes"
+  [ -z "$why" ] && [ "$(stat -c '%U %a' "$log")" != "$JOB 644" ] && why="log/stdout is $(stat -c '%U %a' "$log"), not $JOB 644"
+  [ -z "$why" ] && [ "$(cat "$P/log/stderr" 2> /dev/null)" != stderr-ok ] && why="log/stderr is not the workload's stderr: $(head -c 200 "$P/log/stderr" 2>&1)"
+  [ -z "$why" ] && [ -e "$P/log/stderr.dropped" ] && why="log/stderr has a drop record under its cap"
+  rm -f "$expected"
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "1 MiB cap, $total bytes written: the file holds the first $at bytes and the newest $((len - at)), dropped $dropped; stderr kept whole"
+  else
+    result "$FUNCNAME" FAIL "$why"
+  fi
+}
+
+# Design 7.1 Signal (R4's checkpoint notice): the engine's account asks the control socket for the template's signal;
+# root sends it to the unit's main process, the workload, and nothing stops. A signal the templates may not name is
+# refused, raw or through the CLI. The workload keeps a child that catches USR1 too and is ready before the notice, so a
+# signal to the whole unit would show (review r6 R6-09). The handler sends a notice only to an active unit (r6 R6-06),
+# so the case waits for that first.
+a_checkpoint_notice_reaches_the_workload_and_stops_nothing() {
+  with_quallog_template || { result "$FUNCNAME" FAIL "the quallog template was not installed"; return; }
+  launch t71 quallog 120 256 "" <<'EOF'
+trap 'echo notice >> "$ONEIRON_JOB_OUT/notices"' USR1
+bash -c 'note() { echo child >> "$ONEIRON_JOB_OUT/child-notices"; }; trap note USR1
+echo ready > "$ONEIRON_JOB_OUT/child-ready"
+while [ ! -s "$ONEIRON_JOB_OUT/notices" ]; do sleep 0.1; done
+sleep 0.5' &
+child=$!
+for ((i = 0; i < 100; i++)); do [ -e "$ONEIRON_JOB_OUT/child-ready" ] && break; sleep 0.1; done
+echo started > "$ONEIRON_JOB_OUT/started"
+for ((i = 0; i < 300; i++)); do [ -s "$ONEIRON_JOB_OUT/notices" ] && break; sleep 0.1; done
+[ -s "$ONEIRON_JOB_OUT/notices" ] || exit 4
+wait "$child" || exit 5
+exit 0
+EOF
+  start
+  local i why= reply
+  for ((i = 0; i < 300; i++)); do [ -e "$P/out/started" ] && break; sleep 0.1; done
+  [ -e "$P/out/started" ] || why="the workload never started"
+  [ -z "$why" ] && [ -e "$P/out/child-ready" ] || why="${why:-the child of the workload was not ready}"
+  for ((i = 0; i < 100; i++)); do [ "$(systemctl show -P ActiveState "$UNIT")" = active ] && break; sleep 0.1; done
+  if [ -z "$why" ]; then
+    as_engine "$BIN" execution-node unit-control signal "$KEY" KILL > /dev/null 2>&1 && why="the CLI sent KILL"
+    # The raw request must reach the handler and come back refused for its reason (review r6 R6-08).
+    reply=$(as_engine socat -t 5 - UNIX-CONNECT:/run/oneiron-job-control.sock <<< "signal $ID TERM" 2>&1)
+    [ -z "$why" ] && [ "$reply" != "refused signal_not_a_checkpoint_signal" ] && why="the socket's answer to TERM: ${reply:-none}"
+    sleep 0.5
+    [ -z "$why" ] && [ "$(systemctl show -P ActiveState "$UNIT")" != active ] && why="the unit stopped after a refused signal"
+    [ -z "$why" ] && ! as_engine "$BIN" execution-node unit-control signal "$KEY" USR1 && why="the notice was not taken"
+  fi
+  wait_ended 60 || { without_quallog_template; result "$FUNCNAME" FAIL "${why:-no end record in 60 s}"; return; }
+  without_quallog_template || why="${why:-the node file was not restored}"
+  [ -z "$why" ] && [ -e "$P/out/child-notices" ] && why="the workload's child got the notice: the signal reached more than the main process"
+  if [ -z "$why" ] && [ "$(cat "$P/out/notices" 2> /dev/null)" = notice ] && [ "$(ended .exit_status)" = 0 ] && [ "$(ended .workload_started)" = true ] && gone; then
+    result "$FUNCNAME" PASS "KILL refused by the CLI and TERM by the socket (refused signal_not_a_checkpoint_signal) with the unit still active; USR1 reached the main process once and not its ready child; exit 0"
+  else
+    result "$FUNCNAME" FAIL "${why:-notices=$(cat "$P/out/notices" 2>&1 | tr '\n' ' ')} $(tr -d '\n' < "$C/ended.json")"
+  fi
+}
+
 setup
 echo "## SETUP host=$(uname -r) systemd=$(systemctl --version | head -1) landlock-abi=$(cat /sys/kernel/security/landlock/abi_version 2> /dev/null || echo ?) cgroup=$(cut -d: -f3 /proc/self/cgroup) root-subtree=[$(cat /sys/fs/cgroup/cgroup.subtree_control 2> /dev/null)]"
 wanted a_machine_without_the_minimum_contract_offers_no_jobs && BEFORE_INSTALL=1
@@ -501,6 +649,7 @@ for test in \
   the_engines_account_starts_only_job_units_and_only_through_the_control_socket \
   a_child_that_left_its_session_dies_when_the_leader_exits \
   a_job_over_its_memory_request_ends_as_memory_limit \
+  a_workload_that_ends_at_once_is_recorded_as_started \
   a_job_cannot_open_the_vault_store_the_keystore_or_the_control_files \
   a_job_writes_only_its_out_tmp_log_and_its_templates_write_paths \
   a_fast_writer_is_stopped_within_its_request_plus_the_rate_times_five_seconds \
@@ -512,6 +661,8 @@ for test in \
   a_workload_cannot_write_or_replace_its_end_record \
   the_unit_opens_the_leased_device_and_no_other \
   a_kill_that_cannot_be_confirmed_quarantines_the_device \
+  a_log_past_its_cap_keeps_its_head_and_its_newest_tail \
+  a_checkpoint_notice_reaches_the_workload_and_stops_nothing \
   a_job_is_ended_at_its_maximum_with_the_engine_and_the_issuer_stopped; do
   wanted "$test" && "$test"
 done

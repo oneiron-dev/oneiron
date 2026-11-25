@@ -113,6 +113,14 @@ pub struct ExecFile {
     pub host_network_namespace: String,
     /// The bounds the template requires (pass 34, 2.2).
     pub require: Vec<BoundRequirement>,
+    /// The bytes each of the workload's log files keeps: the template's
+    /// `log_max_mib` (pass 34, 7.2).
+    #[serde(default = "log_max_bytes_default")]
+    pub log_max_bytes: u64,
+}
+
+fn log_max_bytes_default() -> u64 {
+    u64::from(super::super::node_settings::LOG_MAX_MIB_DEFAULT) << 20
 }
 
 /// What `job-exec` proved from inside the unit, before the workload exists.

@@ -13,6 +13,16 @@
 //! ([`parse_request`]), checks the caller's uid and the instance name, and
 //! asks the service manager itself for that one job unit, always in the job
 //! mode `replace`.
+//!
+//! The third verb, `signal <id> <name>`, is the checkpoint notice (design
+//! 7.1 `Signal`; R4's `JobUnit::signal`): the handler sends one of
+//! [`CHECKPOINT_SIGNALS`] to that unit's main process alone, the workload,
+//! and never stops the unit. It sends it only while the unit is `active`:
+//! the unit is `Type=exec` with the root gate as `ExecStartPost=`, and the
+//! gate ends only after the workload's exec, so an active unit's main
+//! process is the workload and never `job-exec` in its start, which a
+//! checkpoint signal could end (review r6 R6-06). Before that the notice is
+//! refused and lost, as a notice may be.
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -20,8 +30,9 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use super::super::jobs::JobKeyId;
+use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::safe_fs::account;
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
 
 /// The socket the engine's account connects to.
@@ -39,8 +50,12 @@ pub const CONTROL_SERVICE_UNIT_PATH: &str = "/etc/systemd/system/oneiron-job-con
 /// The one job mode the handler asks for.
 pub const CONTROL_JOB_MODE: &str = "replace";
 
-/// The longest request line: `start ` and 32 hex digits and the newline fit
-/// with room.
+/// The unit's `ActiveState` in which a checkpoint notice is sent: past its
+/// start, so its main process is the workload (module doc).
+const SIGNAL_ACTIVE_STATE: &str = "active";
+
+/// The longest request line: `signal `, 32 hex digits, a space, the
+/// longest checkpoint signal's name and the newline fit with room.
 const REQUEST_MAX_BYTES: usize = 64;
 
 /// The longest reply line the engine reads.
@@ -59,37 +74,75 @@ pub const CONTROL_ANSWER_WAIT: Duration = Duration::from_secs(25);
 pub enum ControlVerb {
     Start,
     Stop,
+    /// A checkpoint notice: one of [`CHECKPOINT_SIGNALS`], by name.
+    Signal(&'static str),
 }
 
 impl ControlVerb {
-    /// The request's word, which is also `systemctl`'s verb.
+    /// The request's word.
     #[must_use]
     pub fn word(self) -> &'static str {
         match self {
             Self::Start => "start",
             Self::Stop => "stop",
+            Self::Signal(_) => "signal",
         }
     }
 
-    /// The verb a request word names.
-    #[must_use]
-    pub fn from_word(word: &str) -> Option<Self> {
-        match word {
-            "start" => Some(Self::Start),
-            "stop" => Some(Self::Stop),
-            _ => None,
+    /// The verb a request word names, with the signal's name for `signal`.
+    ///
+    /// # Errors
+    ///
+    /// The refusal's reason: an unknown word, a signal that is not a
+    /// checkpoint signal, or a name given where none belongs.
+    pub fn from_words(word: &str, signal: Option<&str>) -> Result<Self, String> {
+        match (word, signal) {
+            ("start", None) => Ok(Self::Start),
+            ("stop", None) => Ok(Self::Stop),
+            ("signal", Some(name)) => CHECKPOINT_SIGNALS
+                .iter()
+                .copied()
+                .find(|known| *known == name)
+                .map(Self::Signal)
+                .ok_or_else(|| "signal_not_a_checkpoint_signal".to_owned()),
+            ("signal", None) => Err("signal_name_missing".to_owned()),
+            ("start" | "stop", Some(_)) => Err("request_malformed".to_owned()),
+            _ => Err("verb_unknown".to_owned()),
+        }
+    }
+
+    /// The `systemctl` arguments that carry the verb out on `unit`.
+    fn systemctl_args(self, unit: &str) -> Vec<String> {
+        match self {
+            Self::Start | Self::Stop => vec![
+                self.word().to_owned(),
+                "--no-block".to_owned(),
+                format!("--job-mode={CONTROL_JOB_MODE}"),
+                unit.to_owned(),
+            ],
+            Self::Signal(name) => vec![
+                "kill".to_owned(),
+                "--kill-whom=main".to_owned(),
+                format!("--signal=SIG{name}"),
+                unit.to_owned(),
+            ],
         }
     }
 }
 
-/// The request line for `verb` on the job unit `id`: `<verb> <32 hex>\n`.
+/// The request line for `verb` on the job unit `id`: `<verb> <32 hex>\n`,
+/// or `signal <32 hex> <name>\n`.
 #[must_use]
 pub fn render_request(verb: ControlVerb, id: &JobKeyId) -> String {
-    format!("{} {id}\n", verb.word())
+    match verb {
+        ControlVerb::Signal(name) => format!("signal {id} {name}\n"),
+        ControlVerb::Start | ControlVerb::Stop => format!("{} {id}\n", verb.word()),
+    }
 }
 
 /// One request line, as the handler reads it: exactly a known verb, one
-/// space, a job instance id (32 lower-hex digits) and a newline.
+/// space, a job instance id (32 lower-hex digits), for `signal` one space
+/// and a checkpoint signal's name, and a newline.
 ///
 /// # Errors
 ///
@@ -99,10 +152,17 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
     let text = text
         .strip_suffix('\n')
         .ok_or_else(|| "request_not_one_line".to_owned())?;
-    let (word, id) = text
+    let (word, rest) = text
         .split_once(' ')
         .ok_or_else(|| "request_malformed".to_owned())?;
-    let verb = ControlVerb::from_word(word).ok_or_else(|| "verb_unknown".to_owned())?;
+    let (id, signal) = match word {
+        "signal" => rest
+            .split_once(' ')
+            .map(|(id, name)| (id, Some(name)))
+            .ok_or_else(|| "signal_name_missing".to_owned())?,
+        _ => (rest, None),
+    };
+    let verb = ControlVerb::from_words(word, signal)?;
     let id = JobKeyId::parse(id).ok_or_else(|| "instance_not_a_job".to_owned())?;
     Ok((verb, id))
 }
@@ -176,14 +236,17 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
     let line = read_line(stream, REQUEST_MAX_BYTES, REQUEST_WAIT)
         .map_err(|error| format!("request: {error}"))?;
     let (verb, id) = parse_request(&line)?;
-    let job_mode = format!("--job-mode={CONTROL_JOB_MODE}");
     let unit = id.unit_name();
-    run_tool(
-        "systemctl",
-        &[verb.word(), "--no-block", &job_mode, &unit],
-        SYSTEMCTL_TIMEOUT,
-    )
-    .map(drop)
+    if matches!(verb, ControlVerb::Signal(_)) {
+        let found = show(&unit, &["ActiveState"])?;
+        let state = found.get("ActiveState").map_or("", String::as_str);
+        if state != SIGNAL_ACTIVE_STATE {
+            return Err(format!("workload_not_running: the unit is {state:?}"));
+        }
+    }
+    let args = verb.systemctl_args(&unit);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(drop)
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel
@@ -261,6 +324,18 @@ mod tests {
             parse_request(stop.as_bytes()),
             Ok((ControlVerb::Stop, id.clone()))
         );
+        for name in CHECKPOINT_SIGNALS.iter().copied() {
+            let verb = ControlVerb::from_words("signal", Some(name)).expect("a checkpoint signal");
+            let line = render_request(verb, &id);
+            assert_eq!(line, format!("signal {id} {name}\n"));
+            assert!(line.len() <= REQUEST_MAX_BYTES);
+            assert_eq!(parse_request(line.as_bytes()), Ok((verb, id.clone())));
+            let signal = format!("--signal=SIG{name}");
+            assert_eq!(
+                verb.systemctl_args("u"),
+                ["kill", "--kill-whom=main", signal.as_str(), "u"]
+            );
+        }
         for (bad, why) in [
             (format!("start {id}"), "request_not_one_line"),
             (format!("restart {id}\n"), "verb_unknown"),
@@ -279,6 +354,25 @@ mod tests {
                 "instance_not_a_job",
             ),
             ("start\n".to_owned(), "request_malformed"),
+            (format!("signal {id}\n"), "signal_name_missing"),
+            (
+                format!("signal {id} KILL\n"),
+                "signal_not_a_checkpoint_signal",
+            ),
+            (
+                format!("signal {id} TERM\n"),
+                "signal_not_a_checkpoint_signal",
+            ),
+            (
+                format!("signal {id} SIGUSR1\n"),
+                "signal_not_a_checkpoint_signal",
+            ),
+            (
+                format!("signal {id} USR1 USR2\n"),
+                "signal_not_a_checkpoint_signal",
+            ),
+            (format!("signal {id}.service USR1\n"), "instance_not_a_job"),
+            (format!("stop {id} USR1\n"), "instance_not_a_job"),
         ] {
             assert_eq!(
                 parse_request(bad.as_bytes()),
