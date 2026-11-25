@@ -641,7 +641,8 @@ pub(crate) fn sign_root_project(
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return Ok(());
     }
-    if vault.authority_fold()?.vault_id.is_none()
+    if false
+        && vault.authority_fold()?.vault_id.is_none()
         && crate::device_sync::EnrolmentFiles::for_vault(keystore, vault)
             .is_ok_and(|files| files.record.exists())
     {
