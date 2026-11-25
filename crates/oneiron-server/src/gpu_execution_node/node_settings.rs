@@ -137,6 +137,18 @@ pub struct ExecutionNodeSettings {
     /// `[execution_node.cache]`: the box's ceiling on the cache budget.
     #[serde(default)]
     pub cache: NodeCacheSettings,
+    /// Whether the node obeys the owner's machine policy rows (pass 34 2.4, row P0) as well as
+    /// this file, the stricter of the two applying. Default true; false keeps the node to this
+    /// file alone.
+    #[serde(default = "owner_policy_default")]
+    pub owner_policy: bool,
+    /// The most memory the node's jobs hold at once, in GiB. Absent: the machine's total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_memory_gib: Option<u64>,
+    /// The most threads one job uses, a ceiling over every template's `cpu_threads`. Absent: the
+    /// machine's cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_threads: Option<u32>,
 }
 
 /// One `[execution_node.templates.<name>]`: what a pin of it may run, and
@@ -244,6 +256,9 @@ fn require_default() -> Vec<BoundRequirement> {
 fn cpu_threads_default() -> u32 {
     CPU_THREADS_DEFAULT
 }
+fn owner_policy_default() -> bool {
+    true
+}
 fn host_scope() -> Vec<ScopeClass> {
     vec![ScopeClass::Host]
 }
@@ -298,6 +313,12 @@ impl ExecutionNodeSettings {
         }
         if self.scopes.is_empty() {
             return Err("execution_node.scopes must permit at least one scope kind".to_owned());
+        }
+        if self.job_memory_gib == Some(0) {
+            return Err("execution_node.job_memory_gib must be at least 1 when set".to_owned());
+        }
+        if self.job_threads == Some(0) {
+            return Err("execution_node.job_threads must be at least 1 when set".to_owned());
         }
         if self.job_account.trim().is_empty() {
             return Err("execution_node.job_account must name an OS account".to_owned());

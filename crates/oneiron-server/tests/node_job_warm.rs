@@ -364,7 +364,7 @@ fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
     );
 
     // Four caches of 1 MiB under a cap of 2.5 MiB: the plan goes in last use, then key order.
-    let first = jobs.cache_pass_under(&settings, &budget(5 * MIB / 2));
+    let first = jobs.cache_pass_under(&settings, &settings.cache, &budget(5 * MIB / 2));
     let removed: Vec<&str> = first.removed.iter().map(|gone| gone.key.as_str()).collect();
     assert_eq!(removed, ["target:b", "target:c"], "{first:?}");
     assert!(cache_dir.join("a").exists(), "the listed key was removed");
@@ -390,7 +390,7 @@ fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
         .node
         .clock
         .advance_ms(settings.cache.wanted_hold_secs * 1000 + 1000);
-    let second = jobs.cache_pass_under(&settings, &budget(MIB / 2));
+    let second = jobs.cache_pass_under(&settings, &settings.cache, &budget(MIB / 2));
     let removed: Vec<&str> = second
         .removed
         .iter()
@@ -461,7 +461,7 @@ fn an_exit_0_attempt_refreshes_the_last_use_of_each_key_it_listed() {
     std::fs::create_dir_all(fixture.path("data/weights-aa")).expect("input");
     let settings = fixture.settings(&cache_dir);
     let jobs = fixture.node.open();
-    let before = jobs.warm_facts(&settings);
+    let before = jobs.warm_facts(&settings, &settings.cache);
     assert_eq!(fact(&before, "weights:aa").uses, 0);
     assert_eq!(fact(&before, "weights:aa").last_used_ms, Some(NOW_MS));
 
@@ -477,7 +477,7 @@ fn an_exit_0_attempt_refreshes_the_last_use_of_each_key_it_listed() {
     let ended = wait_for(&jobs, key, |entry| entry.end.is_some());
     assert_eq!(ended.end, Some(JobEnd::Exited { code: 0 }));
 
-    let after = jobs.warm_facts(&settings);
+    let after = jobs.warm_facts(&settings, &settings.cache);
     let used = fact(&after, "weights:aa");
     assert_eq!(used.uses, 1);
     assert!(used.last_used_ms >= Some(NOW_MS + 60_000), "{used:?}");
@@ -490,7 +490,10 @@ fn an_exit_0_attempt_refreshes_the_last_use_of_each_key_it_listed() {
         "a key the attempt did not list"
     );
     // Each end is counted once, however often the node is asked.
-    assert_eq!(fact(&jobs.warm_facts(&settings), "weights:aa").uses, 1);
+    assert_eq!(
+        fact(&jobs.warm_facts(&settings, &settings.cache), "weights:aa").uses,
+        1
+    );
 }
 
 #[test]
@@ -500,7 +503,7 @@ fn the_node_answer_reports_each_warm_key_with_its_presence() {
     std::fs::create_dir_all(fixture.path("data/weights-aa")).expect("input");
     let settings = fixture.settings(&cache_dir);
     let jobs = fixture.node.open();
-    let facts = jobs.warm_facts(&settings);
+    let facts = jobs.warm_facts(&settings, &settings.cache);
     let input = fact(&facts, "weights:aa");
     assert!(input.present && input.mapped && !input.cache, "{input:?}");
     assert_eq!(input.last_used_ms, Some(NOW_MS));
@@ -547,7 +550,7 @@ caches = ["target:x"]
     std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o777))
         .expect("cache dir mode");
     let jobs = fixture.node.open();
-    let report = jobs.cache_pass_under(&settings, &budget(0));
+    let report = jobs.cache_pass_under(&settings, &settings.cache, &budget(0));
     assert!(report.removed.is_empty(), "{report:?}");
     for name in ["a", "b", "c", "h"] {
         assert!(cache_dir.join(name).exists(), "{name} was removed");

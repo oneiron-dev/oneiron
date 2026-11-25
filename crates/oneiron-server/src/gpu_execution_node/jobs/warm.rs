@@ -228,7 +228,11 @@ impl NodeJobs {
     /// The warm keys this node holds or has used, as `Node` reports them: every key a template
     /// maps, present or not, then the keys remembered from use alone.
     #[must_use]
-    pub fn warm_facts(&self, settings: &ExecutionNodeSettings) -> Vec<WarmKeyFact> {
+    pub fn warm_facts(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+    ) -> Vec<WarmKeyFact> {
         let paths = warm_paths(settings);
         // The paths are read before any lock is taken.
         let present: BTreeMap<&str, bool> = paths
@@ -248,7 +252,7 @@ impl NodeJobs {
                 changed |= warm.table.found(key, now_ms);
             }
         }
-        let keys_max = usize::try_from(settings.cache.keys_max).unwrap_or(usize::MAX);
+        let keys_max = usize::try_from(cache.keys_max).unwrap_or(usize::MAX);
         changed |= !warm
             .table
             .bound(keys_max, |key| paths.contains_key(key))
@@ -282,15 +286,15 @@ impl NodeJobs {
     /// one wanted hold has passed since this service opened, the last pass started at least
     /// `pass_every_secs` ago, and none runs now. The authority tick calls this; it never waits
     /// for the pass.
-    pub fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings) {
+    pub fn cache_pass_if_due(&self, settings: &ExecutionNodeSettings, cache: &NodeCacheSettings) {
         if settings.cache_dir.is_none() {
             return;
         }
         let now_ms = self.now().wall_ms;
         {
             let mut warm = self.warm_lock();
-            let hold_ms = settings.cache.wanted_hold_secs.saturating_mul(1000);
-            let every_ms = settings.cache.pass_every_secs.saturating_mul(1000);
+            let hold_ms = cache.wanted_hold_secs.saturating_mul(1000);
+            let every_ms = cache.pass_every_secs.saturating_mul(1000);
             let due = now_ms >= warm.opened_ms.saturating_add(hold_ms)
                 && warm
                     .last_pass_ms
@@ -303,10 +307,11 @@ impl NodeJobs {
         }
         let jobs = self.clone();
         let settings = settings.clone();
+        let cache = *cache;
         let spawned = std::thread::Builder::new()
             .name("node-cache-pass".to_owned())
             .spawn(move || {
-                let report = jobs.cache_pass(&settings);
+                let report = jobs.cache_pass(&settings, &cache);
                 if !report.removed.is_empty() || !report.left.is_empty() {
                     tracing::info!(
                         removed = report.removed.len(),
@@ -323,18 +328,23 @@ impl NodeJobs {
         }
     }
 
-    /// One cache pass now, on this thread, under the budget the box's ceiling gives.
+    /// One cache pass now, on this thread, under the cache figures in force.
     #[must_use]
-    pub fn cache_pass(&self, settings: &ExecutionNodeSettings) -> CachePassReport {
-        let budget = cache_budget(&settings.cache);
-        self.cache_pass_under(settings, &budget)
+    pub fn cache_pass(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+    ) -> CachePassReport {
+        self.cache_pass_under(settings, cache, &cache_budget(cache))
     }
 
-    /// One cache pass now, on this thread, under `budget`.
+    /// One cache pass now, on this thread, under `budget`; `cache` gives the wanted hold and
+    /// the table's bound.
     #[must_use]
     pub fn cache_pass_under(
         &self,
         settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
         budget: &CacheBudget,
     ) -> CachePassReport {
         let Some(cache_dir) = settings.cache_dir.as_deref() else {
@@ -354,7 +364,7 @@ impl NodeJobs {
             })
             .collect();
         let now_ms = self.now().wall_ms;
-        let hold_ms = settings.cache.wanted_hold_secs.saturating_mul(1000);
+        let hold_ms = cache.wanted_hold_secs.saturating_mul(1000);
         let mut report = CachePassReport::default();
         let mut renamed = Vec::new();
         {
@@ -408,7 +418,7 @@ impl NodeJobs {
                     Err(why) => report.left.push((eviction.key.clone(), why)),
                 }
             }
-            let keys_max = usize::try_from(settings.cache.keys_max).unwrap_or(usize::MAX);
+            let keys_max = usize::try_from(cache.keys_max).unwrap_or(usize::MAX);
             warm.table.bound(keys_max, |key| paths.contains_key(key));
             warm.save();
         }

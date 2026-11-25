@@ -10,21 +10,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
+use oneiron::machine_policy::CachePolicy;
 use oneiron::warm_key::warm_key_valid;
 use serde::{Deserialize, Serialize};
 
 use super::NodeTemplate;
 
-/// The default ceiling on the bytes the cache keys hold together, in GiB (the pack, section 6).
-pub const CACHE_CAP_GIB_DEFAULT: u64 = 150;
+/// The default ceiling on the bytes the cache keys hold together, in GiB (the pack, section 6):
+/// the owner's key's default, so the two layers start equal.
+pub const CACHE_CAP_GIB_DEFAULT: u64 = CachePolicy::DEFAULT.cap_gib;
 /// The default idle time after which a cache key goes, in days.
-pub const CACHE_IDLE_DAYS_DEFAULT: u32 = 3;
+pub const CACHE_IDLE_DAYS_DEFAULT: u32 = CachePolicy::DEFAULT.idle_days;
 /// The default time after a use in which a cache key never goes for the cap, in hours.
-pub const CACHE_PROTECT_HOURS_DEFAULT: u32 = 6;
+pub const CACHE_PROTECT_HOURS_DEFAULT: u32 = CachePolicy::DEFAULT.protect_hours;
 /// The default time a key an open order listed stays protected after the issuer's ask.
-pub const CACHE_WANTED_HOLD_SECS_DEFAULT: u64 = 900;
+pub const CACHE_WANTED_HOLD_SECS_DEFAULT: u64 = CachePolicy::DEFAULT.wanted_hold_secs;
 /// The default bound on the warm keys the node's table remembers.
-pub const CACHE_KEYS_MAX_DEFAULT: u32 = 256;
+pub const CACHE_KEYS_MAX_DEFAULT: u32 = CachePolicy::DEFAULT.keys_max;
 /// The default time between two cache passes (the pack's two hours).
 pub const CACHE_PASS_EVERY_SECS_DEFAULT: u64 = 7_200;
 
@@ -92,6 +94,23 @@ fn pass_every_secs_default() -> u64 {
 }
 
 impl NodeCacheSettings {
+    /// The figures in force: for each the smaller of this box's and the owner's machine policy
+    /// (`placement.cache.*`, row P0), and the box's own pass cadence. `None`: the box alone.
+    #[must_use]
+    pub fn tightened(&self, owner: Option<&CachePolicy>) -> Self {
+        let Some(owner) = owner else {
+            return *self;
+        };
+        Self {
+            cap_gib: self.cap_gib.min(owner.cap_gib),
+            idle_days: self.idle_days.min(owner.idle_days),
+            protect_hours: self.protect_hours.min(owner.protect_hours),
+            wanted_hold_secs: self.wanted_hold_secs.min(owner.wanted_hold_secs),
+            keys_max: self.keys_max.min(owner.keys_max).max(1),
+            pass_every_secs: self.pass_every_secs,
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), String> {
         if self.keys_max == 0 {
             return Err("execution_node.cache.keys_max must be at least 1".to_owned());
