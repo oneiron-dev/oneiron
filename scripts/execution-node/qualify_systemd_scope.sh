@@ -32,7 +32,7 @@ done
 # Every tool a case reads its verdict with, checked once here, so a missing one never reads as a failed bound (cmp was
 # missing from the Arch container and failed the log case in run q5: FIX EXEC-UNIT-QUALIFY-LOG-CASE-NO-CMP; review r7
 # R7-06).
-for tool in jq socat runuser setpriv timeout journalctl systemctl sha256sum stat awk; do
+for tool in jq socat runuser setpriv getent timeout journalctl systemctl sha256sum stat awk; do
   command -v "$tool" > /dev/null || { echo "## QUALIFY rc=77 why=no-$tool"; exit 77; }
 done
 
@@ -44,6 +44,7 @@ KEYSTORE=/var/lib/oneiron-qual-keystore
 JOB=oneiron-job
 JOB_UID_FIRST=1879048192
 JOB_UID_COUNT=64
+JOB_DEVICE_GROUP=oneiron-job-devices
 IDS_MODE=range
 NODE_FILE=/etc/oneiron/execution-node.toml
 STATE=/var/lib/oneiron-qual/jobs
@@ -204,17 +205,27 @@ do_install() {
   [ "$IDS_MODE" = range ] || id "$JOB" > /dev/null 2>&1
 }
 
-# Two device nodes a job's uid can open outside any unit stand in for cards.
+# Two device nodes stand in for cards. Each is root's, mode 0660, group the job device group that install made (on a
+# binary from before the uid per job, the job account's group, as the R6 runbook then had it), so a job opens one only
+# through that group, and its device policy alone keeps it from the other. Each must open outside any unit for a job's
+# uid holding that group.
 pick_devices() {
   local spec path ids
   ids=$(outside_job_ids)
+  if [ "$IDS_MODE" = range ]; then
+    DEVICE_GID=$(getent group "$JOB_DEVICE_GROUP" | cut -d: -f3)
+  else
+    DEVICE_GID=$(id -g "$JOB")
+  fi
+  [ -n "$DEVICE_GID" ] || { echo "## SETUP no device group gid"; DEVICES=(); return; }
   mkdir -p /dev/qual
   DEVICES=()
   for spec in "10 200" "10 229" "10 237" "10 238" "10 223" "10 232"; do
     path=/dev/qual/node-${spec// /-}
     [ -e "$path" ] || mknod "$path" c $spec 2> /dev/null || continue
-    chmod 0666 "$path"
-    as_job_id ${ids% *} ${ids#* } bash -c "exec 3<> $path" 2> /dev/null && DEVICES+=("$path")
+    chown "root:$DEVICE_GID" "$path" && chmod 0660 "$path"
+    setpriv --reuid="${ids% *}" --regid="${ids#* }" --groups="$DEVICE_GID" -- bash -c "exec 3<> $path" 2> /dev/null \
+      && DEVICES+=("$path")
     [ ${#DEVICES[@]} -eq 2 ] && break
   done
   if [ ${#DEVICES[@]} -eq 2 ]; then
@@ -676,18 +687,27 @@ EOF
 
 the_unit_opens_the_leased_device_and_no_other() {
   if [ ${#DEVICES[@]} -lt 2 ]; then
-    result "$FUNCNAME" UNPROVEN "no two device nodes the job account can open exist here"; return
+    result "$FUNCNAME" UNPROVEN "no two device nodes a job's uid with the device group can open exist here"; return
   fi
   launch t23c qual 120 256 QUAL-DEV-0 <<EOF
 { (exec 3<> "${DEVICES[0]}") 2>&1 && echo "leased opened" || echo "LEASED REFUSED"
   (exec 3<> "${DEVICES[1]}") 2>&1 | grep -q 'Operation not permitted' && echo "other refused EPERM" || echo "OTHER NOT EPERM"; } > "\$ONEIRON_JOB_OUT/results"
+echo "ids \$(id -u) \$(id -G)" >> "\$ONEIRON_JOB_OUT/results"
 EOF
   start
   wait_ended 60 || { result "$FUNCNAME" FAIL "no end record"; return; }
-  if [ "$(ended .workload_started)" = true ] && grep -q '^leased opened' "$P/out/results" && grep -q '^other refused EPERM' "$P/out/results"; then
-    result "$FUNCNAME" PASS "the leased node opens; the other fails with the device policy's EPERM; proof: $(jq -r '.report.proofs.device_closure.evidence' "$C/scope.json")"
+  local ids uid groups why=
+  ids=$(grep '^ids ' "$P/out/results" 2> /dev/null); read -r _ uid groups <<< "$ids"
+  # Under the uid per job: the job's own uid from the range, and the device group as its one supplementary group.
+  if [ "$IDS_MODE" = range ]; then
+    [ -n "$uid" ] && [ "$uid" -ge "$JOB_UID_FIRST" ] && [ "$uid" -lt $((JOB_UID_FIRST + JOB_UID_COUNT)) ] \
+      || why="the job ran as uid '$uid', not one of the node's range; "
+    [ "$groups" = "$uid $DEVICE_GID" ] || why+="the job's groups are '$groups', not its own and the device group $DEVICE_GID; "
+  fi
+  if [ -z "$why" ] && [ "$(ended .workload_started)" = true ] && grep -q '^leased opened' "$P/out/results" && grep -q '^other refused EPERM' "$P/out/results"; then
+    result "$FUNCNAME" PASS "the leased node (0660, the device group's) opens under uid $uid, groups [$groups]; the other fails with the device policy's EPERM; proof: $(jq -r '.report.proofs.device_closure.evidence' "$C/scope.json")"
   else
-    result "$FUNCNAME" FAIL "$(tr '\n' ';' < "$P/out/results" 2> /dev/null) $(ended .refusal)"
+    result "$FUNCNAME" FAIL "$why$(tr '\n' ';' < "$P/out/results" 2> /dev/null) $(ended .refusal)"
   fi
 }
 
@@ -858,7 +878,7 @@ EOF
   fi
   a_pid=$(cat "$a_p/out/pid"); a_uid=$(cat "$a_p/out/uid")
   launch t24-b qual 120 256 "" <<EOF
-id -u > "\$ONEIRON_JOB_OUT/uid"
+id -u > "\$ONEIRON_JOB_OUT/uid"; id -G > "\$ONEIRON_JOB_OUT/groups"
 { [ -d /proc/$a_pid ] && echo "sees process $a_pid"
   kill -0 $a_pid 2> /dev/null && echo "signals process $a_pid"
   head -c 1 /proc/$a_pid/environ > /dev/null 2>&1 && echo "reads /proc/$a_pid/environ"
@@ -875,6 +895,8 @@ EOF
   wait_ended 60 || why+="job A: no end record in 60 s after its stop; "
   [ -n "$a_uid" ] && [ "$a_uid" = "$b_uid" ] && why+="both jobs ran as uid $a_uid; "
   if [ "$IDS_MODE" = range ]; then
+    # A job that leases no device keeps no supplementary group.
+    [ "$(cat "$P/out/groups" 2> /dev/null)" = "$b_uid" ] || why+="job B's groups are '$(cat "$P/out/groups" 2>&1)', not its own gid alone; "
     for found in "$a_uid" "$b_uid"; do
       [ -n "$found" ] && [ "$found" -ge "$JOB_UID_FIRST" ] && [ "$found" -lt $((JOB_UID_FIRST + JOB_UID_COUNT)) ] \
         || why+="uid '$found' is not in the node's range; "
