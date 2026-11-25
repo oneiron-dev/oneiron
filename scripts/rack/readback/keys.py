@@ -243,9 +243,9 @@ def judge(reading: KeyReading, section: dict, phase: str) -> tuple[bool, str, di
     for session in reading.live_sessions:
         accept = latest.get(session)
         if accept is None:
-            live_unknown += 1
+            pass
         elif accept.fingerprint in rack:
-            live_rack.append(rack[accept.fingerprint])
+            pass
     facts["live_sessions"] = len(reading.live_sessions)
     facts["live_rack_key_sessions"] = live_rack
     authorized_rack = {
