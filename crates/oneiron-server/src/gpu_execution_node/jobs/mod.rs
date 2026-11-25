@@ -3,10 +3,10 @@
 //! commit, the end handling with its release check, recovery at start, the
 //! signed receipt (design pass 33, sections 5.2, 5.3 and 7.2 to 7.7), the
 //! status side's answers (`Keys`, `Signal`, `Fetch`, `Ack`) with the cleaning
-//! of an acknowledged payload (row R4, 7.1 and 7.6 step 5), and the
-//! machine's own state (pass 34 row Q4, 7.3): the idle readiness check with
-//! the DRAIN slot's default rule, the incidents, and the breadcrumb lines of
-//! a running key.
+//! of an acknowledged payload (row R4, 7.1 and 7.6 step 5), `Tail`, the
+//! log by offset (pass 34 row Q3, 7.2), and the machine's own state
+//! (pass 34 row Q4, 7.3): the idle readiness check with the DRAIN slot's
+//! default rule, the incidents, and the breadcrumb lines of a running key.
 //!
 //! One lock, the admission lock, serialises every change of a key's state
 //! and every read of the local controls. A reply is built only after its
@@ -39,6 +39,7 @@ pub mod receipt;
 mod admission;
 mod end;
 mod launch;
+mod log_tail;
 mod recovery;
 mod status;
 

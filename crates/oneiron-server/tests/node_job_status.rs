@@ -192,6 +192,7 @@ fn entry(jobs: &NodeJobs, key: &str) -> Option<NodeKey> {
 
 /// Waits until the key exists and `done` holds for it.
 fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> NodeKey {
+    // testkit-lint: allow(wall-clock) bounds a wait on the node's own worker threads
     let deadline = Instant::now() + WAIT;
     loop {
         if let Some(found) = entry(jobs, key)
@@ -200,10 +201,12 @@ fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> Node
             return found;
         }
         assert!(
+            // testkit-lint: allow(wall-clock) the same bound
             Instant::now() < deadline,
             "key {key} did not reach the state: {:?}",
             entry(jobs, key)
         );
+        // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -321,6 +324,7 @@ fn a_cancel_before_launch_withdraws_and_bills_nothing() {
     assert_eq!(withdrawn.end, Some(JobEnd::Withdrawn));
     assert!(!withdrawn.started);
     assert_eq!(withdrawn.measured_secs, None);
+    // testkit-lint: allow(sleep) proves an absence: no worker signals that it started nothing
     std::thread::sleep(Duration::from_millis(300));
     jobs.tick();
     assert_eq!(fixture.node.units.total_starts(), 0, "no unit ever started");

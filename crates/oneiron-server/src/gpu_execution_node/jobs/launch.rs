@@ -217,8 +217,10 @@ impl NodeJobs {
                 self.parts().admission.admit_placement(pin, &placed)?;
                 let mut leases = Vec::with_capacity(placed.devices.len());
                 for device in &placed.devices {
-                    let request =
-                        device_slot_request(key, device, pin.request.devices.get(device.claim));
+                    let Some(claim) = pin.request.devices.get(device.claim) else {
+                        return Err(format!("device_refused: no claim {}", device.claim));
+                    };
+                    let request = device_slot_request(key, device, claim);
                     match self.parts().devices.lease_for_launch(&request) {
                         Ok(lease) => leases.push(lease),
                         // The leases taken so far drop here: their devices go

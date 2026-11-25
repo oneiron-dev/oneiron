@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use oneiron::{EntityId, Vault};
 
-use super::availability::GpuAvailability;
+use super::availability::{GpuAvailability, admits_gpu};
 use super::device::GpuDevice;
 use super::slots::{GpuSlotRefusal, GpuSlotRequest, GpuSlotTable};
 
@@ -162,7 +162,7 @@ pub fn select_gpu_slot(
             candidate
                 .inventory
                 .iter()
-                .any(|device| request.admits(device))
+                .any(|device| admits_gpu(request, device))
         })
         .map(|candidate| candidate.machine)
         .collect();
