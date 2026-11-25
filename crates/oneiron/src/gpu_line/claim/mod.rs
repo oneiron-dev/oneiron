@@ -502,7 +502,7 @@ pub fn claims_at_rung_in_txn(
 /// # Errors
 ///
 /// A store failure.
-pub fn claims_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<UnitClaim>> {
+pub(crate) fn claims_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<UnitClaim>> {
     Ok(CLAIMS
         .scan(&vault.store, txn)?
         .into_iter()
