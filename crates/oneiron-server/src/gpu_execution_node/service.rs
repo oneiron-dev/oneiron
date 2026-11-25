@@ -191,8 +191,5 @@ where
     };
     // A peer that stopped reading loses this answer; it asks again on a new
     // stream.
-    let sent = tokio::time::timeout(REPLY_WRITE_DEADLINE, stream.send(&reply)).await;
-    if !matches!(sent, Ok(Ok(()))) {
-        stream.reset();
-    }
+    drop(stream.send(&reply).await);
 }
