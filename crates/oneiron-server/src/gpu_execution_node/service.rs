@@ -14,8 +14,8 @@
 //! enabled. `Node` and `Availability` are answered here. A request that names a key
 //! goes to the node's keys (row R3a's journal, [`super::node::NodeKeys`])
 //! once they are attached; until then it is refused as `NotEnabled`, and
-//! nothing is written. The status side's answers are row R4's: past the
-//! gate they are refused as `NotEnabled` too.
+//! nothing is written. The status side (row R4) goes there the same way:
+//! `Find`, `Status`, `Stop`, `Keys`, `Signal`, `Fetch` and `Ack`.
 
 use std::future::Future;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -163,17 +163,21 @@ fn answer_status(
     endpoint_key: [u8; 32],
     request: &JobStatusRequest,
 ) -> JobStatusAnswer {
-    if let Err(refusal) = node.gate(endpoint_key, JOB_STATUS_ALPN, GateAsk::Status) {
-        return JobStatusAnswer::Refused(refusal);
-    }
+    let (peer, _snapshot) = match node.gate(endpoint_key, JOB_STATUS_ALPN, GateAsk::Status) {
+        Ok(passed) => passed,
+        Err(refusal) => return JobStatusAnswer::Refused(refusal),
+    };
+    let Some(keys) = node.keys() else {
+        return JobStatusAnswer::Refused(JobRefusal::NotEnabled);
+    };
     match request {
-        JobStatusRequest::Find { .. }
-        | JobStatusRequest::Status { .. }
-        | JobStatusRequest::Signal { .. }
-        | JobStatusRequest::Stop { .. }
-        | JobStatusRequest::Keys { .. }
-        | JobStatusRequest::Fetch { .. }
-        | JobStatusRequest::Ack { .. } => JobStatusAnswer::Refused(JobRefusal::NotEnabled),
+        JobStatusRequest::Find { key } | JobStatusRequest::Status { key } => keys.find(peer, key),
+        JobStatusRequest::Stop { key } => keys.stop(peer, key),
+        JobStatusRequest::Keys { after } => keys.keys_page(peer, after.as_deref()),
+        JobStatusRequest::Signal { key, signal } => keys.signal(peer, key, signal),
+        JobStatusRequest::Fetch { key, name } => keys.fetch(peer, key, name),
+        JobStatusRequest::Ack { key } => keys.acknowledge(peer, key),
+        JobStatusRequest::Tail(request) => keys.tail(peer, request),
     }
 }
 

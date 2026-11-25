@@ -156,5 +156,13 @@ fn the_generic_outcome_setter_refuses_an_arm_reference() {
 
     let settled = settle_team_outcome(&fixture.vault, "run-1", &outcome("run-1-verdict"))
         .expect("an ordinary outcome settles");
-    assert_eq!(settled.outcome, Some(outcome("run-1-verdict")));
+    // The setter names the outcome's critics from the store (FIX 12106): a
+    // run with no deliverable has none, which is known, not unknown.
+    assert_eq!(
+        settled.outcome,
+        Some(TeamOutcome {
+            critics: Some(Vec::new()),
+            ..outcome("run-1-verdict")
+        })
+    );
 }
