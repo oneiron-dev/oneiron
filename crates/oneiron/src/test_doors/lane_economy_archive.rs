@@ -93,7 +93,8 @@ pub fn exported_rows(vault: &Vault, table: &str) -> crate::Result<Vec<(Vec<u8>, 
 ///
 /// # Errors
 ///
-/// The store's.
+/// A job whose stored form gained a field with no serde default (this door then names it); the
+/// store's.
 #[doc(hidden)]
 pub fn put_running_gpu_job(
     vault: &Vault,
@@ -135,44 +136,51 @@ pub fn put_running_gpu_job(
         valid_until_ms: now_ms + GPU_QUOTE_VALID_MS,
         digest: "0".repeat(64),
     };
-    let job = GpuJob {
-        id,
-        started_by: Some(started_by),
-        offer: GpuOfferPin {
-            name: quote.offer.clone(),
-            class: "h100".to_owned(),
-            provider: "fixture-cloud".to_owned(),
-            region: "test-1".to_owned(),
-            price_shape: PriceShape::AtOneironList,
-        },
-        job_type: quote.job_type.clone(),
-        image: quote.image.clone(),
-        maximum,
-        chunks: vec![GpuChunk {
-            idempotency_key: key.clone(),
-            quote,
-            base_used_secs: 0,
-            checkpoint_from: None,
-            permit: serde_json::Value::Null,
-            dispatched: true,
-            resource: Some(GpuResourceRef(format!("resource-{key}"))),
-            used_secs: 30,
-            signalled_percents: Vec::new(),
-            newest_checkpoint: None,
-            billed_secs: None,
-            settled_units: None,
-            unbilled_secs: 0,
-            admission_lost: false,
-        }],
-        state: GpuJobState::Running,
-        stop: None,
-        resume_quote: None,
-        overrun_reported: false,
-        created_at_ms: now_ms,
-        updated_at_ms: now_ms,
-        revision: 2,
-        orphaned_resources: Vec::new(),
+    let offer = GpuOfferPin {
+        name: quote.offer.clone(),
+        class: "h100".to_owned(),
+        provider: "fixture-cloud".to_owned(),
+        region: "test-1".to_owned(),
+        price_shape: PriceShape::AtOneironList,
     };
+    let job_type = quote.job_type.clone();
+    let image = quote.image.clone();
+    let chunk = GpuChunk {
+        idempotency_key: key.clone(),
+        quote,
+        base_used_secs: 0,
+        checkpoint_from: None,
+        permit: serde_json::Value::Null,
+        dispatched: true,
+        resource: Some(GpuResourceRef(format!("resource-{key}"))),
+        used_secs: 30,
+        signalled_percents: Vec::new(),
+        newest_checkpoint: None,
+        billed_secs: None,
+        settled_units: None,
+        unbilled_secs: 0,
+        admission_lost: false,
+    };
+    // The job is read from its stored form, not written as a struct literal: a field the job
+    // gains with a serde default takes that default here, so a new field breaks no test build.
+    let job: GpuJob = serde_json::from_value(serde_json::json!({
+        "id": id,
+        "started_by": started_by,
+        "offer": offer,
+        "job_type": job_type,
+        "image": image,
+        "maximum": maximum,
+        "chunks": [chunk],
+        "state": GpuJobState::Running,
+        "stop": null,
+        "resume_quote": null,
+        "overrun_reported": false,
+        "created_at_ms": now_ms,
+        "updated_at_ms": now_ms,
+        "revision": 2,
+        "orphaned_resources": [],
+    }))
+    .map_err(|error| Error::InvalidConfig(format!("running GPU job fixture: {error}")))?;
     vault.with_write_txn_grouped(|txn| GPU_JOBS.put(&vault.store, txn, &id, &job))?;
     Ok(job)
 }
