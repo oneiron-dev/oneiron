@@ -62,7 +62,10 @@ pub(crate) async fn vault_gpu_lines_set(
         VAULT_GPU_LINES_SET,
         move |server, memory, owner| {
             if owner.is_some() {
-                check_managed_offers(server, &input.policy)?;
+                // The offers and unit in force: the stated fields over the
+                // preset's document where one is named (pass 34, 3.2).
+                let policy = memory.resolved_gpu_line_policy(&input)?;
+                check_managed_offers(server, &policy)?;
             }
             Ok(memory.set_gpu_line(owner, &input, now_ms())?)
         },

@@ -456,7 +456,7 @@ impl Vault {
         // ([INSTALL-PACK-DEFAULTS-AFTER-COMMIT]).
         match source.setting_defaults() {
             Some(table)
-                if super::setting_defaults_pack::install_may_carry_setting_defaults(
+                if super::setting_defaults_pack::install_may_carry_presets(
                     &source.manifest.name,
                     &receipt,
                 ) =>

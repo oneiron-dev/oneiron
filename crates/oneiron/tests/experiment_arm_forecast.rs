@@ -39,7 +39,8 @@ use oneiron::experiment_arm::{
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, WalletRef};
 use oneiron::gpu_line::{
     BudgetPolicy, ClaimState, Draw, DrawSource, GpuLineFamilyAdmitRequest, GpuLinePolicy,
-    GpuLineSetRequest, Track, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal, gpu_seconds,
+    GpuLinePolicyFields, GpuLineSetRequest, Track, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal,
+    gpu_seconds,
 };
 use oneiron::llm::run_admission::AllocationRef;
 use oneiron::memory::{
@@ -174,7 +175,8 @@ impl Fixture {
                 &GpuLineSetRequest {
                     intent_key: key.to_owned(),
                     project: lane,
-                    policy: policy(roles, floor_arms, score_after),
+                    preset: None,
+                    policy: GpuLinePolicyFields::from(&policy(roles, floor_arms, score_after)),
                 },
                 now_ms,
             )

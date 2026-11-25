@@ -49,7 +49,7 @@ use oneiron::experiment_arm::{
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, WalletRef};
 use oneiron::gpu_line::{
     AllowanceHold, BudgetPolicy, Draw, DrawSource, GpuLineFamilyAdmitRequest, GpuLinePolicy,
-    GpuLineSetRequest, Track, gpu_seconds,
+    GpuLinePolicyFields, GpuLineSetRequest, Track, gpu_seconds,
 };
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
@@ -178,7 +178,8 @@ impl Fixture {
                 &GpuLineSetRequest {
                     intent_key: key.to_owned(),
                     project: lane,
-                    policy: policy(roles, families, floor_arms),
+                    preset: None,
+                    policy: GpuLinePolicyFields::from(&policy(roles, families, floor_arms)),
                 },
                 now_ms,
             )

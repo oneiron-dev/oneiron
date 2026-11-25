@@ -42,8 +42,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, WalletRef};
 use oneiron::gpu_line::{
     BudgetPolicy, Draw, DrawAsk, DrawPurpose, DrawSource, GpuLine, GpuLineError,
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineSetRequest, GpuLineView, LineInvalid,
-    MintError, PeriodRoom, RuleRef, Side, Track, VAULT_GPU_LINES_FAMILIES_ADMIT,
+    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineSetRequest, GpuLineView,
+    LineInvalid, MintError, PeriodRoom, RuleRef, Side, Track, VAULT_GPU_LINES_FAMILIES_ADMIT,
     VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET, cohort_seed_commit, gpu_seconds, line_allocation_id,
     mint_period, period_balances, plan_draws,
 };
@@ -195,7 +195,8 @@ impl Fixture {
                 &GpuLineSetRequest {
                     intent_key: key.to_owned(),
                     project: lane,
-                    policy,
+                    preset: None,
+                    policy: GpuLinePolicyFields::from(&policy),
                 },
                 now_ms,
             )
@@ -502,7 +503,8 @@ fn setting_a_line_is_the_owners_act_and_reading_one_needs_a_role() {
             &GpuLineSetRequest {
                 intent_key: "agent-set".to_owned(),
                 project: lane,
-                policy: policy(),
+                preset: None,
+                policy: GpuLinePolicyFields::from(&policy()),
             },
             NOW_MS,
         )

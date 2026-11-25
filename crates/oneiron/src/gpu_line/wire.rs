@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::fold::{BudgetPolicy, GpuLine, GpuLinePeriod, Track};
+use super::preset::LinePresetRef;
 use super::store::gpu_seconds;
 use crate::EntityId;
 use crate::federation::WalletRef;
@@ -46,9 +47,47 @@ pub struct GpuLinePolicy {
     pub budget: BudgetPolicy,
 }
 
+/// The fields of a [`GpuLinePolicy`] the owner states to `vault.gpu.lines.set`,
+/// as one JSON object. With no preset they are the whole policy, read as it
+/// always was; with a preset, each field he states replaces the preset's
+/// (inside `budget`, field by field), so he states the wallet, the anchor, the
+/// lists and only the budget fields that differ (pass 34, 3.2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GpuLinePolicyFields(pub serde_json::Map<String, serde_json::Value>);
+
+impl From<&GpuLinePolicy> for GpuLinePolicyFields {
+    /// Every field of `policy`: the whole policy, as an owner with no preset
+    /// states it.
+    fn from(policy: &GpuLinePolicy) -> Self {
+        match serde_json::to_value(policy) {
+            Ok(serde_json::Value::Object(fields)) => Self(fields),
+            _ => Self::default(),
+        }
+    }
+}
+
+/// [`GpuLinePolicy`]'s schema with no field required: a preset may give any of
+/// them, and the door checks the whole.
+impl schemars::JsonSchema for GpuLinePolicyFields {
+    fn schema_name() -> String {
+        "GpuLinePolicyFields".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        let mut schema = <GpuLinePolicy as schemars::JsonSchema>::json_schema(generator);
+        if let schemars::schema::Schema::Object(object) = &mut schema
+            && let Some(validation) = object.object.as_mut()
+        {
+            validation.required.clear();
+        }
+        schema
+    }
+}
+
 /// `vault.gpu.lines.set`: the owner sets the policy of one lane project's
-/// GPU line. The budget applies from the next mint; the offers, machines and
-/// role lists at once.
+/// GPU line, stated whole or laid over a lane's preset. The budget applies
+/// from the next mint; the offers, machines and role lists at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuLineSetRequest {
@@ -57,7 +96,13 @@ pub struct GpuLineSetRequest {
     pub intent_key: String,
     /// The lane project.
     pub project: EntityId,
-    pub policy: GpuLinePolicy,
+    /// The lane preset the policy starts from (pass 34, 3.2): a line policy
+    /// document of an installed pack, named by its digest. The line keeps the
+    /// reference beside the full values; a later version of the pack changes
+    /// no value in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<LinePresetRef>,
+    pub policy: GpuLinePolicyFields,
 }
 
 /// `vault.gpu.lines.get`: one lane project's GPU line.
