@@ -531,6 +531,7 @@ fn exec_file(
         hidden_pids,
         host_network_namespace: safe_fs::host_network_namespace(),
         require: template.require.clone(),
+        log_max_bytes: template.log_max_bytes(),
     })
 }
 
