@@ -294,17 +294,11 @@ impl NodeJobs {
     /// passes. The slot table compares the drain's start and removes it in
     /// one step, so a drain set after the clear stands, whatever its reason.
     /// The node has that time only where the owner's `clear_by`, the box's
-    /// file and the row's writer all give the clear to the panel. A time
-    /// later than the node's clock waits until the clock reaches it: until
-    /// then it would clear each drain as it began, and a mistyped year
-    /// would do so for a year.
+    /// file and the row's writer all give the clear to the panel.
     fn owner_clear(&self, settings: &NodeJobSettings) {
         let Some(cleared_at_ms) = settings.drain_cleared_at_ms else {
             return;
         };
-        if cleared_at_ms > self.now().wall_ms {
-            return;
-        }
         let failed = matches!(
             self.shared.readiness.book().record.readiness.state,
             ReadinessState::NotReady { .. }
