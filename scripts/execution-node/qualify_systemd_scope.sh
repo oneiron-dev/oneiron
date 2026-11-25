@@ -338,24 +338,35 @@ EOF
   fi
 }
 
+# The rate is the payload's logical bytes over the time to write and fsync them, and the bytes are
+# incompressible (/dev/urandom), so the device takes as many bytes as the job wrote. Zeros measure a compressing
+# filesystem instead of the cap: on mel's btrfs compress=zstd:1, 200 MiB of zeros under a 20 MiB/s cap took 0.33 s
+# (609.6 MiB/s logical, 6.2 MiB on disk), random bytes 10.92 s (18.3 MiB/s, 200 MiB on disk; FIX
+# QUALIFY-WRITE-RATE-ZEROS-ON-COMPRESSING-FS, R6 on mel). Uncapped, the same random write took 0.47 s there, so
+# reading /dev/urandom inside the timed window lowers a capped rate by under 5 %.
 a_fast_writer_is_stopped_within_its_request_plus_the_rate_times_five_seconds() {
   launch t20b qual 300 256 "" <<'EOF'
 start=$(date +%s%N)
-dd if=/dev/zero of="$ONEIRON_JOB_OUT/big" bs=1M count=200 conv=fsync 2> /dev/null
+dd if=/dev/urandom of="$ONEIRON_JOB_OUT/big" bs=1M count=200 iflag=fullblock conv=fsync 2> /dev/null
 end=$(date +%s%N)
-echo $(( 200 * 1048576 * 1000000000 / (end - start) )) > "$ONEIRON_JOB_OUT/rate"
+bytes=$(stat -c %s "$ONEIRON_JOB_OUT/big" 2> /dev/null || echo 0)
+echo $(( bytes * 1000000000 / (end - start) )) > "$ONEIRON_JOB_OUT/rate"
+echo "$bytes" > "$ONEIRON_JOB_OUT/bytes"
 EOF
   start
   wait_ended 280 || { result "$FUNCNAME" FAIL "no end record"; return; }
-  local rate cap=$((20 * 1048576)) applied
+  local rate bytes cap=$((20 * 1048576)) applied
   rate=$(cat "$P/out/rate" 2> /dev/null || echo 0)
+  bytes=$(cat "$P/out/bytes" 2> /dev/null || echo 0)
   applied=$(jq -r '.report.proofs.write_rate_cap.strength' "$C/scope.json")
-  if [ "$applied" != kernel ]; then
-    result "$FUNCNAME" UNPROVEN "the write-rate cap does not hold here: $(jq -r '.report.proofs.write_rate_cap.evidence' "$C/scope.json"); measured $((rate / 1048576)) MiB/s. The 5 s payload check is the engine's (server test)"
+  if [ "$bytes" != $((200 * 1048576)) ]; then
+    result "$FUNCNAME" FAIL "the workload wrote $bytes bytes of the 200 MiB of random bytes it was to write"
+  elif [ "$applied" != kernel ]; then
+    result "$FUNCNAME" UNPROVEN "the write-rate cap does not hold here: $(jq -r '.report.proofs.write_rate_cap.evidence' "$C/scope.json"); measured $((rate / 1048576)) MiB/s of incompressible bytes. The 5 s payload check is the engine's (server test)"
   elif [ "$rate" -gt 0 ] && [ "$rate" -le $((cap * 3 / 2)) ]; then
-    result "$FUNCNAME" PASS "write rate $((rate / 1048576)) MiB/s under a cap of 20 MiB/s, so request + rate x 5 s bounds the overrun; the 5 s payload check is the engine's (server test)"
+    result "$FUNCNAME" PASS "200 MiB of incompressible bytes written and synced at $((rate / 1048576)) MiB/s under a cap of 20 MiB/s; the 5 s payload check is the engine's (server test)"
   else
-    result "$FUNCNAME" FAIL "write rate $((rate / 1048576)) MiB/s past the cap of 20 MiB/s"
+    result "$FUNCNAME" FAIL "write rate $((rate / 1048576)) MiB/s of incompressible bytes past the cap of 20 MiB/s"
   fi
 }
 
