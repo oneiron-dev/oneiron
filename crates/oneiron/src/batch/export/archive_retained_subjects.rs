@@ -102,8 +102,18 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("ENTITY_DOC_RECEIPT", HEX_PAIR_OWNER),
     ("ESIGN_AUDIT", ID_AND_U64),
     ("ESIGN_IMAGE_BYTES_BUDGET", ONE_ID),
+    // An arm's side id; a unit's arm, rung, unit digest and attempt. An actor erase rewrites
+    // the row and drops none (`experiment_arm::erase_arm_actor_in_txn`,
+    // `gpu_line::claim::erase_claim_actor_in_txn`).
+    ("EXPERIMENT_ARM", NoRecord),
+    ("EXPERIMENT_ARM_UNIT", NoRecord),
     ("EXPORT_RECEIPT", NoRecord),
     ("GATE_DECISION_LEDGER", NoRecord),
+    // The lane project; a period's lane project and big-endian u32 index. A period row whose
+    // cohort seed is still sealed is withheld apart from this rule
+    // (`archive_retained_side_rows::retained_row_withheld`).
+    ("GPU_LINE", ONE_ID),
+    ("GPU_LINE_PERIOD", RawIds { len: 20, ids: &[0] }),
     ("HOME_HANDOFF_RECEIPT", NoRecord),
     ("HOOKS_GRANT", ONE_ID),
     ("HOOKS_RECEIPT", NoRecord),
@@ -114,6 +124,8 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
         KeyAndValue(house_link_receipt_records),
     ),
     ("INQUIRY_RECEIPT", NoRecord),
+    // A digest key; the asker's erase drops the row.
+    ("LANE_ECONOMY_INTENT", Value(lane_intent_records)),
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
     ("LEGAL_HOLD_EVENT", Evidence),
     ("LEGAL_HOLD_ROW", Evidence),
@@ -282,6 +294,11 @@ fn house_link_receipt_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>>
 /// The records a stored standing escalation policy names in its governed scopes and answerers.
 fn standing_policy_records(value: &[u8]) -> Option<Vec<EntityId>> {
     crate::edit_distance::escalation::standing_policy_records(value)
+}
+
+/// The asker of a stored lane-economy intent, whose erase drops the row.
+fn lane_intent_records(value: &[u8]) -> Option<Vec<EntityId>> {
+    crate::gpu_line::intent_row_asker(value).map(|asker| vec![asker])
 }
 
 /// The voice subject a stored render decision is about.
