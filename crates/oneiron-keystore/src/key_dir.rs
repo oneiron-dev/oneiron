@@ -818,4 +818,47 @@ mod tests {
         drop(tmp);
         assert!(writer_holds(), "the hold outlived the write");
     }
+
+    /// Review of #10420, round 2 (Sol read of the fix): a vault directory is
+    /// compared as a directory also as it resolves, so one named past a
+    /// missing part and a `..` (`gap/../vault`, which the system cannot stat)
+    /// is still seen under another spelling of the key path.
+    #[cfg(unix)]
+    #[test]
+    fn the_vault_check_compares_a_vault_directory_as_it_resolves() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        let alias = base.join("alias");
+        std::os::unix::fs::symlink(&vault, &alias).expect("another name for the vault");
+        let named = base.join("gap").join("..").join("vault");
+        assert_eq!(
+            refuse_inside_vaults(&alias.join("keys"), &[&named]),
+            Err(KeystoreError::Unavailable(INSIDE_A_VAULT))
+        );
+    }
+
+    /// Review of #10420, round 2 (Sol read of the fix): a write handed a
+    /// sweep's hold that holds nothing, as one whose key directory was gone,
+    /// takes its own shared hold, so a sweep of a key directory made since
+    /// cannot run beside it.
+    #[test]
+    fn a_write_after_a_sweep_that_holds_nothing_takes_its_own_hold() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let dir = root.path().join("keys");
+        let swept = sweep_and_hold(&dir, "slot").expect("a key directory that is gone");
+        fs::create_dir(&dir).expect("the key directory is made again");
+        let (tmp, written) = write_temp(&dir, "slot", &[1; 32], Some(swept), |_| Ok(()));
+        written.expect("the temporary file is written");
+        let sweep_holds = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join(TEMP_WRITERS_LOCK))
+            .expect("the lock file opens")
+            .try_lock()
+            .is_ok();
+        assert!(!sweep_holds, "a sweep took its hold beside a writer");
+        fs::remove_file(&tmp.path).expect("the writer removes its file");
+    }
 }
