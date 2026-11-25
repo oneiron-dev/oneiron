@@ -54,7 +54,7 @@ pub fn node_view(vault: &Vault, job: &GpuJob, now_ms: u64, step_ms: u64) -> Opti
         }
     });
     Some(GpuJobNodeView {
-        lifecycle: GpuJobLifecycle::of(job),
+        lifecycle: lifecycle_of(job, receipt.as_ref()),
         machine: machine.to_hex(),
         node: receipt.as_ref().map(report_of),
         accounting: accounting_of(job, dispatch.as_ref(), observation.as_ref(), observed),
@@ -62,9 +62,25 @@ pub fn node_view(vault: &Vault, job: &GpuJob, now_ms: u64, step_ms: u64) -> Opti
     })
 }
 
-/// Where the money stands: settled once the job settled; written off; unconfirmed while the
-/// end cannot be confirmed (the node's history lost, a kill it could not confirm, a node that
-/// does not answer an asked stop); else held.
+/// Where the job stands, with the machine's newest receipt: a job the host runs whose key the
+/// machine holds but has not launched (no receipt yet, or one whose workload never started and
+/// is not running) is `assigned`. The job row alone cannot tell: its chunk gets its resource
+/// in the same write that makes it `Running`.
+fn lifecycle_of(job: &GpuJob, receipt: Option<&JobReceipt>) -> GpuJobLifecycle {
+    match GpuJobLifecycle::of(job) {
+        GpuJobLifecycle::Running
+            if receipt
+                .is_none_or(|receipt| !receipt.started && receipt.state != JobState::Running) =>
+        {
+            GpuJobLifecycle::Assigned
+        }
+        lifecycle => lifecycle,
+    }
+}
+
+/// Where the money stands: settled once the job settled, or at zero once it ended unpaid;
+/// written off; unconfirmed while the end cannot be confirmed (the node's history lost, a kill
+/// it could not confirm, a node that does not answer an asked stop); else held.
 fn accounting_of(
     job: &GpuJob,
     dispatch: Option<&JobDispatch>,
@@ -77,6 +93,12 @@ fn accounting_of(
     }
     if let Some(units) = chunk.and_then(|chunk| chunk.settled_units) {
         return GpuJobAccounting::Settled { units };
+    }
+    // Over, and its chunk settled nothing: it ended unpaid (a host that lost its admission, a
+    // refusal before any resource). Nothing holds its units any more, and it bills zero, as
+    // the job's own `settled_units` sum counts it.
+    if !job.state.is_live() {
+        return GpuJobAccounting::Settled { units: 0 };
     }
     if dispatch.is_some_and(|row| row.history_lost_at_ms.is_some()) {
         return GpuJobAccounting::Unconfirmed {

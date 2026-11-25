@@ -87,6 +87,11 @@ fn an_unreachable_node_is_never_read_as_gone() {
     with_rig(|rig| {
         let workload = rig.approve("unreachable", FAR_EXPIRY_MS);
         let run = rig.start_job(&workload);
+        assert_eq!(
+            view(rig, &run).lifecycle,
+            GpuJobLifecycle::Assigned,
+            "the machine holds the key and has not launched it",
+        );
         rig.node
             .advance(run.key(), JobState::Running, Some(30), None, true);
         let report = rig.step(&run).expect("poll the running job");
