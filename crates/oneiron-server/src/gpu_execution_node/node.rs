@@ -679,8 +679,8 @@ impl ExecutionNode {
                 Some(policy) => Ok(Some(policy.cache)),
                 None => match self.shared.vault.local_machine() {
                     Err(error) => Err(format!("this machine's MACHINE id does not read: {error}")),
-                    Ok(_) => self
-                        .owner_policy(settings)
+                    Ok(machine) => self
+                        .owner_policy_of(settings, machine.map(|machine| machine.id))
                         .map(|policy| policy.map(|policy| policy.cache)),
                 },
             };

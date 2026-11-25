@@ -8,8 +8,9 @@
 //! of the changes, and a write older than the file on disk is skipped.
 //!
 //! The table also records each cache path a pass moved into the removed caches' directory and
-//! has not deleted yet ([`EvictedRecord`]): only a recorded entry is ever deleted from there. A
-//! lost record leaves its entry on disk, never deletes another.
+//! has not deleted yet ([`EvictedRecord`]): only a recorded entry is ever deleted from there, and
+//! only once a write that holds its record is on disk with its directory synced. A lost record
+//! leaves its entry on disk, never deletes another.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -40,11 +41,13 @@ pub struct WarmKeyRecord {
 }
 
 /// A cache path a pass moved into the removed caches' directory and has not deleted yet: its
-/// name there and its inode, as the move left it.
+/// name there and its inode, as the move left it, and that directory's inode (a record made in
+/// another cache directory's is never acted on).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvictedRecord {
     pub name: String,
     pub ino: u64,
+    pub trash_ino: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,8 +71,16 @@ pub struct WarmKeyTable {
     evicted: BTreeMap<String, EvictedRecord>,
     /// The number of the table's newest change.
     generation: u64,
-    /// The number of the change the file on disk holds.
-    written: Arc<Mutex<u64>>,
+    /// The changes the file on disk holds.
+    written: Arc<Mutex<Written>>,
+}
+
+/// The changes the table's file holds: the newest renamed into place, and the newest whose
+/// directory was synced after (it survives a crash).
+#[derive(Debug, Default)]
+struct Written {
+    installed: u64,
+    synced: u64,
 }
 
 /// One write of the table, encoded under the warm lock and written after it is dropped.
@@ -79,35 +90,40 @@ pub struct TableWrite {
     path: PathBuf,
     bytes: Vec<u8>,
     generation: u64,
-    written: Arc<Mutex<u64>>,
+    written: Arc<Mutex<Written>>,
 }
 
 impl TableWrite {
-    /// Writes the table whole, unless the file already holds this change or a newer one.
+    /// Writes the table whole, unless the file already holds this change or a newer one; then
+    /// syncs its directory, unless that was done for this change or a newer one. `Ok`: the file
+    /// on disk holds this change or a newer one, and survives a crash.
     ///
     /// # Errors
     ///
     /// The write, sync or rename failed, and the file on disk is the one before; or the
-    /// directory's sync after the rename failed, and the file holds this change, which may not
-    /// survive a crash. No older change replaces it either way.
+    /// directory's sync after the rename failed, and the file holds this change or a newer one,
+    /// which may not survive a crash. No older change replaces it either way.
     pub fn write(self) -> std::io::Result<()> {
         let mut written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
-        if *written >= self.generation {
+        if written.synced >= self.generation {
             return Ok(());
         }
-        let staging = self.path.with_extension("json.new");
-        {
-            let mut out = std::fs::File::create(&staging)?;
-            out.write_all(&self.bytes)?;
-            out.sync_all()?;
+        if written.installed < self.generation {
+            let staging = self.path.with_extension("json.new");
+            {
+                let mut out = std::fs::File::create(&staging)?;
+                out.write_all(&self.bytes)?;
+                out.sync_all()?;
+            }
+            std::fs::rename(&staging, &self.path)?;
+            // The file holds this change from the rename on: an older one must not replace it,
+            // even when the directory's sync fails.
+            written.installed = self.generation;
         }
-        std::fs::rename(&staging, &self.path)?;
-        // The file holds this change from the rename on: an older one must not replace it, even
-        // when the directory's sync fails.
-        *written = self.generation;
         if let Some(dir) = self.path.parent() {
             std::fs::File::open(dir)?.sync_all()?;
         }
+        written.synced = written.installed;
         Ok(())
     }
 }
@@ -153,7 +169,7 @@ impl WarmKeyTable {
             counted,
             evicted,
             generation: 0,
-            written: Arc::new(Mutex::new(0)),
+            written: Arc::new(Mutex::new(Written::default())),
         }
     }
 

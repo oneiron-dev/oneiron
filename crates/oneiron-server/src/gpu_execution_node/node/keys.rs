@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use oneiron::EntityId;
 
-use super::super::node_settings::{ExecutionNodeSettings, NodeCacheSettings};
+use super::super::node_settings::{ExecutionNodeSettings, NodeCacheSettings, SettingsRead};
 use super::super::wire::{
     JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeReadiness, ScopeReport,
     SignedJobSubmit, WarmKeyFact, WarmWanted,
@@ -112,7 +112,7 @@ pub trait NodeKeys: Send + Sync {
         &self,
         settings: &ExecutionNodeSettings,
         cache: &NodeCacheSettings,
-        settings_now: crate::gpu_execution_node::jobs::warm::SettingsRead,
+        settings_now: SettingsRead,
     ) {
         let _ = (settings, cache, settings_now);
     }

@@ -450,6 +450,8 @@ fn budget(cap_bytes: u64) -> CacheBudget {
     }
 }
 
+// It moves caches: off Linux the pass moves nothing (no `openat2`).
+#[cfg(target_os = "linux")]
 #[test]
 fn the_cache_budget_never_evicts_a_key_an_open_order_lists() {
     let fixture = fixture();
@@ -763,19 +765,26 @@ fn a_cache_pass_removes_nothing_when_the_file_changed_while_it_measured() {
     }
 }
 
+// It moves caches: off Linux the pass moves nothing (no `openat2`).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_cache_pass_never_moves_a_cache_another_keys_path_resolves_into() {
     let fixture = fixture();
     let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
     // `weights:al` names a file in cache `b` through another spelling of the cache directory:
-    // the file's check compares spellings, the pass resolves them.
+    // the file's check compares spellings, the pass resolves them. `weights:lk` names a file
+    // outside every cache, through a link in cache `a`: its lookup passes through `a`.
     let alias = fixture.path("caches-alias");
     std::os::unix::fs::symlink(&cache_dir, &alias).expect("alias");
+    let outside = fixture.path("outside.bin");
+    std::fs::write(&outside, b"outside").expect("outside file");
+    std::os::unix::fs::symlink(&outside, cache_dir.join("a/link")).expect("link in a");
     let settings = fixture.settings_with(
         &cache_dir,
         &format!(
-            r#", "weights:al" = "{}""#,
-            alias.join("b/blob.bin").display()
+            r#", "weights:al" = "{}", "weights:lk" = "{}""#,
+            alias.join("b/blob.bin").display(),
+            alias.join("a/link").display()
         ),
     );
     let jobs = fixture.node.open();
@@ -786,23 +795,45 @@ fn a_cache_pass_never_moves_a_cache_another_keys_path_resolves_into() {
         .iter()
         .map(|gone| gone.key.as_str())
         .collect();
-    assert!(!removed.contains(&"target:b"), "{report:?}");
-    assert!(
-        report
-            .left
-            .iter()
-            .any(|(key, why)| key == "target:b" && why.contains("another warm key's path")),
-        "{report:?}"
-    );
+    for kept in ["target:a", "target:b"] {
+        assert!(!removed.contains(&kept), "{report:?}");
+        assert!(
+            report
+                .left
+                .iter()
+                .any(|(key, why)| key == kept && why.contains("another warm key's path")),
+            "{report:?}"
+        );
+    }
     assert!(
         cache_dir.join("b/blob.bin").exists(),
         "the input in b was removed"
     );
-    for name in ["a", "c", "h"] {
+    assert!(
+        cache_dir.join("a/link").exists(),
+        "the link in a was removed"
+    );
+    for name in ["c", "h"] {
         assert!(!cache_dir.join(name).exists(), "{name} was kept");
     }
 }
 
+#[test]
+fn a_cache_pass_after_the_service_closed_removes_nothing() {
+    let fixture = fixture();
+    let cache_dir = fixture.cache_dir(&["a", "b", "c", "h"], 1);
+    let settings = fixture.settings(&cache_dir);
+    let jobs = fixture.node.open();
+    jobs.close();
+    let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
+    assert!(report.removed.is_empty(), "{report:?}");
+    for name in ["a", "b", "c", "h"] {
+        assert!(cache_dir.join(name).exists(), "{name} was removed");
+    }
+}
+
+// It moves caches: off Linux the pass moves nothing (no `openat2`).
+#[cfg(target_os = "linux")]
 #[test]
 fn the_removed_caches_directory_deletes_only_what_a_pass_moved() {
     let fixture = fixture();
@@ -835,8 +866,11 @@ fn the_removed_caches_directory_deletes_only_what_a_pass_moved() {
     );
     assert!(trash.join("stranger/kept.bin").exists());
 
-    // A removed caches' directory others may enter: the pass removes nothing.
+    // A removed caches' directory others may enter: the pass removes nothing, though `b`
+    // holds bytes over the cap.
     std::fs::create_dir_all(cache_dir.join("b")).expect("cache b");
+    std::fs::write(cache_dir.join("b/blob.bin"), noise(MIB)).expect("cache b blob");
+    assert!(allocated(&cache_dir.join("b")) > 0, "b takes no disk");
     std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o755)).expect("trash mode");
     let report = jobs.cache_pass_under(&unchanged_file(&settings), &settings.cache, &budget(0));
     assert!(report.removed.is_empty(), "{report:?}");

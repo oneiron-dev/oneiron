@@ -29,7 +29,7 @@ mod warm;
 pub use warm::{
     CACHE_CAP_GIB_DEFAULT, CACHE_DIR_NAME_DEFAULT, CACHE_IDLE_DAYS_DEFAULT, CACHE_KEYS_MAX_DEFAULT,
     CACHE_PASS_EVERY_SECS_DEFAULT, CACHE_PROTECT_HOURS_DEFAULT, CACHE_WANTED_HOLD_SECS_DEFAULT,
-    EVICTED_DIR_NAME, NodeCacheSettings, TEMPLATE_WARM_KEYS_MAX,
+    EVICTED_DIR_NAME, NodeCacheSettings, SettingsRead, TEMPLATE_WARM_KEYS_MAX,
 };
 
 /// Where the node's file is when neither the server's configuration nor

@@ -46,6 +46,10 @@ pub const EVICTED_DIR_NAME: &str = ".oneiron-evicted";
 /// The cache directory's name inside `work_dir` when the file names no `cache_dir`.
 pub const CACHE_DIR_NAME_DEFAULT: &str = "caches";
 
+/// How the cache pass reads the node's file now: `None` when there is none or it does not
+/// read.
+pub type SettingsRead = std::sync::Arc<dyn Fn() -> Option<ExecutionNodeSettings> + Send + Sync>;
+
 impl ExecutionNodeSettings {
     /// The directory the cache keys live in: `cache_dir`, else `<work_dir>/caches`.
     #[must_use]

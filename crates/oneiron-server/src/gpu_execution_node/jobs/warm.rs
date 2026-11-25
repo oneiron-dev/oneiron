@@ -25,8 +25,12 @@
 //!   each removed path moved out of use, under the admission lock; the files are deleted after
 //!   it is dropped. A path is removed only directly inside a cache directory that is the
 //!   engine's alone, and never when another key's path lies in it where the file system
-//!   resolves that path ([`eviction`]). The pass reads the node's file again under the lock and
-//!   removes nothing when it changed while the pass measured.
+//!   resolves that path or its lookup passes through it ([`eviction`]). The pass reads the
+//!   node's file again under the lock and removes nothing when it changed while the pass
+//!   measured. A moved path is deleted only once the table that records the move is on disk,
+//!   and nothing is deleted from the removed caches' directory while anything is deferred. Once
+//!   the service closes ([`NodeJobs::close`]), no pass starts, and a running one stops at its
+//!   next move or directory.
 //!
 //! Lock order: the admission lock, then the warm lock; never the other way. The table's file is
 //! written after both are dropped.
@@ -38,7 +42,7 @@ pub mod table;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, MutexGuard, PoisonError};
+use std::sync::{MutexGuard, PoisonError};
 
 use oneiron::EntityId;
 use oneiron::warm_key::{WANTED_WARM_KEYS_MAX, WarmWanted, check_warm_keys};
@@ -48,6 +52,7 @@ pub use table::{EvictedRecord, TableWrite, WARM_KEYS_FILE_NAME, WarmKeyRecord, W
 
 use super::NodeJobs;
 use super::journal::NodeKey;
+pub use crate::gpu_execution_node::node_settings::SettingsRead;
 use crate::gpu_execution_node::node_settings::{ExecutionNodeSettings, NodeCacheSettings};
 use crate::gpu_execution_node::wire::{JobEnd, WarmKeyFact};
 
@@ -95,10 +100,6 @@ pub fn missing_input<'a>(
         .map(String::as_str)
 }
 
-/// How the cache pass reads the node's file now: `None` when there is none or it does not
-/// read.
-pub type SettingsRead = Arc<dyn Fn() -> Option<ExecutionNodeSettings> + Send + Sync>;
-
 /// Each template's digest in `settings`.
 fn template_digests(settings: &ExecutionNodeSettings) -> BTreeMap<String, String> {
     settings
@@ -108,37 +109,20 @@ fn template_digests(settings: &ExecutionNodeSettings) -> BTreeMap<String, String
         .collect()
 }
 
-/// Where the file system resolves `path`: its nearest existing ancestor resolved, with the
-/// rest of the path after it.
-fn resolve(path: &Path) -> std::io::Result<PathBuf> {
-    let mut tail = Vec::new();
-    let mut at = path;
-    loop {
-        match std::fs::canonicalize(at) {
-            Ok(real) => return Ok(tail.iter().rev().fold(real, |real, part| real.join(part))),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let (Some(parent), Some(name)) = (at.parent(), at.file_name()) else {
-                    return Err(error);
-                };
-                tail.push(name);
-                at = parent;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// Where the file system resolves each warm path of `paths`.
+/// Where the file system resolves each warm path of `paths`, with what its lookup passes
+/// through.
 ///
 /// # Errors
 ///
 /// A path does not resolve: what lies in a cache is then not known.
-fn resolved_paths(paths: &BTreeMap<String, WarmPath>) -> Result<BTreeMap<String, PathBuf>, String> {
+fn resolved_paths(
+    paths: &BTreeMap<String, WarmPath>,
+) -> Result<BTreeMap<String, eviction::Lookup>, String> {
     paths
         .iter()
         .map(|(key, warm)| {
-            resolve(&warm.path)
-                .map(|real| (key.clone(), real))
+            eviction::lookup(&warm.path)
+                .map(|found| (key.clone(), found))
                 .map_err(|error| format!("the path of warm key {key} does not resolve: {error}"))
         })
         .collect()
@@ -243,10 +227,16 @@ impl WarmState {
     }
 }
 
-/// Writes the table, with the warm lock dropped.
-fn write_table(write: Option<TableWrite>) {
-    if let Some(Err(error)) = write.map(TableWrite::write) {
-        tracing::warn!(%error, "warm keys: the table was not written; the next change tries again");
+/// Writes the table, with the warm lock dropped. Returns whether the file on disk holds this
+/// change or a newer one, its directory synced.
+fn write_table(write: Option<TableWrite>) -> bool {
+    match write.map(TableWrite::write) {
+        Some(Ok(())) => true,
+        Some(Err(error)) => {
+            tracing::warn!(%error, "warm keys: the table was not written; the next change tries again");
+            false
+        }
+        None => false,
     }
 }
 
@@ -352,17 +342,17 @@ impl NodeJobs {
         facts
     }
 
-    /// Starts a cache pass on its own thread when one is due: a template marks a cache, one
-    /// wanted hold has passed since this service opened, the last pass started at least
-    /// `pass_every_secs` ago, and none runs now. The authority tick calls this; it never waits
-    /// for the pass, which reads the node's file through `settings_now`.
+    /// Starts a cache pass on its own thread when one is due: the service has not closed, a
+    /// template marks a cache, one wanted hold has passed since this service opened, the last
+    /// pass started at least `pass_every_secs` ago, and none runs now. The authority tick calls
+    /// this; it never waits for the pass, which reads the node's file through `settings_now`.
     pub fn cache_pass_if_due(
         &self,
         settings: &ExecutionNodeSettings,
         cache: &NodeCacheSettings,
         settings_now: SettingsRead,
     ) {
-        if !settings.marks_caches() {
+        if !settings.marks_caches() || self.service_closed() {
             return;
         }
         let now_ms = self.now().wall_ms;
@@ -422,7 +412,8 @@ impl NodeJobs {
     /// One cache pass now, on this thread, under `budget`. `settings_now` reads the node's
     /// file: once before the pass measures, and once more under the admission lock, where the
     /// pass removes nothing unless the two readings map the same keys to the same paths with the
-    /// same template digests. `cache` gives the wanted hold and the table's bound.
+    /// same template digests, cache figures and owner opt-in. `cache` gives the wanted hold and
+    /// the table's bound. Once the service has closed, it stops at its next move or directory.
     #[must_use]
     pub fn cache_pass_under(
         &self,
@@ -430,6 +421,9 @@ impl NodeJobs {
         cache: &NodeCacheSettings,
         budget: &CacheBudget,
     ) -> CachePassReport {
+        if self.service_closed() {
+            return CachePassReport::default();
+        }
         let Some(settings) = settings_now().filter(ExecutionNodeSettings::marks_caches) else {
             return CachePassReport::default();
         };
@@ -458,7 +452,7 @@ impl NodeJobs {
         let now_ms = self.now().wall_ms;
         let hold_ms = cache.wanted_hold_secs.saturating_mul(1000);
         let mut report = CachePassReport::default();
-        let (write, evicted) = {
+        let (write, evicted, sweep) = {
             let book = self.lock();
             let Some(journal) = book.journal.as_ref() else {
                 return report;
@@ -468,6 +462,8 @@ impl NodeJobs {
             let unchanged = current.as_ref().is_some_and(|now| {
                 now.cache_root() == settings.cache_root()
                     && now.job_account == settings.job_account
+                    && now.cache == settings.cache
+                    && now.owner_policy == settings.owner_policy
                     && warm_paths(now) == paths
                     && template_digests(now) == digests
             });
@@ -475,8 +471,9 @@ impl NodeJobs {
                 report.deferred =
                     Some("the node's file changed while the pass measured".to_owned());
             }
-            // Where each warm path of the file now resolves: a move never takes a cache another
-            // key's path lies in, and nothing is deleted while one lies where removed caches go.
+            // Where each warm path of the file now resolves, and what its lookup passes through:
+            // a move never takes a cache another key's path overlaps, and nothing is deleted
+            // while one overlaps where removed caches go.
             let resolved = match current.as_ref().map(|now| resolved_paths(&warm_paths(now))) {
                 Some(Ok(resolved)) => Some(resolved),
                 Some(Err(why)) => {
@@ -487,7 +484,7 @@ impl NodeJobs {
             };
             let trash_real = trash.real_path();
             let sweep = resolved.as_ref().is_some_and(|resolved| {
-                !resolved.values().any(|real| real.starts_with(&trash_real))
+                !resolved.values().any(|found| found.overlaps(&trash_real))
             });
             if resolved.is_some() && !sweep {
                 report.deferred = Some("a warm key's path lies where removed caches go".to_owned());
@@ -543,15 +540,20 @@ impl NodeJobs {
             }
             // A key left (its move refused) keeps its bytes: plan again with it held, so the
             // next candidate is tried. Each round holds one more key, so the rounds end.
+            let mut closed = false;
             loop {
                 let (plan, kept_bytes) = cache_plan(&entries, budget, now_ms);
                 report.kept_bytes = kept_bytes;
                 let mut refused = None;
                 for chosen in plan {
-                    let protected: Vec<PathBuf> = resolved
+                    if self.service_closed() {
+                        closed = true;
+                        break;
+                    }
+                    let protected: Vec<&eviction::Lookup> = resolved
                         .iter()
                         .filter(|(key, _)| **key != chosen.key)
-                        .map(|(_, real)| real.clone())
+                        .map(|(_, found)| found)
                         .collect();
                     let taken = match (paths.get(&chosen.key), measured.get(&chosen.key)) {
                         (None, _) => Err("no template maps it now".to_owned()),
@@ -577,7 +579,7 @@ impl NodeJobs {
                         }
                     }
                 }
-                let Some(refused) = refused else {
+                let Some(refused) = refused.filter(|_| !closed) else {
                     break;
                 };
                 for entry in &mut entries {
@@ -586,19 +588,37 @@ impl NodeJobs {
             }
             let keys_max = usize::try_from(cache.keys_max).unwrap_or(usize::MAX);
             warm.table.bound(keys_max, |key| paths.contains_key(key));
-            let evicted = if sweep {
-                warm.table.evicted_records().clone()
+            // Nothing is deleted while anything is deferred: what lies where removed caches go
+            // is then not known for sure.
+            let sweep = sweep && report.deferred.is_none() && !closed;
+            let evicted: BTreeMap<String, EvictedRecord> = if sweep {
+                warm.table
+                    .evicted_records()
+                    .iter()
+                    .filter(|(_, record)| trash.holds(record))
+                    .map(|(name, record)| (name.clone(), record.clone()))
+                    .collect()
             } else {
                 BTreeMap::new()
             };
-            (warm.table_write(), evicted)
+            (warm.table_write(), evicted, sweep)
         };
-        write_table(write);
+        // A move is deleted only once the table that records it is on disk.
+        if !write_table(write) {
+            for name in evicted.keys() {
+                report.not_deleted.push((
+                    name.clone(),
+                    "the table that records its move was not written".to_owned(),
+                ));
+            }
+            return report;
+        }
         // The moved paths, this pass's and any an earlier pass left, go now: each only when the
         // entry there is the one the move recorded.
+        let stop = || self.service_closed();
         let mut deleted = Vec::new();
         for record in evicted.values() {
-            match trash.delete(record) {
+            match trash.delete(record, &stop) {
                 Ok(()) => deleted.push(record.name.clone()),
                 Err(why) => {
                     tracing::warn!(name = %record.name, %why, "warm keys: a removed cache path was not deleted; the next pass tries again");

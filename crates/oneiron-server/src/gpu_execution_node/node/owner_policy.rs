@@ -3,6 +3,7 @@
 //! goes through [`ExecutionNode::owner_policy`], which `snapshot`, the template check and the
 //! launch commit's placement fit each take fresh.
 
+use oneiron::EntityId;
 use oneiron::job_workload::DevicePlacement;
 use oneiron::machine_policy::MachinePolicy;
 
@@ -23,8 +24,22 @@ impl ExecutionNode {
         &self,
         settings: &ExecutionNodeSettings,
     ) -> Result<Option<MachinePolicy>, String> {
+        self.owner_policy_of(settings, self.own_machine())
+    }
+
+    /// [`Self::owner_policy`] for the MACHINE id `machine` as the caller read it, so a caller
+    /// that must tell an id that does not read from no id reads it once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::owner_policy`].
+    pub(super) fn owner_policy_of(
+        &self,
+        settings: &ExecutionNodeSettings,
+        machine: Option<EntityId>,
+    ) -> Result<Option<MachinePolicy>, String> {
         let devices: Vec<String> = self.shared.slots.offer().offered.iter().cloned().collect();
-        machine_policy::owner_policy(&self.shared.vault, self.own_machine(), settings, &devices)
+        machine_policy::owner_policy(&self.shared.vault, machine, settings, &devices)
             .map_err(|why| format!("owner_policy_unreadable: {why}"))
     }
 
