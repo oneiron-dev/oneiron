@@ -621,6 +621,10 @@ impl NodeJobs {
                 // does, the run's armed cutoff is earlier than the journal's.
                 return busy();
             }
+            // The renewal's own time: the end read above may have waited on
+            // the service manager, and the scope's deadline counts from the
+            // moment the renewal is journaled.
+            let now = self.now();
             let journal = match admitting(&mut book) {
                 Ok(journal) => journal,
                 Err(answer) => return answer,
