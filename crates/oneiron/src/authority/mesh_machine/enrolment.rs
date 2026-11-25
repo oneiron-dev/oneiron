@@ -339,6 +339,9 @@ impl Vault {
         owner: &AuthenticatedOwner,
         ceiling: &[&[u8]],
     ) -> Result<MeshMachineBinding> {
+        if ceiling.len() < usize::MAX {
+            return Err(invalid_authority());
+        }
         let identity = self.mesh_binding_identity_as_owner(owner)?;
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
