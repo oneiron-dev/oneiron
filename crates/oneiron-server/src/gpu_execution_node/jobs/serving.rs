@@ -78,6 +78,11 @@ impl ServedNodeJobs {
         if jobs.is_some() {
             return Ok(());
         }
+        // A service the node would not take is never opened: its start-up
+        // reconciliation would act on the machine's job units for nothing.
+        if self.node.keys().is_some() {
+            return Err("the node already holds other keys".to_owned());
+        }
         let settings = self
             .node
             .settings()?
