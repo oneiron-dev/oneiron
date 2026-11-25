@@ -21,37 +21,52 @@ pub fn call_json_digest(value: &serde_json::Value) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+/// Writes `value` canonically (object keys sorted at every depth) into
+/// `hasher`: the bytes [`call_json_digest`] hashes.
 pub fn write_canonical(hasher: &mut blake3::Hasher, value: &serde_json::Value) {
+    write_canonical_to_sink(
+        &mut |bytes: &[u8]| {
+            hasher.update(bytes);
+        },
+        value,
+    );
+}
+
+/// Hands the canonical bytes of `value` (object keys sorted at every depth)
+/// to `sink`, in order, one piece at a time: the bytes [`write_canonical`]
+/// writes into a BLAKE3 hasher, for a digest kept by another writer (the
+/// fingerprint door's `LegacyDigest`).
+pub fn write_canonical_to_sink(sink: &mut impl FnMut(&[u8]), value: &serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
-            hasher.update(b"{");
+            sink(b"{");
             for (index, key) in keys.into_iter().enumerate() {
                 if index > 0 {
-                    hasher.update(b",");
+                    sink(b",");
                 }
-                write_canonical(hasher, &serde_json::Value::String(key.clone()));
-                hasher.update(b":");
+                write_canonical_to_sink(sink, &serde_json::Value::String(key.clone()));
+                sink(b":");
                 if let Some(item) = map.get(key) {
-                    write_canonical(hasher, item);
+                    write_canonical_to_sink(sink, item);
                 }
             }
-            hasher.update(b"}");
+            sink(b"}");
         }
         serde_json::Value::Array(items) => {
-            hasher.update(b"[");
+            sink(b"[");
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
-                    hasher.update(b",");
+                    sink(b",");
                 }
-                write_canonical(hasher, item);
+                write_canonical_to_sink(sink, item);
             }
-            hasher.update(b"]");
+            sink(b"]");
         }
         scalar => {
             // A scalar's JSON text is already canonical.
-            hasher.update(scalar.to_string().as_bytes());
+            sink(scalar.to_string().as_bytes());
         }
     }
 }

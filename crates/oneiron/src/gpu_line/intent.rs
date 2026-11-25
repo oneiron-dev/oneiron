@@ -12,17 +12,13 @@
 //! the first write made, so an erase that forgets an actor in that row
 //! leaves no copy of it here. An erase of the asker drops its rows.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MemoryError};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
-
-/// Domain of an intent's row key.
-const INTENT_KEY_CONTEXT: &str = "oneiron lane economy intent key v1";
-/// Domain of an ask's digest.
-const ASK_DIGEST_CONTEXT: &str = "oneiron lane economy intent ask v2";
 
 /// The refusal of a key that already names another ask.
 pub const DIFFERENT_ASK: &str = "this intent key already names a different ask; repeat that \
@@ -126,13 +122,18 @@ impl IntentAsk {
         // two encodings of one ask, such as a map in another iteration
         // order, digest alike (review-10396 P1).
         let value = serde_json::to_value(ask).map_err(|_| IntentRefused::Unencodable)?;
-        let mut digest = blake3::Hasher::new_derive_key(ASK_DIGEST_CONTEXT);
-        oneiron_records::receipt::call::write_canonical(&mut digest, &value);
+        let mut digest = LegacyDigest::new(purposes::gpu_line::INTENT_ASK);
+        oneiron_records::receipt::call::write_canonical_to_sink(
+            &mut |bytes: &[u8]| {
+                digest.raw(bytes);
+            },
+            &value,
+        );
         Ok(Self {
             asker,
             verb: verb.to_owned(),
             row_key: intent_row_key(&asker, verb, intent_key),
-            ask_digest: bytes_to_hex_lower(digest.finalize().as_bytes()),
+            ask_digest: bytes_to_hex_lower(&digest.finish()),
         })
     }
 
@@ -192,15 +193,15 @@ impl IntentAsk {
     }
 }
 
-/// The row key: BLAKE3 over the framed asker, verb and intent key.
+/// The row key (`purposes::gpu_line::INTENT_KEY`): the framed asker, verb and intent key.
 fn intent_row_key(asker: &EntityId, verb: &str, intent_key: &str) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(INTENT_KEY_CONTEXT);
-    hasher.update(asker.as_bytes());
-    hasher.update(&(verb.len() as u64).to_be_bytes());
-    hasher.update(verb.as_bytes());
-    hasher.update(&(intent_key.len() as u64).to_be_bytes());
-    hasher.update(intent_key.as_bytes());
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::gpu_line::INTENT_KEY)
+        .raw(asker.as_bytes())
+        .len_u64_be(verb.len())
+        .raw(verb.as_bytes())
+        .len_u64_be(intent_key.len())
+        .raw(intent_key.as_bytes())
+        .finish()
 }
 
 /// Drops every intent the erased actor asked (the side table's actor

@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use super::policy::{BUILT_RULES, pools};
 use super::rules::{even_split, payoff_share, posterior_sampling};
@@ -85,7 +85,7 @@ struct EconomicFields<'a> {
 }
 
 /// sha256 (lower hex) of the record's economic fields as JSON, behind a
-/// domain prefix.
+/// domain prefix (`purposes::gpu_line::PERIOD_ECONOMIC`).
 #[must_use]
 pub fn economic_digest(period: &GpuLinePeriod) -> String {
     let fields = EconomicFields {
@@ -109,10 +109,12 @@ pub fn economic_digest(period: &GpuLinePeriod) -> String {
         split_remainder: period.split_remainder,
         allocation: &period.allocation,
     };
-    let mut hasher = Sha256::new();
-    hasher.update(b"oneiron.gpu_line.period.economic:v1\n");
-    hasher.update(serde_json::to_vec(&fields).expect("a period record serializes"));
-    bytes_to_hex_lower(&hasher.finalize())
+    let encoded = serde_json::to_vec(&fields).expect("a period record serializes");
+    bytes_to_hex_lower(
+        &LegacyDigest::new(purposes::gpu_line::PERIOD_ECONOMIC)
+            .raw(&encoded)
+            .finish(),
+    )
 }
 
 /// Whether `period`'s pools sum to its allowance (section 3.2).

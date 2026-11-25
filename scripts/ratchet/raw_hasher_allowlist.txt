@@ -54,3 +54,6 @@ crates/oneiron-organ-host/src/seal/custody_keys.rs sha256  # RSA PKCS#1 v1.5 ove
 crates/oneiron-organ-host/src/seal/file_keys.rs sha256  # RSA PKCS#1 v1.5 over SHA-256 signing key
 crates/oneiron-server/src/control_keys.rs sha256  # HMAC-SHA256 API-key digests at rest
 crates/oneiron/src/campaign/one_click_unsubscribe.rs all  # one-click List-Unsubscribe link MAC (RFC 8058): keyed BLAKE3 under the vault's link key
+
+# Waiting on the door: the fingerprint door has no extendable output (XOF) yet.
+crates/oneiron/src/gpu_line/mint/rules.rs all  # posterior_sampling@1's BLAKE3 XOF sample stream: each period stores and digests the ceilings it draws, and the fingerprint door has no XOF (HASH-ROUTE-GPU-LINE-STORED = A, Engine 25 Nov 14:56)

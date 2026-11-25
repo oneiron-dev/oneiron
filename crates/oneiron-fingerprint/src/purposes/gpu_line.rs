@@ -15,4 +15,23 @@ purposes! {
     COHORT_BLOCK = "oneiron.gpu_line.cohort_block.v1";
 }
 
-legacy_purposes! {}
+// HASH-ROUTE-GPU-LINE-STORED = A (Engine, 25 Nov 14:56) keeps these bytes.
+// Stack #10416 stored them after this crate existed, an exception to the `legacy.rs`
+// rule for bytes main wrote before this crate. PLAN-UC-04 stage 9 moves them to v1 at launch reset.
+legacy_purposes! {
+    /// The key of every `LANE_ECONOMY_INTENT` row (`gpu_line/intent.rs`, `intent_row_key`).
+    /// Writes the asker's ID bytes, the verb's length as a u64 big-endian and its bytes,
+    /// then the intent key's length as a u64 big-endian and its bytes.
+    INTENT_KEY = (Blake3, DeriveKeyContext, "oneiron lane economy intent key v1");
+
+    /// The ask digest in every intent row (`gpu_line/intent.rs`, `IntentAsk::new`), stored
+    /// in lower hex. Writes the ask's canonical JSON with no length before it.
+    /// `oneiron_records::receipt::call::write_canonical` sorts object keys at every depth.
+    INTENT_ASK = (Blake3, DeriveKeyContext, "oneiron lane economy intent ask v2");
+
+    /// The economic digest in every period record (`gpu_line/mint/period.rs`,
+    /// `economic_digest`), stored in lower hex. Writes the tag's bytes, including its final
+    /// newline, then `serde_json::to_vec` of `EconomicFields` in that struct's field order.
+    /// There is no length before the JSON.
+    PERIOD_ECONOMIC = (Sha256, HashedFirst, "oneiron.gpu_line.period.economic:v1\n");
+}
