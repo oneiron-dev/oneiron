@@ -335,6 +335,7 @@ pub mod repo_secret_marks;
 pub mod research_continuation;
 #[cfg(feature = "sync")]
 pub mod residence_directive_run;
+pub mod resident_share_rows;
 pub mod resident_wake_hold;
 pub mod restored_code_consent_waits;
 pub mod restored_enrolment;

@@ -884,6 +884,16 @@ fn rsi_line_configures_holds_resumes_without_provider() {
     });
 }
 
+/// The residents' rows in a share view's `micro_usd` block (one block per
+/// unit a share is set in: this host selects no walletless allocation).
+fn money_rows(view: &serde_json::Value) -> &Vec<serde_json::Value> {
+    view["allocations"]
+        .as_array()
+        .and_then(|blocks| blocks.iter().find(|block| block["unit"] == "micro_usd"))
+        .and_then(|block| block["residents"].as_array())
+        .unwrap_or_else(|| panic!("a micro_usd block: {view}"))
+}
+
 /// A resident share sets and reads back, and strangers are refused: the
 /// owner sets a pinned and a default share, the agent and a stranger are
 /// refused at the set with the owner refusal, and the shares still show
@@ -893,7 +903,7 @@ fn resident_share_set_reads_and_strangers_refused() {
     run_on_engine_stack("budgets-resident-shares", || async {
         let served = served();
         let empty = served.ok(Caller::Owner, RESIDENT_SHARES, json!({})).await;
-        assert_eq!(empty["residents"], json!([]), "{empty}");
+        assert_eq!(empty["allocations"], json!([]), "{empty}");
 
         let stranger_hex = served.stranger.to_hex();
         let set = served
@@ -904,10 +914,11 @@ fn resident_share_set_reads_and_strangers_refused() {
                     "resident": stranger_hex.clone(),
                     "units": 500,
                     "pinned": true,
+                    "unit": "micro_usd",
                 }),
             )
             .await;
-        let rows = set["residents"].as_array().expect("residents");
+        let rows = money_rows(&set);
         assert_eq!(rows.len(), 1, "{set}");
         assert_eq!(rows[0]["resident"], stranger_hex, "{set}");
         assert_eq!(rows[0]["units"], 500, "{set}");
@@ -919,10 +930,10 @@ fn resident_share_set_reads_and_strangers_refused() {
             .ok(
                 Caller::Owner,
                 RESIDENT_SHARES_SET,
-                json!({"resident": other.clone(), "pinned": false}),
+                json!({"resident": other.clone(), "pinned": false, "unit": "micro_usd"}),
             )
             .await;
-        let rows = soft["residents"].as_array().expect("residents");
+        let rows = money_rows(&soft);
         assert_eq!(rows.len(), 2, "{soft}");
         let row = rows
             .iter()
@@ -953,7 +964,7 @@ fn resident_share_set_reads_and_strangers_refused() {
         }
 
         let reread = served.ok(Caller::Owner, RESIDENT_SHARES, json!({})).await;
-        let rows = reread["residents"].as_array().expect("residents");
+        let rows = money_rows(&reread);
         assert_eq!(rows.len(), 2, "{reread}");
         let row = rows
             .iter()

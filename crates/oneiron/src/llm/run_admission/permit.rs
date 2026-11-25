@@ -537,7 +537,7 @@ impl RunInner {
             Some((residents, resident)) => {
                 let allocation_units = meter.read().limit_units;
                 let scope = ResidentShareScope::of_wallet(wallet.as_ref());
-                match residents.draw(resident, &reference, allocation_units, units, scope) {
+                match residents.draw(resident, &reference, &unit, allocation_units, units, scope) {
                     Ok(draw) => Some(draw),
                     Err(denied) => {
                         // Not dispatched, so the abort releases the hold.
