@@ -23,6 +23,7 @@
 //! again before it goes out and sends nothing once the key is closing ([`sends`]). A receipt is
 //! judged and stored in the same write as the row's `Held` mark ([`receipts`]).
 mod receipts;
+mod renewals;
 mod sends;
 
 use std::collections::HashMap;
@@ -50,8 +51,8 @@ use super::{
 };
 use crate::config::gpu_jobs::VaultMachineSettings;
 use crate::gpu_execution_node::wire::{
-    HoldRef, JobAnswer, JobEnd, JobReceipt, JobRequest, JobState, JobStatusAnswer,
-    JobStatusRequest, JobSubmit, SignedJobSubmit, Starter, TemplateKind,
+    HoldRef, JobAnswer, JobEnd, JobReceipt, JobState, JobStatusAnswer, JobStatusRequest, JobSubmit,
+    SignedJobSubmit, Starter,
 };
 
 /// What a [`VaultMachineConnector`] is built from.
@@ -384,211 +385,6 @@ impl VaultMachineConnector {
         Ok(resource)
     }
 
-    /// `renew` under the key's lock (row W1): the session's next paid chunk under `key`, a
-    /// submit that continues the run the job's first key `continues` started. It binds to that
-    /// key's dispatch: its machine, pin, slot and signed starter; no Grant is chosen anew. Before
-    /// the row is written it checks the pause, the machine's guard, the live recheck of that
-    /// starter, the Grant's per-job maximum over every chunk of the run, and the node's offer of
-    /// the pin's template as a session's. The row holds the signed submit before any network
-    /// call, and the submit goes out with no reserve.
-    fn renew_key(
-        &self,
-        key: &str,
-        continues: &str,
-        spec: &GpuJobSpec,
-    ) -> Result<GpuResourceRef, GpuConnectorError> {
-        if let Some(row) = self.vault().job_dispatch(key).map_err(store)? {
-            return Ok(GpuResourceRef(row.resource()));
-        }
-        if self.parts.settings.paused {
-            return Err(refused("dispatch_paused"));
-        }
-        let job = EntityId::from_hex(&spec.job).map_err(|_| refused("job_id_invalid"))?;
-        let first = self
-            .vault()
-            .job_dispatch(continues)
-            .map_err(store)?
-            .filter(|first| first.job == job)
-            .ok_or_else(|| refused("continues_unknown"))?;
-        let first_submit = decode::<SignedJobSubmit>(&first.submit)?.submit;
-        if first_submit.continues.is_some() {
-            return Err(refused("continues_not_a_first_key"));
-        }
-        if let Some(refusal) = super::guard::machine_job_guard_refusal(self.vault(), first.machine)
-        {
-            return Err(refused(refusal));
-        }
-        let Some(starter) = self.starter_of(&first, &first_submit)? else {
-            return Err(refused(DispatchRefusal::StarterLapsed.code()));
-        };
-        if let WorkloadStarter::Grant(grant) = starter {
-            self.check_session_allowance(&job, &grant, spec.maximum_secs)?;
-        }
-        let now = self.now_ms();
-        let ask = DispatchAsk {
-            starter,
-            workload: &first.workload,
-            node: first.machine,
-            maximum_secs: spec.maximum_secs,
-        };
-        let pin = self
-            .vault()
-            .dispatch_recheck(&ask, now, self.horizon_ms())
-            .map_err(store)?
-            .map_err(|refusal| refused(refusal.code()))?;
-        if pin != first_submit.pin {
-            return Err(refused("pin_changed"));
-        }
-        self.session_template_offered(first.machine, &first_submit)?;
-        let not_after_ms =
-            now.saturating_add(self.parts.settings.submit_window_secs.saturating_mul(1000));
-        let submit = JobSubmit {
-            key: key.to_owned(),
-            job,
-            chunk: spec.chunk,
-            pin,
-            slot: first_submit.slot.clone(),
-            maximum_secs: spec.maximum_secs,
-            issued_at_ms: now,
-            not_after_ms,
-            issuer: self.parts.issuer,
-            starter: first_submit.starter,
-            hold: hold_of(key),
-            authority_heads: self.vault().authority_main_log_heads().map_err(store)?,
-            continues: Some(continues.to_owned()),
-        };
-        let signed = SignedJobSubmit::sign(submit, self.parts.signer.as_ref())
-            .map_err(|error| refused(format!("issuer_cannot_sign: {error}")))?;
-        // A continuing key stays `Reserving` until the node's receipt proves it: no reserve is
-        // ever sent for it, so the phase alone never claims the node journaled it.
-        let row = self
-            .vault()
-            .insert_job_dispatch(JobDispatch {
-                key: key.to_owned(),
-                job,
-                chunk: spec.chunk,
-                workload: first.workload.clone(),
-                machine: first.machine,
-                submit: encode(&signed)?,
-                issued_at_ms: now,
-                not_after_ms,
-                phase: DispatchPhase::Reserving,
-                held: None,
-                sent_boot: None,
-                closed: None,
-                history_lost_at_ms: None,
-            })
-            .map_err(store)?;
-        let resource = GpuResourceRef(row.resource());
-        self.reconciled
-            .ensure(
-                row.machine,
-                self.vault(),
-                self.parts.client.as_ref(),
-                self.parts.orphans.as_ref(),
-            )
-            .map_err(|error| unavailable(format!("reconcile: {error}")))?;
-        let receipt = match self.send_submit(&row, &signed)? {
-            Sent::Receipt(receipt) => receipt,
-            // A terminate closed the key before the submit: its status reads the key.
-            Sent::Withheld => return Ok(resource),
-            // Busy, or no answer: the step's read of this key sends the same bytes again inside
-            // its window.
-            Sent::NoReceipt(why) => {
-                tracing::info!(node = %row.machine.to_hex(), key, why = %why, "vault_machine: a session's next chunk got no receipt yet");
-                return Ok(resource);
-            }
-            Sent::NoAnswer(_) => return Ok(resource),
-        };
-        if let (JobState::Ended, Some(JobEnd::Refused { reason })) = (receipt.state, &receipt.end) {
-            tracing::info!(
-                node = %row.machine.to_hex(),
-                key,
-                reason = %reason,
-                "vault_machine: the node refused a session's next chunk"
-            );
-            let reason = reason.clone();
-            self.update(key, |row| {
-                row.phase = DispatchPhase::Closed;
-                row.closed
-                    .get_or_insert(DispatchClose::NodeRefused { reason });
-            })?;
-            return Err(refused(NOT_AVAILABLE_TO_THIS_CALLER));
-        }
-        Ok(resource)
-    }
-
-    /// A Grant's per-job maximum holds over every chunk of a session (row W1), as it holds over
-    /// a resume: the paid maximum so far plus `maximum_secs` must fit it.
-    fn check_session_allowance(
-        &self,
-        job: &EntityId,
-        grant: &EntityId,
-        maximum_secs: u64,
-    ) -> Result<(), GpuConnectorError> {
-        let paid_secs = self
-            .vault()
-            .gpu_job(job)
-            .map_err(store)?
-            .ok_or_else(|| refused("job_missing"))?
-            .maximum
-            .maximum()
-            .units;
-        let allowance = self
-            .vault()
-            .gpu_job_allowance(grant)
-            .map_err(store)?
-            .ok_or_else(|| refused("allowance_missing"))?;
-        if paid_secs.saturating_add(maximum_secs) > allowance.maximum_secs {
-            return Err(refused("allowance_exceeded"));
-        }
-        Ok(())
-    }
-
-    /// The node must offer the first key's template, by name and digest, as a session's
-    /// template, and take work now: a node that predates sessions, a job's template, a pause or
-    /// a drain renews nothing. The node checks all of it again itself.
-    fn session_template_offered(
-        &self,
-        machine: EntityId,
-        first: &JobSubmit,
-    ) -> Result<(), GpuConnectorError> {
-        let answer = self
-            .parts
-            .client
-            .job(machine, &JobRequest::Node)
-            .map_err(call_error)?;
-        let JobAnswer::Node(node) = answer else {
-            return Err(unavailable(job_answer_label(&answer)));
-        };
-        if !node.enabled || node.paused.is_some() || node.drained.is_some() {
-            return Err(refused("node_takes_no_work"));
-        }
-        let offered = node.templates.iter().any(|template| {
-            template.name == first.pin.template
-                && template.digest == first.pin.template_digest
-                && template.kind == TemplateKind::Session
-        });
-        if !offered {
-            return Err(refused("template_not_a_session"));
-        }
-        Ok(())
-    }
-
-    /// The typed terminal of a session's slice that the run passed (row W1), if the key holds
-    /// one.
-    fn continued_terminal(
-        &self,
-        key: &str,
-    ) -> Result<Option<oneiron::gpu_job::GpuJobTerminal>, GpuConnectorError> {
-        Ok(self
-            .vault()
-            .job_observation(key)
-            .map_err(store)?
-            .and_then(|observation| observation.terminal)
-            .filter(|terminal| terminal.end == GpuJobEnd::Continued))
-    }
-
     /// `status` under the key's lock.
     fn status_key(
         &self,
@@ -801,36 +597,6 @@ impl GpuJobConnector for VaultMachineConnector {
 }
 
 impl VaultMachineConnector {
-    /// The latest cutoff a session's run can reach (row W1): its first key's `not_after` plus
-    /// the maximum of every chunk of the run, the open next one included; `None` for a job that
-    /// does not renew, whose chunk's own submit bounds it.
-    fn session_run_cutoff_ms(&self, job: &GpuJob) -> Result<Option<u64>, GpuConnectorError> {
-        if !job.renews() {
-            return Ok(None);
-        }
-        let Some(first) = job.chunks.first() else {
-            return Ok(None);
-        };
-        let Some(row) = self
-            .vault()
-            .job_dispatch(&first.idempotency_key)
-            .map_err(store)?
-        else {
-            return Ok(None);
-        };
-        let not_after_ms = decode::<SignedJobSubmit>(&row.submit)?.submit.not_after_ms;
-        let maximum_secs = job
-            .chunks
-            .iter()
-            .chain(job.renewal.as_ref())
-            .fold(0_u64, |total, chunk| {
-                total.saturating_add(chunk.quote.maximum_secs)
-            });
-        Ok(Some(
-            not_after_ms.saturating_add(maximum_secs.saturating_mul(1_000)),
-        ))
-    }
-
     /// `write_off` under the key's lock.
     fn write_off_key(
         &self,

@@ -102,7 +102,17 @@ impl Vault {
                 }
             }
             GpuJobState::Running => {
-                self.observe_gpu_chunk(job, offer, taken_up, permits, connector, renewal, now_ms)
+                let renews = job.renews();
+                let report =
+                    self.observe_gpu_chunk(job, offer, taken_up, permits, connector, now_ms)?;
+                // A session still running after its step renews from the row that step wrote.
+                if let Some(renewal) =
+                    renewal.filter(|_| renews && report.state == GpuJobState::Running)
+                {
+                    let job = self.load_gpu_job(id)?;
+                    self.renew_gpu_session(job, offer, renewal, permits, connector, now_ms)?;
+                }
+                Ok(report)
             }
             _ => self
                 .end_gpu_chunk(job, permits, connector, now_ms)
@@ -111,9 +121,8 @@ impl Vault {
     }
 
     /// Reads a running chunk's status and acts on what its usage crossed. A session records its
-    /// usage alone, renews once its chunk nears its maximum, and moves to its next chunk once its
-    /// provider proves the run passed this one's end.
-    #[allow(clippy::too_many_arguments)]
+    /// usage alone, and moves to its next chunk once its provider proves the run passed this
+    /// one's end.
     fn observe_gpu_chunk(
         &self,
         mut job: GpuJob,
@@ -121,7 +130,6 @@ impl Vault {
         taken_up: bool,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
-        renewal: Option<&GpuJobRenewal<'_>>,
         now_ms: u64,
     ) -> Result<GpuJobStepReport, GpuJobError> {
         let resource =
@@ -283,9 +291,6 @@ impl Vault {
         };
         let mut report = if matches!(job.state, GpuJobState::Ending { .. }) {
             self.end_gpu_chunk(job, permits, connector, now_ms)?.1
-        } else if let Some(renewal) = renewal.filter(|_| job.renews()) {
-            let job = self.renew_gpu_session(job, offer, renewal, permits, connector, now_ms)?;
-            GpuJobStepReport::of(&job)
         } else {
             GpuJobStepReport::of(&job)
         };
