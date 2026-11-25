@@ -22,6 +22,7 @@ use mesh_machines::{Device, Home, TestResult, at, home};
 use oneiron::EntityId;
 use oneiron::authority::ActSurface;
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::job_workload::BoundRequirement;
 use oneiron::job_workload::{DeviceKind, DeviceLease, DevicePlacement, Sharing};
 use oneiron::machine_policy::{ExecutionState, machine_item, machine_part_item};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
@@ -30,12 +31,18 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
+use oneiron_server::gpu_execution_node::jobs::{
+    IssuerNotLive, NodeAdmission, NodeControls, NodeJobSettings, NodeJobs, NodeKey,
+};
 use oneiron_server::gpu_execution_node::wire::{
-    DeviceClaim, NetworkMode, OutputDecl, ResourceRequest, ScopeKind, WorkloadPin,
+    DeviceClaim, HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobSubmit,
+    NetworkMode, OutputDecl, ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector, Starter,
+    WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
     ExecutionNode, GpuDeviceOffer, GpuSlotTable, NvidiaSmiProbe,
 };
+use oneiron_server::test_doors::node_jobs::{ScriptedAdmission, ScriptedNode, ScriptedSigner};
 use serde_json::{Value, json};
 
 /// The issuer the node's file names: the gate is not what these tests read.
@@ -552,5 +559,190 @@ fn a_policy_row_the_owner_did_not_sign_changes_nothing_on_the_node() -> TestResu
     // Only the owner's act moves it.
     rig.owner_sets(EXECUTION, None, json!({ "state": "on" }))?;
     assert_eq!(rig.node.controls().refusal(), None);
+    Ok(())
+}
+
+/// The template and digest the scripted job service holds.
+const STAGED_TEMPLATE: &str = "open-models";
+const STAGED_DIGEST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+const NOW_MS: u64 = 1_800_000_000_000;
+const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The job service's admission for the launch commit test: the node's controls from N's real
+/// node, which reads the owner's rows from N's own vault; every other check from the scripted
+/// parts.
+struct PolicyAdmission {
+    node: ExecutionNode,
+    scripted: Arc<ScriptedAdmission>,
+}
+
+impl NodeAdmission for PolicyAdmission {
+    fn controls(&self) -> NodeControls {
+        self.node.controls()
+    }
+
+    fn issuer_live(&self, issuer: EntityId) -> Result<(), IssuerNotLive> {
+        NodeAdmission::issuer_live(&*self.scripted, issuer)
+    }
+
+    fn admit_pin(&self, pin: &WorkloadPin) -> Result<(), String> {
+        NodeAdmission::admit_pin(&*self.scripted, pin)
+    }
+
+    fn template_digest(&self, template: &str) -> Option<String> {
+        NodeAdmission::template_digest(&*self.scripted, template)
+    }
+
+    fn template_requires(&self, template: &str) -> Option<Vec<BoundRequirement>> {
+        NodeAdmission::template_requires(&*self.scripted, template)
+    }
+
+    fn admit_placement(
+        &self,
+        pin: &WorkloadPin,
+        placement: &DevicePlacement,
+        held_mib: u64,
+    ) -> Result<(), String> {
+        NodeAdmission::admit_placement(&*self.scripted, pin, placement, held_mib)
+    }
+
+    fn disk_room(&self, booked_mib: u64, request_mib: u64) -> Result<(), String> {
+        NodeAdmission::disk_room(&*self.scripted, booked_mib, request_mib)
+    }
+
+    fn job_settings(&self) -> NodeJobSettings {
+        NodeAdmission::job_settings(&*self.scripted)
+    }
+}
+
+/// A pin of the scripted template, with one 22 GiB GPU claim.
+fn staged_pin() -> WorkloadPin {
+    let mut pin = pin(STAGED_DIGEST, NetworkMode::None);
+    pin.template = STAGED_TEMPLATE.to_owned();
+    pin.request.memory_mib = 22 * 1_024;
+    pin.request.devices[0].memory_mib = 22 * 1_024;
+    pin.request.devices[0].features = Vec::new();
+    pin
+}
+
+fn reserve(issuer: EntityId, key: &str, pin: &WorkloadPin) -> JobReserve {
+    JobReserve {
+        key: key.to_owned(),
+        pin: pin.clone(),
+        slot: SlotSelector::default(),
+        issuer,
+        starter: Starter::Owner,
+        issued_at_ms: NOW_MS,
+        not_after_ms: NOW_MS + 300_000,
+    }
+}
+
+fn submit(issuer: EntityId, key: &str, pin: &WorkloadPin) -> TestResult<SignedJobSubmit> {
+    let submit = JobSubmit {
+        key: key.to_owned(),
+        job: EntityId::now(),
+        chunk: 0,
+        pin: pin.clone(),
+        slot: SlotSelector::default(),
+        maximum_secs: pin.request.maximum_secs,
+        issued_at_ms: NOW_MS,
+        not_after_ms: NOW_MS + 300_000,
+        issuer,
+        starter: Starter::Owner,
+        hold: HoldRef {
+            reservation: format!("hold-{key}"),
+            generation: 1,
+        },
+        authority_heads: Vec::new(),
+    };
+    Ok(
+        SignedJobSubmit::sign(submit, ScriptedSigner::new(issuer).as_ref())
+            .map_err(at("the issuer signs"))?,
+    )
+}
+
+fn receipt(answer: JobAnswer) -> TestResult<JobReceipt> {
+    match answer {
+        JobAnswer::Receipt(signed) => Ok(signed.receipt),
+        other => Err(format!("expected a receipt, got {other:?}").into()),
+    }
+}
+
+/// Waits until `key` exists and `done` holds for it: the staging worker and the launch commit
+/// run on threads of their own and signal nothing a test could await.
+fn wait_for(jobs: &NodeJobs, key: &str, done: impl Fn(&NodeKey) -> bool) -> TestResult<NodeKey> {
+    // testkit-lint: allow(wall-clock) bounds a wait on the node's own worker threads
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let found = jobs.keys().into_iter().find(|entry| entry.key == key);
+        if let Some(found) = found.filter(|entry| done(entry)) {
+            return Ok(found);
+        }
+        // testkit-lint: allow(wall-clock) the same bound
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("key {key} did not reach the state").into());
+        }
+        // testkit-lint: allow(sleep) the poll interval; the worker threads signal nothing
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn the_owners_pause_during_staging_refuses_the_launch_inside_the_launch_commit() -> TestResult {
+    let rig = Rig::new("")?;
+    let dir = tempfile::tempdir()?;
+    let scripted = ScriptedNode::new(
+        dir.path(),
+        rig.device.machine,
+        STAGED_TEMPLATE,
+        STAGED_DIGEST,
+        NOW_MS,
+    );
+    let mut parts = scripted.parts();
+    parts.admission = Arc::new(PolicyAdmission {
+        node: node_of(&rig.device, &rig.file),
+        scripted: Arc::clone(&scripted.admission),
+    });
+    let jobs = NodeJobs::open(scripted.paths.clone(), parts)?;
+    let issuer = EntityId::now();
+    let pin = staged_pin();
+
+    // The owner pauses N after the submit, while the key stages: the launch commit reads his row
+    // from N's own fold, and the key ends refused, its unit never started.
+    let key = "job-p0/paused";
+    scripted.stager.hold();
+    assert_eq!(
+        receipt(jobs.reserve(issuer, reserve(issuer, key, &pin)))?.state,
+        JobState::Held
+    );
+    assert_eq!(
+        receipt(jobs.submit(issuer, submit(issuer, key, &pin)?))?.state,
+        JobState::Accepted
+    );
+    assert!(scripted.stager.wait_entered(1, WAIT), "the key stages");
+    rig.owner_sets(EXECUTION, None, json!({ "state": "paused" }))?;
+    scripted.stager.let_go();
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended)?;
+    assert!(
+        matches!(&ended.end, Some(JobEnd::LaunchRefused { reason }) if reason == "node_paused: owner: paused"),
+        "{:?}",
+        ended.end
+    );
+    assert_eq!(scripted.units.starts(key), 0, "no unit started");
+
+    // The owner turns N back on: the next key launches.
+    rig.owner_sets(EXECUTION, None, json!({ "state": "on" }))?;
+    let next = "job-p0/on";
+    assert_eq!(
+        receipt(jobs.reserve(issuer, reserve(issuer, next, &pin)))?.state,
+        JobState::Held
+    );
+    assert_eq!(
+        receipt(jobs.submit(issuer, submit(issuer, next, &pin)?))?.state,
+        JobState::Accepted
+    );
+    wait_for(&jobs, next, |entry| entry.state == JobState::Launching)?;
+    jobs.tick();
+    wait_for(&jobs, next, |entry| entry.state == JobState::Running)?;
     Ok(())
 }

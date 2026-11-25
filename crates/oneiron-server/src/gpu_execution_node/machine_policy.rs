@@ -24,8 +24,9 @@ use oneiron::Vault;
 use oneiron::job_workload::{DevicePlacement, NetworkMode};
 use oneiron::machine_policy::{ExecutionState, MachineAccepts, MachinePolicy};
 
+use super::availability::GpuDeviceAvailability;
 use super::node_settings::ExecutionNodeSettings;
-use super::wire::WorkloadPin;
+use super::wire::{TemplateOffer, WorkloadPin};
 
 /// Where Linux lists the machine's power supplies.
 const POWER_SUPPLY_DIR: &str = "/sys/class/power_supply";
@@ -113,6 +114,32 @@ pub fn offered_network(
         .copied()
         .filter(|mode| opened.is_some_and(|opened| opened.0.contains(mode)))
         .collect()
+}
+
+/// The file's templates as the node offers them: each with the network modes the owner opened
+/// among the box's.
+#[must_use]
+pub fn offered_templates(
+    policy: Option<&MachinePolicy>,
+    settings: &ExecutionNodeSettings,
+) -> Vec<TemplateOffer> {
+    let offers = settings.template_offers().unwrap_or_else(|why| {
+        tracing::warn!(%why, "a template of the execution node does not encode");
+        Vec::new()
+    });
+    offers
+        .into_iter()
+        .map(|mut offer| {
+            offer.network = offered_network(policy, &offer.name, &offer.network);
+            offer
+        })
+        .collect()
+}
+
+/// `devices` less every device the owner withholds: an `Availability` sample offers no withheld
+/// device, so the issuer's start gate places nothing on it.
+pub fn retain_offered(policy: Option<&MachinePolicy>, devices: &mut Vec<GpuDeviceAvailability>) {
+    devices.retain(|device| device_offered(policy, &device.device.device_id));
 }
 
 /// Whether the owner offers the device `device_id` to work. A device the policy was not read for
