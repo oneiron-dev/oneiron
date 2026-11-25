@@ -707,7 +707,11 @@ fn three_machine_failures_in_a_row_drain_the_node_until_a_person_clears_it() {
             "nothing is written for it",
         );
 
-        assert_eq!(owner_clears_drain(rig), Ok("lost: node_reset".to_owned()));
+        assert_eq!(
+            owner_clears_drain(rig),
+            Ok(drained.why.clone()),
+            "the clear answers the cause the drain recorded",
+        );
         assert_eq!(guard().drained, None);
         assert_eq!(guard().failures_in_a_row, 0, "the count starts again");
         assert_eq!(
