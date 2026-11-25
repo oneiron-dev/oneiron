@@ -208,12 +208,20 @@ impl NodeJobs {
     /// the journal moved and the scope has not taken (row W1): a renewal
     /// whose ask failed, or any renewed run after a start. The scope's
     /// renewal moves a cutoff only forward, so asking twice changes nothing.
+    /// The armed cutoff of a run that no longer runs is forgotten.
     fn rearm_renewed_cutoffs(&self) {
         let pending: Vec<(String, u64)> = {
-            let book = self.lock();
+            let mut guard = self.lock();
+            let book = &mut *guard;
             let Some(journal) = book.journal.as_ref() else {
                 return;
             };
+            // A run that no longer runs needs no armed cutoff kept.
+            book.armed_cutoffs.retain(|key, _| {
+                journal.table().get(key).is_some_and(|known| {
+                    matches!(known.state, JobState::Launching | JobState::Running)
+                })
+            });
             journal
                 .table()
                 .iter()

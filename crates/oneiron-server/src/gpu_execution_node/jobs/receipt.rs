@@ -200,6 +200,14 @@ pub fn chunk_receipt_of(
         view.other_compute_pids = Vec::new();
     }
     let mut receipt = receipt_of(&view, machine, epoch, now);
+    // A live slice that a later one follows is at most its own paid chunk
+    // long, also before a tick proves the run past its end.
+    if progress == 1 && !last {
+        let chunk_secs = to_boot_ns
+            .saturating_sub(from_boot_ns)
+            .div_ceil(NANOS_PER_SEC);
+        receipt.measured_secs = receipt.measured_secs.map(|secs| secs.min(chunk_secs));
+    }
     receipt.seq = first.seq.saturating_mul(4).saturating_add(progress);
     receipt.slice = Some(ReceiptSlice {
         first_key: first.key.clone(),

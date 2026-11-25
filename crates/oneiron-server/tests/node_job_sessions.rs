@@ -329,10 +329,16 @@ fn every_second_of_a_renewed_session_is_billed_to_exactly_one_chunk() {
     // only once the node saw the run alive past its end: before the next
     // tick the second chunk is still the current one.
     f.advance_secs(400);
+    let unproved = known(jobs.find(f.issuer, "session-1"));
     assert_eq!(
-        known(jobs.find(f.issuer, "session-1")).state,
+        unproved.state,
         JobState::Running,
         "no tick has seen the run past 1,200 s yet"
+    );
+    assert_eq!(
+        unproved.measured_secs,
+        Some(600),
+        "a live slice that a later one follows is at most its chunk long"
     );
     jobs.tick();
     let live: Vec<JobReceipt> = ["session-0", "session-1", "session-2"]
@@ -505,6 +511,49 @@ fn a_renewal_after_an_untaken_renewal_and_the_runs_end_is_refused() {
     assert_eq!(late.end, refused("continues_ended"));
     assert!(!late.started);
     assert_eq!(late.measured_secs, None);
+
+    // The same after an engine restart, which forgets every armed cutoff
+    // (EM-22, R3A's review of #10501, P1-1).
+    let g = fixture();
+    let jobs = g.node.open();
+    g.launch(&jobs, "other-0");
+    g.advance_secs(60);
+    receipt(jobs.submit(g.issuer, g.renewal("other-1", 1, "other-0")));
+    g.advance_secs(60);
+    g.node.units.exit("other-0", 0);
+    jobs.tick();
+    wait_for(&jobs, "other-0", |entry| entry.state == JobState::Ended);
+    drop(jobs);
+    let jobs = g.node.open();
+    jobs.tick();
+    let after_restart = receipt(jobs.submit(g.issuer, g.renewal("other-2", 2, "other-0")));
+    assert_eq!(after_restart.end, refused("continues_ended"));
+}
+
+/// A renewal waits for the node's fold to hold the issuer's authority heads
+/// only while it would pass (EM-22, R3A's review of #10501, P2-1): with a
+/// fold that lags it answers `Busy` and writes nothing, and once the run's
+/// stop is too near it is refused, so the wait ends.
+#[test]
+fn a_renewal_waits_for_the_fold_only_while_it_would_pass() {
+    let f = fixture();
+    let jobs = f.node.open();
+    f.launch(&jobs, "session-0");
+    f.advance_secs(60);
+    f.node.authority.set_stale(true);
+    assert!(matches!(
+        jobs.submit(f.issuer, f.renewal("session-1", 1, "session-0")),
+        JobAnswer::Busy { .. }
+    ));
+    assert_eq!(
+        entry(&jobs, "session-0").map(|entry| entry.renewals.len()),
+        Some(0),
+        "nothing journaled"
+    );
+    f.advance_secs(CHUNK_SECS - 60 - 20);
+    let late = receipt(jobs.submit(f.issuer, f.renewal("session-1", 1, "session-0")));
+    assert_eq!(late.end, refused("continues_ended"));
+    assert!(!late.started);
 }
 
 /// The node journals no renewal that the scope's handoff could not take
