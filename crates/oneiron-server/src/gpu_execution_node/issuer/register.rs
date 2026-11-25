@@ -130,19 +130,31 @@ fn mesh_backend(
     runtime: tokio::runtime::Handle,
 ) -> Result<Arc<VaultMachineConnector>, VaultMachineNotRegistered> {
     let settings = server.config.gpu_jobs.vault_machine.clone();
-    let client = super::node_client::MeshJobNodeClient::new(
-        Arc::downgrade(server),
-        runtime,
-        Duration::from_secs(settings.call_timeout_secs),
-    );
+    let client: Arc<dyn super::node_client::JobNodeClient> =
+        Arc::new(super::node_client::MeshJobNodeClient::new(
+            Arc::downgrade(server),
+            runtime,
+            Duration::from_secs(settings.call_timeout_secs),
+        ));
+    let clock: Arc<dyn super::clock::IssuerClock> = Arc::new(super::clock::SystemIssuerClock);
+    // Row R4: a key a node holds that this issuer never dispatched gets its JOB_ORPHAN row and
+    // its stop (pass 33, 8.5).
+    let orphans = Arc::new(super::orphans::JobOrphanKeys {
+        vault: Arc::clone(server.vault()),
+        issuer: local,
+        client: Arc::clone(&client),
+        signer: Arc::clone(&signer),
+        clock: Arc::clone(&clock),
+        ledger: Arc::new(super::orphans::LoggedUnattributedLedger),
+    });
     Ok(Arc::new(VaultMachineConnector::new(
         super::connector::VaultMachineParts {
             vault: Arc::clone(server.vault()),
             issuer: local,
-            client: Arc::new(client),
+            client,
             signer,
-            clock: Arc::new(super::clock::SystemIssuerClock),
-            orphans: Arc::new(super::reconcile::LoggedOrphanKeys),
+            clock,
+            orphans,
             settings,
         },
     )))
