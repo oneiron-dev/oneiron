@@ -5,12 +5,18 @@ shell text. The credential stays in the two environment variables the
 issuer's configuration names (`oneiron api` reads them itself; see
 crates/oneiron-server/src/commands/api.rs); no other variable of the caller
 reaches the child, so no ssh agent, forward or proxy setting can carry the
-call somewhere else. An issuer URL whose host connects to this box (a
-loopback or unspecified address in any spelling curl accepts, such as
-`127.1`, or an address of the box's own) is refused unless this box serves
-the issuer itself (`issuer.loopback_allowed`): on any other box it would be
-a forward. The host is resolved as curl resolves it, and the URL is refused
-when any of its addresses is local.
+call somewhere else. An issuer URL whose host connects to this box is refused
+unless this box serves the issuer itself (`issuer.loopback_allowed`): on any
+other box it would be a forward (rack.addresses judges the host).
+
+curl's own lookup of the host could answer differently from the check's, so
+the call holds curl to the addresses the check judged. `oneiron api` starts
+`curl` from PATH; the harness puts a curl of its own first on that PATH, in
+the call's private directory, which starts the real curl with `--resolve
+<host>:<port>:<judged addresses>` (keeping `-q` first, where curl honours
+it). It marks that it ran; a call that answered with no mark was not held to
+the judged address, and fails. A host that is an address literal needs no
+lookup and no pin.
 
 The call runs in a process group of its own, with a private TMPDIR, where
 `oneiron api` stages the request body. At the deadline the whole group is
@@ -21,17 +27,18 @@ and the directory goes with the staged body.
 from __future__ import annotations
 
 import errno
-import ipaddress
 import json
 import os
+import shlex
 import shutil
 import signal
-import socket
 import subprocess
 import tempfile
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
+from rack.addresses import AddressError, Target, resolve_target
 from rack.commands import minimal_env
 from rack.evidence import redact
 from rack.rack_config import RackConfig
@@ -69,56 +76,6 @@ def _raise_for(verb: str, error: dict, status: str) -> None:
 REAP_SECS = 5
 
 
-class AddressError(Exception):
-    """A URL whose host cannot be resolved, or whose address cannot be judged."""
-
-
-def _address_is_local(sockaddr: tuple) -> bool:
-    """Whether a connect to this address reaches this box.
-
-    Loopback and unspecified addresses do, in any spelling (an IPv4-mapped
-    one too). Any other address is local when a socket can bind to it, which
-    sends nothing; an answer other than "not an address here" counts as local.
-    """
-    ip = ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    if ip.is_loopback or ip.is_unspecified:
-        return True
-    family = socket.AF_INET6 if len(sockaddr) == 4 else socket.AF_INET
-    try:
-        probe = socket.socket(family, socket.SOCK_DGRAM)
-    except OSError:
-        return True
-    with probe:
-        try:
-            probe.bind((sockaddr[0], 0, *sockaddr[2:]))
-        except OSError as error:
-            return error.errno != errno.EADDRNOTAVAIL
-    return True
-
-
-def local_target(url: str) -> bool:
-    """Whether a request to `url` would connect to this box (AddressError when it cannot be told)."""
-    parts = urllib.parse.urlsplit(url)
-    host = parts.hostname or ""
-    if not host:
-        raise AddressError("the URL names no host")
-    if host == "localhost" or host.endswith(".localhost"):
-        return True
-    try:
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-    except ValueError:
-        raise AddressError("the URL's port is not a number") from None
-    try:
-        answers = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except (socket.gaierror, UnicodeError):
-        raise AddressError("the URL's host does not resolve") from None
-    if not answers:
-        raise AddressError("the URL's host does not resolve")
-    return any(_address_is_local(sockaddr) for *_, sockaddr in answers)
-
-
 def _kill_group(leader: subprocess.Popen) -> None:
     """SIGKILL the leader's process group while the leader is unreaped (so its id is not reused)."""
     try:
@@ -127,16 +84,49 @@ def _kill_group(leader: subprocess.Popen) -> None:
         pass
 
 
-def _run_bounded(argv: list[str], data: bytes, timeout: int, env: dict[str, str]) -> tuple[int, bytes, bytes]:
-    """(exit, stdout, stderr) of `argv` in its own group with a private TMPDIR; TimeoutExpired past `timeout`."""
-    staging = tempfile.mkdtemp(prefix="oneiron-rack-api-")
+# The mark the harness's curl leaves in the call's directory when it ran.
+PIN_MARK = "curl-pinned"
+
+
+def _write_curl_pin(staging: Path, real_curl: str, target: Target) -> Path:
+    """The call's own `curl`: the real one with `--resolve` to the judged addresses, `-q` still first."""
+    bin_dir = staging / "bin"
+    bin_dir.mkdir(mode=0o700)
+    shim = bin_dir / "curl"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "# The rack harness's curl: it connects only to the addresses the harness judged.\n"
+        '[ "$1" = "-q" ] || { echo "rack: curl was not started with -q first" >&2; exit 2; }\n'
+        "shift\n"
+        f": > {shlex.quote(str(staging / PIN_MARK))}\n"
+        f'exec {shlex.quote(real_curl)} -q --resolve {shlex.quote(target.curl_resolve())} "$@"\n'
+    )
+    shim.chmod(0o700)
+    return bin_dir
+
+
+def _run_bounded(
+    argv: list[str], data: bytes, timeout: int, env: dict[str, str], pin: Target | None
+) -> tuple[int, bytes, bytes, bool]:
+    """(exit, stdout, stderr, pinned) of `argv` in its own group with a private TMPDIR; TimeoutExpired past `timeout`.
+
+    With `pin`, curl on the child's PATH is the harness's own (`pinned`: it ran).
+    """
+    staging = Path(tempfile.mkdtemp(prefix="oneiron-rack-api-"))
     try:
+        child_env = {**env, "TMPDIR": str(staging)}
+        if pin is not None:
+            real_curl = shutil.which("curl", path=env.get("PATH", ""))
+            if real_curl is None:
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "curl")
+            bin_dir = _write_curl_pin(staging, os.path.abspath(real_curl), pin)
+            child_env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
         child = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={**env, "TMPDIR": staging},
+            env=child_env,
             start_new_session=True,
         )
         try:
@@ -149,7 +139,7 @@ def _run_bounded(argv: list[str], data: bytes, timeout: int, env: dict[str, str]
                 child.kill()
                 child.wait()
             raise
-        return child.returncode, out, err
+        return child.returncode, out, err, (staging / PIN_MARK).exists()
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -162,13 +152,16 @@ def call(config: RackConfig, host: str, verb: str, body: dict[str, Any], hold_se
         raise ApiError(verb, "no issuer.base_url for this host")
     if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
         raise ApiError(verb, "issuer.base_url is not http or https")
+    pin: Target | None = None
     if not issuer["loopback_allowed"]:
         try:
-            local = local_target(url)
+            target = resolve_target(url)
         except AddressError as error:
             raise ApiError(verb, f"issuer.base_url: {error}") from None
-        if local:
+        if target.local:
             raise ApiError(verb, "issuer.base_url is a loopback or local address on a box that does not serve the issuer")
+        if not target.literal:
+            pin = target
     passed = {
         name: os.environ[name]
         for name in (issuer["secret_env"], issuer["binding_key_env"])
@@ -190,11 +183,13 @@ def call(config: RackConfig, host: str, verb: str, body: dict[str, Any], hold_se
     ]
     timeout = config.command_timeout_secs + hold_secs
     try:
-        returncode, stdout, stderr = _run_bounded(argv, json.dumps(body).encode(), timeout, minimal_env(passed))
-    except FileNotFoundError:
-        raise ApiError(verb, f"{config.oneiron_bin} not installed") from None
+        returncode, stdout, stderr, pinned = _run_bounded(argv, json.dumps(body).encode(), timeout, minimal_env(passed), pin)
+    except FileNotFoundError as error:
+        raise ApiError(verb, f"{error.filename or config.oneiron_bin} not installed") from None
     except subprocess.TimeoutExpired:
         raise ApiError(verb, f"no answer in {timeout} s") from None
+    if pin is not None and returncode == 0 and not pinned:
+        raise ApiError(verb, "the call did not go through the harness's curl, so it was not held to the checked address")
     # The facade answers the verb's output bare, or {"error": {...}}. curl fails a 4xx/5xx
     # with the body on stdout; a 202 (a pin that waits for a check-in) exits 0 with an error.
     text = stdout.decode("utf-8", errors="replace")

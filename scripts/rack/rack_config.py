@@ -34,6 +34,8 @@ DEFAULTS: dict[str, Any] = {
     },
     "oneiron_bin": "oneiron",
     "command_timeout_secs": 15,
+    # The box's process table (the drain and the key readbacks read it).
+    "proc_root": "/proc",
     # Empty: $XDG_STATE_HOME/oneiron-rack, else ~/.local/state/oneiron-rack.
     "evidence_dir": "",
     "canary": {
@@ -69,13 +71,17 @@ DEFAULTS: dict[str, Any] = {
         "rack_addresses": [],
         "control_socket_globs": ["~/.ssh/cm-*", "~/.ssh/sockets/*"],
         "transfer_programs": ["rsync", "scp", "sftp"],
-        "proc_root": "/proc",
         # The system ssh client configuration (an ssh process without -F reads it after ~/.ssh/config).
         "ssh_system_config": "/etc/ssh/ssh_config",
     },
     "keys": {
-        # A privileged run takes absolute paths only, one for each account the rack logs in as.
-        "authorized_keys_files": ["~/.ssh/authorized_keys", "/root/.ssh/authorized_keys"],
+        # The accounts the rack logs in to this box as (root's files are always read too).
+        "login_accounts": [],
+        # sshd's AuthorizedKeysFile: %h the account's home, %u its name, %U its uid, %% a
+        # percent sign; a relative entry is under the home. sshd's default is below.
+        "authorized_keys_file_patterns": [".ssh/authorized_keys", ".ssh/authorized_keys2"],
+        # Further files to read (absolute; a privileged run refuses a `~` entry).
+        "authorized_keys_files": [],
         "client_key_globs": ["~/.ssh/*.pub"],
         "rack_client_keys_dir": "",
         "owner_devices": [],
@@ -185,6 +191,10 @@ class RackConfig:
     @property
     def command_timeout_secs(self) -> int:
         return max(1, self.raw["command_timeout_secs"])
+
+    @property
+    def proc_root(self) -> Path:
+        return expand(self.raw["proc_root"])
 
     def evidence_root(self) -> Path:
         named = self.raw["evidence_dir"]

@@ -6,11 +6,15 @@ Every run is the entry as a subprocess against a stand-in box
 
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import re
 import stat
 import subprocess
+import threading
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -348,3 +352,211 @@ def test_without_the_user_bus_the_units_are_not_read_and_the_drain_fails(box):
     done = box.run(HOST, "after", "old-channels-drained")
     assert done.returncode == 1
     assert "1 sources not read" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "include",
+    [
+        'Include "~/.ssh/conf d/*.conf"',
+        "Include '~/.ssh/conf d/gateway.conf'",
+        "Include ~/.ssh/conf\\ d/gateway.conf",
+    ],
+)
+def test_a_quoted_include_path_with_a_space_is_the_file_ssh_reads(box, include):
+    # A RemoteForward has no listener on this side and need not be on the command line.
+    gateway_box(box, include + "\n")
+    (box.home / ".ssh/conf d").mkdir()
+    (box.home / ".ssh/conf d/gateway.conf").write_text("Host gateway\n  RemoteForward 9000 localhost:22\n")
+    box.process(4310, ["ssh", "-N", "gateway"])
+    for check in ("old-channels-drained", "forward-policy"):
+        done = box.run(HOST, "after", check)
+        assert done.returncode == 1, check
+        assert "1 ssh forwards" in done.stderr, check
+
+
+@pytest.mark.parametrize(
+    ("user_config", "system_config"),
+    [
+        ('Include "~/.ssh/conf d/gateway.conf\n', ""),
+        ("Include\n", ""),
+        ("", "Include ~/.ssh/conf.d/gateway.conf\n"),
+    ],
+)
+def test_an_ssh_configuration_ssh_would_refuse_is_no_proof(box, user_config, system_config):
+    gateway_box(box, user_config)
+    box.ssh_system_config.parent.mkdir()
+    box.ssh_system_config.write_text(system_config)
+    box.process(4320, ["ssh", "-N", "gateway"])
+    done = box.run(HOST, "after", "forward-policy")
+    assert done.returncode == 1
+    assert "not read: ssh configuration" in done.stderr
+
+
+def test_ssh_configuration_lines_are_split_as_openssh_splits_them():
+    from rack.readback.drain import config_line
+
+    assert config_line('Include "a b" c # d') == ("include", ["a b", "c"])
+    assert config_line("  RemoteForward=9000 localhost:22") == ("remoteforward", ["9000", "localhost:22"])
+    assert config_line('"RemoteForward" 9000 x:22') == ("remoteforward", ["9000", "x:22"])
+    assert config_line("Include 'it''s' a\\ b") == ("include", ["its", "a b"])
+    assert config_line("# a comment") == ("", [])
+    assert config_line("   ") == ("", [])
+    with pytest.raises(ValueError):
+        config_line('Include "open')
+    with pytest.raises(ValueError):
+        config_line("Include")
+
+
+def test_an_include_directory_that_cannot_be_listed_is_no_proof(tmp_path, monkeypatch):
+    from rack.readback import drain
+
+    (tmp_path / "conf.d").mkdir()
+    listdir = os.listdir
+
+    def denied(path):
+        if str(path) == str(tmp_path / "conf.d"):
+            raise PermissionError(13, "Permission denied")
+        return listdir(path)
+
+    monkeypatch.setattr(drain.os, "listdir", denied)
+    with pytest.raises(drain.SshConfigUnread):
+        drain.strict_glob(f"{tmp_path}/conf.d/*.conf")
+
+
+def test_a_proc_mount_that_hides_other_users_processes_is_no_proof(box):
+    box.proc_mount("rw,nosuid,hidepid=invisible,gid=4242424")
+    done = box.run(HOST, "after", "old-channels-drained")
+    if os.geteuid() == 0:
+        # root reads every process through hidepid.
+        assert done.returncode == 0, done.stderr
+    else:
+        assert done.returncode == 1
+        assert "1 sources not read" in done.stderr
+
+
+def test_a_hidepid_mount_whose_group_this_run_is_in_shows_every_process(box):
+    box.proc_mount(f"rw,hidepid=2,gid={os.getegid()}")
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_process_table_with_no_proc_mount_at_it_is_no_proof(box):
+    box.proc_mount("rw", at=box.tmp / "elsewhere")
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 sources not read" in done.stderr
+
+
+def test_a_process_entry_that_cannot_be_read_is_no_proof_and_one_that_ended_is_none(box):
+    # An entry whose cmdline is gone ended while the table was read.
+    (box.proc / "4400").mkdir()
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 0, done.stderr
+    unreadable = box.proc / "4401"
+    unreadable.mkdir()
+    (unreadable / "cmdline").mkdir()
+    (unreadable / "status").write_text("Name:\tssh\nPPid:\t1\n")
+    done = box.run(HOST, "after", "old-channels-drained")
+    assert done.returncode == 1
+    assert "1 sources not read" in done.stderr
+
+
+def serve(status: int, location: str = ""):
+    """A model gateway stand-in on 127.0.0.1 answering every GET with `status`; it records (path, Host)."""
+    seen: list[tuple[str, str]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Host", "")))
+            self.send_response(status)
+            if location:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def gateway_context():
+    return SimpleNamespace(config=SimpleNamespace(command_timeout_secs=5), evidence=SimpleNamespace(add=lambda *a: None))
+
+
+def test_forward_policy_follows_no_redirect_and_connects_only_to_the_judged_address():
+    from rack.addresses import Target
+    from rack.checks import gateway_outcome
+
+    after, after_seen = serve(200)
+    first, first_seen = serve(302, f"http://127.0.0.1:{after.server_port}/v1/models")
+    try:
+        # The name never resolves: the request reaches the gateway only through the judged address.
+        target = Target("http", "gateway.invalid", first.server_port, ("127.0.0.1",), False, False, "/v1/models")
+        outcome = gateway_outcome(gateway_context(), target)
+        assert not outcome.passed
+        assert "redirect (302)" in outcome.reason
+        assert first_seen == [("/v1/models", f"gateway.invalid:{first.server_port}")]
+        assert after_seen == []
+    finally:
+        first.shutdown()
+        after.shutdown()
+
+
+def test_forward_policy_takes_a_401_over_the_judged_address_as_the_route_working():
+    from rack.addresses import Target
+    from rack.checks import gateway_outcome
+
+    gateway, seen = serve(401)
+    try:
+        target = Target("http", "gateway.invalid", gateway.server_port, ("127.0.0.1",), False, False, "/v1/models?x=1")
+        assert gateway_outcome(gateway_context(), target).passed
+        assert seen == [("/v1/models?x=1", f"gateway.invalid:{gateway.server_port}")]
+    finally:
+        gateway.shutdown()
+
+
+def test_a_run_directory_that_is_a_link_is_refused_and_nothing_is_written_through_it(box):
+    elsewhere = box.tmp / "elsewhere-private"
+    elsewhere.mkdir(mode=0o700)
+    box.evidence.mkdir(mode=0o700)
+    (box.evidence / "r1").symlink_to(elsewhere)
+    done = box.run(HOST, "after", "old-channels-drained", env={"ONEIRON_RACK_RUN_ID": "r1"})
+    assert done.returncode == 2
+    assert done.stdout == ""
+    assert "the run directory is a link" in done.stderr
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_run_directory_on_another_filesystem_than_the_evidence_root_is_refused(tmp_path, monkeypatch):
+    from rack import evidence
+
+    devices = {}
+
+    def device(fd):
+        # The first directory asked about (the run directory) is on another device.
+        return devices.setdefault(fd, len(devices) + 1)
+
+    monkeypatch.setattr(evidence, "_device", device)
+    monkeypatch.setattr(evidence, "filesystem_type", lambda path: "ext4")
+    record = evidence.Evidence(tmp_path / "evidence", "r1", HOST, "after", "old-channels-drained")
+    with pytest.raises(evidence.EvidenceError, match="another filesystem"):
+        record.write("pass", "")
+    assert list((tmp_path / "evidence" / "r1").iterdir()) == []
+
+
+def test_the_example_configuration_names_every_key_and_only_those():
+    from rack import rack_config
+    from rack.rack_config import DEFAULTS
+
+    example = json.loads(Path(rack_config.__file__).with_name("rack.example.json").read_text())
+
+    def keys(value, defaults, where=""):
+        assert set(value) == set(defaults), where
+        for key, default in defaults.items():
+            if isinstance(default, dict) and default:
+                keys(value[key], default, f"{where}.{key}")
+
+    keys({k: v for k, v in example.items() if k != "hosts"}, {k: v for k, v in DEFAULTS.items() if k != "hosts"})

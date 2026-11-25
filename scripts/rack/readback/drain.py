@@ -18,10 +18,23 @@ process holds (a local or dynamic forward, one added later through `-O
 forward`, or a control master that can take one). Another user's ssh process
 can be read only by root: a run that cannot read its sockets or its
 configuration fails.
+
+Each configuration line is split as OpenSSH's readconf.c splits it (the
+keyword as strdelim reads it, its arguments as argv_split does: quotes,
+backslash escapes, a comment at a word's start), so a quoted Include path
+with a space is the file ssh reads. A line ssh would refuse, an Include ssh
+would refuse, or a directory on an Include's path that cannot be listed or
+searched is a configuration not read.
+
+The process table counts as read only when it holds every process: the proc
+mount must show this run every user's processes (no `hidepid`, unless the run
+is root or in the mount's `gid=` group), and an entry that exists but cannot
+be read is a gap (one that ended meanwhile is not).
 """
 
 from __future__ import annotations
 
+import errno
 import fnmatch
 import glob
 import ipaddress
@@ -50,7 +63,12 @@ FORWARD_SOURCES = ("processes", "ssh process sockets", "ssh configuration")
 # /proc/<pid>/net/tcp state LISTEN, and a unix socket's __SO_ACCEPTCON flag.
 TCP_LISTEN = "0A"
 UNIX_ACCEPTCON = 0x10000
-OPTION_WORDS = re.compile(r"^\s*([A-Za-z0-9]+)\s*(?:=\s*|\s+|$)(.*)$")
+# OpenSSH misc.c WHITESPACE, and the characters that make an Include word a glob pattern.
+SSH_WHITESPACE = " \t\r\n"
+GLOB_MAGIC = re.compile(r"[*?[]")
+# A process that ended while its entry was read.
+VANISHED = (errno.ENOENT, errno.ESRCH)
+MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
 
 
 @dataclass
@@ -58,6 +76,8 @@ class Process:
     pid: int
     ppid: int
     argv: list[str]
+    # The kernel's name for it (status `Name:`, at most 15 bytes).
+    name: str = ""
 
 
 @dataclass
@@ -98,8 +118,51 @@ class DrainReading:
         return ", ".join(parts)
 
 
-def read_processes(proc_root: Path) -> list[Process]:
-    """Every process whose command line can be read."""
+def _mount_path(field: str) -> str:
+    """A mountinfo path with its octal escapes (`\\040` for a space) undone."""
+    return MOUNT_ESCAPE.sub(lambda m: chr(int(m[1], 8)), field)
+
+
+def proc_shows_every_process(proc_root: Path) -> bool:
+    """Whether the proc mount at `proc_root` shows this run every process.
+
+    `hidepid` other than 0/off hides other users' processes from all but root
+    and the mount's `gid=` group. With no proc mount found at `proc_root` the
+    answer is no.
+    """
+    try:
+        table = (proc_root / "self" / "mountinfo").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    where = os.path.realpath(proc_root)
+    options: list[str] | None = None
+    for line in table.splitlines():
+        fields = line.split(" ")
+        try:
+            sep = fields.index("-", 6)
+        except ValueError:
+            continue
+        if len(fields) < sep + 4 or fields[sep + 1] != "proc" or _mount_path(fields[4]) != where:
+            continue
+        # The last mount at a point is the one on top.
+        options = fields[sep + 3].split(",")
+    if options is None:
+        return False
+    values = dict(option.split("=", 1) for option in options if "=" in option)
+    if values.get("hidepid", "0") in ("0", "off"):
+        return True
+    if os.geteuid() == 0:
+        return True
+    gid = values.get("gid", "")
+    return gid.isdigit() and (int(gid) == os.getegid() or int(gid) in os.getgroups())
+
+
+def read_processes(proc_root: Path) -> tuple[list[Process], bool]:
+    """Every process whose command line can be read, and whether that is every process on the box.
+
+    OSError when the table itself cannot be listed.
+    """
+    complete = proc_shows_every_process(proc_root)
     found = []
     for entry in proc_root.iterdir():
         if not entry.name.isdigit():
@@ -107,18 +170,22 @@ def read_processes(proc_root: Path) -> list[Process]:
         try:
             raw = (entry / "cmdline").read_bytes()
             status = (entry / "status").read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as error:
+            if error.errno not in VANISHED:
+                complete = False
             continue
         argv = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
         if not argv:
             continue
         ppid = 0
+        name = ""
         for line in status.splitlines():
-            if line.startswith("PPid:"):
+            if line.startswith("Name:"):
+                name = line[len("Name:") :].strip()
+            elif line.startswith("PPid:"):
                 ppid = int(line.split()[1])
-                break
-        found.append(Process(pid=int(entry.name), ppid=ppid, argv=argv))
-    return found
+        found.append(Process(pid=int(entry.name), ppid=ppid, argv=argv, name=name))
+    return found, complete
 
 
 def own_lineage(processes: list[Process], me: int) -> set[int]:
@@ -132,15 +199,81 @@ def own_lineage(processes: list[Process], me: int) -> set[int]:
     return lineage
 
 
-def option_words(text: str) -> tuple[str, str]:
-    """(keyword in lower case, its argument) of `Key value` or `Key=value`; ("", "") for a blank or comment."""
-    line = text.strip()
-    if not line or line.startswith("#"):
-        return "", ""
-    match = OPTION_WORDS.match(line)
-    if not match:
-        return "", ""
-    return match[1].lower(), match[2].strip()
+def _strdelim(text: str) -> tuple[str | None, str | None]:
+    """OpenSSH misc.c strdelim: (token, rest). The token is None at an unmatched quote, rest None at the end."""
+    stop = next((i for i, char in enumerate(text) if char in SSH_WHITESPACE + '"='), None)
+    if stop is None:
+        return text, None
+    if text[stop] == '"':
+        text = text[:stop] + text[stop + 1 :]
+        close = text.find('"', stop)
+        if close < 0:
+            return None, None
+        return text[:close], text[close + 1 :].lstrip(SSH_WHITESPACE)
+    rest = text[stop + 1 :].lstrip(SSH_WHITESPACE)
+    if text[stop] != "=" and rest.startswith("="):
+        rest = rest[1:].lstrip(SSH_WHITESPACE)
+    return text[:stop], rest
+
+
+def argv_split(text: str) -> list[str]:
+    """OpenSSH misc.c argv_split (comments end the line): ValueError at an unclosed quote."""
+    words: list[str] = []
+    index, size = 0, len(text)
+    while index < size:
+        if text[index] in " \t":
+            index += 1
+            continue
+        if text[index] == "#":
+            break
+        quote = ""
+        word: list[str] = []
+        while index < size:
+            char = text[index]
+            following = text[index + 1] if index + 1 < size else ""
+            if char == "\\" and (following in ("'", '"', "\\") or (not quote and following == " ")):
+                index += 1
+                word.append(following)
+            elif not quote and char in " \t":
+                break
+            elif not quote and char in "\"'":
+                quote = char
+            elif quote and char == quote:
+                quote = ""
+            else:
+                word.append(char)
+            index += 1
+        if quote:
+            raise ValueError("an unclosed quote")
+        words.append("".join(word))
+    return words
+
+
+def config_line(text: str) -> tuple[str, list[str]]:
+    """(keyword in lower case, its arguments) of one ssh configuration line, read as readconf.c reads it.
+
+    ("", []) for a line ssh skips (blank, a comment, a keyword with an
+    unmatched quote); ValueError for one it refuses (no argument, an unclosed
+    quote in the arguments).
+    """
+    line = text.rstrip(SSH_WHITESPACE + "\f")
+    keyword, rest = _strdelim(line)
+    if keyword == "":
+        keyword, rest = _strdelim(rest) if rest is not None else (None, None)
+    if not keyword or keyword.startswith("#"):
+        return "", []
+    keyword = keyword.lower()
+    if not rest:
+        raise ValueError(f"no argument after {keyword}")
+    return keyword, argv_split(rest)
+
+
+def _option(value: str) -> tuple[str, list[str]]:
+    """A `-o` value as ssh reads it; ("", []) for one ssh refuses (it exits before it connects)."""
+    try:
+        return config_line(value)
+    except ValueError:
+        return "", []
 
 
 def ssh_options(argv: list[str]) -> list[tuple[str, str]]:
@@ -189,7 +322,7 @@ def is_forward(argv: list[str]) -> bool:
     for flag, value in ssh_options(argv):
         if flag in FORWARD_FLAGS:
             return True
-        if flag == "o" and option_words(value)[0] in FORWARD_OPTIONS:
+        if flag == "o" and _option(value)[0] in FORWARD_OPTIONS:
             return True
     return False
 
@@ -199,14 +332,70 @@ def clears_forwards(options: list[tuple[str, str]]) -> bool:
     for flag, value in options:
         if flag != "o":
             continue
-        name, argument = option_words(value)
+        name, arguments = _option(value)
         if name == "clearallforwardings":
-            return argument.lower() == "yes"
+            return bool(arguments) and arguments[0].lower() == "yes"
     return False
 
 
 class SshConfigUnread(Exception):
     """An ssh configuration file (or an Include) that exists but cannot be read."""
+
+
+def strict_glob(pattern: str) -> list[str]:
+    """glob(3) of an absolute pattern; SshConfigUnread at a directory on its path that cannot be listed or searched."""
+    if not os.path.isabs(pattern):
+        raise SshConfigUnread("an Include pattern that is not absolute")
+    found = ["/"]
+    for part in pattern.split("/"):
+        if not part:
+            continue
+        reached = []
+        for base in found:
+            if GLOB_MAGIC.search(part):
+                try:
+                    names = os.listdir(base)
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                except OSError:
+                    raise SshConfigUnread(base) from None
+                reached += [
+                    os.path.join(base, name)
+                    for name in sorted(names)
+                    if fnmatch.fnmatchcase(name, part) and (part.startswith(".") or not name.startswith("."))
+                ]
+                continue
+            candidate = os.path.join(base, part)
+            try:
+                os.lstat(candidate)
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError:
+                raise SshConfigUnread(base) from None
+            reached.append(candidate)
+        found = reached
+    return sorted(found)
+
+
+def include_pattern(word: str, user_conf: bool, home: Path, system_dir: Path) -> str:
+    """The absolute glob pattern ssh makes of one Include word (readconf.c oInclude, glob GLOB_TILDE)."""
+    if not word:
+        raise SshConfigUnread("an empty Include word")
+    if word.startswith("~"):
+        if not user_conf:
+            raise SshConfigUnread("a system configuration Include starts with ~")
+        name, _, rest = word[1:].partition("/")
+        if name:
+            try:
+                base = Path(pwd.getpwnam(name).pw_dir)
+            except KeyError:
+                raise SshConfigUnread(f"no home for ~{name}") from None
+        else:
+            base = home
+        return str(base / rest) if rest else str(base)
+    if os.path.isabs(word):
+        return word
+    return str((home / ".ssh" if user_conf else system_dir) / word)
 
 
 def forward_in_ssh_config(path: Path, user_conf: bool, home: Path, system_dir: Path, depth: int = 0) -> Path | None:
@@ -224,23 +413,16 @@ def forward_in_ssh_config(path: Path, user_conf: bool, home: Path, system_dir: P
     except OSError:
         raise SshConfigUnread(str(path)) from None
     for raw in text.splitlines():
-        name, argument = option_words(raw)
+        try:
+            name, arguments = config_line(raw)
+        except ValueError as error:
+            raise SshConfigUnread(f"{path}: {error}") from None
         if name in FORWARD_OPTIONS:
             return path
         if name != "include":
             continue
-        for word in argument.split():
-            word = word.strip('"')
-            if word.startswith("~/"):
-                pattern = home / word[2:]
-            elif os.path.isabs(word):
-                pattern = Path(word)
-            else:
-                pattern = (home / ".ssh" if user_conf else system_dir) / word
-            parent = pattern.parent
-            if parent.exists() and not os.access(parent, os.R_OK | os.X_OK):
-                raise SshConfigUnread(str(parent))
-            for match in sorted(glob.glob(str(pattern))):
+        for word in arguments:
+            for match in strict_glob(include_pattern(word, user_conf, home, system_dir)):
                 found = forward_in_ssh_config(Path(match), user_conf, home, system_dir, depth + 1)
                 if found is not None:
                     return found
@@ -375,16 +557,16 @@ def ssh_forward(pid_dir: Path, argv: list[str], system_config: Path, reading: Dr
     return ""
 
 
-def read_drain(section: dict, timeout: int, me: int | None = None) -> DrainReading:
+def read_drain(section: dict, proc_root: Path, timeout: int, me: int | None = None) -> DrainReading:
     """What of the old channels is still live on this box."""
     reading = DrainReading()
     me = os.getpid() if me is None else me
 
-    proc_root = expand(section["proc_root"])
     try:
-        processes = read_processes(proc_root)
+        processes, complete = read_processes(proc_root)
     except OSError:
-        processes = []
+        processes, complete = [], False
+    if not complete:
         reading.not_read("processes")
     lineage = own_lineage(processes, me)
     patterns = section["tool_process_patterns"]

@@ -9,6 +9,7 @@ reads the exact request bodies and the environment the client passed on.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -16,7 +17,8 @@ import pytest
 
 from rack_fixture import HOST, Box
 
-from rack.oneiron_api import local_target
+from rack.addresses import Target, local_target, resolve_target
+from rack.oneiron_api import PIN_MARK, _write_curl_pin
 
 M1 = "a1" * 16
 M2 = "b2" * 16
@@ -322,3 +324,50 @@ def test_inbox_append_waits_for_a_bounded_write_verb(box):
     done = run(box, "inbox-append")
     assert done.returncode == 3
     assert done.stderr.startswith(f"WAITS {HOST} before inbox-append: needs a write a Grant can bound")
+
+
+# A host curl looks up (not an address literal) that resolves with no DNS: 3325256711 is 198.51.100.7.
+NAMED_ISSUER = "http://3325256711:9090"
+
+
+def test_the_issuer_call_is_held_to_the_address_the_check_judged(box):
+    box.config["issuer"] = {"base_url": NAMED_ISSUER}
+    box.curl()
+    box.oneiron({"vault.machines.execution.get": [execution(machine(M1), machine(M2))]}, runs_curl=True)
+    done = run(box, "mesh-probe")
+    assert done.returncode == 0, done.stderr
+    (argv,) = box.curl_calls()
+    assert argv[:3] == ["-q", "--resolve", "3325256711:9090:198.51.100.7"]
+    assert argv[3:] == ["--silent", "--url", f"{NAMED_ISSUER}/api/verbs/vault.machines.execution.get"]
+
+
+def test_a_call_that_does_not_go_through_the_harness_curl_fails(box):
+    box.config["issuer"] = {"base_url": NAMED_ISSUER}
+    box.curl()
+    box.oneiron({"vault.machines.execution.get": [execution(machine(M1), machine(M2))]})
+    done = run(box, "mesh-probe")
+    assert done.returncode == 1
+    assert "not held to the checked address" in done.stderr
+
+
+def test_an_address_literal_issuer_needs_no_pin():
+    assert resolve_target("https://198.51.100.7").literal
+    named = resolve_target(NAMED_ISSUER)
+    assert not named.literal and named.addresses == ("198.51.100.7",) and not named.local
+
+
+def test_the_resolve_entry_names_every_judged_address_with_v6_in_brackets():
+    target = Target("https", "issuer.example", 443, ("2001:db8::7", "198.51.100.7"), False, False, "/")
+    assert target.curl_resolve() == "issuer.example:443:[2001:db8::7],198.51.100.7"
+
+
+def test_the_harness_curl_refuses_a_call_without_q_first(tmp_path):
+    real = tmp_path / "real-curl"
+    real.write_text("#!/bin/sh\nexit 0\n")
+    real.chmod(0o755)
+    target = Target("https", "issuer.example", 443, ("198.51.100.7",), False, False, "/")
+    bin_dir = _write_curl_pin(tmp_path, str(real), target)
+    done = subprocess.run([str(bin_dir / "curl"), "--silent"], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 2
+    assert "-q first" in done.stderr
+    assert not (tmp_path / PIN_MARK).exists()

@@ -9,13 +9,12 @@ those rows, never a skip and never a PASS. A later row's PR gives its check a
 
 from __future__ import annotations
 
-import urllib.error
-import urllib.request
+import http.client
 from dataclasses import dataclass, field
 from typing import Callable
 
+from rack.addresses import AddressError, Target, pinned_status, resolve_target
 from rack.evidence import Evidence
-from rack.oneiron_api import AddressError, local_target
 from rack.rack_config import RackConfig
 
 
@@ -46,7 +45,7 @@ def drained(ctx: Context) -> Outcome:
     """old-channels-drained: nothing of the tool or the old transports is left."""
     from rack.readback.drain import read_drain
 
-    reading = read_drain(ctx.config.section("drain"), ctx.config.command_timeout_secs)
+    reading = read_drain(ctx.config.section("drain"), ctx.config.proc_root, ctx.config.command_timeout_secs)
     ctx.evidence.add("drain", reading.__dict__)
     summary = reading.summary()
     return Outcome(not summary, f"live: {summary}" if summary else "")
@@ -56,7 +55,7 @@ def transfers_drained(ctx: Context) -> Outcome:
     """other-rsync: no file transfer program runs, and every source was read."""
     from rack.readback.drain import read_drain
 
-    reading = read_drain(ctx.config.section("drain"), ctx.config.command_timeout_secs)
+    reading = read_drain(ctx.config.section("drain"), ctx.config.proc_root, ctx.config.command_timeout_secs)
     ctx.evidence.add("transfers", reading.transfers)
     ctx.evidence.add("unread", reading.unread)
     summary = reading.summary(("transfers", "sources not read"))
@@ -68,7 +67,7 @@ def keys_unused(ctx: Context) -> Outcome:
     from rack.readback.keys import judge, read_keys
 
     section = ctx.config.section("keys")
-    reading = read_keys(section, ctx.config.command_timeout_secs)
+    reading = read_keys(section, ctx.config.proc_root, ctx.config.command_timeout_secs)
     passed, reason, facts = judge(reading, section, ctx.phase)
     ctx.evidence.add("keys", facts)
     ctx.evidence.add("unread", reading.unread + reading.unread_files)
@@ -78,11 +77,14 @@ def keys_unused(ctx: Context) -> Outcome:
 def forward_policy(ctx: Context) -> Outcome:
     """forward-policy: no ssh forward is live, and the model gateway answers on its own route.
 
-    It asks the gateway's model list and spends nothing: any HTTP answer,
-    401 included, shows the route works without a forward. A URL that
-    connects to this box (loopback, unspecified or its own address, in any
-    spelling) is refused, because on a lane box it would be a forward. A
-    forward source that could not be read is no proof of absence.
+    It asks the gateway's model list and spends nothing: any HTTP answer
+    below 300, or a 4xx (401 included), shows the route works without a
+    forward. A URL that connects to this box (loopback, unspecified or its own
+    address, in any spelling) is refused, because on a lane box it would be a
+    forward. The request connects only to the addresses that judgement saw
+    (rack.addresses), and no redirect is followed: a 3xx fails, since its
+    next hop was never judged. A forward source that could not be read is no
+    proof of absence.
     """
     from rack.readback.drain import FORWARD_SOURCES, read_drain
 
@@ -90,28 +92,32 @@ def forward_policy(ctx: Context) -> Outcome:
     if not url:
         return Outcome(False, "no canary.model_list_url")
     try:
-        if local_target(url):
-            return Outcome(False, "canary.model_list_url is a loopback or local address")
+        target = resolve_target(url)
     except AddressError as error:
         return Outcome(False, f"canary.model_list_url: {error}")
-    reading = read_drain(ctx.config.section("drain"), ctx.config.command_timeout_secs)
+    if target.local:
+        return Outcome(False, "canary.model_list_url is a loopback or local address")
+    if target.scheme not in ("http", "https"):
+        return Outcome(False, "canary.model_list_url is not http or https")
+    reading = read_drain(ctx.config.section("drain"), ctx.config.proc_root, ctx.config.command_timeout_secs)
     ctx.evidence.add("forwards", reading.forwards)
     if reading.forwards:
         return Outcome(False, f"live: {len(reading.forwards)} ssh forwards")
     missing = [source for source in reading.unread if source in FORWARD_SOURCES]
     if missing:
         return Outcome(False, "not read: " + ", ".join(missing))
-    request = urllib.request.Request(url, method="GET")
-    # No proxy from the environment: the answer must come over the gateway's own route.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return gateway_outcome(ctx, target)
+
+
+def gateway_outcome(ctx: Context, target: Target) -> Outcome:
+    """The model list's answer over the judged address, as forward-policy reads it."""
     try:
-        with opener.open(request, timeout=ctx.config.command_timeout_secs) as answer:
-            status = answer.status
-    except urllib.error.HTTPError as error:
-        status = error.code
-    except (urllib.error.URLError, OSError) as error:
+        status = pinned_status(target, ctx.config.command_timeout_secs)
+    except (OSError, http.client.HTTPException) as error:
         return Outcome(False, f"the model gateway did not answer: {type(error).__name__}")
     ctx.evidence.add("model_list_status", status)
+    if 300 <= status < 400:
+        return Outcome(False, f"the model gateway answered a redirect ({status}), which is not followed")
     if status >= 500:
         return Outcome(False, f"the model gateway answered {status}")
     return Outcome(True)

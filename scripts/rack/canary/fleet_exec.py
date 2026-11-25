@@ -7,7 +7,7 @@ detached follow (pass 34 section 13 row 2; 15.5's probe example):
    template's digest as that machine offers it.
 2. `vault.jobs.workloads.pin`: the probe at the configured commit, one
    thread, no network, no device. A pin that waits for the owner's
-   check-in fails here with the check-in's id; once he has answered,
+   check-in fails here with the check-in's id; once the owner has answered,
    `canary.probe.check_in_ref` names it and the pin goes.
 3. `vault.jobs.order`: class interactive, limited to the exec machine,
    charged to `canary.offer`, waiting at most `canary.order_deadline_secs`
@@ -89,7 +89,7 @@ def _pin(ctx: Context, template_digest: str) -> str:
             pending = error.error.get("pending") or {}
             raise Failed(
                 f"the probe pin waits for the owner's check-in {pending.get('check_in', '')}; "
-                "name it in canary.probe.check_in_ref once he has answered"
+                "name it in canary.probe.check_in_ref once the owner has answered"
             ) from None
         raise
     workload = change.get("workload") or {}

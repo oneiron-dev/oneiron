@@ -7,13 +7,21 @@ device is mac, whose key stays (section 13).
 
 from __future__ import annotations
 
+import shutil
 import stat
+from pathlib import Path
 
 import pytest
 
 from rack_fixture import HOST, Box, key_blob
 
-from rack.readback.keys import authorized_keys_paths, fingerprint, parse_authorized_keys
+from rack.readback.keys import (
+    Account,
+    authorized_keys_paths,
+    expand_authorized_keys_file,
+    fingerprint,
+    parse_authorized_keys,
+)
 
 # A throwaway key made for this test with ssh-keygen (private half deleted);
 # `ssh-keygen -lf` printed the fingerprint below.
@@ -202,3 +210,102 @@ def test_a_privileged_run_reads_only_absolute_authorized_keys_paths():
     assert len(paths) == 2 and problems == []
     paths, problems = authorized_keys_paths(["owen/authorized_keys"], privileged=False)
     assert paths == [] and "relative path" in problems[0]
+
+
+def test_a_rack_key_in_a_login_accounts_file_fails_after_with_no_further_file_named(rack):
+    # owen's file is found through the password database; keys.authorized_keys_files names nothing.
+    assert rack.box.config["keys"]["authorized_keys_files"] == []
+    done = rack.run(phase="after")
+    assert done.returncode == 1
+    assert "1 rack keys still authorized" in done.stderr
+
+
+def test_a_rack_key_in_roots_file_fails_after(rack):
+    rack.authorize(rack.mac)
+    (rack.box.root_home / ".ssh").mkdir(parents=True)
+    (rack.box.root_home / ".ssh/authorized_keys").write_text(f"ssh-ed25519 {rack.kel} kel-to-root\n")
+    done = rack.run(phase="after")
+    assert done.returncode == 1
+    assert "1 rack keys still authorized" in done.stderr
+
+
+def test_the_authorized_keys_file_patterns_are_expanded_as_sshd_expands_them(rack):
+    rack.authorize(rack.mac)
+    keys_dir = rack.box.tmp / "etc-ssh-keys"
+    keys_dir.mkdir()
+    (keys_dir / "owen-1000").write_text(f"ssh-ed25519 {rack.kel} kel\n")
+    rack.box.config["keys"]["authorized_keys_file_patterns"] = [".ssh/authorized_keys", f"{keys_dir}/%u-%U"]
+    done = rack.run(phase="after")
+    assert done.returncode == 1
+    assert "1 rack keys still authorized" in done.stderr
+
+
+def test_no_login_account_or_one_the_password_database_does_not_know_is_no_proof(rack):
+    rack.box.config["keys"]["login_accounts"] = []
+    done = rack.run()
+    assert done.returncode == 1
+    assert "no rack login accounts" in done.stderr
+    rack.box.config["keys"]["login_accounts"] = ["owen", "yuki"]
+    rack.box.output("getent", "passwd-yuki", "", rc=2)
+    done = rack.run()
+    assert done.returncode == 1
+    assert "does not know" in done.stderr
+
+
+def test_an_authorized_keys_file_pattern_is_expanded_with_sshds_tokens():
+    account = Account("owen", 1000, Path("/home/owen"))
+    assert expand_authorized_keys_file(".ssh/authorized_keys", account) == Path("/home/owen/.ssh/authorized_keys")
+    assert expand_authorized_keys_file("%h/.ssh/keys", account) == Path("/home/owen/.ssh/keys")
+    assert expand_authorized_keys_file("/etc/ssh/keys/%u.%U.%%", account) == Path("/etc/ssh/keys/owen.1000.%")
+    assert expand_authorized_keys_file("none", account) is None
+    with pytest.raises(ValueError):
+        expand_authorized_keys_file("/etc/ssh/keys/%z", account)
+
+
+def test_an_sshd_listener_outside_the_configured_units_is_no_proof(rack):
+    # A second sshd logs to rack-ssh.service: accepts read from sshd.service alone would miss its logins.
+    rack.box.process(
+        610,
+        ["/usr/sbin/sshd", "-D", "-f", "/etc/ssh/sshd_config_rack"],
+        name="sshd",
+        cgroup="0::/system.slice/rack-ssh.service\n",
+    )
+    done = rack.run()
+    assert done.returncode == 1
+    assert "rack-ssh.service, outside keys.sshd_units" in done.stderr
+    rack.box.config["keys"]["sshd_units"] = ["sshd.service", "rack-ssh.service"]
+    assert rack.run().returncode == 0
+
+
+def test_with_no_sshd_listener_found_the_journal_source_is_no_proof(rack):
+    shutil.rmtree(rack.box.proc / "600")
+    done = rack.run()
+    assert done.returncode == 1
+    assert "no sshd listener found" in done.stderr
+
+
+def test_an_sshd_listener_whose_cgroup_cannot_be_read_is_no_proof(rack):
+    cgroup = rack.box.proc / "600" / "cgroup"
+    cgroup.unlink()
+    cgroup.mkdir()
+    done = rack.run()
+    assert done.returncode == 1
+    assert "cgroup not read" in done.stderr
+
+
+def test_sshds_per_connection_processes_are_not_listeners(rack):
+    scope = "0::/user.slice/user-1000.slice/session-4.scope\n"
+    rack.box.process(620, ["sshd: owen [priv]"], ppid=600, name="sshd", cgroup=scope)
+    rack.box.process(621, ["sshd-session: owen@pts/0"], ppid=620, name="sshd-session", cgroup=scope)
+    done = rack.run()
+    assert done.returncode == 0, done.stderr
+
+
+def test_the_coverage_probe_reads_the_sshd_units_the_accepts_are_read_from(rack):
+    rack.box.config["keys"]["sshd_units"] = ["sshd.service", "sshd@*.service"]
+    done = rack.run()
+    assert done.returncode == 0, done.stderr
+    units = ["-u", "sshd.service", "-u", "sshd@*.service"]
+    probe = rack.box.argv_of("journalctl", "coverage")
+    assert probe[-len(units) :] == units and "--until" in probe and "--system" not in probe
+    assert rack.box.argv_of("journalctl", "journal")[-len(units) :] == units

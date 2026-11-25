@@ -24,6 +24,7 @@
   },
   "oneiron_bin": "oneiron",
   "command_timeout_secs": 15,
+  "proc_root": "/proc",
   "evidence_dir": "",
   "canary": {
     "target_machines": [
@@ -72,14 +73,17 @@
       "scp",
       "sftp"
     ],
-    "proc_root": "/proc",
     "ssh_system_config": "/etc/ssh/ssh_config"
   },
   "keys": {
-    "authorized_keys_files": [
-      "/home/<rack login account>/.ssh/authorized_keys",
-      "/root/.ssh/authorized_keys"
+    "login_accounts": [
+      "<rack login account>"
     ],
+    "authorized_keys_file_patterns": [
+      ".ssh/authorized_keys",
+      ".ssh/authorized_keys2"
+    ],
+    "authorized_keys_files": [],
     "client_key_globs": [
       "~/.ssh/*.pub"
     ],

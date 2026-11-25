@@ -1,10 +1,11 @@
 """A stand-in box for the rack harness tests (scripts/rack): stub programs, a fake /proc, a config.
 
 Each read-only program the harness calls (findmnt, ss, systemctl, journalctl,
-oneiron) is a small shell stub first on PATH. It prints the file
+getent, oneiron) is a small shell stub first on PATH. It prints the file
 `out/<program>.<key>` and exits with `out/<program>.<key>.rc` when that file
 exists, where the key is picked from its arguments; it writes the names of
-its environment to `out/<program>.<key>.env`. The harness passes only PATH,
+its environment to `out/<program>.<key>.env` and its arguments, one a line,
+to `out/<program>.<key>.argv`. The harness passes only PATH,
 HOME and LC_ALL to a child (and to `systemctl --user` the user's bus
 variables, without which the stub fails as systemctl does), so the stubs
 carry their fixture paths inside them. Each run has the login session's
@@ -43,17 +44,24 @@ esac""",
   *" --until "*) key=coverage ;;
   *) key=journal ;;
 esac""",
+    "getent": 'key="$1-$2"',
 }
 
 TCP_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
 UNIX_HEADER = "Num       RefCount Protocol Flags    Type St Inode Path"
 
 
-_ONEIRON_STUB = """import json, os, pathlib, sys
+_ONEIRON_STUB = """import json, os, pathlib, subprocess, sys
 out = pathlib.Path(@OUT@)
 argv = sys.argv[1:]
 verb = argv[argv.index("call") + 1]
 body = json.loads(sys.stdin.read() or "null")
+if (out / "oneiron.runs_curl").exists():
+    # As `oneiron api` does: the host's curl from PATH, -q first.
+    base_url = argv[argv.index("--base-url") + 1]
+    curl = subprocess.run(["curl", "-q", "--silent", "--url", base_url + "/api/verbs/" + verb])
+    if curl.returncode != 0:
+        sys.exit(curl.returncode)
 with open(out / "oneiron.calls.jsonl", "a") as log:
     log.write(json.dumps({"verb": verb, "argv": argv, "body": body, "env": sorted(os.environ)}) + "\\n")
 listed = out / ("oneiron." + verb + ".json")
@@ -104,16 +112,24 @@ class Box:
         for program, pick in _STUBS.items():
             self.stub(program, pick)
         self.output("findmnt", "fstype", "ext4\n")
-        # The system journal reaches back before the fixtures' freeze (1000).
-        self.output("journalctl", "coverage", "500.000000 box kernel: started\n")
+        # The sshd journal reaches back before the fixtures' freeze (1000).
+        self.output("journalctl", "coverage", "500.000000 box sshd[600]: Server listening on :: port 22.\n")
+        # The fake /proc is a proc mount that hides no process.
+        self.proc_mount("rw")
+        # sshd's listener, in the unit its journal is read from.
+        self.process(600, ["sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"], name="sshd", cgroup="0::/system.slice/sshd.service\n")
+        # The password database: root, and owen, the rack's login account here.
+        self.root_home = tmp / "roothome"
+        self.account("root", 0, self.root_home)
+        self.account("owen", 1000, self.home)
         self.ssh_system_config = tmp / "etc-ssh" / "ssh_config"
         # The login session's variables every run gets (an ssh login sets XDG_RUNTIME_DIR).
         self.session_env: dict[str, str] = {"XDG_RUNTIME_DIR": str(tmp / "run")}
         self.config: dict = {
             "hosts": {HOST: {"box_names": [this_box()]}},
             "evidence_dir": str(self.evidence),
+            "proc_root": str(self.proc),
             "drain": {
-                "proc_root": str(self.proc),
                 "tool_process_patterns": ["/usr/local/bin/gpu", "okc_then_render.sh"],
                 "tool_unit_patterns": ["fleet-*"],
                 "control_socket_globs": [f"{self.sockets}/cm-*"],
@@ -121,7 +137,8 @@ class Box:
                 "ssh_system_config": str(self.ssh_system_config),
             },
             "keys": {
-                "authorized_keys_files": [str(self.home / ".ssh/authorized_keys")],
+                "login_accounts": ["owen"],
+                "authorized_keys_files": [],
                 "client_key_globs": [str(self.home / ".ssh/*.pub")],
                 "rack_client_keys_dir": str(self.rack_keys),
                 "owner_devices": ["mac"],
@@ -137,24 +154,64 @@ class Box:
             f'out="{self.out}/{program}.$key"\n'
             '[ -f "$out" ] && cat "$out"\n'
             'env | sed "s/=.*//" > "$out.env"\n'
+            'printf "%s\\n" "$@" > "$out.argv"\n'
             'rc=0; [ -f "$out.rc" ] && rc=$(cat "$out.rc")\n'
             "exit $rc\n"
         )
         path.chmod(0o755)
 
-    def oneiron(self, answers: dict[str, list[dict]]) -> None:
+    def oneiron(self, answers: dict[str, list[dict]], runs_curl: bool = False) -> None:
         """A stand-in `oneiron`: each verb answers its list in turn (the last repeats).
 
         An answer is {"body": <JSON printed on stdout>, "rc": <exit, default 0>}.
         Every call is logged to out/oneiron.calls.jsonl with its argv, body and
-        the names of the environment variables it was given.
+        the names of the environment variables it was given. With `runs_curl`
+        it first runs `curl -q --silent --url <base url>/...` from its PATH, as
+        `oneiron api` does (see `curl`).
         """
         for verb, listed in answers.items():
             (self.out / f"oneiron.{verb}.json").write_text(json.dumps(listed))
             (self.out / f"oneiron.{verb}.n").unlink(missing_ok=True)
+        marker = self.out / "oneiron.runs_curl"
+        if runs_curl:
+            marker.write_text("")
+        else:
+            marker.unlink(missing_ok=True)
         path = self.bin / "oneiron"
         path.write_text(f"#!{sys.executable}\n" + _ONEIRON_STUB.replace("@OUT@", repr(str(self.out))))
         path.chmod(0o755)
+
+    def curl(self) -> None:
+        """A stand-in host `curl` that answers 0 and logs each argv, a JSON list a line, to out/curl.argv.jsonl."""
+        path = self.bin / "curl"
+        path.write_text(
+            f"#!{sys.executable}\n"
+            "import json, sys\n"
+            f"with open({str(self.out / 'curl.argv.jsonl')!r}, 'a') as log:\n"
+            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        )
+        path.chmod(0o755)
+
+    def curl_calls(self) -> list[list[str]]:
+        log = self.out / "curl.argv.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def proc_mount(self, super_options: str, at: Path | None = None) -> None:
+        """The fake /proc's own mount table line: a proc mount at `at` (the fake /proc) with these options."""
+        (self.proc / "self").mkdir(exist_ok=True)
+        point = os.path.realpath(at or self.proc).replace(" ", "\\040")
+        (self.proc / "self" / "mountinfo").write_text(
+            f"22 1 0:5 / / rw,relatime shared:1 - ext4 /dev/root rw\n"
+            f"25 22 0:21 / {point} rw,nosuid,nodev,noexec,relatime shared:12 - proc proc {super_options}\n"
+        )
+
+    def account(self, name: str, uid: int, home: Path) -> None:
+        """A password database entry `getent passwd <name>` prints."""
+        self.output("getent", f"passwd-{name}", f"{name}:x:{uid}:{uid}::{home}:/bin/sh\n")
+
+    def argv_of(self, program: str, key: str) -> list[str]:
+        """The arguments the stub `program` was last started with under `key`."""
+        return (self.out / f"{program}.{key}.argv").read_text().splitlines()
 
     def calls(self) -> list[dict]:
         log = self.out / "oneiron.calls.jsonl"
@@ -176,16 +233,20 @@ class Box:
         listen_unix: tuple[int, ...] = (),
         connected: tuple[int, ...] = (),
         fds_readable: bool = True,
+        name: str = "",
+        cgroup: str = "0::/user.slice/user-1000.slice/session-1.scope\n",
     ) -> None:
         """A process in the fake /proc: its argv, parent, open sockets (by inode) and its network tables.
 
         `listen_tcp` and `listen_unix` are listening sockets it holds, `connected` other sockets.
         With `fds_readable` false its fd directory cannot be listed, as another user's is to a non-root run.
+        `name` is its status Name (default: its program's file name), `cgroup` its /proc/<pid>/cgroup.
         """
         entry = self.proc / str(pid)
         entry.mkdir()
         (entry / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
-        (entry / "status").write_text(f"Name:\t{Path(argv[0]).name}\nPPid:\t{ppid}\n")
+        (entry / "status").write_text(f"Name:\t{name or Path(argv[0]).name}\nPPid:\t{ppid}\n")
+        (entry / "cgroup").write_text(cgroup)
         net = entry / "net"
         net.mkdir()
         tcp = [TCP_HEADER]

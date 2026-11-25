@@ -2,7 +2,7 @@
 
 It reads, and changes nothing. A rack key is the client key of another rack
 machine that is not one of the owner's own devices (13: the owner's access
-from his device stays). Each box exports its client keys' fingerprints into
+from the owner's own devices stays). Each box exports its client keys' fingerprints into
 a private file (`export_client_keys`); the Orchestrator collects those files
 into one directory, `keys.rack_client_keys_dir`, for every box to read.
 
@@ -12,18 +12,29 @@ keys removed) no authorized_keys file may list a rack key either. A file that
 cannot be read, a missing freeze time, a missing rack list or a live session
 with no accept record is no proof: the readback fails.
 
+The files read are sshd's AuthorizedKeysFile (`keys.authorized_keys_file_patterns`)
+for root and for every account the rack logs in as (`keys.login_accounts`),
+each account's home and uid from the password database (`getent passwd`),
+plus any further absolute files (`keys.authorized_keys_files`). A run with no
+login account, or an account the database does not know, is no proof. In a
+privileged run `~` is root's home, so a further file named with `~` is
+refused.
+
 The sshd journal must cover the whole time since the freeze: a read that
-starts after it (`keys.journal_since_unix`) fails, and so does a system
-journal with no record from before the freeze (rotated, volatile, or not
-readable by the running user). In a privileged run `~` is root's home, so
-every authorized_keys file must be named by its absolute path, one for each
-account the rack logs in as.
+starts after it (`keys.journal_since_unix`) fails, and so does an sshd
+journal (`keys.sshd_units`, the units the accepts are read from) with no
+record from before the freeze (rotated, volatile, or not readable by the
+running user). The units must be where sshd logs: every running sshd
+listener (an sshd whose parent is not one) must run in one of them, by its
+cgroup; a listener elsewhere, none found, or a process table not read in
+full is no proof.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import fnmatch
 import glob
 import hashlib
 import os
@@ -33,7 +44,7 @@ from pathlib import Path
 
 from rack.commands import CommandError, read_output
 from rack.rack_config import expand
-from rack.readback.drain import parse_peer
+from rack.readback.drain import Process, parse_peer, read_processes
 
 KEY_TYPES = re.compile(r"^(ssh-(?:ed25519|rsa|dss)|ecdsa-sha2-\S+|sk-\S+@openssh\.com)$")
 ACCEPTED = re.compile(
@@ -65,10 +76,14 @@ class KeyReading:
     accepts: list[Accept] = field(default_factory=list)
     live_sessions: list[tuple[str, int]] = field(default_factory=list)
     unread: list[str] = field(default_factory=list)
-    # The configured files a run of this privilege cannot use as named.
+    # The configured files a run of this privilege cannot use as named, and the
+    # login accounts whose files cannot be named.
     path_problems: list[str] = field(default_factory=list)
-    # The system journal holds a record from at or before the freeze.
+    # The sshd journal (keys.sshd_units) holds a record from at or before the freeze.
     journal_before_freeze: bool = False
+    # The systemd unit of each running sshd listener, and why that could not be told.
+    sshd_listener_units: list[str] = field(default_factory=list)
+    sshd_source_problems: list[str] = field(default_factory=list)
 
 
 def fingerprint(blob_b64: str) -> str | None:
@@ -189,7 +204,7 @@ def parse_accepts(text: str) -> list[Accept]:
 
 
 def authorized_keys_paths(files: list[str], privileged: bool) -> tuple[list[Path], list[str]]:
-    """(paths to read, problems) for the configured authorized_keys files.
+    """(paths to read, problems) for the further authorized_keys files (keys.authorized_keys_files).
 
     Every path must be absolute once `~` is expanded. In a privileged run `~`
     is root's home, so a `~` entry would read root's file in place of the rack
@@ -200,7 +215,7 @@ def authorized_keys_paths(files: list[str], privileged: bool) -> tuple[list[Path
     for name in files:
         if privileged and name.startswith("~"):
             problems.append(
-                "a privileged run reads ~ as root's home: name each login account's authorized_keys file "
+                "a privileged run reads ~ as root's home: name a further authorized_keys file "
                 "by its absolute path (keys.authorized_keys_files)"
             )
             continue
@@ -213,11 +228,124 @@ def authorized_keys_paths(files: list[str], privileged: bool) -> tuple[list[Path
     return paths, sorted(set(problems))
 
 
-def read_keys(section: dict, timeout: int, privileged: bool | None = None) -> KeyReading:
+@dataclass
+class Account:
+    name: str
+    uid: int
+    home: Path
+
+
+def lookup_account(name: str, timeout: int) -> Account | None:
+    """The account's uid and home from the password database (`getent passwd`); None when it has none.
+
+    CommandError when the database cannot be asked.
+    """
+    out = read_output(["getent", "passwd", name], timeout, ok_codes=(0, 2))
+    for line in out.splitlines():
+        fields = line.split(":")
+        if len(fields) >= 7 and fields[0] == name and fields[2].isdigit() and fields[5].startswith("/"):
+            return Account(name=name, uid=int(fields[2]), home=Path(fields[5]))
+    return None
+
+
+def expand_authorized_keys_file(pattern: str, account: Account) -> Path | None:
+    """sshd's expansion of one AuthorizedKeysFile entry (auth.c expand_authorized_keys); None for `none`.
+
+    %h is the home, %u the name, %U the uid, %% a percent sign; a relative
+    result is under the home. ValueError for any other token.
+    """
+    if pattern.lower() == "none":
+        return None
+    tokens = {"h": str(account.home), "u": account.name, "U": str(account.uid), "%": "%"}
+    out: list[str] = []
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char != "%":
+            out.append(char)
+            index += 1
+            continue
+        token = pattern[index + 1 : index + 2]
+        if token not in tokens:
+            raise ValueError(f"AuthorizedKeysFile token %{token}")
+        out.append(tokens[token])
+        index += 2
+    path = Path("".join(out))
+    return path if path.is_absolute() else account.home / path
+
+
+def login_account_files(section: dict, timeout: int) -> tuple[list[Path], list[str], list[str]]:
+    """(files, problems, unread) for root and every rack login account, as sshd names their files."""
+    files: list[Path] = []
+    problems: list[str] = []
+    unread: list[str] = []
+    if not section["login_accounts"]:
+        problems.append("no rack login accounts (keys.login_accounts)")
+    for name in dict.fromkeys(["root", *section["login_accounts"]]):
+        try:
+            account = lookup_account(name, timeout)
+        except CommandError:
+            unread.append("password database")
+            continue
+        if account is None:
+            problems.append("a login account the password database does not know (keys.login_accounts)")
+            continue
+        for pattern in section["authorized_keys_file_patterns"]:
+            try:
+                path = expand_authorized_keys_file(pattern, account)
+            except ValueError as error:
+                problems.append(f"keys.authorized_keys_file_patterns: {error}")
+                continue
+            if path is not None and path not in files:
+                files.append(path)
+    return files, sorted(set(problems)), sorted(set(unread))
+
+
+def cgroup_unit(text: str) -> str | None:
+    """The systemd service of a process, from its /proc/<pid>/cgroup (the v2 line, else name=systemd)."""
+    paths = {}
+    for line in text.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) == 3:
+            paths[parts[1]] = parts[2]
+    path = paths.get("", paths.get("name=systemd"))
+    if path is None:
+        return None
+    services = [part for part in path.split("/") if part.endswith(".service")]
+    return services[-1] if services else None
+
+
+def sshd_listener_units(processes: list[Process], proc_root: Path) -> tuple[list[str], list[str]]:
+    """(units, problems): the systemd service each running sshd listener (an sshd whose parent is not one) runs in."""
+    names = {proc.pid: proc.name for proc in processes}
+    units: list[str] = []
+    problems: list[str] = []
+    for proc in processes:
+        if proc.name != "sshd" or names.get(proc.ppid) == "sshd":
+            continue
+        try:
+            text = (proc_root / str(proc.pid) / "cgroup").read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            problems.append("an sshd listener's cgroup not read")
+            continue
+        unit = cgroup_unit(text)
+        if unit is None:
+            problems.append("an sshd listener runs in no systemd service")
+            continue
+        units.append(unit)
+    return sorted(set(units)), sorted(set(problems))
+
+
+def read_keys(section: dict, proc_root: Path, timeout: int, privileged: bool | None = None) -> KeyReading:
     reading = KeyReading()
     privileged = os.geteuid() == 0 if privileged is None else privileged
     paths, reading.path_problems = authorized_keys_paths(section["authorized_keys_files"], privileged)
-    for path in paths:
+    account_paths, account_problems, account_unread = login_account_files(section, timeout)
+    reading.path_problems = sorted(set(reading.path_problems + account_problems))
+    reading.unread += account_unread
+    for path in account_paths + [p for p in paths if p not in account_paths]:
         try:
             reading.authorized[str(path)] = parse_authorized_keys(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -232,26 +360,36 @@ def read_keys(section: dict, timeout: int, privileged: bool | None = None) -> Ke
         except OSError:
             reading.unread.append("rack client keys")
 
+    units: list[str] = []
+    for unit in section["sshd_units"]:
+        units += ["-u", unit]
     argv = ["journalctl", "--no-pager", "-q", "-o", "short-unix"]
     since = section["journal_since_unix"]
     if since:
         argv += ["--since", f"@{since}"]
-    for unit in section["sshd_units"]:
-        argv += ["-u", unit]
     try:
-        reading.accepts = parse_accepts(read_output(argv, timeout))
+        reading.accepts = parse_accepts(read_output(argv + units, timeout))
     except CommandError:
         reading.unread.append("sshd journal")
 
     freeze = section["freeze_unix"]
     if freeze:
-        # The newest system record at or before the freeze: none means the journal does not reach back to it.
-        probe = ["journalctl", "--no-pager", "-q", "-o", "short-unix", "--system", "-r", "-n", "1", "--until", f"@{freeze}"]
+        # The sshd units' newest record at or before the freeze: none means their journal does not reach back to it.
+        probe = ["journalctl", "--no-pager", "-q", "-o", "short-unix", "-r", "-n", "1", "--until", f"@{freeze}"]
         try:
-            first = read_output(probe, timeout).split(None, 1)
+            first = read_output(probe + units, timeout).split(None, 1)
             reading.journal_before_freeze = bool(first) and _unix_time(first[0]) is not None
         except CommandError:
             reading.unread.append("journal coverage")
+
+    try:
+        processes, complete = read_processes(proc_root)
+    except OSError:
+        processes, complete = [], False
+    if not complete:
+        reading.unread.append("processes")
+    else:
+        reading.sshd_listener_units, reading.sshd_source_problems = sshd_listener_units(processes, proc_root)
 
     try:
         out = read_output(["ss", "-tnH", "state", "established", "( sport = :22 )"], timeout)
@@ -266,6 +404,24 @@ def read_keys(section: dict, timeout: int, privileged: bool | None = None) -> Ke
     except CommandError:
         reading.unread.append("live sessions")
     return reading
+
+
+def sshd_source_problems(reading: KeyReading, section: dict) -> list[str]:
+    """Why keys.sshd_units cannot be taken as the journal sshd logs its accepts to."""
+    if "processes" in reading.unread:
+        return []
+    units = section["sshd_units"]
+    if not units:
+        return ["no sshd units (keys.sshd_units)"]
+    problems = list(reading.sshd_source_problems)
+    if not reading.sshd_listener_units and not problems:
+        problems.append("no sshd listener found, so keys.sshd_units is not shown to be sshd's journal")
+    outside = [
+        unit for unit in reading.sshd_listener_units if not any(fnmatch.fnmatchcase(unit, pattern) for pattern in units)
+    ]
+    if outside:
+        problems.append(f"an sshd listener runs in {', '.join(outside)}, outside keys.sshd_units")
+    return problems
 
 
 def judge(reading: KeyReading, section: dict, phase: str) -> tuple[bool, str, dict]:
@@ -284,8 +440,10 @@ def judge(reading: KeyReading, section: dict, phase: str) -> tuple[bool, str, di
         problems.append("keys.journal_since_unix is later than the freeze: logins in between are not read")
     elif "journal coverage" not in reading.unread and not reading.journal_before_freeze:
         problems.append(
-            "the system journal holds no record from before the freeze (rotated, volatile, or not readable by this user)"
+            "the sshd journal (keys.sshd_units) holds no record from before the freeze "
+            "(rotated, volatile, or not readable by this user)"
         )
+    problems += sshd_source_problems(reading, section)
     if not reading.rack_keys:
         problems.append("no rack client key list (keys.rack_client_keys_dir)")
     if problems:
