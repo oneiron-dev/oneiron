@@ -1,6 +1,7 @@
-//! `vault.arms.units.cancel` (design pass 32 r2, section 5.2): the owner, or the agent that
-//! reserved a unit, withdraws it while its job has not started. The cancel of a started
-//! unit's job, through a scoped path, is row M2-C's second part.
+//! `vault.arms.units.cancel` (design pass 32 r2, sections 5.2 and 5.3): the owner, or the agent
+//! that reserved a unit, withdraws it while its job has not started, or cancels its started job
+//! through a scoped path: the door judges the lead role and "the reserver, or the owner", and
+//! the caller needs no `vault.gpu.jobs.cancel` Grant.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +15,42 @@ use crate::{EntityId, Vault};
 use super::reserve::{check_unit_shape, invalid_state, not_found, role_for};
 use super::unit_view::UnitView;
 
-/// The verb that withdraws a unit whose job has not started.
+/// The verb that withdraws a unit, or cancels its started job.
 pub const ARMS_UNITS_CANCEL_VERB: &str = "vault.arms.units.cancel";
+
+/// What `vault.arms.units.cancel` decided in its write.
+#[derive(Debug)]
+pub enum UnitCancel {
+    /// The unit was withdrawn before its job started (or this is a repeat of that).
+    Withdrawn(UnitView),
+    /// The unit's job has started, and the caller may cancel it: the door ends the job with
+    /// [`Vault::cancel_unit_gpu_job`]. The claim ends at the job's terminal.
+    JobStarted(StartedUnitCancel),
+}
+
+/// The door's admission of a cancel of a unit whose job started. Only
+/// [`unit_cancel_as`] makes one, after the line, the role and the reserver were judged, and only
+/// [`Vault::cancel_unit_gpu_job`] spends it.
+#[derive(Debug)]
+pub struct StartedUnitCancel {
+    pub(crate) claim: ClaimKey,
+    pub(crate) job: EntityId,
+    view: UnitView,
+}
+
+impl StartedUnitCancel {
+    /// The unit's job: the claim's id.
+    #[must_use]
+    pub fn job(&self) -> EntityId {
+        self.job
+    }
+
+    /// The unit as the cancel read it, its claim still started.
+    #[must_use]
+    pub fn view(&self) -> &UnitView {
+        &self.view
+    }
+}
 
 /// The release reason of a unit its lead or the owner withdrew before its job started.
 const WITHDRAWN: &str = "withdrawn";
@@ -34,22 +69,23 @@ pub struct UnitCancelRequest {
 
 /// `vault.arms.units.cancel` as `memory`'s caller, with the owner's own proof when its
 /// credential is owner-grade: withdraws the unit the request names while its job has not
-/// started, ending its claim `Released("withdrawn")` and returning its draws. The owner may
-/// cancel any unit; an agent only one it reserved, under the role it reserved it with.
+/// started, ending its claim `Released("withdrawn")` and returning its draws, or admits the
+/// cancel of its started job ([`UnitCancel::JobStarted`]). The owner may cancel any unit; an
+/// agent only one it reserved, under the role it reserved it with.
 ///
 /// # Errors
 ///
 /// `bad_request` for a malformed ask; `forbidden` for a caller whose Grant does not reach the
 /// line, holds no lead (reviewer) role on it, or did not reserve the unit
 /// (`not_the_reserver`); `not_found` for an unknown line or unit; `invalid_state` for a unit
-/// whose job has started (`unit_started`) or that ended otherwise (`claim_ended`); a store
-/// failure. A repeat of a cancel answers the withdrawn claim, `replayed`.
+/// that ended otherwise (`claim_ended`); a store failure. A repeat of a withdrawal answers the
+/// withdrawn claim, `replayed`.
 pub fn unit_cancel_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
     request: &UnitCancelRequest,
     now_ms: u64,
-) -> MemoryResult<UnitView> {
+) -> MemoryResult<UnitCancel> {
     check_unit_shape(request.rung, &request.unit_key, request.attempt)?;
     let vault = memory.vault();
     vault.try_with_write_txn_grouped(|wtxn| {
@@ -64,7 +100,7 @@ fn cancel_in_txn(
     owner: Option<&AuthenticatedOwner>,
     request: &UnitCancelRequest,
     now_ms: u64,
-) -> MemoryResult<UnitView> {
+) -> MemoryResult<UnitCancel> {
     let caller =
         doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_UNITS_CANCEL_VERB, request.line)?;
     let line = line_in_txn(vault, wtxn, &request.line)?
@@ -96,15 +132,17 @@ fn cancel_in_txn(
                 release_claim_in_txn(vault, wtxn, &claim, WITHDRAWN, now_ms)?.ok_or_else(|| {
                     invalid_state("the claim changed under this cancel; read it and ask again")
                 })?;
-            Ok(UnitView::of(&ended, None, false))
+            Ok(UnitCancel::Withdrawn(UnitView::of(&ended, None, false)))
         }
-        ClaimState::Started => Err(invalid_state(
-            "unit_started: the unit's job has started; this door withdraws only a unit whose job has not started",
-        )),
+        ClaimState::Started => Ok(UnitCancel::JobStarted(StartedUnitCancel {
+            claim: key,
+            job: claim.id,
+            view: UnitView::of(&claim, None, false),
+        })),
         ClaimState::Ended(UnitTerminal {
             end: UnitEnd::Released(reason),
             ..
-        }) if reason == WITHDRAWN => Ok(UnitView::of(&claim, None, true)),
+        }) if reason == WITHDRAWN => Ok(UnitCancel::Withdrawn(UnitView::of(&claim, None, true))),
         ClaimState::Ended(_) => Err(invalid_state(
             "claim_ended: the unit has already ended; its terminal stands",
         )),

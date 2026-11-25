@@ -32,8 +32,6 @@ use crate::{EntityId, Vault};
 mod allocation;
 pub(crate) mod tables;
 
-#[cfg(oneiron_test_support)]
-pub(crate) use allocation::start_claim_in_txn;
 pub use allocation::{
     AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob,
     UnattributedRecord, allocation_standing_in_txn, claim_hold_in_txn, open_claim_in_txn,
@@ -46,7 +44,9 @@ const CLAIMS: SideTable<ClaimKey, UnitClaim, Named> =
 
 /// A claim's row key: the logical attempt. Rows of one arm sort together, then by rung, so a
 /// rung's claims are one prefix scan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SideKey)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SideKey, Serialize, Deserialize,
+)]
 pub struct ClaimKey {
     pub arm: EntityId,
     /// 1 is the first rung.
@@ -525,6 +525,32 @@ pub(crate) fn release_claim_in_txn(
             .ok()
             .map(|settlement| settlement.claim),
     )
+}
+
+/// Marks `claim` started if it still stands as read: `Claimed`, at the same revision (the
+/// compare-and-set of design 5.2 that the custody release also takes). The start gate writes it
+/// in the write that inserts the claim's job row (design 5.3). Answers the started claim, or
+/// `None` when it has since started, ended or changed: the other writer won.
+///
+/// # Errors
+///
+/// A store failure.
+pub(crate) fn start_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim: &UnitClaim,
+) -> crate::Result<Option<UnitClaim>> {
+    let key = claim.key();
+    let Some(mut stored) = CLAIMS.get(&vault.store, wtxn, &key)? else {
+        return Ok(None);
+    };
+    if stored.state != ClaimState::Claimed || stored.revision != claim.revision {
+        return Ok(None);
+    }
+    stored.state = ClaimState::Started;
+    stored.revision += 1;
+    CLAIMS.put(&vault.store, wtxn, &key, &stored)?;
+    Ok(Some(stored))
 }
 
 /// The claim under `key`.

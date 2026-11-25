@@ -44,7 +44,9 @@ pub use reserve::{ARMS_UNITS_RESERVE_VERB, UnitReserveRequest, unit_reserve_as};
 pub use score::{
     CALIBRATION_BINS, CalibrationBin, ForecastScore, ForecastScoreRow, forecast_scores,
 };
-pub use unit_cancel::{ARMS_UNITS_CANCEL_VERB, UnitCancelRequest, unit_cancel_as};
+pub use unit_cancel::{
+    ARMS_UNITS_CANCEL_VERB, StartedUnitCancel, UnitCancel, UnitCancelRequest, unit_cancel_as,
+};
 pub use unit_view::UnitView;
 pub use wire::{ArmList, ArmListRequest, ArmRef, ArmView};
 

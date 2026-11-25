@@ -113,7 +113,14 @@ impl GpuOffer {
         self.quote_for(job, request, default_maximum_secs, now_ms)
     }
 
-    pub(super) fn quote_for(
+    /// Quotes one chunk of `request` on this offer for the job `job`: as
+    /// [`Self::quote`], for a job whose id was fixed before its quote (a
+    /// unit claim's id is its one job's).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::quote`].
+    pub fn quote_for(
         &self,
         job: EntityId,
         request: &GpuJobRequest,
