@@ -33,6 +33,8 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 pub(crate) struct GpuJobHost {
     backends: RwLock<BTreeMap<String, Arc<dyn GpuJobConnector>>>,
     permits: GpuJobPermits,
+    /// The work-order loop's wake, lock and node client (pass 34, EM-22 = A: one worker).
+    orders: crate::work_order_host::OrderLoop,
 }
 
 impl std::fmt::Debug for GpuJobHost {
@@ -86,6 +88,11 @@ impl GpuJobHost {
 
     pub(crate) fn permits(&self) -> &GpuJobPermits {
         &self.permits
+    }
+
+    /// The work-order loop this worker runs.
+    pub(crate) fn orders(&self) -> &crate::work_order_host::OrderLoop {
+        &self.orders
     }
 }
 
@@ -235,9 +242,11 @@ fn step_one_job(
     )?)
 }
 
-/// Starts the worker: every `step_secs`, one step of every live job, each
-/// pass admitted through `admit` as a housekeeping pass is, so a vault frozen
-/// for reap steps nothing. A server that posts no offer starts no worker.
+/// Starts the worker: every `step_secs`, and at each wake of the work-order
+/// loop, one pass of the loop (pass 34, section 0) and then one step of every
+/// live job, each pass admitted through `admit` as a housekeeping pass is, so
+/// a vault frozen for reap steps nothing. A server that posts no offer starts
+/// no worker.
 pub(crate) fn spawn_gpu_job_steps(
     server: Arc<SyncServer>,
     admit: HousekeepingAdmission,
@@ -250,13 +259,17 @@ pub(crate) fn spawn_gpu_job_steps(
         let mut interval = tokio::time::interval(tick);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                () = server.gpu_jobs.orders().woken() => {}
+            }
             let Some(admission) = admit() else {
                 continue;
             };
             let server = Arc::clone(&server);
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
+                crate::work_order_host::run_order_pass(&server, now_ms());
                 for (job, outcome) in step_live_jobs(&server, now_ms()) {
                     if let Err(error) = outcome {
                         tracing::warn!(job = %job.to_hex(), error = %error, "GPU job step failed");

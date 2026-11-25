@@ -176,6 +176,10 @@ impl CodeRunBridgeCall {
             // `tasks.wait({agents, ...})`'s answer is the reduction over the
             // run's AGENT children, as a verb answer (slice 6.5b).
             SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::TasksWaitSet => Ok(()),
+            // A met work order wait answers the order's view (pass 34 Q1).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::JobsOrdersWait => {
+                Ok(())
+            }
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),

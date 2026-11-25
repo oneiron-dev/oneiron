@@ -60,6 +60,12 @@ impl ScriptedNodeClock {
         self.wall_ms.fetch_add(millis, Ordering::SeqCst);
     }
 
+    /// A step of the wall clock alone, by `millis` forward: a clock set
+    /// by hand or by a time server, as the readiness check sees it.
+    pub fn step_wall_ms(&self, millis: u64) {
+        self.wall_ms.fetch_add(millis, Ordering::SeqCst);
+    }
+
     /// A host reset: a new boot id, the boot clock starts again.
     pub fn reboot(&self, boot_id: &str) {
         *locked(&self.boot_id) = boot_id.to_owned();

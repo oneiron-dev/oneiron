@@ -238,6 +238,14 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
                     .map_err(|_| invalid_code_run_replay("task wait set does not encode"))?,
             ),
         )]),
+        // The guest's whole call, its default milestone written out.
+        SelfCall::JobsOrdersWait(call) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::to_string(call)
+                    .map_err(|_| invalid_code_run_replay("jobs orders wait does not encode"))?,
+            ),
+        )]),
         // The guest's call: the members the host bound to it are not the
         // guest's, and a replay resolves them again.
         SelfCall::Summarize(call) => summarize_request_value(call),

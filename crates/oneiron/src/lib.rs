@@ -53,6 +53,8 @@ pub mod limit_ask;
 pub mod machine_capacity;
 pub mod machine_destination;
 pub mod machine_names;
+pub mod machine_policy;
+pub mod machine_readiness;
 pub mod machine_signature;
 pub(crate) use oneiron_base::limits;
 pub mod maintain;
@@ -237,6 +239,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
+pub mod work_order;
 pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;

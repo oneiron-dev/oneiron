@@ -363,7 +363,9 @@ pub(super) fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         // (DOOR-063).
         // A TASK binding is judged as the agent gave it, on the lane its
         // door admitted (FIX 5316).
+        // A work order wait waits on the order the run named (pass 34 Q1).
         SelfCall::AgentVerb(_)
+        | SelfCall::JobsOrdersWait(_)
         | SelfCall::ConnectorAnswer(_)
         | SelfCall::WorldPrivacySet(_)
         | SelfCall::ConsultResult(_)

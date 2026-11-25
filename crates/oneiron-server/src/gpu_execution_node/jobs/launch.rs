@@ -226,6 +226,7 @@ impl NodeJobs {
             return;
         }
         let pin = &reserve.pin;
+        let held_mib = journal.table().held_host_memory_mib();
         // Step 4: every lease of the request, or none (pass 34 9.2 (a)): the
         // placement from a fresh reading, each placed device leased and
         // confirmed, then the host memory. A request with no device claim
@@ -235,7 +236,9 @@ impl NodeJobs {
             .and_then(|placed| {
                 // The sum rule against the template's memory ceiling, before
                 // any lease.
-                self.parts().admission.admit_placement(pin, &placed)?;
+                self.parts()
+                    .admission
+                    .admit_placement(pin, &placed, held_mib)?;
                 let mut leases = Vec::with_capacity(placed.devices.len());
                 for device in &placed.devices {
                     let Some(claim) = pin.request.devices.get(device.claim) else {
