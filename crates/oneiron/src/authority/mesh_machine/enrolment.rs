@@ -80,19 +80,31 @@ pub enum MeshEnrolment {
         pairing_slip_id: [u8; 32],
     },
     /// The endpoint's binding stood from an earlier pairing, and the ALPN was
-    /// granted on it again.
+    /// granted on it again. `re_paired` is as in [`Self::AlreadyGranted`].
     Regranted {
         machine: EntityId,
         endpoint_key: [u8; 32],
+        re_paired: Option<[u8; 32]>,
     },
     /// The endpoint already held a live grant on the ALPN, and it stands. Its
     /// binding moved to a pairing under the ask's ceiling if its own did not
-    /// cover it.
+    /// cover it: `re_paired` names that new pairing slip, on which the
+    /// owner binds the machine again in each other replica that bound it
+    /// (`vault.mesh.bind_machine`); `None` when the binding did not move.
     AlreadyGranted {
         machine: EntityId,
         endpoint_key: [u8; 32],
+        re_paired: Option<[u8; 32]>,
     },
     Refused(MeshBindRefusal),
+}
+
+/// What an enrolment's binding step made: a fresh binding on its new
+/// pairing slip, or a binding that stood from an earlier pairing and the
+/// pairing slip it moved to, if it moved.
+enum EnrolledBinding {
+    Fresh([u8; 32]),
+    Standing { re_paired: Option<[u8; 32]> },
 }
 
 /// Whether a head `machine` stands under with `pin` removed it: removal is
@@ -147,22 +159,24 @@ impl Vault {
             // A move that does not land refuses the binding, so no answer
             // promises a ceiling the binding lacks.
             return match self.re_pair_enrolled_in_savepoint(txn, issuer, request, ask) {
-                Ok(()) => MeshEnrolment::AlreadyGranted {
+                Ok(re_paired) => MeshEnrolment::AlreadyGranted {
                     machine,
                     endpoint_key,
+                    re_paired,
                 },
                 Err(_) => MeshEnrolment::Refused(MeshBindRefusal::BindRefused),
             };
         }
         match self.bind_enrolled_in_savepoint(txn, issuer, request, ask) {
-            Ok(Some(pairing_slip_id)) => MeshEnrolment::Bound {
+            Ok(EnrolledBinding::Fresh(pairing_slip_id)) => MeshEnrolment::Bound {
                 machine,
                 endpoint_key,
                 pairing_slip_id,
             },
-            Ok(None) => MeshEnrolment::Regranted {
+            Ok(EnrolledBinding::Standing { re_paired }) => MeshEnrolment::Regranted {
                 machine,
                 endpoint_key,
+                re_paired,
             },
             Err(_) => MeshEnrolment::Refused(MeshBindRefusal::BindRefused),
         }
@@ -170,15 +184,17 @@ impl Vault {
 
     /// The pairing slip, the binding and the grant, in one savepoint of `txn`
     /// that lands only whole, and the new pairing slip's id. A binding that
-    /// stands from an earlier pairing takes the grant alone, as the owner's
-    /// grant door gives it (`None`). The slip runs no longer than a grant may.
+    /// stands from an earlier pairing moves to the ask's ceiling if it must
+    /// and takes the grant, as the owner's grant door gives it
+    /// ([`EnrolledBinding::Standing`]). The slip runs no longer than a grant
+    /// may.
     fn bind_enrolled_in_savepoint(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
         ask: MeshEnrolmentAsk<'_>,
-    ) -> Result<Option<[u8; 32]>> {
+    ) -> Result<EnrolledBinding> {
         let (identity, alpn) = (ask.identity, ask.granted);
         let (machine, endpoint_key) = (request.machine, identity.endpoint_key);
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
@@ -189,10 +205,10 @@ impl Vault {
             allow: true,
         };
         if MESH_AUTHORITY.contains(&self.store, &savepoint, &HexId(machine))? {
-            self.re_pair_enrolled_in_txn(&mut savepoint, issuer, request, ask)?;
+            let re_paired = self.re_pair_enrolled_in_txn(&mut savepoint, issuer, request, ask)?;
             self.set_mesh_alpn_grant_in_txn(&mut savepoint, issuer, grant)?;
             savepoint.commit()?;
-            return Ok(None);
+            return Ok(EnrolledBinding::Standing { re_paired });
         }
         let pairing_slip_id =
             self.mint_enrolment_pairing_in_txn(&mut savepoint, issuer, request, ask, 0)?;
@@ -215,7 +231,7 @@ impl Vault {
         self.set_mesh_alpn_grant_in_txn(&mut savepoint, issuer, grant)?;
         savepoint.commit()?;
         count.finish(self);
-        Ok(Some(pairing_slip_id))
+        Ok(EnrolledBinding::Fresh(pairing_slip_id))
     }
 
     /// The binding's pairing slip for an enrolment: held by the MACHINE under
@@ -276,12 +292,13 @@ impl Vault {
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
         ask: MeshEnrolmentAsk<'_>,
-    ) -> Result<()> {
+    ) -> Result<Option<[u8; 32]>> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
-        if self.re_pair_enrolled_in_txn(&mut savepoint, issuer, request, ask)? {
+        let re_paired = self.re_pair_enrolled_in_txn(&mut savepoint, issuer, request, ask)?;
+        if re_paired.is_some() {
             savepoint.commit()?;
         }
-        Ok(())
+        Ok(re_paired)
     }
 
     /// A re-enrolment of a machine this vault has bound at the same endpoint
@@ -292,8 +309,10 @@ impl Vault {
     /// live one. Its grants stand: the new pairing ends no earlier than the
     /// old one, which no grant outlives. The old pairing is left to its
     /// expiry, never revoked here: another replica's binding of the machine
-    /// may stand on it. `false` when nothing moved: the pairing is live and
-    /// covers the ceiling already, or the binding is revoked, names another
+    /// may stand on it, and moves to the new one when its owner binds the
+    /// machine again there (`Vault::bind_mesh_machine`). The new pairing
+    /// slip's id; `None` when nothing moved: the pairing is live and covers
+    /// the ceiling already, or the binding is revoked, names another
     /// endpoint, key or host, or stands on a pairing a revoke or the
     /// MACHINE's removal ended (the grant refuses those).
     fn re_pair_enrolled_in_txn(
@@ -302,33 +321,34 @@ impl Vault {
         issuer: &HostSlipIssuer,
         request: &MachineEnrolmentRequest,
         ask: MeshEnrolmentAsk<'_>,
-    ) -> Result<bool> {
+    ) -> Result<Option<[u8; 32]>> {
         let Some((fold, mut claims)) = self.mesh_authority_signed_in_txn(txn, request.machine)?
         else {
-            return Ok(false);
+            return Ok(None);
         };
         if claims.revoked
             || claims.endpoint_key != ask.identity.endpoint_key
             || claims.device_key != request.machine_key
             || claims.host_key != issuer.binding_key()
         {
-            return Ok(false);
+            return Ok(None);
         }
         let Some(pair) = mesh_pairing_standing(&fold, &claims) else {
-            return Ok(false);
+            return Ok(None);
         };
         let now = self.instant_in_txn(txn)?.secs();
         if now >= pair.issued_at
             && now < pair.expires_at
             && ask.ceiling_scope().is_narrowing_of(&pair.scope)
         {
-            return Ok(false);
+            return Ok(None);
         }
         let at_least_until = pair.expires_at;
-        claims.pairing_slip_id =
+        let pairing_slip_id =
             self.mint_enrolment_pairing_in_txn(txn, issuer, request, ask, at_least_until)?;
+        claims.pairing_slip_id = pairing_slip_id;
         self.write_mesh_authority_in_txn(txn, issuer, claims)?;
-        Ok(true)
+        Ok(Some(pairing_slip_id))
     }
 
     /// Revokes, for a MACHINE the owner removed, the pairing its mesh binding
