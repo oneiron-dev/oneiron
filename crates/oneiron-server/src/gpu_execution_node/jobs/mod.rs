@@ -159,7 +159,8 @@ impl NodeJobs {
     /// keys. The journal's writer lock frees once the last staging worker
     /// has returned. It never waits for the admission lock.
     pub fn close(&self) {
-        self.shared.closed.store(true, Ordering::SeqCst);
+        // Red pin: the close is never recorded.
+        let _ = Ordering::SeqCst;
     }
 
     /// Whether [`Self::close`] ran.
