@@ -58,8 +58,10 @@ pub(super) enum Placing {
 ///
 /// The reason for the key's end: the devices cannot be read, no device of
 /// the machine meets a claim (`no_device: claim <n>`), the devices that
-/// meet it are taken (`device_unavailable: claim <n>`), or the placement
-/// takes more devices than a key may hold (`devices_above_one`).
+/// meet it are taken (`device_unavailable: claim <n>`), the host memory
+/// the placement leases has no value in MiB (`host_memory_overflow: claim
+/// <n>`), or the placement takes more devices than a key may hold
+/// (`devices_above_one`).
 pub(super) fn placement(
     devices: &dyn NodeDevices,
     reserve: &JobReserve,
@@ -84,6 +86,9 @@ pub(super) fn placement(
         DevicePlacementError::NoDevice { claim, .. } => format!("no_device: claim {claim}"),
         DevicePlacementError::DeviceBusy { claim } => {
             format!("device_unavailable: claim {claim}")
+        }
+        DevicePlacementError::HostMemoryOverflow { claim } => {
+            format!("host_memory_overflow: claim {claim}")
         }
     })?;
     if placed.devices.len() > DEVICES_PER_KEY_MAX {
