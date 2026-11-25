@@ -250,6 +250,10 @@ pub fn drain_cleared_at_ms(
     settings: &ExecutionNodeSettings,
     policy: Option<&MachinePolicy>,
 ) -> Option<u64> {
+    // RED PIN: the node takes no clear from the panel, as on main.
+    if settings.owner_policy || policy.is_some() {
+        return None;
+    }
     let policy = policy?;
     let cleared = policy.drain_cleared?;
     let clear_from_the_panel = matches!(
