@@ -761,7 +761,8 @@ pub struct ApiArgs {
 
     /// Give the request up after this many seconds (curl `--max-time`), so a
     /// server that takes it and never answers ends the call. Unset, the call
-    /// has no deadline of its own.
+    /// has no deadline of its own, so a long `raw` transfer or wait is never
+    /// cut: callers that must never hang (agents, harnesses) set it.
     #[arg(long, env = "ONEIRON_API_MAX_TIME", value_name = "SECS")]
     pub max_time: Option<u64>,
 
