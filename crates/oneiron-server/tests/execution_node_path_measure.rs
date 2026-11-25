@@ -12,7 +12,8 @@ use std::time::Duration;
 use oneiron_mesh_transport::{MeshMachineAddress, MeshPathDirection, MeshPathKind};
 use oneiron_server::gpu_execution_node::path_measure::{
     MeasureError, MeasurePlan, MeasurerKey, PathReceiptLog, SampleKind, bind_measurer,
-    measure_path, report_lines, serve_measurements, summarize,
+    measure_path, path_line, report_lines, serve_measurements, serve_measurements_with_path,
+    summarize,
 };
 use oneiron_server::gpu_execution_node::wire::FETCH_MAX_BYTES;
 use tokio::time::Instant;
@@ -22,6 +23,13 @@ fn free_loopback() -> SocketAddr {
     UdpSocket::bind("127.0.0.1:0")
         .and_then(|socket| socket.local_addr())
         .expect("a free loopback port")
+}
+
+/// The listener's deadline, `secs` from now. It bounds serving over a real
+/// loopback connection; no test asserts a time.
+fn deadline_after(secs: u64) -> Instant {
+    // testkit-lint: allow(wall-clock) the listener's deadline on a real loopback connection, not a timing assertion
+    Instant::now() + Duration::from_secs(secs)
 }
 
 fn address(endpoint_key: [u8; 32], direct_addrs: Vec<SocketAddr>) -> MeshMachineAddress {
@@ -64,7 +72,7 @@ async fn a_measurement_reports_each_round_trip_with_its_bytes_on_the_direct_path
     )
     .await
     .expect("the dialer binds");
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = deadline_after(60);
     let serving = tokio::spawn(async move { serve_measurements(&listener, deadline, 1).await });
 
     let report = measure_path(&dialer, peer, &plan(5, 2))
@@ -135,6 +143,59 @@ async fn a_measurement_reports_each_round_trip_with_its_bytes_on_the_direct_path
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_reports_the_direct_path_of_the_connection_it_served() {
+    let (listener_key, dialer_key) = (MeasurerKey::generate(), MeasurerKey::generate());
+    let at = free_loopback();
+    let listener_receipts = Arc::new(PathReceiptLog::default());
+    let (listener, _) = bind_measurer(
+        &listener_key,
+        address(dialer_key.endpoint(), Vec::new()),
+        at,
+        Arc::clone(&listener_receipts),
+    )
+    .await
+    .expect("the listener binds");
+    let (dialer, peer) = bind_measurer(
+        &dialer_key,
+        address(listener_key.endpoint(), vec![at]),
+        free_loopback(),
+        Arc::default(),
+    )
+    .await
+    .expect("the dialer binds");
+    let deadline = deadline_after(60);
+    let serving = tokio::spawn(async move {
+        serve_measurements_with_path(
+            &listener,
+            &listener_receipts,
+            deadline,
+            1,
+            Duration::from_secs(5),
+        )
+        .await
+    });
+
+    measure_path(&dialer, peer, &plan(2, 1))
+        .await
+        .expect("the measurement runs");
+
+    let outcome = serving.await.expect("the listener task");
+    let tally = outcome.served.expect("the listener serves");
+    assert_eq!((tally.connections, tally.answers), (1, 3), "{tally:?}");
+    let path = outcome
+        .path
+        .expect("the listener's receipt of the connection it served");
+    assert_eq!(path.direction, MeshPathDirection::Inbound, "{path:?}");
+    assert_eq!(path.paths, MeshPathKind::Direct, "{path:?}");
+    assert!(path.used_direct && !path.used_relay, "{path:?}");
+    assert!(
+        path_line(Some(&path))
+            .starts_with("## PATH paths=direct used_direct=true used_relay=false"),
+        "{path:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_listener_answers_no_key_but_the_one_dialer_it_was_given() {
     let (listener_key, dialer_key, stranger_key) = (
         MeasurerKey::generate(),
@@ -158,7 +219,7 @@ async fn a_listener_answers_no_key_but_the_one_dialer_it_was_given() {
     )
     .await
     .expect("the stranger binds");
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = deadline_after(8);
     let serving = tokio::spawn(async move { serve_measurements(&listener, deadline, 1).await });
 
     let mut short = plan(1, 0);

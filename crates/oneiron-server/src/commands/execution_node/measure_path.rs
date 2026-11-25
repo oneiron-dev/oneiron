@@ -64,11 +64,20 @@ mod mesh {
     use crate::cli::{MeasurePathDialArgs, MeasurePathListenArgs};
     use crate::gpu_execution_node::path_measure::{
         MeasurePlan, MeasurerKey, PathReceiptLog, bind_measurer, measure_path, path_line,
-        report_lines, serve_measurements,
+        report_lines, serve_measurements_with_path,
     };
 
-    /// How long a dialer waits for its closed connection's path receipt.
+    /// How long each end waits for its closed connection's path receipt.
     const CLOSED_RECEIPT_WAIT: Duration = Duration::from_secs(3);
+
+    /// Writes `line` to standard output and flushes it, so the operator
+    /// reads each report line as it is taken.
+    fn write_line(line: &str) -> anyhow::Result<()> {
+        let mut out = std::io::stdout().lock();
+        writeln!(out, "{line}")?;
+        out.flush()?;
+        Ok(())
+    }
 
     /// `measure-path key`: a new measuring key in `out` (never over an
     /// existing file; mode 0600), and its endpoint key.
@@ -84,12 +93,11 @@ mod mesh {
         writeln!(file, "{}", oneiron_hex::encode(&key.seed()))
             .and_then(|()| file.sync_all())
             .with_context(|| format!("measure-path key: write {}", out.display()))?;
-        println!(
+        write_line(&format!(
             "## KEY endpoint={} file={}",
             oneiron_hex::encode(&key.endpoint()),
             out.display()
-        );
-        Ok(())
+        ))
     }
 
     /// `measure-path listen`: serves the one dialer until the deadline.
@@ -105,26 +113,32 @@ mod mesh {
         let (transport, _) = bind_measurer(&key, address, args.bind, Arc::clone(&receipts))
             .await
             .map_err(|error| anyhow::anyhow!("measure-path listen: bind {}: {error}", args.bind))?;
-        println!(
+        write_line(&format!(
             "## LISTEN endpoint={} bind={} peer={} max_secs={} connections={}",
             oneiron_hex::encode(&key.endpoint()),
             args.bind,
             args.peer,
             args.max_secs,
             args.connections
-        );
-        std::io::stdout().flush()?;
+        ))?;
         let deadline = Instant::now() + Duration::from_secs(args.max_secs);
-        let served = serve_measurements(&transport, deadline, args.connections).await;
-        let path = receipts.closed(MeshPathDirection::Inbound);
+        let outcome = serve_measurements_with_path(
+            &transport,
+            &receipts,
+            deadline,
+            args.connections,
+            CLOSED_RECEIPT_WAIT,
+        )
+        .await;
         let _ = transport.shutdown().await;
-        let tally = served.map_err(|error| anyhow::anyhow!("measure-path listen: {error}"))?;
-        println!(
+        let tally = outcome
+            .served
+            .map_err(|error| anyhow::anyhow!("measure-path listen: {error}"))?;
+        write_line(&format!(
             "## SERVED connections={} answers={} received_bytes={} sent_bytes={}",
             tally.connections, tally.answers, tally.received_bytes, tally.sent_bytes
-        );
-        println!("{}", path_line(path.as_ref()));
-        Ok(())
+        ))?;
+        write_line(&path_line(outcome.path.as_ref()))
     }
 
     /// `measure-path dial`: takes the samples and prints the report.
@@ -147,12 +161,12 @@ mod mesh {
             fetch_bytes: args.fetch_bytes,
             call_timeout: Duration::from_secs(args.timeout_secs),
         };
-        println!(
+        write_line(&format!(
             "## PATH-MEASURE peer={} addr={} endpoint={} relay=none",
             args.peer,
             args.addr,
             oneiron_hex::encode(&key.endpoint())
-        );
+        ))?;
         let measured = measure_path(&transport, peer, &plan).await;
         let path = receipts
             .wait_closed(MeshPathDirection::Outbound, CLOSED_RECEIPT_WAIT)
@@ -160,7 +174,7 @@ mod mesh {
         let _ = transport.shutdown().await;
         let report = measured.map_err(|error| anyhow::anyhow!("measure-path dial: {error}"))?;
         for line in report_lines(&report, path.as_ref()) {
-            println!("{line}");
+            write_line(&line)?;
         }
         Ok(())
     }

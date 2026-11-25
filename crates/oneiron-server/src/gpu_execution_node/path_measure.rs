@@ -239,6 +239,37 @@ pub async fn serve_measurements(
     Ok(tally)
 }
 
+/// What a listener served, and the path its newest closed connection took.
+#[derive(Debug)]
+pub struct ListenOutcome {
+    pub served: Result<ServeTally, MeshError>,
+    pub path: Option<MeshPathReceipt>,
+}
+
+/// Serves as [`serve_measurements`] does, then reads the inbound path
+/// receipt of the newest closed connection from `receipts`. The transport
+/// writes a connection's closed receipt in a task of its own after the
+/// connection closes, so serving can end first: once a connection was
+/// served, the read waits up to `receipt_wait` for that receipt.
+pub async fn serve_measurements_with_path(
+    transport: &dyn MeshTransport,
+    receipts: &PathReceiptLog,
+    deadline: Instant,
+    connections: u32,
+    receipt_wait: Duration,
+) -> ListenOutcome {
+    let served = serve_measurements(transport, deadline, connections).await;
+    let path = match &served {
+        Ok(tally) if tally.connections > 0 => {
+            receipts
+                .wait_closed(MeshPathDirection::Inbound, receipt_wait)
+                .await
+        }
+        _ => receipts.closed(MeshPathDirection::Inbound),
+    };
+    ListenOutcome { served, path }
+}
+
 /// Answers each stream of `connection` until it ends or `deadline` passes.
 async fn serve_connection(
     connection: &dyn MeshConnection,
