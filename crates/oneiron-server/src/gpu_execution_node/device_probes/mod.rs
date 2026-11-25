@@ -24,9 +24,7 @@ use super::device::{
 
 pub use amdgpu_sysfs::AmdgpuSysfsProbe;
 pub use apple_system_profiler::{SystemProfilerProbe, parse_system_profiler_devices};
-pub use xpu_smi::{
-    XpuSmiProbe, parse_xpu_smi_device_detail, parse_xpu_smi_device_list, parse_xpu_smi_processes,
-};
+pub use xpu_smi::{XpuSmiProbe, parse_xpu_smi_device_detail, parse_xpu_smi_device_list};
 
 /// What a probe can say about the processes computing on its devices.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,8 +33,10 @@ pub enum ComputeProcesses {
     /// [`oneiron::job_workload::DeviceClosure::Closed`], read now. An empty
     /// list means none runs.
     Listed(Vec<GpuComputeProcess>),
-    /// This probe can never list a process on its devices (an Apple GPU),
-    /// a fact of the probe and not a failed read: each device it lists is
+    /// This probe can never list every process on its devices (an Apple
+    /// GPU; an Intel GPU, whose process list shows another user's processes
+    /// only to a privileged caller), a fact of the probe and not a failed
+    /// read: each device it lists is
     /// [`oneiron::job_workload::DeviceClosure::Admitted`], and its lease is
     /// a count of the claimants this machine let in.
     NeverListed,

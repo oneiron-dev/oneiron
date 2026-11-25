@@ -1,0 +1,34 @@
+{
+    "device_list": [
+        {
+            "device_function_type": "physical",
+            "device_id": 0,
+            "device_name": "Intel(R) Data Center GPU Max 1100",
+            "device_state": "normal",
+            "device_type": "GPU",
+            "drm_device": "/dev/dri/card1",
+            "pci_bdf_address": "0000:29:00.0",
+            "pci_device_id": "0xbda",
+            "uuid": "00000000-0000-0029-0000-002f0bda8086",
+            "vendor_name": "Intel(R) Corporation"
+        },
+        {
+            "device_function_type": "physical",
+            "device_id": 1,
+            "device_name": "Intel(R) Data Center GPU Max 1100",
+            "device_state": "normal",
+            "device_type": "GPU",
+            "drm_device": "/dev/dri/card2",
+            "pci_bdf_address": "0000:3a:00.0",
+            "pci_device_id": "0xbda",
+            "uuid": "00000000-0000-003a-0000-002f0bda8086",
+            "vendor_name": "Intel(R) Corporation"
+        },
+        {
+            "device_id": 2,
+            "device_state": "survivability mode",
+            "pci_bdf_address": "0000:4b:00.0",
+            "recovery_action": "firmware flash"
+        }
+    ]
+}

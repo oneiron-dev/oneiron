@@ -4,13 +4,17 @@
 //! placement matches the reports by kind, features and memory alone, never
 //! by vendor or model.
 //!
-//! Fixtures: `kfd_properties_*.txt` are KFD topology files read on an AMD
+//! Fixtures: `kfd_properties_*.txt` and `kfd_mem_bank_gfx1103_apu.txt` are
+//! KFD topology files read on an AMD
 //! Radeon 780M APU (PCI 1002:1900, gfx1103) on Linux; the amdgpu sysfs
 //! values beside them are that machine's. `system_profiler_m4_max.json` is
 //! `system_profiler -json SPDisplaysDataType SPHardwareDataType` from an
 //! M4 Max Mac, with its serial, platform UUID and provisioning id replaced.
-//! The `xpu_smi_*.json` fixtures follow xpumanager's own output (cited in
-//! each test). Placement tests also use NVIDIA's probe facts.
+//! The `xpu_smi_*.json` fixtures are built (no Intel GPU was at hand) on the
+//! keys and JSON types xpumanager 6882e2ca writes in
+//! `ial/cmn/cmd_discovery.cpp`: `device_list` entries (lines 456-514, the
+//! survivability entry 2581-2589) and one device's detail (lines 710-953).
+//! Placement tests also use NVIDIA's probe facts.
 
 #![cfg(unix)]
 
@@ -20,7 +24,7 @@ use oneiron::job_workload::{
 };
 use oneiron_server::gpu_execution_node::device_probes::{
     AmdgpuSysfsProbe, ComputeProcesses, DeviceProbe, SystemProfilerProbe, XpuSmiProbe,
-    parse_system_profiler_devices,
+    parse_system_profiler_devices, parse_xpu_smi_device_detail, parse_xpu_smi_device_list,
 };
 use oneiron_server::gpu_execution_node::{
     GpuComputeProcess, GpuDevice, GpuProbeError, NvidiaSmiProbe,
@@ -28,7 +32,10 @@ use oneiron_server::gpu_execution_node::{
 
 const APU_PROPERTIES: &str = include_str!("fixtures/device_probes/kfd_properties_gfx1103_apu.txt");
 const CPU_PROPERTIES: &str = include_str!("fixtures/device_probes/kfd_properties_cpu.txt");
+const APU_BANK: &str = include_str!("fixtures/device_probes/kfd_mem_bank_gfx1103_apu.txt");
 const M4_MAX: &str = include_str!("fixtures/device_probes/system_profiler_m4_max.json");
+const XPU_LIST: &str = include_str!("fixtures/device_probes/xpu_smi_discovery_list.json");
+const XPU_DEVICE: &str = include_str!("fixtures/device_probes/xpu_smi_discovery_device.json");
 
 /// The APU's PCI address and KFD id on the machine the fixtures come from.
 const APU_SLOT: &str = "0000:c4:00.0";
@@ -117,27 +124,26 @@ impl SysfsTree {
         );
     }
 
-    fn kfd_node(&self, node: u32, gpu_id: u32, properties: &str) {
-        self.write(
-            &format!("class/kfd/kfd/topology/nodes/{node}/gpu_id"),
-            &format!("{gpu_id}\n"),
-        );
-        self.write(
-            &format!("class/kfd/kfd/topology/nodes/{node}/properties"),
-            properties,
-        );
+    /// A KFD node with `properties` and, for a GPU, one memory bank.
+    fn kfd_node(&self, node: u32, gpu_id: u32, properties: &str, bank: Option<&str>) {
+        let dir = format!("class/kfd/kfd/topology/nodes/{node}");
+        self.write(&format!("{dir}/gpu_id"), &format!("{gpu_id}\n"));
+        self.write(&format!("{dir}/properties"), properties);
+        if let Some(bank) = bank {
+            self.write(&format!("{dir}/mem_banks/0/properties"), bank);
+        }
     }
 
     /// The fixture machine's KFD topology: its CPU node and the APU's node.
     fn fixture_kfd(&self) {
-        self.kfd_node(0, 0, CPU_PROPERTIES);
-        self.kfd_node(1, APU_KFD_ID, APU_PROPERTIES);
+        self.kfd_node(0, 0, CPU_PROPERTIES, None);
+        self.kfd_node(1, APU_KFD_ID, APU_PROPERTIES, Some(APU_BANK));
         std::fs::create_dir_all(self.dir.path().join("class/kfd/kfd/proc")).expect("proc dir");
     }
 
     /// A process with a compute context on each of `gpu_ids`.
     fn kfd_process(&self, pid: u32, gpu_ids: &[u32]) {
-        self.write(&format!("class/kfd/kfd/proc/{pid}/pasid"), "32770\n");
+        self.write(&format!("class/kfd/kfd/proc/{pid}/pasid"), "0\n");
         for gpu_id in gpu_ids {
             self.write(&format!("class/kfd/kfd/proc/{pid}/vram_{gpu_id}"), "0\n");
             self.write(&format!("class/kfd/kfd/proc/{pid}/sdma_{gpu_id}"), "0\n");
@@ -145,18 +151,22 @@ impl SysfsTree {
     }
 }
 
-/// The APU's properties as a discrete card at `location_id` would write
-/// them: its own memory, `local_mem_size` above 0.
-fn discrete_properties(location_id: u32, local_mem_size: u64) -> String {
+/// The APU's node properties as a card at `location_id` would write them
+/// (KFD writes `local_mem_size 0` for every GPU).
+fn discrete_properties(location_id: u32) -> String {
     APU_PROPERTIES
         .lines()
         .map(|line| match line.split_once(' ') {
             Some(("location_id", _)) => format!("location_id {location_id}"),
-            Some(("local_mem_size", _)) => format!("local_mem_size {local_mem_size}"),
             _ => line.to_owned(),
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A discrete card's frame buffer bank: its VRAM.
+fn discrete_bank(bytes: u64) -> String {
+    format!("heap_type 1\nsize_in_bytes {bytes}\nflags 0\nwidth 4096\nmem_clk_max 1600\n")
 }
 
 fn apu_facts() -> DeviceFacts {
@@ -210,7 +220,12 @@ fn a_discrete_amd_card_is_found_by_its_unique_id_with_its_own_memory() {
             ("mem_info_gtt_total", "135015096320"),
         ],
     );
-    tree.kfd_node(2, 41210, &discrete_properties(0x0300, 68_702_699_520));
+    tree.kfd_node(
+        2,
+        41210,
+        &discrete_properties(0x0300),
+        Some(&discrete_bank(68_702_699_520)),
+    );
     let devices = tree.probe().list().expect("list");
     assert_eq!(devices.len(), 1);
     let card = &devices[0];
@@ -252,7 +267,54 @@ fn a_discrete_amd_card_with_no_stable_id_is_not_listed() {
         "amdgpu",
         &[("unique_id", ""), ("mem_info_vram_total", "17163091968")],
     );
-    tree.kfd_node(1, 41210, &discrete_properties(0x0300, 17_163_091_968));
+    tree.kfd_node(
+        1,
+        41210,
+        &discrete_properties(0x0300),
+        Some(&discrete_bank(17_163_091_968)),
+    );
+    assert_eq!(tree.probe().list().expect("list"), Vec::new());
+}
+
+#[test]
+fn an_apu_with_no_vram_carve_out_is_unified_with_the_memory_kfd_gives_it() {
+    let tree = SysfsTree::new();
+    tree.card(
+        "card0",
+        APU_SLOT,
+        "0x1002",
+        "amdgpu",
+        &[("mem_info_gtt_total", &APU_GTT_BYTES.to_string())],
+    );
+    tree.fixture_kfd();
+    let devices = tree.probe().list().expect("list");
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].id_source, DeviceIdSource::PlatformRegistry);
+    assert_eq!(
+        devices[0].memory,
+        DeviceMemory::Unified {
+            mib: APU_GTT_BYTES / (1024 * 1024)
+        }
+    );
+}
+
+#[test]
+fn a_card_split_into_compute_partitions_is_not_listed() {
+    let tree = SysfsTree::new();
+    tree.card(
+        "card0",
+        "0000:03:00.0",
+        "0x1002",
+        "amdgpu",
+        &[
+            ("unique_id", "52d10e8a52d4b1c3"),
+            ("mem_info_vram_total", "206141652992"),
+        ],
+    );
+    let bank = discrete_bank(103_070_826_496);
+    // KFD writes the partition into the low bits of a node's location.
+    tree.kfd_node(1, 41210, &discrete_properties(0x0300), Some(&bank));
+    tree.kfd_node(2, 41211, &discrete_properties(0x0301), Some(&bank));
     assert_eq!(tree.probe().list().expect("list"), Vec::new());
 }
 
@@ -362,8 +424,13 @@ fn a_kfd_device_without_the_process_directory_cannot_tell_and_is_never_read_as_i
 fn unreadable_amd_files_are_refused() {
     let tree = SysfsTree::new();
     tree.fixture_apu();
-    tree.kfd_node(0, 0, CPU_PROPERTIES);
-    tree.kfd_node(1, APU_KFD_ID, "location_id 50176\ndomain zero\n");
+    tree.kfd_node(0, 0, CPU_PROPERTIES, None);
+    tree.kfd_node(
+        1,
+        APU_KFD_ID,
+        "location_id 50176\ndomain zero\n",
+        Some(APU_BANK),
+    );
     assert!(matches!(
         tree.probe().list(),
         Err(GpuProbeError::Unreadable { .. })
@@ -384,6 +451,114 @@ fn unreadable_amd_files_are_refused() {
         tree.probe().list(),
         Err(GpuProbeError::Unreadable { .. })
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Intel through xpu-smi.
+
+fn intel_detail(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> String {
+    let mut detail: serde_json::Value = serde_json::from_str(XPU_DEVICE).expect("json");
+    edit(detail.as_object_mut().expect("object"));
+    detail.to_string()
+}
+
+fn intel_facts() -> DeviceFacts {
+    parse_xpu_smi_device_detail(XPU_DEVICE)
+        .expect("parse")
+        .expect("a device")
+}
+
+#[test]
+fn an_intel_gpu_is_found_by_its_serial_with_its_own_memory_and_oneapi() {
+    assert_eq!(
+        intel_facts(),
+        DeviceFacts {
+            id: "LQAC31600342".to_owned(),
+            id_source: DeviceIdSource::Serial,
+            kind: DeviceKind::Gpu,
+            vendor: "intel".to_owned(),
+            model: "Intel(R) Data Center GPU Max 1100".to_owned(),
+            memory: DeviceMemory::Dedicated { mib: 49_152 },
+            features: vec!["oneapi".to_owned()],
+            closure: DeviceClosure::Admitted,
+            state: DeviceState::Offered,
+            max_claimants: 1,
+        }
+    );
+}
+
+#[test]
+fn an_intel_gpu_whose_serial_is_unknown_or_needs_root_is_found_by_its_oneapi_uuid() {
+    for serial in ["unknown", "N/A (Requires Root)", ""] {
+        let detail = intel_detail(|detail| {
+            detail.insert("serial_number".to_owned(), serial.into());
+        });
+        let facts = parse_xpu_smi_device_detail(&detail)
+            .expect("parse")
+            .expect("a device");
+        assert_eq!(facts.id, "00000000-0000-0029-0000-002f0bda8086", "{serial}");
+        assert_eq!(facts.id_source, DeviceIdSource::VendorUuid, "{serial}");
+    }
+}
+
+#[test]
+fn an_intel_gpu_with_no_serial_or_uuid_is_not_listed() {
+    let detail = intel_detail(|detail| {
+        detail.insert("serial_number".to_owned(), "unknown".into());
+        detail.insert("uuid".to_owned(), "".into());
+    });
+    assert_eq!(parse_xpu_smi_device_detail(&detail).expect("parse"), None);
+}
+
+#[test]
+fn a_memory_size_the_tool_writes_as_a_string_is_read() {
+    let detail = intel_detail(|detail| {
+        detail.insert("memory_physical_size_byte".to_owned(), "51539607552".into());
+    });
+    let facts = parse_xpu_smi_device_detail(&detail)
+        .expect("parse")
+        .expect("a device");
+    assert_eq!(facts.memory, DeviceMemory::Dedicated { mib: 49_152 });
+}
+
+#[test]
+fn the_device_list_gives_each_device_number_and_leaves_out_survivability_mode() {
+    assert_eq!(
+        parse_xpu_smi_device_list(XPU_LIST).expect("parse"),
+        vec![0, 1]
+    );
+    assert_eq!(
+        parse_xpu_smi_device_list(r#"{"device_list": null}"#).expect("parse"),
+        Vec::<u32>::new()
+    );
+}
+
+#[test]
+fn unreadable_xpu_smi_output_is_refused() {
+    // What the tool prints on stdout when Level Zero does not start.
+    assert!(matches!(
+        parse_xpu_smi_device_list("Sysman driver initialization failed."),
+        Err(GpuProbeError::Unreadable { .. })
+    ));
+    assert!(matches!(
+        parse_xpu_smi_device_list(r#"{"device_list": [{"device_name": "x"}]}"#),
+        Err(GpuProbeError::Unreadable { .. })
+    ));
+    let detail = intel_detail(|detail| {
+        detail.remove("memory_physical_size_byte");
+    });
+    assert!(matches!(
+        parse_xpu_smi_device_detail(&detail),
+        Err(GpuProbeError::Unreadable { .. })
+    ));
+}
+
+#[test]
+fn the_intel_probe_never_lists_processes() {
+    assert_eq!(
+        XpuSmiProbe.processes().expect("processes"),
+        ComputeProcesses::NeverListed
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -486,7 +661,7 @@ fn nvidia_facts() -> DeviceFacts {
 }
 
 fn machine() -> Vec<DeviceFacts> {
-    vec![nvidia_facts(), apu_facts(), apple_facts()]
+    vec![nvidia_facts(), apu_facts(), intel_facts(), apple_facts()]
 }
 
 fn free(devices: Vec<DeviceFacts>) -> Vec<HeldDevice> {
@@ -535,7 +710,8 @@ fn placed_ids(devices: &[HeldDevice], claims: Vec<DeviceClaim>) -> Vec<String> {
 #[test]
 fn a_claim_for_a_feature_lands_only_on_the_device_whose_probe_reports_it() {
     let devices = free(machine());
-    let [nvidia, amd, apple] = [&devices[0], &devices[1], &devices[2]].map(|d| d.facts.id.clone());
+    let [nvidia, amd, intel, apple] =
+        [&devices[0], &devices[1], &devices[2], &devices[3]].map(|d| d.facts.id.clone());
     assert_eq!(
         placed_ids(&devices, vec![gpu_claim(&["cuda"], 0, 1)]),
         vec![nvidia]
@@ -548,8 +724,12 @@ fn a_claim_for_a_feature_lands_only_on_the_device_whose_probe_reports_it() {
         placed_ids(&devices, vec![gpu_claim(&["metal"], 0, 1)]),
         vec![apple]
     );
+    assert_eq!(
+        placed_ids(&devices, vec![gpu_claim(&["oneapi"], 0, 1)]),
+        vec![intel]
+    );
     assert!(matches!(
-        request(vec![gpu_claim(&["oneapi"], 0, 1)]).place_devices(&devices),
+        request(vec![gpu_claim(&["vulkan"], 0, 1)]).place_devices(&devices),
         Err(DevicePlacementError::NoDevice { .. })
     ));
 }
@@ -557,7 +737,7 @@ fn a_claim_for_a_feature_lands_only_on_the_device_whose_probe_reports_it() {
 #[test]
 fn a_claim_naming_no_feature_takes_a_gpu_of_any_vendor() {
     let devices = free(machine());
-    let mut placed = placed_ids(&devices, vec![gpu_claim(&[], 0, 3)]);
+    let mut placed = placed_ids(&devices, vec![gpu_claim(&[], 0, 4)]);
     placed.sort();
     let mut all: Vec<String> = devices.iter().map(|d| d.facts.id.clone()).collect();
     all.sort();
@@ -597,7 +777,7 @@ fn vendor_and_model_never_change_a_placement() {
         facts.model.clone_from(model);
     }
     let renamed = free(renamed);
-    let cases: [&[&str]; 4] = [&["cuda"], &["rocm"], &["metal"], &[]];
+    let cases: [&[&str]; 5] = [&["cuda"], &["rocm"], &["oneapi"], &["metal"], &[]];
     for features in cases {
         assert_eq!(
             placed_ids(&devices, vec![gpu_claim(features, 0, 1)]),

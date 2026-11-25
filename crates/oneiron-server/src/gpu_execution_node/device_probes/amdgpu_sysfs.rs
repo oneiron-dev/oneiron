@@ -1,17 +1,25 @@
 //! AMD GPUs, read from the `amdgpu` driver's sysfs files: no tool needs to
-//! be installed. A device is each `/sys/class/drm/card<N>` whose PCI vendor
-//! is AMD and whose driver is `amdgpu`. The KFD compute driver
+//! be installed (`rocm-smi` is deprecated, and `amd-smi` reads the same
+//! driver). A device is each `/sys/class/drm/card<N>` whose PCI vendor is
+//! AMD and whose driver is `amdgpu`. The KFD compute driver
 //! (`/sys/class/kfd/kfd`), where it is loaded, adds what ROCm sees: the
-//! device's KFD node, which gives the `rocm` feature, and the processes
-//! that hold a compute context on it.
+//! device's KFD node, which gives the `rocm` feature, the memory ROCm
+//! allocates on it, and the processes that hold a compute context on it.
+//!
+//! Memory: the device's own VRAM (`mem_info_vram_total`), unless KFD gives
+//! it more memory than that VRAM, or the driver keeps no VRAM for it. That
+//! is a GPU built into the processor (an APU), whose compute memory comes
+//! from the machine's own: it is [`DeviceMemory::Unified`], with the memory
+//! KFD reports.
 //!
 //! The id is the device's own unique id where the driver gives one, else
-//! its serial number. A GPU built into the processor (an APU) has neither,
-//! and is found by its PCI address, which the platform fixes for a built-in
-//! device. A discrete card with neither is not listed: its PCI address
-//! changes when the card moves.
+//! its serial number. A built-in GPU with neither is found by its PCI
+//! address, which the platform fixes for a built-in device. A discrete card
+//! with neither is not listed: its PCI address changes when the card moves.
+//! Nor is a card split into compute partitions, which KFD lists as several
+//! nodes: each partition would be a device of its own.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use oneiron::job_workload::{
@@ -32,6 +40,10 @@ const AMD: &str = "amd";
 
 /// The compute feature of a device KFD lists.
 const ROCM: &str = "rocm";
+
+/// KFD's heap types of a GPU's own memory: frame buffer, public and
+/// private.
+const FRAME_BUFFER_HEAPS: [u64; 2] = [1, 2];
 
 /// The probe of this machine's AMD GPUs. The roots are fields so a test can
 /// point the probe at a copy of the tree.
@@ -57,11 +69,18 @@ impl Default for AmdgpuSysfsProbe {
 struct KfdNode {
     /// KFD's id for the device, which names it in each process's files.
     gpu_id: u32,
-    /// The device's own memory as KFD counts it, in bytes; 0 on a GPU that
-    /// has none and shares the machine's memory.
-    local_mem_size: Option<u64>,
+    /// The frame buffer memory ROCm allocates on the device, in bytes.
+    memory_bytes: u64,
     /// The device's graphics IP version, `110003` for `gfx1103`.
     gfx_target_version: Option<u64>,
+}
+
+/// KFD's GPU nodes: by PCI address, and the PCI devices (address without
+/// its function) that more than one node names, which are partitioned.
+#[derive(Debug, Default)]
+struct KfdTopology {
+    nodes: BTreeMap<String, KfdNode>,
+    partitioned: BTreeSet<String>,
 }
 
 /// One AMD GPU as this probe read it.
@@ -131,7 +150,7 @@ impl DeviceProbe for AmdgpuSysfsProbe {
 impl AmdgpuSysfsProbe {
     /// Every AMD GPU the tree lists, in card order.
     fn devices(&self) -> Result<Vec<AmdgpuDevice>, GpuProbeError> {
-        let kfd_nodes = self.kfd_nodes()?;
+        let kfd = self.kfd_topology()?;
         let mut devices = Vec::new();
         for (name, card) in sorted_entries(&self.drm_root)? {
             if !is_card_name(&name) {
@@ -148,21 +167,46 @@ impl AmdgpuSysfsProbe {
                 .and_then(|text| {
                     text.lines()
                         .find_map(|line| line.strip_prefix("PCI_SLOT_NAME="))
-                        .map(str::to_owned)
+                        .map(str::to_ascii_lowercase)
                 })
                 .ok_or_else(|| GpuProbeError::Unreadable {
                     line: format!("{}: no PCI_SLOT_NAME", uevent.display()),
                 })?;
-            let kfd = kfd_nodes.get(&slot.to_ascii_lowercase()).copied();
-            let built_in = kfd.is_some_and(|node| node.local_mem_size == Some(0));
-            let unique_id = attribute(&device.join("unique_id"))?
+            if slot
+                .rsplit_once('.')
+                .is_some_and(|(pci_device, _)| kfd.partitioned.contains(pci_device))
+            {
+                continue;
+            }
+            let node = kfd.nodes.get(&slot).copied();
+            let vram_bytes = optional_byte_count(&device.join("mem_info_vram_total"))?;
+            let memory = match (node, vram_bytes) {
+                (Some(node), vram) if vram.is_none_or(|vram| node.memory_bytes > vram) => {
+                    DeviceMemory::Unified {
+                        mib: bytes_to_mib(node.memory_bytes),
+                    }
+                }
+                (_, Some(vram)) => DeviceMemory::Dedicated {
+                    mib: bytes_to_mib(vram),
+                },
+                (None, None) => {
+                    return Err(GpuProbeError::Unavailable {
+                        reason: format!(
+                            "{}: no mem_info_vram_total and no KFD node",
+                            device.display()
+                        ),
+                    });
+                }
+            };
+            let unique_id = optional_attribute(&device.join("unique_id"))?
                 .filter(|id| id.bytes().any(|byte| byte != b'0'));
-            let serial = attribute(&device.join("serial_number"))?.filter(|id| !id.is_empty());
+            let serial =
+                optional_attribute(&device.join("serial_number"))?.filter(|id| !id.is_empty());
             let (id, id_source) = if let Some(id) = unique_id {
                 (id, DeviceIdSource::VendorUuid)
             } else if let Some(serial) = serial {
                 (serial, DeviceIdSource::Serial)
-            } else if built_in {
+            } else if memory.is_unified() {
                 (format!("pci-{slot}"), DeviceIdSource::PlatformRegistry)
             } else {
                 continue;
@@ -170,18 +214,11 @@ impl AmdgpuSysfsProbe {
             let id = plain_device_id(&id).ok_or_else(|| GpuProbeError::Unreadable {
                 line: format!("{}: device id {id:?}", device.display()),
             })?;
-            let memory = if built_in {
-                DeviceMemory::Unified {
-                    mib: bytes_to_mib(byte_count(&device.join("mem_info_gtt_total"))?),
-                }
-            } else {
-                DeviceMemory::Dedicated {
-                    mib: bytes_to_mib(byte_count(&device.join("mem_info_vram_total"))?),
-                }
-            };
-            let model = match attribute(&device.join("product_name"))?.filter(|n| !n.is_empty()) {
+            let model = match optional_attribute(&device.join("product_name"))?
+                .filter(|product| !product.is_empty())
+            {
                 Some(product) => product,
-                None => match kfd
+                None => match node
                     .and_then(|node| node.gfx_target_version)
                     .and_then(gfx_name)
                 {
@@ -200,10 +237,11 @@ impl AmdgpuSysfsProbe {
                     vendor: AMD.to_owned(),
                     model,
                     memory,
-                    features: kfd.map(|_| ROCM.to_owned()).into_iter().collect(),
-                    // KFD lists every process with a compute context on the
-                    // device; without KFD nothing can say who computes on it.
-                    closure: if kfd.is_some() {
+                    features: node.map(|_| ROCM.to_owned()).into_iter().collect(),
+                    // KFD lists every user's processes with a compute
+                    // context on the device; without KFD nothing can say who
+                    // computes on it.
+                    closure: if node.is_some() {
                         DeviceClosure::Closed
                     } else {
                         DeviceClosure::Admitted
@@ -211,16 +249,16 @@ impl AmdgpuSysfsProbe {
                     state: DeviceState::Offered,
                     max_claimants: 1,
                 },
-                kfd_gpu_id: kfd.map(|node| node.gpu_id),
+                kfd_gpu_id: node.map(|node| node.gpu_id),
             });
         }
         Ok(devices)
     }
 
-    /// KFD's GPU nodes by their PCI address (`0000:c4:00.0`). None where
-    /// KFD is not loaded.
-    fn kfd_nodes(&self) -> Result<BTreeMap<String, KfdNode>, GpuProbeError> {
-        let mut nodes = BTreeMap::new();
+    /// KFD's GPU nodes. None where KFD is not loaded.
+    fn kfd_topology(&self) -> Result<KfdTopology, GpuProbeError> {
+        let mut topology = KfdTopology::default();
+        let mut nodes_per_device: BTreeMap<String, usize> = BTreeMap::new();
         for (_, node) in sorted_entries(&self.kfd_root.join("topology").join("nodes"))? {
             let gpu_id_file = node.join("gpu_id");
             let gpu_id = attribute(&gpu_id_file)?
@@ -235,7 +273,7 @@ impl AmdgpuSysfsProbe {
             if gpu_id == 0 {
                 continue;
             }
-            let properties = kfd_properties(&node.join("properties"))?;
+            let properties = pairs(&node.join("properties"))?;
             let (Some(&domain), Some(&location)) =
                 (properties.get("domain"), properties.get("location_id"))
             else {
@@ -243,22 +281,40 @@ impl AmdgpuSysfsProbe {
                     line: format!("{}: no domain or location_id", node.display()),
                 });
             };
-            let slot = format!(
-                "{domain:04x}:{:02x}:{:02x}.{:x}",
+            // `location_id` is the PCI bus and device-function; a node of
+            // a partitioned card has its partition in the function bits.
+            let pci_device = format!(
+                "{domain:04x}:{:02x}:{:02x}",
                 (location >> 8) & 0xff,
-                (location >> 3) & 0x1f,
-                location & 0x7
+                (location >> 3) & 0x1f
             );
-            nodes.insert(
-                slot,
+            *nodes_per_device.entry(pci_device.clone()).or_default() += 1;
+            let mut memory_bytes = 0_u64;
+            for (_, bank) in sorted_entries(&node.join("mem_banks"))? {
+                let bank = pairs(&bank.join("properties"))?;
+                if bank
+                    .get("heap_type")
+                    .is_some_and(|heap| FRAME_BUFFER_HEAPS.contains(heap))
+                {
+                    memory_bytes = memory_bytes
+                        .saturating_add(bank.get("size_in_bytes").copied().unwrap_or(0));
+                }
+            }
+            topology.nodes.insert(
+                format!("{pci_device}.{:x}", location & 0x7),
                 KfdNode {
                     gpu_id,
-                    local_mem_size: properties.get("local_mem_size").copied(),
+                    memory_bytes,
                     gfx_target_version: properties.get("gfx_target_version").copied(),
                 },
             );
         }
-        Ok(nodes)
+        topology.partitioned = nodes_per_device
+            .into_iter()
+            .filter(|(_, count)| *count > 1)
+            .map(|(pci_device, _)| pci_device)
+            .collect();
+        Ok(topology)
     }
 }
 
@@ -301,14 +357,35 @@ fn attribute(path: &Path) -> Result<Option<String>, GpuProbeError> {
     }
 }
 
-/// A sysfs attribute that holds a count of bytes.
-fn byte_count(path: &Path) -> Result<u64, GpuProbeError> {
-    let text = attribute(path)?.ok_or_else(|| GpuProbeError::Unavailable {
-        reason: format!("{} does not exist", path.display()),
-    })?;
-    text.parse().map_err(|_| GpuProbeError::Unreadable {
-        line: format!("{}: {text}", path.display()),
-    })
+/// An attribute that only some devices give, or only root may read (the
+/// PCI serial number is `0400`): `None` when this server cannot read it.
+fn optional_attribute(path: &Path) -> Result<Option<String>, GpuProbeError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text.trim().to_owned())),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(GpuProbeError::Unavailable {
+            reason: format!("{}: {error}", path.display()),
+        }),
+    }
+}
+
+/// An attribute that holds a count of bytes; `None` when the file does not
+/// exist.
+fn optional_byte_count(path: &Path) -> Result<Option<u64>, GpuProbeError> {
+    attribute(path)?
+        .map(|text| {
+            text.parse().map_err(|_| GpuProbeError::Unreadable {
+                line: format!("{}: {text}", path.display()),
+            })
+        })
+        .transpose()
 }
 
 /// The name of the driver bound to the PCI device at `device`; `None` when
@@ -326,8 +403,8 @@ fn driver_name(device: &Path) -> Result<Option<String>, GpuProbeError> {
     }
 }
 
-/// A KFD node's `properties` file: one `name value` pair per line.
-fn kfd_properties(path: &Path) -> Result<BTreeMap<String, u64>, GpuProbeError> {
+/// A KFD `properties` file: one `name value` pair per line.
+fn pairs(path: &Path) -> Result<BTreeMap<String, u64>, GpuProbeError> {
     let text = attribute(path)?.ok_or_else(|| GpuProbeError::Unavailable {
         reason: format!("{} does not exist", path.display()),
     })?;
