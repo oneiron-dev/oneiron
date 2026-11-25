@@ -636,4 +636,33 @@ mod tests {
         );
         assert_eq!(fs::read(&tmp.path).expect("the file was made"), b"");
     }
+
+    /// Review of #10420, round 2: the vault check compares directories, not
+    /// only their spellings. A path that names a vault directory under
+    /// another spelling, which its canonical path keeps (`VAULT` for `vault`
+    /// on a Linux volume that ignores case), is refused. A link stands for
+    /// that spelling here, since the check takes the path as given.
+    #[cfg(unix)]
+    #[test]
+    fn the_vault_check_compares_directories_not_only_their_spellings() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let base = root.path().canonicalize().expect("the root resolves");
+        let vault = base.join("vault");
+        fs::create_dir(&vault).expect("the vault directory");
+        let alias = base.join("alias");
+        std::os::unix::fs::symlink(&vault, &alias).expect("another name for the vault");
+        for dir in [
+            alias.clone(),
+            alias.join("keys"),
+            alias.join("a").join("keys"),
+        ] {
+            assert_eq!(
+                refuse_inside_vaults(&dir, &[&vault]),
+                Err(KeystoreError::Unavailable(INSIDE_A_VAULT)),
+                "{}",
+                dir.display()
+            );
+        }
+        assert_eq!(refuse_inside_vaults(&base.join("keys"), &[&vault]), Ok(()));
+    }
 }

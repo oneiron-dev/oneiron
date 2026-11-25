@@ -586,4 +586,32 @@ mod tests {
             "the dead writer's copy of the sealed value is removed"
         );
     }
+
+    /// Review of #10420, round 2: an erase whose lock file does not open, in
+    /// a key directory that is there, could not wait for the writers in
+    /// flight, so it is an error and not a clean erase. Here the lock file
+    /// is a link whose target's directory is missing. Only a key directory
+    /// that is gone answers Ok.
+    #[test]
+    fn an_erase_whose_lock_file_does_not_open_reports_it() {
+        let root = tempfile::tempdir().unwrap();
+        let keys = LocalFileKeystore::open(&root.path().join("keys"), &[]).unwrap();
+        keys.create(&slot(), &[1; 32]).unwrap();
+        // A pid no process has: above every Unix pid limit.
+        let copy = keys
+            .dir
+            .join(format!(".{}.4294967295.1.tmp", slot().name()));
+        fs::hard_link(keys.path(&slot()), &copy).unwrap();
+        let lock = keys.dir.join(key_dir::TEMP_WRITERS_LOCK);
+        fs::remove_file(&lock).unwrap();
+        std::os::unix::fs::symlink(keys.dir.join("missing-parent").join("lock"), &lock).unwrap();
+        assert!(matches!(
+            keys.delete(&slot()),
+            Err(KeystoreError::Platform("io", _))
+        ));
+        assert!(copy.exists(), "the erase reported no copy it left");
+        fs::remove_file(&lock).unwrap();
+        keys.delete(&slot()).unwrap();
+        assert!(!copy.exists(), "the next erase kept the stale copy");
+    }
 }
