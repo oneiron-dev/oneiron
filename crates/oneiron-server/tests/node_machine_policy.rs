@@ -655,10 +655,8 @@ fn submit(issuer: EntityId, key: &str, pin: &WorkloadPin) -> TestResult<SignedJo
         },
         authority_heads: Vec::new(),
     };
-    Ok(
-        SignedJobSubmit::sign(submit, ScriptedSigner::new(issuer).as_ref())
-            .map_err(at("the issuer signs"))?,
-    )
+    SignedJobSubmit::sign(submit, ScriptedSigner::new(issuer).as_ref())
+        .map_err(at("the issuer signs"))
 }
 
 fn receipt(answer: JobAnswer) -> TestResult<JobReceipt> {
