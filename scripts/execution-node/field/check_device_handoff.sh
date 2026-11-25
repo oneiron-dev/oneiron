@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # T40 of pass 33 (33-exec-node/DESIGN.md sections 7.10 and 11): after the handoff no other ordinary account can open
 # the card. Run as root at the box, in the handoff window (card CG-1), once for each phase of 7.10:
-#   --phase nobody        step 2: the card's files are closed to every ordinary account, the job account's too.
-#   --phase oneiron-only  step 3: only the job account's group may open them (T40 proper).
+#   --phase nobody        step 2: the card's files are closed to every ordinary account and to the job device group.
+#   --phase oneiron-only  step 3: only the job device group may open them (T40 proper).
 # Each phase also checks that the closing is the driver's persistent setting (so it survives a reboot), that no
 # process holds the card's files open (closing them closes no descriptor that is already open), and that no compute
 # context lives on the card. Every line also goes to the evidence file, kept beside the node's configuration.
 #
-# usage: check_device_handoff.sh --phase nobody|oneiron-only --device <GPU-uuid> --job-account <name>
-#          [--also-account <name>]... [--allow-holder <command name>]... [--evidence <file>]
+# usage: check_device_handoff.sh --phase nobody|oneiron-only --device <GPU-uuid> --job-device-group <name>
+#          [--job-uid <n>] [--also-account <name>]... [--allow-holder <command name>]... [--evidence <file>]
+#   --job-device-group  the node file's job_device_group (default oneiron-job-devices): the group that owns every device
+#                   file a job may lease. Each job unit runs as its own uid from the node's range and keeps this group
+#                   as its one supplementary group when it leases a device (FIX EXEC-UNIT-CROSS-JOB-SAME-UID).
+#   --job-uid       the uid a job's open is tried as, holding that group alone: an id of the node's range no job
+#                   holds (default 1879113727, the last id of the default range).
 #   --also-account  an account to try besides the ordinary ones (UID_MIN..UID_MAX of /etc/login.defs): the engine's
 #                   account, or the private tool's account when either is a system account.
 #   --allow-holder  a process that may hold the card's files open, by its command name (e.g. nvidia-persistenced).
@@ -19,12 +24,13 @@
 # Fixtures (fixture_checks_in_container.sh): NVIDIA_PROC (default /proc/driver/nvidia), NVIDIA_DEV (default /dev) and
 # an nvidia-smi on PATH stand in for the driver.
 set -u
-PHASE=; DEVICE=; JOB=; ALSO=(); ALLOW=(); EVIDENCE=
+PHASE=; DEVICE=; GROUP=; JOB_UID=1879113727; ALSO=(); ALLOW=(); EVIDENCE=
 while [ $# -gt 0 ]; do
   case $1 in
     --phase) PHASE=$2; shift 2;;
     --device) DEVICE=$2; shift 2;;
-    --job-account) JOB=$2; shift 2;;
+    --job-device-group) GROUP=$2; shift 2;;
+    --job-uid) JOB_UID=$2; shift 2;;
     --also-account) ALSO+=("$2"); shift 2;;
     --allow-holder) ALLOW+=("$2"); shift 2;;
     --evidence) EVIDENCE=$2; shift 2;;
@@ -32,7 +38,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case $PHASE in nobody|oneiron-only) ;; *) echo "--phase nobody|oneiron-only" >&2; exit 64;; esac
-[ -n "$DEVICE" ] && [ -n "$JOB" ] || { echo "--device and --job-account are required" >&2; exit 64; }
+[ -n "$DEVICE" ] && [ -n "$GROUP" ] || { echo "--device and --job-device-group are required" >&2; exit 64; }
 TEST=after_the_handoff_no_other_ordinary_account_can_open_the_card
 [ "$PHASE" = nobody ] && TEST=before_the_grant_no_ordinary_account_can_open_the_card
 . "$(dirname "$0")/card.sh"
@@ -43,7 +49,9 @@ unproven() { echo "## TEST $TEST UNPROVEN $1"; exit 77; }
 [ -d "$NVIDIA_PROC/gpus" ] || unproven "no-nvidia-driver ($NVIDIA_PROC/gpus)"
 command -v nvidia-smi > /dev/null || unproven "no-nvidia-smi"
 command -v python3 > /dev/null || unproven "no-python3 (the open probe)"
-id -u "$JOB" > /dev/null 2>&1 || unproven "no-job-account-$JOB"
+command -v setpriv > /dev/null || unproven "no-setpriv (the open as a job)"
+group_gid=$(getent group "$GROUP" | cut -d: -f3)
+[ -n "$group_gid" ] || unproven "no-job-device-group-$GROUP"
 
 mkdir -p "$(dirname "$EVIDENCE")" && : > "$EVIDENCE" || unproven "evidence-file-not-writable"
 say() { echo "$*"; echo "$*" >> "$EVIDENCE"; }
@@ -58,29 +66,31 @@ card_resolve "$DEVICE" || unproven "no-card-$DEVICE"
 say "## EVIDENCE at=$(date -u +%FT%TZ) boot_id=$(cat /proc/sys/kernel/random/boot_id) kernel=$(uname -r) phase=$PHASE"
 say "## EVIDENCE card uuid=$DEVICE bus=$CARD_BUS minor=$CARD_MINOR driver=$CARD_DRIVER"
 
-# The accounts to try: every ordinary one, the named ones, never the job account (it is tried on its own).
+# The accounts to try: every ordinary one and the named ones. A job is tried on its own, as a uid of the node's range.
 uid_min=$(awk '$1 == "UID_MIN" { print $2 }' /etc/login.defs 2>/dev/null); uid_min=${uid_min:-1000}
 uid_max=$(awk '$1 == "UID_MAX" { print $2 }' /etc/login.defs 2>/dev/null); uid_max=${uid_max:-60000}
 mapfile -t OTHERS < <({ getent passwd | awk -F: -v lo="$uid_min" -v hi="$uid_max" '$3 >= lo && $3 <= hi { print $1 }'
-  [ ${#ALSO[@]} -eq 0 ] || printf '%s\n' "${ALSO[@]}"; } | grep -v '^$' | grep -vx -- "$JOB" | sort -u)
-job_gid=$(id -g "$JOB")
-say "## EVIDENCE accounts tried=[${OTHERS[*]}] job=$JOB job_gid=$job_gid"
+  [ ${#ALSO[@]} -eq 0 ] || printf '%s\n' "${ALSO[@]}"; } | grep -v '^$' | sort -u)
+say "## EVIDENCE accounts tried=[${OTHERS[*]}] job_device_group=$GROUP gid=$group_gid job_uid=$JOB_UID"
 
 # Whether <account> gets past the permission check of <file>: `closed` for EACCES or EPERM, else what the open gave
 # (`opened`, or an errno past the permission check, such as ENXIO on a fixture's node with no driver behind it).
-open_as() {
-  runuser -u "$1" -- python3 -c '
+OPEN_PROBE='
 import errno, os, sys
 try:
     os.close(os.open(sys.argv[1], os.O_RDWR))
     print("opened")
 except OSError as e:
     print("closed" if e.errno in (errno.EACCES, errno.EPERM) else errno.errorcode.get(e.errno, str(e.errno)))
-' "$2" 2>&1 | tail -1
+'
+open_as() { runuser -u "$1" -- python3 -c "$OPEN_PROBE" "$2" 2>&1 | tail -1; }
+# The same open as a job: the job uid, its own gid, and the job device group as its one supplementary group.
+open_as_job() {
+  setpriv --reuid="$JOB_UID" --regid="$JOB_UID" --groups="$group_gid" -- python3 -c "$OPEN_PROBE" "$1" 2>&1 | tail -1
 }
 
-# 1. Each file of the card: owner, group and mode; no bit for others; the group is the job account's (oneiron-only) or
-#    no ordinary account's (nobody).
+# 1. Each file of the card: owner, group and mode; no bit for others; the group is the job device group, with no
+#    account in it (oneiron-only), or no ordinary account's (nobody).
 members_of_gid() { # the accounts whose primary or supplementary group is <gid>
   { getent passwd | awk -F: -v g="$1" '$4 == g { print $1 }'
     getent group "$1" | awk -F: '{ gsub(",", "\n", $4); print $4 }'; } | grep -v '^$' | sort -u
@@ -91,14 +101,14 @@ done
 for f in "${CARD[@]}"; do
   [ -e "$f" ] || { check "file-$(basename "$f")" FAIL "missing"; continue; }
   mode=$(stat -c %a "$f"); gid=$(stat -c %g "$f")
-  others=$(members_of_gid "$gid" | grep -vx -- "$JOB" | tr '\n' ' ')
+  others=$(members_of_gid "$gid" | tr '\n' ' ')
   why="mode=$mode gid=$gid other_members=[${others% }]"
   if (( 8#$mode & 8#007 )); then check "file-$(basename "$f")" FAIL "$why: open to every account"
   elif [ -n "$others" ] && (( 8#$mode & 8#070 )); then check "file-$(basename "$f")" FAIL "$why: open to the group's other members"
-  elif [ "$PHASE" = oneiron-only ] && { [ "$gid" != "$job_gid" ] || ! (( (8#$mode & 8#060) == 8#060 )); }; then
-    check "file-$(basename "$f")" FAIL "$why: the job account's group $job_gid cannot read and write it"
-  elif [ "$PHASE" = nobody ] && [ "$gid" = "$job_gid" ] && (( 8#$mode & 8#070 )); then
-    check "file-$(basename "$f")" FAIL "$why: still open to the job account's group"
+  elif [ "$PHASE" = oneiron-only ] && { [ "$gid" != "$group_gid" ] || ! (( (8#$mode & 8#060) == 8#060 )); }; then
+    check "file-$(basename "$f")" FAIL "$why: the job device group $group_gid cannot read and write it"
+  elif [ "$PHASE" = nobody ] && [ "$gid" = "$group_gid" ] && (( 8#$mode & 8#070 )); then
+    check "file-$(basename "$f")" FAIL "$why: still open to the job device group"
   else check "file-$(basename "$f")" PASS "$why"; fi
 done
 
@@ -108,7 +118,7 @@ param() { awk -F': *' -v k="$1" '$1 == k { print $2 }' "$NVIDIA_PROC/params" 2>/
 p_modify=$(param ModifyDeviceFiles); p_gid=$(param DeviceFileGID); p_mode=$(param DeviceFileMode)
 options=$(grep -rhs 'NVreg_DeviceFile' /etc/modprobe.d /usr/lib/modprobe.d /lib/modprobe.d | grep -v '^\s*#' | tr '\n' ' ')
 say "## EVIDENCE driver ModifyDeviceFiles=$p_modify DeviceFileGID=$p_gid DeviceFileMode=$p_mode options=[${options% }]"
-want_gid=0; [ "$PHASE" = oneiron-only ] && want_gid=$job_gid
+want_gid=0; [ "$PHASE" = oneiron-only ] && want_gid=$group_gid
 if [ "$p_modify" != 1 ]; then check driver-setting FAIL "ModifyDeviceFiles=$p_modify: the driver does not set the files' mode"
 elif [ -z "$p_mode" ] || (( p_mode & 8#007 )); then check driver-setting FAIL "DeviceFileMode=$p_mode (decimal) leaves the card open to every account"
 elif [ "$p_gid" != "$want_gid" ]; then check driver-setting FAIL "DeviceFileGID=$p_gid, want $want_gid"
@@ -121,20 +131,20 @@ if [ $dri = 1 ]; then
   else check dri-rule FAIL "the card has drm nodes and no rule under /etc/udev/rules.d sets them: a reboot restores the default mode"; fi
 fi
 
-# 3. An open under every other account fails at the permission check; the job account's succeeds only in oneiron-only.
+# 3. An open under every other account fails at the permission check; a job's succeeds only in oneiron-only.
 for account in "${OTHERS[@]}"; do
   id -u "$account" > /dev/null 2>&1 || { check "open-as-$account" FAIL "no such account"; continue; }
   got=""; for f in "${CARD[@]}"; do [ -e "$f" ] && got="$got $(basename "$f")=$(open_as "$account" "$f")"; done
   if grep -qvE '=closed$' <<< "$(tr ' ' '\n' <<< "${got# }")"; then check "open-as-$account" FAIL "${got# }"
   else check "open-as-$account" PASS "${got# }"; fi
 done
-got="$(basename "${CARD[0]}")=$(open_as "$JOB" "${CARD[0]}") $(basename "${CARD[1]}")=$(open_as "$JOB" "${CARD[1]}")"
+got="$(basename "${CARD[0]}")=$(open_as_job "${CARD[0]}") $(basename "${CARD[1]}")=$(open_as_job "${CARD[1]}")"
 if [ "$PHASE" = oneiron-only ]; then
-  if grep -q '=closed' <<< "$got"; then check "open-as-job-account" FAIL "$got: the job account cannot open the card"
-  else check "open-as-job-account" PASS "$got"; fi
+  if grep -q '=closed' <<< "$got"; then check "open-as-job" FAIL "$got: a job holding the job device group cannot open the card"
+  else check "open-as-job" PASS "$got"; fi
 else
-  if grep -qvE '=closed$' <<< "$(tr ' ' '\n' <<< "$got")"; then check "open-as-job-account" FAIL "$got: open before the grant"
-  else check "open-as-job-account" PASS "$got"; fi
+  if grep -qvE '=closed$' <<< "$(tr ' ' '\n' <<< "$got")"; then check "open-as-job" FAIL "$got: open before the grant"
+  else check "open-as-job" PASS "$got"; fi
 fi
 
 # 4. No descriptor on the card's files is open, but an allowed holder's.
