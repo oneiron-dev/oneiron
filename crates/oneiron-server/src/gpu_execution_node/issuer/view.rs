@@ -67,10 +67,15 @@ pub fn node_view(vault: &Vault, job: &GpuJob, now_ms: u64, step_ms: u64) -> Opti
 /// is not running) is `assigned`. The job row alone cannot tell: its chunk gets its resource
 /// in the same write that makes it `Running`.
 fn lifecycle_of(job: &GpuJob, receipt: Option<&JobReceipt>) -> GpuJobLifecycle {
+    // A session's chunk that continues a run (row W1) runs once the run passed into it, before
+    // its own first receipt says so.
+    let continues = job.chunk().is_some_and(|chunk| chunk.continues.is_some());
     match GpuJobLifecycle::of(job) {
         GpuJobLifecycle::Running
-            if receipt
-                .is_none_or(|receipt| !receipt.started && receipt.state != JobState::Running) =>
+            if !continues
+                && receipt.is_none_or(|receipt| {
+                    !receipt.started && receipt.state != JobState::Running
+                }) =>
         {
             GpuJobLifecycle::Assigned
         }

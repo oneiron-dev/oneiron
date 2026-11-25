@@ -11,7 +11,7 @@ use crate::llm::run_admission::{CallOutcome, DeclaredMaximum, PaidConnector, Run
 
 use super::{
     GpuChunk, GpuConnectorError, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
-    GpuJobState, GpuJobStepReport, GpuOffer, GpuTermination, seconds,
+    GpuJobState, GpuJobStepReport, GpuOffer, GpuResourceStatus, GpuTermination, seconds,
 };
 
 /// The default of `jobs.sessions.renew_lead_secs`: five minutes of the chunk's run time.
@@ -38,16 +38,6 @@ impl std::fmt::Debug for GpuJobRenewal<'_> {
     }
 }
 
-/// What ending a session's next chunk with its run found.
-pub(super) enum RenewalDrain {
-    /// The job holds no next chunk that is still open.
-    Nothing,
-    /// The next chunk ended with the run: it settles `charged_secs` under its permit.
-    Ended { key: String, charged_secs: u64 },
-    /// Its provider has not confirmed its end yet: the step asks again.
-    Pending,
-}
-
 impl Vault {
     /// Renews a running session whose current chunk's run time reached its maximum less the lead:
     /// quotes the next chunk on `offer` with the current chunk's request and maximum, admits it
@@ -67,16 +57,27 @@ impl Vault {
             return Ok(job);
         }
         if let Some(next) = &job.renewal {
-            if next.billed_secs.is_none() {
-                match &next.resource {
-                    None => return self.send_gpu_renewal(job, permits, connector, now_ms),
-                    // Read at each step, so a provider whose send got no answer sends the same
-                    // chunk again inside its window. What it says is the current chunk's to
-                    // tell: that chunk's end, or the run's passage into this one.
-                    Some(resource) => {
-                        let _ = connector.status(resource);
-                    }
+            if next.billed_secs.is_some() {
+                return Ok(job);
+            }
+            // A next chunk this host holds no permit for (its admission was lost at a restart)
+            // is never sent: unsent, it closes here and the session ends at the end of its
+            // chunk; maybe sent, it ends with the run.
+            if !permits.holds_chunk(&job.id, &next.idempotency_key) {
+                if next.dispatched {
+                    return Ok(job);
                 }
+                return self.close_gpu_renewal(job, permits, now_ms);
+            }
+            let Some(resource) = next.resource.clone() else {
+                return self.send_gpu_renewal(job, permits, connector, now_ms);
+            };
+            // Read at each step, so a provider whose send got no answer sends the same chunk
+            // again inside its window. A chunk the run has not reached that ended with nothing
+            // run (a refusal learned on a later send) settles at zero now; any other answer is
+            // the current chunk's to tell.
+            if let Ok(GpuResourceStatus::Exited { used_secs: 0 }) = connector.status(&resource) {
+                return self.close_gpu_renewal(job, permits, now_ms);
             }
             return Ok(job);
         }
@@ -205,17 +206,7 @@ impl Vault {
             Ok(resource) => Some(resource),
             Err(GpuConnectorError::Refused { reason }) => {
                 tracing::info!(job = %job.id.to_hex(), key = %key, %reason, "gpu session: the provider refused the next chunk; the session ends at the end of its chunk");
-                let paid = permits.holds_chunk(&job.id, &key);
-                let _ = bill_chunk(next, Some(0), paid);
-                if !self
-                    .with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?
-                {
-                    return self.stored_after_lost_step(&job.id, &key, permits);
-                }
-                if let Some(permit) = permits.take_for_chunk(&job.id, &key) {
-                    let _ = permit.settle(CallOutcome::Used(0));
-                }
-                return Ok(job);
+                return self.close_gpu_renewal(job, permits, now_ms);
             }
             Err(GpuConnectorError::Timeout | GpuConnectorError::Unavailable { .. }) => {
                 connector.find(&key).ok().flatten()
@@ -227,6 +218,34 @@ impl Vault {
         }
         if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
             return self.stored_after_lost_write(&job.id, &key, sent, permits, connector, now_ms);
+        }
+        Ok(job)
+    }
+
+    /// Ends the session's open next chunk with nothing run: it bills zero, settles its permit at
+    /// zero after the write, and stays on the job, so no other renewal follows it and the run
+    /// ends at the end of the chunk paid.
+    fn close_gpu_renewal(
+        &self,
+        mut job: GpuJob,
+        permits: &GpuJobPermits,
+        now_ms: u64,
+    ) -> Result<GpuJob, GpuJobError> {
+        let id = job.id;
+        let next = job
+            .renewal
+            .as_mut()
+            .ok_or(crate::Error::InvariantViolation(
+                "a GPU session holds its next chunk",
+            ))?;
+        let key = next.idempotency_key.clone();
+        let paid = permits.holds_chunk(&id, &key);
+        let _ = bill_chunk(next, Some(0), paid);
+        if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
+            return self.stored_after_lost_step(&id, &key, permits);
+        }
+        if let Some(permit) = permits.take_for_chunk(&id, &key) {
+            let _ = permit.settle(CallOutcome::Used(0));
         }
         Ok(job)
     }
@@ -275,9 +294,8 @@ impl Vault {
         }
         let chunk = job.chunk_mut()?;
         let key = chunk.idempotency_key.clone();
-        if let Some(used) = used_secs {
-            chunk.used_secs = chunk.used_secs.max(used);
-        }
+        // The slice ran at least what it bills, also when a stop met it with no reading.
+        chunk.used_secs = chunk.used_secs.max(used_secs.unwrap_or(0)).max(billed_secs);
         let paid = permits.holds_chunk(&id, &key);
         let charged_secs = bill_chunk(chunk, Some(billed_secs), paid);
         let settled_units = chunk.settled_units;
@@ -350,39 +368,40 @@ pub(super) fn take_up_gpu_renewal(
     false
 }
 
-/// Ends a session's open next chunk with its run (row W1): the run ended inside the chunk
-/// before it, so it reached this one never, or only for the part its provider bills. A chunk
-/// never sent, or one its provider never made, bills nothing.
+/// Ends a session's open next chunk with its run (row W1): the current chunk's termination
+/// confirmed a real end, so the run ended inside it and never reached the next chunk, which bills
+/// nothing. Its provider is told once, so it closes the chunk; an answer that bills it is taken,
+/// any other answer (none, pending, an error) bills zero, so the job's end never waits on it.
+/// Answers the chunk's key and the seconds charged, or `None` when no next chunk is open.
 pub(super) fn drain_gpu_renewal(
     job: &mut GpuJob,
     permits: &GpuJobPermits,
     connector: &dyn GpuJobConnector,
-) -> Result<RenewalDrain, GpuJobError> {
+) -> Option<(String, u64)> {
     let id = job.id;
-    let Some(next) = job
+    let next = job
         .renewal
         .as_mut()
-        .filter(|next| next.billed_secs.is_none())
-    else {
-        return Ok(RenewalDrain::Nothing);
-    };
-    let resource = match next.resource.clone() {
-        Some(resource) => Some(resource),
-        None => connector.find(&next.idempotency_key)?,
-    };
-    let billed_secs = match &resource {
-        None => 0,
-        Some(resource) => match connector.terminate(resource)? {
-            GpuTermination::Pending => return Ok(RenewalDrain::Pending),
-            GpuTermination::Confirmed { billed_secs }
-            | GpuTermination::Continued { billed_secs } => billed_secs,
-        },
-    };
+        .filter(|next| next.billed_secs.is_none())?;
+    let resource = next
+        .resource
+        .clone()
+        .or_else(|| connector.find(&next.idempotency_key).ok().flatten());
+    let billed_secs = resource
+        .as_ref()
+        .and_then(|resource| match connector.terminate(resource) {
+            Ok(
+                GpuTermination::Confirmed { billed_secs }
+                | GpuTermination::Continued { billed_secs },
+            ) => Some(billed_secs),
+            Ok(GpuTermination::Pending) | Err(_) => None,
+        })
+        .unwrap_or(0);
     next.resource = resource;
     let key = next.idempotency_key.clone();
     let paid = permits.holds_chunk(&id, &key);
     let charged_secs = bill_chunk(next, Some(billed_secs), paid);
-    Ok(RenewalDrain::Ended { key, charged_secs })
+    Some((key, charged_secs))
 }
 
 /// Bills `chunk` its provider's `billed_secs` plus its overhead, never above its quote, and

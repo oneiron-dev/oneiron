@@ -922,10 +922,9 @@ impl Rig {
         self.vault().gpu_job_step_with_renewal(
             &run.job.id,
             &offer,
-            &run.admission,
             &self.permits,
             &self.connector,
-            Some(&renewal),
+            &renewal,
             self.clock.now_ms(),
         )
     }

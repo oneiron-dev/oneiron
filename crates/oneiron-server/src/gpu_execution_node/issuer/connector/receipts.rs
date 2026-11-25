@@ -7,7 +7,9 @@ use oneiron::job_dispatch::{BootMark, DispatchClose, DispatchPhase, JobDispatch,
 
 use super::{VaultMachineConnector, decode, encode, store, unavailable};
 use crate::gpu_execution_node::issuer::billing::{billing, bracket, terminal};
-use crate::gpu_execution_node::wire::{JobEnd, JobReceipt, JobState, JobSubmit, SignedJobReceipt};
+use crate::gpu_execution_node::wire::{
+    JobEnd, JobReceipt, JobState, JobSubmit, SignedJobReceipt, SignedJobSubmit,
+};
 
 /// What the judgement of one receipt found.
 enum Judged {
@@ -45,10 +47,19 @@ impl VaultMachineConnector {
         let receipt = signed.receipt;
         let now_ms = self.now_ms();
         let end_mark = (receipt.state == JobState::Ended).then(|| self.parts.clock.boot_mark());
+        let run_epoch = self.run_epoch(row)?;
         let (_, judged) = self
             .vault()
             .update_job_dispatch_and_observation(&row.key, |row, stored| {
-                judge_receipt(row, stored, &receipt, bytes, now_ms, end_mark)
+                judge_receipt(
+                    row,
+                    stored,
+                    &receipt,
+                    bytes,
+                    now_ms,
+                    end_mark,
+                    run_epoch.as_deref(),
+                )
             })
             .map_err(store)?
             .ok_or_else(|| unavailable("no_dispatch_row"))?;
@@ -57,6 +68,25 @@ impl VaultMachineConnector {
             Judged::HistoryLost => Err(unavailable("history_lost")),
             Judged::HeldUnreadable(error) => Err(unavailable(format!("decode: {error}"))),
         }
+    }
+
+    /// The journal a session's next chunk (row W1) must be judged against, which no `Held`
+    /// receipt binds since it is never reserved: its own first receipt's, or else its run's first
+    /// key's. A receipt from another journal is the node's history lost, never a zero end.
+    /// `None` for every other key.
+    fn run_epoch(&self, row: &JobDispatch) -> Result<Option<String>, GpuConnectorError> {
+        if row.held.is_some() {
+            return Ok(None);
+        }
+        let Some(first) = decode::<SignedJobSubmit>(&row.submit)?.submit.continues else {
+            return Ok(None);
+        };
+        let own = self.vault().job_observation(&row.key).map_err(store)?;
+        let observation = match own {
+            Some(own) => Some(own),
+            None => self.vault().job_observation(&first).map_err(store)?,
+        };
+        Ok(observation.map(|observation| observation.epoch))
     }
 
     /// Whether the node journaled the key: the row holds its `Held` receipt or got past the
@@ -167,6 +197,7 @@ fn judge_receipt(
     bytes: Vec<u8>,
     now_ms: u64,
     end_mark: Option<BootMark>,
+    run_epoch: Option<&str>,
 ) -> (Option<JobObservation>, Judged) {
     let held_epoch = match row
         .held
@@ -174,7 +205,9 @@ fn judge_receipt(
         .map(oneiron_organ_protocol::from_slice::<SignedJobReceipt>)
         .transpose()
     {
-        Ok(held) => held.map(|held| held.receipt.epoch),
+        Ok(held) => held
+            .map(|held| held.receipt.epoch)
+            .or_else(|| run_epoch.map(str::to_owned)),
         Err(error) => return (None, Judged::HeldUnreadable(error.to_string())),
     };
     let went_back = stored

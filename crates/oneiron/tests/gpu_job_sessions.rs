@@ -267,7 +267,6 @@ impl Rig {
     fn step_renewing(
         &self,
         job: &EntityId,
-        admission: &RunAdmission,
         next_limit: Option<u64>,
     ) -> oneiron::gpu_job::GpuJobStepReport {
         let admission_of =
@@ -277,20 +276,12 @@ impl Rig {
             admission: &admission_of,
         };
         self.vault
-            .gpu_job_step_with_renewal(
-                job,
-                &self.offer,
-                admission,
-                &self.permits,
-                &self.gpu,
-                Some(&renewal),
-                NOW,
-            )
+            .gpu_job_step_with_renewal(job, &self.offer, &self.permits, &self.gpu, &renewal, NOW)
             .expect("step")
     }
 
-    fn step(&self, job: &EntityId, admission: &RunAdmission) {
-        let _ = self.step_renewing(job, admission, None);
+    fn step(&self, job: &EntityId) {
+        let _ = self.step_renewing(job, None);
     }
 
     fn job(&self, id: &EntityId) -> GpuJob {
@@ -314,32 +305,31 @@ fn key(job: &EntityId, index: usize) -> String {
     format!("{}:{index}", job.to_hex())
 }
 
-/// Starts a session, runs it to the renewal at 700 s and answers the job, its first admission
-/// and the two chunk keys.
-fn renewed(rig: &Rig) -> (GpuJob, RunAdmission, String, String) {
-    let (job, admission) = rig.start();
+/// Starts a session, runs it to the renewal at 700 s and answers the job and the two chunk keys.
+fn renewed(rig: &Rig) -> (GpuJob, String, String) {
+    let (job, _admission) = rig.start();
     let (first, next) = (key(&job.id, 0), key(&job.id, 1));
     rig.gpu.running(&first, CHUNK_SECS - 300);
-    rig.step(&job.id, &admission);
-    (rig.job(&job.id), admission, first, next)
+    rig.step(&job.id);
+    (rig.job(&job.id), first, next)
 }
 
 #[test]
 fn a_session_offer_sends_its_renewal_before_its_chunk_ends() {
     let rig = rig();
-    let (job, admission) = rig.start();
+    let (job, _admission) = rig.start();
     let first = key(&job.id, 0);
     assert_eq!(rig.gpu.called("create"), 1);
 
     // 699 s of a 1,000 s chunk: one second short of the lead, nothing is sent. A job on any
     // other offer would have been told to checkpoint at 50 percent by now.
     rig.gpu.running(&first, CHUNK_SECS - 301);
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     assert_eq!(rig.gpu.called("renew"), 0);
     assert!(rig.job(&job.id).renewal.is_none());
 
     rig.gpu.running(&first, CHUNK_SECS - 300);
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     let stored = rig.job(&job.id);
     let next = stored.renewal.as_ref().expect("the next chunk is written");
     assert_eq!(
@@ -363,7 +353,7 @@ fn a_session_offer_sends_its_renewal_before_its_chunk_ends() {
 
     // Later steps send no second renewal, and C2 tells the session nothing at 95 percent.
     rig.gpu.running(&first, CHUNK_SECS - 50);
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     assert_eq!(rig.gpu.called("renew"), 1);
     let signals = rig.gpu.state().signals.clone();
     assert!(signals.is_empty(), "{signals:?}");
@@ -376,13 +366,13 @@ fn a_session_offer_sends_its_renewal_before_its_chunk_ends() {
 #[test]
 fn a_session_whose_next_chunk_is_not_admitted_ends_at_its_chunk() {
     let rig = rig();
-    let (job, admission) = rig.start();
+    let (job, _admission) = rig.start();
     let first = key(&job.id, 0);
     // The next chunk's line is one credit-micro: its whole quote does not fit.
     rig.gpu.running(&first, CHUNK_SECS - 300);
-    let _ = rig.step_renewing(&job.id, &admission, Some(1));
+    let _ = rig.step_renewing(&job.id, Some(1));
     rig.gpu.running(&first, CHUNK_SECS - 100);
-    let _ = rig.step_renewing(&job.id, &admission, Some(1));
+    let _ = rig.step_renewing(&job.id, Some(1));
     assert_eq!(rig.gpu.called("renew"), 0, "nothing is sent unpaid");
     assert!(rig.job(&job.id).renewal.is_none());
 
@@ -399,7 +389,7 @@ fn a_session_whose_next_chunk_is_not_admitted_ends_at_its_chunk() {
             billed_secs: CHUNK_SECS,
         },
     );
-    let _ = rig.step_renewing(&job.id, &admission, Some(1));
+    let _ = rig.step_renewing(&job.id, Some(1));
     let ended = rig.job(&job.id);
     assert_eq!(
         ended.state,
@@ -420,7 +410,7 @@ fn a_session_whose_next_chunk_is_not_admitted_ends_at_its_chunk() {
 fn a_session_whose_next_chunk_the_provider_refuses_sends_no_other() {
     let rig = rig();
     rig.gpu.state().renew_refusal = Some("template_not_a_session".to_owned());
-    let (job, admission, first, next) = renewed(&rig);
+    let (job, first, next) = renewed(&rig);
     let held = job
         .renewal
         .as_ref()
@@ -433,7 +423,7 @@ fn a_session_whose_next_chunk_the_provider_refuses_sends_no_other() {
         "the refused chunk's hold settles at zero"
     );
     rig.gpu.running(&first, CHUNK_SECS - 100);
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     assert_eq!(
         rig.gpu.called(&format!("renew {next}")),
         1,
@@ -444,7 +434,7 @@ fn a_session_whose_next_chunk_the_provider_refuses_sends_no_other() {
 #[test]
 fn each_chunk_of_a_session_settles_its_own_slice_once() {
     let rig = rig();
-    let (job, admission, first, next) = renewed(&rig);
+    let (job, first, next) = renewed(&rig);
     assert!(job.renewal.is_some());
 
     // The node proves the run passed the first chunk's paid end: that slice is confirmed and
@@ -457,7 +447,7 @@ fn each_chunk_of_a_session_settles_its_own_slice_once() {
         },
     );
     rig.gpu.running(&next, 10);
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     let passed = rig.job(&job.id);
     assert_eq!(passed.state, GpuJobState::Running);
     assert_eq!(passed.chunks.len(), 2);
@@ -479,7 +469,7 @@ fn each_chunk_of_a_session_settles_its_own_slice_once() {
 
     // The next step reads the chunk running now and settles nothing again.
     rig.gpu.running(&next, 300);
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     assert_eq!(
         rig.settled(),
         vec![(CHUNK_SECS + OVERHEAD_SECS) * UNIT_COST]
@@ -492,7 +482,7 @@ fn each_chunk_of_a_session_settles_its_own_slice_once() {
         .reports(&next, GpuResourceStatus::Exited { used_secs: 400 });
     rig.gpu
         .terminates(&next, GpuTermination::Confirmed { billed_secs: 400 });
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     let ended = rig.job(&job.id);
     assert_eq!(
         ended.state,
@@ -501,7 +491,7 @@ fn each_chunk_of_a_session_settles_its_own_slice_once() {
         }
     );
     assert_eq!(ended.chunks[1].settled_units, Some(400 * UNIT_COST));
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     assert_eq!(
         rig.settled(),
         vec![(CHUNK_SECS + OVERHEAD_SECS) * UNIT_COST, 400 * UNIT_COST],
@@ -513,7 +503,7 @@ fn each_chunk_of_a_session_settles_its_own_slice_once() {
 #[test]
 fn a_session_that_ends_before_its_next_chunk_settles_that_chunk_at_zero() {
     let rig = rig();
-    let (job, admission, first, next) = renewed(&rig);
+    let (job, first, next) = renewed(&rig);
     rig.gpu
         .reports(&first, GpuResourceStatus::Exited { used_secs: 900 });
     rig.gpu
@@ -521,7 +511,7 @@ fn a_session_that_ends_before_its_next_chunk_settles_that_chunk_at_zero() {
     // The node withdraws the chunk the run never reached.
     rig.gpu
         .terminates(&next, GpuTermination::Confirmed { billed_secs: 0 });
-    rig.step(&job.id, &admission);
+    rig.step(&job.id);
     let ended = rig.job(&job.id);
     assert_eq!(
         ended.state,
@@ -549,7 +539,7 @@ fn a_session_that_ends_before_its_next_chunk_settles_that_chunk_at_zero() {
 #[test]
 fn a_cancel_that_meets_a_passed_boundary_ends_the_next_chunk() {
     let rig = rig();
-    let (job, admission, first, next) = renewed(&rig);
+    let (job, first, next) = renewed(&rig);
     // The run passed the first chunk's end before the stop reached it: the stop of the first
     // key stopped nothing.
     rig.gpu.terminates(
@@ -577,7 +567,11 @@ fn a_cancel_that_meets_a_passed_boundary_ends_the_next_chunk() {
         }
     );
     assert_eq!(cancelled.chunks.len(), 2, "the next chunk runs now");
-    rig.step(&job.id, &admission);
+    assert_eq!(
+        cancelled.chunks[1].base_used_secs, CHUNK_SECS,
+        "the passed slice counts the seconds it billed, not the last reading"
+    );
+    rig.step(&job.id);
     let ended = rig.job(&job.id);
     assert_eq!(
         ended.state,
@@ -594,4 +588,29 @@ fn a_cancel_that_meets_a_passed_boundary_ends_the_next_chunk() {
         rig.settled(),
         vec![(CHUNK_SECS + OVERHEAD_SECS) * UNIT_COST, 25 * UNIT_COST]
     );
+}
+
+#[test]
+fn a_next_chunk_that_ended_unrun_releases_its_hold_at_once() {
+    let rig = rig();
+    let (job, first, next) = renewed(&rig);
+    // A later read finds the node refused the next chunk: it ended with nothing run.
+    rig.gpu.running(&first, CHUNK_SECS - 200);
+    rig.gpu
+        .reports(&next, GpuResourceStatus::Exited { used_secs: 0 });
+    rig.step(&job.id);
+    let stored = rig.job(&job.id);
+    let held = stored
+        .renewal
+        .as_ref()
+        .expect("the next chunk stays on the job");
+    assert_eq!((held.billed_secs, held.settled_units), (Some(0), Some(0)));
+    assert_eq!(
+        stored.state,
+        GpuJobState::Running,
+        "the current chunk runs on"
+    );
+    assert_eq!(rig.settled().iter().sum::<u64>(), 0);
+    rig.step(&job.id);
+    assert_eq!(rig.gpu.called("renew"), 1, "no second renewal");
 }

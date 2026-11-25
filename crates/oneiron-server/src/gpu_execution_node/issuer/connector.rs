@@ -513,19 +513,9 @@ impl VaultMachineConnector {
         };
         let ended = match answered {
             Some(receipt) => receipt,
-            None => match self.stored_terminal(&row.key)? {
-                Some(receipt) => receipt,
-                // A session's next chunk the node never journaled (row W1): once its submit's
-                // window passed, the node takes it never, and nothing ran under it.
-                None if signed.submit.continues.is_some() && !self.journaled(&row)? => {
-                    if self.now_ms() < row.not_after_ms {
-                        return Ok(GpuTermination::Pending);
-                    }
-                    self.update(&row.key, |row| row.phase = DispatchPhase::Closed)?;
-                    return Ok(GpuTermination::Confirmed { billed_secs: 0 });
-                }
-                None => return Err(unavailable("stop_not_confirmed")),
-            },
+            None => self
+                .stored_terminal(&row.key)?
+                .ok_or_else(|| unavailable("stop_not_confirmed"))?,
         };
         self.confirm(&row.key, &signed.submit, &ended)
     }

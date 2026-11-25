@@ -428,10 +428,18 @@ impl Vault {
         permits: &GpuJobPermits,
     ) -> Result<GpuJob, GpuJobError> {
         let stored = self.load_gpu_job(id)?;
-        if ended_unsettled(&stored, key)
-            && let Some(permit) = permits.take_for_chunk(id, key)
-        {
-            let _ = permit.settle(CallOutcome::Used(0));
+        // A session's next chunk too: the row that won may have ended it with no settlement.
+        let renewal = stored
+            .renewal
+            .as_ref()
+            .map(|next| next.idempotency_key.as_str())
+            .filter(|renewal| *renewal != key);
+        for key in std::iter::once(key).chain(renewal) {
+            if ended_unsettled(&stored, key)
+                && let Some(permit) = permits.take_for_chunk(id, key)
+            {
+                let _ = permit.settle(CallOutcome::Used(0));
+            }
         }
         Ok(stored)
     }

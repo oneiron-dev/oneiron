@@ -225,7 +225,17 @@ impl VaultMachineConnector {
             self.close(&row.key, DispatchClose::StartWindowPassed)?;
             return Ok(GpuResourceStatus::Pending);
         }
-        // The gate of a first send, with no stop on a refusal: the key closes unsent.
+        // The renewal's own controls again (row W1), and the gate of a first send, with no
+        // stop on a refusal: the key closes unsent.
+        if let Some(code) = self.renewal_refusal(
+            &row.job,
+            row.machine,
+            &signed.submit,
+            signed.submit.maximum_secs,
+        )? {
+            self.close(&row.key, DispatchClose::RefusedBeforeSend { code })?;
+            return Ok(GpuResourceStatus::Pending);
+        }
         if let Err(refusal) = self.recheck(row, &signed.submit)? {
             self.close(
                 &row.key,

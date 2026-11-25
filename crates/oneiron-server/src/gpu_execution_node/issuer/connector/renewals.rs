@@ -7,7 +7,6 @@ use oneiron::gpu_job::{
 use oneiron::job_dispatch::{
     DispatchAsk, DispatchClose, DispatchPhase, DispatchRefusal, JobDispatch,
 };
-use oneiron::job_workload::WorkloadStarter;
 
 use super::{
     Sent, VaultMachineConnector, call_error, decode, encode, hold_of, job_answer_label, refused,
@@ -15,7 +14,7 @@ use super::{
 };
 use crate::gpu_execution_node::issuer::NOT_AVAILABLE_TO_THIS_CALLER;
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobEnd, JobRequest, JobState, JobSubmit, SignedJobSubmit, TemplateKind,
+    JobAnswer, JobEnd, JobRequest, JobState, JobSubmit, SignedJobSubmit, Starter, TemplateKind,
 };
 
 impl VaultMachineConnector {
@@ -35,9 +34,6 @@ impl VaultMachineConnector {
         if let Some(row) = self.vault().job_dispatch(key).map_err(store)? {
             return Ok(GpuResourceRef(row.resource()));
         }
-        if self.parts.settings.paused {
-            return Err(refused("dispatch_paused"));
-        }
         let job = EntityId::from_hex(&spec.job).map_err(|_| refused("job_id_invalid"))?;
         let first = self
             .vault()
@@ -50,16 +46,13 @@ impl VaultMachineConnector {
             return Err(refused("continues_not_a_first_key"));
         }
         if let Some(refusal) =
-            super::super::guard::machine_job_guard_refusal(self.vault(), first.machine)
+            self.renewal_refusal(&job, first.machine, &first_submit, spec.maximum_secs)?
         {
             return Err(refused(refusal));
         }
         let Some(starter) = self.starter_of(&first, &first_submit)? else {
             return Err(refused(DispatchRefusal::StarterLapsed.code()));
         };
-        if let WorkloadStarter::Grant(grant) = starter {
-            self.check_session_allowance(&job, &grant, spec.maximum_secs)?;
-        }
         let now = self.now_ms();
         let ask = DispatchAsk {
             starter,
@@ -154,31 +147,38 @@ impl VaultMachineConnector {
         Ok(resource)
     }
 
-    /// A Grant's per-job maximum holds over every chunk of a session (row W1), as it holds over
-    /// a resume: the paid maximum so far plus `maximum_secs` must fit it.
-    fn check_session_allowance(
+    /// The issuer's own controls on a session's next chunk (row W1), before its first send and
+    /// before every send again: the pause, the machine's guard, and a Grant's per-job maximum,
+    /// which holds over every chunk of the run as it holds over a resume (the paid maximum so far
+    /// plus `maximum_secs` must fit it). Answers the refusal's code, or `None` to go on.
+    pub(super) fn renewal_refusal(
         &self,
         job: &EntityId,
-        grant: &EntityId,
+        machine: EntityId,
+        submit: &JobSubmit,
         maximum_secs: u64,
-    ) -> Result<(), GpuConnectorError> {
-        let paid_secs = self
-            .vault()
-            .gpu_job(job)
-            .map_err(store)?
-            .ok_or_else(|| refused("job_missing"))?
-            .maximum
-            .maximum()
-            .units;
-        let allowance = self
-            .vault()
-            .gpu_job_allowance(grant)
-            .map_err(store)?
-            .ok_or_else(|| refused("allowance_missing"))?;
-        if paid_secs.saturating_add(maximum_secs) > allowance.maximum_secs {
-            return Err(refused("allowance_exceeded"));
+    ) -> Result<Option<String>, GpuConnectorError> {
+        if self.parts.settings.paused {
+            return Ok(Some("dispatch_paused".to_owned()));
         }
-        Ok(())
+        if let Some(refusal) = super::super::guard::machine_job_guard_refusal(self.vault(), machine)
+        {
+            return Ok(Some(refusal.into()));
+        }
+        let Starter::Grant { grant } = submit.starter else {
+            return Ok(None);
+        };
+        let Some(stored) = self.vault().gpu_job(job).map_err(store)? else {
+            return Ok(Some("job_missing".to_owned()));
+        };
+        let Some(allowance) = self.vault().gpu_job_allowance(&grant).map_err(store)? else {
+            return Ok(Some("allowance_missing".to_owned()));
+        };
+        let paid_secs = stored.maximum.maximum().units;
+        if paid_secs.saturating_add(maximum_secs) > allowance.maximum_secs {
+            return Ok(Some("allowance_exceeded".to_owned()));
+        }
+        Ok(None)
     }
 
     /// The node must offer the first key's template, by name and digest, as a session's

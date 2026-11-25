@@ -228,10 +228,8 @@ fn step_one_job(
         .gpu_job(id)
         .map_err(GpuJobError::from)?
         .ok_or(GpuJobError::NotFound)?;
-    let chunk = job.chunk().ok_or(GpuJobError::NotFound)?;
     let (offer, connector) = offer_with_backend(server, &job.offer.name)?;
-    let admission = job_admission(server, &offer.offer, &chunk.quote);
-    // Each chunk of a session is admitted under its own quote's line (row W1).
+    // Each chunk is admitted under its own quote's line, a session's next one too (row W1).
     let admission_of = |quote: &GpuJobQuote| job_admission(server, &offer.offer, quote);
     let renewal = GpuJobRenewal {
         lead_floor_ms: session_renew_lead_floor_ms(&server.config.gpu_jobs),
@@ -240,21 +238,22 @@ fn step_one_job(
     Ok(server.vault.gpu_job_step_with_renewal(
         id,
         &offer.offer,
-        &admission,
         server.gpu_jobs.permits(),
         connector.as_ref(),
-        Some(&renewal),
+        &renewal,
         now_ms,
     )?)
 }
 
-/// The least renewal lead a session's step may take (row W1): one step of the worker, one
-/// bounded send to the node, the node's renewal margin before the chunk's cutoff, and a second.
-/// A `jobs.sessions.renew_lead_secs` at or below it renews nothing.
+/// The least renewal lead a session's step may take (row W1): one step of the worker, three
+/// bounded calls to the node (its offer, the submit, a status), the node's stop grace (its
+/// default, 10 s: the issuer does not read a node's own) and its renewal margin before that
+/// stop, and a second. A `jobs.sessions.renew_lead_secs` at or below it renews nothing.
 fn session_renew_lead_floor_ms(settings: &crate::config::gpu_jobs::GpuJobsSettings) -> u64 {
     settings
         .step_secs
-        .saturating_add(settings.vault_machine.call_timeout_secs)
+        .saturating_add(settings.vault_machine.call_timeout_secs.saturating_mul(3))
+        .saturating_add(crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT)
         .saturating_add(1)
         .saturating_mul(1_000)
         .saturating_add(crate::gpu_execution_node::jobs::RENEWAL_MARGIN_NS / 1_000_000)
