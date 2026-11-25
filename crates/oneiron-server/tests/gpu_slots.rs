@@ -909,6 +909,41 @@ fn a_failed_probe_offers_nothing() -> TestResult {
     Ok(())
 }
 
+/// FIX G1-PLACEMENT-DUPLICATE-DEVICE-ID (first-pass review of #10471): a
+/// lease and its launch recheck find their GPU by id in a fresh reading, so
+/// a reading that lists one id twice, here under two models, could lease or
+/// launch on either line. Such a reading measures nothing.
+#[test]
+fn a_reading_that_lists_one_gpu_twice_offers_nothing() -> TestResult {
+    let probe = FakeProbe::with(vec![rtx4090("GPU-aaaa")]);
+    let slots = table(&probe, offering(&["GPU-aaaa"]));
+    let mut lease = slots.lease(&pinned("job", "GPU-aaaa"), T0)?;
+
+    probe
+        .devices
+        .lock()
+        .unwrap()
+        .push(gpu("GPU-aaaa", A4000, A4000_MIB));
+    let repeated = GpuProbeError::RepeatedDevice {
+        device_id: "GPU-aaaa".to_owned(),
+    };
+    let unmeasured = GpuSlotRefusal::Unmeasured {
+        reason: repeated.to_string(),
+    };
+    assert_eq!(slots.availability(T0 + 1), Err(repeated));
+    assert_eq!(slots.held_devices(T0 + 1), Err(unmeasured.clone()));
+    assert_eq!(
+        slots.lease(&request("other"), T0 + 1).map(|_| ()),
+        Err(unmeasured.clone())
+    );
+    assert_eq!(
+        lease.confirm_launch(),
+        Err(unmeasured),
+        "the launch recheck cannot tell which line is its GPU"
+    );
+    Ok(())
+}
+
 /// The vault's machines as the home reads them: each a real slot table on
 /// a fake driver, some unreachable, some whose answer is a refusal. It
 /// records every machine it asks.
