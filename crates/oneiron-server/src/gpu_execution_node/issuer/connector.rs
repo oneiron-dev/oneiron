@@ -24,8 +24,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJobConnector, GpuJobSignal, GpuJobSpec, GpuResourceRef,
-    GpuResourceStatus, GpuTermination,
+    GpuConnectorError, GpuJob, GpuJobConnector, GpuJobNodeView, GpuJobSignal, GpuJobSpec,
+    GpuResourceRef, GpuResourceStatus, GpuTermination,
 };
 use oneiron::job_dispatch::{
     DispatchAsk, DispatchClose, DispatchPhase, DispatchRefusal, JobDispatch,
@@ -266,6 +266,12 @@ impl VaultMachineConnector {
         if self.parts.settings.paused {
             return Err(refused("dispatch_paused"));
         }
+        // Row R4, 7.9: a machine the issuer drained takes no new dispatch until door 12 clears
+        // it. Nothing is written or sent.
+        if let Some(refusal) = super::guard::machine_job_guard_refusal(self.vault(), inputs.machine)
+        {
+            return Err(refused(refusal));
+        }
         let job = EntityId::from_hex(&spec.job).map_err(|_| refused("job_id_invalid"))?;
         let started_by = self
             .vault()
@@ -378,6 +384,10 @@ impl VaultMachineConnector {
         resource: &GpuResourceRef,
     ) -> Result<GpuResourceStatus, GpuConnectorError> {
         let row = self.dispatch_of(resource)?;
+        // Row R4, door 10: a written-off key is never asked or settled again.
+        if matches!(row.closed, Some(DispatchClose::WrittenOff { .. })) {
+            return Err(unavailable("written_off"));
+        }
         if row.history_lost_at_ms.is_some() {
             return Err(unavailable("history_lost"));
         }
@@ -452,6 +462,9 @@ impl VaultMachineConnector {
         resource: &GpuResourceRef,
     ) -> Result<GpuTermination, GpuConnectorError> {
         let row = self.dispatch_of(resource)?;
+        if matches!(row.closed, Some(DispatchClose::WrittenOff { .. })) {
+            return Err(unavailable("written_off"));
+        }
         let signed = decode::<SignedJobSubmit>(&row.submit)?;
         if row.phase == DispatchPhase::Closed
             && let Some(terminal) = self
@@ -510,6 +523,57 @@ impl GpuJobConnector for VaultMachineConnector {
     fn terminate(&self, resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
         let (_, key) = resource_parts(resource)?;
         self.keys.with(key, || self.terminate_key(resource))
+    }
+
+    fn node_view(&self, job: &GpuJob, now_ms: u64, step_ms: u64) -> Option<GpuJobNodeView> {
+        super::view::node_view(self.vault(), job, now_ms, step_ms)
+    }
+
+    /// Door 10 (pass 33, 8.5): closes the chunk's dispatch as written off, for good, under the
+    /// key's lock. Refused for a key whose terminal receipt the issuer holds (its step settles
+    /// it), and before the node's latest cutoff (the submit's `not_after` plus its maximum) and
+    /// `jobs.write_off.wait_secs` have passed, so any launch from this dispatch has met its
+    /// cutoff. A repeat answers `Ok`.
+    fn write_off(&self, job: &GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
+        let chunk = job.chunk().ok_or_else(|| refused("write_off_no_chunk"))?;
+        let key = chunk.idempotency_key.as_str();
+        self.keys.with(key, || self.write_off_key(key, now_ms))
+    }
+}
+
+impl VaultMachineConnector {
+    /// `write_off` under the key's lock.
+    fn write_off_key(&self, key: &str, now_ms: u64) -> Result<(), GpuConnectorError> {
+        let Some(row) = self.vault().job_dispatch(key).map_err(store)? else {
+            return Err(refused("write_off_never_dispatched"));
+        };
+        if matches!(row.closed, Some(DispatchClose::WrittenOff { .. })) {
+            return Ok(());
+        }
+        if self.stored_terminal(&row.key)?.is_some() {
+            return Err(refused("end_confirmed"));
+        }
+        let submit = decode::<SignedJobSubmit>(&row.submit)?.submit;
+        let wait_secs = self
+            .vault()
+            .machine_job_settings(row.machine)
+            .map_err(store)?
+            .write_off_wait_secs;
+        let earliest_ms = submit
+            .not_after_ms
+            .saturating_add(submit.maximum_secs.saturating_mul(1_000))
+            .saturating_add(wait_secs.saturating_mul(1_000));
+        if now_ms < earliest_ms {
+            return Err(refused("write_off_too_early"));
+        }
+        self.update(&row.key, |row| {
+            row.phase = DispatchPhase::Closed;
+            row.closed = Some(DispatchClose::WrittenOff {
+                at_ms: now_ms,
+                late_receipt: None,
+            });
+        })?;
+        Ok(())
     }
 }
 

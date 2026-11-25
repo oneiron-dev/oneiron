@@ -33,8 +33,9 @@ use oneiron::gpu_line::{
     record_node_answer_in_txn, settle_unit_in_txn,
 };
 use oneiron::job_workload::{
-    DeviceClaim, DeviceKind, JOB_ALPN, NetworkMode, ResourceRequest, ScopeKind, Sharing,
-    WorkloadApproveRequest, WorkloadCaller, WorkloadPin, WorkloadPinRequest, WorkloadStanding,
+    DeviceClaim, DeviceKind, JOB_ALPN, NetworkMode, NoScreenModel, ResourceRequest, ScopeKind,
+    Sharing, WorkloadApproveRequest, WorkloadCaller, WorkloadPin, WorkloadPinRequest,
+    WorkloadStanding,
 };
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory,
@@ -392,9 +393,21 @@ impl Fixture {
             network: NetworkMode::None,
             outputs: Vec::new(),
         };
+        // The pin door is the caller's memory handle (pass 34, 6.5): the
+        // vault owner's pin goes at once, so no screen runs and no project or
+        // check-in is named.
         let pinned = self
             .vault
-            .pin_job_workload(caller, &WorkloadPinRequest { pin }, NOW_MS)
+            .memory(self.owner, EdgeActorClass::Human)
+            .pin_job_workload(
+                &WorkloadPinRequest {
+                    pin,
+                    project: None,
+                    check_in_ref: None,
+                },
+                &NoScreenModel,
+                NOW_MS,
+            )
             .expect("the owner pins the workload");
         let workload = pinned.workload.digest;
         let approved = self
