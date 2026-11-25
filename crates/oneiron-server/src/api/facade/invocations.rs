@@ -286,7 +286,12 @@ pub(crate) enum DoorClaim {
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 7] = [
+/// The machines' status (review round 1 of #10424) is a live read that the
+/// vault never stores: on `refresh` it holds what each execution node
+/// answers now, and a kept reply would write that answer to this vault's
+/// invocation state and replay it after the node went offline. A same-id
+/// retry reads, and on `refresh` asks the nodes, again.
+const UNKEPT_REPLY_VERBS: [&str; 8] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -294,6 +299,7 @@ const UNKEPT_REPLY_VERBS: [&str; 7] = [
     "vault.booking.personal_link.mint",
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
+    oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
