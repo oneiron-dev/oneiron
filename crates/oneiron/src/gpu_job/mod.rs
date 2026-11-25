@@ -27,6 +27,7 @@ use crate::{EntityId, Vault};
 mod allowance;
 mod caller;
 mod connector;
+mod host_allocation;
 mod node_view;
 mod offer;
 mod permits;
@@ -44,6 +45,7 @@ pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
     GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
 };
+pub use host_allocation::HostAllocationGrant;
 pub use node_view::{
     GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved,
     GpuJobOutputView, GpuJobOutputsView,

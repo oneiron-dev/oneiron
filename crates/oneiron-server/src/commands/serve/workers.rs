@@ -78,6 +78,10 @@ pub(crate) async fn start_desktop_workers(
     // Read before any worker starts, so a candidate file that does not read
     // stops the start with nothing running (FIX 7386).
     let publisher_candidates = config.failure_signals.publisher_candidates()?;
+    // `[gpu_jobs.host_allocation]` funds the host account, once per id, before any GPU job is
+    // started or taken up again; a refusal stops the start with nothing running
+    // (R6-VAULT-MACHINE-FUNDING = A).
+    crate::gpu_host::install_host_allocation_at_start(&sync_server)?;
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(config);
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With

@@ -17,4 +17,11 @@ crate::side_table::side_tables! {
         // start again after the owner narrowed or removed it.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::gpu_job::erase_allowance_actor_in_txn;
+    /// One allocation a self-hosted server granted its own host account from
+    /// `[gpu_jobs.host_allocation]` (R6-VAULT-MACHINE-FUNDING = A): its units, unit and when, so
+    /// a restart never grants the same id again. Key: the allocation id (UTF-8).
+    GPU_HOST_ALLOCATION_GRANT: VaultMeta b"gpu_host_allocation:v1:" Named
+        // Restore class: A grant is live: a restore never forgets one, so it never mints the
+        // units of an id a second time.
+        [restore: live] [family: unclassified] [tier: canonical];
 }

@@ -79,6 +79,30 @@ pub fn grant_allocation(
         .map_err(|error| anyhow::anyhow!("{error:?}"))
 }
 
+/// Grants `server`'s host account its `[gpu_jobs.host_allocation]`, as server start does: once
+/// per id in its vault (R6-VAULT-MACHINE-FUNDING = A). Answers whether the account was granted
+/// the allocation now: `false` when the section is absent or the vault recorded the id before.
+///
+/// # Errors
+///
+/// The start's refusal: a managed server, the vault's write, or the account's refusal.
+pub fn install_host_allocation(server: &SyncServer) -> anyhow::Result<bool> {
+    crate::gpu_host::install_host_allocation_at_start(server)
+        .map(|installed| installed == crate::gpu_host::HostAllocationAtStart::Granted)
+}
+
+/// Refuses a `[gpu_jobs]` section that names `[gpu_jobs.host_allocation]`, as a managed
+/// server's start does.
+///
+/// # Errors
+///
+/// The section names one.
+pub fn refuse_managed_host_allocation(
+    settings: &crate::config::GpuJobsSettings,
+) -> anyhow::Result<()> {
+    crate::gpu_host::refuse_managed_host_allocation(settings)
+}
+
 /// One pass of the GPU job worker: one step of every live job, each with its
 /// outcome as text when it refused.
 pub fn step_gpu_jobs(server: &SyncServer) -> Vec<(EntityId, Result<GpuJobStepReport, String>)> {

@@ -11,7 +11,8 @@
 //! an offer whose backend is not registered refuses before any reservation. Each job runs as its own
 //! declared run, whose one line is the chunk's quote, reserved whole on this
 //! server's host account (FRAUD-1: a host-paid offer draws on the vault's
-//! paid allocation).
+//! paid allocation). A self-hosted server funds that account from `[gpu_jobs.host_allocation]` at
+//! start, once per id ([`install_host_allocation_at_start`]; R6-VAULT-MACHINE-FUNDING = A).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -21,11 +22,11 @@ use oneiron::EntityId;
 use oneiron::gpu_job::{
     GpuConnectorError, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
     GpuJobSignal, GpuJobSpec, GpuJobStepReport, GpuOffer, GpuResourceRef, GpuResourceStatus,
-    GpuTermination,
+    GpuTermination, HostAllocationGrant,
 };
-use oneiron::llm::run_admission::{BudgetLine, RunAdmission, RunDeclaration};
+use oneiron::llm::run_admission::{Allocation, BudgetLine, RunAdmission, RunDeclaration};
 
-use crate::config::GpuOfferSettings;
+use crate::config::{GpuJobsSettings, GpuOfferSettings};
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// The GPU backends this server registered, by name, and the run permits of
@@ -197,6 +198,83 @@ pub(crate) fn now_ms() -> u64 {
         .map_or(0, |since| {
             u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
         })
+}
+
+/// What a server start did with `[gpu_jobs.host_allocation]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HostAllocationAtStart {
+    /// The section is absent: the host account starts empty, as without it.
+    NotConfigured,
+    /// The vault recorded the id now, and the host account holds its units.
+    Granted,
+    /// The vault recorded a grant of the id at an earlier start: nothing was granted now.
+    GrantedBefore,
+}
+
+/// The refusal of `[gpu_jobs.host_allocation]` on a managed server.
+const MANAGED_HOST_ALLOCATION: &str =
+    "gpu_jobs.host_allocation is refused on a managed server: its supervisor funds its host account";
+
+/// Grants `server`'s host account the allocation `[gpu_jobs.host_allocation]` names, walletless,
+/// before any job is started or taken up again (R6-VAULT-MACHINE-FUNDING = A). The vault records
+/// the id first, so an id is granted once: a start that finds it recorded grants nothing and says
+/// so. Every job still reserves and settles on the host account (FRAUD-1).
+///
+/// # Errors
+///
+/// A managed server, the vault's write, or the account's refusal of the allocation: the start
+/// stops.
+pub(crate) fn install_host_allocation_at_start(
+    server: &SyncServer,
+) -> anyhow::Result<HostAllocationAtStart> {
+    let Some(settings) = &server.config.gpu_jobs.host_allocation else {
+        return Ok(HostAllocationAtStart::NotConfigured);
+    };
+    anyhow::ensure!(server.managed_issuer.is_none(), MANAGED_HOST_ALLOCATION);
+    let id = &settings.reference.id;
+    let grant = HostAllocationGrant {
+        units: settings.units,
+        unit: settings.unit.clone(),
+        granted_at_ms: now_ms(),
+    };
+    if let Some(earlier) = server.vault.record_host_allocation_grant(id, &grant)? {
+        tracing::warn!(
+            id = %id,
+            granted_at_ms = earlier.granted_at_ms,
+            "gpu_jobs.host_allocation was granted at an earlier start and is not granted again: \
+             name a new id to fund GPU jobs"
+        );
+        return Ok(HostAllocationAtStart::GrantedBefore);
+    }
+    server
+        .host_account()
+        .grant(Allocation {
+            reference: settings.reference.clone(),
+            units: settings.units,
+            unit: settings.unit.clone(),
+            wallet: None,
+        })
+        .map_err(|refused| {
+            anyhow::anyhow!("gpu_jobs.host_allocation {id}: the host account refused it: {refused}")
+        })?;
+    tracing::info!(
+        id = %id,
+        units = settings.units,
+        unit = %settings.unit.as_str(),
+        "gpu_jobs.host_allocation granted to the host account"
+    );
+    Ok(HostAllocationAtStart::Granted)
+}
+
+/// A managed server's start refuses `[gpu_jobs.host_allocation]`: its supervisor funds its host
+/// account.
+///
+/// # Errors
+///
+/// The section is present.
+pub(crate) fn refuse_managed_host_allocation(settings: &GpuJobsSettings) -> anyhow::Result<()> {
+    anyhow::ensure!(settings.host_allocation.is_none(), MANAGED_HOST_ALLOCATION);
+    Ok(())
 }
 
 /// One step of every live job at `now_ms`, each with its outcome. A job whose
