@@ -239,6 +239,7 @@ pub mod outbound_intent_ledger;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
+pub mod work_order;
 pub use oneiron_web_fetch::web_fetch;
 // ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
 pub mod agent_def;

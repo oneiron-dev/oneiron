@@ -427,6 +427,7 @@ pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
 pub mod weave_arc_rederive;
 pub mod witness_project;
+pub mod work_order;
 #[cfg(feature = "sync")]
 pub mod work_talk_replay;
 pub mod workaround_skills;

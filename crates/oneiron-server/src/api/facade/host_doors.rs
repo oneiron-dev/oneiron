@@ -30,6 +30,7 @@ pub(in crate::api) mod support;
 mod verb_grant;
 mod verdict_hooks;
 mod vision;
+mod work_orders;
 
 pub(super) use self::admission::*;
 pub(crate) use self::arms::*;
@@ -44,6 +45,7 @@ pub(crate) use self::planner_card::*;
 pub(crate) use self::proactivity::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
+pub(crate) use self::work_orders::*;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
