@@ -433,6 +433,59 @@ a_unit_started_with_another_keys_parameters_fails_in_the_prepare_step() {
   fi
 }
 
+# forge_gate_report <exchange dir> <report line> <log> <seconds>: run as the job account. Until <log>.stop exists or
+# the time is up, it offers <report line> to the gate of the job whose exchange directory is <dir>: through the gate's
+# socket, or, on a head that still has them, through the report pipe. Each delivery that went through adds a line.
+forge_gate_report() {
+  local dir=$1 line=$2 log=$3 end=$((SECONDS + $4))
+  while [ $SECONDS -lt $end ] && [ ! -e "$log.stop" ]; do
+    if [ -S "$dir/gate.sock" ]; then
+      printf '%s\n' "$line" | socat -u - "UNIX-CONNECT:$dir/gate.sock" 2> /dev/null && echo socket >> "$log"
+    elif [ -p "$dir/report" ]; then
+      timeout 2 bash -c 'printf "%s\n" "$1" > "$2"' _ "$line" "$dir/report" 2> /dev/null && echo pipe >> "$log"
+    else
+      sleep 0.005
+    fi
+  done
+}
+
+# FIX EXEC-UNIT-ONE-JOB-ACCOUNT: every job runs as the one job account, so another job's workload can reach a starting
+# job's exchange (through /proc of a same-uid process where Landlock is missing). Here a shell of the job account on the
+# machine plays that workload: from before the start it offers the gate a report that refuses the job. The job must
+# start on job-exec's own report, and the gate must have refused the other process. Up to 3 runs, until one shows the
+# gate refusing it; none: UNPROVEN (job-exec reached the gate first each time).
+another_process_of_the_job_account_cannot_answer_the_gate_for_a_job() {
+  local run why= refused=0 log forger line
+  log=$(mktemp /tmp/qual-forger.XXXXXX); chmod 0666 "$log"
+  for run in 1 2 3; do
+    launch_marker t21-forge qual 120 256 ""
+    line=$(jq -cn --arg i "$ID" '{instance: $i, proofs: {}, refusal: "forged_by_another_process"}')
+    : > "$log"; rm -f "$log.stop"
+    runuser -u "$JOB" -- bash -c "$(declare -f forge_gate_report); forge_gate_report /run/oneiron-jobs/$ID '$line' $log 60" &
+    forger=$!
+    sleep 0.3
+    start
+    wait_ended 60 || why="run $run: no end record in 60 s"
+    touch "$log.stop"; wait "$forger" 2> /dev/null
+    [ -n "$why" ] && break
+    if [ "$(ended .workload_started)" != true ] || [ ! -e "$P/out/started" ] || [ "$(jq -r '.report.refusal // ""' "$C/scope.json")" != "" ]; then
+      why="run $run: the job did not start on its own report (deliveries: $(sort "$log" | uniq -c | tr -s ' \n' ' ')); scope $(jq -c '{released, refusal, report_refusal: .report.refusal}' "$C/scope.json" 2>&1); end $(tr -d '\n' < "$C/ended.json")"
+      break
+    fi
+    journalctl --sync 2> /dev/null
+    refused=$(journalctl -u "$UNIT" --no-pager -o cat 2> /dev/null | grep -c 'refused a peer')
+    [ "$refused" -gt 0 ] && break
+  done
+  rm -f "$log" "$log.stop"
+  if [ -n "$why" ]; then
+    result "$FUNCNAME" FAIL "$why"
+  elif [ "$refused" -gt 0 ]; then
+    result "$FUNCNAME" PASS "run $run: the gate refused $refused connection(s) of another process of the job account; the job started on job-exec's own report"
+  else
+    result "$FUNCNAME" UNPROVEN "in 3 runs the other process never reached the gate before job-exec"
+  fi
+}
+
 a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unproven() {
   local why=""
   launch_marker t23-unrequired qual 120 256 ""
@@ -657,6 +710,7 @@ for test in \
   a_job_has_no_network_unless_its_template_opens_it \
   a_unit_whose_network_or_process_hiding_did_not_apply_refuses_before_the_workload_exists \
   a_unit_started_with_another_keys_parameters_fails_in_the_prepare_step \
+  another_process_of_the_job_account_cannot_answer_the_gate_for_a_job \
   a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unproven \
   a_workload_cannot_write_or_replace_its_end_record \
   the_unit_opens_the_leased_device_and_no_other \
