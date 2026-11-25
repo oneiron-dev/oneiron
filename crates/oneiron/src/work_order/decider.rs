@@ -281,7 +281,8 @@ struct SlotQuestion<'o> {
     /// The order whose line's project holds the slot's rows; none reads the vault's.
     order: Option<&'o WorkOrder>,
     options: Vec<String>,
-    facts: Value,
+    /// The facts the decider reads, made only when it is asked.
+    facts: Box<dyn FnOnce() -> Value + 'o>,
 }
 
 /// `value` as JSON, or null when it does not encode.
@@ -375,7 +376,7 @@ impl Vault {
             agent,
             class,
             options: question.options,
-            facts: question.facts,
+            facts: (question.facts)(),
             deadline_ms: policy.deadline_ms,
             max_asks_per_hour: policy.max_asks_per_hour,
         };
@@ -426,26 +427,30 @@ impl Vault {
         }
         let ids: Vec<EntityId> = ranked.iter().map(|order| order.id).collect();
         let rule = rank_decision(&ids, 0);
-        let orders: Vec<Value> = ranked
-            .iter()
-            .take(RANK_OPTIONS_MAX)
-            .map(|order| {
-                json!({
-                    "order": order.id.to_hex(),
-                    "class": fact(&order.class),
-                    "charge": fact(&order.charge),
-                    "age_ms": now_ms.saturating_sub(order.ordered_at_ms),
-                    "attempts": order.attempts.len(),
-                    "family_running": running.get(&order.family_key()).copied().unwrap_or(0),
+        let rule_pick = rule_fact(&rule);
+        let shown = &ranked;
+        let facts = move || {
+            let orders: Vec<Value> = shown
+                .iter()
+                .take(RANK_OPTIONS_MAX)
+                .map(|order| {
+                    json!({
+                        "order": order.id.to_hex(),
+                        "class": fact(&order.class),
+                        "charge": fact(&order.charge),
+                        "age_ms": now_ms.saturating_sub(order.ordered_at_ms),
+                        "attempts": order.attempts.len(),
+                        "family_running": running.get(&order.family_key()).copied().unwrap_or(0),
+                    })
                 })
-            })
-            .collect();
-        let facts = json!({ "rule": RANK_RULE, "orders": orders, "rule_pick": rule_fact(&rule) });
+                .collect();
+            json!({ "rule": RANK_RULE, "orders": orders, "rule_pick": rule_pick })
+        };
         let question = SlotQuestion {
             slot: SlotName::Rank,
             order: None,
             options: rule.options.clone(),
-            facts,
+            facts: Box::new(facts),
         };
         let decision = self.decide_slot(host, question, rule)?;
         if let Some(position) = ranked
@@ -479,33 +484,35 @@ impl Vault {
         if may_wait(order.wait, now_ms) {
             options.push(PLACE_WAIT.to_owned());
         }
-        let machines: Vec<Value> = placed
-            .options
-            .iter()
-            .filter_map(|id| {
-                candidates
-                    .iter()
-                    .find(|facts| facts.machine.to_hex() == *id)
-            })
-            .map(|facts| fact(*facts))
-            .collect();
-        let facts = json!({
-            "rule": PLACE_RULE,
-            "order": {
-                "class": fact(&order.class),
-                "request": fact(&order.request),
-                "wait": fact(&order.wait),
-                "wishes": fact(&order.wishes),
-            },
-            "candidates": machines,
-            "rule_pick": rule_fact(&placed),
-        });
         let rule = placed.clone();
+        let facts = || {
+            let machines: Vec<Value> = rule
+                .options
+                .iter()
+                .filter_map(|id| {
+                    candidates
+                        .iter()
+                        .find(|facts| facts.machine.to_hex() == *id)
+                })
+                .map(|facts| fact(*facts))
+                .collect();
+            json!({
+                "rule": PLACE_RULE,
+                "order": {
+                    "class": fact(&order.class),
+                    "request": fact(&order.request),
+                    "wait": fact(&order.wait),
+                    "wishes": fact(&order.wishes),
+                },
+                "candidates": machines,
+                "rule_pick": rule_fact(&rule),
+            })
+        };
         let question = SlotQuestion {
             slot: SlotName::Place,
             order: Some(order),
             options,
-            facts,
+            facts: Box::new(facts),
         };
         let decision = self.decide_slot(host, question, placed)?;
         let decider = match &decision.by {
@@ -553,23 +560,26 @@ impl Vault {
         if matches!(pick, AfterPick::Done | AfterPick::GiveUp) || order.cancel.is_some() {
             return Ok((pick, decision));
         }
-        let facts = json!({
-            "rule": AFTER_RULE,
-            "end": fact(&end),
-            "attempt": order.attempts.len(),
-            "ends": order
-                .attempts
-                .iter()
-                .filter_map(|attempt| attempt.end.as_ref().map(|ended| fact(&ended.kind)))
-                .collect::<Vec<Value>>(),
-            "retry_on": fact(&order.retry_on),
-            "rule_pick": rule_fact(&decision),
-        });
+        let rule_pick = rule_fact(&decision);
+        let facts = move || {
+            json!({
+                "rule": AFTER_RULE,
+                "end": fact(&end),
+                "attempt": order.attempts.len(),
+                "ends": order
+                    .attempts
+                    .iter()
+                    .filter_map(|attempt| attempt.end.as_ref().map(|ended| fact(&ended.kind)))
+                    .collect::<Vec<Value>>(),
+                "retry_on": fact(&order.retry_on),
+                "rule_pick": rule_pick,
+            })
+        };
         let question = SlotQuestion {
             slot: SlotName::After,
             order: Some(order),
             options: decision.options.clone(),
-            facts,
+            facts: Box::new(facts),
         };
         let decided = self.decide_slot(host, question, decision)?;
         if !matches!(decided.by, DecidedBy::Grant { .. }) {
