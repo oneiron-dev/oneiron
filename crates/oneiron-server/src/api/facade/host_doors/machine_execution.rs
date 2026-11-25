@@ -7,7 +7,9 @@
 //! never kept for a same-id retry (`invocations::UNKEPT_REPLY_VERBS`).
 //!
 //! `vault.machines.execution.clear_drain` (row R4, door 12): clears the issuer's drain of one
-//! machine. The owner under their own proof, or an agent whose own Grant lists the verb
+//! machine; the owner's call under `clear_by` `owner` or `grants` also sends the machine the
+//! owner's clear of its own drain (`machines.drain.cleared_at`), and may ask the owner's
+//! presence. The owner under their own proof, or an agent whose own Grant lists the verb
 //! (`verb_grant_caller`); the engine's act then judges the caller against the machine's setting
 //! `machines.drain.clear_by` (`oneiron::machine_policy`).
 
@@ -54,7 +56,8 @@ pub(crate) async fn vault_machines_execution_get(
     .await
 }
 
-/// `vault.machines.execution.clear_drain`: the issuer takes new jobs on `input.machine` again.
+/// `vault.machines.execution.clear_drain`: the issuer takes new jobs on `input.machine` again;
+/// the owner's call can also clear the machine's own drain.
 pub(crate) async fn vault_machines_execution_clear_drain(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

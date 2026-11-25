@@ -1,6 +1,6 @@
 {
   "name": "vault.machines.execution.clear_drain",
-  "description": "Clears the issuer's drain of one machine after its failed jobs in a row, so it takes new jobs again. Who may call it is the machine's setting machines.drain.clear_by: the owner by default.",
+  "description": "Clears the issuer's drain of one machine after failed jobs in a row, so it takes jobs again; the owner's call under clear_by owner or grants also sends the machine the owner's clear of its own drain. Who may call: machines.drain.clear_by.",
   "input": "crate::job_dispatch::machine_records::MachineDrainClearRequest",
   "output": "crate::job_dispatch::machine_records::MachineDrainCleared",
   "call": "crate::job_dispatch::machine_records::clear_drain_embedded(memory, &input)?",

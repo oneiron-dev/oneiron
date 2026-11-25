@@ -21,7 +21,7 @@ pub(crate) mod tables;
 use serde::{Deserialize, Serialize};
 
 pub use clear_drain_door::{
-    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, clear_drain_as,
+    CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, NodeDrainClear, clear_drain_as,
     clear_drain_embedded,
 };
 pub use job_return::{JobReturn, ReturnRefusal};
@@ -133,6 +133,9 @@ pub enum ClearDrainRefusal {
     /// The issuer has not drained this machine.
     #[error("machine_not_drained")]
     NotDrained,
+    /// The issuer's drain is not the one the caller read: cleared and set again since.
+    #[error("machine_drained_again")]
+    DrainedAgain,
 }
 
 impl Vault {
@@ -271,31 +274,48 @@ impl Vault {
     }
 
     /// Door 12's write: clears the issuer's drain of `machine` and its count, in one durable
-    /// write. Who may call it is the door's check against `machines.drain.clear_by`.
+    /// write, when the drain is still `was`, the one the door read. Who may call it is the
+    /// door's check against `machines.drain.clear_by`.
     ///
     /// # Errors
     ///
     /// A store failure; inside, [`ClearDrainRefusal::NotDrained`] for a machine the issuer has
-    /// not drained.
+    /// not drained, [`ClearDrainRefusal::DrainedAgain`] for a drain that is not `was`.
     pub fn clear_machine_job_drain(
         &self,
         machine: EntityId,
+        was: &MachineDrain,
+        now_ms: u64,
+    ) -> crate::Result<Result<MachineJobGuard, ClearDrainRefusal>> {
+        self.with_write_txn(|txn| self.clear_machine_job_drain_in_txn(txn, machine, was, now_ms))
+    }
+
+    /// [`Self::clear_machine_job_drain`] in the caller's write.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::clear_machine_job_drain`].
+    pub(crate) fn clear_machine_job_drain_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        machine: EntityId,
+        was: &MachineDrain,
         now_ms: u64,
     ) -> crate::Result<Result<MachineJobGuard, ClearDrainRefusal>> {
         let row_key = machine.to_hex();
-        self.with_write_txn(|txn| {
-            let Some(mut guard) = MACHINE_JOB_GUARDS.get(&self.store, txn, &row_key)? else {
-                return Ok(Err(ClearDrainRefusal::NotDrained));
-            };
-            if guard.drained.is_none() {
-                return Ok(Err(ClearDrainRefusal::NotDrained));
-            }
-            guard.drained = None;
-            guard.failures_in_a_row = 0;
-            guard.last_failure = None;
-            guard.updated_at_ms = now_ms;
-            MACHINE_JOB_GUARDS.put(&self.store, txn, &row_key, &guard)?;
-            Ok(Ok(guard))
-        })
+        let Some(mut guard) = MACHINE_JOB_GUARDS.get(&self.store, txn, &row_key)? else {
+            return Ok(Err(ClearDrainRefusal::NotDrained));
+        };
+        match &guard.drained {
+            None => return Ok(Err(ClearDrainRefusal::NotDrained)),
+            Some(drained) if drained != was => return Ok(Err(ClearDrainRefusal::DrainedAgain)),
+            Some(_) => {}
+        }
+        guard.drained = None;
+        guard.failures_in_a_row = 0;
+        guard.last_failure = None;
+        guard.updated_at_ms = now_ms;
+        MACHINE_JOB_GUARDS.put(&self.store, txn, &row_key, &guard)?;
+        Ok(Ok(guard))
     }
 }

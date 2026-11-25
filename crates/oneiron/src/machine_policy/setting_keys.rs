@@ -88,6 +88,10 @@ fn readiness_every_secs() -> u64 {
     READINESS_EVERY_SECS_DEFAULT
 }
 
+fn drain_never_cleared() -> u64 {
+    0
+}
+
 crate::setting::setting_keys! {
     /// Whether the machine takes work: `state` is `on`; `paused` (no new work, and running work
     /// goes on: the panel's "off"); or `draining` (no new work, and work with a task boundary is
@@ -160,6 +164,19 @@ crate::setting::setting_keys! {
         kind: Kind::new(clear_after_readiness_check)
             .strictest(clear_by_person_at_box)
             .custom(drain_clear_by_no_wider),
+        item: Some(MACHINES),
+    };
+    /// When you, or a Grant `machines.drain.clear_by` names, last cleared the machine's drain from
+    /// the panel, in Unix milliseconds. Default 0: never. Where `machines.drain.clear_by` is
+    /// `owner` or `grants`, the machine's execution node clears a drain that began before this
+    /// time at its next readiness tick once its last check has not failed, when its box file does
+    /// not keep the clear for the person at the box and this row's writer is one `clear_by`
+    /// names. Only the machine's own row clears its drain. An earlier time is tighter: an agent
+    /// you gave this key may move it back at once, and needs you to move it on.
+    pub(crate) DRAIN_CLEARED_AT: u64 = "machines.drain.cleared_at" {
+        kind: Kind::new(drain_never_cleared)
+            .strictest(drain_never_cleared)
+            .lower(),
         item: Some(MACHINES),
     };
     /// The most the template caches on the machine hold together, in GiB; above it the least

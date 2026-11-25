@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 mod judged_change;
+mod with_write;
 
 use serde::{Deserialize, Serialize};
 
@@ -258,39 +259,8 @@ impl Vault {
         request: SetSetting,
         between: impl FnOnce(),
     ) -> Result<SetSettingOutcome> {
-        // The owner's change is checked and judged on a read first. The read drops before
-        // the ask, and the ask is before the turn, so the door holds nothing while it blocks.
-        let ground = match caller {
-            SettingCaller::Owner(owner) if owner_change_signs(&request) => {
-                let importance = judged_change::owner_change_importance(self, owner, &request)?;
-                let witness =
-                    self.owner_presence(importance, owner_presence_reasons::SETTING_CHANGE)?;
-                Some(OwnerProofGround::witnessed(&witness))
-            }
-            _ => None,
-        };
-        between();
-        // Taken before the write opens, never inside it: a holder of the turn may be waiting on
-        // the writer. An unknown key takes none; the write refuses it.
-        let turn = match spec_named(&request.key)
-            .ok()
-            .and_then(|spec| spec.write_turn)
-        {
-            Some(turn) => Some((turn.take)(self)?),
-            None => None,
-        };
-        let outcome = self.with_write_txn_grouped_after_commit(
-            |txn| self.set_setting_in_txn(txn, ground.as_ref(), caller, &request),
-            |outcome| {
-                run_after_commit(self, &[(&request, &outcome)]);
-                Ok(outcome)
-            },
-        );
-        // The projection pass this write's commit ran left the rows of keys with this turn for
-        // later: it runs now that the turn is released.
-        drop(turn);
-        super::project::project_deferred_settings(self);
-        outcome
+        self.set_setting_with(caller, request, between, |_, _| Ok::<(), Error>(()))
+            .map(|(outcome, ())| outcome)
     }
 
     /// [`Self::set_setting`] in the caller's write: the same wall, checks, power, change row and

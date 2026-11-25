@@ -70,6 +70,24 @@ pub fn plant_undecodable_row(vault: &Vault, key: &str, scope: SettingScope) -> R
     crate::setting::put_stored_bytes(vault, key, SettingMode::Value, scope, &[0xc1, 0xc1])
 }
 
+/// Plants `value` as `key`'s value row at the vault for `item`, written by `by` in the capacity
+/// `setter` (an agent through its Grant, say), on an install where the fixture cannot act as that
+/// writer.
+///
+/// # Errors
+///
+/// An unknown key; an item the key does not admit; a value it does not take; storage errors.
+#[cfg(feature = "test-support")]
+pub fn plant_setting_row(
+    vault: &Vault,
+    key: &str,
+    item: Option<&str>,
+    value: serde_json::Value,
+    (setter, by): (crate::setting::Setter, Option<EntityId>),
+) -> Result<()> {
+    crate::setting::put_stored_row(vault, key, item, value, (setter, by))
+}
+
 /// Plants `digest` as the defaults digest `pack`'s head row keeps: a damaged store.
 ///
 /// # Errors
