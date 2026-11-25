@@ -147,9 +147,11 @@ async fn serve_prepared<A: AppHost>(
     // The app's channel, taken once, before any worker starts.
     let connections = host.listener()?;
     let server_config = config.sync_server_config();
-    if let Err(error) =
-        crate::commands::sign_root_project(&vault, server_config.auth_secret.as_deref())
-    {
+    if let Err(error) = crate::commands::sign_root_project(
+        &vault,
+        server_config.auth_secret.as_deref(),
+        &config.keystore,
+    ) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
     crate::owner::house::bind_house_leader_at_start(
