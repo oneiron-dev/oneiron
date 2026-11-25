@@ -931,6 +931,46 @@ EOF
   fi
 }
 
+# FIX EXEC-NODE-DISK-CHECK-UNBUILT (design 7.9): the engine's disk check asks root for a running job's payload size
+# through the control socket's `usage` verb, since a job runs as its own uid and may make a directory the engine's
+# account cannot list. Here the job writes 3 MiB into a 0700 directory of its own; root's answer counts them, a bound
+# below the payload answers `past`, and an account that is not the engine's is not answered. Red (a binary from before
+# the verb): the CLI refuses `usage`.
+the_engine_learns_the_size_of_a_payload_with_a_private_directory_through_root() {
+  launch t75 qual 120 256 "" <<'EOF'
+mkdir -m 0700 "$ONEIRON_JOB_OUT/private"
+head -c 3145728 /dev/urandom > "$ONEIRON_JOB_OUT/private/blob"
+sync
+echo written > "$ONEIRON_JOB_OUT/written"
+sleep 60
+EOF
+  start
+  local i why= whole= past= other= listed=no
+  for ((i = 0; i < 300; i++)); do [ -e "$P/out/written" ] && break; sleep 0.1; done
+  [ -e "$P/out/written" ] || why="the workload never wrote its payload"
+  if [ -z "$why" ]; then
+    as_engine ls "$P/out/private" > /dev/null 2>&1 && listed=yes
+    whole=$(as_engine "$BIN" execution-node unit-control usage "$KEY" 18446744073709551615 2>&1)
+    past=$(as_engine "$BIN" execution-node unit-control usage "$KEY" 1048576 2>&1)
+    other=$(as_job_id $(outside_job_ids) "$BIN" execution-node unit-control usage "$KEY" 1048576 2>&1) \
+      && why="an account that is not the engine's was answered: $other"
+  fi
+  as_engine "$BIN" execution-node unit-control stop "$KEY" > /dev/null 2>&1
+  wait_ended 60 || why="${why:-no end record in 60 s after the stop}"
+  [ -z "$why" ] && [ "$listed" = yes ] && why="the engine's account could list the job's 0700 directory, so the case proves nothing"
+  if [ -z "$why" ] && ! { [[ "$whole" =~ ^bytes\ [0-9]+$ ]] && [ "${whole#bytes }" -ge 3145728 ]; }; then
+    why="root's answer for the whole payload: ${whole:-none}"
+  fi
+  if [ -z "$why" ] && ! { [[ "$past" =~ ^past\ [0-9]+$ ]] && [ "${past#past }" -gt 1048576 ]; }; then
+    why="root's answer under a 1 MiB bound: ${past:-none}"
+  fi
+  if [ -z "$why" ]; then
+    result "$FUNCNAME" PASS "the engine's account cannot list the job's 0700 directory; root answered '$whole' for the payload (3 MiB written there) and '$past' under a 1 MiB bound; a job's uid was refused"
+  else
+    result "$FUNCNAME" FAIL "$why"
+  fi
+}
+
 setup
 echo "## SETUP host=$(uname -r) systemd=$(systemctl --version | head -1) landlock-abi=$(cat /sys/kernel/security/landlock/abi_version 2> /dev/null || echo ?) cgroup=$(cut -d: -f3 /proc/self/cgroup) root-subtree=[$(cat /sys/fs/cgroup/cgroup.subtree_control 2> /dev/null)]"
 wanted a_machine_without_the_minimum_contract_offers_no_jobs && BEFORE_INSTALL=1
@@ -969,6 +1009,7 @@ for test in \
   a_kill_that_cannot_be_confirmed_quarantines_the_device \
   a_log_past_its_cap_keeps_its_head_and_its_newest_tail \
   a_checkpoint_notice_reaches_the_workload_and_stops_nothing \
+  the_engine_learns_the_size_of_a_payload_with_a_private_directory_through_root \
   a_job_is_ended_at_its_maximum_with_the_engine_and_the_issuer_stopped; do
   wanted "$test" && "$test"
 done
