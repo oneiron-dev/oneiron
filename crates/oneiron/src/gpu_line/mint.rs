@@ -216,15 +216,23 @@ fn draw_orders_valid(policy: &BudgetPolicy) -> bool {
 }
 
 impl GpuLine {
-    /// The live seats the next mint funds a floor for, on (pinned, unpinned)
-    /// side; new ideas are paid from their own pool.
+    /// The seats the mint of period `index` lists under this line's policy,
+    /// as [`mint_period`] picks them.
+    fn seats_funded_in(&self, index: u32) -> impl Iterator<Item = &FamilySeat> {
+        let new_idea_periods = self.budget.new_idea_periods;
+        self.families
+            .iter()
+            .filter(move |seat| seat.funded_in(index, new_idea_periods))
+    }
+
+    /// The seats the mint of period `index` funds a floor for, on (pinned,
+    /// unpinned) side; new ideas are paid from their own pool.
     #[must_use]
-    pub fn side_seats(&self) -> (u64, u64) {
+    pub fn side_seats(&self, index: u32) -> (u64, u64) {
         let mut sides = (0, 0);
         for seat in self
-            .families
-            .iter()
-            .filter(|seat| seat.lapsed_from_period.is_none() && seat.track != Track::NewIdea)
+            .seats_funded_in(index)
+            .filter(|seat| seat.track != Track::NewIdea)
         {
             match self.budget.side_of(seat.track) {
                 Side::Pinned => sides.0 += 1,
@@ -234,22 +242,23 @@ impl GpuLine {
         sides
     }
 
-    /// The live new-idea seats.
+    /// The new-idea seats the mint of period `index` funds.
     #[must_use]
-    pub fn new_idea_seats(&self) -> u64 {
-        self.families
-            .iter()
-            .filter(|seat| seat.lapsed_from_period.is_none() && seat.track == Track::NewIdea)
+    pub fn new_idea_seats(&self, index: u32) -> u64 {
+        self.seats_funded_in(index)
+            .filter(|seat| seat.track == Track::NewIdea)
             .count() as u64
     }
 
     /// Checks every rule a line must keep before it is stored: the bounds of
-    /// section 3.1 and that the next mint funds every live seat.
+    /// section 3.1, and that the mint of `next_period`, the first one the
+    /// policy applies to, funds every seat it lists. A seat that lapses
+    /// before that mint counts for none of it.
     ///
     /// # Errors
     ///
     /// The first rule it breaks.
-    pub fn validate(&self) -> Result<(), LineInvalid> {
+    pub fn validate(&self, next_period: u32) -> Result<(), LineInvalid> {
         let budget = &self.budget;
         if LeaseUnit::new(self.unit.as_str()).is_err() {
             return Err(LineInvalid::Unit);
@@ -286,7 +295,7 @@ impl GpuLine {
             return Err(LineInvalid::FloorArms);
         }
         if budget.new_idea_slots_per_period > defaults::MAX_NEW_IDEA_SLOTS_PER_PERIOD
-            || self.new_idea_seats() > u64::from(budget.new_idea_slots_per_period)
+            || self.new_idea_seats(next_period) > u64::from(budget.new_idea_slots_per_period)
         {
             return Err(LineInvalid::NewIdeaSlots);
         }
@@ -314,7 +323,7 @@ impl GpuLine {
         if !distinct(&self.leads) || !distinct(&self.reviewers) || !distinct(&self.planners) {
             return Err(LineInvalid::Roles);
         }
-        let (pinned_seats, unpinned_seats) = self.side_seats();
+        let (pinned_seats, unpinned_seats) = self.side_seats(next_period);
         pools(budget, pinned_seats, unpinned_seats)
             .map_err(|side| LineInvalid::Unfunded { side })?;
         Ok(())
