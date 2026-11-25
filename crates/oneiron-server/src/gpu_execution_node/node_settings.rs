@@ -437,7 +437,8 @@ impl ExecutionNodeSettings {
     /// when the template declares `params`, every argument is `name=value`
     /// with a declared name and a value its pattern matches; and last, the
     /// pin has the shape the issuer's pin door checks
-    /// ([`WorkloadPin::check_shape`]: at most `REQUEST_DEVICE_CLAIMS_MAX`
+    /// ([`WorkloadPin::check_shape`]: lower-hex digests, relative paths,
+    /// bounded arguments and outputs, and at most `REQUEST_DEVICE_CLAIMS_MAX`
     /// device claims, each of at least one device), since the node places
     /// what its issuer sent. Both the reserve and the job unit's root prepare
     /// step run this one check.
@@ -460,7 +461,8 @@ impl ExecutionNodeSettings {
         // Last, so each refusal the template judges keeps its own reason; a
         // claim of no device adds nothing to the template's devices ceiling,
         // and only the shape bounds the claims a pin carries.
-        pin.check_shape().map_err(|why| format!("pin_shape_invalid: {why}"))
+        pin.check_shape()
+            .map_err(|why| format!("pin_shape_invalid: {why}"))
     }
 
     /// The launch commit's fit of `pin`'s placement (pass 34, section 2.1,
