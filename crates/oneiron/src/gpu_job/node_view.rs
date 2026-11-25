@@ -22,7 +22,9 @@ use super::{GpuJob, GpuJobState};
 pub enum GpuJobLifecycle {
     /// Reserved, and no machine holds its key yet.
     Waiting,
-    /// Reserved, and its resource is known: a machine holds the key.
+    /// A machine holds the key, and its workload has not started. The `vault_machine` view
+    /// reads it from the machine's newest receipt; [`GpuJobLifecycle::of`] alone sees it only
+    /// for a reserved chunk whose resource is known.
     Assigned,
     Running,
     /// Its end was asked and is not confirmed yet.

@@ -25,7 +25,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`GpuJobError::NotFound`]; [`GpuJobError::Ended`] for a job that is not live;
+    /// [`GpuJobError::NotFound`]; [`GpuJobError::Ended`] for a job that is not live, or whose
+    /// chunk changed after its backend closed the old chunk's dispatch;
     /// [`GpuJobError::Connector`] with the backend's refusal; an owner proof that no longer
     /// holds; a store failure.
     pub fn write_off_gpu_job(
@@ -41,6 +42,8 @@ impl Vault {
         if !job.state.is_live() {
             return Err(GpuJobError::Ended);
         }
+        // The chunk whose dispatch the backend closes: the write below ends only that chunk.
+        let closed_key = job.chunk().map(|chunk| chunk.idempotency_key.clone());
         connector.write_off(&job, now_ms)?;
         let written = self.with_write_txn_grouped(|txn| -> crate::Result<Written> {
             let Some(mut job) = GPU_JOBS.get(&self.store, txn, id)? else {
@@ -48,6 +51,11 @@ impl Vault {
             };
             owner.revalidate_in_txn(self, txn)?;
             if !job.state.is_live() {
+                return Ok(Err(GpuJobError::Ended));
+            }
+            // The job stopped and resumed since the backend closed its chunk's dispatch: the
+            // new chunk's dispatch is open, so this write ends nothing.
+            if job.chunk().map(|chunk| &chunk.idempotency_key) != closed_key.as_ref() {
                 return Ok(Err(GpuJobError::Ended));
             }
             let chunk = job.chunk_mut()?;
