@@ -16,12 +16,15 @@
 //!   the next mint; it takes a floor at once from its side's reserve while
 //!   one is left, and a new idea takes a free slot of the new-idea pool or is
 //!   refused.
+//! - `vault.gpu.lines.tables.propose`: the planner or the owner proposes the
+//!   next period's `proposed@1` table.
 use super::doors_caller::{admit_in_txn, refused_owner_act};
 use super::fold::{
     BudgetPolicy, FamilySeat, GpuLine, LineRole, PeriodClockError, PeriodRoom, Side, Track,
 };
 use super::intent::{IntentAsk, IntentRefused, IntentStand};
 use super::mint::{LineInvalid, MintError};
+use super::proposal::ProposalRefusal;
 use super::store::{
     MintedLine, line_in_txn, mint_first_in_txn, newest_minted_in_txn, other_line_in_txn,
     period_view_in_txn, put_line_in_txn, seated_elsewhere_in_txn,
@@ -55,6 +58,8 @@ pub enum GpuLineError {
     Invalid(#[from] LineInvalid),
     #[error(transparent)]
     Mint(#[from] MintError),
+    #[error(transparent)]
+    Proposal(#[from] ProposalRefusal),
     #[error("no GPU line is set for this project")]
     NoLine,
     #[error("no such project")]
@@ -93,6 +98,16 @@ impl From<GpuLineError> for MemoryError {
             | GpuLineError::NewIdeaSlotsFull { .. }
             | GpuLineError::ScheduleFixed => MEMORY_CODE_INVALID_STATE,
             GpuLineError::NoLine | GpuLineError::NoProject => MEMORY_CODE_NOT_FOUND,
+            GpuLineError::Proposal(refusal) => match refusal {
+                ProposalRefusal::WhyTooLong { .. }
+                | ProposalRefusal::FamilyListedTwice
+                | ProposalRefusal::DoesNotConserve => MEMORY_CODE_BAD_REQUEST,
+                ProposalRefusal::Gone => MEMORY_CODE_NOT_FOUND,
+                ProposalRefusal::RuleNotInForce
+                | ProposalRefusal::PeriodNotNext { .. }
+                | ProposalRefusal::PoolMismatch { .. }
+                | ProposalRefusal::FamilyNotSeated => MEMORY_CODE_INVALID_STATE,
+            },
             GpuLineError::Vault(_) | GpuLineError::Caller(_) | GpuLineError::Intent(_) => {
                 MEMORY_CODE_FORBIDDEN
             }
@@ -128,7 +143,7 @@ fn view_in_txn(
 
 /// The period the next mint of `minted`'s line makes: the one after the
 /// period that holds now, or period 0 before it starts.
-fn next_mint_index(minted: &MintedLine) -> Result<u32, GpuLineError> {
+pub(super) fn next_mint_index(minted: &MintedLine) -> Result<u32, GpuLineError> {
     minted.period.as_ref().map_or(Ok(0), |period| {
         period
             .index

@@ -1,7 +1,7 @@
 //! The GPU line doors (design pass 32, section 5): `vault.gpu.lines.set`,
-//! `.get` and `.families.admit`. The engine decides (`oneiron::gpu_line`):
-//! the door admits the caller through the lane economy's door kit
-//! (`verb_grant_caller`) and calls the engine act. The period record names
+//! `.get`, `.families.admit` and `.tables.propose`. The engine decides
+//! (`oneiron::gpu_line`): the door admits the caller through the lane economy's
+//! door kit (`verb_grant_caller`) and calls the engine act. The period record names
 //! its allocation; its standing is a fold over the line's claims in the
 //! vault, never a grant into this server's in-memory host account (Engine
 //! ruling HOLD-IS-CLAIM-FOLD = A). Lines and period records live in side
@@ -10,8 +10,9 @@
 use std::sync::Arc;
 
 use oneiron::gpu_line::{
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,
-    VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
+    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest,
+    GpuLineTableProposeRequest, GpuLineView, TableProposal, VAULT_GPU_LINES_FAMILIES_ADMIT,
+    VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET, VAULT_GPU_LINES_TABLES_PROPOSE,
 };
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 
@@ -98,6 +99,21 @@ pub(crate) async fn vault_gpu_lines_families_admit(
         auth,
         VAULT_GPU_LINES_FAMILIES_ADMIT,
         move |_, memory, owner| Ok(memory.admit_gpu_line_family(owner, &input, now_ms())?),
+    )
+    .await
+}
+
+/// `vault.gpu.lines.tables.propose`: submits the next period's standing table.
+pub(crate) async fn vault_gpu_lines_tables_propose(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GpuLineTableProposeRequest,
+) -> Listed<TableProposal> {
+    verb_grant_door(
+        server,
+        auth,
+        VAULT_GPU_LINES_TABLES_PROPOSE,
+        move |_, memory, owner| Ok(memory.propose_gpu_line_table(owner, &input, now_ms())?),
     )
     .await
 }

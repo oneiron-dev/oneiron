@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.lines.tables.propose",
+  "description": "Proposes the proposed@1 table of market ceilings for a GPU line's next period. A planner of the line or the owner; the mint checks it again and uses the line's fallback rule if it fails.",
+  "input": "crate::gpu_line::GpuLineTableProposeRequest",
+  "output": "crate::gpu_line::TableProposal",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.tables.propose\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

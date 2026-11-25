@@ -479,6 +479,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GPU_LINE",
         "GPU_LINE_COHORT_POSITION",
         "GPU_LINE_PERIOD",
+        "GPU_LINE_PROPOSAL",
         "GPU_LINE_REFUSAL",
         "HOOKS_TASK_TICK_HOLD",
         "HOUSEKEEPING_SCHEDULE",

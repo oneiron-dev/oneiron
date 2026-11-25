@@ -43,6 +43,10 @@ pub const WINDOW_PERIODS: u32 = 1;
 pub const POSTERIOR_MAX_SLOTS: u32 = 4_096;
 /// posterior_sampling@1 scales a family's wins and losses down together when they sum past this.
 pub const POSTERIOR_MAX_EVIDENCE: u32 = 1_023;
+/// A failed or missing proposed table is replaced by the starter's.
+pub const PROPOSAL_FALLBACK: RuleRef = RuleRef::PAYOFF_SHARE_1;
+/// Pass 34 section 1.2: a decision's reason is at most 500 bytes.
+pub const PROPOSAL_WHY_MAX_BYTES: u32 = 500;
 
 /// The draw order of pass 32 section 4.2: what the three tracks mean, not a
 /// lane's number. Demand: the hold, the floor, the market. Interest: the
@@ -85,3 +89,4 @@ pub const RULE_COUNT_BOUNDS: RangeInclusive<usize> = 1..=2;
 pub const WINDOW_PERIODS_BOUNDS: RangeInclusive<u32> = 1..=26;
 pub const POSTERIOR_MAX_SLOTS_BOUNDS: RangeInclusive<u32> = 1..=4_096;
 pub const POSTERIOR_MAX_EVIDENCE_BOUNDS: RangeInclusive<u32> = 1..=1_023;
+pub const PROPOSAL_WHY_MAX_BYTES_BOUNDS: RangeInclusive<u32> = 1..=4_096;

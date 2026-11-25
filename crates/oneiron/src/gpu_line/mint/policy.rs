@@ -10,11 +10,12 @@ use crate::llm::run_admission::LeaseUnit;
 /// one second.
 pub const GPU_SECONDS: &str = "gpu_seconds";
 
-/// The rules the mint can fund today: the starter and its two rivals.
-pub const BUILT_RULES: [RuleRef; 3] = [
+/// The rules the mint can fund today: the starter, its two rivals and the proposed table.
+pub const BUILT_RULES: [RuleRef; 4] = [
     RuleRef::PAYOFF_SHARE_1,
     RuleRef::EVEN_SPLIT_1,
     RuleRef::POSTERIOR_SAMPLING_1,
+    RuleRef::PROPOSED_1,
 ];
 
 /// Why a line cannot be set.
@@ -86,6 +87,14 @@ pub enum LineInvalid {
         evidence_max = defaults::POSTERIOR_MAX_EVIDENCE_BOUNDS.end()
     )]
     PosteriorSampling,
+    #[error("a line's proposal_fallback is a built rule other than proposed@1")]
+    ProposalFallback,
+    #[error(
+        "a proposal's reason limit is {min} to {max} bytes",
+        min = defaults::PROPOSAL_WHY_MAX_BYTES_BOUNDS.start(),
+        max = defaults::PROPOSAL_WHY_MAX_BYTES_BOUNDS.end()
+    )]
+    ProposalWhy,
     #[error(
         "the draw orders name each track once; each order names a pool once, and the first \
          allowance only at the head of the rung-1 order"
@@ -274,6 +283,14 @@ impl GpuLine {
             || !defaults::POSTERIOR_MAX_EVIDENCE_BOUNDS.contains(&budget.posterior_max_evidence)
         {
             return Err(LineInvalid::PosteriorSampling);
+        }
+        if budget.proposal_fallback == RuleRef::PROPOSED_1
+            || !BUILT_RULES.contains(&budget.proposal_fallback)
+        {
+            return Err(LineInvalid::ProposalFallback);
+        }
+        if !defaults::PROPOSAL_WHY_MAX_BYTES_BOUNDS.contains(&budget.proposal_why_max_bytes) {
+            return Err(LineInvalid::ProposalWhy);
         }
         if !draw_orders_valid(budget) {
             return Err(LineInvalid::DrawOrders);

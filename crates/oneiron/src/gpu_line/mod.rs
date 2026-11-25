@@ -18,6 +18,7 @@ pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
+pub(crate) mod proposal;
 mod refusal;
 mod store;
 pub(crate) mod tables;
@@ -42,8 +43,12 @@ pub(crate) use intent::erase_intent_asker_in_txn;
 pub use intent::{DIFFERENT_ASK, IntentAsk, IntentRefused, IntentStand, LaneIntent};
 pub use mint::{
     BUILT_RULES, GPU_SECONDS, LineInvalid, MintError, PAYOFF_WEIGHT_SHIFT, Pools, SettledTally,
-    economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
-    pools, posterior_sampling,
+    economic_digest, even_split, line_allocation_id, mint_period, mint_period_with_proposal,
+    payoff_share, period_balances, pools, posterior_sampling,
+};
+pub use proposal::{
+    GpuLineTableProposeRequest, ProposalAuthor, ProposalMiss, ProposalNote, ProposalRefusal,
+    TableProposal, TableSource, VAULT_GPU_LINES_TABLES_PROPOSE, check_proposal,
 };
 pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
 pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};

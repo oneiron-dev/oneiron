@@ -14,7 +14,7 @@ use rand_core::RngCore;
 
 use super::cohort::cohort_seed_commit;
 use super::fold::{GpuLine, GpuLinePeriod, PeriodAllocation, PeriodClockError};
-use super::mint::{MintError, SettledTally, mint_period};
+use super::mint::{MintError, SettledTally, mint_period_with_proposal};
 use crate::llm::run_admission::{Allocation, AllocationRef, LeaseUnit};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -209,10 +209,12 @@ pub fn mint_first_in_txn(
         })));
     }
     let tallies = settled_tallies_in_txn(vault, wtxn, &line, index)?;
-    let mut record = match mint_period(&line, index, &tallies, now_ms) {
-        Ok(record) => record,
-        Err(refusal) => return Ok(Err(refusal)),
-    };
+    let proposal = crate::gpu_line::proposal::proposal_in_txn(vault, wtxn, project, index)?;
+    let mut record =
+        match mint_period_with_proposal(&line, index, &tallies, proposal.as_ref(), now_ms) {
+            Ok(record) => record,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
     // A two-rule period draws its cohort seed now (section 4.4). The seed and
     // its commit are outside the economic digest; the get view withholds the
     // seed until the period ends.
@@ -274,7 +276,11 @@ pub fn period_view_in_txn(
         return Ok(Ok(Some((stored, false))));
     }
     let tallies = settled_tallies_in_txn(vault, txn, line, index)?;
-    Ok(mint_period(line, index, &tallies, now_ms).map(|record| Some((record, true))))
+    let proposal = crate::gpu_line::proposal::proposal_in_txn(vault, txn, &line.project, index)?;
+    Ok(
+        mint_period_with_proposal(line, index, &tallies, proposal.as_ref(), now_ms)
+            .map(|record| Some((record, true))),
+    )
 }
 
 impl Vault {

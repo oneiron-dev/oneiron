@@ -298,6 +298,8 @@ pub(crate) enum DoorClaim {
 /// role away, with only the verb Grant judged. A same-id retry runs the admit
 /// again, role first; its intent key then replays the seat already made and
 /// writes nothing.
+/// A table's proposal (`vault.gpu.lines.tables.propose`) judges the planner
+/// role on the stored line before its intent replay, as the seat's does.
 /// An experiment arm's admission (`vault.arms.admit`) answers the arm, and its
 /// door judges the caller's lead role on the arm's line before its intent
 /// replay, as the seat's does: a same-id retry runs the admit again, role
@@ -311,7 +313,7 @@ pub(crate) enum DoorClaim {
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
 /// replay could judge again. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 14] = [
+const UNKEPT_REPLY_VERBS: [&str; 15] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -324,6 +326,7 @@ const UNKEPT_REPLY_VERBS: [&str; 14] = [
     oneiron::experiment_arm::ARMS_UNITS_CANCEL_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
+    oneiron::gpu_line::VAULT_GPU_LINES_TABLES_PROPOSE,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
 ];
