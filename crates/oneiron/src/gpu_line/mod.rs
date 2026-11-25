@@ -18,6 +18,7 @@ pub(crate) mod doors_caller;
 mod fold;
 mod intent;
 mod mint;
+mod preset;
 mod refusal;
 mod store;
 pub(crate) mod tables;
@@ -42,6 +43,7 @@ pub use mint::{
     economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
     pools, posterior_sampling,
 };
+pub use preset::{LinePresetDocument, LinePresetRef, check_document, lay_over, resolve_policy};
 pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
 pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};
 pub(crate) use store::erase_line_actor_in_txn;
@@ -51,7 +53,8 @@ pub use store::{
     settled_tallies_in_txn, stored_period_in_txn,
 };
 pub use wire::{
-    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetRequest, GpuLineView,
+    GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest,
+    GpuLineSetWire, GpuLineView,
 };
 
 pub use fold::{
