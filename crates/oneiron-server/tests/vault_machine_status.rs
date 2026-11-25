@@ -26,7 +26,7 @@ use oneiron::blob_artifact::ArtifactCreateRequest;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
     GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobError,
-    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, GpuJobVerb, MeterVerdict,
+    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, MeterVerdict,
 };
 use oneiron::job_dispatch::machine_records::{
     MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
@@ -1201,7 +1201,7 @@ fn a_finished_job_whose_starter_lapsed_lands_its_result_in_the_owners_lane() {
             .expect("a named agent on the issuer");
         let mut authority_scope = Scope::top();
         authority_scope.verbs = ScopeAxis::Some(
-            ["read", GpuJobVerb::Start.name()]
+            ["read", oneiron::gpu_job::GpuJobVerb::Start.name()]
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
