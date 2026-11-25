@@ -236,6 +236,12 @@ pub enum AuthorityOp {
     /// slips of each Grant it names and carries an Owner act's handover. A
     /// main-log entry, so every machine the owner admits folds it.
     MembershipExecution(MembershipExecution),
+    /// One giving or end of a Grant row's standing that no other act carries
+    /// (pass 28 R2): a shared vault's member role, a delegate, a house link,
+    /// an inquiry edge's re-scope, or a lapse's end, signed in its writer's
+    /// transaction by the install key of a live machine of the vault, in any
+    /// role. A main-log entry, so every machine the owner admits folds it.
+    GrantAct(GrantActRecord),
     /// The anchor of an owner root appoints a successor root key when the
     /// roster holds no live root key (OWNER-ANCHOR-ROOT-RECOVERY). Signed by
     /// that anchor alone, with no cosign. A main-log entry; the fold judges
@@ -609,6 +615,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OriginCut(cut) => cut.validate(),
         AuthorityOp::DeviceSuccession(succession) => succession.validate(),
         AuthorityOp::MembershipExecution(record) => record.validate(),
+        AuthorityOp::GrantAct(record) => record.validate(),
         AuthorityOp::RootAppointment(appointment) => appointment.validate(),
         AuthorityOp::RestoredMachineJoin(join) => join.validate(),
         AuthorityOp::RecoveryHold(hold) => hold.validate(),

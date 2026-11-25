@@ -158,6 +158,8 @@ fn counted_matching_mint_in_txn(
         AuthorityOp::MembershipExecution(record) => {
             record.withdrawn_grants.binary_search(&standing.id).is_ok()
         }
+        // A lapse's end of the agent Grant (pass 28 R2).
+        AuthorityOp::GrantAct(record) => record.ended_owner_agent_grant() == Some(standing.id),
         _ => false,
     };
     let mut acts = BTreeMap::new();
@@ -190,6 +192,10 @@ fn counted_matching_mint_in_txn(
     let mut found: Option<AuthorityEntryHash> = None;
     for (hash, entry) in &acts {
         if !fold.valid_entries.contains(hash) {
+            continue;
+        }
+        // A lapse's end the fold holds without effect (a line of another family) ends nothing.
+        if matches!(entry.op, AuthorityOp::GrantAct(_)) && fold.held_back_entries().contains(hash) {
             continue;
         }
         let AuthorityOp::AgentGrantAct(record) = &entry.op else {

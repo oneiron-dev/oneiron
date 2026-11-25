@@ -700,6 +700,7 @@ fn carries_own_will(
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::GrantAct(_)
         | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)

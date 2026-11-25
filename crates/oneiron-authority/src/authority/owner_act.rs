@@ -162,6 +162,15 @@ pub enum OwnerActKind {
     /// proposal lands `Proposed` under the carrying owner's principal, and
     /// only the owner accepts.
     ModelBindingPropose,
+    /// A person gives a Grant row its terms (`GrantAct`, pass 28 R2): a
+    /// shared vault's member role, a delegate, a house link or an inquiry
+    /// edge's re-scope. `owner` is the deciding PERSON (the holder meaning of
+    /// `by: Owner`), whose own standing the reader judges; its `target` is
+    /// the row and its `seen` zero ([`GRANT_ACT_SEEN`]).
+    GrantGive,
+    /// A person ends a Grant row's standing (`GrantAct`, pass 28 R2). Its
+    /// `target` is the row and its `seen` zero: an end always lands.
+    GrantEnd,
     /// The owner's word that no other machine of the vault is left, which
     /// joins one machine born of a restore (`RestoredMachineJoin`; Setting
     /// DESIGN pass 15e "Joined", RULING RESTORED-COPIES-JOIN-SCOPE = A). Its
@@ -208,6 +217,8 @@ impl OwnerActKind {
             Self::OriginCut => "origin_cut",
             Self::DeviceSuccession => "device_succession",
             Self::ModelBindingPropose => "model_binding_propose",
+            Self::GrantGive => "grant_give",
+            Self::GrantEnd => "grant_end",
             Self::RestoredMachineJoin => "restored_machine_join",
             Self::RunnerContinue => "runner_continue",
             Self::HookTranscriptImport => "hook_transcript_import",
@@ -240,6 +251,8 @@ impl OwnerActKind {
             "origin_cut" => Self::OriginCut,
             "device_succession" => Self::DeviceSuccession,
             "model_binding_propose" => Self::ModelBindingPropose,
+            "grant_give" => Self::GrantGive,
+            "grant_end" => Self::GrantEnd,
             "restored_machine_join" => Self::RestoredMachineJoin,
             "runner_continue" => Self::RunnerContinue,
             "hook_transcript_import" => Self::HookTranscriptImport,
