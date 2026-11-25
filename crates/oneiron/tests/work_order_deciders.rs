@@ -512,6 +512,7 @@ fn never() -> Script {
 /// read whose clock ran out.
 fn slow() -> Script {
     Box::new(|ask| {
+        // testkit-lint: allow(sleep) the pass's ask budget is real time (Instant), which no fake clock reaches
         std::thread::sleep(Duration::from_millis(ask.deadline_ms));
         DeciderReply::Silent { receipt: None }
     })
@@ -1012,6 +1013,7 @@ fn a_pass_waits_about_one_deadline_on_its_deciders() {
         rig.set_slot("policy.slots.deadline_ms", slot, json!(DEADLINE_MS));
     }
     let host = TestHost::new(&rig, facts, slow());
+    // testkit-lint: allow(wall-clock) measures the pass against the real-time ask budget
     let started = Instant::now();
     rig.vault.work_order_pass(&host, NOW + 1_000).expect("pass");
     let took = started.elapsed();
