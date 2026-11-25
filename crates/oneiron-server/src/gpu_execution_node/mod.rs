@@ -7,10 +7,12 @@
 //! (`scope_systemd`). Its GPUs: what they are and what runs on them now
 //! ([`device`]), what it offers and answers when asked ([`availability`]),
 //! the slots it leases on them, beside its memory floor ([`slots`]), and a
-//! read that picks a machine's GPU before a quote ([`selection`]).
+//! read that picks a machine's GPU before a quote ([`selection`]). The
+//! issuer's side: the `vault_machine` GPU job connector ([`issuer`]).
 
 pub mod availability;
 pub mod device;
+pub mod issuer;
 #[cfg(unix)]
 pub mod jobs;
 pub mod machine_policy;
