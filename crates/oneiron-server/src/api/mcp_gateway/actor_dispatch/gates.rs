@@ -142,6 +142,26 @@ pub(in crate::api::mcp_gateway) fn mcp_proof_error() -> McpGatewayError {
     )
 }
 
+/// A live connector credential, matched to its registration, that lacks the
+/// grant a call needs: its tier holds less (read-only: no Propose or Write;
+/// propose-only: no Write). It names the grant, as the HTTP door's
+/// `forbidden_scope` does, and is not the proof refusal: nothing about the
+/// credential needs presenting again or renewing (FIX
+/// MCP-READONLY-WRITE-REFUSAL-NAMES-AUTH).
+pub(in crate::api::mcp_gateway) fn mcp_grant_refusal(
+    scope: crate::auth::CoreScope,
+) -> McpGatewayError {
+    McpGatewayError::new(
+        -32020,
+        "mcp_grant_missing",
+        format!(
+            "this connector's credential does not hold the {} grant this call needs",
+            scope.as_str()
+        ),
+    )
+    .with_required_scope(scope.as_str())
+}
+
 /// The verb a call needs on this door: Read; for a write, Write — or Propose
 /// when the write waits for review: it proposes and the actor's live ceiling
 /// is `proposed`. So a propose-only credential (ARCH-0028: write capability
@@ -241,8 +261,10 @@ fn mcp_session_operation_gate(
         McpCallEffect::Reads => Ok(()),
         McpCallEffect::Proposes | McpCallEffect::Commits => {
             let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
-            auth.require(mcp_call_scope(server, actor, auth, effect))
-                .map_err(|_| mcp_proof_error())
+            // The session gate above held the credential live and its record
+            // scope unrestricted, so only the grant is left to miss.
+            let scope = mcp_call_scope(server, actor, auth, effect);
+            auth.require(scope).map_err(|_| mcp_grant_refusal(scope))
         }
     }
 }
@@ -325,15 +347,25 @@ pub(super) fn mcp_credential_gate(
             "this facade cannot project the credential's record bounds",
         )
     })?;
-    match bounds {
+    // The credential is live and its record bounds were judged just above,
+    // so what is left to miss is the grant itself. Read is part of the proof
+    // a connector registers with (`mcp_proof_admits`), so its miss stays the
+    // proof refusal; a missing Propose or Write is the tier's.
+    let scope = match bounds {
         // The world and facet it carries were judged just above. The birth
         // takes Write: a Propose-only grant would rest on a ceiling read
         // outside the transaction that commits the TASK.
-        McpRecordBounds::Born => auth.require_granted(crate::auth::CoreScope::Write),
-        McpRecordBounds::Filtered => {
-            auth.require_granted(mcp_call_scope(server, actor, auth, effect))
+        McpRecordBounds::Born => crate::auth::CoreScope::Write,
+        McpRecordBounds::Filtered | McpRecordBounds::Unrestricted => {
+            mcp_call_scope(server, actor, auth, effect)
         }
-        McpRecordBounds::Unrestricted => auth.require(mcp_call_scope(server, actor, auth, effect)),
+    };
+    match bounds {
+        McpRecordBounds::Born | McpRecordBounds::Filtered => auth.require_granted(scope),
+        McpRecordBounds::Unrestricted => auth.require(scope),
     }
-    .map_err(|_| mcp_proof_error())
+    .map_err(|_| match scope {
+        crate::auth::CoreScope::Read => mcp_proof_error(),
+        _ => mcp_grant_refusal(scope),
+    })
 }
