@@ -35,6 +35,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/feedback.rs` | src | s | — | — | Purposes of feedback (`crates/oneiron/src/feedback`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
+| `src/purposes/gpu_line.rs` | src | s | — | — | Purposes of the lane economy's GPU lines (`crates/oneiron/src/gpu_line`) |
 | `src/purposes/ingest.rs` | src | s | — | — | Purposes of imports into the vault: claims from a registered source, and chat history |
 | `src/purposes/inquiry.rs` | src | s | — | — | Purposes of inquiries (`crates/oneiron/src/inquiry`) |
 | `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
