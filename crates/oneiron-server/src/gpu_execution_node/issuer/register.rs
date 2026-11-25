@@ -186,7 +186,7 @@ pub fn register_vault_machine(
 pub fn register_vault_machine_at_start(
     server: &Arc<SyncServer>,
 ) -> Result<(), VaultMachineNotRegistered> {
-    let signer: Arc<dyn MachineSignatures> = Arc::clone(server.vault());
+    let signer: Arc<dyn MachineSignatures> = Arc::<oneiron::Vault>::clone(server.vault());
     let registered = register_vault_machine(server, signer);
     match &registered {
         Ok(()) => tracing::info!(backend = VAULT_MACHINE_BACKEND, "GPU backend registered"),
