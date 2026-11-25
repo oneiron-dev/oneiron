@@ -1,172 +1,182 @@
-//! The server half of `vault.machines.execution.get` (pass 33 door 11): the serving machine asks
-//! each machine the engine named ([`MachineExecutionTarget`]) what it offers, its GPUs and the
-//! keys it holds, over the issuer's job calls ([`JobNodeClient`]), and answers what each said.
-//! It asks `oneiron/job/1` only under a held job grant and `oneiron/job-status/1` only under a
-//! held status grant, every machine at once, and never itself. A machine that does not answer
-//! is shown with the ask and the reason; nothing is retried and nothing is ranked.
+//! The issuer's half of `vault.machines.execution.get` (pass 33 door 11): the issuer asks each
+//! machine the engine named ([`MachineExecutionTarget`]) what it offers and then its GPUs, under
+//! the held `oneiron/job/1` grant, and the keys it holds, under the held `oneiron/job-status/1`
+//! grant, through its job calls ([`JobNodeClient`]), and shows what each said. The two
+//! protocols are asked apart: a machine whose job route refuses or does not answer is still
+//! asked its keys (EM-1 = A). Every machine asked is asked at once, one thread each, as
+//! `vault.machines.status` asks ([`super::node_status`]); the issuer never asks itself, and
+//! nothing is retried or ranked.
 
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::task_verb::sdk::{
-    MachineAsk, MachineDiskReading, MachineExecution, MachineExecutionReply,
-    MachineExecutionTarget, MachineGpuAvailability, MachineGpuDevice, MachineGpuState,
-    MachineKeyState, MachineLiveKey, MachineNodeOffer, MachineScopeClass, MachineScopeReport,
-    MachineTemplateOffer, MachineUnreachable,
+    MachineDiskReading, MachineExecution, MachineExecutionReply, MachineExecutionTarget,
+    MachineGpuAvailability, MachineGpuDevice, MachineGpuState, MachineGpuView, MachineKeyState,
+    MachineKeysView, MachineLiveKey, MachineNodeView,
 };
 
 use super::clock::IssuerClock;
 use super::node_client::{JobNodeClient, NodeCallError};
+use super::node_status::node_view;
 use super::{job_answer_kind, job_refusal_code, status_answer_kind};
 use crate::gpu_execution_node::availability::{
     GpuAvailability, GpuDeviceAvailability, GpuDeviceState, GpuDiskReading,
 };
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRequest, JobState, JobStatusAnswer, JobStatusRequest, NodeAnswer, ScopeClass,
-    ScopeReport, TemplateOffer,
+    JobAnswer, JobRequest, JobState, JobStatusAnswer, JobStatusRequest,
 };
-use crate::server::SyncServer;
 
 /// The most pages of keys one read takes from one machine. A bound on one read, as
 /// `FETCH_MAX_BYTES` bounds one fetch: a page stays under the transport's 1 MiB message bound,
-/// so a machine that keeps naming a next page cannot hold the read open. Past it the machine is
-/// shown unreachable on its keys.
+/// so a machine that keeps naming a next page cannot hold the read open. Past it the keys are
+/// `unknown`.
 pub const MACHINE_EXECUTION_KEY_PAGES_MAX: usize = 16;
 
-/// The job calls this server makes for `vault.machines.execution.get`: over the vault's mesh,
-/// on the runtime the caller runs on, each waiting at most the `vault_machine` backend's
-/// `call_timeout_secs`.
-#[cfg(feature = "mesh")]
-#[must_use]
-pub fn machine_execution_client(server: &Arc<SyncServer>) -> Box<dyn JobNodeClient> {
-    let timeout =
-        std::time::Duration::from_secs(server.config.gpu_jobs.vault_machine.call_timeout_secs);
-    match tokio::runtime::Handle::try_current() {
-        Ok(runtime) => Box::new(super::MeshJobNodeClient::new(
-            Arc::downgrade(server),
-            runtime,
-            timeout,
-        )),
-        Err(_) => Box::new(NoJobCalls("no runtime serves this read")),
-    }
-}
-
-/// The job calls of a server built without the mesh: every ask is unreachable.
-#[cfg(not(feature = "mesh"))]
-#[must_use]
-pub fn machine_execution_client(_server: &Arc<SyncServer>) -> Box<dyn JobNodeClient> {
-    Box::new(NoJobCalls("this server is built without the mesh"))
-}
-
-/// Job calls that reach no machine, with why.
-struct NoJobCalls(&'static str);
-
-impl JobNodeClient for NoJobCalls {
-    fn job(
-        &self,
-        _node: oneiron::EntityId,
-        _request: &JobRequest,
-    ) -> Result<JobAnswer, NodeCallError> {
-        Err(NodeCallError::Unreachable {
-            reason: self.0.to_owned(),
-        })
-    }
-
-    fn job_status(
-        &self,
-        _node: oneiron::EntityId,
-        _request: &JobStatusRequest,
-    ) -> Result<JobStatusAnswer, NodeCallError> {
-        Err(NodeCallError::Unreachable {
-            reason: self.0.to_owned(),
-        })
-    }
-}
-
-/// Asks every machine of `targets` that holds a job grant, at once, through `client`, and
-/// answers each in `targets`' order. The calls block: run it on a blocking thread.
+/// Asks every machine of `targets` that the issuer asks, at once, through `client`, and answers
+/// each in `targets`' order. Where this server asks none (`client` is why: not the issuer, no
+/// runtime, no mesh), each ask says why. A call that could not start leaves its machine's asks
+/// `not_asked`; a call that failed leaves them `unknown`. The calls block: run it on a blocking
+/// thread.
 #[must_use]
 pub fn read_machine_execution(
-    client: &dyn JobNodeClient,
+    client: Result<Arc<dyn JobNodeClient>, &'static str>,
     clock: &dyn IssuerClock,
     targets: Vec<MachineExecutionTarget>,
 ) -> MachineExecutionReply {
-    let machines = std::thread::scope(|scope| {
-        let asks: Vec<_> = targets
-            .into_iter()
-            .map(|target| scope.spawn(move || read_machine(client, clock, &target)))
+    let mut machines: Vec<MachineExecution> = targets
+        .iter()
+        .map(MachineExecutionTarget::unasked)
+        .collect();
+    let client = match client {
+        Ok(client) => client,
+        Err(why) => {
+            for (shown, target) in machines.iter_mut().zip(&targets) {
+                not_asked(shown, target, why);
+            }
+            return MachineExecutionReply { machines };
+        }
+    };
+    let client = client.as_ref();
+    let read: Vec<(usize, MachineExecution)> = std::thread::scope(|scope| {
+        let calls: Vec<_> = targets
+            .iter()
+            .enumerate()
+            .filter(|(_, target)| target.asks_offer() || target.asks_keys())
+            .map(|(index, target)| {
+                let call = std::thread::Builder::new()
+                    .name("machine-execution".to_owned())
+                    .spawn_scoped(scope, move || read_machine(client, clock, target));
+                (index, call)
+            })
             .collect();
-        asks.into_iter()
-            .map(|ask| match ask.join() {
-                Ok(machine) => machine,
-                Err(panic) => std::panic::resume_unwind(panic),
+        calls
+            .into_iter()
+            .map(|(index, call)| {
+                let target = &targets[index];
+                let mut shown = target.unasked();
+                match call.map(std::thread::ScopedJoinHandle::join) {
+                    Ok(Ok(read)) => shown = read,
+                    Ok(Err(_)) => failed(&mut shown, target, clock.now_ms()),
+                    Err(_) => not_asked(&mut shown, target, "call_not_started"),
+                }
+                (index, shown)
             })
             .collect()
     });
+    for (index, shown) in read {
+        machines[index] = shown;
+    }
     MachineExecutionReply { machines }
 }
 
-/// One machine: its offer and its GPUs under the job grant, then its keys under the status
-/// grant. A machine that cannot be reached on its offer is not asked again.
+/// Each ask the issuer makes of `target`, `not_asked` with `why`.
+fn not_asked(shown: &mut MachineExecution, target: &MachineExecutionTarget, why: &str) {
+    if target.asks_offer() {
+        shown.node = MachineNodeView::not_asked(why);
+        shown.availability = MachineGpuView::not_asked(why);
+    }
+    if target.asks_keys() {
+        shown.live_keys = MachineKeysView::not_asked(why);
+    }
+}
+
+/// Each ask the issuer makes of `target`, `unknown`: the call to the machine failed.
+fn failed(shown: &mut MachineExecution, target: &MachineExecutionTarget, at_ms: u64) {
+    let error = || "the call to the machine failed".to_owned();
+    if target.asks_offer() {
+        shown.node = MachineNodeView::unknown(error(), at_ms);
+        shown.availability = MachineGpuView::unknown(error(), at_ms);
+    }
+    if target.asks_keys() {
+        shown.live_keys = MachineKeysView::unknown(error(), at_ms);
+    }
+}
+
+/// One machine: its offer and then its GPUs under the job grant, its keys under the status
+/// grant. Its GPUs are asked only once it answered its offer.
 fn read_machine(
     client: &dyn JobNodeClient,
     clock: &dyn IssuerClock,
     target: &MachineExecutionTarget,
 ) -> MachineExecution {
-    let mut machine = target.unasked();
-    if !target.asked() {
-        return machine;
+    let mut shown = target.unasked();
+    let machine = target.machine;
+    if target.asks_offer() {
+        let asked_at_ms = clock.now_ms();
+        let answer = client.job(machine, &JobRequest::Node);
+        let offered = matches!(answer, Ok(JobAnswer::Node(_)));
+        shown.node = node_view(answer, asked_at_ms);
+        shown.availability = if offered {
+            let asked_at_ms = clock.now_ms();
+            gpu_view(client.job(machine, &JobRequest::Availability), asked_at_ms)
+        } else {
+            MachineGpuView::not_asked("offer_not_answered")
+        };
     }
-    machine.asked_at_ms = Some(clock.now_ms());
-    let node = target.machine;
-    if target.job_grant {
-        match client.job(node, &JobRequest::Node) {
-            Ok(JobAnswer::Node(offer)) => machine.node = Some(node_offer(&offer)),
-            Ok(answer) => machine.unreachable = Some(refused(MachineAsk::Node, &answer)),
-            Err(error) => {
-                machine.unreachable = Some(no_answer(MachineAsk::Node, &error));
-                return machine;
-            }
-        }
-        if machine.node.is_some() {
-            match client.job(node, &JobRequest::Availability) {
-                Ok(JobAnswer::Availability(gpus)) => {
-                    machine.availability = Some(gpu_availability(&gpus));
-                }
-                Ok(answer) => {
-                    machine.unreachable = Some(refused(MachineAsk::Availability, &answer));
-                }
-                Err(error) => {
-                    machine.unreachable = Some(no_answer(MachineAsk::Availability, &error));
-                    return machine;
-                }
-            }
-        }
+    if target.asks_keys() {
+        shown.live_keys = keys_view(client, machine, clock.now_ms());
     }
-    if target.job_status_grant {
-        match live_keys(client, node) {
-            Ok(keys) => machine.live_keys = Some(keys),
-            Err(unreachable) => {
-                if machine.unreachable.is_none() {
-                    machine.unreachable = Some(unreachable);
-                }
-            }
-        }
-    }
-    machine
+    shown
 }
 
-/// Every key `node` holds that has not ended, read page by page.
-fn live_keys(
-    client: &dyn JobNodeClient,
-    node: oneiron::EntityId,
-) -> Result<Vec<MachineLiveKey>, MachineUnreachable> {
+/// What one `Availability` call says about the machine's GPUs.
+fn gpu_view(answer: Result<JobAnswer, NodeCallError>, asked_at_ms: u64) -> MachineGpuView {
+    match answer {
+        Ok(JobAnswer::Availability(gpus)) => {
+            MachineGpuView::answered(gpu_availability(&gpus), asked_at_ms)
+        }
+        Ok(JobAnswer::Refused(refusal)) => {
+            MachineGpuView::refused(job_refusal_code(&refusal).to_owned(), asked_at_ms)
+        }
+        Ok(other) => MachineGpuView::unknown(
+            format!("the machine answered {}", job_answer_kind(&other)),
+            asked_at_ms,
+        ),
+        Err(error) => MachineGpuView::unknown(error.to_string(), asked_at_ms),
+    }
+}
+
+/// Every key `machine` holds that has not ended, read page by page from `asked_at_ms`.
+fn keys_view(client: &dyn JobNodeClient, machine: EntityId, asked_at_ms: u64) -> MachineKeysView {
     let mut keys = Vec::new();
     let mut after = None;
     for _ in 0..MACHINE_EXECUTION_KEY_PAGES_MAX {
-        let page = match client.job_status(node, &JobStatusRequest::Keys { after }) {
+        let page = match client.job_status(machine, &JobStatusRequest::Keys { after }) {
             Ok(JobStatusAnswer::Keys(page)) => page,
-            Ok(answer) => return Err(status_refused(&answer)),
-            Err(error) => return Err(no_answer(MachineAsk::Keys, &error)),
+            Ok(JobStatusAnswer::Refused(refusal)) => {
+                return MachineKeysView::refused(
+                    job_refusal_code(&refusal).to_owned(),
+                    asked_at_ms,
+                );
+            }
+            Ok(other) => {
+                return MachineKeysView::unknown(
+                    format!("the machine answered {}", status_answer_kind(&other)),
+                    asked_at_ms,
+                );
+            }
+            Err(error) => return MachineKeysView::unknown(error.to_string(), asked_at_ms),
         };
         keys.extend(page.entries.iter().filter_map(|entry| {
             key_state(entry.state).map(|state| MachineLiveKey {
@@ -175,46 +185,14 @@ fn live_keys(
             })
         }));
         match page.next {
-            None => return Ok(keys),
+            None => return MachineKeysView::answered(keys, asked_at_ms),
             Some(next) => after = Some(next),
         }
     }
-    Err(MachineUnreachable {
-        ask: MachineAsk::Keys,
-        reason: format!("more than {MACHINE_EXECUTION_KEY_PAGES_MAX} pages of keys"),
-    })
-}
-
-fn no_answer(ask: MachineAsk, error: &NodeCallError) -> MachineUnreachable {
-    MachineUnreachable {
-        ask,
-        reason: error.to_string(),
-    }
-}
-
-/// What the machine answered on `oneiron/job/1` in place of what was asked.
-fn refused(ask: MachineAsk, answer: &JobAnswer) -> MachineUnreachable {
-    let reason = match answer {
-        JobAnswer::Refused(refusal) => job_refusal_code(refusal).to_owned(),
-        JobAnswer::Busy { retry_after_ms } => format!("busy, retry after {retry_after_ms} ms"),
-        other => format!("answered {}", job_answer_kind(other)),
-    };
-    MachineUnreachable { ask, reason }
-}
-
-/// What the machine answered on `oneiron/job-status/1` in place of a page of keys.
-fn status_refused(answer: &JobStatusAnswer) -> MachineUnreachable {
-    let reason = match answer {
-        JobStatusAnswer::Refused(refusal) => job_refusal_code(refusal).to_owned(),
-        JobStatusAnswer::Busy { retry_after_ms } => {
-            format!("busy, retry after {retry_after_ms} ms")
-        }
-        other => format!("answered {}", status_answer_kind(other)),
-    };
-    MachineUnreachable {
-        ask: MachineAsk::Keys,
-        reason,
-    }
+    MachineKeysView::unknown(
+        format!("more than {MACHINE_EXECUTION_KEY_PAGES_MAX} pages of keys"),
+        asked_at_ms,
+    )
 }
 
 /// A key's state while it has not ended; `None` once it has.
@@ -228,46 +206,6 @@ const fn key_state(state: JobState) -> Option<MachineKeyState> {
         JobState::Ending => MachineKeyState::Ending,
         JobState::Ended => return None,
     })
-}
-
-fn node_offer(answer: &NodeAnswer) -> MachineNodeOffer {
-    MachineNodeOffer {
-        enabled: answer.enabled,
-        paused: answer.paused.clone(),
-        drained: answer.drained.clone(),
-        templates: answer.templates.iter().map(template_offer).collect(),
-        scopes: answer.scopes.iter().map(scope_report).collect(),
-        disk_free_bytes: answer.disk_free_bytes,
-        disk_reserved_bytes: answer.disk_reserved_bytes,
-        disk_reserve_bytes: answer.disk_reserve_bytes,
-        swept: answer.swept,
-        engine_version: answer.engine_version.clone(),
-    }
-}
-
-fn template_offer(template: &TemplateOffer) -> MachineTemplateOffer {
-    MachineTemplateOffer {
-        name: template.name.clone(),
-        digest: template.digest.clone(),
-        scopes: template.scopes.iter().copied().map(scope_class).collect(),
-        network: template.network.clone(),
-        returnable: template.returnable.clone(),
-        require: template.require.clone(),
-    }
-}
-
-fn scope_report(scope: &ScopeReport) -> MachineScopeReport {
-    MachineScopeReport {
-        class: scope_class(scope.class),
-        capabilities: scope.capabilities.clone(),
-    }
-}
-
-const fn scope_class(class: ScopeClass) -> MachineScopeClass {
-    match class {
-        ScopeClass::Host => MachineScopeClass::Host,
-        ScopeClass::Container => MachineScopeClass::Container,
-    }
 }
 
 fn gpu_availability(gpus: &GpuAvailability) -> MachineGpuAvailability {

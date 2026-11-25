@@ -26,9 +26,7 @@ use oneiron::job_workload::WorkloadStartRefusal;
 
 pub use clock::{IssuerClock, SystemIssuerClock};
 pub use connector::{VaultMachineConnector, VaultMachineParts};
-pub use machine_execution::{
-    MACHINE_EXECUTION_KEY_PAGES_MAX, machine_execution_client, read_machine_execution,
-};
+pub use machine_execution::{MACHINE_EXECUTION_KEY_PAGES_MAX, read_machine_execution};
 #[cfg(feature = "mesh")]
 pub use node_client::MeshJobNodeClient;
 pub use node_client::{JobNodeClient, NodeCallError};
