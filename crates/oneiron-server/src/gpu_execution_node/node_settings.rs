@@ -24,6 +24,15 @@ use serde::{Deserialize, Serialize};
 
 use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 
+mod warm;
+
+pub use warm::{
+    CACHE_CAP_GIB_DEFAULT, CACHE_DIR_NAME_DEFAULT, CACHE_IDLE_DAYS_DEFAULT, CACHE_KEYS_MAX_DEFAULT,
+    CACHE_KEYS_MAX_MOST, CACHE_PASS_EVERY_SECS_DEFAULT, CACHE_PROTECT_HOURS_DEFAULT,
+    CACHE_WANTED_HOLD_SECS_DEFAULT, EVICTED_DIR_NAME, NODE_WARM_KEYS_MAX, NodeCacheSettings,
+    SettingsRead, TEMPLATE_WARM_KEYS_MAX,
+};
+
 /// Where the node's file is when neither the server's configuration nor
 /// [`EXECUTION_NODE_FILE_ENV`] names one.
 pub const EXECUTION_NODE_FILE_DEFAULT: &str = "/etc/oneiron/execution-node.toml";
@@ -166,6 +175,13 @@ pub struct ExecutionNodeSettings {
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
+    /// The directory the templates' cache keys live in, each an entry
+    /// directly in it (pass 34, row P2). Unset: `<work_dir>/caches`.
+    #[serde(default)]
+    pub cache_dir: Option<PathBuf>,
+    /// `[execution_node.cache]`: the box's ceiling on the cache budget.
+    #[serde(default)]
+    pub cache: NodeCacheSettings,
     #[serde(default = "stop_grace_secs_default")]
     pub stop_grace_secs: u64,
     #[serde(default = "unit_start_timeout_secs_default")]
@@ -280,6 +296,17 @@ pub struct NodeTemplate {
     /// no request asks more.
     #[serde(default = "cpu_threads_default")]
     pub cpu_threads: u32,
+    /// The warm keys this template knows, each with its absolute path
+    /// (pass 34, 4.1; row P2). Absent from the digest when empty, so a
+    /// template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub warm: BTreeMap<String, PathBuf>,
+    /// The warm keys whose paths are caches: absent is a cold start, and
+    /// the cache budget may remove them. Each is an entry directly in
+    /// `execution_node.cache_dir` (default `<work_dir>/caches`). Absent from
+    /// the digest when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caches: Vec<String>,
 }
 
 /// The signals a template may name as its checkpoint notice: each one a
@@ -395,9 +422,19 @@ impl ExecutionNodeSettings {
         if self.job_account.trim().is_empty() {
             return Err("execution_node.job_account must name an OS account".to_owned());
         }
+        if self
+            .cache_dir
+            .as_ref()
+            .is_some_and(|dir| !dir.is_absolute())
+        {
+            return Err("execution_node.cache_dir must be an absolute path".to_owned());
+        }
+        self.cache.validate()?;
+        warm::check_warm_agreement(&self.templates)?;
         for (name, template) in &self.templates {
             template
                 .validate()
+                .and_then(|()| warm::check_template_warm(template, &self.cache_root()))
                 .map_err(|why| format!("execution_node.templates.{name}: {why}"))?;
             if !plain_name(name, TEMPLATE_NAME_MAX) {
                 return Err(format!(

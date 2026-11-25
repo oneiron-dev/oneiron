@@ -57,8 +57,8 @@ pub const VAULT_MACHINE_BACKEND: &str = "vault_machine";
 pub const NOT_AVAILABLE_TO_THIS_CALLER: &str = "not_available_to_this_caller";
 
 /// A `vault_machine` quote's inputs: the machine that runs the job (required), the GPU it
-/// may take, and where its returned result lands (EM-12 = A). Other fields (a lane's arm
-/// binding) pass through untouched.
+/// may take, where its returned result lands (EM-12 = A), and the warm keys the work reads
+/// (pass 34, row P2). Other fields (a lane's arm binding) pass through untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultMachineInputs {
     pub machine: EntityId,
@@ -67,6 +67,7 @@ pub struct VaultMachineInputs {
     /// `inputs.result { artifact, task }`: each returnable output becomes the artifact's next
     /// version, pending Keep, made by the task. Absent: the issuer fetches nothing.
     pub result: Option<GpuJobResultBinding>,
+    pub warm: Vec<String>,
 }
 
 impl VaultMachineInputs {
@@ -86,7 +87,9 @@ impl VaultMachineInputs {
 ///
 /// `machine_missing` when `inputs.machine` is absent or not a MACHINE id in hex;
 /// `device_id_invalid` or `model_invalid` when one is present and not a string;
-/// `result_invalid` when `inputs.result` is present and not `{ artifact, task }` ids.
+/// `result_invalid` when `inputs.result` is present and not `{ artifact, task }` ids;
+/// `warm_invalid` when `inputs.warm` is present and not a list of at most
+/// [`oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX`] distinct warm keys.
 pub fn vault_machine_inputs(
     inputs: &serde_json::Value,
 ) -> Result<VaultMachineInputs, &'static str> {
@@ -107,11 +110,22 @@ pub fn vault_machine_inputs(
                 .map_err(|_| "result_invalid")?,
         ),
     };
+    let warm = match inputs.get("warm") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(value) => serde_json::from_value::<Vec<String>>(value.clone())
+            .ok()
+            .filter(|keys| {
+                oneiron::warm_key::check_warm_keys(keys, oneiron::warm_key::ATTEMPT_WARM_KEYS_MAX)
+                    .is_ok()
+            })
+            .ok_or("warm_invalid")?,
+    };
     Ok(VaultMachineInputs {
         machine,
         device_id: text("device_id", "device_id_invalid")?,
         model: text("model", "model_invalid")?,
         result,
+        warm,
     })
 }
 

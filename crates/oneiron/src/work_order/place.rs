@@ -48,7 +48,7 @@ fn score(order: &WorkOrder, needs: &Needs, machine: &MachineFacts) -> Score {
     } else {
         1
     };
-    let wanted = &order.wishes.warm;
+    let wanted = crate::warm_key::attempt_warm_keys(&order.wishes.warm);
     let present = wanted
         .iter()
         .filter(|key| machine.warm.contains(key))
@@ -85,15 +85,27 @@ fn score(order: &WorkOrder, needs: &Needs, machine: &MachineFacts) -> Score {
     }
 }
 
-/// The step that decided between the pick and the runner-up, as the reason phrase.
-fn reason(first: &Score, second: Option<&Score>, order: &WorkOrder) -> String {
+/// The step that decided between the pick `picked` and the runner-up, as the reason phrase. A
+/// warm step names the keys the order lists that `picked` holds, and no other.
+fn reason(
+    first: &Score,
+    second: Option<&Score>,
+    order: &WorkOrder,
+    picked: &MachineFacts,
+) -> String {
     let Some(second) = second else {
         return "the only machine that fits".to_owned();
     };
     if first.role != second.role {
         "its role".to_owned()
     } else if first.warm != second.warm {
-        format!("already holds {}", order.wishes.warm.join(", "))
+        let wanted = crate::warm_key::attempt_warm_keys(&order.wishes.warm);
+        let held: Vec<&str> = wanted
+            .iter()
+            .filter(|key| picked.warm.contains(key))
+            .map(String::as_str)
+            .collect();
+        format!("already holds {}", held.join(", "))
     } else if (first.waste_devices, first.waste_memory_mib)
         != (second.waste_devices, second.waste_memory_mib)
     {
@@ -124,7 +136,12 @@ pub fn place<'a>(
         other => other,
     });
     let (first_score, first) = scored.first()?;
-    let why = reason(first_score, scored.get(1).map(|(score, _)| score), order);
+    let why = reason(
+        first_score,
+        scored.get(1).map(|(score, _)| score),
+        order,
+        first,
+    );
     let options = scored
         .iter()
         .take(PLACE_OPTIONS_MAX)

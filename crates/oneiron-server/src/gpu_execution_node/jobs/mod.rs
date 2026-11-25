@@ -24,6 +24,7 @@
 //! configuration (row R1), the GPU slot table (OPUS-LE-FLEET), the memory
 //! floor, the job unit (row R3b), the stager (row R3c) and the machine-key
 //! signer. Its calls block; an async caller runs them on a blocking thread.
+//! The warm keys and the cache budget are [`warm`]'s (pass 34, row P2).
 //! On Linux the server opens it and steps it on the mesh listener's tick
 //! (`serving`).
 //! One service per `state_dir`: it holds the journal's writer lock while any
@@ -43,6 +44,7 @@ pub mod receipt;
 #[cfg(target_os = "linux")]
 pub mod serving;
 pub mod staging;
+pub mod warm;
 
 mod admission;
 mod end;
@@ -113,6 +115,8 @@ struct NodeJobsShared {
     paths: NodeJobPaths,
     parts: NodeJobParts,
     book: Mutex<NodeBook>,
+    /// The warm keys (row P2): taken only after `book`, never before it.
+    warm: Mutex<warm::WarmState>,
     /// The server stopped serving this service ([`NodeJobs::close`]).
     closed: AtomicBool,
     /// The readiness record and the incidents, under locks of their own.

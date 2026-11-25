@@ -6,9 +6,10 @@ use std::collections::BTreeSet;
 
 use oneiron::EntityId;
 
+use super::super::node_settings::{ExecutionNodeSettings, NodeCacheSettings, SettingsRead};
 use super::super::wire::{
     JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest, NodeReadiness, ScopeReport,
-    SignedJobSubmit,
+    SignedJobSubmit, WarmKeyFact, WarmWanted,
 };
 
 /// The node's keys: the journal, the key states, admission and the launch
@@ -86,6 +87,34 @@ pub trait NodeKeys: Send + Sync {
     fn acknowledge(&self, peer: EntityId, key: &str) -> JobStatusAnswer {
         let _ = (peer, key);
         JobStatusAnswer::Refused(JobRefusal::NotEnabled)
+    }
+
+    /// `NodeWanting` from `peer` (pass 34, row P2): the warm keys of its
+    /// open orders that may run here.
+    fn warm_wanted(&self, peer: EntityId, wanted: &WarmWanted) {
+        let _ = (peer, wanted);
+    }
+
+    /// The warm keys `Node` reports (row P2), under the cache figures in
+    /// force (`cache`: the smaller of the box's and the owner's).
+    fn warm_facts(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+    ) -> Vec<WarmKeyFact> {
+        let _ = (settings, cache);
+        Vec::new()
+    }
+
+    /// Starts a cache pass when one is due (row P2); it never waits for it. The pass reads the
+    /// node's file again through `settings_now`.
+    fn cache_pass_if_due(
+        &self,
+        settings: &ExecutionNodeSettings,
+        cache: &NodeCacheSettings,
+        settings_now: SettingsRead,
+    ) {
+        let _ = (settings, cache, settings_now);
     }
 
     /// `Tail` from `peer`: the key's log from an offset (pass 34, 7.2).

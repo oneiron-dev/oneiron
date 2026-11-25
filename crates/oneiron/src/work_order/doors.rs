@@ -203,6 +203,14 @@ pub fn order_work_as(
                     )));
                 }
             }
+            // Row P2: a new order's warm keys; a replay above answers the order it made, as it
+            // was made.
+            let warm_keys_max = super::setting_keys::order_warm_keys_max_in_txn(vault, txn)?;
+            if let Err(invalid) =
+                crate::warm_key::check_warm_keys(&input.wishes.warm, warm_keys_max)
+            {
+                return Ok(Err(bad_request(&format!("wishes.warm: {invalid}"))));
+            }
             let Some(row) = vault.job_workload_in_txn(txn, &input.workload)? else {
                 return Ok(Err(order_refusal(
                     MEMORY_CODE_INVALID_STATE,

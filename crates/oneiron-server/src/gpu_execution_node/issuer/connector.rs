@@ -134,7 +134,7 @@ impl VaultMachineConnector {
     ///
     /// # Errors
     ///
-    /// `machine_missing`, `device_id_invalid` or `model_invalid`.
+    /// `machine_missing`, `device_id_invalid`, `model_invalid`, `result_invalid` or `warm_invalid`.
     pub fn check_inputs(&self, _job_type: &str, inputs: &serde_json::Value) -> Result<(), String> {
         vault_machine_inputs(inputs)
             .map(|_| ())
@@ -311,6 +311,7 @@ impl VaultMachineConnector {
             starter: wire_starter(starter),
             hold: hold_of(key),
             authority_heads: self.vault().authority_main_log_heads().map_err(store)?,
+            warm: inputs.warm.clone(),
         };
         let signed = SignedJobSubmit::sign(submit, self.parts.signer.as_ref())
             .map_err(|error| refused(format!("issuer_cannot_sign: {error}")))?;
