@@ -10,16 +10,19 @@
 //!
 //! The ask runs outside every transaction. Its inference is the decider's own read: the host
 //! meters it on the Grant's agent, and the decision keeps the read's receipt, never model text.
+//! One pass waits about one slot deadline on its deciders in all ([`PassAsks`]).
 //!
 //! - RANK: one ask per pass among the first [`RANK_OPTIONS_MAX`] runnable orders; the decider
-//!   picks which goes first, and the rest keep the rule's order.
+//!   picks which goes first, and the rest keep the rule's order and its decisions.
 //! - PLACE: the rule's candidates, and [`PLACE_WAIT`] when the order may wait; only a decider
-//!   picks wait, and the order then waits with the blocker `decider_wait`.
+//!   picks wait, and the order then waits with the blocker `decider_wait` until
+//!   `policy.slots.wait_reask_ms` has passed.
 //! - AFTER: asked only when the rule would retry, among the options the end cause allows: a
 //!   decider may give up sooner, never retry past the owner's `jobs.retry` count.
 
 pub(crate) mod setting_keys;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -39,7 +42,8 @@ use super::rank::{RANK_OPTIONS_MAX, RANK_RULE, rank_decision};
 use super::record::{DecidedBy, EndKind, OrderCharge, SlotDecision, SlotName, WaitRule, WorkOrder};
 
 pub use setting_keys::{
-    DeciderGrant, SLOT_DEADLINE_MS_DEFAULT, SLOT_DEADLINE_MS_MAX, SLOT_MAX_ASKS_PER_HOUR_DEFAULT,
+    DeciderGrant, PLACE_WAIT_REASK_MS_DEFAULT, PLACE_WAIT_REASK_MS_MAX, SLOT_DEADLINE_MS_DEFAULT,
+    SLOT_DEADLINE_MS_MAX, SLOT_MAX_ASKS_PER_HOUR_DEFAULT,
 };
 
 /// The verb a decider's Grant names: each answer is one typed model read.
@@ -78,7 +82,8 @@ pub enum DeciderMiss {
     NoModel,
     /// The named Grant does not stand for its agent and [`DECIDER_VERB`]: it was not asked.
     NotLive,
-    /// The slot's asks this hour reached `policy.slots.max_asks_per_hour`: it was not asked.
+    /// The slot's asks this hour reached `policy.slots.max_asks_per_hour`, or this pass's ask
+    /// budget ([`PassAsks`]) has run out: it was not asked.
     Ceiling,
 }
 
@@ -235,6 +240,43 @@ impl SlotAskWindow {
     }
 }
 
+/// One pass's asks of its slot deciders: the host that asks them, and the pass's ask budget
+/// (Engine F1 = a, 25 Nov 20:4x). The pass's first ask opens the budget for that ask's
+/// deadline, and each later ask in the pass may take only what is left of it. Once it has run
+/// out, the later slots keep the rule's pick, as past the hourly ceiling
+/// ([`DeciderMiss::Ceiling`]). So a pass, and a `vault.jobs.order` call that runs one, waits
+/// about one slot deadline on its deciders, however many slots name one.
+pub(super) struct PassAsks<'h> {
+    host: &'h dyn OrderHost,
+    /// When the budget runs out; none before the pass's first ask.
+    closes_at: Cell<Option<Instant>>,
+}
+
+impl<'h> PassAsks<'h> {
+    /// A pass's asks through `host`, with its budget not yet opened.
+    pub(super) fn new(host: &'h dyn OrderHost) -> Self {
+        Self {
+            host,
+            closes_at: Cell::new(None),
+        }
+    }
+
+    /// The deadline the next ask of a slot whose own deadline is `deadline_ms` may take: all of
+    /// it for the pass's first ask, which opens the budget; after that, at most what is left.
+    /// `None` once the budget has run out.
+    fn deadline_ms(&self, deadline_ms: u64) -> Option<u64> {
+        let now = Instant::now();
+        let Some(closes_at) = self.closes_at.get() else {
+            self.closes_at
+                .set(now.checked_add(Duration::from_millis(deadline_ms)));
+            return Some(deadline_ms);
+        };
+        let left = closes_at.saturating_duration_since(now).as_millis();
+        let left = u64::try_from(left).unwrap_or(u64::MAX);
+        (left > 0).then_some(left.min(deadline_ms))
+    }
+}
+
 impl SlotDecision {
     /// The decision of the named decider `grant`, which picked `pick` among `options` in time.
     fn by_decider(
@@ -344,10 +386,10 @@ impl Vault {
     }
 
     /// `rule`, or the named decider's pick among `question.options` when it answers one of them
-    /// inside the slot's deadline (1.2, I9).
+    /// inside the slot's deadline, cut to what is left of the pass's ask budget (1.2, I9).
     fn decide_slot(
         &self,
-        host: &dyn OrderHost,
+        asks: &PassAsks<'_>,
         question: SlotQuestion<'_>,
         rule: SlotDecision,
     ) -> crate::Result<SlotDecision> {
@@ -370,6 +412,9 @@ impl Vault {
         let Some((agent, class)) = stands else {
             return Ok(rule.kept(grant, DeciderMiss::NotLive, None));
         };
+        let Some(deadline_ms) = asks.deadline_ms(policy.deadline_ms) else {
+            return Ok(rule.kept(grant, DeciderMiss::Ceiling, None));
+        };
         let ask = SlotAsk {
             slot: question.slot,
             grant,
@@ -377,12 +422,12 @@ impl Vault {
             class,
             options: question.options,
             facts: (question.facts)(),
-            deadline_ms: policy.deadline_ms,
+            deadline_ms,
             max_asks_per_hour: policy.max_asks_per_hour,
         };
         let started = Instant::now();
-        let reply = host.decide(&ask);
-        let in_time = started.elapsed() <= Duration::from_millis(policy.deadline_ms);
+        let reply = asks.host.decide(&ask);
+        let in_time = started.elapsed() <= Duration::from_millis(deadline_ms);
         Ok(match reply {
             DeciderReply::Answered { receipt, .. } if !in_time => {
                 rule.kept(grant, DeciderMiss::Silent, Some(receipt))
@@ -411,26 +456,30 @@ impl Vault {
         })
     }
 
-    /// RANK (4.5): the named decider picks which of the first [`RANK_OPTIONS_MAX`] runnable
-    /// orders in `ranked` (the rule's order) goes first, and it moves there; the rest keep the
-    /// rule's order. With the decision for the order now first when a decider was named; with
-    /// `None`, every decision is the rule's.
+    /// RANK (4.5): each order of `ranked` (the rule's order) with its rank decision. The named
+    /// decider picks which of the first [`RANK_OPTIONS_MAX`] goes first, and that order moves
+    /// there with the decider's decision; the others keep the rule's order, and each keeps the
+    /// rule's own decision from before the move (Engine F2, 25 Nov 20:4x).
     pub(super) fn ranked_by_decider<'o>(
         &self,
-        host: &dyn OrderHost,
-        mut ranked: Vec<&'o WorkOrder>,
+        asks: &PassAsks<'_>,
+        ranked: &[&'o WorkOrder],
         running: &BTreeMap<String, u32>,
         now_ms: u64,
-    ) -> crate::Result<(Vec<&'o WorkOrder>, Option<SlotDecision>)> {
-        if ranked.len() < 2 {
-            return Ok((ranked, None));
-        }
+    ) -> crate::Result<Vec<(&'o WorkOrder, SlotDecision)>> {
         let ids: Vec<EntityId> = ranked.iter().map(|order| order.id).collect();
+        let mut decided: Vec<(&'o WorkOrder, SlotDecision)> = ranked
+            .iter()
+            .enumerate()
+            .map(|(position, order)| (*order, rank_decision(&ids, position)))
+            .collect();
+        if ranked.len() < 2 {
+            return Ok(decided);
+        }
         let rule = rank_decision(&ids, 0);
         let rule_pick = rule_fact(&rule);
-        let shown = &ranked;
         let facts = move || {
-            let orders: Vec<Value> = shown
+            let orders: Vec<Value> = ranked
                 .iter()
                 .take(RANK_OPTIONS_MAX)
                 .map(|order| {
@@ -452,25 +501,25 @@ impl Vault {
             options: rule.options.clone(),
             facts: Box::new(facts),
         };
-        let decision = self.decide_slot(host, question, rule)?;
-        if let Some(position) = ranked
+        let decision = self.decide_slot(asks, question, rule)?;
+        if let Some(position) = decided
             .iter()
-            .position(|order| order.id.to_hex() == decision.pick)
-            && position > 0
+            .position(|(order, _)| order.id.to_hex() == decision.pick)
         {
-            let first = ranked.remove(position);
-            ranked.insert(0, first);
+            let (first, _) = decided.remove(position);
+            decided.insert(0, (first, decision));
         }
-        Ok((ranked, Some(decision)))
+        Ok(decided)
     }
 
     /// PLACE (4.4): the named decider picks among the rule's candidates (`placed` lists their
     /// top ones, `chosen` is the rule's pick), or [`PLACE_WAIT`] when the order may wait. No
     /// ask when the order's limits name one machine. `None` when the decider picked wait: the
-    /// order then waits with the blocker `decider_wait`, written here.
+    /// order then waits with the blocker `decider_wait`, written here, until
+    /// `policy.slots.wait_reask_ms` has passed.
     pub(super) fn decide_place<'a>(
         &self,
-        host: &dyn OrderHost,
+        asks: &PassAsks<'_>,
         order: &WorkOrder,
         candidates: &[&'a MachineFacts],
         (chosen, placed): (&'a MachineFacts, SlotDecision),
@@ -514,7 +563,7 @@ impl Vault {
             options,
             facts: Box::new(facts),
         };
-        let decision = self.decide_slot(host, question, placed)?;
+        let decision = self.decide_slot(asks, question, placed)?;
         let decider = match &decision.by {
             DecidedBy::Grant { grant, .. } => Some(*grant),
             _ => None,
@@ -523,10 +572,16 @@ impl Vault {
             return Ok(Some((chosen, decision)));
         };
         if decision.pick == PLACE_WAIT {
+            let reask_ms = {
+                let txn = self.store.env.read_txn()?;
+                let project = self.order_project_in_txn(&txn, order)?;
+                setting_keys::place_wait_reask_ms_in_txn(self, &txn, project)?
+            };
             let blocked = vec![BlockedOn {
                 machine: None,
                 blocker: Blocker::DeciderWait {
                     decider: decider.to_hex(),
+                    until_ms: now_ms.saturating_add(reask_ms),
                 },
             }];
             self.block_order(order, blocked, false, now_ms, report)?;
@@ -550,7 +605,7 @@ impl Vault {
     /// sooner, or retry now where the rule waits; it never retries where the rule would not.
     pub(super) fn decide_after(
         &self,
-        host: &dyn OrderHost,
+        asks: &PassAsks<'_>,
         order: &WorkOrder,
         end: EndKind,
         pick: AfterPick,
@@ -581,7 +636,7 @@ impl Vault {
             options: decision.options.clone(),
             facts: Box::new(facts),
         };
-        let decided = self.decide_slot(host, question, decision)?;
+        let decided = self.decide_slot(asks, question, decision)?;
         if !matches!(decided.by, DecidedBy::Grant { .. }) {
             return Ok((pick, decided));
         }

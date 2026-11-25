@@ -9,7 +9,7 @@ use crate::job_workload::{ResourceRequest, WorkloadStarter};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId};
 
-use super::blocker::BlockedOn;
+use super::blocker::{BlockedOn, Blocker};
 use super::decider::{DeciderMiss, DeciderReceipt};
 
 pub(super) const WORK_ORDERS: SideTable<EntityId, WorkOrder, Named> =
@@ -416,6 +416,28 @@ impl WorkOrder {
     #[must_use]
     pub fn wait_ran_out(&self, now_ms: u64) -> bool {
         matches!(self.wait, WaitRule::Until { ms } if now_ms >= ms)
+    }
+
+    /// What holds the order back from a new attempt at `now_ms` until a time passes: its
+    /// retry's backoff ([`Self::retry_not_before_ms`]), or the wait its PLACE decider picked,
+    /// which its open state keeps until the wait's `until_ms` (Engine F3, 25 Nov 20:4x).
+    #[must_use]
+    pub fn timed_hold(&self, now_ms: u64) -> Option<BlockedOn> {
+        if let Some(ms) = self.retry_not_before_ms.filter(|ms| *ms > now_ms) {
+            return Some(BlockedOn {
+                machine: None,
+                blocker: Blocker::RetryNotBefore { ms },
+            });
+        }
+        let OrderState::Open { blocked, .. } = &self.state else {
+            return None;
+        };
+        blocked
+            .iter()
+            .find(|on| {
+                matches!(on.blocker, Blocker::DeciderWait { until_ms, .. } if until_ms > now_ms)
+            })
+            .cloned()
     }
 
     /// The attempt numbered `n`.

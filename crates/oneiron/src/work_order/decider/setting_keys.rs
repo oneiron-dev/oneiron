@@ -1,7 +1,9 @@
 //! The slot deciders' Setting keys (pass 34, 1.2 and 6.3; row P1): per slot (the item: `rank`,
 //! `place` or `after`), the Grant the owner named to decide it, how long the loop waits for its
-//! answer, and how often an hour it may be asked. Each is the owner's, read in one place
-//! ([`slot_policy_in_txn`]), at the vault or at one line's project.
+//! answer, and how often an hour it may be asked; for PLACE alone, how long an order its
+//! decider holds waits before it is placed again. Each is the owner's, read in one place
+//! ([`slot_policy_in_txn`], [`place_wait_reask_ms_in_txn`]), at the vault or at one line's
+//! project.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,6 +21,11 @@ pub const SLOT_DEADLINE_MS_DEFAULT: u64 = 5_000;
 pub const SLOT_DEADLINE_MS_MAX: u64 = 60_000;
 /// A slot's default ceiling of decider asks an hour (1.2).
 pub const SLOT_MAX_ASKS_PER_HOUR_DEFAULT: u32 = 120;
+/// How long an order waits, by default, after its PLACE decider picked wait, before the loop
+/// places it again and asks again, in milliseconds (Engine F3, 25 Nov 20:4x).
+pub const PLACE_WAIT_REASK_MS_DEFAULT: u64 = 60_000;
+/// The longest such wait: one hour, the span of a slot's ask ceiling.
+pub const PLACE_WAIT_REASK_MS_MAX: u64 = 3_600_000;
 
 /// The Grant the owner named to decide a slot: its id, as the setting stores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -41,6 +48,16 @@ const SLOTS: ItemDomain = ItemDomain {
     admits: admits_slot,
 };
 
+/// Whether `item` names the PLACE slot.
+fn admits_place(item: &str) -> bool {
+    item == slot_item(SlotName::Place)
+}
+
+const PLACE_SLOT: ItemDomain = ItemDomain {
+    name: "place slot",
+    admits: admits_place,
+};
+
 fn no_decider() -> Option<DeciderGrant> {
     None
 }
@@ -51,6 +68,10 @@ fn slot_deadline_ms() -> u64 {
 
 fn slot_max_asks_per_hour() -> u32 {
     SLOT_MAX_ASKS_PER_HOUR_DEFAULT
+}
+
+fn place_wait_reask_ms() -> u64 {
+    PLACE_WAIT_REASK_MS_DEFAULT
 }
 
 crate::setting::setting_keys! {
@@ -76,6 +97,14 @@ crate::setting::setting_keys! {
         kind: Kind::new(slot_max_asks_per_hour).lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Project],
         item: Some(SLOTS),
+    };
+    /// How long an order waits after the PLACE slot's decider picked wait (item: place), in
+    /// milliseconds, before the loop places it again and asks its decider again. Default 60000;
+    /// at most 3600000. Longer is tighter: fewer asks.
+    pub(crate) SLOT_WAIT_REASK_MS: u64 = "policy.slots.wait_reask_ms" {
+        kind: Kind::new(place_wait_reask_ms).higher(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        item: Some(PLACE_SLOT),
     };
 }
 
@@ -115,4 +144,23 @@ pub(crate) fn slot_policy_in_txn(
         deadline_ms: deadline_ms.min(SLOT_DEADLINE_MS_MAX),
         max_asks_per_hour,
     })
+}
+
+/// How long an order whose PLACE decider picked wait waits before it is placed again, in `txn`:
+/// at `project`'s scope when given (a line order's line), else at the vault's. At most
+/// [`PLACE_WAIT_REASK_MS_MAX`].
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn place_wait_reask_ms_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+) -> Result<u64> {
+    let known: Vec<SettingScope> = project.map(SettingScope::Project).into_iter().collect();
+    let reask_ms = SLOT_WAIT_REASK_MS
+        .read_in_txn(vault, txn, &known, Some(slot_item(SlotName::Place)))?
+        .value;
+    Ok(reask_ms.min(PLACE_WAIT_REASK_MS_MAX))
 }

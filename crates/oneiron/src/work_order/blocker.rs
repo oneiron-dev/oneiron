@@ -141,9 +141,11 @@ pub enum Blocker {
         key: String,
     },
     /// The PLACE slot's decider (row P1), the Grant `decider` in lower hex, chose to wait for
-    /// a better machine; the next pass places the order again.
+    /// a better machine; the loop places the order again, and asks again, from `until_ms`
+    /// (`policy.slots.wait_reask_ms` after the pick).
     DeciderWait {
         decider: String,
+        until_ms: u64,
     },
 
     // Faults of one key on the node: the issuer's own record disagrees with the node's, or a
@@ -324,7 +326,7 @@ impl Blocker {
             | Self::MemoryBusy { free_at_ms }
             | Self::ThreadsBusy { free_at_ms } => *free_at_ms,
             Self::OutsideWindow { opens_ms } => *opens_ms,
-            Self::RetryNotBefore { ms } => Some(*ms),
+            Self::RetryNotBefore { ms } | Self::DeciderWait { until_ms: ms, .. } => Some(*ms),
             _ => None,
         }
     }

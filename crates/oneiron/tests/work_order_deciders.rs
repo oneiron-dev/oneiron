@@ -1,14 +1,17 @@
 //! Slot deciders (pass 34, `34-compute-general/DESIGN.md` sections 1.2, 4.4, 4.5, 4.7 and 10;
 //! row P1): the Grant the owner names in `policy.slots.decider` answers RANK, PLACE or AFTER
 //! among the options the engine lists. An answer outside them, or none inside the slot's
-//! deadline, keeps the rule's pick (I9), and the decision is stored on the row it decides. The
-//! host's decision ladder is a scripted decider here; the provider is a scripted fake.
+//! deadline, keeps the rule's pick (I9), and the decision is stored on the row it decides. One
+//! pass waits about one deadline on its deciders, and an order a decider holds is asked again
+//! only once its wait ends (Engine F1 and F3, 25 Nov 20:4x). The host's decision ladder is a
+//! scripted decider here; the provider is a scripted fake.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test work_order_deciders`
 #![cfg(oneiron_test_support)]
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
@@ -32,7 +35,8 @@ use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::work_order::{put_approved_workload, put_order};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::work_order::decider::{
-    DECIDER_VERB, DeciderMiss, DeciderReceipt, DeciderReply, PLACE_WAIT, SlotAsk, SlotAskWindow,
+    DECIDER_VERB, DeciderMiss, DeciderReceipt, DeciderReply, PLACE_WAIT,
+    PLACE_WAIT_REASK_MS_DEFAULT, SlotAsk, SlotAskWindow,
 };
 use oneiron::work_order::{
     AttemptOutcome, AttemptRefused, AttemptToMake, Blocker, DecidedBy, DeviceFact, EndKind,
@@ -504,6 +508,15 @@ fn never() -> Script {
     Box::new(|ask| panic!("the decider was asked: {ask:?}"))
 }
 
+/// A decider whose every read takes the whole deadline it is given and answers nothing, as a
+/// read whose clock ran out.
+fn slow() -> Script {
+    Box::new(|ask| {
+        std::thread::sleep(Duration::from_millis(ask.deadline_ms));
+        DeciderReply::Silent { receipt: None }
+    })
+}
+
 fn blockers(order: &WorkOrder) -> Vec<Blocker> {
     match &order.state {
         OrderState::Open { blocked, .. } => blocked.iter().map(|on| on.blocker.clone()).collect(),
@@ -849,7 +862,8 @@ fn only_a_decider_waits_while_a_machine_fits() {
     assert_eq!(
         blockers(&stored),
         vec![Blocker::DeciderWait {
-            decider: grant.to_hex()
+            decider: grant.to_hex(),
+            until_ms: NOW + PLACE_WAIT_REASK_MS_DEFAULT,
         }]
     );
     assert!(rig.vault.gpu_jobs().expect("jobs read").is_empty());
@@ -869,6 +883,194 @@ fn only_a_decider_waits_while_a_machine_fits() {
         .collect();
     assert!(offered.contains(&vec![low.to_hex(), high.to_hex()]));
     assert_eq!(rig.stored(&now_only).attempts[0].machine, Some(high));
+}
+
+#[test]
+fn a_decider_that_waits_is_asked_again_only_once_its_wait_ends() {
+    let rig = rig();
+    let (low, high) = two_machines();
+    let digest = rig.workload(0, &[low, high]);
+    let order = rig.order(&digest, 0, WaitRule::Open, OrderClass::Normal);
+    let grant = rig.decider();
+    rig.name_decider("place", grant);
+    let host = TestHost::new(
+        &rig,
+        vec![machine(low, None), machine(high, None)],
+        answers(PLACE_WAIT),
+    );
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+    let held = vec![Blocker::DeciderWait {
+        decider: grant.to_hex(),
+        until_ms: NOW + PLACE_WAIT_REASK_MS_DEFAULT,
+    }];
+    assert_eq!(blockers(&rig.stored(&order)), held);
+
+    // Inside the wait the order is held with no ask, so it spends none of the hour's ceiling.
+    rig.vault
+        .work_order_pass(&host, NOW + PLACE_WAIT_REASK_MS_DEFAULT - 1)
+        .expect("pass");
+    assert_eq!(host.asked(SlotName::Place).len(), 1);
+    assert_eq!(blockers(&rig.stored(&order)), held);
+
+    // Once it ends, the loop places the order again and asks again; the owner's
+    // policy.slots.wait_reask_ms sets the next wait.
+    rig.set_slot("policy.slots.wait_reask_ms", "place", json!(5_000));
+    let again = NOW + PLACE_WAIT_REASK_MS_DEFAULT;
+    rig.vault.work_order_pass(&host, again).expect("pass");
+    assert_eq!(host.asked(SlotName::Place).len(), 2);
+    let stored = rig.stored(&order);
+    assert_eq!(
+        blockers(&stored),
+        vec![Blocker::DeciderWait {
+            decider: grant.to_hex(),
+            until_ms: again + 5_000,
+        }]
+    );
+    assert!(
+        matches!(stored.state, OrderState::Open { earliest_ms: Some(ms), .. } if ms == again + 5_000),
+        "the open state says when the wait ends: {:?}",
+        stored.state
+    );
+    assert!(stored.attempts.is_empty());
+}
+
+#[test]
+fn the_orders_after_a_rank_pick_keep_the_rule_s_own_decisions() {
+    let rig = rig();
+    let free = EntityId::now();
+    let digest = rig.workload(0, &[free]);
+    // The rule ranks interactive, normal, background; the decider picks background.
+    let background = rig.order(&digest, 0, WaitRule::No, OrderClass::Background);
+    let normal = rig.order(&digest, 0, WaitRule::No, OrderClass::Normal);
+    let interactive = rig.order(&digest, 0, WaitRule::No, OrderClass::Interactive);
+    let grant = rig.decider();
+    rig.name_decider("rank", grant);
+    let host = TestHost::new(
+        &rig,
+        vec![machine(free, None)],
+        answers(&background.id.to_hex()),
+    );
+    rig.vault.work_order_pass(&host, NOW).expect("pass");
+
+    let rule_order: Vec<String> = [&interactive, &normal, &background]
+        .iter()
+        .map(|order| order.id.to_hex())
+        .collect();
+    assert_eq!(host.asked(SlotName::Rank)[0].options, rule_order);
+    let ranked = |order: &WorkOrder| rig.stored(order).attempts[0].ranked.clone();
+    assert!(matches!(
+        ranked(&background).by,
+        DecidedBy::Grant { grant: by, .. } if by == grant
+    ));
+    // Each other order keeps the rule's own decision about it: its place in the rule's order
+    // and the rule's why, not a place in the order the decider's pick made.
+    for (order, why) in [
+        (
+            &interactive,
+            "first by class, then the fewest running in its family, then the oldest",
+        ),
+        (&normal, "place 2 by class, running in its family, then age"),
+    ] {
+        let decision = ranked(order);
+        assert_eq!(decision.pick, order.id.to_hex());
+        assert_eq!(decision.why, why);
+        assert_eq!(decision.options, rule_order);
+        assert_eq!(
+            decision.by,
+            DecidedBy::Rule {
+                name: RANK_RULE.to_owned()
+            }
+        );
+    }
+}
+
+#[test]
+fn a_pass_waits_about_one_deadline_on_its_deciders() {
+    const DEADLINE_MS: u64 = 500;
+    let rig = rig();
+    let (low, high) = two_machines();
+    let digest = rig.workload(0, &[low, high]);
+    let facts = vec![machine(low, None), machine(high, None)];
+    // An order whose first attempt the provider refused before anything ran: the next pass
+    // settles its end, and the rule retries it.
+    let retried = rig.order(&digest, 0, WaitRule::Open, OrderClass::Normal);
+    rig.gpu.state().create_refused = true;
+    let quiet = TestHost::new(&rig, facts.clone(), never());
+    rig.vault.work_order_pass(&quiet, NOW).expect("pass");
+    assert_eq!(
+        rig.stored(&retried).attempts.len(),
+        1,
+        "FIXTURE: one attempt"
+    );
+    // Three runnable orders, each with two machines and the wait to pick from.
+    let runnable: Vec<WorkOrder> = (0..3)
+        .map(|_| rig.order(&digest, 0, WaitRule::Open, OrderClass::Normal))
+        .collect();
+    let grant = rig.decider();
+    for slot in ["rank", "place", "after"] {
+        rig.name_decider(slot, grant);
+        rig.set_slot("policy.slots.deadline_ms", slot, json!(DEADLINE_MS));
+    }
+    let host = TestHost::new(&rig, facts, slow());
+    let started = Instant::now();
+    rig.vault.work_order_pass(&host, NOW + 1_000).expect("pass");
+    let took = started.elapsed();
+
+    // AFTER, RANK and three PLACEs name the slow decider; only the pass's first ask is made.
+    assert_eq!(
+        host.asks.borrow().len(),
+        1,
+        "one ask: the one that spent the budget"
+    );
+    assert_eq!(host.asked(SlotName::After).len(), 1);
+    assert!(
+        took < Duration::from_millis(DEADLINE_MS + 1_500),
+        "the pass took {took:?}, past one deadline and a margin"
+    );
+    let end = rig.stored(&retried).attempts[0]
+        .end
+        .clone()
+        .expect("the attempt's end");
+    assert!(
+        matches!(
+            end.after.by,
+            DecidedBy::RuleKept {
+                miss: DeciderMiss::Silent,
+                ..
+            }
+        ),
+        "{:?}",
+        end.after.by
+    );
+    // The later slots keep the rule's pick, recorded as a ceiling miss: each order starts on the
+    // rule's machine, and the first in the rule's order keeps its rank as the rule had it.
+    let kept = |name: &str| DecidedBy::RuleKept {
+        name: name.to_owned(),
+        decider: grant,
+        miss: DeciderMiss::Ceiling,
+        receipt: None,
+    };
+    let mut rank_kept = 0;
+    for order in &runnable {
+        let stored = rig.stored(order);
+        let attempt = &stored.attempts[0];
+        assert_eq!(attempt.machine, Some(low));
+        assert_eq!(attempt.placed.by, kept(PLACE_RULE));
+        if attempt.ranked.by == kept(RANK_RULE) {
+            rank_kept += 1;
+        } else {
+            assert_eq!(
+                attempt.ranked.by,
+                DecidedBy::Rule {
+                    name: RANK_RULE.to_owned()
+                }
+            );
+        }
+    }
+    assert_eq!(
+        rank_kept, 1,
+        "the rank slot's one decision is kept on the first order"
+    );
 }
 
 #[test]
