@@ -43,9 +43,19 @@ fn require_host_issuer(server: &SyncServer) -> Result<(), oneiron::memory::Memor
         "this install holds no host issuer for the vault, so it signs no mesh binding or grant \
          here",
         &[
-            "A replica that joined its home takes back the vault root's escrowed issuer seed when its keystore is installed at a start after its first sync (FIX-LIST 10770). Its start then logs no 'serves without signing as its root'.",
+            "Bind and grant on an install that already holds the vault's live host issuer, such as the home. A replica that joined its home holds none, and a restart gives it none (FIX-LIST 10770): only a restore of the vault's protected custody carries the issuer seed.",
         ],
     ))
+}
+
+/// Whether `error` is [`oneiron::Vault::PAIR_SELF_UNANSWERED`]: this
+/// install's own MACHINE has no answered profile yet.
+fn unanswered_home(error: &oneiron::Error) -> bool {
+    matches!(
+        error,
+        oneiron::Error::Record(oneiron::error::RecordError::AuthorityRefused(reason))
+            if *reason == oneiron::Vault::PAIR_SELF_UNANSWERED
+    )
 }
 
 /// The same host issuer pairing uses; the caller's proof reaches the writer.
@@ -95,14 +105,29 @@ pub(crate) async fn vault_mesh_pair_self(
         "vault.mesh.pair_self",
         |server, owner| {
             require_host_issuer(server)?;
-            let mut binding = crate::api::pairing::with_issuer(server, |issuer| {
-                server.vault().pair_own_mesh_machine_as_owner(
+            // An unanswered home's refusal is taken here, before the pairing
+            // door's mapping answers it as an unnamed 401 (REVIEW-10531
+            // round 2 P1).
+            let paired = crate::api::pairing::with_issuer(server, |issuer| {
+                match server.vault().pair_own_mesh_machine_as_owner(
                     issuer,
                     owner,
                     crate::device_sync::enrolment::home_bind::enrolment_ceiling(),
-                )
+                ) {
+                    Err(error) if unanswered_home(&error) => Ok(None),
+                    paired => paired.map(Some),
+                }
             })
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            let mut binding = paired.ok_or_else(|| {
+                oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_INVALID_STATE,
+                    oneiron::Vault::PAIR_SELF_UNANSWERED,
+                    &[
+                        "As the owner, answer this install's MACHINE \"yours\" (POST /v1/owner/machines/answer), then call vault.mesh.pair_self again.",
+                    ],
+                )
+            })?;
             if let Some(address) =
                 crate::device_sync::enrolment::home_bind::home_mesh_address(server)
                     .filter(|address| address.endpoint_key == binding.address.endpoint_key)

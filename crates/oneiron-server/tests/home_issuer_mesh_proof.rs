@@ -208,6 +208,11 @@ fn the_owner_pairs_the_homes_own_machine_and_it_is_proven_on_the_job_alpn() {
             StatusCode::OK,
             "an unanswered home is not paired: {refused}"
         );
+        assert_ne!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "the owner's credential stands; the refusal is the home's state: {refused}"
+        );
         assert!(
             refused.to_string().contains("/v1/owner/machines/answer"),
             "the refusal names the owner's step: {refused}"
