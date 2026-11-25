@@ -1,6 +1,7 @@
 //! The scripted admission, memory floor, signer, authority and stager.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -393,10 +394,11 @@ struct StagerState {
     holding: bool,
     entered: u32,
     refusal: Option<String>,
+    unstaged: Vec<(String, PathBuf)>,
 }
 
 /// Staging, scripted: completes at once, or waits in each stage until the
-/// test lets it go, or refuses.
+/// test lets it go, or refuses. It records each removal of staged code.
 #[derive(Debug, Default)]
 pub struct ScriptedStager {
     state: Mutex<StagerState>,
@@ -424,6 +426,13 @@ impl ScriptedStager {
     /// The reason every later stage refuses with.
     pub fn set_refusal(&self, refusal: Option<&str>) {
         locked(&self.state).refusal = refusal.map(str::to_owned);
+    }
+
+    /// Each `(key, payload directory)` whose staged code was removed, in
+    /// call order.
+    #[must_use]
+    pub fn unstaged(&self) -> Vec<(String, PathBuf)> {
+        locked(&self.state).unstaged.clone()
     }
 
     /// Waits until `count` stages have begun, up to `timeout`.
@@ -468,5 +477,11 @@ impl Stager for ScriptedStager {
             .refusal
             .clone()
             .map_or(Ok(()), |reason| Err(StageFailure::Refused(reason)))
+    }
+
+    fn unstage(&self, key: &str, payload_dir: &Path) {
+        locked(&self.state)
+            .unstaged
+            .push((key.to_owned(), payload_dir.to_path_buf()));
     }
 }
