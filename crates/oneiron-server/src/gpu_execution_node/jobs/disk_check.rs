@@ -3,26 +3,34 @@
 //! through its job unit ([`super::JobUnit::payload_usage`]) and ends a key
 //! whose payload passed its disk request as `DiskLimit`.
 //!
-//! How far a job can pass its request (review r13 R13-05 and R13-07 of
-//! #10512):
-//! - `disk_check_secs` is the period a pass is planned at, not a bound on
-//!   the time between two measures of one key. A pass measures up to
-//!   [`DISK_MEASURES_AT_ONCE`] keys at once, batch after batch, so a key is
-//!   measured again within the period plus the slowest measure of each
-//!   batch up to its own (each at most the walk's time bound).
-//! - The speed a job fills its payload at is bounded only where the scope
-//!   gives `write_rate_cap` (the unit's `IOWriteBandwidthMax`), which a
-//!   template may require. That cap limits writes to the device: a file
-//!   system with delayed allocation reserves space for buffered writes
-//!   before they reach the device, up to the unit's dirty pages (a share of
-//!   its `MemoryMax`), and metadata reaches the device through the file
-//!   system's journal, outside the unit's cap. So the overshoot is about the
-//!   rate times the time between two measures, plus the unit's dirty pages.
-//!   Without the cap no rate is bounded, and the node's disk reserve and its
-//!   state floor are what is left. `fallocate` and io_uring are refused by
-//!   the unit's system call filter, which each job checks for itself.
-//! - A quota the file system enforces for each payload is the complete
-//!   mechanism; design 7.9 makes it a later node setting (FIX
+//! How far a job can pass its request (reviews r13 R13-05, R13-07 and r14
+//! R14-04, R14-06, R14-09 of #10512). The check bounds nothing by itself;
+//! it ends a key it finds over its request:
+//! - `disk_check_secs` is the period a pass is planned at, a scheduling
+//!   target and not a bound on the time between two measures of one key.
+//!   A pass measures up to [`DISK_MEASURES_AT_ONCE`] keys at once, batch
+//!   after batch, and a batch waits for its slowest measure, so one key's
+//!   next measure can wait on other keys' measures, control exchanges and
+//!   stops.
+//! - The check holds only where a measure completes. A payload the walk
+//!   cannot finish within the node's bounds passes, and one that keeps the
+//!   measure past its time bound is measured again next pass, so a job that
+//!   makes its payload slow or large to read is not ended by this check.
+//! - Where the scope gives `write_rate_cap` (the unit's
+//!   `IOWriteBandwidthMax`), the device takes the job's writes at that rate
+//!   at most. That slows a fill; it is no bound on the space a job takes: a
+//!   file system with delayed allocation reserves space for buffered writes
+//!   before they reach the device, metadata reaches the device through the
+//!   file system's journal outside the unit's cap, and a preallocation is
+//!   not a write. The unit's system call filter refuses `fallocate` and
+//!   io_uring, which each job checks for itself, but other paths remain: the
+//!   `FS_IOC_RESVSP` ioctls preallocate through `vfs_fallocate`, and
+//!   systemd's `SystemCallFilter=` names system calls, not ioctl requests
+//!   (an ioctl filter would also refuse the GPU drivers'). Without the cap
+//!   no rate is bounded. The node's disk reserve and its state floor are
+//!   admission checks, not limits on a running job.
+//! - A quota the file system enforces for each payload is the mechanism
+//!   that bounds the space; design 7.9 makes it a later node setting (FIX
 //!   EXEC-NODE-PAYLOAD-QUOTA).
 //!
 //! The measures run outside the admission lock, since a walk may take
@@ -39,7 +47,7 @@ use crate::gpu_execution_node::wire::JobState;
 
 /// The most payloads one pass measures at once: each is one root handler
 /// of the job control socket.
-pub const DISK_MEASURES_AT_ONCE: usize = 8;
+const DISK_MEASURES_AT_ONCE: usize = 8;
 
 /// A key the disk check measures: launched and not ending.
 struct MeasuredKey {
@@ -118,8 +126,11 @@ impl NodeJobs {
                         // The record did not land, perhaps on the very disk
                         // the job filled: the unit is stopped all the same,
                         // and the end handling names its end from the end
-                        // record (review r12 R12-09). A service that closed
-                        // meanwhile leaves the key to the next one.
+                        // record (review r12 R12-09). A service seen closed
+                        // here leaves the key to the next one; one that
+                        // closes after this look does not take back a stop
+                        // already asked for, as a launch commit already
+                        // begun is not taken back (r14 R14-12).
                         tracing::error!(key = %measured.key, %error, "job key over its disk request not journaled as ending; its unit is stopped anyway");
                         if !self.service_closed() {
                             self.stop_unit(&measured.key);

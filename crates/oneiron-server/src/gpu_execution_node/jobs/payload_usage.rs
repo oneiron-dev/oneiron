@@ -181,8 +181,9 @@ pub fn measure_payload_fd(
 }
 
 /// [`measure_payload_fd`], leaving in `counted` the (device, inode) of
-/// every file it counted other than a directory, so a later count (root's
-/// held files) charges none of them again (review r13 R13-01). A
+/// every file it counted, directories included, so a later count (root's
+/// held files, which counts a removed directory a task still holds) charges
+/// none of them again (review r13 R13-01, r14 R14-01). A
 /// [`PayloadUsage::Past`] or [`PayloadUsage::Unmeasurable`] stands even
 /// when found after the time bound: it is no estimate (R13-04).
 ///
@@ -224,10 +225,11 @@ pub fn measure_payload_fd_counting(
     };
     // Each file once by its inode, whatever its names now: a file whose
     // second name goes while the walk runs is not counted twice (review r12
-    // R12-05).
+    // R12-05), nor a directory the held files' count meets again (r14
+    // R14-01).
     let mut bytes: u64 = 0;
     let mut add = |stat: &Stat| -> Option<PayloadUsage> {
-        if !is_directory(stat) && !counted.insert(file_identity(stat)) {
+        if !counted.insert(file_identity(stat)) {
             return None;
         }
         let blocks = u64::try_from(stat.st_blocks).unwrap_or(0);

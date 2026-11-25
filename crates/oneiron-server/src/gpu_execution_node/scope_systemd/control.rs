@@ -40,7 +40,6 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
-use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -423,10 +422,11 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<String, String> {
 /// `<PAYLOAD_ROOT>/<id>`, opened beneath the root-only payload root and
 /// never through a link, so the walk counts the directory the unit binds
 /// and no path the engine's account could replace (the bind carries no
-/// submount), and then the inodes on its device that the unit's tasks hold
-/// with no name left and the job's uid owns (review r12 R12-01, r13
-/// R13-01..R13-04). Both within the walk's time bound, from the request's
-/// start; the held files' links count against the walk's entry bound.
+/// submount), and then the inodes on a device the walk met that the unit's
+/// tasks hold with no name left and the job's uid owns (review r12 R12-01,
+/// r13 R13-01..R13-04, r14 R14-08). Both within the walk's time bound, from
+/// the request's start; the held files' links have a bound of their own,
+/// the size of the walk's entry bound (r14 R14-10).
 fn payload_usage(
     id: &JobKeyId,
     stop_past: u64,
@@ -452,12 +452,6 @@ fn payload_usage(
     }
     let payload = open_dir_beneath(borrow(&root), OsStr::new(id.as_str()))
         .map_err(|error| format!("payload_not_published: {error}"))?;
-    let payload_device = payload
-        .try_clone()
-        .map(std::fs::File::from)
-        .and_then(|file| file.metadata())
-        .map_err(|error| format!("payload_not_measured: {error}"))?
-        .dev();
     let walk_bounds = PayloadWalkBounds {
         time_max: deadline.saturating_duration_since(Instant::now()),
         ..bounds.clone()
@@ -468,9 +462,11 @@ fn payload_usage(
     let PayloadUsage::Measured { bytes } = walked else {
         return Ok(walked);
     };
+    // The payload directory's own device is among them: the walk counts it.
+    let payload_devices: HashSet<u64> = counted.iter().map(|&(device, _)| device).collect();
     let scan = HeldScan {
         control_group,
-        payload_device,
+        payload_devices: &payload_devices,
         job_uid,
         deadline,
         links_max: bounds.entries_max,

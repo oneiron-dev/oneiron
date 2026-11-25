@@ -28,13 +28,13 @@
 //! but the engine's account and root.
 
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron_organ_host::MachineFloor;
 
-use super::{MirrorStager, NodeJobParts, NodeJobPaths, NodeJobs, SystemNodeClock};
+use super::{MirrorStager, NodeJobParts, NodeJobPaths, NodeJobs, NodeJobsShared, SystemNodeClock};
 use crate::gpu_execution_node::scope_systemd::SystemdJobUnit;
 use crate::gpu_execution_node::{ExecutionNode, GpuSlotTable};
 
@@ -138,40 +138,64 @@ impl ServedNodeJobs {
             stager: Arc::new(MirrorStager::new(Arc::<ExecutionNode>::clone(&node))),
             authority: node,
         };
-        let opened = NodeJobs::open(paths, parts)
-            .map_err(|error| format!("the job journal did not open: {error}"))?;
-        // No job runs unchecked for disk: a service whose check did not
-        // start, or that the node did not attach, is closed before it is
-        // dropped, and the next tick opens it again (review r12 R12-08). Its
+        // No job runs unchecked for disk: the check's thread starts before
+        // the opening, whose start-up reconciliation may open the gate and
+        // launch a restaged key at once, and takes the service once it has
+        // opened (review r12 R12-08, r14 R14-03). A thread that did not
+        // start opens nothing.
+        let handover = self.start_disk_check(disk_check_every)?;
+        let opened = match NodeJobs::open(paths, parts) {
+            Ok(opened) => opened,
+            Err(error) => {
+                self.stop_disk_check();
+                return Err(format!("the job journal did not open: {error}"));
+            }
+        };
+        // A service the check did not take, or the node did not attach, is
+        // closed before it is dropped, and the next tick opens it again. Its
         // opening may already have started staging workers, which hold the
         // service themselves: closed, none of them commits a launch (review
-        // r13 R13-11).
-        if let Err(why) = self.start_disk_check(&opened, disk_check_every) {
+        // r13 R13-11). The node attaches no service while it holds another,
+        // which the check above found none of.
+        let why = if handover.send(Arc::downgrade(&opened.shared)).is_err() {
+            Some("the disk check's thread ended before the service opened")
+        } else if self.node.attach_keys(opened.attachment()).is_err() {
+            Some("the node already holds other keys")
+        } else {
+            None
+        };
+        if let Some(why) = why {
             opened.close();
-            return Err(why);
-        }
-        if self.node.attach_keys(opened.attachment()).is_err() {
-            opened.close();
-            self.disk_check
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-            return Err("the node already holds other keys".to_owned());
+            self.stop_disk_check();
+            return Err(why.to_owned());
         }
         *jobs = Some(opened);
         Ok(())
     }
 
-    /// Starts the disk check's thread on `jobs`: one pass every `every`,
-    /// until this service is dropped. Between passes it holds the service
-    /// weakly, so a dropped service is not kept by it (review r12 R12-07).
+    /// Ends the disk check's thread, at once.
+    fn stop_disk_check(&self) {
+        self.disk_check
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+
+    /// Starts the disk check's thread: it waits for the service the
+    /// returned sender hands it, then runs one pass every `every`, until
+    /// this service is dropped. Between passes it holds the service weakly,
+    /// so a dropped service is not kept by it (review r12 R12-07). A sender
+    /// dropped with nothing sent ends it.
     ///
     /// # Errors
     ///
     /// The thread did not start.
-    fn start_disk_check(&self, jobs: &NodeJobs, every: Duration) -> Result<(), String> {
+    fn start_disk_check(
+        &self,
+        every: Duration,
+    ) -> Result<mpsc::Sender<Weak<NodeJobsShared>>, String> {
         let (keep, kept) = mpsc::channel::<()>();
-        let service = Arc::downgrade(&jobs.shared);
+        let (handover, handed) = mpsc::channel::<Weak<NodeJobsShared>>();
         // The first pass's time is known before the thread starts, so a
         // period no clock can add fails here (review r13 R13-14); the node
         // file bounds it anyway (`disk_check_secs` at most an hour).
@@ -181,6 +205,9 @@ impl ServedNodeJobs {
         std::thread::Builder::new()
             .name("oneiron-node-disk-check".to_owned())
             .spawn(move || {
+                let Ok(service) = handed.recv() else {
+                    return;
+                };
                 // Each pass is planned from the one before it, so a slow
                 // pass does not stretch the period (review r12 R12-03).
                 let mut next = first;
@@ -202,7 +229,7 @@ impl ServedNodeJobs {
             .disk_check
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(keep);
-        Ok(())
+        Ok(handover)
     }
 
     /// One pass of the listener's tick. It blocks. A service that has not

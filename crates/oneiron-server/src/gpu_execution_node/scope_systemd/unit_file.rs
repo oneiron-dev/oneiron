@@ -105,11 +105,12 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("RestrictSUIDSGID", "yes".to_owned());
     set("RestrictRealtime", "yes".to_owned());
     set("LockPersonality", "yes".to_owned());
-    // Disk a job takes goes through the unit's write-rate cap, which the
-    // disk check's bound rests on (design 7.9): `fallocate` would take
-    // blocks with no write, and io_uring would reach it past the filter
-    // (review r12 R12-04 of #10512). `posix_fallocate` falls back to
-    // writing on EOPNOTSUPP.
+    // The plain ways to take disk with no write through the unit's
+    // write-rate cap are refused (review r12 R12-04 of #10512): `fallocate`
+    // takes blocks with no write, and io_uring would reach it past the
+    // filter. `posix_fallocate` falls back to writing on EOPNOTSUPP. A
+    // mitigation, not a bound: the `FS_IOC_RESVSP` ioctls still preallocate
+    // (r14 R14-04; the disk check's module doc, FIX EXEC-NODE-PAYLOAD-QUOTA).
     set("SystemCallFilter", JOB_SYSTEM_CALL_FILTER.to_owned());
     set("CapabilityBoundingSet", "CAP_SETUID CAP_SETGID".to_owned());
     set("AmbientCapabilities", String::new());

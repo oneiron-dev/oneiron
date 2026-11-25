@@ -8,18 +8,26 @@
 //! For each task (thread) in the unit's control group (`cgroup.threads`, so
 //! a thread with its own descriptor table, or one whose thread-group leader
 //! has ended, is read too), the scan follows each open descriptor
-//! (`/proc/<tid>/fd`), each mapped file (`/proc/<tid>/map_files`), and the
-//! task's working and root directories. It reads a descriptor table or an
-//! address space that another task of the scan shares only once (`kcmp`).
-//! A link counts when it names an inode with no name left, on the
-//! payload's device, owned by the job's own uid: a shared host file that is
-//! replaced while a job still maps it is not the job's (R13-03). A removed
-//! directory that a task still holds counts too. Each inode counts once,
-//! across the walk and this scan (R13-01).
+//! (`/proc/<tid>/fd`), each mapped file (`/proc/<tid>/map_files`), the
+//! executable its address space runs (`/proc/<tid>/exe`, r14 R14-02), and
+//! the task's working and root directories. It reads a descriptor table or
+//! an address space that another task of the scan shares only once
+//! (`kcmp`), and trusts that comparison only while the task it compared
+//! with is the same one (its start time, r14 R14-13). A link counts when it
+//! names an inode with no name left, on a device the payload's walk met,
+//! owned by the job's own uid: a shared host file that is replaced while a
+//! job still maps it is not the job's (R13-03). A removed directory that a
+//! task still holds counts too. Each inode counts once, across the walk and
+//! this scan (R13-01, R14-01). A task of the unit's group whose tables the
+//! handler cannot find, though the group still lists it (procfs `hidepid`,
+//! a handler without `CAP_SYS_PTRACE`), makes the scan an error, not a
+//! smaller count (r14 R14-07).
 //!
 //! The scan is a lower bound, not complete accounting: a reference the
 //! kernel holds outside every task's tables (a descriptor in flight in a
-//! socket message) is not seen. A filesystem quota per payload is the
+//! socket message) is not seen, nor a held file on a device the walk did
+//! not meet (an overlay layer's, with `xino=off`, under a payload that
+//! names no file there, r14 R14-08). A filesystem quota per payload is the
 //! complete mechanism (FIX EXEC-NODE-PAYLOAD-QUOTA).
 
 use std::collections::HashSet;
@@ -55,14 +63,18 @@ pub struct HeldScan<'a> {
     /// The unit's control group as `systemctl show` names it, from the
     /// cgroup root; empty when the unit runs no task.
     pub control_group: &'a str,
-    /// The payload's device: only inodes on it count.
-    pub payload_device: u64,
+    /// The devices the payload's walk met (the payload's own, a btrfs
+    /// subvolume's, an overlay layer's): only inodes on one of them count
+    /// (review r14 R14-08).
+    pub payload_devices: &'a HashSet<u64>,
     /// The job's own uid: only inodes it owns count.
     pub job_uid: u32,
     /// The measure's deadline, the walk's included.
     pub deadline: Instant,
-    /// The most links the scan follows. A unit whose tasks hold more is
-    /// unmeasurable, as a payload with more entries than the walk's bound.
+    /// The most links the scan follows, a bound of its own beside the
+    /// walk's entry bound (review r14 R14-10). A unit whose tasks hold more
+    /// is unmeasurable, as a payload with more entries than the walk's
+    /// bound.
     pub links_max: u64,
 }
 
@@ -78,7 +90,8 @@ pub struct HeldScan<'a> {
 ///
 /// The control group, a task's table or a link could not be read for a
 /// reason other than a task or a descriptor that has just gone (a denied
-/// read is no measure, R13-10), or the deadline passed first.
+/// read is no measure, R13-10), a task the group still lists had no tables
+/// to read (R14-07), or the deadline passed first.
 pub fn add_unlinked_held(
     scan: &HeldScan<'_>,
     counted: &mut HashSet<(u64, u64)>,
@@ -125,26 +138,34 @@ impl HeldCount<'_, '_> {
         if group.is_empty() {
             return Ok(None);
         }
+        let group_dir = Path::new(CGROUP_ROOT).join(group);
         let mut tasks = Vec::new();
-        group_tasks(
-            &Path::new(CGROUP_ROOT).join(group),
-            0,
-            self.scan.deadline,
-            &mut tasks,
-        )?;
-        let mut files_tables: Vec<u32> = Vec::new();
-        let mut address_spaces: Vec<u32> = Vec::new();
+        group_tasks(&group_dir, 0, self.scan.deadline, &mut tasks)?;
+        let mut files_tables: Vec<Representative> = Vec::new();
+        let mut address_spaces: Vec<Representative> = Vec::new();
+        // Tasks with a table not found: gone, or hidden from the handler.
+        let mut not_found: Vec<u32> = Vec::new();
         for task in tasks {
             self.in_time()?;
-            if first_of_its_kind(task, &mut files_tables, KCMP_FILES)
-                && let Some(done) = self.read_links(&format!("/proc/{task}/fd"))?
-            {
-                return Ok(Some(done));
+            if first_of_its_kind(task, &mut files_tables, KCMP_FILES) {
+                match self.read_links(&format!("/proc/{task}/fd"))? {
+                    Links::Done(done) => return Ok(Some(done)),
+                    Links::NotFound => not_found.push(task),
+                    Links::Read => {}
+                }
             }
-            if first_of_its_kind(task, &mut address_spaces, KCMP_VM)
-                && let Some(done) = self.read_links(&format!("/proc/{task}/map_files"))?
-            {
-                return Ok(Some(done));
+            if first_of_its_kind(task, &mut address_spaces, KCMP_VM) {
+                match self.read_links(&format!("/proc/{task}/map_files"))? {
+                    Links::Done(done) => return Ok(Some(done)),
+                    Links::NotFound => not_found.push(task),
+                    Links::Read => {}
+                }
+                // The executable the address space runs is held by it
+                // (`mm->exe_file`) even with no mapping of it left (review
+                // r14 R14-02).
+                if let Some(done) = self.follow(&PathBuf::from(format!("/proc/{task}/exe")))? {
+                    return Ok(Some(done));
+                }
             }
             // A removed directory a task still works in, or roots at.
             for link in ["cwd", "root"] {
@@ -153,27 +174,39 @@ impl HeldCount<'_, '_> {
                 }
             }
         }
+        // A task that ended has left its group; one the group still lists
+        // is hidden from the handler, and its files are not counted (review
+        // r14 R14-07).
+        if !not_found.is_empty() {
+            let mut listed = Vec::new();
+            group_tasks(&group_dir, 0, self.scan.deadline, &mut listed)?;
+            if let Some(hidden) = not_found.iter().find(|task| listed.contains(task)) {
+                return Err(format!(
+                    "task {hidden} is in the unit's group, but the handler finds no tables of it in /proc (hidepid, or no CAP_SYS_PTRACE)"
+                ));
+            }
+        }
         Ok(None)
     }
 
     /// Every link in the table directory `dir`.
-    fn read_links(&mut self, dir: &str) -> Result<Option<PayloadUsage>, String> {
+    fn read_links(&mut self, dir: &str) -> Result<Links, String> {
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
-            Err(error) if gone(&error) => return Ok(None),
+            Err(error) if gone(&error) => return Ok(Links::NotFound),
             Err(error) => return Err(format!("{dir}: {error}")),
         };
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(error) if gone(&error) => return Ok(None),
+                Err(error) if gone(&error) => return Ok(Links::NotFound),
                 Err(error) => return Err(format!("{dir}: {error}")),
             };
             if let Some(done) = self.follow(&entry.path())? {
-                return Ok(Some(done));
+                return Ok(Links::Done(done));
             }
         }
-        Ok(None)
+        Ok(Links::Read)
     }
 
     /// Charges one link and counts the inode it names when it is the job's
@@ -198,7 +231,7 @@ impl HeldCount<'_, '_> {
             Err(error) => return Err(format!("{}: {error}", link.display())),
         };
         if file.nlink() != 0
-            || file.dev() != self.scan.payload_device
+            || !self.scan.payload_devices.contains(&file.dev())
             || file.uid() != self.scan.job_uid
         {
             return Ok(None);
@@ -212,20 +245,63 @@ impl HeldCount<'_, '_> {
     }
 }
 
+/// What reading one table directory found.
+enum Links {
+    /// Every link in it was followed.
+    Read,
+    /// The directory was not found: its task ended, or is hidden.
+    NotFound,
+    /// The answer is known early.
+    Done(PayloadUsage),
+}
+
+/// A task whose table the scan read, by its id and its start time: a
+/// comparison with it is trusted only while that same task lives, since an
+/// ended task's id can be given to a new one (review r14 R14-13).
+#[derive(Debug, Clone, Copy)]
+struct Representative {
+    task: u32,
+    started: u64,
+}
+
 /// Whether `error` says the task or the descriptor has just gone.
 fn gone(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
 }
 
 /// Whether `task`'s table of `kind` is shared with none in `seen`; a first
-/// one joins `seen`. A comparison the kernel does not answer counts as not
-/// shared: the table is read, and each inode still counts once.
-fn first_of_its_kind(task: u32, seen: &mut Vec<u32>, kind: libc::c_int) -> bool {
-    let shared = seen.iter().any(|&other| same_table(other, task, kind));
-    if !shared && seen.len() < SHARED_TABLES_COMPARED_MAX {
-        seen.push(task);
+/// one joins `seen`. A comparison the kernel does not answer, or one with a
+/// task that has since ended (its start time is not the one seen), counts
+/// as not shared: the table is read, and each inode still counts once.
+fn first_of_its_kind(task: u32, seen: &mut Vec<Representative>, kind: libc::c_int) -> bool {
+    // The start time is read after `kcmp`: the same task still living then
+    // was the one compared, since a living task's id is its own.
+    let shared = seen.iter().any(|other| {
+        same_table(other.task, task, kind) && task_started(other.task) == Some(other.started)
+    });
+    if !shared
+        && seen.len() < SHARED_TABLES_COMPARED_MAX
+        && let Some(started) = task_started(task)
+    {
+        seen.push(Representative { task, started });
     }
     !shared
+}
+
+/// The start time of `task` (`/proc/<task>/stat`, field 22, in clock ticks
+/// since boot); `None` once it is gone.
+fn task_started(task: u32) -> Option<u64> {
+    // Bytes, not text: the task's name, in parentheses before the fields,
+    // may hold any byte a job gives it. The fields are counted from its
+    // last `)`, the state (field 3) first.
+    let stat = std::fs::read(format!("/proc/{task}/stat")).ok()?;
+    let after_name = stat.get(stat.iter().rposition(|&byte| byte == b')')? + 1..)?;
+    std::str::from_utf8(after_name)
+        .ok()?
+        .split_ascii_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
 }
 
 /// Whether tasks `a` and `b` share their table of `kind` (`kcmp(2)`).
