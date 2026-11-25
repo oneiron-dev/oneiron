@@ -896,8 +896,9 @@ fn a_write_off_is_final_and_a_later_receipt_does_not_settle() {
     });
 }
 
-/// A JSON artifact with one version and a live task, both the owner's: where a job's result
-/// lands, and the task its made_by names.
+/// A plain-text artifact with one version and a live task, both the owner's: where a job's
+/// result lands, and the task its made_by names. The returnable output is `verdict.json`: each
+/// version keeps the artifact's own media type, whatever the file is called (review 10430 P1).
 fn result_binding(rig: &Rig) -> GpuJobResultBinding {
     let vault = rig.vault().as_ref();
     let owner = rig
@@ -917,9 +918,9 @@ fn result_binding(rig: &Rig) -> GpuJobResultBinding {
         .expect("a landed task");
     let artifact = human
         .artifacts_create(&ArtifactCreateRequest {
-            name: "verdict.json".to_owned(),
-            media_type: "application/json".to_owned(),
-            content_base64: STANDARD.encode(b"{}"),
+            name: "verdict.txt".to_owned(),
+            media_type: "text/plain".to_owned(),
+            content_base64: STANDARD.encode(b"no verdict yet"),
             run_ref: None,
             made_by: None,
         })

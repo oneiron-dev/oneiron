@@ -3,9 +3,6 @@
 //! the bound task and proposed through the job starter's own lane. The issuer fetches and
 //! checks the bytes against the machine's signed receipt first; Keep is a separate act.
 
-use std::ffi::OsStr;
-use std::path::Path;
-
 use oneiron_contracts::fingerprint::ContentHash;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -94,17 +91,15 @@ impl Vault {
         let job_hex = job.id.to_hex();
         let identity = json!([job_hex, file.key, file.name]).to_string();
         let params_hash = ContentHash::of(identity.as_bytes()).to_hex();
-        let media_type = match Path::new(&file.name).extension().and_then(OsStr::to_str) {
-            Some("json") => "application/json",
-            Some("md") => "text/markdown",
-            Some("txt") => "text/plain",
-            Some("csv") => "text/csv",
-            _ => "application/octet-stream",
-        };
+        // Every version keeps the artifact's own media type, whatever the file is called.
+        let media_type = self
+            .get_blob_artifact(&binding.artifact)?
+            .ok_or(Error::EntityNotFound)?
+            .media_type;
         let output = NativeOutput {
             run_ref: format!("gpu-job-{job_hex}-{params_hash}"),
             name: file.name.clone(),
-            media_type: media_type.into(),
+            media_type,
             bytes: file.bytes.clone(),
             report: json!({
                 "job": job_hex,

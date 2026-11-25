@@ -74,32 +74,36 @@ impl ResultReturns {
         self.acknowledge(row);
     }
 
-    /// The housekeeping pass: every key whose acknowledgement the issuer still owes, from its
-    /// stored terminal receipt.
-    pub fn follow_owed_returns(&self) {
-        let owed = match self.vault.job_returns_owed() {
-            Ok(owed) => owed,
+    /// The keys whose acknowledgement the issuer still owes: the housekeeping pass follows each
+    /// with [`Self::follow_owed_return`].
+    #[must_use]
+    pub fn owed_keys(&self) -> Vec<String> {
+        match self.vault.job_returns_owed() {
+            Ok(owed) => owed.into_iter().map(|owed| owed.key).collect(),
             Err(error) => {
                 tracing::warn!(%error, "vault_machine: owed job returns not read");
-                return;
+                Vec::new()
             }
-        };
-        for owed in owed {
-            let row = self.vault.job_dispatch(&owed.key).ok().flatten();
-            let ended = self
-                .vault
-                .job_observation(&owed.key)
-                .ok()
-                .flatten()
-                .and_then(|observation| {
-                    oneiron_organ_protocol::from_slice::<SignedJobReceipt>(&observation.receipt)
-                        .ok()
-                })
-                .map(|signed| signed.receipt)
-                .filter(|receipt| receipt.state == JobState::Ended);
-            if let (Some(row), Some(ended)) = (row, ended) {
-                self.return_outputs(&row, &ended);
-            }
+        }
+    }
+
+    /// One owed key of the housekeeping pass, from its stored terminal receipt. The caller holds
+    /// the key's lock, as the confirm that first returned it did, so two passes never land the
+    /// same file.
+    pub fn follow_owed_return(&self, key: &str) {
+        let row = self.vault.job_dispatch(key).ok().flatten();
+        let ended = self
+            .vault
+            .job_observation(key)
+            .ok()
+            .flatten()
+            .and_then(|observation| {
+                oneiron_organ_protocol::from_slice::<SignedJobReceipt>(&observation.receipt).ok()
+            })
+            .map(|signed| signed.receipt)
+            .filter(|receipt| receipt.state == JobState::Ended);
+        if let (Some(row), Some(ended)) = (row, ended) {
+            self.return_outputs(&row, &ended);
         }
     }
 
@@ -114,10 +118,21 @@ impl ResultReturns {
                 return Outputs::Owed;
             }
         };
-        let binding = job
-            .chunk()
-            .and_then(|chunk| super::vault_machine_inputs(&chunk.quote.inputs).ok())
-            .and_then(|inputs| inputs.result);
+        // The dispatched chunk's own quote (the row's key is its idempotency key), never a
+        // later chunk's: a resumed job may bind another result or none.
+        let inputs = job
+            .chunks
+            .iter()
+            .find(|chunk| chunk.idempotency_key == row.key)
+            .map(|chunk| super::vault_machine_inputs(&chunk.quote.inputs));
+        let binding = match inputs {
+            Some(Ok(inputs)) => inputs.result,
+            Some(Err(error)) => {
+                tracing::warn!(key = %row.key, %error, "vault_machine: the chunk's stored quote inputs do not read; no result is bound");
+                None
+            }
+            None => None,
+        };
         let Some(binding) = binding else {
             return Outputs::Decided;
         };

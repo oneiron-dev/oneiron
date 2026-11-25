@@ -543,7 +543,10 @@ impl GpuJobConnector for VaultMachineConnector {
     /// Row R4: the live orphans are asked to stop again, and the owed results returned.
     fn housekeeping(&self) {
         self.parts.orphans.follow_live();
-        self.result_returns().follow_owed_returns();
+        let returns = self.result_returns();
+        for key in returns.owed_keys() {
+            self.keys.with(&key, || returns.follow_owed_return(&key));
+        }
     }
 }
 
