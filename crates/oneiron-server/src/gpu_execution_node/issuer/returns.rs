@@ -182,6 +182,12 @@ impl ResultReturns {
         let bytes = match answer {
             Ok(JobStatusAnswer::Output { bytes }) => bytes,
             Ok(JobStatusAnswer::Busy { .. }) | Err(_) => return None,
+            Ok(JobStatusAnswer::Refused(refusal)) => {
+                return Some(Err(format!(
+                    "not_fetchable: {}",
+                    super::job_refusal_code(&refusal)
+                )));
+            }
             Ok(other) => {
                 return Some(Err(format!(
                     "not_fetchable: {}",
