@@ -125,6 +125,46 @@ fn an_order_on_a_replica_that_is_not_the_issuer_is_refused() {
     assert!(dispatches_offer(&server, "cloud").is_ok());
 }
 
+/// FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME: a first call off the runtime does not cut the
+/// loop off from every machine for good.
+#[cfg(feature = "mesh")]
+#[test]
+fn a_loop_first_asked_off_the_runtime_calls_machines_once_a_runtime_is_at_hand() {
+    use oneiron_server::gpu_execution_node::issuer::NodeCallError;
+    use oneiron_server::test_doors::work_order_host::node_call_now;
+
+    fn unreachable_reason(answer: Result<JobAnswer, NodeCallError>) -> String {
+        match answer {
+            Err(NodeCallError::Unreachable { reason }) => reason,
+            other => panic!("no mesh reaches the machine, so it is unreachable: {other:?}"),
+        }
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("vault"));
+    let server =
+        Arc::new(SyncServer::new(vault, SyncServerConfig::default()).expect("boot the server"));
+    let machine = EntityId::now();
+    // Off any runtime the loop has no client that calls machines.
+    assert_eq!(
+        unreachable_reason(node_call_now(&server, machine)),
+        "this server calls no machines"
+    );
+    // The next call, on the runtime, goes through the mesh client, which reads the listener at
+    // each call: none is bound in this test.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let on_runtime = Arc::clone(&server);
+    let answer = runtime.block_on(async move {
+        tokio::task::spawn_blocking(move || node_call_now(&on_runtime, machine))
+            .await
+            .expect("the blocking call ends")
+    });
+    assert_eq!(unreachable_reason(answer), "no mesh listener is bound");
+}
+
 #[test]
 fn the_node_the_gate_and_the_order_name_a_refusal_with_one_code() {
     // Every node refusal keeps its code on the order.
