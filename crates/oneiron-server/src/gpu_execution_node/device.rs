@@ -268,7 +268,8 @@ impl NvidiaSmiRoute {
                     Ok(output) => Ok(output),
                     Err(DeviceQueryError::Unavailable(error)) => Err(error),
                     Err(DeviceQueryError::Unusable { reason }) => {
-                        run_here_after_unusable_socket(fallback_program, query, &reason)
+                        let _ = (fallback_program, run_here_after_unusable_socket);
+                        Err(GpuProbeError::Unavailable { reason })
                     }
                 }
             }
