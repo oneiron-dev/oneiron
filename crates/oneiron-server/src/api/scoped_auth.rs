@@ -259,8 +259,8 @@ fn transport_memory<'a>(
     }
     // An attached session's read that names no project reads its folder's project
     // (RECALL-SESSION-PROJECT): a request, never authority.
-    if let Some(workspace_ids) = auth.and_then(CoreAuth::session_workspace) {
-        memory = memory.in_session_workspace(workspace_ids);
+    if let Some(folder_digests) = auth.and_then(CoreAuth::session_workspace) {
+        memory = memory.in_session_workspace(folder_digests);
     }
     memory
 }

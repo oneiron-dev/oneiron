@@ -260,8 +260,8 @@ pub enum Command {
     Api(ApiArgs),
     /// Bind the folder this runs in to a PROJECT, unbind it, or list the bindings: the
     /// project an attached agent session there reads by default. The owner's act, sent over
-    /// `oneiron api`'s transport under the owner's credential; only the folder's workspace id
-    /// and its name leave this machine, never its path.
+    /// `oneiron api`'s transport under the owner's credential; only the folder's digest and
+    /// its name leave this machine, never its path.
     Project(ProjectArgs),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
     /// 2): git calls it; it answers the context the seat host bound.
@@ -971,7 +971,7 @@ pub struct McpArgs {
     pub tool_timeout_secs: Vec<String>,
 
     /// The folder the agent session runs in (`.` is this process's working directory): every
-    /// tool call then names the folder's workspace id, so a read that names no project reads
+    /// tool call then names the folder's digest, so a read that names no project reads
     /// the project the owner bound to the folder (`oneiron project bind`), and none in a
     /// folder with no project bound. Absent, or a folder whose checkout root is the
     /// filesystem root or the home directory, attaches nothing.

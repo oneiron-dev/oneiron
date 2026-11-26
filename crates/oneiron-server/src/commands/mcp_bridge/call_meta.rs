@@ -62,8 +62,8 @@ pub(super) fn named_invocation(message: &Value) -> Option<String> {
 #[derive(Default)]
 pub(super) struct ClientSession {
     capabilities: Mutex<Option<Value>>,
-    /// The session's folder (`--workspace`), as `{"ids": [...]}`: its workspace ids, its own
-    /// first, never its path (RECALL-SESSION-PROJECT). Named on every call, over any the
+    /// The session's folder (`--workspace`), as `{"digests": [...]}`: its folder digests, its
+    /// own first, never its path (RECALL-SESSION-PROJECT). Named on every call, over any the
     /// client named, so the folder this bridge runs for is the one its reads default to.
     workspace: Option<Value>,
 }
@@ -75,7 +75,7 @@ impl ClientSession {
     ) -> Self {
         Self {
             capabilities: Mutex::default(),
-            workspace: workspace.map(|identity| serde_json::json!({ "ids": identity.ids })),
+            workspace: workspace.map(|identity| serde_json::json!({ "digests": identity.digests })),
         }
     }
 

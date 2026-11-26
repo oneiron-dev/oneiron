@@ -1,11 +1,12 @@
 //! A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER
-//! RECALL-SESSION-PROJECT-INTENT, 26 Nov: the binding stores a hash plus a label): the ids an
-//! attached session names its folder by, and the one `oneiron project bind` binds.
+//! RECALL-SESSION-PROJECT-INTENT, 26 Nov: the binding stores a hash plus a label): the folder
+//! digests an attached session names its folder by, and the one `oneiron project bind` binds.
 //!
 //! The folder's checkout root is its git top-level, else the folder itself, as a canonical path
-//! (symlinks resolved). Its workspace id is the SHA-256 of a domain tag and that path's bytes,
-//! in lower-case hex: the vault's `workspace.project` key is keyed by it, so the vault never
-//! holds the path. A linked worktree also names its main checkout's id, second: a worktree with
+//! (symlinks resolved). Its folder digest is the SHA-256 of a domain tag and that path's bytes,
+//! in lower-case hex. Only the digest leaves this machine: the vault keys it with its own id
+//! into the workspace id its `workspace.project` row is named by, so the vault never receives
+//! the path. A linked worktree also names its main checkout's digest, second: a worktree with
 //! no binding of its own reads its main checkout's. Nothing here is inferred from a folder name,
 //! a branch, a remote or a session id. The label is the root's folder name, for display.
 
@@ -16,23 +17,23 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest as _, Sha256};
 
-/// What a workspace id's digest covers before the path: the scheme and its version.
-const WORKSPACE_ID_DOMAIN: &[u8] = b"oneiron.workspace.v1\0";
+/// What a folder digest covers before the path: the scheme and its version.
+const FOLDER_DIGEST_DOMAIN: &[u8] = b"oneiron.workspace.v1\0";
 
 /// The longest a git call here may take.
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A folder's workspace ids and label.
+/// A folder's digests and label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceIdentity {
-    /// The folder's checkout's id, then its main checkout's when it is a linked worktree.
-    pub ids: Vec<String>,
+    /// The folder's checkout's digest, then its main checkout's when it is a linked worktree.
+    pub digests: Vec<String>,
     /// The checkout root's folder name.
     pub label: String,
 }
 
 impl WorkspaceIdentity {
-    /// The identity of `folder`: its checkout root's id, its main checkout's for a linked
+    /// The identity of `folder`: its checkout root's digest, its main checkout's for a linked
     /// worktree, and its root's name. Git gets until `deadline` (and at most [`GIT_TIMEOUT`]);
     /// a folder git does not answer for is its own root. `None` when the folder does not
     /// resolve to a canonical path.
@@ -46,15 +47,15 @@ impl WorkspaceIdentity {
             }
             None => (folder, None),
         };
-        let mut ids = vec![workspace_id(&root)];
+        let mut digests = vec![folder_digest(&root)];
         if let Some(main) = main.filter(|main| *main != root) {
-            ids.push(workspace_id(&main));
+            digests.push(folder_digest(&main));
         }
         let label = root
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        Some(Self { ids, label })
+        Some(Self { digests, label })
     }
 
     /// [`Self::of_folder`] for a folder an agent session runs in: `None` as well when the
@@ -64,28 +65,28 @@ impl WorkspaceIdentity {
         let identity = Self::of_folder(folder, deadline)?;
         let not_workspaces = [Some(PathBuf::from("/")), home_directory()];
         let roots = not_workspaces.iter().flatten().map(|path| {
-            workspace_id(&std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+            folder_digest(&std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
         });
-        let own = identity.own_id().to_owned();
+        let own = identity.own_digest().to_owned();
         roots
             .into_iter()
             .all(|root| root != own)
             .then_some(identity)
     }
 
-    /// The folder's own id: the item `oneiron project bind` binds.
+    /// The folder's own digest: the one `oneiron project bind` binds.
     #[must_use]
-    pub fn own_id(&self) -> &str {
-        &self.ids[0]
+    pub fn own_digest(&self) -> &str {
+        &self.digests[0]
     }
 }
 
-/// The workspace id of the canonical checkout root `root`: the SHA-256 of
-/// [`WORKSPACE_ID_DOMAIN`] and the path's bytes, in lower-case hex.
+/// The folder digest of the canonical checkout root `root`: the SHA-256 of
+/// [`FOLDER_DIGEST_DOMAIN`] and the path's bytes, in lower-case hex.
 #[must_use]
-pub fn workspace_id(root: &Path) -> String {
+pub fn folder_digest(root: &Path) -> String {
     let mut digest = Sha256::new();
-    digest.update(WORKSPACE_ID_DOMAIN);
+    digest.update(FOLDER_DIGEST_DOMAIN);
     digest.update(path_bytes(root).as_ref());
     oneiron_hex::encode(&digest.finalize())
 }

@@ -103,16 +103,16 @@ impl Memory<'_> {
         ))
     }
 
-    /// What an attached session in the folder `workspace_ids` (its own id first) reads by
+    /// What an attached session in the folder `folder_digests` (its own digest first) reads by
     /// default: the folder's bound project with every project below it, or
     /// [`SessionProjects::Unbound`] when no live project is bound.
     ///
     /// [`SessionProjects::Unbound`]: crate::session_project::SessionProjects::Unbound
     pub(super) fn session_projects_of(
         &self,
-        workspace_ids: &[String],
+        folder_digests: &[String],
     ) -> MemoryResult<crate::session_project::SessionProjects> {
-        Ok(self.vault.session_projects(workspace_ids)?)
+        Ok(self.vault.session_projects(folder_digests)?)
     }
 
     /// `selected` and every PROJECT that belongs to one of them at any depth:

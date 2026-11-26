@@ -296,7 +296,7 @@ pub(crate) struct McpCallContext {
     /// `None` lowers for the whole atom kit. It selects a rendering and
     /// grants nothing.
     pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
-    /// The workspace ids of the folder the calling session runs in, its own first, as the
+    /// The folder digests of the folder the calling session runs in, its own first, as the
     /// call's `_meta["oneiron/workspace"]` names them (RECALL-SESSION-PROJECT), read on every
     /// call as `client_surface` is. It selects the default project of the call's reads and
     /// grants nothing; [`Self::for_verb_row`] binds it on a read row's caller.

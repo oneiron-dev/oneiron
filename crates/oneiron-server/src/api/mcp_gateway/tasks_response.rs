@@ -401,9 +401,9 @@ pub(crate) fn mcp_scoped_read<'a>(
             .as_ref()
             .and_then(crate::auth::CoreAuth::session_workspace)
         {
-            Some(workspace_ids) => read.within_session_projects(
+            Some(folder_digests) => read.within_session_projects(
                 vault
-                    .session_projects(workspace_ids)
+                    .session_projects(folder_digests)
                     .unwrap_or(oneiron::session_project::SessionProjects::Unbound),
             ),
             None => read,

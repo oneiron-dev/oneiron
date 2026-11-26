@@ -365,8 +365,12 @@ oneiron project bindings             # list every folder's binding
 
 These send your credential as `oneiron api` does (`ONEIRON_SECRET`), and
 binding is your act alone: an agent may tell you the command, and its own
-attempt waits for your answer. The vault keeps the folder's workspace id (a
-SHA-256 of the checkout's real path) and its name, never the path. The folder
+attempt waits for your answer. The command sends a SHA-256 digest of the
+checkout's real path and the folder's name, never the path; the vault keys the
+digest with its own id before it stores it, so one folder's ids differ from
+vault to vault. Someone who reads the vault and knows its id can still test a
+guessed path against a stored id: the digest hides the path, it is not a
+secret. The folder
 is the git checkout it sits in, so every subfolder of a repository shares one
 binding; a linked worktree with no binding of its own reads its main
 checkout's. The filesystem root and your home folder are never a workspace.
@@ -386,7 +390,10 @@ folder Claude Code runs in. Then:
 - Only claims carry a project. Notes, messages and every other row read as
   before.
 
-The binding selects; it grants nothing. Writes keep their own project rules.
+The binding selects; it grants nothing. The folder a tool call names comes from
+the client, so a client that names another folder only changes which of the
+claims its credential reads anyway come first by default. Writes keep their own
+project rules.
 
 ## 1. Turn on the import queue
 

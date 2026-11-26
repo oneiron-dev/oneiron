@@ -2,12 +2,15 @@
 //! (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, the
 //! session's project is the default of a read that names none, never a wall; Q2 = A).
 //!
-//! The `oneiron mcp` bridge started with `--workspace <DIR>` names the folder's workspace ids
-//! (its own, then its main checkout's) in every `tools/call`'s `_meta["oneiron/workspace"]`.
+//! The `oneiron mcp` bridge started with `--workspace <DIR>` names the folder's digests (its
+//! own, then its main checkout's; never its path) in every `tools/call`'s
+//! `_meta["oneiron/workspace"]`.
 //! This endpoint keeps no session, so it reads them on every call, as it reads
-//! `clientCapabilities`. They select a default and grant nothing: a caller that names another
-//! folder only changes which project its own reads default to, and a read that names its
-//! projects (`project_refs`) reads those. A write never takes the read default.
+//! `clientCapabilities`. The client names them, so they select a default and grant nothing: a
+//! caller that names another folder, or forges a digest, only moves which project its own reads
+//! default to, inside its credential's own ceiling, never past it (Q1 = A, selection never
+//! grants). A read that names its projects (`project_refs`) reads those. A write never takes the
+//! read default.
 
 use serde_json::Value;
 
@@ -16,26 +19,27 @@ use super::{McpCallContext, McpToolCallParams};
 /// The `_meta` key a `tools/call` names its session's folder under.
 pub(crate) const MCP_WORKSPACE_META: &str = "oneiron/workspace";
 
-/// The most workspace ids a call names: the folder's own and its main checkout's.
-const MAX_WORKSPACE_IDS: usize = 2;
+/// The most folder digests a call names: the folder's own and its main checkout's.
+const MAX_FOLDER_DIGESTS: usize = 2;
 
 impl McpToolCallParams {
-    /// The workspace ids the call's `_meta["oneiron/workspace"].ids` names, each a workspace
-    /// id, in order; `None` when it names none, so the call reads with no session default.
+    /// The folder digests the call's `_meta["oneiron/workspace"].digests` names, each 64
+    /// lower-case hex, in order; `None` when it names none, so the call reads with no session
+    /// default.
     pub(super) fn session_workspace(&self) -> Option<Vec<String>> {
-        let ids: Vec<String> = self
+        let digests: Vec<String> = self
             .meta
             .as_ref()?
             .get(MCP_WORKSPACE_META)?
-            .get("ids")?
+            .get("digests")?
             .as_array()?
             .iter()
             .filter_map(Value::as_str)
-            .filter(|id| oneiron::session_project::is_workspace_id(id))
-            .take(MAX_WORKSPACE_IDS)
+            .filter(|digest| oneiron::session_project::is_sha256_hex(digest))
+            .take(MAX_FOLDER_DIGESTS)
             .map(str::to_owned)
             .collect();
-        (!ids.is_empty()).then_some(ids)
+        (!digests.is_empty()).then_some(digests)
     }
 }
 

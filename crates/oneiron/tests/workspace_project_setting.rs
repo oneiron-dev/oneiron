@@ -1,8 +1,9 @@
 //! RECALL-SESSION-PROJECT PR 1 (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q3 = A,
-//! the binding is the owner's act and stores a hash plus a label): the owner binds a folder to a
-//! PROJECT with the family Setting key `workspace.project`, one item per folder named by its
-//! workspace id (64 lower-case hex, the SHA-256 of the folder's canonical checkout path), and an
-//! attached session's folder ids resolve to that project.
+//! the binding is the owner's act and stores a hash plus a label; Engine NOTE 22:5x: the id is
+//! keyed by the vault): the owner binds a folder, named by its digest, to a PROJECT. The vault
+//! keys the digest with its own id into the folder's workspace id, the item of the family
+//! Setting key `workspace.project`, and an attached session's folder digests resolve to that
+//! project.
 //!
 //! Red on the base: the Setting primitive has no `workspace.project` key and the engine no
 //! `session_project` module, so this file does not build there.
@@ -16,7 +17,9 @@ use std::sync::Arc;
 use oneiron::authority::{ActSurface, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::session_project::{WORKSPACE_PROJECT_KEY, is_workspace_id};
+use oneiron::session_project::{
+    WORKSPACE_PROJECT_KEY, WorkspaceBindRequest, WorkspaceUnbindRequest, is_sha256_hex,
+};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
@@ -26,12 +29,12 @@ use oneiron::verbs::{
 use oneiron::{EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
-/// A folder's own workspace id (a linked worktree's checkout).
-const WORKTREE_ID: &str = "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
-/// Its main checkout's workspace id.
-const MAIN_ID: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+/// A folder's own digest (a linked worktree's checkout).
+const WORKTREE_DIGEST: &str = "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+/// Its main checkout's digest.
+const MAIN_DIGEST: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
 /// A folder nobody bound.
-const OTHER_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OTHER_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// One rooted vault, seeded with its root PROJECT, and its owner's proof. The vault drops
 /// first.
@@ -69,39 +72,66 @@ impl Fixture {
         }
     }
 
-    /// `caller`'s change of the row for `workspace`: `value`, or a clear for `None`.
+    /// The workspace id this vault keys `folder_digest` into.
+    fn workspace_id(&self, folder_digest: &str) -> String {
+        self.vault
+            .workspace_id(folder_digest)
+            .unwrap_or_else(|| panic!("{folder_digest} is a folder digest"))
+    }
+
+    /// `caller`'s own change of the row named `item`: `value`, or a clear for `None`.
     fn set(
         &self,
         caller: SettingCaller<'_>,
-        workspace: &str,
+        item: &str,
         value: Option<Value>,
     ) -> oneiron::Result<SetSettingOutcome> {
         let mut change = SetSetting::vault_value(WORKSPACE_PROJECT_KEY, Value::Null);
-        change.item = Some(workspace.to_owned());
+        change.item = Some(item.to_owned());
         change.value = value;
         self.vault.set_setting(caller, change)
     }
 
-    /// The owner binds `workspace` to `project`, labelled `label`.
-    fn owner_binds(&self, workspace: &str, project: EntityId, label: &str) {
-        let outcome = self
-            .set(
-                SettingCaller::Owner(&self.proof),
-                workspace,
-                Some(json!({ "project": project.to_hex(), "label": label })),
-            )
-            .unwrap_or_else(|error| panic!("the owner binds {workspace}: {error}"));
-        assert!(
-            matches!(outcome, SetSettingOutcome::Applied { .. }),
-            "the owner's binding applies at once: {outcome:?}"
-        );
+    /// The owner's bind of the folder `folder_digest` to `project`, labelled `label`.
+    fn bind(
+        &self,
+        folder_digest: &str,
+        project: EntityId,
+        label: &str,
+    ) -> oneiron::Result<oneiron::session_project::WorkspaceBinding> {
+        self.vault.bind_workspace_as_owner(
+            &self.proof,
+            Some(ActSurface::ThisInstall),
+            WorkspaceBindRequest {
+                folder_digest: folder_digest.to_owned(),
+                project,
+                label: Some(label.to_owned()),
+            },
+        )
     }
 
-    /// The project a session naming `ids` reads by default.
-    fn session_project(&self, ids: &[&str]) -> Option<EntityId> {
-        let ids: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
+    /// The owner binds `folder_digest` to `project`, labelled `label`.
+    fn owner_binds(&self, folder_digest: &str, project: EntityId, label: &str) {
+        let binding = self
+            .bind(folder_digest, project, label)
+            .unwrap_or_else(|error| panic!("the owner binds {folder_digest}: {error}"));
+        assert_eq!(binding.workspace_id, self.workspace_id(folder_digest));
+        assert_eq!(
+            binding.project,
+            Some(project),
+            "the answer names the project"
+        );
+        assert_eq!(binding.label.as_deref(), Some(label));
+    }
+
+    /// The project a session naming `folder_digests` reads by default.
+    fn session_project(&self, folder_digests: &[&str]) -> Option<EntityId> {
+        let folder_digests: Vec<String> = folder_digests
+            .iter()
+            .map(|digest| (*digest).to_owned())
+            .collect();
         self.vault
-            .workspace_project(&ids)
+            .workspace_project(&folder_digests)
             .expect("the folder's binding reads")
     }
 }
@@ -110,18 +140,18 @@ impl Fixture {
 fn the_owner_binds_a_folder_and_its_session_reads_that_project() {
     let fixture = Fixture::open();
     assert_eq!(
-        fixture.session_project(&[MAIN_ID]),
+        fixture.session_project(&[MAIN_DIGEST]),
         None,
         "a folder nobody bound selects no project"
     );
-    fixture.owner_binds(MAIN_ID, fixture.root_project, "alpha");
+    fixture.owner_binds(MAIN_DIGEST, fixture.root_project, "alpha");
     assert_eq!(
-        fixture.session_project(&[MAIN_ID]),
+        fixture.session_project(&[MAIN_DIGEST]),
         Some(fixture.root_project),
         "the bound folder selects its project"
     );
     assert_eq!(
-        fixture.session_project(&[OTHER_ID]),
+        fixture.session_project(&[OTHER_DIGEST]),
         None,
         "another folder stays unbound"
     );
@@ -130,9 +160,9 @@ fn the_owner_binds_a_folder_and_its_session_reads_that_project() {
 #[test]
 fn a_linked_worktree_with_no_binding_of_its_own_reads_its_main_checkouts_project() {
     let fixture = Fixture::open();
-    fixture.owner_binds(MAIN_ID, fixture.root_project, "alpha");
+    fixture.owner_binds(MAIN_DIGEST, fixture.root_project, "alpha");
     assert_eq!(
-        fixture.session_project(&[WORKTREE_ID, MAIN_ID]),
+        fixture.session_project(&[WORKTREE_DIGEST, MAIN_DIGEST]),
         Some(fixture.root_project),
         "the worktree falls back to its main checkout's binding"
     );
@@ -141,18 +171,18 @@ fn a_linked_worktree_with_no_binding_of_its_own_reads_its_main_checkouts_project
 #[test]
 fn a_folders_own_binding_decides_before_its_main_checkouts() {
     let fixture = Fixture::open();
-    fixture.owner_binds(MAIN_ID, fixture.root_project, "alpha");
+    fixture.owner_binds(MAIN_DIGEST, fixture.root_project, "alpha");
     // The worktree's own row names no project: the owner bound it to none.
     let outcome = fixture
         .set(
             SettingCaller::Owner(&fixture.proof),
-            WORKTREE_ID,
+            &fixture.workspace_id(WORKTREE_DIGEST),
             Some(json!({ "label": "alpha-fork" })),
         )
         .expect("the owner's unbound row for the worktree");
     assert!(matches!(outcome, SetSettingOutcome::Applied { .. }));
     assert_eq!(
-        fixture.session_project(&[WORKTREE_ID, MAIN_ID]),
+        fixture.session_project(&[WORKTREE_DIGEST, MAIN_DIGEST]),
         Some(fixture.root_project),
         "a row that names no project binds nothing, so the main checkout's decides"
     );
@@ -162,67 +192,114 @@ fn a_folders_own_binding_decides_before_its_main_checkouts() {
 fn a_binding_must_name_a_live_project() {
     let fixture = Fixture::open();
     let not_a_project = EntityId::now();
-    let refused = fixture.set(
-        SettingCaller::Owner(&fixture.proof),
-        MAIN_ID,
-        Some(json!({ "project": not_a_project.to_hex(), "label": "alpha" })),
-    );
+    let refused = fixture.bind(MAIN_DIGEST, not_a_project, "alpha");
     let error = refused.expect_err("an id that names no PROJECT is refused");
     assert!(
         error.to_string().contains("is not a live PROJECT"),
         "the refusal names the reason: {error}"
     );
-    assert_eq!(fixture.session_project(&[MAIN_ID]), None);
+    assert_eq!(fixture.session_project(&[MAIN_DIGEST]), None);
 }
 
 #[test]
-fn an_item_that_is_not_a_workspace_id_is_refused() {
+fn a_digest_that_is_not_one_is_refused() {
     let fixture = Fixture::open();
-    for item in [
+    for digest in [
         "alpha",
         "/srv/checkouts/alpha",
-        &MAIN_ID.to_uppercase(),
-        &MAIN_ID[..63],
+        &MAIN_DIGEST.to_uppercase(),
+        &MAIN_DIGEST[..63],
     ] {
-        assert!(!is_workspace_id(item), "{item} is no workspace id");
+        assert!(!is_sha256_hex(digest), "{digest} is no digest");
+        assert_eq!(fixture.vault.workspace_id(digest), None);
+        let refused = fixture.bind(digest, fixture.root_project, "alpha");
+        assert!(
+            refused.is_err(),
+            "binding {digest:?} is refused: {refused:?}"
+        );
         let refused = fixture.set(
             SettingCaller::Owner(&fixture.proof),
-            item,
+            digest,
             Some(json!({ "project": fixture.root_project.to_hex(), "label": "alpha" })),
         );
         assert!(
             refused.is_err(),
-            "a row named by {item:?} is refused: {refused:?}"
+            "a row named by {digest:?} is refused: {refused:?}"
         );
     }
-    assert!(is_workspace_id(MAIN_ID));
+    assert!(is_sha256_hex(MAIN_DIGEST));
+}
+
+#[test]
+fn the_workspace_id_is_the_digest_keyed_by_the_vault() {
+    let first = Fixture::open();
+    let second = Fixture::open();
+    let id = first.workspace_id(MAIN_DIGEST);
+    assert!(
+        is_sha256_hex(&id),
+        "a workspace id is 64 lower-case hex: {id}"
+    );
+    assert_ne!(
+        id, MAIN_DIGEST,
+        "the vault never stores the client's digest as sent"
+    );
+    assert_eq!(
+        id,
+        first.workspace_id(MAIN_DIGEST),
+        "one vault keys one folder the same way each time"
+    );
+    assert_ne!(
+        id,
+        second.workspace_id(MAIN_DIGEST),
+        "two vaults key one folder apart, so its ids do not correlate across vaults"
+    );
+    assert_ne!(id, first.workspace_id(OTHER_DIGEST));
+}
+
+#[test]
+fn a_row_named_by_the_bare_digest_binds_nothing() {
+    let fixture = Fixture::open();
+    let outcome = fixture
+        .set(
+            SettingCaller::Owner(&fixture.proof),
+            MAIN_DIGEST,
+            Some(json!({ "project": fixture.root_project.to_hex(), "label": "alpha" })),
+        )
+        .expect("the row is a well-formed item");
+    assert!(matches!(outcome, SetSettingOutcome::Applied { .. }));
+    assert_eq!(
+        fixture.session_project(&[MAIN_DIGEST]),
+        None,
+        "a session's digest reads the row its workspace id names, not one named by the digest"
+    );
 }
 
 #[test]
 fn a_label_with_a_control_character_is_refused() {
     let fixture = Fixture::open();
-    let refused = fixture.set(
-        SettingCaller::Owner(&fixture.proof),
-        MAIN_ID,
-        Some(json!({ "project": fixture.root_project.to_hex(), "label": "alpha\nbeta" })),
-    );
+    let refused = fixture.bind(MAIN_DIGEST, fixture.root_project, "alpha\nbeta");
     assert!(refused.is_err(), "the label is refused: {refused:?}");
-    assert_eq!(fixture.session_project(&[MAIN_ID]), None);
+    assert_eq!(fixture.session_project(&[MAIN_DIGEST]), None);
 }
 
 #[test]
 fn the_owner_unbinds_a_folder() {
     let fixture = Fixture::open();
-    fixture.owner_binds(MAIN_ID, fixture.root_project, "alpha");
-    let outcome = fixture
-        .set(SettingCaller::Owner(&fixture.proof), MAIN_ID, None)
-        .expect("the owner's clear");
-    assert!(
-        matches!(outcome, SetSettingOutcome::Applied { .. }),
-        "the owner's clear applies at once: {outcome:?}"
-    );
+    fixture.owner_binds(MAIN_DIGEST, fixture.root_project, "alpha");
+    let binding = fixture
+        .vault
+        .unbind_workspace_as_owner(
+            &fixture.proof,
+            Some(ActSurface::ThisInstall),
+            &WorkspaceUnbindRequest {
+                folder_digest: MAIN_DIGEST.to_owned(),
+            },
+        )
+        .expect("the owner's unbind");
+    assert_eq!(binding.workspace_id, fixture.workspace_id(MAIN_DIGEST));
+    assert_eq!(binding.project, None, "the answer names no project");
     assert_eq!(
-        fixture.session_project(&[MAIN_ID]),
+        fixture.session_project(&[MAIN_DIGEST]),
         None,
         "an unbound folder selects no project"
     );
@@ -281,7 +358,7 @@ fn an_agents_binding_waits_for_the_owner_and_binds_nothing() {
     let outcome = fixture
         .set(
             SettingCaller::Agent(agent),
-            MAIN_ID,
+            &fixture.workspace_id(MAIN_DIGEST),
             Some(json!({ "project": fixture.root_project.to_hex(), "label": "alpha" })),
         )
         .expect("the agent's binding answers");
@@ -290,7 +367,7 @@ fn an_agents_binding_waits_for_the_owner_and_binds_nothing() {
         "an agent's binding waits on the owner's answer: {outcome:?}"
     );
     assert_eq!(
-        fixture.session_project(&[MAIN_ID]),
+        fixture.session_project(&[MAIN_DIGEST]),
         None,
         "the folder stays unbound until the owner says yes"
     );

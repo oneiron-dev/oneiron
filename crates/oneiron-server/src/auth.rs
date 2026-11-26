@@ -404,7 +404,7 @@ pub(crate) struct CoreAuth {
     /// `credential_memory` builds for this caller binds it, so a door acts
     /// inside the session its caller named (OF-063, FIX 1668).
     off_record_session: Option<String>,
-    /// The workspace ids of the folder an attached agent session runs in, its own first, which
+    /// The folder digests of the folder an attached agent session runs in, its own first, which
     /// the MCP gateway binds on a read that names no project (RECALL-SESSION-PROJECT): context,
     /// not authority. Every handle `credential_memory` builds for this caller then reads that
     /// folder's project by default.
@@ -709,16 +709,16 @@ impl CoreAuth {
         self.off_record_session.as_deref()
     }
 
-    /// The attached session's folder ids this caller's reads default to, if any.
+    /// The attached session's folder digests this caller's reads default to, if any.
     pub(crate) fn session_workspace(&self) -> Option<&[String]> {
         self.session_workspace.as_deref()
     }
 
-    /// This caller, reading by default the project of the folder `workspace_ids` names
+    /// This caller, reading by default the project of the folder `folder_digests` names
     /// (RECALL-SESSION-PROJECT); `None` reads with no default.
     #[must_use]
-    pub(crate) fn in_session_workspace(mut self, workspace_ids: Option<Vec<String>>) -> Self {
-        self.session_workspace = workspace_ids;
+    pub(crate) fn in_session_workspace(mut self, folder_digests: Option<Vec<String>>) -> Self {
+        self.session_workspace = folder_digests;
         self
     }
 

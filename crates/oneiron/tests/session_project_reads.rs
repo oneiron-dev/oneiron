@@ -19,6 +19,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::authority::ActSurface;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
@@ -27,10 +28,7 @@ use oneiron::memory::{
     ClaimRelationships, ClaimScope, Memory, ScopedClaimInput,
 };
 use oneiron::registry::ENTITY_TYPE_FACET;
-use oneiron::session_project::{
-    NO_PROJECT_BOUND_AXIS, SESSION_PROJECT_AXIS, WORKSPACE_PROJECT_KEY,
-};
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::session_project::{NO_PROJECT_BOUND_AXIS, SESSION_PROJECT_AXIS, WorkspaceBindRequest};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::workspace_roster::ProjectRecord;
@@ -39,15 +37,15 @@ use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-/// The bound folder's own workspace id.
-const MAIN_ID: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+/// The bound folder's own digest.
+const MAIN_DIGEST: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
 /// A linked worktree of it, with no binding of its own.
-const WORKTREE_ID: &str = "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+const WORKTREE_DIGEST: &str = "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 /// A folder nobody bound.
-const UNBOUND_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const UNBOUND_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// A rooted vault whose owner made two projects under the root, `alpha` and `beta`, and
-/// `alpha-docs` under `alpha`, with one owner claim in each, and bound the folder `MAIN_ID` to
+/// `alpha-docs` under `alpha`, with one owner claim in each, and bound the folder `MAIN_DIGEST` to
 /// `alpha`. The vault closes before its directory goes.
 struct Fixture {
     vault: Vault,
@@ -106,15 +104,19 @@ fn open() -> TestResult<Fixture> {
         "profile.occupation",
         "baker",
     )?;
-    let mut binding = SetSetting::vault_value(
-        WORKSPACE_PROJECT_KEY,
-        json!({ "project": alpha.to_hex(), "label": "alpha" }),
-    );
-    binding.item = Some(MAIN_ID.to_owned());
-    let outcome = vault.set_setting(SettingCaller::Owner(&proof), binding)?;
-    assert!(
-        matches!(outcome, SetSettingOutcome::Applied { .. }),
-        "FIXTURE: the owner binds the folder: {outcome:?}"
+    let binding = vault.bind_workspace_as_owner(
+        &proof,
+        Some(ActSurface::ThisInstall),
+        WorkspaceBindRequest {
+            folder_digest: MAIN_DIGEST.to_owned(),
+            project: alpha,
+            label: Some("alpha".to_owned()),
+        },
+    )?;
+    assert_eq!(
+        binding.project,
+        Some(alpha),
+        "FIXTURE: the owner binds the folder"
     );
     Ok(Fixture {
         vault,
@@ -266,7 +268,9 @@ fn a_handle_with_no_folder_reads_every_project_as_before() -> TestResult {
 #[test]
 fn a_bound_folders_list_reads_its_project_and_the_projects_below_it() -> TestResult {
     let fixture = open()?;
-    let session = fixture.memory().in_session_workspace(&[MAIN_ID.to_owned()]);
+    let session = fixture
+        .memory()
+        .in_session_workspace(&[MAIN_DIGEST.to_owned()]);
     let (listed, axes) = fixture.listed(&session)?;
     assert_eq!(
         listed,
@@ -283,7 +287,9 @@ fn a_bound_folders_list_reads_its_project_and_the_projects_below_it() -> TestRes
 #[test]
 fn a_filtered_list_that_names_no_project_reads_the_session_project() -> TestResult {
     let fixture = open()?;
-    let session = fixture.memory().in_session_workspace(&[MAIN_ID.to_owned()]);
+    let session = fixture
+        .memory()
+        .in_session_workspace(&[MAIN_DIGEST.to_owned()]);
     assert_eq!(
         fixture.listed_filtered(&session, json!({ "limit": 100 }))?,
         set(&[&fixture.in_alpha, &fixture.in_alpha_docs])
@@ -294,7 +300,9 @@ fn a_filtered_list_that_names_no_project_reads_the_session_project() -> TestResu
 #[test]
 fn a_point_read_of_another_projects_claim_reads_nothing() -> TestResult {
     let fixture = open()?;
-    let session = fixture.memory().in_session_workspace(&[MAIN_ID.to_owned()]);
+    let session = fixture
+        .memory()
+        .in_session_workspace(&[MAIN_DIGEST.to_owned()]);
     assert!(fixture.reads(&session, &fixture.in_alpha)?);
     assert!(
         !fixture.reads(&session, &fixture.in_beta)?,
@@ -309,7 +317,7 @@ fn a_linked_worktree_reads_its_main_checkouts_project() -> TestResult {
     let fixture = open()?;
     let session = fixture
         .memory()
-        .in_session_workspace(&[WORKTREE_ID.to_owned(), MAIN_ID.to_owned()]);
+        .in_session_workspace(&[WORKTREE_DIGEST.to_owned(), MAIN_DIGEST.to_owned()]);
     let (listed, _) = fixture.listed(&session)?;
     assert_eq!(listed, set(&[&fixture.in_alpha, &fixture.in_alpha_docs]));
     Ok(())
@@ -320,7 +328,7 @@ fn an_unbound_folder_reads_no_claim_and_its_receipt_says_why() -> TestResult {
     let fixture = open()?;
     let session = fixture
         .memory()
-        .in_session_workspace(&[UNBOUND_ID.to_owned()]);
+        .in_session_workspace(&[UNBOUND_DIGEST.to_owned()]);
     let (listed, axes) = fixture.listed(&session)?;
     for claim in [&fixture.in_alpha, &fixture.in_alpha_docs, &fixture.in_beta] {
         assert!(!listed.contains(claim), "no claim is read: {listed:?}");

@@ -36,7 +36,7 @@ impl Memory<'_> {
     }
 
     /// This handle for one read of an attached agent session whose folder names
-    /// `workspace_ids`, its own workspace id first (RECALL-SESSION-PROJECT; Engine ANSWER
+    /// `folder_digests`, its own digest first (RECALL-SESSION-PROJECT; Engine ANSWER
     /// RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, Q2 = A). Every read key it builds then
     /// reads CLAIM rows stamped inside the folder's bound project, or a project below it, and
     /// none when no live project is bound; every receipt names the axis. It binds a request,
@@ -44,9 +44,9 @@ impl Memory<'_> {
     /// read that names no project; a storage failure binds the unbound default, never a wider
     /// read.
     #[must_use]
-    pub fn in_session_workspace(&self, workspace_ids: &[String]) -> Self {
+    pub fn in_session_workspace(&self, folder_digests: &[String]) -> Self {
         let mut bound = self.clone();
-        bound.session_projects = Some(self.session_projects_of(workspace_ids).unwrap_or_else(
+        bound.session_projects = Some(self.session_projects_of(folder_digests).unwrap_or_else(
             |error| {
                 tracing::warn!(
                     error_kind = ?error.code,

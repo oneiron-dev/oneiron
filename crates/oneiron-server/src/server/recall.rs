@@ -423,7 +423,7 @@ impl SyncServer {
                     .for_destination(&destination)
                     .listing_producers(&listing);
                 let memory = match session_workspace.as_deref() {
-                    Some(workspace_ids) => memory.in_session_workspace(workspace_ids),
+                    Some(folder_digests) => memory.in_session_workspace(folder_digests),
                     None => memory,
                 };
                 let hyde = server.hyde_host.expander(
