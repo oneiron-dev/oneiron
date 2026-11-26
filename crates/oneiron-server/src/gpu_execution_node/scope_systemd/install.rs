@@ -12,6 +12,8 @@
 //! ([`super::device_query::require_install_paths_apart`]), and any entry
 //! where the version before this one kept its query lock in the state
 //! directory ([`super::device_query::require_no_old_state_dir_lock`]).
+//! Before any change it also refuses a work directory whose path staging
+//! would refuse ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict`]).
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
@@ -33,6 +35,7 @@ use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
     unit_path_word,
 };
+use crate::gpu_execution_node::jobs::staging::{WorkDirVerdict, work_dir_verdict};
 
 /// What `install` is given.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +118,7 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         &inputs.binary,
         lock_dir,
     )?;
+    require_work_dir_chain(&inputs.work_dir, &request.engine_account, engine_uid)?;
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
@@ -170,6 +174,27 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     print_templates(&settings);
     stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
     Ok(())
+}
+
+/// Refuses a work directory whose path staging would refuse, before any
+/// change: the staging rule
+/// ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict`]) for the
+/// engine's account. A path that is not there yet passes: [`ensure_dir`]
+/// makes missing parents root's (mode 0755) and the leaf the engine's,
+/// which pass.
+fn require_work_dir_chain(
+    work_dir: &Path,
+    engine_account: &str,
+    engine_uid: u32,
+) -> Result<(), String> {
+    match work_dir_verdict(work_dir, engine_uid) {
+        WorkDirVerdict::Passes(_) | WorkDirVerdict::Missing { .. } => Ok(()),
+        WorkDirVerdict::Unsafe(unsafe_) => Err(format!(
+            "work_dir {}: {}, judged for the engine account {engine_account} (uid {engine_uid}): staging would refuse every job (work_dir_unsafe); give the path to root or to {engine_account}, or pick another work_dir",
+            unsafe_.path.display(),
+            unsafe_.fault
+        )),
+    }
 }
 
 fn print_templates(settings: &ExecutionNodeSettings) {
@@ -365,5 +390,31 @@ mod tests {
         assert!(existing_job_account_fits(nologin, 1000, 971).is_err());
         assert!(existing_job_account_fits(nologin, 0, 971).is_err());
         assert!(existing_job_account_fits(nologin, 971, 971).is_err());
+    }
+
+    #[test]
+    fn install_refuses_a_work_dir_whose_path_staging_would_refuse() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().canonicalize().expect("resolved temp dir");
+        let open = root.join("open");
+        let work = open.join("work");
+        let ok = root.join("ok");
+        let good = ok.join("work");
+        for (path, mode) in [(&open, 0o777), (&work, 0o755), (&ok, 0o755), (&good, 0o755)] {
+            std::fs::create_dir(path).expect("make test directory");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("test directory mode");
+        }
+        // SAFETY: geteuid has no preconditions.
+        let euid = unsafe { libc::geteuid() };
+        let why = require_work_dir_chain(&work, "oneiron", euid)
+            .expect_err("the work directory beneath the open ancestor is refused");
+        assert!(why.contains(open.display().to_string().as_str()), "{why}");
+        assert!(why.contains("work_dir_unsafe"), "{why}");
+        assert_eq!(require_work_dir_chain(&good, "oneiron", euid), Ok(()));
+        let missing = ok.join("missing").join("work");
+        assert_eq!(require_work_dir_chain(&missing, "oneiron", euid), Ok(()));
     }
 }

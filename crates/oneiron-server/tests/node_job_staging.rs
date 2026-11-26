@@ -19,6 +19,9 @@
 //! not made, a work directory reached through the engine's own link stages,
 //! and the unstage test waits for a completed staging first.
 //!
+//! The read-only work directory rule tests cover foreign owners, open and
+//! sticky ancestors, and missing components.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test node_job_staging`.
 #![cfg(all(oneiron_test_support, unix))]
 
@@ -30,7 +33,10 @@ use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
-use oneiron_server::gpu_execution_node::jobs::staging::{CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME};
+use oneiron_server::gpu_execution_node::jobs::staging::{
+    CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME, WorkDirFault, WorkDirUnsafe, WorkDirVerdict,
+    work_dir_verdict,
+};
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, MirrorStager, NodeJobs, NodeKey, StagingRefusal, TemplateMirrors,
 };
@@ -761,6 +767,104 @@ fn a_work_directory_reached_through_the_engines_own_link_stages() {
         .join(CHECKOUT_DIR_NAME)
         .join(CONTRACT);
     assert_eq!(std::fs::read(staged).expect("contract"), CONTRACT_V1);
+}
+
+#[test]
+fn the_work_dir_rule_names_an_ancestor_another_account_owns() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let a = root.join("a");
+    let work = a.join("work");
+    make_work_dir_test_directory(&a, 0o755);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    let engine = if euid == 0 {
+        std::os::unix::fs::chown(&a, Some(65534), Some(65534)).expect("give a to another account");
+        0
+    } else {
+        euid + 1
+    };
+    let verdict = work_dir_verdict(&work, engine);
+    let WorkDirVerdict::Unsafe(u) = verdict else {
+        panic!("expected a foreign owner on the path: {verdict:?}");
+    };
+    assert!(
+        matches!(u.fault, WorkDirFault::ForeignOwner { uid } if uid != 0 && uid != engine),
+        "expected a foreign owner: {u:?}"
+    );
+    assert!(work.starts_with(&u.path), "not on the work path: {u:?}");
+    if euid == 0 {
+        assert_eq!(
+            u.path, a,
+            "the temp root and its ancestors must pass for root"
+        );
+    }
+}
+
+#[test]
+fn the_work_dir_rule_names_an_ancestor_others_may_rename_in() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let open = root.join("open");
+    let work = open.join("work");
+    make_work_dir_test_directory(&open, 0o777);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    let verdict = work_dir_verdict(&work, euid);
+    assert!(
+        matches!(
+            &verdict,
+            WorkDirVerdict::Unsafe(WorkDirUnsafe {
+                path,
+                fault: WorkDirFault::OthersMayRename { mode },
+            }) if path == &open && *mode & 0o022 != 0
+        ),
+        "expected the open ancestor to fail; the temp root and its ancestors must pass for uid {euid}: {verdict:?}"
+    );
+}
+
+#[test]
+fn a_sticky_ancestor_others_may_write_in_passes_the_work_dir_rule() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let shared = root.join("shared");
+    let work = shared.join("work");
+    make_work_dir_test_directory(&shared, 0o1777);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    assert_eq!(
+        work_dir_verdict(&work, euid),
+        WorkDirVerdict::Passes(work),
+        "expected the sticky ancestor to pass; the temp root and its ancestors must pass for uid {euid}"
+    );
+}
+
+#[test]
+fn a_missing_work_dir_reads_missing_and_the_rule_makes_nothing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let a = root.join("a");
+    let b = a.join("b");
+    let work = b.join("work");
+    make_work_dir_test_directory(&a, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    assert_eq!(
+        work_dir_verdict(&work, euid),
+        WorkDirVerdict::Missing {
+            first_missing: b.clone(),
+        },
+        "expected the first missing component; the temp root and its ancestors must pass for uid {euid}"
+    );
+    assert!(
+        !b.exists(),
+        "the read-only rule made the first missing component"
+    );
+}
+
+fn make_work_dir_test_directory(path: &Path, mode: u32) {
+    std::fs::create_dir(path).expect("make test directory");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .expect("test directory mode");
 }
 
 #[test]

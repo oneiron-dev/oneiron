@@ -241,6 +241,17 @@ fn check(args: &ExecutionNodeServeArgs, output: &mut impl Write) -> anyhow::Resu
             Err(error) => refusals.push(format!("{name} {}: {error}", dir.display())),
         }
     }
+    #[cfg(unix)]
+    match work_dir_check_account() {
+        Ok((uid, who)) => match work_dir_chain_line(&settings.work_dir, &who, uid) {
+            Ok(line) => writeln!(output, "{line}")?,
+            Err(why) => {
+                writeln!(output, "work_dir chain: {why}")?;
+                refusals.push(why);
+            }
+        },
+        Err(why) => refusals.push(why),
+    }
     // The job unit (row R3b): each bound's strength, proved in a probe unit
     // when run as root.
     #[cfg(target_os = "linux")]
@@ -259,6 +270,54 @@ fn check(args: &ExecutionNodeServeArgs, output: &mut impl Write) -> anyhow::Resu
         Ok(())
     } else {
         anyhow::bail!("would refuse a job: {}", refusals.join("; "))
+    }
+}
+
+/// The engine account named in the installed unit, or the current account.
+#[cfg(unix)]
+fn work_dir_check_account() -> Result<(u32, String), String> {
+    let euid = rustix::process::geteuid().as_raw();
+    #[cfg(target_os = "linux")]
+    let who = {
+        use crate::gpu_execution_node::scope_systemd::{UNIT_TEMPLATE_PATH, safe_fs, unit_file};
+
+        if let Ok(text) = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
+            && let Some(name) = unit_file::installed_engine_account(&text)
+        {
+            let (uid, _, _) = safe_fs::account(name).map_err(|error| {
+                format!("the job unit names the engine account {name}: {error}")
+            })?;
+            return Ok((
+                uid,
+                format!("the engine account {name} (uid {uid}, from {UNIT_TEMPLATE_PATH})"),
+            ));
+        }
+        format!("this account (uid {euid}; no job unit names the engine account)")
+    };
+    #[cfg(not(target_os = "linux"))]
+    let who = "this account".to_owned();
+    Ok((euid, who))
+}
+
+/// Describes the work directory rule's read-only verdict for the named account.
+#[cfg(unix)]
+fn work_dir_chain_line(work_dir: &Path, who: &str, engine_uid: u32) -> Result<String, String> {
+    use crate::gpu_execution_node::jobs::staging::{WorkDirVerdict, work_dir_verdict};
+
+    match work_dir_verdict(work_dir, engine_uid) {
+        WorkDirVerdict::Passes(dir) => Ok(format!(
+            "work_dir chain: {} passes for {who}",
+            dir.display()
+        )),
+        WorkDirVerdict::Missing { first_missing } => Ok(format!(
+            "work_dir chain: {} is not there yet (staging makes it); the path to it passes for {who}",
+            first_missing.display()
+        )),
+        WorkDirVerdict::Unsafe(u) => Err(format!(
+            "work_dir {}: {}, judged for {who}: staging refuses every job (work_dir_unsafe)",
+            u.path.display(),
+            u.fault
+        )),
     }
 }
 
@@ -356,4 +415,42 @@ fn unit_control(_verb: &str, _key: &str, _signal: Option<&str>) -> anyhow::Resul
 #[cfg(not(unix))]
 fn unit_name(_key: &str) -> anyhow::Result<()> {
     anyhow::bail!("unit-name: the job unit needs Linux with systemd (pass 33, EM-4)")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::work_dir_chain_line;
+
+    #[test]
+    fn the_checks_work_dir_line_names_the_ancestor_others_may_rename_in() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().canonicalize().expect("resolved temp dir");
+        let open = root.join("open");
+        let open_work = open.join("work");
+        let ok = root.join("ok");
+        let ok_work = ok.join("work");
+        for (path, mode) in [
+            (&open, 0o777),
+            (&open_work, 0o755),
+            (&ok, 0o755),
+            (&ok_work, 0o755),
+        ] {
+            fs::create_dir(path).expect("make test directory");
+            fs::set_permissions(path, Permissions::from_mode(mode)).expect("test directory mode");
+        }
+        let euid = rustix::process::geteuid().as_raw();
+        let who = format!("this account (uid {euid})");
+        let text =
+            work_dir_chain_line(&open_work, &who, euid).expect_err("the open ancestor fails");
+        assert!(text.contains(open.display().to_string().as_str()), "{text}");
+        assert!(text.contains("mode 777"), "{text}");
+        assert!(text.contains("work_dir_unsafe"), "{text}");
+
+        let text = work_dir_chain_line(&ok_work, &who, euid)
+            .expect("the path including the temp root's ancestors passes for this account");
+        assert!(text.contains("passes for"), "{text}");
+    }
 }

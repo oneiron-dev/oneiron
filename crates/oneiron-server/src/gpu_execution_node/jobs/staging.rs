@@ -85,6 +85,7 @@ mod payload_dir;
 
 use git_process::{GitChild, GitView};
 use payload_dir::payload_dir_owned;
+pub use payload_dir::{WorkDirFault, WorkDirUnsafe, WorkDirVerdict, work_dir_verdict};
 
 /// The checkout's directory name inside a key's payload directory.
 pub const CHECKOUT_DIR_NAME: &str = "checkout";
