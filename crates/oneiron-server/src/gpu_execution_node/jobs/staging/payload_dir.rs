@@ -110,7 +110,9 @@ pub enum WorkDirVerdict {
 }
 
 /// Judges the rule staging applies before a key's first write for the account
-/// `engine_uid`, without making or changing anything. Check and install call it.
+/// `engine_uid`, without making or changing anything, with this process's own
+/// file access. Check and install judge with the engine's
+/// ([`work_dir_verdict_for`]).
 pub fn work_dir_verdict(work_dir: &Path, engine_uid: u32) -> WorkDirVerdict {
     match walk_work_dir(work_dir, engine_uid, false) {
         Ok(Walked::Dir(dir)) => WorkDirVerdict::Passes(dir),
@@ -118,6 +120,82 @@ pub fn work_dir_verdict(work_dir: &Path, engine_uid: u32) -> WorkDirVerdict {
         Err(WalkFailed::Unsafe(unsafe_)) => WorkDirVerdict::Unsafe(unsafe_),
         Err(WalkFailed::MakeFailed) => unreachable!("the read-only walk does not make directories"),
     }
+}
+
+/// The file access of the account a judgement is for: its uid, its primary
+/// gid and its groups from the group database. A unit's own
+/// `SupplementaryGroups=` is not among them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkDirAccess {
+    /// The account's uid: the engine's.
+    pub uid: u32,
+    /// The account's primary gid.
+    pub gid: u32,
+    /// The account's supplementary groups.
+    pub groups: Vec<u32>,
+}
+
+/// [`work_dir_verdict`] with `access`'s file access, the access staging has
+/// in the engine (review r1 of #10575): a directory root may search but the
+/// engine may not reads unsafe here, as staging's own walk refuses it. Run as
+/// `access`'s account, the walk runs here. Run as root, it runs on a thread of
+/// its own that first takes `access`'s groups, gid and uid; on Linux these are
+/// the thread's own, so the rest of the process keeps root's, and the thread
+/// ends with the walk.
+///
+/// # Errors
+///
+/// This process is neither root nor `access`'s account, or the thread could
+/// not take `access`'s file access.
+pub fn work_dir_verdict_for(
+    work_dir: &Path,
+    access: &WorkDirAccess,
+) -> Result<WorkDirVerdict, String> {
+    let euid = rustix::process::geteuid().as_raw();
+    if euid == access.uid {
+        return Ok(work_dir_verdict(work_dir, access.uid));
+    }
+    if euid != 0 {
+        return Err(format!(
+            "this process (uid {euid}) can take neither root's nor uid {}'s file access: run it as root or as that account",
+            access.uid
+        ));
+    }
+    walk_with_access(work_dir, access)
+}
+
+#[cfg(target_os = "linux")]
+fn walk_with_access(work_dir: &Path, access: &WorkDirAccess) -> Result<WorkDirVerdict, String> {
+    use rustix::process::{Gid, Uid};
+
+    let work_dir = work_dir.to_path_buf();
+    let access = access.clone();
+    std::thread::spawn(move || -> Result<WorkDirVerdict, String> {
+        let groups: Vec<Gid> = access
+            .groups
+            .iter()
+            .map(|gid| Gid::from_raw(*gid))
+            .collect();
+        let gid = Gid::from_raw(access.gid);
+        let uid = Uid::from_raw(access.uid);
+        // The uid goes last: once it is not root's, this thread can change
+        // nothing else.
+        rustix::thread::set_thread_groups(&groups)
+            .and_then(|()| rustix::thread::set_thread_res_gid(gid, gid, gid))
+            .and_then(|()| rustix::thread::set_thread_res_uid(uid, uid, uid))
+            .map_err(|error| format!("could not take uid {}'s file access: {error}", access.uid))?;
+        Ok(work_dir_verdict(&work_dir, access.uid))
+    })
+    .join()
+    .map_err(|_| "the work directory judgement stopped".to_owned())?
+}
+
+#[cfg(not(target_os = "linux"))]
+fn walk_with_access(_work_dir: &Path, access: &WorkDirAccess) -> Result<WorkDirVerdict, String> {
+    Err(format!(
+        "judging the work directory with uid {}'s file access needs Linux",
+        access.uid
+    ))
 }
 
 /// Whether the key's payload directory exists and is the engine's alone:

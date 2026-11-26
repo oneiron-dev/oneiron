@@ -35,7 +35,9 @@ use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
     unit_path_word,
 };
-use crate::gpu_execution_node::jobs::staging::{WorkDirVerdict, work_dir_verdict};
+use crate::gpu_execution_node::jobs::staging::{
+    WorkDirAccess, WorkDirVerdict, work_dir_verdict_for,
+};
 
 /// What `install` is given.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,7 +120,19 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         &inputs.binary,
         lock_dir,
     )?;
-    require_work_dir_chain(&inputs.work_dir, &request.engine_account, engine_uid)?;
+    let engine_access = WorkDirAccess {
+        uid: engine_uid,
+        gid: engine_gid,
+        groups: super::safe_fs::account_groups(&request.engine_account, engine_gid).map_err(
+            |error| {
+                format!(
+                    "the groups of the engine account {}: {error}",
+                    request.engine_account
+                )
+            },
+        )?,
+    };
+    require_work_dir_chain(&inputs.work_dir, &request.engine_account, &engine_access)?;
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
@@ -178,16 +192,20 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
 
 /// Refuses a work directory whose path staging would refuse, before any
 /// change: the staging rule
-/// ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict`]) for the
-/// engine's account. A path that is not there yet passes: [`ensure_dir`]
-/// makes missing parents root's (mode 0755) and the leaf the engine's,
-/// which pass.
+/// ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict_for`]) for
+/// the engine's account, with the engine's file access, so a directory root
+/// may search but the engine may not is refused here as staging refuses it.
+/// A path that is not there yet passes: [`ensure_dir`] makes missing parents
+/// root's (mode 0755) and the leaf the engine's, which pass.
 fn require_work_dir_chain(
     work_dir: &Path,
     engine_account: &str,
-    engine_uid: u32,
+    engine: &WorkDirAccess,
 ) -> Result<(), String> {
-    match work_dir_verdict(work_dir, engine_uid) {
+    let engine_uid = engine.uid;
+    match work_dir_verdict_for(work_dir, engine)
+        .map_err(|why| format!("work_dir {}: not judged for the engine account {engine_account} (uid {engine_uid}): {why}", work_dir.display()))?
+    {
         WorkDirVerdict::Passes(_) | WorkDirVerdict::Missing { .. } => Ok(()),
         WorkDirVerdict::Unsafe(unsafe_) => Err(format!(
             "work_dir {}: {}, judged for the engine account {engine_account} (uid {engine_uid}): staging would refuse every job (work_dir_unsafe); give the path to root or to {engine_account}, or pick another work_dir",
@@ -407,14 +425,20 @@ mod tests {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
                 .expect("test directory mode");
         }
-        // SAFETY: geteuid has no preconditions.
-        let euid = unsafe { libc::geteuid() };
-        let why = require_work_dir_chain(&work, "oneiron", euid)
+        // SAFETY: geteuid and getegid have no preconditions.
+        let me = unsafe {
+            WorkDirAccess {
+                uid: libc::geteuid(),
+                gid: libc::getegid(),
+                groups: Vec::new(),
+            }
+        };
+        let why = require_work_dir_chain(&work, "oneiron", &me)
             .expect_err("the work directory beneath the open ancestor is refused");
         assert!(why.contains(open.display().to_string().as_str()), "{why}");
         assert!(why.contains("work_dir_unsafe"), "{why}");
-        assert_eq!(require_work_dir_chain(&good, "oneiron", euid), Ok(()));
+        assert_eq!(require_work_dir_chain(&good, "oneiron", &me), Ok(()));
         let missing = ok.join("missing").join("work");
-        assert_eq!(require_work_dir_chain(&missing, "oneiron", euid), Ok(()));
+        assert_eq!(require_work_dir_chain(&missing, "oneiron", &me), Ok(()));
     }
 }

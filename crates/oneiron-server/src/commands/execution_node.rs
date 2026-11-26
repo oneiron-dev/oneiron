@@ -243,7 +243,7 @@ fn check(args: &ExecutionNodeServeArgs, output: &mut impl Write) -> anyhow::Resu
     }
     #[cfg(unix)]
     match work_dir_check_account() {
-        Ok((uid, who)) => match work_dir_chain_line(&settings.work_dir, &who, uid) {
+        Ok((access, who)) => match work_dir_chain_line(&settings.work_dir, &who, &access) {
             Ok(line) => writeln!(output, "{line}")?,
             Err(why) => {
                 writeln!(output, "work_dir chain: {why}")?;
@@ -273,10 +273,24 @@ fn check(args: &ExecutionNodeServeArgs, output: &mut impl Write) -> anyhow::Resu
     }
 }
 
-/// The engine account named in the installed unit, or the current account.
+/// The engine account named in the installed unit, or the current account,
+/// with its file access.
 #[cfg(unix)]
-fn work_dir_check_account() -> Result<(u32, String), String> {
+fn work_dir_check_account() -> Result<
+    (
+        crate::gpu_execution_node::jobs::staging::WorkDirAccess,
+        String,
+    ),
+    String,
+> {
+    use crate::gpu_execution_node::jobs::staging::WorkDirAccess;
+
     let euid = rustix::process::geteuid().as_raw();
+    let this_account = WorkDirAccess {
+        uid: euid,
+        gid: rustix::process::getegid().as_raw(),
+        groups: Vec::new(),
+    };
     #[cfg(target_os = "linux")]
     let who = {
         use crate::gpu_execution_node::scope_systemd::{UNIT_TEMPLATE_PATH, safe_fs, unit_file};
@@ -284,11 +298,13 @@ fn work_dir_check_account() -> Result<(u32, String), String> {
         if let Ok(text) = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
             && let Some(name) = unit_file::installed_engine_account(&text)
         {
-            let (uid, _, _) = safe_fs::account(name).map_err(|error| {
+            let (uid, gid, _) = safe_fs::account(name).map_err(|error| {
                 format!("the job unit names the engine account {name}: {error}")
             })?;
+            let groups = safe_fs::account_groups(name, gid)
+                .map_err(|error| format!("the groups of the engine account {name}: {error}"))?;
             return Ok((
-                uid,
+                WorkDirAccess { uid, gid, groups },
                 format!("the engine account {name} (uid {uid}, from {UNIT_TEMPLATE_PATH})"),
             ));
         }
@@ -296,15 +312,25 @@ fn work_dir_check_account() -> Result<(u32, String), String> {
     };
     #[cfg(not(target_os = "linux"))]
     let who = "this account".to_owned();
-    Ok((euid, who))
+    Ok((this_account, who))
 }
 
-/// Describes the work directory rule's read-only verdict for the named account.
+/// Describes the work directory rule's read-only verdict for the named
+/// account, judged with its own file access (review r1 of #10575).
 #[cfg(unix)]
-fn work_dir_chain_line(work_dir: &Path, who: &str, engine_uid: u32) -> Result<String, String> {
-    use crate::gpu_execution_node::jobs::staging::{WorkDirVerdict, work_dir_verdict};
+fn work_dir_chain_line(
+    work_dir: &Path,
+    who: &str,
+    access: &crate::gpu_execution_node::jobs::staging::WorkDirAccess,
+) -> Result<String, String> {
+    use crate::gpu_execution_node::jobs::staging::{WorkDirVerdict, work_dir_verdict_for};
 
-    match work_dir_verdict(work_dir, engine_uid) {
+    match work_dir_verdict_for(work_dir, access).map_err(|why| {
+        format!(
+            "work_dir {}: not judged for {who}: {why}",
+            work_dir.display()
+        )
+    })? {
         WorkDirVerdict::Passes(dir) => Ok(format!(
             "work_dir chain: {} passes for {who}",
             dir.display()
@@ -442,14 +468,18 @@ mod tests {
             fs::set_permissions(path, Permissions::from_mode(mode)).expect("test directory mode");
         }
         let euid = rustix::process::geteuid().as_raw();
+        let me = crate::gpu_execution_node::jobs::staging::WorkDirAccess {
+            uid: euid,
+            gid: rustix::process::getegid().as_raw(),
+            groups: Vec::new(),
+        };
         let who = format!("this account (uid {euid})");
-        let text =
-            work_dir_chain_line(&open_work, &who, euid).expect_err("the open ancestor fails");
+        let text = work_dir_chain_line(&open_work, &who, &me).expect_err("the open ancestor fails");
         assert!(text.contains(open.display().to_string().as_str()), "{text}");
         assert!(text.contains("mode 777"), "{text}");
         assert!(text.contains("work_dir_unsafe"), "{text}");
 
-        let text = work_dir_chain_line(&ok_work, &who, euid)
+        let text = work_dir_chain_line(&ok_work, &who, &me)
             .expect("the path including the temp root's ancestors passes for this account");
         assert!(text.contains("passes for"), "{text}");
     }

@@ -34,8 +34,8 @@ use std::time::{Duration, Instant};
 use oneiron::EntityId;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron_server::gpu_execution_node::jobs::staging::{
-    CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME, WorkDirFault, WorkDirUnsafe, WorkDirVerdict,
-    work_dir_verdict,
+    CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME, WorkDirAccess, WorkDirFault, WorkDirUnsafe,
+    WorkDirVerdict, work_dir_verdict, work_dir_verdict_for,
 };
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, MirrorStager, NodeJobs, NodeKey, StagingRefusal, TemplateMirrors,
@@ -858,6 +858,72 @@ fn a_missing_work_dir_reads_missing_and_the_rule_makes_nothing() {
     assert!(
         !b.exists(),
         "the read-only rule made the first missing component"
+    );
+}
+
+#[test]
+fn the_work_dir_rule_judged_for_the_engine_takes_the_engines_file_access() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let closed = root.join("closed");
+    let work = closed.join("work");
+    make_work_dir_test_directory(&closed, 0o700);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    let me = WorkDirAccess {
+        uid: euid,
+        gid: rustix::process::getegid().as_raw(),
+        groups: Vec::new(),
+    };
+    if euid != 0 {
+        // Only root can take another account's file access.
+        let other = WorkDirAccess {
+            uid: euid + 1,
+            gid: me.gid,
+            groups: Vec::new(),
+        };
+        let why = work_dir_verdict_for(&work, &other)
+            .expect_err("a process that is not root judges only for itself");
+        assert!(why.contains("can take neither root's"), "{why}");
+        assert_eq!(
+            work_dir_verdict_for(&work, &me),
+            Ok(work_dir_verdict(&work, euid)),
+            "judged for its own account, the walk runs here"
+        );
+        return;
+    }
+    // As root: the temp root opens to every account, `closed` is root's
+    // alone (0700), and the work directory inside it is the engine's.
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+        .expect("open the temp root");
+    std::os::unix::fs::chown(&work, Some(65534), Some(65534)).expect("give work to the engine");
+    assert_eq!(
+        work_dir_verdict(&work, 65534),
+        WorkDirVerdict::Passes(work.clone()),
+        "with root's own file access the chain passes; the temp root and its ancestors must pass for root"
+    );
+    let engine = WorkDirAccess {
+        uid: 65534,
+        gid: 65534,
+        groups: Vec::new(),
+    };
+    let verdict =
+        work_dir_verdict_for(&work, &engine).expect("root takes the engine's file access");
+    let WorkDirVerdict::Unsafe(u) = verdict else {
+        panic!(
+            "the engine may not search {}: {verdict:?}",
+            closed.display()
+        );
+    };
+    assert!(
+        matches!(&u.fault, WorkDirFault::Unreadable(why) if why.contains("ermission denied")),
+        "expected the engine's lookup to be refused: {u:?}"
+    );
+    assert!(work.starts_with(&u.path), "not on the work path: {u:?}");
+    assert_eq!(
+        rustix::process::geteuid().as_raw(),
+        0,
+        "the judgement's thread took the engine's access, not the process"
     );
 }
 
