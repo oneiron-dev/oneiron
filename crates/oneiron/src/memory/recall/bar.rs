@@ -26,13 +26,6 @@ use crate::error::{Error, Result};
 use crate::setting::{SettingScope, SettingValue};
 use crate::store::ManifestDbs;
 
-/// The floors measured for lines keyed on a session's work, by embedding model name (the
-/// `name` of `org/name@revision`, any org or revision): the lowest cosine that kept every
-/// line the A/B's sessions used and passed no trap (RECALL-AB-THRESHOLD-DATA, 26 Nov 21:38:
-/// used lines 0.545-0.610, the best trap 0.390). A space not named here has no measured floor,
-/// so `measured` keeps it quiet until it is measured (RECALL-THRESHOLD-MEASURE).
-const MEASURED_FLOORS: [(&str, f64); 1] = [("pplx-embed-v1-0.6b", 0.52)];
-
 /// A query term is distinctive when at most one in this many of the vault's documents hold
 /// it (at least one document).
 const DISTINCTIVE_SHARE: u32 = 20;
@@ -41,8 +34,10 @@ const DISTINCTIVE_SHARE: u32 = 20;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RecallBar {
-    /// The measured floor of the vault's embedding space ([`MEASURED_FLOORS`]); on a vault
-    /// with no embedder, a direct match; quiet in a space with no measured floor.
+    /// The bar the host measured for the vault's embedding space: set only by a host that
+    /// runs the space's model at the exact revision and on the profile it was measured with
+    /// ([`Vault::set_measured_recall_bar`]; 0.52 for pplx-embed-v1-0.6b, RECALL-AB-THRESHOLD-
+    /// DATA). On a vault with no embedder, a direct match; quiet in every other case.
     Measured,
     /// No bar: every line the recall found.
     Open,
@@ -195,8 +190,8 @@ pub(crate) fn resolve(
                     }),
                     RecallBarRule::DirectMatch,
                 ),
-                RecallBar::Measured => match measured_floor(space) {
-                    Some(floor) => cosine(floor, space),
+                RecallBar::Measured => match vault.measured_recall_bar() {
+                    Some(floor) => cosine(f64::from(floor), space),
                     None => quiet("unmeasured"),
                 },
             },
@@ -235,15 +230,6 @@ impl crate::memory::Memory<'_> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         Ok(resolve(self.vault, &txn, ask, query, project, query_vector))
     }
-}
-
-/// The measured floor of the embedding space `space` (`org/name@revision`), by its name.
-fn measured_floor(space: &str) -> Option<f64> {
-    let name = space.split_once('/')?.1.split_once('@')?.0;
-    MEASURED_FLOORS
-        .iter()
-        .find(|(measured, _)| measured.eq_ignore_ascii_case(name))
-        .map(|(_, floor)| *floor)
 }
 
 impl BarJudge {
@@ -358,20 +344,6 @@ fn direct_match(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn measured_floor_reads_the_model_name_of_any_org_or_revision() {
-        assert_eq!(
-            measured_floor("perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a7"),
-            Some(0.52)
-        );
-        assert_eq!(
-            measured_floor("vel/pplx-embed-v1-0.6b@endpoint"),
-            Some(0.52)
-        );
-        assert_eq!(measured_floor("BAAI/bge-m3@main"), None);
-        assert_eq!(measured_floor(""), None);
-    }
 
     #[test]
     fn a_cosine_floor_out_of_range_or_a_bad_model_is_refused() {

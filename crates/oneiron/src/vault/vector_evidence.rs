@@ -204,6 +204,39 @@ impl Vault {
         Ok(())
     }
 
+    /// Sets the relevance bar a host measured for recall lines keyed on a session's work in
+    /// this vault's embedding space (RECALL-CARRIER-THRESHOLD), as it sets the floors its
+    /// embedder states: only a host that runs the space's model on the profile it was measured
+    /// with names one, and `None` clears it, so the `measured` bar is quiet. A bar outside
+    /// `0 <= bar <= 1`, or not a number, is refused, and the bar in force stays.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` naming the bar.
+    pub fn set_measured_recall_bar(&self, bar: Option<f32>) -> Result<()> {
+        if let Some(bar) = bar
+            && (!bar.is_finite() || !(0.0..=1.0).contains(&bar))
+        {
+            return Err(Error::InvalidConfig(format!(
+                "a measured recall bar must satisfy 0 <= bar <= 1, got {bar}"
+            )));
+        }
+        *self
+            .measured_recall_bar
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = bar;
+        Ok(())
+    }
+
+    /// The relevance bar the host measured in this vault's space
+    /// ([`Self::set_measured_recall_bar`]), `None` when it measured none.
+    pub(crate) fn measured_recall_bar(&self) -> Option<f32> {
+        *self
+            .measured_recall_bar
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Every floor the no-match check reads, at once. A run reads them
     /// once, when it starts, and judges, keys and records by that copy. The
     /// owner's floors for this vault's space take the place of the host's

@@ -8,10 +8,12 @@ crate::setting::setting_keys! {
     /// The relevance bar for the lines a session is given at its start, keyed on the task's
     /// words (RECALL-CARRIER-THRESHOLD; owner 26 Nov 18:53 and 18:59). A start keyed on the
     /// folder's name asks none: no bar separates true lines from traps there. `measured`
-    /// (the default): the floor measured for the vault's embedding space (pplx-embed-v1-0.6b:
-    /// a cosine of 0.52), a direct match on a vault with no embedder, and no line in a space
-    /// with no measured floor. `open`: every line. `quiet`: no line. `direct_match`: a line
-    /// holding a rare term of the query, or every term of it. `{"cosine": {"floor", "model"}}`:
+    /// (the default): the bar the host measured for the vault's embedding space, which only a
+    /// host running that exact model revision on its measured profile states (a cosine of
+    /// 0.52 for pplx-embed-v1-0.6b); a direct match on a vault with no embedder; and no line
+    /// anywhere else, such as an endpoint that names no profile. `open`: every line. `quiet`:
+    /// no line. `direct_match`: a line holding a rare term of the query, or every term of it.
+    /// `{"cosine": {"floor", "model"}}`:
     /// a raw cosine of at least `floor` in `model`'s space, and no line in another space. A
     /// line is judged before the result is cut, so one under the bar takes no slot, and a
     /// start gets at most 3 lines, only from the session's project. Item: the harness

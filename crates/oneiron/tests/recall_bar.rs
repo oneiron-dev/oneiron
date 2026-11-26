@@ -5,9 +5,9 @@
 //! clears the owner's floor for that source and harness; a line under the bar takes no slot; a
 //! push answers at most 3 lines, only inside a project, and nothing when nothing clears; each
 //! kept line says its similarity. The floor is `recall.bar.<source>`, per harness (the row's
-//! item) and per project (its scope); the default measures 0.52 in pplx-embed-v1-0.6b's space,
-//! stays quiet in a space no one measured, and on a vault with no embedder takes a direct match
-//! of a rare query term, or of every term.
+//! item) and per project (its scope); the default is the bar the host measured for the vault's
+//! space (0.52 for pplx-embed-v1-0.6b on its measured profile), quiet where the host measured
+//! none, and on a vault with no embedder a direct match of a rare query term, or of every term.
 //!
 //! Red on the base: `spec.bar` is no field of `vault.recall` and no `recall.bar.*` key exists,
 //! so this file does not compile there.
@@ -32,10 +32,12 @@ use oneiron::task_verb::sdk::recall_with_vector;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
-/// pplx-embed-v1-0.6b's space, whose measured floor is 0.52.
-const PPLX: &str = "perplexity-ai/pplx-embed-v1-0.6b@test";
+/// pplx-embed-v1-0.6b's space at its pinned revision, where 0.52 was measured.
+const PPLX: &str = "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8";
 /// A space no one measured.
 const UNMEASURED: &str = "test/model@v1";
+/// The bar a host on pplx's measured profile states at admission.
+const MEASURED: Option<f32> = Some(0.52);
 const LEARNED_AT: u64 = 1_780_000_000;
 const QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 const QUERY_TEXT: &str = "granite drafter plan";
@@ -57,8 +59,10 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// A vault whose vectors are pinned to `space`, or with no embedder for `None`.
-    fn open(space: Option<&str>) -> Self {
+    /// A vault whose vectors are pinned to `space`, or with no embedder for `None`, whose host
+    /// states `measured` as the bar it measured in that space, as an embedder on the measured
+    /// profile does when the vault admits it.
+    fn open(space: Option<&str>, measured: Option<f32>) -> Self {
         let dir = tempfile::tempdir().expect("vault directory");
         let mut config = VaultConfig::device();
         config.dimensions = QUERY.len();
@@ -79,6 +83,9 @@ impl Fixture {
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
             .expect("owner proof");
         let project = vault.root_project().expect("the seeded root PROJECT");
+        vault
+            .set_measured_recall_bar(measured)
+            .expect("the host's measured bar");
         Self {
             vault,
             proof,
@@ -217,7 +224,7 @@ fn quiet_reason(pack: &MemoryPack) -> Option<&str> {
 
 #[test]
 fn a_carrier_keeps_only_lines_over_the_measured_floor_and_says_each_similarity() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     let (passing, _traps) = fixture.seed_lines();
     let pack = fixture
         .recall(ask(RecallSource::Carrier, HARNESS), 8)
@@ -239,7 +246,7 @@ fn a_carrier_keeps_only_lines_over_the_measured_floor_and_says_each_similarity()
 
 #[test]
 fn a_line_under_the_bar_takes_no_slot() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     let (passing, traps) = fixture.seed_lines();
     let open = fixture
         .recall(ask(RecallSource::Pull, HARNESS), 3)
@@ -261,7 +268,7 @@ fn a_line_under_the_bar_takes_no_slot() {
 
 #[test]
 fn a_pull_is_open_by_default_and_a_recall_with_no_bar_is_unchanged() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     let (passing, traps) = fixture.seed_lines();
     let every: BTreeSet<_> = passing.union(&traps).copied().collect();
     let pull = fixture
@@ -293,7 +300,7 @@ fn a_pull_is_open_by_default_and_a_recall_with_no_bar_is_unchanged() {
 
 #[test]
 fn at_most_three_lines_are_pushed() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     for step in 0..5 {
         fixture.put_turn(
             &format!("granite drafter plan, note {step}"),
@@ -312,7 +319,7 @@ fn at_most_three_lines_are_pushed() {
 
 #[test]
 fn a_push_outside_any_project_is_quiet() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     fixture.seed_lines();
     let pack = fixture
         .recall_in(ask(RecallSource::Carrier, HARNESS), 8, Vec::new(), None)
@@ -323,7 +330,7 @@ fn a_push_outside_any_project_is_quiet() {
 
 #[test]
 fn the_session_folders_project_scopes_a_push_and_its_rows() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     let (passing, _traps) = fixture.seed_lines();
     fixture
         .vault
@@ -365,8 +372,22 @@ fn the_session_folders_project_scopes_a_push_and_its_rows() {
 }
 
 #[test]
-fn a_space_no_one_measured_starts_quiet_until_the_owner_sets_its_floor() {
-    let fixture = Fixture::open(Some(UNMEASURED));
+fn a_space_no_one_measured_is_quiet() {
+    let fixture = Fixture::open(Some(UNMEASURED), None);
+    fixture.seed_lines();
+    let pack = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(pack.items.is_empty());
+    assert_eq!(quiet_reason(&pack), Some("unmeasured"));
+}
+
+/// Engine ANSWER 27 Nov 03:42: `measured` is the host's, keyed like the space's floors, so
+/// pplx served by a server that names no profile (vel today) is quiet until the owner gives
+/// that space its floor, naming it.
+#[test]
+fn a_space_its_host_did_not_measure_is_quiet_until_the_owner_sets_its_floor() {
+    let fixture = Fixture::open(Some(PPLX), None);
     let (passing, _traps) = fixture.seed_lines();
     let pack = fixture
         .recall(ask(RecallSource::Carrier, HARNESS), 8)
@@ -377,7 +398,7 @@ fn a_space_no_one_measured_starts_quiet_until_the_owner_sets_its_floor() {
         "recall.bar.carrier",
         SettingScope::Vault,
         None,
-        json!({ "cosine": { "floor": 0.50, "model": "perplexity-ai/pplx-embed-v1-0.6b@test" } }),
+        json!({ "cosine": { "floor": 0.52, "model": UNMEASURED } }),
     );
     let other = fixture
         .recall(ask(RecallSource::Carrier, HARNESS), 8)
@@ -391,17 +412,33 @@ fn a_space_no_one_measured_starts_quiet_until_the_owner_sets_its_floor() {
         "recall.bar.carrier",
         SettingScope::Vault,
         None,
-        json!({ "cosine": { "floor": 0.50, "model": UNMEASURED } }),
+        json!({ "cosine": { "floor": 0.52, "model": PPLX } }),
     );
-    let measured = fixture
+    let owners = fixture
         .recall(ask(RecallSource::Carrier, HARNESS), 8)
         .expect("the recall runs");
-    assert_eq!(ids(&measured), passing, "the owner's floor for this space");
+    assert_eq!(ids(&owners), passing, "the owner's floor for this space");
+}
+
+#[test]
+fn a_host_bar_outside_zero_one_is_refused() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    for bar in [-0.1, 1.5, f32::NAN] {
+        assert!(
+            fixture.vault.set_measured_recall_bar(Some(bar)).is_err(),
+            "{bar}"
+        );
+    }
+    let (passing, _traps) = fixture.seed_lines();
+    let pack = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert_eq!(ids(&pack), passing, "the bar in force stays");
 }
 
 #[test]
 fn the_harness_row_and_the_project_row_decide() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     let (passing, traps) = fixture.seed_lines();
     fixture.owner_sets(
         "recall.bar.carrier",
@@ -454,7 +491,7 @@ fn the_harness_row_and_the_project_row_decide() {
 
 #[test]
 fn a_vault_with_no_embedder_passes_a_direct_match() {
-    let fixture = Fixture::open(None);
+    let fixture = Fixture::open(None, None);
     for step in 0..24 {
         fixture.put_turn(&format!("the weekly plan for item {step}"), None);
     }
@@ -507,7 +544,7 @@ fn a_vault_with_no_embedder_passes_a_direct_match() {
 
 #[test]
 fn a_bad_harness_and_a_bar_under_an_operation_id_are_refused() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     fixture.seed_lines();
     for harness in ["", "Claude", "claude code", "-x", &"a".repeat(41)] {
         assert!(
@@ -533,7 +570,7 @@ fn a_bad_harness_and_a_bar_under_an_operation_id_are_refused() {
 
 #[test]
 fn the_empty_receipt_is_one_setting_away() {
-    let fixture = Fixture::open(Some(PPLX));
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
     fixture.put_turn("granite drafter plan bookkeeping", Some(at(0.20)));
     let pack = fixture
         .recall(ask(RecallSource::Carrier, HARNESS), 8)
