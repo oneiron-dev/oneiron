@@ -8,6 +8,7 @@ use crate::claim::ScopedRead as ClaimRead;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideKey;
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// How many captures one night draws at most.
 pub(crate) const DRAW_TAKE: usize = 8;
@@ -54,12 +55,13 @@ fn sources_read_in_txn(
     Ok(true)
 }
 
-/// One capture's rank hash under a night: `blake3(id16(night) || capture key)`.
+/// One capture's rank hash under a night: the content hash (plain BLAKE3) of
+/// `id16(night) || capture key`.
 pub(crate) fn rank_key(night: AttemptId, key: &(AttemptId, [u8; 32])) -> [u8; 32] {
     let mut keyed = Vec::with_capacity(16 + 48);
     keyed.extend_from_slice(night.as_bytes());
     key.encode_into(&mut keyed);
-    *blake3::hash(&keyed).as_bytes()
+    ContentHash::of(&keyed).into_bytes()
 }
 
 /// Ranks the pool by [`rank_key`] ascending and takes the first eight: the night's stable

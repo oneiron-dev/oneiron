@@ -112,13 +112,11 @@ pub(crate) struct PairRow {
     pub(crate) schema_whole: bool,
     /// Whether the shadow reply came back whole.
     pub(crate) shadow_whole: bool,
-    /// How many candidates the schema reply decoded. Kept for receipt detail; the rules
-    /// read the whole flags and F1, and the test door reads these back.
-    #[allow(dead_code)]
+    /// How many candidates the schema reply decoded. The rules read the whole flags and
+    /// F1; the check's landing log states the night's totals, and the test door reads these.
     pub(crate) schema_candidates: u32,
-    /// How many candidates the shadow reply decoded. Kept for receipt detail; the rules
-    /// read the whole flags and F1, and the test door reads these back.
-    #[allow(dead_code)]
+    /// How many candidates the shadow reply decoded. The rules read the whole flags and
+    /// F1; the check's landing log states the night's totals, and the test door reads these.
     pub(crate) shadow_candidates: u32,
     /// The schema arm's F1 against the pooled gold, if the pair has quality.
     pub(crate) schema_f1: Option<f64>,

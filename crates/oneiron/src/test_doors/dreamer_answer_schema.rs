@@ -8,10 +8,9 @@
 //! the shadow arms, the rules, the judged F1, and running the check on a scripted house.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::answer_schema::{
     AnswerSchemaSuspension, answer_schema_in_force_in_txn, capture, check, draw, events_for_test,
     hold_event_for_test, overrun, pair, receipt, request_over_params_for_test, rule,
@@ -19,20 +18,19 @@ use crate::dreamer_consolidation::answer_schema::{
 };
 use crate::dreamer_consolidation::extraction_request_params_for_test;
 use crate::dreamer_runner::{
-    AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt,
-    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DreamerAdmissionOutcome, DreamerAttemptPayload,
-    DreamerAttemptStatus, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, decode_dreamer_attempt_payload,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DreamerAttemptPayload, DreamerConsolidationScope,
+    DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
-use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext, WakePassDeadline};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::inference_context::{HostInferenceBinding, HostInferenceContext};
 use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat, Scope,
-    TierPrecedence,
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    ModelId, ModelLocality, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
+};
+
+mod check_run;
+pub use check_run::{
+    check_replies_kept, run_check, run_check_no_house, run_check_outcome, run_check_toward,
 };
 
 /// One answer-schema event as `(id, kind, at)`: `kind` is `suspended_window`,
@@ -548,11 +546,6 @@ pub struct ReceiptView {
     pub line: String,
 }
 
-/// The test house's egress: every call stays in the test.
-fn allow_house(_: &LlmRequest) -> bool {
-    true
-}
-
 /// Reads the night's receipt view, which the run wrote.
 ///
 /// # Errors
@@ -598,152 +591,4 @@ fn receipt_view(receipt: &receipt::NightReceipt) -> ReceiptView {
         selection: receipt.selection.len(),
         line: receipt::receipt_line(receipt),
     }
-}
-
-/// Runs the night's check on the scripted `backend` under `guard` as `model`: enqueues the
-/// check when the night has none, runs it, and reads its receipt. Returns the receipt with
-/// the run's outcome.
-///
-/// # Errors
-///
-/// No night; the enqueue; the run; no receipt; storage faults.
-pub async fn run_check(
-    vault: &Vault,
-    night: AttemptId,
-    backend: &dyn LlmBackend,
-    guard: &BudgetGuard,
-    model: ModelId,
-    now: u64,
-) -> Result<(ReceiptView, DreamerAttemptExecution)> {
-    run_with_lend(vault, night, Some((backend, guard, model)), now).await
-}
-
-/// Runs the night's check with no house lend: the night skips with its reason when it gets
-/// that far.
-///
-/// # Errors
-///
-/// No night; the enqueue; the run; no receipt; storage faults.
-pub async fn run_check_no_house(
-    vault: &Vault,
-    night: AttemptId,
-    now: u64,
-) -> Result<(ReceiptView, DreamerAttemptExecution)> {
-    run_with_lend(vault, night, None, now).await
-}
-
-/// [`run_check`] with an optional scripted house.
-async fn run_with_lend(
-    vault: &Vault,
-    night: AttemptId,
-    lend: Option<(&dyn LlmBackend, &BudgetGuard, ModelId)>,
-    now: u64,
-) -> Result<(ReceiptView, DreamerAttemptExecution)> {
-    settle_children(vault, now)?;
-    let check = plant_check(vault, night, now)?;
-    let status = check_status(vault, check)?;
-    let deadline = WakePassDeadline::with_clock(180_000, Arc::new(|| 0));
-    let ctx = WakeAttemptContext {
-        vault,
-        deadline: &deadline,
-        cancel: None,
-        device_cancel: None,
-        budget_id: "test-answer-schema-check",
-        now_ms: now * 1_000,
-        prepared_wake: None,
-        prepared_attempt: None,
-        spend_meter: None,
-    };
-    let house = lend.map(|(backend, guard, model)| check::AnswerSchemaHouse {
-        backend,
-        sourced: None,
-        guard,
-        model: model.clone(),
-        inference: HostInferenceContext {
-            binding: HostInferenceBinding::Advertised {
-                model,
-                locality: ModelLocality::OwnServer,
-                keyless: true,
-            },
-            extraction_egress: Some(&allow_house),
-        },
-    });
-    let outcome = check::run_answer_schema_check(&status, &ctx, house).await?;
-    Ok((receipt(vault, night)?, outcome))
-}
-
-/// Admits and completes every admittable descendant, so the gate stands open: the door's
-/// children are Micro-lane attempts, admitted without a home election.
-///
-/// # Errors
-///
-/// The admission or completion.
-fn settle_children(vault: &Vault, now: u64) -> Result<()> {
-    const WORKER: &str = "test-answer-schema-check";
-    loop {
-        let outcome = DreamerRunnerStore::new(vault).admit_next_consolidation(
-            AdmitDreamerConsolidationAttempt {
-                scope: DreamerConsolidationScope::Micro,
-                local_node_id: 1,
-                claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-                admission: AdmitDreamerAttempt {
-                    lease_owner: WORKER.to_owned(),
-                    now,
-                    budget_id: WORKER.to_owned(),
-                    budget_total_units: 100_000,
-                    reserve_units: 100,
-                    started_milestone: None,
-                },
-            },
-        )?;
-        let admitted = match outcome {
-            DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
-                admitted,
-            )) => *admitted,
-            _ => return Ok(()),
-        };
-        DreamerRunnerStore::new(vault).complete(CompleteDreamerAttempt {
-            id: admitted.status.attempt.id,
-            lease_owner: WORKER.to_owned(),
-            attempt_count: admitted.status.attempt.attempt_count,
-            now,
-        })?;
-    }
-}
-
-/// Enqueues the night's check (or meets the one standing) and returns its attempt.
-fn plant_check(vault: &Vault, night: AttemptId, now: u64) -> Result<AttemptId> {
-    let night_status = check_status(vault, night)?;
-    vault.with_write_txn_grouped(|txn| check::enqueue_in_txn(vault, txn, &night_status, now))?;
-    let txn = vault.store.env.read_txn()?;
-    for child in DreamerRunnerStore::new(vault).child_attempts_in_txn(&txn, night)? {
-        let Some(record) = AttemptQueue::new(vault).get_in_txn(&txn, child)? else {
-            continue;
-        };
-        let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
-            continue;
-        };
-        if payload.attempt_type == check::ATTEMPT {
-            return Ok(child);
-        }
-    }
-    Err(crate::error::Error::InvalidConfig(
-        "the night enqueued no check".into(),
-    ))
-}
-
-/// Reads an attempt's status: its queue row with its decoded payload.
-fn check_status(vault: &Vault, id: AttemptId) -> Result<DreamerAttemptStatus> {
-    let txn = vault.store.env.read_txn()?;
-    let record = AttemptQueue::new(vault)
-        .get_in_txn(&txn, id)?
-        .ok_or_else(|| crate::error::Error::InvalidConfig("no such attempt".into()))?;
-    let payload = decode_dreamer_attempt_payload(&record.payload).map_err(|_| {
-        crate::error::Error::InvalidConfig("the attempt payload did not read".into())
-    })?;
-    Ok(DreamerAttemptStatus {
-        attempt: record,
-        payload,
-    })
 }

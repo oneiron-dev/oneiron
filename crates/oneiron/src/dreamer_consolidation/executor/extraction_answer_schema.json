@@ -78,6 +78,14 @@
                 },
                 {
                   "type": "string",
+                  "pattern": "^[\\x00-\\u07FF]{0,128}$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[\\x00-\\uD7FF\\uE000-\\uFFFF]{0,85}$"
+                },
+                {
+                  "type": "string",
                   "pattern": "^[\\x00-\\x7F]{0,256}$"
                 }
               ]

@@ -15,7 +15,9 @@ use serde_json::{Value as JsonValue, json};
 use super::super::executor::extraction::{
     ANSWER_SCHEMA_PARAM, check_extraction_reply, extraction_reply,
 };
-use oneiron_model::llm::{LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality};
+use oneiron_model::llm::{
+    CallClass, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality,
+};
 
 /// The seed param both arms of a pair carry: the pair's own seed, so the two arms differ only
 /// by the schema.
@@ -25,7 +27,10 @@ const SEED_PARAM: &str = "seed";
 /// `params["seed"] = seed`; arm N is arm S without [`ANSWER_SCHEMA_PARAM`] and without its
 /// entry in the own-server-only list. Both arms name `model` at [`ModelLocality::OwnServer`]:
 /// the check's calls go only to the house rung, and an own-server-only field survives the
-/// wire only off a hosted locality.
+/// wire only off a hosted locality. Both arms are [`CallClass::BestEffort`]: the captured TURN
+/// call is Durable with a deterministic `json_rules_v1` fallback that answers a fatal failure
+/// with an empty reply, which would pass a refused schema arm off as a whole one
+/// (REVIEW-10538 round 2).
 pub(crate) fn build_arms(
     captured: &LlmRequest,
     model: &ModelId,
@@ -34,6 +39,7 @@ pub(crate) fn build_arms(
     let mut schema = captured.clone();
     schema.model = model.clone();
     schema.envelope.locality = ModelLocality::OwnServer;
+    schema.envelope.class = CallClass::BestEffort;
     schema.params.insert(SEED_PARAM.to_owned(), json!(seed));
     let mut shadow = schema.clone();
     shadow.params.remove(ANSWER_SCHEMA_PARAM);
@@ -222,9 +228,10 @@ pub(crate) fn candidate_key(candidate: &JsonValue) -> (String, String, String) {
 type GoldKey = (String, String, String);
 
 /// Each arm's F1 against the pooled gold: the supported candidates of both arms, keyed by
-/// [`candidate_key`]. An arm's precision is over every candidate it emitted, so a claim the
-/// judge finds unsupported costs the arm that made it (REVIEW-10538 P1-6); its hits are its
-/// supported candidates. `None` for both when the gold is empty: the pair has no quality and
+/// [`candidate_key`]. An arm's precision is over every candidate it emitted, each counted, so
+/// a claim the judge finds unsupported costs the arm that made it even when its key matches
+/// a supported one's (REVIEW-10538 rounds 1 and 2); its hits are its distinct supported
+/// keys, so a repeat earns nothing. `None` for both when the gold is empty: the pair has no quality and
 /// stays out of the window.
 pub(crate) fn f1_against_gold(
     schema: &[JsonValue],
@@ -240,12 +247,6 @@ pub(crate) fn f1_against_gold(
             .map(|(candidate, _)| candidate_key(candidate))
             .collect::<BTreeSet<_>>()
     };
-    let emitted = |candidates: &[JsonValue]| {
-        candidates
-            .iter()
-            .map(candidate_key)
-            .collect::<BTreeSet<_>>()
-    };
     let schema_keys = keys(schema, schema_supported);
     let shadow_keys = keys(shadow, shadow_supported);
     let gold = schema_keys
@@ -256,19 +257,20 @@ pub(crate) fn f1_against_gold(
         return (None, None);
     }
     (
-        Some(f1(&schema_keys, &emitted(schema), &gold)),
-        Some(f1(&shadow_keys, &emitted(shadow), &gold)),
+        Some(f1(&schema_keys, schema.len(), &gold)),
+        Some(f1(&shadow_keys, shadow.len(), &gold)),
     )
 }
 
-/// The F1 of one arm against `gold`: `supported` are its candidates the judge upheld,
-/// `emitted` all it gave, each set by gold key. 0 when the arm holds nothing of the gold.
-fn f1(supported: &BTreeSet<GoldKey>, emitted: &BTreeSet<GoldKey>, gold: &BTreeSet<GoldKey>) -> f64 {
+/// The F1 of one arm against `gold`: `supported` are the gold keys of its candidates the
+/// judge upheld, `emitted` how many candidates it gave. 0 when the arm holds nothing of the
+/// gold.
+fn f1(supported: &BTreeSet<GoldKey>, emitted: usize, gold: &BTreeSet<GoldKey>) -> f64 {
     let hit = supported.intersection(gold).count() as f64;
-    let precision = if emitted.is_empty() {
+    let precision = if emitted == 0 {
         0.0
     } else {
-        hit / emitted.len() as f64
+        hit / emitted as f64
     };
     let recall = hit / gold.len() as f64;
     if precision + recall == 0.0 {

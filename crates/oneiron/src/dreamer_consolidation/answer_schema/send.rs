@@ -128,7 +128,9 @@ fn arm_failure(error: &DurableStepError) -> bool {
 }
 
 /// The judge's request over the source turn and both candidate lists, admitted on the
-/// extraction role: turn words leave the vault as an extraction's do.
+/// extraction role: turn words leave the vault as an extraction's do. It names `world`, the
+/// world the captured call named, so the world settings judge where the turn's words may go
+/// as they judged the call's own (REVIEW-10538 round 2).
 ///
 /// # Errors
 ///
@@ -136,6 +138,7 @@ fn arm_failure(error: &DurableStepError) -> bool {
 pub(crate) fn judge_request(
     vault: &Vault,
     house: &AnswerSchemaHouse<'_>,
+    world: Option<EntityId>,
     source: &str,
     list1: &[JsonValue],
     list2: &[JsonValue],
@@ -144,7 +147,10 @@ pub(crate) fn judge_request(
         model: house.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: Scope::default(),
+            scope: Scope {
+                world,
+                ..Scope::default()
+            },
             purpose: CallPurpose::Extraction,
             class: CallClass::BestEffort,
             tier: TierPrecedence::for_purpose(

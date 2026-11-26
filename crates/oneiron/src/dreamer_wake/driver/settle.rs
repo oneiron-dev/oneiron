@@ -68,6 +68,17 @@ impl DreamerWakeDriver<'_> {
             },
             _ => None,
         };
+        if let Some(stop) = overrun {
+            // An extraction child settling with a budget stop latches its night over budget,
+            // so the answer-schema check skips it with its reason. The latch commits before
+            // the transition below (REVIEW-10538 round 2): a stop that commits always finds
+            // its latch, and a crash between the two leaves a latched night whose child runs
+            // again, which the check only skips, never scores cut short. The latch is
+            // idempotent, the first stop wins.
+            self.vault.with_write_txn_grouped(|txn| {
+                latch_for_settled_in_txn(self.vault, txn, &admitted.status, stop)
+            })?;
+        }
         match execution {
             DreamerAttemptExecution::Completed {
                 completed_units,
@@ -339,13 +350,6 @@ impl DreamerWakeDriver<'_> {
                 }
                 report.parked += 1;
             }
-        }
-        if let Some(stop) = overrun {
-            // An extraction child settling with a budget stop latches its night over
-            // budget, so the answer-schema check skips it with its reason.
-            self.vault.with_write_txn_grouped(|txn| {
-                latch_for_settled_in_txn(self.vault, txn, &admitted.status, stop)
-            })?;
         }
         Ok(())
     }

@@ -9,7 +9,10 @@
 //! suspends with the digest saying so. Review round 1 of #10538 added: an unsupported claim
 //! costs its arm precision (P1-6); a night over budget skips while an extraction stays open
 //! (P1-4); a schema arm the server refuses is a grammar fault, its shadow still sent (P1-5);
-//! a capture whose source was erased before its write keeps nothing (P1-2).
+//! a capture whose source was erased before its write keeps nothing (P1-2). Round 2 added:
+//! a capture whose world now stays off the house rung's destination sends nothing there; an
+//! erase of a capture's second row takes the reply of a check call already made from it; a
+//! case-variant repeat of a supported claim still costs its arm precision.
 //! Reaches the engine through `oneiron::test_doors::dreamer_answer_schema`, built only
 //! under `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
@@ -19,9 +22,11 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use oneiron::attempt_queue::AttemptId;
+use oneiron::authority::{ActSurface, PeerMachine, ReadLocation, WorldPrivacy};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::OWN_SERVER_ONLY_PARAM;
 use oneiron::setting::{SetSetting, SettingCaller};
+use oneiron::settings::ReadDestination;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::dreamer_answer_schema as door;
@@ -101,6 +106,35 @@ impl LlmBackend for RefusingSchemaBackend {
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         if !is_judge(&request) && request.params.contains_key("answer_schema") {
+            *self.script.calls.lock().unwrap() += 1;
+            return Box::pin(async {
+                Err(oneiron::LlmError::Fatal(
+                    oneiron::FatalLlmError::InvalidRequest,
+                ))
+            });
+        }
+        self.script.generate(request, lease)
+    }
+
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        self.script.stream(request, lease)
+    }
+}
+
+/// A house whose shadow arms fail fatally, so the check stops at its first pair's shadow
+/// with the schema arm's reply kept, while schema arms and judge turns answer as
+/// [`ScriptBackend`]'s.
+struct RefusingShadowBackend {
+    script: ScriptBackend,
+}
+
+impl LlmBackend for RefusingShadowBackend {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        if !is_judge(&request) && !request.params.contains_key("answer_schema") {
             *self.script.calls.lock().unwrap() += 1;
             return Box::pin(async {
                 Err(oneiron::LlmError::Fatal(
@@ -832,4 +866,136 @@ fn a_capture_whose_source_was_erased_first_keeps_nothing() {
         0,
         "the erased turn's words are not stored again"
     );
+}
+
+#[test]
+fn a_capture_whose_world_now_stays_on_the_device_sends_nothing_off_it() {
+    let fixture = Fixture::new();
+    let vault = &fixture.vault;
+    let night = door::plant_night(vault).expect("night");
+    let child = door::plant_child(vault, night).expect("child");
+    let turn = door::plant_turn(vault, "owen is here").expect("turn");
+    door::plant_capture(vault, child, &[turn], "owen is here", T0).expect("capture");
+    // The house rung's offer sends to a machine nobody proved.
+    let toward = ReadDestination::toward(PeerMachine::Unknown);
+    assert!(
+        vault
+            .model_call_may_leave_for(None, &toward)
+            .expect("judge"),
+        "FIXTURE: no world stays on the device when the call is captured"
+    );
+    let world = vault
+        .create_world(&fixture.owner_proof, "Kept here", vault.now_recorded_at())
+        .expect("world");
+    vault
+        .set_world_privacy_as(
+            &fixture.owner_proof,
+            ActSurface::ThisInstall,
+            world,
+            WorldPrivacy {
+                read: ReadLocation::MyMachines,
+                ..WorldPrivacy::default()
+            },
+            None,
+        )
+        .expect("the owner keeps the world on the owner's machines");
+    assert!(
+        !vault
+            .model_call_may_leave_for(None, &toward)
+            .expect("judge"),
+        "FIXTURE: a call that names no world now stays off a machine nobody proved"
+    );
+    let backend = ScriptBackend {
+        schema: whole_reply(),
+        shadow: whole_reply(),
+        calls: Mutex::new(0),
+    };
+    let guard = house_guard();
+    let (receipt, _) = ready(door::run_check_toward(
+        vault,
+        night,
+        &backend,
+        &guard,
+        house_model(),
+        toward,
+        T0,
+    ))
+    .expect("run");
+    assert_eq!(
+        backend.calls(),
+        0,
+        "no call went to the house rung's machine"
+    );
+    assert_eq!(receipt.pairs, 0, "the capture's pair dropped");
+}
+
+#[test]
+fn an_erase_of_a_captures_second_row_takes_its_check_replies() {
+    let fixture = Fixture::new();
+    let vault = &fixture.vault;
+    let night = door::plant_night(vault).expect("night");
+    let child = door::plant_child(vault, night).expect("child");
+    let first = door::plant_turn(vault, "owen is here").expect("first turn");
+    let second = door::plant_turn(vault, "owen moved to kyoto").expect("second turn");
+    let words = "owen is here\nowen moved to kyoto";
+    door::plant_capture(vault, child, &[first, second], words, T0).expect("capture");
+    let backend = RefusingShadowBackend {
+        script: ScriptBackend {
+            schema: whole_reply(),
+            shadow: "unused".to_owned(),
+            calls: Mutex::new(0),
+        },
+    };
+    let guard = house_guard();
+    let outcome = ready(door::run_check_outcome(
+        vault,
+        night,
+        &backend,
+        &guard,
+        house_model(),
+        T0,
+    ))
+    .expect("run");
+    assert!(
+        !matches!(outcome, DreamerAttemptExecution::Completed { .. }),
+        "the failed shadow arm stops the check before it lands: {outcome:?}"
+    );
+    assert!(
+        door::check_replies_kept(vault, night).expect("kept") >= 1,
+        "the schema arm's reply is kept while the check waits"
+    );
+    assert!(
+        vault.delete_entity(&second).expect("delete"),
+        "the second turn existed"
+    );
+    assert_eq!(
+        door::check_replies_kept(vault, night).expect("kept after"),
+        0,
+        "the erase of the capture's second row took the reply quoting it"
+    );
+}
+
+#[test]
+fn a_case_variant_repeat_of_a_supported_claim_costs_its_arm_precision() {
+    // Arm S gives the exact path /Work and a wrong /work, arm N /Work alone; both judge
+    // orders reject /work. The two share one gold key, yet each emitted candidate counts.
+    let schema = [
+        json!({"subject": "P1", "predicate": "file.path", "value": "/Work", "quote": "/Work"}),
+        json!({"subject": "P1", "predicate": "file.path", "value": "/work", "quote": "/Work"}),
+    ];
+    let shadow =
+        [json!({"subject": "P1", "predicate": "file.path", "value": "/Work", "quote": "/Work"})];
+    let (schema_f1, shadow_f1) = door::f1(
+        &schema,
+        &shadow,
+        8,
+        (&[true, false], &[true]),
+        (&[true], &[true, false]),
+    );
+    let schema_f1 = schema_f1.expect("schema quality");
+    assert!(
+        (schema_f1 - 2.0 / 3.0).abs() < 1e-9,
+        "arm S: precision 1/2, recall 1: F1 2/3, got {schema_f1}"
+    );
+    assert_eq!(shadow_f1, Some(1.0), "arm N gave only the supported claim");
 }

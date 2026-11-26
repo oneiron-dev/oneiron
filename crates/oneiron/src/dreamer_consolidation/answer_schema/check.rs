@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::nightly_merge::merge_read;
 use super::super::request_sources::SourcedBackend;
+use super::capture::{bind_check_call, capture_may_go};
 use super::draw::{draw_pool_in_txn, pair_seed, rank_key, select};
 use super::overrun::overrun_in_txn;
 use super::pair::{
@@ -31,7 +32,6 @@ use super::spend::Spend;
 use super::{AnswerSchemaSuspension, answer_schema_in_force_in_txn};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::code_run::source_rows_withdrawn;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
@@ -40,6 +40,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::inference_context::HostInferenceContext;
 use crate::model_step_context::DurableStepContext;
+use crate::settings::ReadDestination;
 use oneiron_model::llm::{BudgetGuard, LlmBackend, ModelId};
 
 /// The check's attempt type: one Macro child per night.
@@ -102,6 +103,10 @@ pub struct AnswerSchemaHouse<'a> {
     pub model: ModelId,
     /// The host's statement of the house route, for the judge calls' admission.
     pub inference: HostInferenceContext<'a>,
+    /// Where the house rung's offer sends its calls now: each capture's rows and world are
+    /// judged for it before its pair and after a failed schema arm, and the host's backend
+    /// judges them again at each physical send (REVIEW-10538 round 2).
+    pub destination: ReadDestination,
 }
 
 /// Runs one admitted check: receipt first, then the gate, the skips, the draw, the pairs,
@@ -260,10 +265,12 @@ pub async fn run_answer_schema_check(
     }
     let mut spend = Spend::default();
     let mut rows = Vec::new();
-    for (_, rank, capture) in &work {
-        // A source erased or withdrawn since the draw drops its pair before any send; the
-        // house backend's fence asks again at each physical send (REVIEW-10538 P1-1).
-        if source_rows_withdrawn(vault, &capture.sources) {
+    for (key, rank, capture) in &work {
+        // A source erased or withdrawn since the draw, or one a world now keeps from the house
+        // rung's destination, drops its pair before any send; the house backend asks again at
+        // each physical send (REVIEW-10538 P1-1 and round 2). Each call is listed on its
+        // capture before it goes, so an erase of any of the capture's rows takes its reply.
+        if !capture_may_go(vault, key, &house.destination)? {
             continue;
         }
         let seed = pair_seed(rank);
@@ -279,8 +286,12 @@ pub async fn run_answer_schema_check(
             wake_pass_bound: true,
         };
         let (schema_request, shadow_request) = build_arms(&capture.request, &house.model, seed);
+        if !bind_check_call(vault, key, check_id, &schema_request)? {
+            continue;
+        }
         // A schema arm the provider refused or failed is a failed arm: its shadow still
-        // goes out, so a grammar fault reaches the two-fault rule (REVIEW-10538 P1-5).
+        // goes out, so a grammar fault reaches the two-fault rule (REVIEW-10538 P1-5). One the
+        // rows' admission or fence refused is no answer of the arm: its pair drops.
         let schema_response =
             match send_schema_arm(&step_ctx, &house, &capture.sources, schema_request, spend)
                 .await?
@@ -291,10 +302,16 @@ pub async fn run_answer_schema_check(
                 }
                 SchemaArm::Failed(next) => {
                     spend = next;
+                    if !capture_may_go(vault, key, &house.destination)? {
+                        continue;
+                    }
                     None
                 }
                 SchemaArm::Parked(parked) => return Ok(parked),
             };
+        if !bind_check_call(vault, key, check_id, &shadow_request)? {
+            continue;
+        }
         let (shadow_response, next) =
             match send_house(&step_ctx, &house, &capture.sources, shadow_request, spend).await? {
                 Ok(done) => done,
@@ -321,7 +338,11 @@ pub async fn run_answer_schema_check(
                     (&shadow_cands, &schema_cands)
                 };
                 let source = source_text(&capture.request);
-                let first_request = judge_request(vault, &house, &source, list1, list2)?;
+                let world = capture.request.envelope.scope.world;
+                let first_request = judge_request(vault, &house, world, &source, list1, list2)?;
+                if !bind_check_call(vault, key, check_id, &first_request)? {
+                    continue;
+                }
                 let (first_response, next) =
                     match send_house(&step_ctx, &house, &capture.sources, first_request, spend)
                         .await?
@@ -330,7 +351,10 @@ pub async fn run_answer_schema_check(
                         Err(parked) => return Ok(parked),
                     };
                 spend = next;
-                let second_request = judge_request(vault, &house, &source, list2, list1)?;
+                let second_request = judge_request(vault, &house, world, &source, list2, list1)?;
+                if !bind_check_call(vault, key, check_id, &second_request)? {
+                    continue;
+                }
                 let (second_response, next) =
                     match send_house(&step_ctx, &house, &capture.sources, second_request, spend)
                         .await?
@@ -420,6 +444,13 @@ pub async fn run_answer_schema_check(
         .iter()
         .filter_map(|row| Some((row.schema_f1?, row.shadow_f1?)))
         .collect();
+    tracing::debug!(
+        target: "oneiron::dreamer",
+        pairs = rows.len(),
+        schema_candidates = rows.iter().map(|row| row.schema_candidates).sum::<u32>(),
+        shadow_candidates = rows.iter().map(|row| row.shadow_candidates).sum::<u32>(),
+        "answer-schema check scored its pairs"
+    );
     let land = LandFinished {
         pairs: rows.len() as u32,
         schema_whole: rows.iter().filter(|row| row.schema_whole).count() as u32,

@@ -6,6 +6,12 @@
 //! call. NOTE reviews never capture. The check deletes every capture under its night when its
 //! receipt lands, and older captures go after eight days; an erase of a row listed in
 //! `sources` drops the capture in the erase's own transaction.
+//!
+//! A durable step's stamps name one subject, and a capture's words come from every row in
+//! `sources`, so the capture binds the check's calls itself (REVIEW-10538 round 2): each call
+//! is listed on the capture before it goes out, and whenever the capture goes (an erase of
+//! any of its rows, the landing, its age) the reply and kept request of every call it lists
+//! go in the same transaction.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +20,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use oneiron_model::llm::LlmRequest;
@@ -23,13 +30,16 @@ const CAPTURES: SideTable<(AttemptId, [u8; 32]), CapturedTurnCall, Named> =
     SideTable::new(&side_table::DREAMER_ANSWER_SCHEMA_CAPTURE);
 
 /// One TURN extraction call kept for the check: the request whole, as sent, the rows its
-/// transcript was read from, and when it was kept (Unix seconds).
+/// transcript was read from, when it was kept (Unix seconds), and the check's calls sent
+/// from it, each as its check attempt and step hash.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CapturedTurnCall {
     pub(crate) request: LlmRequest,
     pub(crate) sources: Vec<EntityId>,
     pub(crate) captured_at: u64,
+    #[serde(default)]
+    pub(crate) check_calls: Vec<(AttemptId, [u8; 32])>,
 }
 
 /// Keeps `request`, built with the answer schema by `attempt`, for the check: one row under
@@ -72,9 +82,111 @@ pub(crate) fn capture_turn_call(
                 request: request.clone(),
                 sources: sources.to_vec(),
                 captured_at,
+                check_calls: Vec::new(),
             },
         )
     })
+}
+
+/// Lists the check's call `request`, sent by the check attempt `check`, on the capture `key`
+/// before the call goes out, in one small write transaction. `false`, listing nothing, when
+/// the capture is gone or one of its rows reads as erased, deleted or withdrawn in that
+/// transaction: the call must not go.
+///
+/// # Errors
+///
+/// The request does not hash; storage faults.
+pub(crate) fn bind_check_call(
+    vault: &Vault,
+    key: &(AttemptId, [u8; 32]),
+    check: AttemptId,
+    request: &LlmRequest,
+) -> Result<bool> {
+    let step = request
+        .canonical_hash()
+        .map_err(|_| invalid_consolidation("the check call's request did not hash"))?;
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut capture) = capture_in_txn(&vault.store, &*txn, key)? else {
+            return Ok(false);
+        };
+        if capture
+            .sources
+            .iter()
+            .any(|source| crate::code_run::source_row_withdrawn_in(vault, &*txn, source))
+        {
+            return Ok(false);
+        }
+        if !capture.check_calls.contains(&(check, step)) {
+            capture.check_calls.push((check, step));
+            CAPTURES.put(&vault.store, txn, key, &capture)?;
+        }
+        Ok(true)
+    })
+}
+
+/// Takes the reply and kept request of every check call `capture` lists, in the writer that
+/// deletes the capture.
+fn take_check_calls_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    capture: &CapturedTurnCall,
+) -> Result<()> {
+    for (check, step) in &capture.check_calls {
+        crate::llm::erase_step_state_key_in_txn(store, txn, *check, step)?;
+    }
+    Ok(())
+}
+
+/// The capture rows whose key starts with `prefix`: each key with its capture, `None` for a
+/// row that does not decode.
+fn rows_from_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    prefix: &[u8],
+) -> Result<Vec<(Vec<u8>, Option<CapturedTurnCall>)>> {
+    let mut out = Vec::new();
+    for row in CAPTURES.iter_raw_from(store, txn, prefix)? {
+        let (key, value) = row?;
+        out.push((key, CAPTURES.decode_value(&value).ok()));
+    }
+    Ok(out)
+}
+
+/// Whether the capture `key` may still go to the house rung at `destination`
+/// (REVIEW-10538 round 2): it stands, none of its rows reads as erased, deleted or
+/// withdrawn, no world withheld from `destination` keeps one of them, and the world its
+/// request names may go there. A capture kept while its world could go stays here once the
+/// world is made device-only; nothing is withheld from a rung on this device.
+///
+/// # Errors
+///
+/// Storage faults; a world settings read that fails.
+pub(crate) fn capture_may_go(
+    vault: &Vault,
+    key: &(AttemptId, [u8; 32]),
+    destination: &ReadDestination,
+) -> Result<bool> {
+    let capture = {
+        let txn = vault.store.env.read_txn()?;
+        capture_in_txn(&vault.store, &txn, key)?
+    };
+    let Some(capture) = capture else {
+        return Ok(false);
+    };
+    if crate::code_run::source_rows_withdrawn(vault, &capture.sources) {
+        return Ok(false);
+    }
+    if !destination.is_off_device() {
+        return Ok(true);
+    }
+    for row in &capture.sources {
+        if vault.device_local_keeps_for(row, destination)? {
+            return Ok(false);
+        }
+    }
+    Ok(vault
+        .model_call_hold_for(capture.request.envelope.scope.world, destination)?
+        .is_none())
 }
 
 /// Reads one capture by key, if it decodes.
@@ -128,7 +240,8 @@ pub(crate) fn capture_count_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Resu
     Ok(CAPTURES.scan_keys(store, txn, &[])?.len())
 }
 
-/// Deletes every capture under `attempt`, decodable or not.
+/// Deletes every capture under `attempt`, decodable or not, with the replies of the check
+/// calls each lists.
 ///
 /// # Errors
 ///
@@ -138,6 +251,12 @@ pub(crate) fn delete_captures_of_in_txn(
     txn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
 ) -> Result<()> {
+    for capture in rows_from_in_txn(store, &*txn, attempt.as_bytes())?
+        .into_iter()
+        .filter_map(|(_, capture)| capture)
+    {
+        take_check_calls_in_txn(store, txn, &capture)?;
+    }
     let keys = CAPTURES.scan_keys(store, &*txn, attempt.as_bytes())?;
     for key in &keys {
         CAPTURES.delete(store, txn, key)?;
@@ -145,8 +264,9 @@ pub(crate) fn delete_captures_of_in_txn(
     Ok(())
 }
 
-/// Deletes every capture older than `max_age_secs` at `now` (both Unix seconds), and every
-/// capture that no longer decodes: the check cannot draw it.
+/// Deletes every capture older than `max_age_secs` at `now` (both Unix seconds), with the
+/// replies of the check calls each lists, and every capture that no longer decodes: the
+/// check cannot draw it.
 ///
 /// # Errors
 ///
@@ -158,27 +278,28 @@ pub(crate) fn delete_old_captures_in_txn(
     max_age_secs: u64,
 ) -> Result<()> {
     let mut doomed = Vec::new();
-    for row in CAPTURES.iter_raw_from(store, &*txn, &[])? {
-        let (key, value) = row?;
+    for (key, capture) in rows_from_in_txn(store, &*txn, &[])? {
         let Some(key) = <(AttemptId, [u8; 32]) as SideKey>::decode_key(&key) else {
             continue;
         };
-        let too_old = match CAPTURES.decode_value(&value) {
-            Ok(capture) => now.saturating_sub(capture.captured_at) > max_age_secs,
-            Err(_) => true,
-        };
-        if too_old {
-            doomed.push(key);
+        match capture {
+            Some(capture) if now.saturating_sub(capture.captured_at) <= max_age_secs => {}
+            capture => doomed.push((key, capture)),
         }
     }
-    for key in &doomed {
+    for (key, capture) in &doomed {
+        if let Some(capture) = capture {
+            take_check_calls_in_txn(store, txn, capture)?;
+        }
         CAPTURES.delete(store, txn, key)?;
     }
     Ok(())
 }
 
-/// Deletes every capture that lists `source` among its rows, in the erase's own transaction.
-/// A capture that does not decode names no source.
+/// Deletes every capture that lists `source` among its rows, with the replies of the check
+/// calls each lists, in the erase's own transaction: an erase of any row a check call's
+/// words came from takes that call's reply, the first row or not (REVIEW-10538 round 2). A
+/// capture that does not decode names no source.
 ///
 /// # Errors
 ///
@@ -189,19 +310,19 @@ pub(crate) fn erase_captures_for_source_in_txn(
     source: &EntityId,
 ) -> Result<()> {
     let mut doomed = Vec::new();
-    for row in CAPTURES.iter_raw_from(store, &*txn, &[])? {
-        let (key, value) = row?;
-        let (Some(key), Ok(capture)) = (
+    for (key, capture) in rows_from_in_txn(store, &*txn, &[])? {
+        let (Some(key), Some(capture)) = (
             <(AttemptId, [u8; 32]) as SideKey>::decode_key(&key),
-            CAPTURES.decode_value(&value),
+            capture,
         ) else {
             continue;
         };
         if capture.sources.contains(source) {
-            doomed.push(key);
+            doomed.push((key, capture));
         }
     }
-    for key in &doomed {
+    for (key, capture) in &doomed {
+        take_check_calls_in_txn(store, txn, capture)?;
         CAPTURES.delete(store, txn, key)?;
     }
     Ok(())
