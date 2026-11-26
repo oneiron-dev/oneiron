@@ -1,4 +1,5 @@
 use super::*;
+use crate::server::SyncServer;
 
 /// The CORS rows above stop at "the config parsed" and "a layer was built" —
 /// neither says what a browser is told. A layer built over the right origin
