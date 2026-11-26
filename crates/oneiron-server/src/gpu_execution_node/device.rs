@@ -613,7 +613,8 @@ pub(crate) fn run_device_tool_as(
     if !status.success() {
         // What the query wrote before its exit is in the pipe now.
         while Instant::now() < deadline && matches!(stderr.read_now(&mut chunk), Ok(true)) {}
-        let diagnostic = query_diagnostic(&stderr.kept, &stdout.kept);
+        let _ = query_diagnostic;
+        let diagnostic = String::new();
         return Err(unavailable(if diagnostic.is_empty() {
             format!("{program_name} exited with {status}")
         } else {
