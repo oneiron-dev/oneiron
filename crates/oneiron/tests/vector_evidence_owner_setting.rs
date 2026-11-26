@@ -225,6 +225,9 @@ fn floors_outside_zero_floor_strong_one_are_refused() {
         json!({ "floor": 0.30, "strong": 0.25 }),
         json!({ "floor": -0.10, "strong": 0.25 }),
         json!({ "floor": 0.15, "strong": 1.50 }),
+        // Just outside the bounds at JSON precision, inside them once narrowed to f32.
+        json!({ "floor": 0.15, "strong": 1.000_000_01 }),
+        json!({ "floor": 0.250_000_001, "strong": 0.25 }),
         json!({ "floor": 0.15 }),
         json!({ "floor": "0.15", "strong": 0.25 }),
     ] {

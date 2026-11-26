@@ -18,9 +18,41 @@ use crate::setting::{SettingChange, SettingValue};
 /// `retrieval.vector_evidence`: `{floor, strong}`, held to
 /// [`VectorEvidenceFloors::validate`] as a host's floors are, or none, where
 /// the host's floors judge the space.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub(crate) struct OwnerEvidenceFloors(pub(crate) Option<VectorEvidenceFloors>);
+
+/// The value as it arrives, read at the number's own precision.
+#[derive(Deserialize)]
+struct OwnerEvidenceFloorsWire {
+    floor: f64,
+    strong: f64,
+}
+
+impl<'de> Deserialize<'de> for OwnerEvidenceFloors {
+    /// Judges `0 <= floor <= strong <= 1` before the floors narrow to `f32`,
+    /// so a value just outside, such as a strong of 1.00000001, is refused
+    /// rather than rounded into a row that passes (review round 2 of #10562).
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
+        let Some(wire) = Option::<OwnerEvidenceFloorsWire>::deserialize(deserializer)? else {
+            return Ok(Self::unset());
+        };
+        let in_range = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
+        if !in_range(wire.floor) || !in_range(wire.strong) || wire.floor > wire.strong {
+            return Err(serde::de::Error::custom(format!(
+                "vector evidence floors must satisfy 0 <= floor <= strong <= 1, got floor {} and \
+                 strong {}",
+                wire.floor, wire.strong
+            )));
+        }
+        Ok(Self(Some(VectorEvidenceFloors {
+            floor: wire.floor as f32,
+            strong: wire.strong as f32,
+        })))
+    }
+}
 
 impl OwnerEvidenceFloors {
     /// No floors of the owner's: the host's judge the space. What a space no
