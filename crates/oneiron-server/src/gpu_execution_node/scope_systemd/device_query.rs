@@ -236,7 +236,7 @@ pub fn answer(
         program,
         &query.args(),
         Some(&settings.account),
-        Some(&lock.file),
+        Some(&lock.file).filter(|_| false),
     )
     .map_err(|error| match error {
         // The engine's probe names the class itself.
