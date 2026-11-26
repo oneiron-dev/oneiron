@@ -197,10 +197,17 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
     let name_value = item(row, "name")?;
     let method = method_name(row)?;
     let name = json(name_value);
+    let input_type = rust_type(item(row, "input")?)?;
     let decode = format!(
-        "let input: {} = serde_json::from_value(input).map_err(|error| McpGatewayError::typed_input_refused(&error))?;\n",
-        rust_type(item(row, "input")?)?
+        "let input: {input_type} = serde_json::from_value(input).map_err(|error| McpGatewayError::typed_input_refused(&error))?;\n"
     );
+    // A door that checks its input decodes it by reference first, so an argument of the wrong shape is refused with
+    // its reason codes (FIX CODE-MODE-DENIAL-REASONS); the check then runs its own field rules on the same value,
+    // and `take_checked` hands the decoded input on.
+    let checked_decode = format!(
+        "let checked_input: {input_type} = serde::Deserialize::deserialize(&input).map_err(|error| McpGatewayError::typed_input_refused(&error))?;\noneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
+    );
+    let take_checked = "let input = checked_input;\n";
     if get_is(row, "context", "board") {
         return Ok(format!(
             "{name} => {{\n{decode}Box::pin(execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input))).await }},\n"
@@ -210,9 +217,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
     if name_value.is_str("describe") {
         // One target per describe (FIX 3256), on the args the pre hooks left, before the self, card-key and
         // TASKS-section paths.
-        body += &format!(
-            "oneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
-        );
+        body += &checked_decode;
         // describe(self) renders the connection's own brief (FIX 17594).
         body += DESCRIBE_SELF;
     }
@@ -225,10 +230,9 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
     };
     if admits("owner_grade")? {
         // A full-vault result needs verifier-produced owner proof, as on REST.
-        body += &format!(
-            "let auth = actor.auth.as_ref().ok_or_else(invalid)?;\nif !auth.is_owner_grade() {{ return Err(McpGatewayError::new(-32020, \"forbidden\", \"full-vault export requires owner authority\")); }}\noneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
-        );
-        body += &decode;
+        body += "let auth = actor.auth.as_ref().ok_or_else(invalid)?;\nif !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, \"forbidden\", \"full-vault export requires owner authority\")); }\n";
+        body += &checked_decode;
+        body += take_checked;
         body += OWNER_GRADE_EXPORT;
     } else if flag(row, "host_door") {
         // A host door answers from the server's own state, under the same credential the REST facade passes it.
@@ -296,11 +300,10 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
         } else {
             "mcp_facade_error"
         };
-        body += &format!(
-            "let auth = actor.auth.as_ref().ok_or_else(invalid)?;\noneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
-        );
+        body += "let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n";
+        body += &checked_decode;
         body += &lens_owner;
-        body += &decode;
+        body += take_checked;
         body += &if flag(row, "host_door_lists") {
             format!(
                 "let (output, listed) = {door};\n// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\nserved.listed(crate::api::facade::host_doors::support::ListedRows::rows(listed));\nlet output = output.map_err({door_error})?;\n"
@@ -328,10 +331,8 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
                 shown(row, "server_door")?
             ),
         };
-        body += &format!(
-            "oneiron::task_verb::sdk::validate_input({name}, &input).map_err(mcp_facade_error)?;\n"
-        );
-        body += &decode;
+        body += &checked_decode;
+        body += take_checked;
         // A home door reads the caller's auth itself; any other server door
         // takes the caller's slip alone.
         let proof_line = if home.is_some() {
@@ -343,7 +344,12 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
             "{proof_line}let (output, listed) = Box::pin(server.{door_call}).await;\n// Derived from these rows too, though it names none of them.\nserved.extend(listed);\nlet output = output.map_err(mcp_facade_error)?;\n"
         );
     } else {
-        body += &decode;
+        // describe decoded its input before its check, at the top.
+        body += if name_value.is_str("describe") {
+            take_checked
+        } else {
+            decode.as_str()
+        };
         if name_value.is_str("vault.artifacts.view") || name_value.is_str("vault.artifacts.export")
         {
             body += OWNER_AUTHORSHIP;

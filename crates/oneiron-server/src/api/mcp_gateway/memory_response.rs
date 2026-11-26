@@ -479,14 +479,19 @@ fn parse_returned_id(id: &str) -> Result<oneiron::EntityId, McpGatewayError> {
         .map_err(|error| mcp_engine_error("native response id is invalid", error))
 }
 
+/// The native method's request, or `tool_args_invalid` naming
+/// `arguments.request` with what was wrong with it in reason codes, as every
+/// other tool refusal says (FIX CODE-MODE-DENIAL-REASONS); the message stays
+/// the fixed one.
 fn request<T: serde::de::DeserializeOwned>(body: Value) -> Result<T, McpGatewayError> {
-    serde_json::from_value(body).map_err(|_| {
+    serde_json::from_value(body).map_err(|error| {
         McpGatewayError::new(
             -32602,
             "tool_args_invalid",
             "request does not match the native method schema",
         )
         .with_field("arguments.request")
+        .with_decode_reason(&error.to_string())
     })
 }
 
