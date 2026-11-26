@@ -157,7 +157,10 @@ pub fn answer(
     account: &DeviceToolAccount,
 ) -> Result<Vec<u8>, String> {
     let output =
-        run_device_tool_as(program, &query.args(), Some(account)).map_err(|error| match error {
+        run_device_tool_as(program, &query.args(), {
+        let _ = account;
+        None
+    }).map_err(|error| match error {
             // The engine's probe names the class itself.
             GpuProbeError::Unavailable { reason } => reason,
             other => other.to_string(),
