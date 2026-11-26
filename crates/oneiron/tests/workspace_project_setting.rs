@@ -3,7 +3,8 @@
 //! keyed by the vault): the owner binds a folder, named by its digest, to a PROJECT. The vault
 //! keys the digest with its own id into the folder's workspace id, the item of the family
 //! Setting key `workspace.project`, and an attached session's folder digests resolve to that
-//! project.
+//! project. Each row is one folder's own value (no itemless row, no pin), and the key is a
+//! choice about this install: a binding never leaves the machine (review round 1 of #10550).
 //!
 //! Red on the base: the Setting primitive has no `workspace.project` key and the engine no
 //! `session_project` module, so this file does not build there.
@@ -20,7 +21,9 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::session_project::{
     WORKSPACE_PROJECT_KEY, WorkspaceBindRequest, WorkspaceUnbindRequest, is_sha256_hex,
 };
-use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
+use oneiron::setting::{
+    SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingSync, set_line, spec_named,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -257,6 +260,27 @@ fn the_workspace_id_is_the_digest_keyed_by_the_vault() {
 }
 
 #[test]
+fn a_binding_row_from_another_store_binds_nothing() {
+    let first = Fixture::open();
+    let second = Fixture::open();
+    // The row another vault holds for the folder: named by the first vault's workspace id, and
+    // naming a project that is live in the second vault.
+    let outcome = second
+        .set(
+            SettingCaller::Owner(&second.proof),
+            &first.workspace_id(MAIN_DIGEST),
+            Some(json!({ "project": second.root_project.to_hex(), "label": "alpha" })),
+        )
+        .expect("the row is a well-formed item");
+    assert!(matches!(outcome, SetSettingOutcome::Applied { .. }));
+    assert_eq!(
+        second.session_project(&[MAIN_DIGEST]),
+        None,
+        "a store with another id resolves the folder as unbound, never as another project"
+    );
+}
+
+#[test]
 fn a_row_named_by_the_bare_digest_binds_nothing() {
     let fixture = Fixture::open();
     let outcome = fixture
@@ -271,6 +295,52 @@ fn a_row_named_by_the_bare_digest_binds_nothing() {
         fixture.session_project(&[MAIN_DIGEST]),
         None,
         "a session's digest reads the row its workspace id names, not one named by the digest"
+    );
+}
+
+#[test]
+fn a_binding_row_is_one_folders_own_value() {
+    let fixture = Fixture::open();
+    let binding = json!({ "project": fixture.root_project.to_hex(), "label": "alpha" });
+    // A row with no item would bind every folder that has no row of its own.
+    let mut itemless = SetSetting::vault_value(WORKSPACE_PROJECT_KEY, binding.clone());
+    itemless.item = None;
+    let error = fixture
+        .vault
+        .set_setting(SettingCaller::Owner(&fixture.proof), itemless)
+        .expect_err("a row with no item is refused");
+    assert!(
+        error.to_string().contains("one folder's own value"),
+        "the refusal names the reason: {error}"
+    );
+    assert_eq!(
+        fixture.session_project(&[OTHER_DIGEST]),
+        None,
+        "no folder reads a project from a row with no item"
+    );
+    // A pinned row would outlast the bind and unbind verbs, which write the value.
+    let mut pinned = SetSetting::vault_value(WORKSPACE_PROJECT_KEY, binding);
+    pinned.item = Some(fixture.workspace_id(MAIN_DIGEST));
+    pinned.mode = SettingMode::Pin;
+    let error = fixture
+        .vault
+        .set_setting(SettingCaller::Owner(&fixture.proof), pinned)
+        .expect_err("a pinned row is refused");
+    assert!(
+        error.to_string().contains("one folder's own value"),
+        "the refusal names the reason: {error}"
+    );
+    assert_eq!(fixture.session_project(&[MAIN_DIGEST]), None);
+}
+
+#[test]
+fn a_binding_is_a_choice_about_this_install() {
+    let spec = spec_named(WORKSPACE_PROJECT_KEY).expect("the key is in the catalogue");
+    assert_eq!(
+        spec.sync,
+        SettingSync::Install,
+        "a binding never leaves its install: no other machine of the vault receives it, and a \
+         restore drops it"
     );
 }
 

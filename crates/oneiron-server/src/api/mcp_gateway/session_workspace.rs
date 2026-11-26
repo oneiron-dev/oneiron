@@ -5,9 +5,9 @@
 //! The `oneiron mcp` bridge started with `--workspace <DIR>` names the folder's digests (its
 //! own, then its main checkout's; never its path) in every `tools/call`'s
 //! `_meta["oneiron/workspace"]`. The vault keys each digest with its store id before it looks
-//! the binding up, so a binding does not follow the vault to a restored store or a replica:
-//! there the folder reads as unbound, and the start hook's vault line gives the bind command
-//! (Q2 = A).
+//! the binding up. A binding is a choice about the install that holds it: another machine of the
+//! vault never receives it, and a restore drops it, so on a replica, and after a restore, the
+//! folder reads as unbound, and the start hook's vault line gives the bind command (Q2 = A).
 //!
 //! This endpoint keeps no session, so it reads them on every call, as it reads
 //! `clientCapabilities`. The bridge names them on `initialize` too, and the answer says under

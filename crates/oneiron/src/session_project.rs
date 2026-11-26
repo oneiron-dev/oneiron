@@ -4,21 +4,26 @@
 //!
 //! A client names a folder by its folder digest: the SHA-256 of a domain tag and the folder's
 //! canonical checkout path, in lower-case hex (`oneiron_server::workspace_identity`). The vault
-//! keys it again with its own store id into the folder's workspace id ([`Vault::workspace_id`]),
-//! so one folder's ids do not correlate across vaults. The vault never receives the path; a
-//! reader of the vault who guesses a path and knows the vault's store id can still test the
-//! guess. The store id is the random one the vault's store took at its first open: it holds
-//! before and after a rooting, and a replica, or a store a backup is restored into, has its own,
-//! so a binding binds the folder on the machine that bound it.
+//! keys it again with its store id into the folder's workspace id ([`Vault::workspace_id`]), so
+//! one folder's ids do not correlate across vaults. The vault never receives the path; a reader
+//! of the vault who guesses a path and knows the vault's store id can still test the guess.
 //!
 //! The owner binds a folder to a PROJECT with `vault.projects.workspace.bind`, which writes the
 //! family Setting key `workspace.project`: one item per folder, named by its workspace id. The
 //! row holds the project and a label, the folder's name, shown to the owner and never matched.
-//! `vault.projects.workspace.unbind` clears it; `vault.settings.list` lists the rows.
+//! `vault.projects.workspace.unbind` clears it; `vault.settings.list` lists the rows. Each row is
+//! one folder's own value: a row with no item, which would bind every folder, and a pinned row,
+//! which the two verbs could not replace, are refused.
+//!
+//! A binding is a choice about this install (`SettingSync::Install`), as the folder's path is a
+//! fact about the machine it is on: it never leaves the install that holds it, another machine of
+//! the vault never receives it, and a restore drops it. So on a replica, and after a restore, the
+//! folder reads as unbound, and the start hook's vault line gives the bind command (Q2 = A); a
+//! restore that has not joined its vault yet can bind it again.
 //!
 //! An attached session names its folder's digests, its own first. The first whose row names a
-//! project decides: [`workspace_project_in_txn`] answers that project while it is a live
-//! PROJECT, and nothing otherwise. That project is the session's default: what its reads select
+//! project decides: [`workspace_project_in_txn`] answers that project while the project fold
+//! shows it (a quarantined or erased PROJECT does not), and nothing otherwise. That project is the session's default: what its reads select
 //! when they name no project. Selection only narrows; the reader's credential still decides
 //! what it reads.
 //!
@@ -41,7 +46,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::setting::{
-    Kind, SetSetting, SetSettingOutcome, SettingCaller, SettingChange, SettingValue,
+    Kind, SetSetting, SetSettingOutcome, SettingCaller, SettingChange, SettingMode, SettingValue,
 };
 use crate::{EntityId, Vault};
 
@@ -157,28 +162,31 @@ pub fn is_sha256_hex(text: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Refuses a binding that names anything but a live PROJECT. A clear, or a row that names no
-/// project, binds nothing and passes.
-fn refuse_unless_live_project(
+/// Refuses a `workspace.project` row that is not one folder's own value, and a binding that
+/// names a PROJECT the project fold does not show. A row with no item would bind every folder,
+/// and a pinned row would outlast the bind and unbind verbs, which write the value. A clear, or
+/// a row that names no project, binds nothing and passes.
+fn check_workspace_binding(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     change: &SettingChange,
 ) -> Result<()> {
+    if change.item.is_none() || !matches!(change.mode, SettingMode::Value) {
+        return Err(Error::InvalidConfig(format!(
+            "{WORKSPACE_PROJECT_KEY}: a binding is one folder's own value: name its workspace id \
+             as the item, and do not pin it"
+        )));
+    }
     let Some(value) = change.value.as_ref() else {
         return Ok(());
     };
-    // A row another machine's signed act projects here may arrive before its PROJECT does:
-    // the reader judges the project live at each read, so the projection is not refused.
-    if change.standing.is_some() {
-        return Ok(());
-    }
     let binding = Kind::<WorkspaceProject>::decode(value).ok_or_else(|| {
         Error::InvalidConfig(format!("{WORKSPACE_PROJECT_KEY}: the row does not decode"))
     })?;
     let Some(project) = binding.project else {
         return Ok(());
     };
-    if !crate::workspace_roster::project::is_project_entity(&vault.store, txn, project)? {
+    if vault.visible_project_in_txn(txn, project)?.is_none() {
         return Err(Error::InvalidConfig(format!(
             "{WORKSPACE_PROJECT_KEY}: {} is not a live PROJECT",
             project.to_hex()
@@ -212,8 +220,8 @@ pub fn workspace_id_of(vault: &Vault, folder_digest: &str) -> Option<String> {
 
 /// The project a session in the folder `folder_digests` names (its own digest first, then its
 /// main checkout's) reads by default, in `txn`: the project of the first folder whose row names
-/// one, while that project is a live PROJECT. `None`: no folder is bound, or the first bound one
-/// names a project that is gone.
+/// one, while the project fold shows that PROJECT. `None`: no folder is bound, or the first bound
+/// one names a project that is gone or quarantined.
 ///
 /// # Errors
 ///
@@ -231,8 +239,7 @@ pub fn workspace_project_in_txn(
             .read_in_txn(vault, txn, &[], Some(&id))?
             .value;
         if let Some(project) = bound.project {
-            let live =
-                crate::workspace_roster::project::is_project_entity(&vault.store, txn, project)?;
+            let live = vault.visible_project_in_txn(txn, project)?.is_some();
             return Ok(live.then_some(project));
         }
     }
