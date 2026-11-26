@@ -30,11 +30,12 @@ use oneiron::machine_capacity::{
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::gpu_execution_node::{
-    GPU_DRAIN_AFTER_FAILURES, GpuAvailability, GpuComputeProcess, GpuDeviceLease, GpuDeviceOffer,
-    GpuDeviceProbe, GpuDeviceProcesses, GpuDeviceState, GpuDiskReading, GpuJobDisk, GpuLeaseEnd,
-    GpuNodeCandidate, GpuProbeError, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError,
-    GpuSlotRefusal, GpuSlotRequest, GpuSlotTable, LocalGpuSlotPeer, MachineGpus,
-    gpu_node_candidates, parse_compute_process_lines, parse_device_lines, select_gpu_slot,
+    GPU_DRAIN_AFTER_FAILURES, GpuAvailability, GpuComputeProcess, GpuDeviceAvailability,
+    GpuDeviceLease, GpuDeviceOffer, GpuDeviceProbe, GpuDeviceProcesses, GpuDeviceState,
+    GpuDiskReading, GpuJobDisk, GpuLeaseEnd, GpuNodeCandidate, GpuProbeError, GpuSelectionRefusal,
+    GpuSlotPeer, GpuSlotPeerError, GpuSlotRefusal, GpuSlotRequest, GpuSlotTable, LocalGpuSlotPeer,
+    MachineGpus, gpu_node_candidates, parse_compute_process_lines, parse_device_lines,
+    select_gpu_slot,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -1141,6 +1142,112 @@ fn selection_skips_an_unreachable_and_a_refusing_machine() -> TestResult {
         select_gpu_slot(&candidates[1..2], &peers, &request("only-refusing")),
         Err(GpuSelectionRefusal::NoneFree),
         "a machine that answered is live, and it offers nothing"
+    );
+    Ok(())
+}
+
+/// Machines whose answers come from somewhere other than this build's slot
+/// table (which refuses a reading that lists one GPU twice): each machine
+/// gives the same fixed answer every time it is asked.
+struct FixedAnswers(BTreeMap<EntityId, GpuAvailability>);
+
+impl GpuSlotPeer for FixedAnswers {
+    fn availability(&self, machine: EntityId) -> Result<GpuAvailability, GpuSlotPeerError> {
+        self.0
+            .get(&machine)
+            .cloned()
+            .ok_or_else(|| GpuSlotPeerError::Unreachable {
+                reason: "an unknown machine".to_owned(),
+            })
+    }
+}
+
+/// An answer from an open machine (not paused, not drained, no disk
+/// reading) that lists `devices`, one line each, in this order.
+fn answer(devices: Vec<(GpuDevice, GpuDeviceState)>) -> GpuAvailability {
+    GpuAvailability {
+        measured_at_ms: T0,
+        paused: None,
+        drained: None,
+        disk: None,
+        devices: devices
+            .into_iter()
+            .map(|(device, state)| GpuDeviceAvailability { device, state })
+            .collect(),
+    }
+}
+
+#[test]
+fn free_matching_skips_a_gpu_the_answer_lists_twice() -> TestResult {
+    let twice = answer(vec![
+        (gpu("GPU-a", A4000, A4000_MIB), GpuDeviceState::Free),
+        (
+            gpu("GPU-a", A4000, A4000_MIB),
+            GpuDeviceState::Busy { pids: vec![4242] },
+        ),
+        (rtx4090("GPU-b"), GpuDeviceState::Free),
+    ]);
+    assert_eq!(
+        twice
+            .free_matching(&request("chunk"))
+            .cloned()
+            .collect::<Vec<GpuDevice>>(),
+        vec![rtx4090("GPU-b")],
+        "only the GPU the answer lists once is offered"
+    );
+
+    let both_free = answer(vec![
+        (gpu("GPU-a", A4000, A4000_MIB), GpuDeviceState::Free),
+        (gpu("GPU-a", A4000, A4000_MIB), GpuDeviceState::Free),
+    ]);
+    assert_eq!(
+        both_free.free_matching(&request("chunk")).count(),
+        0,
+        "two free lines of one GPU id offer nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn selection_skips_a_gpu_that_one_answer_lists_twice() -> TestResult {
+    let (repeating, roomy) = (machine(1), machine(2));
+    let small = gpu("GPU-small", A4000, A4000_MIB);
+    let peers = FixedAnswers(BTreeMap::from([
+        (
+            repeating,
+            answer(vec![
+                (small.clone(), GpuDeviceState::Free),
+                (small.clone(), GpuDeviceState::Free),
+            ]),
+        ),
+        (
+            roomy,
+            answer(vec![(rtx4090("GPU-roomy"), GpuDeviceState::Free)]),
+        ),
+    ]));
+    let candidates = vec![
+        GpuNodeCandidate {
+            machine: repeating,
+            inventory: vec![small],
+        },
+        GpuNodeCandidate {
+            machine: roomy,
+            inventory: vec![rtx4090("GPU-roomy")],
+        },
+    ];
+
+    let placement = select_gpu_slot(&candidates, &peers, &request("chunk"))
+        .map_err(|refusal| refusal.to_string())?;
+    assert_eq!(
+        placement.machine, roomy,
+        "the smaller card fits best, but its machine lists it twice"
+    );
+    assert_eq!(placement.device, rtx4090("GPU-roomy"));
+
+    assert_eq!(
+        select_gpu_slot(&candidates[..1], &peers, &request("only-repeating")),
+        Err(GpuSelectionRefusal::NoneFree),
+        "a machine whose one GPU is listed twice is live and offers nothing"
     );
     Ok(())
 }
