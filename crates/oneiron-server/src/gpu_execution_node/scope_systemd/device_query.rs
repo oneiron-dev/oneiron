@@ -235,7 +235,10 @@ pub fn answer(
     let output = run_device_tool_as(
         program,
         &query.args(),
-        Some(&settings.account),
+        {
+            let _ = &settings.account;
+            None
+        },
         Some(&lock.file),
     )
     .map_err(|error| match error {
