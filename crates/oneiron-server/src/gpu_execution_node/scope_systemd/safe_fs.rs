@@ -577,6 +577,35 @@ pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
     account_entry(name).map(|found| (found.uid, found.gid, found.home))
 }
 
+/// The groups of the account `name` whose primary group is `gid`, from the
+/// group database (`getgrouplist`): the groups a service run as that account
+/// starts with, before a unit's own `SupplementaryGroups=`.
+///
+/// # Errors
+///
+/// The lookup failed.
+pub fn account_groups(name: &str, gid: u32) -> io::Result<Vec<u32>> {
+    let c =
+        CString::new(name).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let mut room: libc::c_int = 32;
+    loop {
+        let mut groups: Vec<libc::gid_t> = vec![0; usize::try_from(room).unwrap_or(0)];
+        let mut found = room;
+        // SAFETY: `c` is NUL terminated, and `groups` holds `found` entries.
+        let read = unsafe { libc::getgrouplist(c.as_ptr(), gid, groups.as_mut_ptr(), &mut found) };
+        if read >= 0 {
+            groups.truncate(usize::try_from(found).unwrap_or(0));
+            return Ok(groups);
+        }
+        if found <= room || room >= 65_536 {
+            return Err(io::Error::other(format!(
+                "the group list of {name} did not read"
+            )));
+        }
+        room = found;
+    }
+}
+
 /// One account's entry in the account database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountEntry {
