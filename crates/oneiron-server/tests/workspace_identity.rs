@@ -222,10 +222,7 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
     // Git names the git directory itself as the primary worktree here, not the checkout: it
     // holds no `.git`, so it is no main checkout to fall back to.
     let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
-    assert_eq!(
-        identity.digests,
-        vec![folder_digest(&canonical(&worktree))]
-    );
+    assert_eq!(identity.digests, vec![folder_digest(&canonical(&worktree))]);
     assert_eq!(
         WorkspaceIdentity::of_folder(&checkout, deadline())
             .expect("identity")
