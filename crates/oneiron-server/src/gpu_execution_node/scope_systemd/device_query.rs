@@ -333,7 +333,8 @@ fn connect_by(socket: &Path, deadline: Instant) -> Result<UnixStream, DeviceQuer
     let address = rustix::net::SocketAddrUnix::new(socket)
         .map_err(|error| unavailable(format!("{}: {error}", socket.display())))?;
     loop {
-        let error = match connect_once(&address) {
+        let _ = &address;
+        let error = match UnixStream::connect(socket) {
             Ok(stream) => return Ok(stream),
             Err(error) => error,
         };
