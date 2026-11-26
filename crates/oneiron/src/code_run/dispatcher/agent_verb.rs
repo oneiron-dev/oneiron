@@ -403,7 +403,7 @@ impl HostSelfDispatcher<'_> {
             ));
         };
         if let Err(refusal) = super::admit_recorded_answer(door) {
-            let rejected = super::gate_rejection(&refusal.code, &refusal.reason_codes);
+            let rejected = super::gate_rejection(&refusal.code);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
                 hook_notice: None,
                 effect: SelfEffect::AgentVerb,
@@ -593,7 +593,7 @@ fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
     else {
         return Err(Error::CorruptedIndex("agent verb receipt refusal"));
     };
-    if let Some(rejected) = super::gate_rejection(&refused.outcome, &refused.reason_codes) {
+    if let Some(rejected) = super::gate_rejection(&refused.outcome) {
         return Err(rejected);
     }
     // The refusal keeps the reason codes its door gave, so a replay answers
