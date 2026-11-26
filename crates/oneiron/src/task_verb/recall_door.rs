@@ -237,9 +237,22 @@ fn recall_with_whole_limit(
         return Ok(fallback.clone());
     }
     let vectors = embed(&input.query)?;
-    let embedding = vectors.text_index.as_deref();
+    // A light or call recall's query embeds only for the owner's bar (the server door embeds
+    // a barred recall at any effort): the bar compares cosines with it, and no retrieval
+    // channel searches it, so light and call retrieval stay lexical as without a bar
+    // (REVIEW-10567 round 2).
+    let bar_only = input.bar.is_some() && effort == crate::memory::Effort::Light;
+    let (embedding, bar_query_vector) = if bar_only {
+        (None, vectors.text_index.as_deref())
+    } else {
+        (vectors.text_index.as_deref(), None)
+    };
     let mut media_memory = crate::host_memory::MachineMemory::process().empty_lease();
-    let media = vectors.media_seeds();
+    let media = if bar_only {
+        Vec::new()
+    } else {
+        vectors.media_seeds()
+    };
     media_memory.materialized(
         0,
         (media.capacity() as u64).saturating_mul(std::mem::size_of::<
@@ -264,6 +277,7 @@ fn recall_with_whole_limit(
             &crate::retrieval_depth::RecallExecution {
                 deadline: deadline.as_ref(),
                 embedding,
+                bar_query_vector,
                 media: &media,
                 as_of: input.as_of,
                 query_affect,
@@ -340,6 +354,7 @@ fn recall_with_whole_limit(
                 telemetry: input.telemetry.as_ref(),
                 bar: input.bar.as_ref(),
                 embedding,
+                bar_query_vector,
                 media: &media,
                 as_of: input.as_of,
                 query_affect,

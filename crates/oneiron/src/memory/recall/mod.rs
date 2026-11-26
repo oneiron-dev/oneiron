@@ -351,6 +351,13 @@ impl Memory<'_> {
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
+        // A push answers at most PUSH_LINES lines, whatever its limit, on every path through
+        // the shared body (RECALL-CARRIER-THRESHOLD; REVIEW-10566 round 2): the SDK door
+        // clamps before its preflight check too, and keeps doing so.
+        let limit = match execution.bar {
+            Some(bar) if bar.source.pushes() => limit.min(PUSH_LINES),
+            _ => limit,
+        };
         check_recall_request(effort, scope, limit, format, lease, execution)?;
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
@@ -628,9 +635,19 @@ impl Memory<'_> {
         };
 
         // The owner's relevance bar, resolved once for this pass (RECALL-CARRIER-THRESHOLD).
+        // The bar judges the comparison vector the door carried for it, which never feeds a
+        // retrieval channel; a door that carried none judges the query's own vector, as before
+        // (REVIEW-10567 round 2).
         let bar = execution
             .bar
-            .map(|ask| self.resolve_recall_bar(ask, query, scope, execution.embedding))
+            .map(|ask| {
+                self.resolve_recall_bar(
+                    ask,
+                    query,
+                    scope,
+                    execution.bar_query_vector.or(execution.embedding),
+                )
+            })
             .transpose()?;
         let (
             items,
