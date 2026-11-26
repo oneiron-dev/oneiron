@@ -258,7 +258,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/drafter/report.rs` | src | s | 2 struct · 2 fn · 2 const | DigestDrafter, DigestDrafterItem | Moved from `crates/oneiron/src/drafter/report.rs` (lib split W1: wire types below the lib) |
 | `src/drafter/serving.rs` | src | s | 1 enum | DrafterUnservedReason | Moved from `crates/oneiron/src/drafter/serving.rs` (lib split W1: wire types below the lib) |
 | `src/drafter/types.rs` | src | m | 6 struct · 8 enum · 4 fn | DrafterActor, DrafterArtifact, DrafterArtifactFile, DrafterCorpus, DrafterCorpusFile, DrafterDependencies, DrafterHoldReason, DrafterRetrainOutcome +6 | Moved from `crates/oneiron/src/drafter/types.rs` (lib split W1: wire types below the lib) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 6 re-export | — | — |
+| `src/dreamer_consolidation/answer_schema.rs` | src | s | 2 struct · 2 fn · 2 const | DigestAnswerSchema, DigestAnswerSchemaItem | The answer-schema line of the morning report (HOUSE-SCHEMA-SWITCH): one item per answer-schema event no… |
+| `src/dreamer_consolidation/mod.rs` | src | s | 3 mod · 10 re-export | — | — |
 | `src/dreamer_consolidation/resources/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/dreamer_consolidation/resources/nightly_link_grant.rs` | src | s | 1 struct | NightlyLinkGrantRequest | Moved from `crates/oneiron/src/dreamer_consolidation/resources/nightly_link_grant.rs` (lib split W1: wire… |
 | `src/dreamer_consolidation/thing_agent.rs` | src | s | 5 struct | ThingDecideInput, ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingProposalRef | Moved from `crates/oneiron/src/dreamer_consolidation/thing_agent.rs` (lib split W1: wire types below the lib) |

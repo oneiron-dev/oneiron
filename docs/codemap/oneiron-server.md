@@ -63,6 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/drafter/job.rs` | src | m | 19 crate-vis | — | One drafter training job's private directory (FIX 14974): what the host stages for the worker, the receipt… |
 | `src/ai_host/drafter/process.rs` | src | s | 3 crate-vis | — | The drafter trainer's process (FIX 14974), run the way the training pack's connector runs its worker… |
 | `src/ai_host/dreamer.rs` | src | XL | 22 crate-vis | — | The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the… |
+| `src/ai_host/dreamer/answer_schema_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's nightly answer-schema check (HOUSE-SCHEMA-CHECK): the extraction role's… |
 | `src/ai_host/dreamer/claim_authoring.rs` | src | s | 1 crate-vis | — | The claim-authoring campaign a Dreamer pass binds (OF-366 R2, FIX 897): the root its consolidation… |
 | `src/ai_host/dreamer/claim_source_recheck.rs` | src | s | 1 crate-vis | — | The host's loan to the Dreamer's re-check of the claims drawn from a message deleted at the provider and… |
 | `src/ai_host/dreamer/compaction_check.rs` | src | s | 2 crate-vis | — | The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative… |
@@ -1862,7 +1863,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/model_call.rs` | src | s | 5 crate-vis | — | The rung that answered one call (FIX 12743) |
 | `src/models/ladder/model_list.rs` | src | s | 3 crate-vis | — | A call-local view of the models its reader inherited from the agent |
 | `src/models/ladder/owner_fallback_door.rs` | src | s | 1 crate-vis | — | The owner's standing quota fallback for each offer of a ladder, for the integration tests (FIX-LIST… |
-| `src/models/ladder/replay_prompt.rs` | src | s | 7 crate-vis | — | A step replay's call (FIX 6255): the one replay path |
+| `src/models/ladder/replay_prompt.rs` | src | s | 10 crate-vis | — | A step replay's call (FIX 6255): the one replay path |
 | `src/models/ladder/rung.rs` | src | s | 3 crate-vis | — | One rung's own work: its route id, the call as it binds it, and its note as the rung that answered a… |
 | `src/models/ladder/rung_hours.rs` | src | s | 3 crate-vis | — | A rung's daily hours on its seat's walk (UNBUILT-14; RULING UNBUILT14-BATCH-MODEL-PICK = A): inside them the… |
 | `src/models/ladder/sends.rs` | src | m | 2 crate-vis | — | The send to one rung: a generated call's (`OfferLadder::send`) and a stream's (`OfferLadder::stream_rung`)… |

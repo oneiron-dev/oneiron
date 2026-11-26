@@ -1758,7 +1758,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/codec/checkpoint.rs` | src | s | 1 const · 3 crate-vis | — | The pinned MessagePack codec of a step checkpoint in a code run's replay record: its keys, its encoding and… |
 | `src/code_run/codec/held.rs` | src | s | 2 crate-vis | — | The parts of a stored replay record a guarded append reads, decoded from the row's bytes in place (FIX 16) |
 | `src/code_run/codec/pending_step.rs` | src | s | 5 crate-vis | — | The pinned MessagePack codec of a code run's pending step (FIX 7703): its keys, its encoding and decoding… |
-| `src/code_run/compaction_fork.rs` | src | m | 3 struct · 1 enum · 18 fn · 2 const · 1 crate-vis | AdmittedLiveFork, CacheBoundary, LiveCompactionFork, LiveForkRung | The live fork (FIX 4465 C): a run's live request, captured at the breakpoint that seals a self-written… |
+| `src/code_run/compaction_fork.rs` | src | m | 3 struct · 1 enum · 18 fn · 2 const · 2 crate-vis | AdmittedLiveFork, CacheBoundary, LiveCompactionFork, LiveForkRung | The live fork (FIX 4465 C): a run's live request, captured at the breakpoint that seals a self-written… |
 | `src/code_run/compaction_home.rs` | src | m | 4 struct · 11 fn · 1 crate-vis | CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome | The agent's home as its own compaction wears it (FIX 4465; the home is the self-model, voice, diary and… |
 | `src/code_run/compaction_home/self_model.rs` | src | s | 2 fn · 4 crate-vis | — | The self-model a resident's compaction home wears (FIX 4570) |
 | `src/code_run/consent.rs` | src | m | 6 struct · 2 enum · 9 fn · 3 const · 1 re-export · 1 crate-vis | BlastRadiusWalk, CodeConsentRequest, CodeEmissionAdmission, CodeEmissionContext, CodeSourceTrust, ConsentLane, ReviewContext, ReviewContextInput | Code-run trust lanes, review context and blast-radius evidence |
@@ -1841,7 +1841,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/world_privacy_wait.rs` | src | s | 1 crate-vis | — | `tasks.wait({request, step_key})` (FIX 4706): a code run's wait on one world-privacy request its actor… |
 | `src/code_run/fold_api.rs` | src | s | 1 fn · 1 re-export | — | Typed public calls on a credential's attached live run |
 | `src/code_run/live_run.rs` | src | s | 2 struct · 10 fn · 2 const · 3 crate-vis | CodeRunLiveRunBinding, LiveRunCredential | A live agent run's attachment to the one credential that may act for it (OF-181) |
-| `src/code_run/mod.rs` | src | m | 8 mod · 39 re-export · 77 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | m | 8 mod · 39 re-export · 78 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/model_call.rs` | src | m | 2 struct · 12 fn · 1 re-export · 3 crate-vis | ModelCallReasoningPart, ModelCallRecord | Per-model-call evidence and replay records (FIX 12516) |
 | `src/code_run/model_call/signed_reasoning.rs` | src | s | 1 crate-vis | — | Whole signed reasoning parts use existing custody, never text masking |
 | `src/code_run/payload.rs` | src | m | 15 crate-vis | — | Code-run request and outcome replay values |
@@ -2625,7 +2625,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/delete/preflight.rs` | src | s | 1 crate-vis | — | What the delete rail admits before any legal hold is read, as one check a caller that decides before the… |
 | `src/deletion/delete/preview.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DeleteEntityPreview | Snapshot-bound impact preview for the one-action, confirmed delete door |
 | `src/deletion/delete/receipt.rs` | src | m | 1 crate-vis | — | — |
-| `src/deletion/derived_rows.rs` | src | s | 2 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
+| `src/deletion/derived_rows.rs` | src | m | 2 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
 | `src/deletion/erase/active_store.rs` | src | m | 4 crate-vis | — | — |
 | `src/deletion/erase/corrupt.rs` | src | m | 1 enum · 11 crate-vis | CorruptClaimRepair | The audited escape for a corrupt CLAIM's hard erase (FIX 7800, ARCH-0038) |
 | `src/deletion/erase/markers.rs` | src | s | 8 crate-vis | — | — |
@@ -2769,6 +2769,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/drafter/traffic.rs` | src | m | 1 struct · 1 enum · 1 fn · 1 const · 7 crate-vis | DrafterExampleKept, DrafterTrafficReply | The drafter's training traffic (FIX 15128, FIX 15129; DRAFTER-DATA = A): one example per answered chat… |
 | `src/drafter/training.rs` | src | m | 4 struct · 8 fn · 1 const · 4 crate-vis | DrafterParentLoadSet, DrafterTrainingDispatch, DrafterTrainingJob, DrafterTrainingMark | A drafter version's training job (FIX 14974, FIX 12569 slice 3): the engine's side of the host that trains a… |
 | `src/drafter/types.rs` | src | s | 6 struct · 1 enum · 1 re-export · 2 crate-vis | DrafterBinding, DrafterBindingChange, DrafterEvent, DrafterEventKind, DrafterRecipe, DrafterTarget, DrafterVersion | The drafter's records (FIX 12569): its versions, the binding of each target, its events and the owner's policy |
+| `src/dreamer_consolidation/answer_schema.rs` | src | m | 1 mod · 1 re-export · 22 crate-vis | — | The answer-schema switch (HOUSE-SCHEMA-SWITCH): the owner's setting `dreamer.extraction.answer_schema`, the… |
+| `src/dreamer_consolidation/answer_schema/capture.rs` | src | m | 11 crate-vis | — | One TURN extraction call kept for the nightly answer-schema check (HOUSE-SCHEMA-CHECK): the request whole… |
+| `src/dreamer_consolidation/answer_schema/check.rs` | src | m | 1 struct · 1 fn · 1 const · 2 crate-vis | AnswerSchemaHouse | The nightly answer-schema check (HOUSE-SCHEMA-CHECK): one Macro child of the night's recipe attempt, drawn… |
+| `src/dreamer_consolidation/answer_schema/draw.rs` | src | s | 6 crate-vis | — | The answer-schema check's nightly draw (HOUSE-SCHEMA-CHECK): up to eight of the night's captured TURN calls… |
+| `src/dreamer_consolidation/answer_schema/overrun.rs` | src | s | 5 crate-vis | — | The answer-schema check's over-budget latch (HOUSE-SCHEMA-CHECK): one row per night whose extraction ran… |
+| `src/dreamer_consolidation/answer_schema/pair.rs` | src | s | 12 crate-vis | — | One shadow pair of the nightly answer-schema check (HOUSE-SCHEMA-CHECK): the two arms re-sent per drawn… |
+| `src/dreamer_consolidation/answer_schema/receipt.rs` | src | m | 16 crate-vis | — | One night's answer-schema check receipt (HOUSE-SCHEMA-CHECK): the drawn selection, written before the first… |
+| `src/dreamer_consolidation/answer_schema/rule.rs` | src | s | 14 crate-vis | — | The answer-schema check's suspension rules (HOUSE-SCHEMA-CHECK), as pure functions: the grammar rule over… |
+| `src/dreamer_consolidation/answer_schema/send.rs` | src | s | 6 crate-vis | — | One answer-schema check's house calls (HOUSE-SCHEMA-CHECK): each arm and each judge turn as a durable step… |
+| `src/dreamer_consolidation/answer_schema/spend.rs` | src | s | 6 crate-vis | — | What one answer-schema check's calls spent (HOUSE-SCHEMA-CHECK): the compaction check's `Spend` shape, units… |
 | `src/dreamer_consolidation/assembly.rs` | src | m | 6 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
 | `src/dreamer_consolidation/attempt_reads.rs` | src | s | 2 crate-vis | — | The rows a Dreamer attempt's inputs were read from, as its own readers report them on its read set (FIX… |
 | `src/dreamer_consolidation/branch.rs` | src | s | 2 struct · 1 trait · 16 crate-vis | BranchTurn, ConsolidationBranchPlan, ConversationPart | One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in… |
@@ -2788,7 +2798,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/executor/decisions/identity_choice.rs` | src | s | 4 crate-vis | — | The one final identity choice (FIX 8693) |
 | `src/dreamer_consolidation/executor/decisions/native_parity.rs` | src | s | 4 crate-vis | — | Runs the native pack oracle for the extraction parity test: one whole resolution read over fixture operands… |
 | `src/dreamer_consolidation/executor/decisions/read.rs` | src | s | 5 crate-vis | — | The scoped typed read every Dreamer pack shares (OF-498a): questions over a state through the host's ladder… |
-| `src/dreamer_consolidation/executor/extraction.rs` | src | m | 1 struct · 2 fn · 1 const · 25 crate-vis | ExtractionPrompt | Extraction request/response projection for one admitted branch; the typed pack that decides which listed… |
+| `src/dreamer_consolidation/executor/extraction.rs` | src | m | 1 struct · 2 fn · 1 const · 28 crate-vis | ExtractionPrompt | Extraction request/response projection for one admitted branch; the typed pack that decides which listed… |
+| `src/dreamer_consolidation/executor/extraction/answer_schema_param.rs` | src | s | 5 crate-vis | — | The TURN extraction answer's JSON Schema (HOUSE-SCHEMA): the own-server body field that carries it, the… |
 | `src/dreamer_consolidation/executor/extraction/cited.rs` | src | s | 5 crate-vis | — | The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole… |
 | `src/dreamer_consolidation/executor/extraction/corrections.rs` | src | m | 13 crate-vis | — | The typed pack that decides which listed claim each extracted candidate corrects: per candidate, one… |
 | `src/dreamer_consolidation/executor/extraction/decided.rs` | src | s | 3 crate-vis | — | Every candidate a Dreamer attempt decided a correction for, kept at the attempt before the branch builds… |
@@ -2812,7 +2823,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/extraction_pack/read_sources.rs` | src | s | 5 crate-vis | — | The rows one lent verdict read sends under |
 | `src/dreamer_consolidation/extraction_pack/reads.rs` | src | m | 16 crate-vis | — | The bound-only rebuild orchestration behind `rebuild_checked_pack`: checked candidate rows, native grouping… |
 | `src/dreamer_consolidation/extraction_pack/step_records.rs` | src | m | 5 crate-vis | — | The recorded step candidates a lent operand names, and each operand's relationship set |
-| `src/dreamer_consolidation/extraction_step.rs` | src | m | 11 crate-vis | — | One bound generative extraction step over served TURN spans |
+| `src/dreamer_consolidation/extraction_step.rs` | src | m | 12 crate-vis | — | One bound generative extraction step over served TURN spans |
 | `src/dreamer_consolidation/extraction_step/reply.rs` | src | m | 3 crate-vis | — | Checks and decodes a bound reply through the native wire and quote binder |
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
 | `src/dreamer_consolidation/follower_attempt/mod.rs` | src | m | 2 crate-vis | — | The follower's attempt (FIX 7510): one queued per session, on the extraction role's route and the wake's… |
@@ -2822,7 +2833,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 1 re-export · 2 crate-vis | — | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | m | 5 mod · 27 re-export · 53 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | m | 6 mod · 27 re-export · 54 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 20 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/memberships.rs` | src | s | 5 crate-vis | — | Relationship units named by a listed PERSON's admitted membership claims |
 | `src/dreamer_consolidation/neighbourhood/pages.rs` | src | s | 5 crate-vis | — | A child's listing in stable pages (Rule 5, FIX 7580) |
@@ -4655,7 +4666,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/manifest/encoder_export.rs` | src | s | 2 struct · 13 fn · 1 re-export · 1 crate-vis | EncoderDistillationRequest, EncoderExport | Offline interchange with the model project |
 | `src/llm/manifest/teacher_probe.rs` | src | s | 1 struct · 4 fn · 1 re-export · 1 crate-vis | TeacherProbeApproval | Policy-bound extraction-teacher probe approval for manifest publication |
 | `src/llm/manifest/tests.rs` | test | m | — | — | — |
-| `src/llm/mod.rs` | src | s | 12 mod · 34 re-export · 25 crate-vis | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 12 mod · 34 re-export · 26 crate-vis | — | Engine-facing LLM invocation seam |
 | `src/llm/model_licence/mod.rs` | src | s | 1 fn · 1 const · 1 crate-vis | — | The model install's owner Setting key (owner principle, 16 Nov 00:44: a restriction that is not a… |
 | `src/llm/model_licence/setting_keys.rs` | src | s | — | — | The `models.install.allow_noncommercial_licences` row (its rule and reader: the parent module) |
 | `src/llm/model_pack.rs` | src | m | 6 struct · 20 fn · 1 const · 2 re-export · 8 crate-vis | AccessSnapshot, ModelPackChange, ModelPackReceipt, ModelPackRoleChoice, ModelPackSetting, ModelPackView | Model packs at inference (FIX 5365-5369, MODEL PACKS = A): the access a host can run now, the pack a vault… |
@@ -4723,7 +4734,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/step/compaction_step.rs` | src | m | 1 fn · 4 crate-vis | — | The actor-bound compaction step (FIX 4465 B): each paid call of a self-written compaction pass, the tries… |
 | `src/llm/step/execute.rs` | src | L | 3 fn · 18 crate-vis | — | Durable step execution: memo/admission/deadline orchestration with retry and lease settlement |
 | `src/llm/step/media_step.rs` | src | s | 1 enum · 2 fn | MediaStepOutcome | The media sibling of `call_as_step` (FIX 465, FIX 2245): a durable step's media call keyed by its attempt… |
-| `src/llm/step/mod.rs` | src | s | 1 mod · 7 re-export · 20 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
+| `src/llm/step/mod.rs` | src | s | 1 mod · 7 re-export · 21 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
 | `src/llm/step/peer_wait.rs` | src | m | 1 struct · 3 fn · 6 crate-vis | PeerResultWaitBinding | Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile |
 | `src/llm/step/public.rs` | src | L | 1 struct · 8 fn · 6 re-export · 4 crate-vis | RunStepCaller | Durable model steps a caller submits over the engine's existing step executor: the vault owner on their… |
 | `src/llm/step/public/parked.rs` | src | s | 1 struct · 1 fn | ParkedStep | The owner's model steps parked on their offer's health, for the host that resumes them after a restart… |
@@ -4743,7 +4754,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/step/step_only.rs` | src | s | 6 crate-vis | — | Transaction-composable C9 waits that suspend one step, never its attempt |
 | `src/llm/step/step_only_tests.rs` | test | m | — | — | STEP-ONLY waits reuse C9 while leaving the queue and run-tree runnable |
 | `src/llm/step/step_result.rs` | src | s | 4 crate-vis | — | Shared model-step result conversion: a durable outcome to its saved result |
-| `src/llm/step/step_state.rs` | src | m | 20 crate-vis | — | Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side… |
+| `src/llm/step/step_state.rs` | src | m | 22 crate-vis | — | Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side… |
 | `src/llm/step/submission_custody.rs` | src | s | 8 crate-vis | — | A public model-step submission's kept copies under body custody (FIX 9929) |
 | `src/llm/step/tests.rs` | test | XL | — | — | — |
 | `src/llm/step/trap.rs` | src | m | 6 fn · 15 crate-vis | — | Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions |
@@ -6685,7 +6696,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/audit/setting_keys.rs` | src | s | — | — | The seal audit's owner Setting keys (DESIGN 15-setting-primitive): rows the setting catalogue reads from… |
 | `src/self_heal/blocked_reports.rs` | src | m | 1 fn · 17 crate-vis | — | Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418) |
 | `src/self_heal/blocked_reports/checkpoint.rs` | src | s | 1 crate-vis | — | Canonical capture owner witnesses, carried under each key owner's compartment |
-| `src/self_heal/blocked_reports/source.rs` | src | m | 25 crate-vis | — | A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX… |
+| `src/self_heal/blocked_reports/source.rs` | src | m | 26 crate-vis | — | A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX… |
 | `src/self_heal/blocked_reports/source/ownership.rs` | src | m | 11 crate-vis | — | One durable capture's owner witnesses (FIX 6734), keyed apart from the capture's bytes so an erase still… |
 | `src/self_heal/blocked_reports/source/receipts.rs` | src | s | 1 crate-vis | — | Receipt capture and its final reporter witness share the native filing writer |
 | `src/self_heal/blocked_reports/source/response.rs` | src | s | 4 crate-vis | — | A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and… |
@@ -8447,10 +8458,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/device_succession_fold.rs` | src | s | 1 fn | — | A retired device's successor in a fold, for the integration tests of the owner-proof rule (row… |
 | `src/test_doors/disclosure_word_sources.rs` | src | s | 9 fn | — | Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the general disclosure clamp, as a… |
 | `src/test_doors/do_not_contact_subject_reads.rs` | src | s | 5 fn | — | Door for `tests/do_not_contact_subject_reads.rs` (L6-22, ARCH-0057 H174 party-key index): the PERSONs the… |
+| `src/test_doors/dreamer_answer_schema.rs` | src | m | 4 struct · 25 fn · 1 re-export | AnswerSchemaEventView, PairRowView, ReceiptView, WindowView | Door for `tests/dreamer_answer_schema_switch.rs` (HOUSE-SCHEMA-SWITCH): the answer-schema switch in force… |
+| `src/test_doors/dreamer_answer_schema/check_run.rs` | src | s | 5 fn | — | Running the night's check on a scripted house (HOUSE-SCHEMA-CHECK), for… |
 | `src/test_doors/dreamer_attempt_binding.rs` | src | s | 1 struct · 7 fn · 4 const | ObservedStrengthClaim | Admitted strength and conflict-settlement attempts for bound job clients |
 | `src/test_doors/dreamer_context_refusal.rs` | src | s | 1 fn | — | Doors for `tests/dreamer_context_refusal_settles.rs` (a Dreamer step the provider refuses for its context… |
 | `src/test_doors/dreamer_exclusion_forgets.rs` | src | s | 1 fn | — | Doors for `tests/setting_dreamer_1.rs`: the sets the `dreamer.excluded_conversations` hook asked the… |
 | `src/test_doors/dreamer_extraction_room.rs` | src | m | 1 struct · 4 fn | RoomSliceCall | Door for `tests/dreamer_extraction_room.rs` (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): one real… |
+| `src/test_doors/dreamer_extraction_schema.rs` | src | s | 4 fn | — | Door for `tests/dreamer_extraction_answer_schema.rs` (HOUSE-SCHEMA): the shipped TURN extraction answer… |
 | `src/test_doors/dreamer_partition_window.rs` | src | m | 1 struct · 4 fn | WindowFinish | Door for `tests/dreamer_window_finish_order.rs` (FIX 21927): one real Meso wake window whose second slot can… |
 | `src/test_doors/dreamer_promotion_seconds.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | PendingStamps, PromotionRun | Doors for `tests/dreamer_promotion_seconds.rs` (UC-03 PR 0a; FIX GATE-ROW-CREATED-AT-MILLISECONDS… |
 | `src/test_doors/dreamer_signed_claim_recall.rs` | src | s | 1 fn | — | Door for `tests/dreamer_signed_claim_recall.rs` (FIX row DREAMER-MESO-CLAIM-RECALL-MISS): the Dreamer's Auto… |
@@ -8583,7 +8597,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 404 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 406 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -9866,7 +9880,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/disclosure_summary_word_sources.rs` | test | m | — | — | The general disclosure clamp follows a summary's words to their sources (census L5-13; ILDF2 P7, one-1592… |
 | `tests/do_not_contact_subject_reads.rs` | test | s | — | — | L6-22 (ARCH-0057 H174: "A synced multi-valued party-key index is a follow-up, so the scan reads every PERSON… |
 | `tests/doors_read_standing_heads.rs` | test | L | — | — | Red/green tests for FOREIGN-ANCHOR PR 2 (K2 of Fable design pass 29): the doors read the heads a machine… |
+| `tests/dreamer_answer_schema_check.rs` | test | L | — | — | HOUSE-SCHEMA-CHECK stage 2: the nightly answer-schema check |
+| `tests/dreamer_answer_schema_switch.rs` | test | m | — | — | HOUSE-SCHEMA-SWITCH stage 1: the answer-schema switch the owner controls and the engine can pause |
 | `tests/dreamer_context_refusal_settles.rs` | test | m | — | — | A Dreamer step the provider refuses for its context window settles once (Engine 21 Nov 07:38): the try ends… |
+| `tests/dreamer_extraction_answer_schema.rs` | test | m | — | — | HOUSE-SCHEMA: the TURN extraction answer schema admits what the prompt's contract describes and refuses what… |
 | `tests/dreamer_extraction_parse_retry.rs` | test | m | — | — | [EXTRACTION-JSON-PARSE-RETRY-PROMPT-LOOKUP-OFF]: one Micro wake over one witnessed TURN |
 | `tests/dreamer_extraction_room.rs` | test | m | — | — | FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW: the main claim extraction call's input is sized by the… |
 | `tests/dreamer_meso_width.rs` | test | s | — | — | FIX 21927 P2: the lead's DREAMER-WIDTH ruling (13 Nov 2026) lets clean Generated Dreamer priors run wide… |

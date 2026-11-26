@@ -20262,7 +20262,7 @@
      "purpose": "The live fork (FIX 4465 C): a run's live request, captured at the breakpoint that seals a self-written…",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 18,
       "struct": 3
@@ -21217,7 +21217,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 77,
+      "crate-vis": 78,
       "mod": 8,
       "re-export": 39
      }
@@ -30644,7 +30644,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/derived_rows.rs",
@@ -32487,6 +32487,113 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema.rs",
+     "purpose": "The answer-schema switch (HOUSE-SCHEMA-SWITCH): the owner's setting `dreamer.extraction.answer_schema`, the…",
+     "surface": {
+      "crate-vis": 22,
+      "mod": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/capture.rs",
+     "purpose": "One TURN extraction call kept for the nightly answer-schema check (HOUSE-SCHEMA-CHECK): the request whole…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnswerSchemaHouse"
+     ],
+     "path": "src/dreamer_consolidation/answer_schema/check.rs",
+     "purpose": "The nightly answer-schema check (HOUSE-SCHEMA-CHECK): one Macro child of the night's recipe attempt, drawn…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/draw.rs",
+     "purpose": "The answer-schema check's nightly draw (HOUSE-SCHEMA-CHECK): up to eight of the night's captured TURN calls…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/overrun.rs",
+     "purpose": "The answer-schema check's over-budget latch (HOUSE-SCHEMA-CHECK): one row per night whose extraction ran…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/pair.rs",
+     "purpose": "One shadow pair of the nightly answer-schema check (HOUSE-SCHEMA-CHECK): the two arms re-sent per drawn…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/receipt.rs",
+     "purpose": "One night's answer-schema check receipt (HOUSE-SCHEMA-CHECK): the drawn selection, written before the first…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/rule.rs",
+     "purpose": "The answer-schema check's suspension rules (HOUSE-SCHEMA-CHECK), as pure functions: the grammar rule over…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/send.rs",
+     "purpose": "One answer-schema check's house calls (HOUSE-SCHEMA-CHECK): each arm and each judge turn as a durable step…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/answer_schema/spend.rs",
+     "purpose": "What one answer-schema check's calls spent (HOUSE-SCHEMA-CHECK): the compaction check's `Spend` shape, units…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/assembly.rs",
      "purpose": "Store-backed mechanical inputs for the consolidation executor",
      "surface": {
@@ -32715,9 +32822,19 @@
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
       "const": 1,
-      "crate-vis": 25,
+      "crate-vis": 28,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/answer_schema_param.rs",
+     "purpose": "The TURN extraction answer's JSON Schema (HOUSE-SCHEMA): the own-server body field that carries it, the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -32957,7 +33074,7 @@
      "path": "src/dreamer_consolidation/extraction_step.rs",
      "purpose": "One bound generative extraction step over served TURN spans",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -33068,8 +33185,8 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 53,
-      "mod": 5,
+      "crate-vis": 54,
+      "mod": 6,
       "re-export": 27
      }
     },
@@ -55036,7 +55153,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 12,
       "re-export": 34
      }
@@ -55905,7 +56022,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
       "re-export": 7
      }
@@ -56120,7 +56237,7 @@
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -78236,7 +78353,7 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -98508,6 +98625,33 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnswerSchemaEventView",
+      "PairRowView",
+      "ReceiptView",
+      "WindowView"
+     ],
+     "path": "src/test_doors/dreamer_answer_schema.rs",
+     "purpose": "Door for `tests/dreamer_answer_schema_switch.rs` (HOUSE-SCHEMA-SWITCH): the answer-schema switch in force…",
+     "surface": {
+      "fn": 25,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/dreamer_answer_schema/check_run.rs",
+     "purpose": "Running the night's check on a scripted house (HOUSE-SCHEMA-CHECK), for…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -98552,6 +98696,16 @@
      "surface": {
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/dreamer_extraction_schema.rs",
+     "purpose": "Door for `tests/dreamer_extraction_answer_schema.rs` (HOUSE-SCHEMA): the shipped TURN extraction answer…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -100031,7 +100185,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 404,
+      "mod": 406,
       "re-export": 3
      }
     },
@@ -113917,11 +114071,35 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_answer_schema_check.rs",
+     "purpose": "HOUSE-SCHEMA-CHECK stage 2: the nightly answer-schema check",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_answer_schema_switch.rs",
+     "purpose": "HOUSE-SCHEMA-SWITCH stage 1: the answer-schema switch the owner controls and the engine can pause",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/dreamer_context_refusal_settles.rs",
      "purpose": "A Dreamer step the provider refuses for its context window settles once (Engine 21 Nov 07:38): the try ends…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_extraction_answer_schema.rs",
+     "purpose": "HOUSE-SCHEMA: the TURN extraction answer schema admits what the prompt's contract describes and refuses what…",
      "surface": {}
     },
     {
@@ -123467,7 +123645,7 @@
     },
     "dreamer_consolidation": {
      "entry": "crates/oneiron/src/dreamer_consolidation/mod.rs",
-     "files": 203,
+     "files": 214,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125040,7 +125218,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 416,
+     "files": 419,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125307,8 +125485,8 @@
    },
    "over_bar": 277,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8619,
-   "test_files": 2321
+   "source_files": 8633,
+   "test_files": 2324
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -164620,6 +164798,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/answer_schema_check.rs",
+     "purpose": "The host's loan to the Dreamer's nightly answer-schema check (HOUSE-SCHEMA-CHECK): the extraction role's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/dreamer/claim_authoring.rs",
      "purpose": "The claim-authoring campaign a Dreamer pass binds (OF-366 R2, FIX 897): the root its consolidation…",
      "surface": {
@@ -183802,7 +183990,7 @@
      "path": "src/models/ladder/replay_prompt.rs",
      "purpose": "A step replay's call (FIX 6255): the one replay path",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -193202,7 +193390,7 @@
     },
     "ai_host": {
      "entry": "crates/oneiron-server/src/ai_host/mod.rs",
-     "files": 151,
+     "files": 152,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -194127,7 +194315,7 @@
    },
    "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2212,
+   "source_files": 2213,
    "test_files": 618
   },
   "oneiron-setting-contract": {
@@ -212045,12 +212233,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DigestAnswerSchema",
+      "DigestAnswerSchemaItem"
+     ],
+     "path": "src/dreamer_consolidation/answer_schema.rs",
+     "purpose": "The answer-schema line of the morning report (HOUSE-SCHEMA-SWITCH): one item per answer-schema event no…",
+     "surface": {
+      "const": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "—",
      "surface": {
-      "mod": 2,
-      "re-export": 6
+      "mod": 3,
+      "re-export": 10
      }
     },
     {
@@ -223449,7 +223652,7 @@
     },
     "dreamer_consolidation": {
      "entry": "crates/oneiron-verb-wire/src/dreamer_consolidation/mod.rs",
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -224107,7 +224310,7 @@
    },
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
-   "source_files": 980,
+   "source_files": 981,
    "test_files": 6
   },
   "oneiron-vm-outbox": {
