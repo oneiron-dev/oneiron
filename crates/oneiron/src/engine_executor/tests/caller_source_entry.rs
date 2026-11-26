@@ -77,14 +77,19 @@ impl AgentVerbDoor for TaskCreateDoor {
             hook_notice: None,
             reason_codes: Vec::new(),
         };
-        let input: TaskCreateRequest =
-            serde_json::from_value(call.input.clone()).map_err(|_| refused())?;
+        let Ok(input) = serde_json::from_value::<TaskCreateRequest>(call.input.clone()) else {
+            return Ok(Err(refused()));
+        };
         let memory = self
             .vault
             .memory(self.actor.entity_ref(), self.actor.actor_class())
             .with_host_origin(origin.clone());
-        let receipt = crate::task_verb::sdk::tasks_create(&memory, input).map_err(|_| refused())?;
-        let output = serde_json::to_value(receipt).map_err(|_| refused())?;
+        let Ok(receipt) = crate::task_verb::sdk::tasks_create(&memory, input) else {
+            return Ok(Err(refused()));
+        };
+        let Ok(output) = serde_json::to_value(receipt) else {
+            return Ok(Err(refused()));
+        };
         Ok(Ok(AgentVerbAnswer {
             output,
             rows: Some(Vec::new()),
