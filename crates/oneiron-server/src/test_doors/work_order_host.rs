@@ -1,8 +1,8 @@
 //! Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call
 //! through the node client the work-order loop calls machines through. Door for
 //! `tests/issuer_readiness_drain.rs`: whether the worker's pass acts on readiness facts. Door for
-//! `tests/issuer_readiness_scheduled_read.rs`: the worker's scheduled readiness read at a given
-//! time.
+//! `tests/issuer_readiness_scheduled_read.rs`: the worker's scheduled readiness read on a given
+//! clock.
 
 use std::sync::Arc;
 
@@ -32,9 +32,9 @@ pub fn worker_pass_observes(server: &SyncServer) -> bool {
     crate::work_order_host::worker_pass_observes(server)
 }
 
-/// The job worker's scheduled readiness read on `server` at `now_ms`, on the issuer's clock
-/// (FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED; `gpu_host::worker_pass` runs it after each
-/// pass at the pass's time).
-pub fn run_readiness_read_at(server: &Arc<SyncServer>, now_ms: u64) {
-    crate::work_order_host::run_readiness_read(server, now_ms);
+/// The job worker's scheduled readiness read on `server` after a pass begun at `pass_at_ms`,
+/// each ask dated by `clock` (FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED; the worker starts it
+/// after each pass, `gpu_host::worker_tick`).
+pub fn run_readiness_read_at(server: &Arc<SyncServer>, pass_at_ms: u64, clock: &dyn Fn() -> u64) {
+    crate::work_order_host::run_readiness_read(server, pass_at_ms, clock);
 }

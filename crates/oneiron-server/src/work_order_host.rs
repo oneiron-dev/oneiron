@@ -8,6 +8,7 @@
 //! The pass runs on the built job worker (`gpu_host.rs`, OPUS-LE-FLEET's file), on its tick and
 //! on each wake: one worker.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
@@ -478,9 +479,22 @@ pub(crate) struct OrderLoop {
     /// counts them here, so an issuer that restarts opens a new window.
     asks: Mutex<SlotAskWindow>,
     /// The worker's readings of each machine's readiness fact, by its pass and by its scheduled
-    /// read: the last sample, the clear baseline and the last ask of each machine asked in the
-    /// last `ReadinessReads::IDLE_MS` (CG-2 row 9).
+    /// read: the last sample and the clear baseline of each machine read in the last
+    /// `ReadinessReads::IDLE_MS`, and the last ask of each machine the read may ask (CG-2 row 9).
     readiness: Mutex<crate::gpu_execution_node::issuer::guard::ReadinessReads>,
+    /// Whether the worker's scheduled readiness read runs now: one runs at a time.
+    reading: Arc<AtomicBool>,
+}
+
+/// The mark of the worker's scheduled readiness read while it runs
+/// ([`OrderLoop::begin_readiness_read`]). Dropping it, however the read ends, lets the next one
+/// start.
+pub(crate) struct ReadinessReadRunning(Arc<AtomicBool>);
+
+impl Drop for ReadinessReadRunning {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -490,16 +504,16 @@ impl std::fmt::Debug for OrderLoop {
 }
 
 impl OrderLoop {
-    /// The worker's `Node` ask of `machine` through `nodes` at `now_ms`, by its pass or by its
-    /// scheduled read, acting on the answer's readiness fact
+    /// The worker's `Node` ask of `machine` through `nodes`, sent at `now_ms`, by its pass or by
+    /// its scheduled read, acting on the answer's readiness fact
     /// (`issuer::guard::ReadinessReads::observe`). The issuer's guard row is read before the
     /// request is sent, so a check the answer shows as newer than an earlier one ran after that
     /// read; the node's own drain comes from the same answer. An answer that repeats the sample
     /// this loop last acted on changes nothing and takes no write. A reading whose store call
-    /// failed is acted on again at the next answer. An ask that brings no readiness fact is
-    /// recorded as well (`ReadinessReads::asked`), so the scheduled read waits a period before it
-    /// asks that machine again. Only the worker asks this way, one ask at a time, so the readings'
-    /// lock is never contended; it is not held while the node answers.
+    /// failed is acted on again at the next answer. Every ask is recorded at `now_ms`, whatever
+    /// came back (`ReadinessReads::asked`), so the scheduled read counts the machine's period from
+    /// it. The readings' lock is not held while the node answers, so a pass and the scheduled
+    /// read that runs beside it wait on each other only for a reading's own writes.
     pub(crate) fn ask_node_observing(
         &self,
         vault: &oneiron::Vault,
@@ -516,6 +530,7 @@ impl OrderLoop {
             .readiness
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        reads.asked(machine, now_ms);
         if let Ok(JobAnswer::Node(node)) = &answer
             && let Some(readiness) = &node.readiness
         {
@@ -527,19 +542,37 @@ impl OrderLoop {
                 readiness,
                 now_ms,
             );
-        } else {
-            reads.asked(machine, now_ms);
         }
         answer
     }
 
-    /// Whether `machine` is due the scheduled read at `now_ms`, `every_ms` after its last ask
-    /// (`issuer::guard::ReadinessReads::due`).
-    fn readiness_due(&self, machine: EntityId, now_ms: u64, every_ms: u64) -> bool {
+    /// Whether `machine` is due the scheduled read after the pass begun at `pass_at_ms`, at
+    /// `now_ms`, `every_ms` after its last ask (`issuer::guard::ReadinessReads::due`).
+    fn readiness_due(
+        &self,
+        machine: EntityId,
+        now_ms: u64,
+        every_ms: u64,
+        pass_at_ms: u64,
+    ) -> bool {
         self.readiness
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .due(machine, now_ms, every_ms)
+            .due(machine, now_ms, every_ms, pass_at_ms)
+    }
+
+    /// Keeps the last ask of `machines` alone (`issuer::guard::ReadinessReads::keep_asked`).
+    fn keep_asked(&self, machines: &[EntityId]) {
+        self.readiness
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keep_asked(machines);
+    }
+
+    /// Marks the worker's scheduled readiness read as running, or `None` while one runs.
+    pub(crate) fn begin_readiness_read(&self) -> Option<ReadinessReadRunning> {
+        (!self.reading.swap(true, Ordering::AcqRel))
+            .then(|| ReadinessReadRunning(Arc::clone(&self.reading)))
     }
 
     /// Wakes the worker for a pass now: a new order, a cancel, an end.
@@ -671,21 +704,28 @@ pub(crate) fn run_order_pass(server: &Arc<SyncServer>, now_ms: u64) {
     }
 }
 
-/// The job worker's scheduled readiness read at `now_ms` (FIX
-/// CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED). The pass asks only the machines an open order
-/// wants, so an idle machine would keep a drain, and its run of failed checks would reach no
-/// owner, until demand came back. This asks each machine the vault's grants admit on the job
-/// protocol once its `jobs.readiness.every_secs` (default 900 s) has passed since the worker last
-/// asked it, and acts on its readiness fact as the pass does
+/// The job worker's scheduled readiness read after its pass begun at `pass_at_ms`, on the
+/// issuer's clock `clock` (FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED). The pass asks only the
+/// machines an open order wants, so an idle machine would keep a drain, and its run of failed
+/// checks would reach no owner, until demand came back. This asks each machine the vault's
+/// grants admit on the job protocol once its `jobs.readiness.every_secs` (default 900 s) has
+/// passed since the worker last asked it, and acts on its readiness fact as the pass does
 /// ([`OrderLoop::ask_node_observing`]): a passed check clears the issuer's drain, and a run of
-/// failed checks reaches the owner as the run's one ask (pass 34, 7.3 and 16, practice 6). A
-/// machine the pass asked at `now_ms` is not asked again.
+/// failed checks reaches the owner as the run's one ask (pass 34, 7.3 and 16, practice 6).
+/// - Each ask is dated by `clock` when it is sent, so a slow answer before it delays no
+///   machine's period (REVIEW-10544 round 1 P1).
+/// - A machine asked since `pass_at_ms`, by the pass or by a later one, is not asked again.
+/// - The last asks of machines the grants no longer admit are dropped.
 ///
 /// Only the vault's issuer of vault machine jobs reads, as only its pass acts on what it reads
-/// ([`ServerOrderHost::observing`]). The read runs after the pass and the steps, off the pass's
-/// lock, so neither placement nor a door's pass waits on an idle machine; each ask is bounded by
+/// ([`ServerOrderHost::observing`]). The worker runs it beside its passes and never waits for it
+/// (`gpu_host::spawn_gpu_job_steps`), off the pass's lock; each ask is bounded by
 /// `[gpu_jobs.vault_machine] call_timeout_secs`. It writes only what a reading writes.
-pub(crate) fn run_readiness_read(server: &Arc<SyncServer>, now_ms: u64) {
+pub(crate) fn run_readiness_read(
+    server: &Arc<SyncServer>,
+    pass_at_ms: u64,
+    clock: &dyn Fn() -> u64,
+) {
     if not_the_issuer(server, VAULT_MACHINE_BACKEND).is_err() {
         return;
     }
@@ -697,6 +737,7 @@ pub(crate) fn run_readiness_read(server: &Arc<SyncServer>, now_ms: u64) {
         }
     };
     let orders = server.gpu_jobs.orders();
+    orders.keep_asked(&machines);
     let nodes = orders.nodes(server);
     for machine in machines {
         let every_secs = match server.vault.machine_policy(machine, &[], &[]) {
@@ -706,7 +747,9 @@ pub(crate) fn run_readiness_read(server: &Arc<SyncServer>, now_ms: u64) {
                 continue;
             }
         };
-        if !orders.readiness_due(machine, now_ms, every_secs.saturating_mul(1_000)) {
+        let now_ms = clock();
+        let every_ms = every_secs.saturating_mul(1_000);
+        if !orders.readiness_due(machine, now_ms, every_ms, pass_at_ms) {
             continue;
         }
         let asked = orders.ask_node_observing(&server.vault, nodes.as_ref(), machine, now_ms);

@@ -1,15 +1,19 @@
 //! CG-2 row 9's scheduled read (owner COMPUTE-CG = AA, 25 Nov 22:56: "A drained machine clears
 //! itself once its readiness check passes; you hear only when the check keeps failing"; FIX
 //! CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED). The job worker's pass asks `Node` only of the
-//! machines an open order wants. After each pass the worker also asks each machine the vault's
-//! grants admit on the job protocol once that machine's `jobs.readiness.every_secs` has passed
-//! since its last ask, and acts on the answer's readiness fact as the pass does. So an idle
-//! machine whose check keeps failing reaches the owner with no order open (pass 34, 7.3 and 16,
-//! practice 6).
+//! machines an open order wants. After each pass the worker also starts a read, beside its next
+//! passes, that asks each machine the vault's grants admit on the job protocol once that
+//! machine's `jobs.readiness.every_secs` has passed since its last ask, and acts on the answer's
+//! readiness fact as the pass does. So an idle machine whose check keeps failing reaches the
+//! owner with no order open (pass 34, 7.3 and 16, practice 6). REVIEW-10544 round 1: the
+//! enabled issuer's worker starts with no job work; the worker never waits for the read, and
+//! one read runs at a time; each ask is dated when it is sent; a period longer than a day
+//! outlives the readings' one-day drop.
 //!
-//! A, B and C share one home. A is the vault's issuer of vault machine jobs, and C names A as
-//! the issuer too. A's vault grants B the job protocol and C the status protocol alone. Every
-//! node call A's worker makes is answered by a script that counts the asks per machine.
+//! A, B and C share one home. A is the vault's issuer of vault machine jobs with the section
+//! enabled, and C names A as the issuer too. A's vault grants B the job protocol and C the
+//! status protocol alone. Every node call A's worker makes is answered by a script that counts
+//! the asks per machine.
 //!
 //! Run on the fleet, not on a workstation:
 //! ```sh
@@ -24,7 +28,9 @@ mod engine_stack;
 mod mesh_machines;
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::time::Duration;
 
 use engine_stack::on_engine_stack;
 use mesh_machines::{Machines, TestResult, at};
@@ -41,7 +47,9 @@ use oneiron_server::gpu_execution_node::wire::{
     NodeAnswer, NodeReadiness, ReadinessCheck, ReadinessResult, ReadinessState,
 };
 use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::gpu_backend::{run_gpu_job_worker_pass, use_job_nodes};
+use oneiron_server::test_doors::gpu_backend::{
+    gpu_job_worker_starts, run_gpu_job_worker_tick, use_job_nodes,
+};
 use oneiron_server::test_doors::work_order_host::run_readiness_read_at;
 use serde_json::{Value, json};
 
@@ -56,6 +64,8 @@ const PERIOD_MS: u64 = 900_000;
 /// The node's newest check, on its own clock.
 const CHECKED_AT_MS: u64 = 1_795_690_000_000;
 const READINESS_EVERY_SECS: &str = "jobs.readiness.every_secs";
+/// How long a held answer waits for the test to release it.
+const HOLD_LIMIT: Duration = Duration::from_secs(30);
 
 /// What the script answers a machine's `Node` ask.
 #[derive(Clone)]
@@ -66,11 +76,25 @@ enum Script {
     Unreachable,
 }
 
+/// One machine's answer held until the test releases it.
+struct Hold {
+    machine: EntityId,
+    asked: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+}
+
 /// The machines A's worker calls, by script. A machine with no script does not answer.
 #[derive(Default)]
 struct ScriptedMachines {
     scripts: Mutex<BTreeMap<EntityId, Script>>,
     asks: Mutex<Vec<EntityId>>,
+    /// The issuer's clock as the scheduled read dates its asks in a test that passes it.
+    clock_ms: AtomicU64,
+    /// How long the next ask takes, on that clock.
+    next_ask_takes_ms: AtomicU64,
+    hold: Mutex<Option<Hold>>,
+    /// A held answer was never released within `HOLD_LIMIT`.
+    hold_expired: AtomicBool,
 }
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -92,9 +116,30 @@ impl ScriptedMachines {
             .count()
     }
 
-    /// Every `Node` ask so far.
+    /// Every `Node` ask so far, in order.
+    fn asked(&self) -> Vec<EntityId> {
+        locked(&self.asks).clone()
+    }
+
     fn asks(&self) -> usize {
         locked(&self.asks).len()
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.clock_ms.load(Ordering::SeqCst)
+    }
+
+    /// Holds `machine`'s next answer until the test sends on the returned sender; the returned
+    /// receiver hears when that ask arrives.
+    fn hold(&self, machine: EntityId) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (asked, heard) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        *locked(&self.hold) = Some(Hold {
+            machine,
+            asked,
+            release: released,
+        });
+        (heard, release)
     }
 }
 
@@ -105,6 +150,22 @@ impl JobNodeClient for ScriptedMachines {
             "the worker asks an idle machine nothing but Node"
         );
         locked(&self.asks).push(node);
+        let takes = self.next_ask_takes_ms.swap(0, Ordering::SeqCst);
+        self.clock_ms.fetch_add(takes, Ordering::SeqCst);
+        let hold = {
+            let mut hold = locked(&self.hold);
+            if hold.as_ref().is_some_and(|hold| hold.machine == node) {
+                hold.take()
+            } else {
+                None
+            }
+        };
+        if let Some(hold) = hold {
+            hold.asked.send(()).ok();
+            if hold.release.recv_timeout(HOLD_LIMIT).is_err() {
+                self.hold_expired.store(true, Ordering::SeqCst);
+            }
+        }
         let script = locked(&self.scripts)
             .get(&node)
             .cloned()
@@ -191,6 +252,7 @@ async fn issuer_with(script: &Arc<ScriptedMachines>) -> TestResult<Machines> {
         if index != B {
             config.gpu_jobs.vault_machine.issuer = Some(machines[A]);
         }
+        config.gpu_jobs.vault_machine.enabled = index == A;
         config
     })
     .await?;
@@ -203,9 +265,10 @@ async fn issuer_with(script: &Arc<ScriptedMachines>) -> TestResult<Machines> {
     Ok(mesh)
 }
 
-/// A's scheduled read at `now_ms`, off the runtime as the worker runs it.
+/// A's scheduled read after a pass begun at `now_ms`, every ask dated `now_ms`, off the runtime
+/// as the worker runs it.
 fn read_at(server: &Arc<SyncServer>, now_ms: u64) {
-    tokio::task::block_in_place(|| run_readiness_read_at(server, now_ms));
+    tokio::task::block_in_place(|| run_readiness_read_at(server, now_ms, &|| now_ms));
 }
 
 /// The owner sets `jobs.readiness.every_secs` for `machine` on `vault`.
@@ -226,10 +289,11 @@ fn owner_sets_every_secs(vault: &Vault, machine: EntityId, value: Value) -> Test
     Ok(())
 }
 
-/// A machine is due the scheduled read a whole period after the worker last asked it, whether
-/// that ask brought a reading or none. It is never asked twice at one time, so a period of 0
-/// (`every_secs = 0`) means every pass, and it is due at once when the issuer's clock steps back
-/// past its last ask.
+/// A machine is due the scheduled read a whole period after the worker last asked it, whatever
+/// that ask brought. A machine asked since the pass began is not due, whatever the period, so a
+/// period of 0 asks once a pass. It is due at once when the issuer's clock steps back past its
+/// last ask. A last ask is kept past the readings' one-day drop, so a period of two days counts
+/// in full, until the grants no longer admit the machine.
 #[test]
 fn a_machine_is_due_the_scheduled_read_a_period_after_its_last_ask() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -237,49 +301,61 @@ fn a_machine_is_due_the_scheduled_read_a_period_after_its_last_ask() -> TestResu
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Vault::open(dir.path(), config).map_err(at("open the vault"))?;
-    let read = EntityId::now();
-    let unanswered = EntityId::now();
+    let machine = EntityId::now();
     let mut reads = ReadinessReads::default();
+    let due = |reads: &ReadinessReads, now: u64, every: u64| reads.due(machine, now, every, now);
     assert!(
-        reads.due(read, READ_AT_MS, PERIOD_MS),
+        due(&reads, READ_AT_MS, PERIOD_MS),
         "a machine never asked is due"
     );
 
+    reads.asked(machine, READ_AT_MS);
+    assert!(
+        !reads.due(machine, READ_AT_MS, PERIOD_MS, READ_AT_MS),
+        "asked since the pass began: not due"
+    );
+    assert!(
+        !reads.due(machine, READ_AT_MS + PERIOD_MS, 0, READ_AT_MS),
+        "asked since the pass began: not due, whatever the period"
+    );
+    assert!(!due(&reads, READ_AT_MS + PERIOD_MS - 1, PERIOD_MS));
+    assert!(due(&reads, READ_AT_MS + PERIOD_MS, PERIOD_MS));
+    assert!(
+        due(&reads, READ_AT_MS + 1, 0),
+        "a period of 0: due at the next pass"
+    );
+    assert!(
+        due(&reads, READ_AT_MS - 1, PERIOD_MS),
+        "the issuer's clock stepped back past the ask"
+    );
+
+    let two_days = 2 * ReadinessReads::IDLE_MS;
+    let day_after = READ_AT_MS + ReadinessReads::IDLE_MS + 3_600_000;
     let fact = passed(CHECKED_AT_MS);
-    reads.observe(&vault, read, None, None, &fact, READ_AT_MS);
-    reads.asked(unanswered, READ_AT_MS);
-    for (machine, what) in [(read, "a read"), (unanswered, "an ask with no reading")] {
-        assert!(
-            !reads.due(machine, READ_AT_MS, PERIOD_MS),
-            "{what} at this time: not due"
-        );
-        assert!(
-            !reads.due(machine, READ_AT_MS + PERIOD_MS - 1, PERIOD_MS),
-            "{what}: not due inside the period"
-        );
-        assert!(
-            reads.due(machine, READ_AT_MS + PERIOD_MS, PERIOD_MS),
-            "{what}: due a period later"
-        );
-        assert!(
-            !reads.due(machine, READ_AT_MS, 0),
-            "{what}: a period of 0 never asks twice at one time"
-        );
-        assert!(
-            reads.due(machine, READ_AT_MS + 1, 0),
-            "{what}: a period of 0 asks at every later pass"
-        );
-        assert!(
-            reads.due(machine, READ_AT_MS - 1, PERIOD_MS),
-            "{what}: due once the issuer's clock steps back past it"
-        );
-    }
+    reads.observe(&vault, EntityId::now(), None, None, &fact, day_after);
+    assert!(
+        !due(&reads, day_after, two_days),
+        "a two-day period outlives the readings' one-day drop"
+    );
+    assert!(due(&reads, READ_AT_MS + two_days, two_days));
+
+    reads.keep_asked(&[machine]);
+    assert!(
+        !due(&reads, day_after, two_days),
+        "a granted machine's ask is kept"
+    );
+    reads.keep_asked(&[]);
+    assert!(
+        due(&reads, day_after, two_days),
+        "an ask of a machine the grants no longer admit is dropped"
+    );
     Ok(())
 }
 
-/// An idle machine whose check keeps failing: no order wants it, so no pass asks it. The worker's
-/// scheduled read asks it and queues the owner's one ask for the run. C, which holds the status
-/// grant alone, is never asked. The next worker pass, inside the period, asks nothing.
+/// An idle machine whose check keeps failing: no order wants it, so no pass asks it. A tick of
+/// the worker starts the scheduled read, which asks B and queues the owner's one ask for the
+/// run. C, which holds the status grant alone, is never asked. The next tick's read, inside the
+/// period, asks nothing. The enabled issuer's worker starts with no offer, job or order.
 async fn idle_failing_machine_reaches_the_owner() -> TestResult {
     let script = Arc::new(ScriptedMachines::default());
     let mesh = issuer_with(&script).await?;
@@ -291,7 +367,10 @@ async fn idle_failing_machine_reaches_the_owner() -> TestResult {
     script.script(b, Script::Answers(Some(run.clone())));
     script.script(c, Script::Answers(Some(run.clone())));
 
-    tokio::task::block_in_place(|| run_gpu_job_worker_pass(&server));
+    let read = run_gpu_job_worker_tick(&server)
+        .await
+        .ok_or("the tick starts the scheduled read")?;
+    read.await?;
     assert_eq!(script.asks_of(b), 1, "the worker asks the idle machine B");
     assert_eq!(script.asks_of(c), 0, "C holds no job grant: never asked");
     let streak = run
@@ -311,24 +390,76 @@ async fn idle_failing_machine_reaches_the_owner() -> TestResult {
         "the worker's read queued the run's one ask: {escalation:?}"
     );
 
-    tokio::task::block_in_place(|| run_gpu_job_worker_pass(&server));
+    let read = run_gpu_job_worker_tick(&server)
+        .await
+        .ok_or("the next tick starts a read too")?;
+    read.await?;
     assert_eq!(
         script.asks(),
         1,
-        "inside the period the next pass asks nothing"
+        "inside the period the next read asks nothing"
+    );
+    assert!(
+        gpu_job_worker_starts(&server),
+        "the enabled issuer's worker starts with no offer, job or order"
     );
     mesh.stop().await;
     Ok(())
 }
 
 #[test]
-fn the_worker_reads_an_idle_granted_machine_and_its_failing_run_reaches_the_owner() -> TestResult {
+fn the_issuers_worker_reads_an_idle_machine_and_its_failing_run_reaches_the_owner() -> TestResult {
     on_engine_stack(idle_failing_machine_reaches_the_owner)
 }
 
+/// The worker never waits for its scheduled read: while B's answer is held, the tick that
+/// started the read has returned, and the next tick runs its pass and starts no second read.
+/// Once the read ends, the next tick starts one again.
+async fn read_runs_beside_the_worker_one_at_a_time() -> TestResult {
+    let script = Arc::new(ScriptedMachines::default());
+    let mesh = issuer_with(&script).await?;
+    let server = Arc::clone(&mesh.machine(A).served.server);
+    let b = mesh.machine(B).device.machine;
+    script.script(b, Script::Answers(Some(passed(CHECKED_AT_MS))));
+    let (heard, release) = script.hold(b);
+
+    let read = run_gpu_job_worker_tick(&server)
+        .await
+        .ok_or("the tick starts the scheduled read")?;
+    tokio::task::block_in_place(|| heard.recv_timeout(HOLD_LIMIT))
+        .map_err(at("the read asks B"))?;
+    assert!(
+        run_gpu_job_worker_tick(&server).await.is_none(),
+        "the next tick starts no second read while one runs"
+    );
+    release.send(()).map_err(at("release B's answer"))?;
+    read.await?;
+    assert!(
+        !script.hold_expired.load(Ordering::SeqCst),
+        "the tick returned while B's answer was held"
+    );
+    assert_eq!(script.asks_of(b), 1);
+
+    let read = run_gpu_job_worker_tick(&server)
+        .await
+        .ok_or("the read ended: the next tick starts one")?;
+    read.await?;
+    assert_eq!(
+        script.asks_of(b),
+        1,
+        "inside the period B is not asked again"
+    );
+    mesh.stop().await;
+    Ok(())
+}
+
+#[test]
+fn the_worker_never_waits_for_its_readiness_read_and_runs_one_at_a_time() -> TestResult {
+    on_engine_stack(read_runs_beside_the_worker_one_at_a_time)
+}
+
 /// The scheduled read asks B at most once per B's `jobs.readiness.every_secs`, counted from the
-/// worker's last ask of it: 900 s by default, then the owner's 60 s for B, then 0 (every pass,
-/// never twice at one time).
+/// worker's last ask of it: 900 s by default, then the owner's 60 s for B, then 0 (once a pass).
 async fn machine_is_asked_once_a_period() -> TestResult {
     let script = Arc::new(ScriptedMachines::default());
     let mesh = issuer_with(&script).await?;
@@ -362,13 +493,13 @@ async fn machine_is_asked_once_a_period() -> TestResult {
     assert_eq!(
         script.asks_of(b),
         3,
-        "a period of 0 never asks twice at one time"
+        "a period of 0 asks no machine twice for one pass"
     );
     read_at(&server, last + 1);
     assert_eq!(
         script.asks_of(b),
         4,
-        "a period of 0 asks at every later read"
+        "a period of 0 asks at every later pass"
     );
     mesh.stop().await;
     Ok(())
@@ -377,6 +508,52 @@ async fn machine_is_asked_once_a_period() -> TestResult {
 #[test]
 fn the_scheduled_read_asks_a_machine_again_only_after_its_every_secs() -> TestResult {
     on_engine_stack(machine_is_asked_once_a_period)
+}
+
+/// Each ask is dated when it is sent. The read's first ask takes 70 s; the machine asked after
+/// it is dated 70 s later than the pass, so with a 60 s period it is not due again 100 s after
+/// the pass, while the first one is.
+async fn asks_are_dated_when_sent() -> TestResult {
+    let script = Arc::new(ScriptedMachines::default());
+    let mesh = issuer_with(&script).await?;
+    mesh.grant(A, C, &[JOB_ALPN])?;
+    let server = Arc::clone(&mesh.machine(A).served.server);
+    let vault = Arc::clone(&mesh.machine(A).device.vault);
+    for index in [B, C] {
+        let machine = mesh.machine(index).device.machine;
+        script.script(machine, Script::Answers(Some(passed(CHECKED_AT_MS))));
+        owner_sets_every_secs(&vault, machine, json!(60))?;
+    }
+    let clock = || script.now_ms();
+
+    script.clock_ms.store(READ_AT_MS, Ordering::SeqCst);
+    script.next_ask_takes_ms.store(70_000, Ordering::SeqCst);
+    tokio::task::block_in_place(|| run_readiness_read_at(&server, READ_AT_MS, &clock));
+    let order = script.asked();
+    let [first, second] = order.as_slice() else {
+        return Err(format!("FIXTURE: the first read asks B and C once each: {order:?}").into());
+    };
+
+    let later = READ_AT_MS + 100_000;
+    script.clock_ms.store(later, Ordering::SeqCst);
+    tokio::task::block_in_place(|| run_readiness_read_at(&server, later, &clock));
+    assert_eq!(
+        script.asks_of(*first),
+        2,
+        "asked at the pass, 100 s ago: due"
+    );
+    assert_eq!(
+        script.asks_of(*second),
+        1,
+        "asked 70 s after the pass, 30 s ago: not due"
+    );
+    mesh.stop().await;
+    Ok(())
+}
+
+#[test]
+fn each_ask_is_dated_when_it_is_sent() -> TestResult {
+    on_engine_stack(asks_are_dated_when_sent)
 }
 
 /// A machine that does not answer, or answers with no readiness fact, is asked once a period

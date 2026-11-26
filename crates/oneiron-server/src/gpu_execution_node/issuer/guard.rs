@@ -16,9 +16,10 @@
 //! that answer:
 //! - the job worker's work-order pass, for the candidate machines of open orders. A placement
 //!   preview and the order door's own pass only read the answer;
-//! - the job worker's scheduled read, after each pass, of every machine the vault's grants admit
-//!   on the job protocol that no read asked within its `jobs.readiness.every_secs`, so that an
-//!   idle machine is observed too (FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED).
+//! - the job worker's scheduled read, beside its passes, of every machine the vault's grants
+//!   admit on the job protocol that the worker has not asked within that machine's
+//!   `jobs.readiness.every_secs`, so that an idle machine is observed too (FIX
+//!   CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED).
 //!
 //! The node's own drain belongs to the node: `resume` at the box clears only that one.
 
@@ -171,8 +172,7 @@ struct MachineReads {
     /// on again.
     sample: Option<ReadinessSample>,
     baseline: Option<ClearBaseline>,
-    /// When the issuer last asked this machine for its `Node` answer, on its own clock, whatever
-    /// came back.
+    /// When the issuer last read this machine, on its own clock.
     read_at_ms: u64,
 }
 
@@ -182,9 +182,17 @@ struct MachineReads {
 /// baseline (REVIEW-10518 round 2 P1). A machine not read for that long is dropped. The worker
 /// reads only the vault's own machines, so the entries stay as many as those. A dropped entry,
 /// or one lost to a restart, only delays a clear: the next answer becomes the new baseline.
+///
+/// Apart from those entries it keeps when the worker last asked each machine, which the
+/// scheduled read counts each machine's period from ([`Self::due`]). A machine's last ask is
+/// kept for as long as the scheduled read may ask it, however long its period, and dropped once
+/// the vault's grants no longer admit it ([`Self::keep_asked`]; REVIEW-10544 round 1 P1).
 #[derive(Debug, Default)]
 pub struct ReadinessReads {
     machines: HashMap<EntityId, MachineReads>,
+    /// When the worker last sent each machine a `Node` request, on the issuer's clock, whatever
+    /// came back.
+    asked_at: HashMap<EntityId, u64>,
 }
 
 impl ReadinessReads {
@@ -203,40 +211,34 @@ impl ReadinessReads {
         self.machines.is_empty()
     }
 
-    /// Whether `machine` is due the job worker's scheduled read at `now_ms`: no ask of it is kept,
-    /// its last ask is at least `every_ms` old (at least 1 ms, so an ask at `now_ms` itself is
-    /// never repeated, whatever `jobs.readiness.every_secs` says), or the issuer's clock stepped
-    /// back past that ask.
+    /// Records that the worker sent `machine` a `Node` request at `asked_at_ms`, whatever came
+    /// back: an answer, another answer than `Node`, or none. The scheduled read counts the
+    /// machine's period from it.
+    pub fn asked(&mut self, machine: EntityId, asked_at_ms: u64) {
+        self.asked_at.insert(machine, asked_at_ms);
+    }
+
+    /// Whether `machine` is due the scheduled read that follows the worker's pass begun at
+    /// `pass_at_ms`, at `now_ms`, with the period `every_ms`:
+    /// - never asked: due;
+    /// - last asked after `now_ms` (the issuer's clock stepped back past it): due;
+    /// - asked since `pass_at_ms`, by that pass, by a later one or by this read: not due, so one
+    ///   pass and its read never ask a machine twice, whatever the period;
+    /// - otherwise due once its last ask is at least `every_ms` old.
     #[must_use]
-    pub fn due(&self, machine: EntityId, now_ms: u64, every_ms: u64) -> bool {
-        let Some(reads) = self.machines.get(&machine) else {
+    pub fn due(&self, machine: EntityId, now_ms: u64, every_ms: u64, pass_at_ms: u64) -> bool {
+        let Some(&asked_at_ms) = self.asked_at.get(&machine) else {
             return true;
         };
-        now_ms
-            .checked_sub(reads.read_at_ms)
-            .is_none_or(|age| age >= every_ms.max(1))
+        let Some(age) = now_ms.checked_sub(asked_at_ms) else {
+            return true;
+        };
+        asked_at_ms < pass_at_ms && age >= every_ms
     }
 
-    /// Records an ask of `machine` at `now_ms` that brought no readiness fact to act on: no
-    /// answer, another answer than `Node`, or a node that reports none. The scheduled read then
-    /// waits a whole period before it asks that machine again, as after a read.
-    pub fn asked(&mut self, machine: EntityId, now_ms: u64) {
-        self.entry(machine, now_ms);
-    }
-
-    /// `machine`'s entry, asked at `now_ms`: made when none is kept, after every machine idle
-    /// for [`Self::IDLE_MS`] is dropped.
-    fn entry(&mut self, machine: EntityId, now_ms: u64) -> &mut MachineReads {
-        if !self.machines.contains_key(&machine) {
-            self.drop_idle(now_ms);
-        }
-        let reads = self.machines.entry(machine).or_insert(MachineReads {
-            sample: None,
-            baseline: None,
-            read_at_ms: now_ms,
-        });
-        reads.read_at_ms = now_ms;
-        reads
+    /// Keeps the last ask of `machines` alone: the machines the vault's grants admit now.
+    pub fn keep_asked(&mut self, machines: &[EntityId]) {
+        self.asked_at.retain(|machine, _| machines.contains(machine));
     }
 
     /// Reads `machine`'s readiness fact from one `Node` answer the issuer read at `now_ms`. The
@@ -271,7 +273,15 @@ impl ReadinessReads {
             node_drained: node_drained.is_some(),
             guard: guard_before.cloned(),
         };
-        let reads = self.entry(machine, now_ms);
+        if !self.machines.contains_key(&machine) {
+            self.drop_idle(now_ms);
+        }
+        let reads = self.machines.entry(machine).or_insert(MachineReads {
+            sample: None,
+            baseline: None,
+            read_at_ms: now_ms,
+        });
+        reads.read_at_ms = now_ms;
         if reads.sample.as_ref() == Some(&sample) {
             return None;
         }
