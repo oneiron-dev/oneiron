@@ -230,6 +230,12 @@ impl Recall<'_> {
     }
 }
 
+/// The empty receipt's lead for a recall that searched `query`: session-start's lead, reused
+/// by prompt when `--query` was given (REVIEW-10567 round 2 P1 3).
+pub(super) fn query_lead(query: &str) -> String {
+    format!("From your Oneiron vault, for \"{query}\"")
+}
+
 /// The rule the owner's bar applied, in words, when the recall in `result` asks a receipt
 /// line for an empty answer (`bar.receipt`); `None` when it asks none.
 fn receipt(result: &Value) -> Option<String> {

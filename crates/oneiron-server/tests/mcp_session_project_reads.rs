@@ -17,19 +17,18 @@
 //! not exist there, so this file does not build.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
-//! --all-features --features oneiron/test-support --test mcp_session_project_reads`.
-
-#[path = "support/engine_stack.rs"]
-mod engine_stack;
+//! --all-features --features
+//! oneiron/test-support,oneiron/test-hooks,oneiron-broker/test-support,tokio/test-util --test
+//! mcp_session_project_reads`.
 
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
-use engine_stack::on_engine_stack;
 use oneiron::authority::{
     ActSurface, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
@@ -48,6 +47,39 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// The native stack of every thread this file's tests run on: twice the engine's
+/// (`ENGINE_THREAD_STACK_BYTES`, 32 MiB), as `window_sync_ask_drain.rs` gives the same ask
+/// drain. A dev build overflowed 32 MiB on a runtime thread here (FIX
+/// SESSION-PROJECT-ROOM-CLAIM-TEST-RED).
+const STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// Runs `test` on a multi-thread runtime whose threads have [`STACK_BYTES`], driven from a
+/// thread that has it too, and answers its result. `test` builds its future inside the thread,
+/// so the future need not be `Send`; an error crosses back as its text, and a failed assertion
+/// fails the test with its own message.
+fn on_deep_stack<F, Fut>(test: F) -> TestResult
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = TestResult>,
+{
+    let driver = std::thread::Builder::new().stack_size(STACK_BYTES).spawn(
+        move || -> Result<(), String> {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(STACK_BYTES)
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())?
+                .block_on(test())
+                .map_err(|error| error.to_string())
+        },
+    )?;
+    match driver.join() {
+        Ok(outcome) => Ok(outcome?),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
 
 const MCP_PATH: &str = "/mcp/tool-first";
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
@@ -90,8 +122,19 @@ impl Fixture {
     fn new() -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+        // The keystore goes in BEFORE the server: construction roots the vault with this
+        // install's own host issuer seed, which a code-mode credential's registration loads
+        // (`code_mode_host_verb_refusals.rs`). A vault rooted out of band holds no seed, and
+        // `register_credential` refused (FIX SESSION-PROJECT-ROOM-CLAIM-TEST-RED).
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-        let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        let server = Arc::new(SyncServer::new(
+            vault.clone(),
+            SyncServerConfig {
+                auth_secret: Some("mcp-session-project-reads".into()),
+                ..Default::default()
+            },
+        )?);
+        let issuer = vault.load_host_slip_issuer()?;
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
         let owner = vault.ensure_embedded_owner_actor()?;
         oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
@@ -133,13 +176,6 @@ impl Fixture {
         let reader = mint_holder(&vault, &issuer, 0x62, &["core:read"], None)?;
         let alpha_reader = mint_holder(&vault, &issuer, 0x63, &["core:read"], Some(alpha_facet))?;
         let writer = mint_holder(&vault, &issuer, 0x64, &["core:read", "core:write"], None)?;
-        let server = Arc::new(SyncServer::new(
-            vault.clone(),
-            SyncServerConfig {
-                auth_secret: Some("mcp-session-project-reads".into()),
-                ..Default::default()
-            },
-        )?);
         Ok(Self {
             app: build_app(Arc::clone(&server)),
             server,
@@ -388,7 +424,7 @@ fn names(reply: &Value, claim: EntityId) -> bool {
 
 #[test]
 fn an_attached_sessions_reads_default_to_its_folders_project() -> TestResult {
-    on_engine_stack(session_reads)
+    on_deep_stack(session_reads)
 }
 
 async fn session_reads() -> TestResult {
@@ -487,7 +523,7 @@ async fn session_reads() -> TestResult {
 /// call is refused.
 #[test]
 fn a_push_reads_only_the_sessions_project_and_is_quiet_outside_one() -> TestResult {
-    on_engine_stack(push_in_session_project)
+    on_deep_stack(push_in_session_project)
 }
 
 async fn push_in_session_project() -> TestResult {
@@ -533,7 +569,7 @@ async fn push_in_session_project() -> TestResult {
 
 #[test]
 fn a_session_naming_another_folder_reads_nothing_its_credential_could_not() -> TestResult {
-    on_engine_stack(another_folder)
+    on_deep_stack(another_folder)
 }
 
 /// The folder a call names comes from the client, so a session may name a folder it does not
@@ -611,7 +647,7 @@ async fn another_folder() -> TestResult {
 
 #[test]
 fn an_attached_sessions_write_that_names_no_project_lands_in_its_folders_project() -> TestResult {
-    on_engine_stack(session_write)
+    on_deep_stack(session_write)
 }
 
 /// One `vault.claims.upsert` that names no project from the bound folder, one from a folder
@@ -670,7 +706,7 @@ async fn session_write() -> TestResult {
 
 #[test]
 fn initialize_says_whether_a_project_is_bound_to_the_sessions_folder() -> TestResult {
-    on_engine_stack(initialize_folder)
+    on_deep_stack(initialize_folder)
 }
 
 async fn initialize_folder() -> TestResult {
@@ -713,7 +749,7 @@ async fn initialize_folder() -> TestResult {
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
 fn an_approved_mcp_hook_ask_resumes_the_write_in_its_original_project() -> TestResult {
-    on_engine_stack(approved_session_write)
+    on_deep_stack(approved_session_write)
 }
 
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -831,7 +867,7 @@ impl oneiron::runtime_hooks::HookBodyRuntime for SessionWriteAsk {
 
 #[test]
 fn a_code_runs_room_claim_that_omits_its_project_lands_in_the_folders_project() -> TestResult {
-    on_engine_stack(room_claim)
+    on_deep_stack(room_claim)
 }
 
 async fn room_claim() -> TestResult {

@@ -8,7 +8,7 @@ mod edge_pass;
 mod entity_pass;
 mod tombstone_pass;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::bridge::Materializer;
 use super::loro_support::TombstoneIndex;
@@ -18,7 +18,7 @@ use super::types::WindowKey;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{ErrorKind, Result};
 use loro::{LoroDoc, LoroMap};
 
 /// Shared read-only context for the rematerialization passes.
@@ -40,14 +40,32 @@ struct RematLedger {
     marked: HashSet<String>,
     healed: Vec<EntityId>,
     terminal_quarantines: Vec<EntityId>,
-    pending_entity_dependencies: HashSet<EntityId>,
+    pending_entity_dependencies: HashMap<EntityId, ErrorKind>,
     pending_dag_parent_sources: HashSet<EntityId>,
+    /// Ids the entity or edge pass refused for good this pass (a terminal
+    /// entity refusal, a quarantined or rejected edge sourced at the id).
+    /// Unlike `terminal_quarantines`, an edge's moved wait never lands here,
+    /// and settle never drops an id from it. An id here is never read as held
+    /// only by a parent project or the message a project was born from that
+    /// this replica does not hold yet.
+    refused_otherwise: HashSet<EntityId>,
     /// Delete-protected rows the entity pass admitted: the ingest step already
     /// refused every tombstone naming them, so the tombstone pass records
     /// each such tombstone once, not twice.
     protected_admissions: HashSet<EntityId>,
     count: u32,
     scope: MarkerScope,
+}
+
+impl RematLedger {
+    /// Records `id` refused for good this pass: its marker settles as a
+    /// terminal quarantine's. It is never read as held only by a parent project
+    /// or the message a project was born from that this replica does not hold
+    /// yet ([`Self::refused_otherwise`]).
+    fn refuse(&mut self, id: EntityId) {
+        self.terminal_quarantines.push(id);
+        self.refused_otherwise.insert(id);
+    }
 }
 
 /// Whose replay markers a forward pass settles (FIX 538). The markers of a
@@ -135,8 +153,9 @@ pub(crate) fn replay_window_in_edge_order_for_test(
         marked,
         healed: Vec::new(),
         terminal_quarantines: Vec::new(),
-        pending_entity_dependencies: HashSet::new(),
+        pending_entity_dependencies: HashMap::new(),
         pending_dag_parent_sources: HashSet::new(),
+        refused_otherwise: HashSet::new(),
         protected_admissions: HashSet::new(),
         count: 0,
         scope: MarkerScope::Window,
@@ -468,8 +487,9 @@ impl ForwardRun {
             marked,
             healed: Vec::new(),
             terminal_quarantines: Vec::new(),
-            pending_entity_dependencies: HashSet::new(),
+            pending_entity_dependencies: HashMap::new(),
             pending_dag_parent_sources: HashSet::new(),
+            refused_otherwise: HashSet::new(),
             protected_admissions: HashSet::new(),
             count: 0u32,
             scope,
@@ -724,12 +744,15 @@ fn settle(
             ..
         } = &mut *ledger;
         healed.retain(|id| {
-            !pending_entity_dependencies.contains(id) && !pending_dag_parent_sources.contains(id)
+            !pending_entity_dependencies.contains_key(id)
+                && !pending_dag_parent_sources.contains(id)
         });
         terminal_quarantines.retain(|id| {
-            !pending_entity_dependencies.contains(id) && !pending_dag_parent_sources.contains(id)
+            !pending_entity_dependencies.contains_key(id)
+                && !pending_dag_parent_sources.contains(id)
         });
     }
+    let mut bookkeeping_fell_back = false;
     if !outcome.purge_failures.is_empty()
         || !outcome.cleared.is_empty()
         || !ledger.healed.is_empty()
@@ -867,6 +890,7 @@ fn settle(
         match marker_result {
             Err(err) if outcome.receiver_scrub_candidates.is_empty() => return Err(err),
             Err(err) => {
+                bookkeeping_fell_back = true;
                 tracing::error!(
                     window = %window_key,
                     purge_failures = outcome.purge_failures.len(),
@@ -894,21 +918,49 @@ fn settle(
     if let Some(err) = outcome.deferred_error {
         return Err(err);
     }
-    if ledger.scope == MarkerScope::Window
-        && quarantine::pending_remat_windows(vault)?
-            .iter()
-            .any(|window| window == window_key.as_str())
-    {
+    if ledger.scope == MarkerScope::Window {
         // Markers survive the pass when a purge failed above, when a
         // flagged entity has neither a healing write nor a proven non-delete
         // terminal x: row in the loaded doc (stale/cross-window state), or
         // when a marker row no longer parses. Clearing any of them here
         // would vacuously discharge a GDPR retry — keep them (fail closed)
         // and keep ERROR-grade visibility.
-        tracing::error!(
-            window = %window_key,
-            "forward remat: rm: markers still pending after tombstone pass — hard-deleted content may be live (GDPR SLA breach signal)"
-        );
+        // GDPR-SIGNAL-ON-QUARANTINED-WINDOW: warn only if all surviving markers
+        // have proven replay origin, have valid hold starts, and wait for a parent
+        // project or the message a project was born from that this replica does
+        // not hold yet. The wait is a breach without a start or beyond
+        // sync.remat.dependency_hold_max_secs. An id this pass also refused for
+        // good (`refused_otherwise`) is never held by either dependency alone.
+        let held_by_pending_dependency = |id: EntityId| {
+            ledger.pending_entity_dependencies.get(&id)
+                == Some(&ErrorKind::ProjectDependencyPending)
+                && !ledger.refused_otherwise.contains(&id)
+                && !ctx.tombstones.contains(&id)
+        };
+        // A failed read ends the pass with its error, as the plain marker read
+        // did before this row.
+        let class = quarantine::classify_window_markers(
+            vault,
+            window_key.as_str(),
+            held_by_pending_dependency,
+        )?;
+        let pass_ran_clean = outcome.purge_failures.is_empty() && !bookkeeping_fell_back;
+        match class {
+            quarantine::WindowMarkerClass::NonePending => {}
+            quarantine::WindowMarkerClass::AllMatch if pass_ran_clean => {
+                tracing::warn!(
+                    window = %window_key,
+                    reason = "ProjectDependencyPending",
+                    "forward remat: rm: markers still pending: each one waits for a project, or the message a project was born from, that this replica does not hold yet; no hard delete is owed for them"
+                );
+            }
+            _ => {
+                tracing::error!(
+                    window = %window_key,
+                    "forward remat: rm: markers still pending after tombstone pass — hard-deleted content may be live (GDPR SLA breach signal)"
+                );
+            }
+        }
     }
 
     if let Some(documents) = ctx.trusted {

@@ -19,14 +19,15 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
-use oneiron::claim::base_world_id;
+use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{
-    AllRelationships, ClaimRelationships, ClaimScope, MemoryPack, RecallBarAsk, RecallBarRule,
-    RecallRequest, RecallScope, RecallSource, ScopedClaimInput,
+    AllRelationships, ClaimRelationships, ClaimScope, Effort, MemoryPack, RecallBarAsk,
+    RecallBarRule, RecallEffort, RecallRequest, RecallScope, RecallSource, ScopedClaimInput,
 };
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use oneiron::retrieval_depth::RecallExecution;
 use oneiron::session_project::WorkspaceBindRequest;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
 use oneiron::store::GateDecisionId;
@@ -891,4 +892,307 @@ fn an_undecodable_bar_row_reports_reason_unreadable() {
         Some("unreadable"),
         "an unreadable deciding row is not the owner's quiet"
     );
+}
+
+// REVIEW-10566 round 2: a redundant child does not open its parent's quiet bar.
+#[test]
+fn a_redundant_child_project_does_not_open_its_parents_quiet_bar() {
+    let child = EntityId::now();
+    let fixture = Fixture::open_in(Some(PPLX), MEASURED, Some(child));
+    let parent = fixture.vault.root_project().expect("the root PROJECT");
+    fixture.put_claim_in(parent, "profile.note", QUERY_TEXT, Some(at(0.90)));
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Vault,
+        None,
+        json!("open"),
+    );
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Project(parent),
+        None,
+        json!("quiet"),
+    );
+    let once = fixture
+        .recall_in(
+            ask(RecallSource::Carrier, HARNESS),
+            8,
+            vec![parent.to_hex()],
+            None,
+        )
+        .expect("the recall runs");
+    assert!(once.items.is_empty(), "[P] reads the parent's quiet row");
+    assert_eq!(quiet_reason(&once), Some("owner"));
+    let both = fixture
+        .recall_in(
+            ask(RecallSource::Carrier, HARNESS),
+            8,
+            vec![parent.to_hex(), child.to_hex()],
+            None,
+        )
+        .expect("the recall runs");
+    assert!(
+        both.items.is_empty(),
+        "[P, C] reads the same corpus under the same quiet row, not the vault's open row"
+    );
+    assert_eq!(quiet_reason(&both), Some("owner"));
+}
+
+// REVIEW-10566 round 2: the reserved unscoped stamp is no project for a push.
+#[test]
+fn a_push_naming_only_the_reserved_default_stamp_is_quiet_no_project() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    let unscoped = default_project_id();
+    fixture.put_claim_in(unscoped, "profile.note", QUERY_TEXT, Some(at(0.90)));
+    let pack = fixture
+        .recall_in(
+            ask(RecallSource::Carrier, HARNESS),
+            8,
+            vec![unscoped.to_hex()],
+            None,
+        )
+        .expect("the recall runs");
+    assert!(
+        pack.items.is_empty(),
+        "a push outside any project pushes nothing, not even its matching unscoped claim"
+    );
+    assert_eq!(quiet_reason(&pack), Some("no_project"));
+}
+
+// REVIEW-10566/10567 round 2: a passing claim ranked below the text window's under-bar hits
+// is still pushed.
+#[test]
+fn a_passing_claim_ranked_below_the_text_windows_under_bar_hits_is_still_pushed() {
+    let fixture = Fixture::open(None, None);
+    // One hundred single-term claims, short with a high term count, so every one outranks
+    // the passing claim by BM25: fifty per term, and neither term distinctive at fifty-one
+    // postings against a cap of about five.
+    for step in 0..50 {
+        fixture.put_claim(
+            "profile.note",
+            &format!("telescope survey note {step}: {}", "telescope ".repeat(30)),
+        );
+        fixture.put_claim(
+            "profile.note",
+            &format!("granite survey note {step}: {}", "granite ".repeat(30)),
+        );
+    }
+    // The passing claim holds both terms once, in a long value that ranks it below every
+    // under-bar hit.
+    let both = fixture.put_claim(
+        "profile.note",
+        &format!(
+            "telescope granite observation: {}",
+            "weekly plan item ledger for the quarter ".repeat(40)
+        ),
+    );
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let scope = RecallScope {
+        project_refs: vec![fixture.project.to_hex()],
+        ..RecallScope::default()
+    };
+    let bar = ask(RecallSource::Carrier, HARNESS).expect("a bar");
+    let pack = memory
+        .recall_with_execution(
+            "telescope granite",
+            Effort::Light,
+            &scope,
+            8,
+            None,
+            None,
+            &RecallExecution {
+                bar: Some(&bar),
+                ..Default::default()
+            },
+        )
+        .expect("the recall runs");
+    assert_eq!(
+        ids(&pack),
+        BTreeSet::from([both]),
+        "more under-bar hits than the window, yet the both-term claim is pushed"
+    );
+}
+
+// REVIEW-10566 round 2: the shared engine recall pushes at most three lines.
+#[test]
+fn the_shared_engine_recall_pushes_at_most_three_lines() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    for step in 0..5 {
+        fixture.put_claim_in(
+            fixture.project,
+            "profile.note",
+            &format!("granite drafter plan, note {step}"),
+            Some(at(0.70)),
+        );
+    }
+    let query = QUERY.to_vec();
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let scope = RecallScope {
+        project_refs: vec![fixture.project.to_hex()],
+        ..RecallScope::default()
+    };
+    let bar = ask(RecallSource::Carrier, HARNESS).expect("a bar");
+    let pack = memory
+        .recall_with_execution(
+            QUERY_TEXT,
+            Effort::Medium,
+            &scope,
+            4,
+            None,
+            None,
+            &RecallExecution {
+                bar: Some(&bar),
+                embedding: Some(&query),
+                ..Default::default()
+            },
+        )
+        .expect("the recall runs");
+    assert_eq!(
+        pack.items.len(),
+        3,
+        "a push answers at most three lines, whatever its limit, on the shared path too"
+    );
+}
+
+// REVIEW-10566 round 2: a term held by every document of a small vault is not distinctive.
+#[test]
+fn a_term_held_by_every_document_of_a_small_vault_is_not_distinctive() {
+    let fixture = Fixture::open(None, None);
+    fixture.put_claim("profile.note", "quillwort ledger entry");
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let recall = |query: &str| {
+        recall_with_vector(
+            &memory,
+            RecallRequest {
+                query: query.to_owned(),
+                limit: Some(8),
+                scope: Some(RecallScope {
+                    project_refs: vec![fixture.project.to_hex()],
+                    ..RecallScope::default()
+                }),
+                bar: ask(RecallSource::Carrier, HARNESS),
+                ..RecallRequest::default()
+            },
+            |_| None,
+        )
+        .expect("the recall runs")
+    };
+    assert!(
+        recall("quillwort").items.is_empty(),
+        "one document holds every posting of the term, so it is not distinctive by rarity"
+    );
+    assert_eq!(
+        recall("quillwort ledger").items.len(),
+        1,
+        "the every-term rule still passes a line holding every term"
+    );
+}
+
+// REVIEW-10567 round 2 (engine side): a light barred recall finds no claim by cosine alone.
+#[test]
+fn a_light_barred_recall_finds_no_claim_by_cosine_alone() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    let query = QUERY.to_vec();
+    fixture.put_claim_in(
+        fixture.project,
+        "profile.note",
+        "chartreuse harbour lantern",
+        Some(at(0.90)),
+    );
+    fixture.put_claim_in(
+        fixture.project,
+        "profile.note",
+        "granite drafter plan outline",
+        Some(at(0.10)),
+    );
+    let over = fixture.put_claim_in(
+        fixture.project,
+        "profile.note",
+        "granite drafter plan notes",
+        Some(at(0.90)),
+    );
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let scope = RecallScope {
+        project_refs: vec![fixture.project.to_hex()],
+        ..RecallScope::default()
+    };
+    let bar = ask(RecallSource::Carrier, HARNESS).expect("a bar");
+    let pack = memory
+        .recall_with_execution(
+            QUERY_TEXT,
+            Effort::Light,
+            &scope,
+            8,
+            None,
+            None,
+            &RecallExecution {
+                bar: Some(&bar),
+                bar_query_vector: Some(&query),
+                ..Default::default()
+            },
+        )
+        .expect("the recall runs");
+    assert_eq!(
+        ids(&pack),
+        BTreeSet::from([over]),
+        "no dense list runs at light: the termless claim at 0.9 is not found, and the bar \
+         still judges the lexical hits by the comparison vector"
+    );
+    let similarity = pack
+        .items
+        .first()
+        .expect("one line")
+        .similarity
+        .expect("the bar says the cosine it judged");
+    assert!(
+        (similarity - 0.90).abs() < 1e-6,
+        "the kept line says its judged cosine: {similarity}"
+    );
+}
+
+// REVIEW-10567 round 2 (the door): a light or call push through the SDK door, whose host embeds
+// a barred query at any effort, still runs no dense list; the bar judges that vector alone.
+#[test]
+fn a_light_or_call_barred_push_through_the_door_finds_no_claim_by_cosine_alone() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    fixture.put_claim_in(
+        fixture.project,
+        "profile.note",
+        "chartreuse harbour lantern",
+        Some(at(0.90)),
+    );
+    let over = fixture.put_claim_in(
+        fixture.project,
+        "profile.note",
+        "granite drafter plan notes",
+        Some(at(0.90)),
+    );
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    for effort in [RecallEffort::Light, RecallEffort::Call] {
+        let pack = recall_with_vector(
+            &memory,
+            RecallRequest {
+                query: QUERY_TEXT.to_owned(),
+                effort: Some(effort),
+                // The longest deadline a request may ask: call's 100 ms default would cut a
+                // loaded test host's stages; the effort level is light either way.
+                deadline_ms: Some(60_000),
+                limit: Some(8),
+                scope: Some(RecallScope {
+                    project_refs: vec![fixture.project.to_hex()],
+                    ..RecallScope::default()
+                }),
+                bar: ask(RecallSource::Carrier, HARNESS),
+                ..RecallRequest::default()
+            },
+            |_| Some(QUERY.to_vec()),
+        )
+        .expect("the recall runs");
+        assert_eq!(
+            ids(&pack),
+            BTreeSet::from([over]),
+            "{effort:?}: the door's vector is the bar's alone: the termless claim at 0.9 is not \
+             found, the lexical hit over the floor is"
+        );
+    }
 }

@@ -217,7 +217,7 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         &format!(
             "From your Oneiron vault, for \"{query}\" (recalled at session start; may be dated):"
         ),
-        &format!("From your Oneiron vault, for \"{query}\""),
+        &recall::query_lead(query),
     ));
     said
 }
@@ -284,9 +284,17 @@ fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         bar: RecallSource::Carrier,
         session: session_id(host, &event),
     };
+    let lead = match args
+        .query
+        .as_deref()
+        .filter(|given| !given.trim().is_empty())
+    {
+        Some(_) => recall::query_lead(&query),
+        None => "From your Oneiron vault, for this prompt".to_owned(),
+    };
     recall.block(
         "From your Oneiron vault, for this prompt (may be dated):",
-        "From your Oneiron vault, for this prompt",
+        &lead,
     )
 }
 

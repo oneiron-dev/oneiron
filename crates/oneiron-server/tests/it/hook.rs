@@ -826,6 +826,90 @@ fn an_owner_who_asks_the_empty_receipt_hears_it_when_nothing_clears_the_bar() {
     }
 }
 
+/// REVIEW-10567 round 2 P1 3: the prompt's opted-in empty receipt names the effective query
+/// when `--query` was given, with session-start's lead, not "for this prompt". Carrier `quiet`
+/// and `recall.bar.empty_receipt` set for claude-code: `prompt --query "release checklist"` on
+/// an event whose prompt is "summarize today's diff" prints exactly the query-named receipt
+/// line; without the flag the same prompt still prints the "for this prompt" receipt.
+#[test]
+fn a_prompt_with_query_names_that_query_in_its_empty_receipt() {
+    let home = Home::new();
+    let vault = home.path("vault");
+    let config = home.path("oneiron.toml");
+    home.init(&vault, &config);
+    let credential = home.credential(&config);
+    let folder = home.path("work").join("heron-lantern");
+    std::fs::create_dir_all(&folder).expect("test fixture");
+    {
+        let seeded = open_stopped(&vault);
+        let (owner, proof) = owner_and_proof(&seeded);
+        let project = mint_project(&seeded, owner, &proof, "hook-test-receipt-query-card");
+        bind_folder(&seeded, &proof, &folder, project, "heron-lantern");
+        owner_sets_bar(&seeded, &proof, "recall.bar.carrier", json!("quiet"));
+        owner_sets_bar(&seeded, &proof, "recall.bar.empty_receipt", json!(true));
+    }
+    let config_arg = config.to_str().expect("UTF-8 path");
+    let log_path = home.path("serve.log");
+    let serve_log = std::fs::File::create(&log_path).expect("server log file");
+    let server = Server(
+        home.oneiron(&["serve", "--host", "127.0.0.1", "--config", config_arg])
+            .stdout(serve_log.try_clone().expect("server log file"))
+            .stderr(serve_log)
+            .spawn()
+            .expect("spawn oneiron serve"),
+    );
+    home.wait_for_runtime_file(server.0.id(), &log_path);
+    let credential_arg = credential.to_str().expect("UTF-8 path");
+    let prompt = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "0b5e55e0-4444-4555-8666-b77788889999",
+        "cwd": folder,
+        "prompt": "summarize today's diff",
+    });
+    let said = lines(&home.hook(
+        "prompt",
+        &[
+            "--credential-file",
+            credential_arg,
+            "--timeout",
+            "60",
+            "--query",
+            "release checklist",
+        ],
+        &prompt,
+    ));
+    assert_eq!(
+        said.len(),
+        1,
+        "a prompt with --query names that query in its empty receipt: {said:?}"
+    );
+    assert_eq!(
+        said[0],
+        "From your Oneiron vault, for \"release checklist\": nothing cleared the relevance bar \
+         (quiet: owner).",
+        "{said:?}"
+    );
+    let said = lines(&home.hook(
+        "prompt",
+        &["--credential-file", credential_arg, "--timeout", "60"],
+        &prompt,
+    ));
+    assert_eq!(
+        said.len(),
+        1,
+        "with no --query the prompt's own wording stays: {said:?}"
+    );
+    assert_eq!(
+        said[0],
+        "From your Oneiron vault, for this prompt: nothing cleared the relevance bar \
+         (quiet: owner).",
+        "{said:?}"
+    );
+    let pid = server.0.id();
+    sigterm(pid);
+    home.wait_for_no_runtime_file(pid);
+}
+
 /// REVIEW-10567 round 1, `tool_call()`: start and carrier pushes now ask `scope.kinds:
 /// ["CLAIM"]`, so a TURN, MESSAGE or NOTE, which names no project, can no longer reach a
 /// session from another project. A session in beta's folder is stopped and imported with a turn

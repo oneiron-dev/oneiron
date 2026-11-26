@@ -29,7 +29,7 @@ use crate::setting::{SettingScope, SettingSource, SettingValue};
 use crate::store::{ManifestDbs, StoreRead};
 
 /// A query term is distinctive when at most one in this many of the vault's documents hold
-/// it (at least one document).
+/// it.
 const DISTINCTIVE_SHARE: u32 = 20;
 
 /// The value of `recall.bar.<source>`: the rule one source's lines are judged by.
@@ -280,9 +280,12 @@ fn resolve(
 
 impl crate::memory::Memory<'_> {
     /// The bar a recall of `query` in `scope` that asks `ask` is judged by ([`resolve`]): its
-    /// project is the one `scope` names (repeated refs to the same project still name one),
-    /// else the project bound to the session's folder; a scope that names several distinct
-    /// projects reads the rows that name no project.
+    /// project is the one `scope` names (repeated refs to the same project still name one, as
+    /// does a root named beside its own descendant, which reads the same corpus), else the
+    /// project bound to the session's folder; a scope that names several distinct projects
+    /// reads the rows that name no project. A push never takes the reserved default stamp
+    /// ([`crate::claim::default_project_id`]) as its project: naming only that ref reads as
+    /// naming none, quiet when no session project binds the push.
     pub(super) fn resolve_recall_bar(
         &self,
         ask: &RecallBarAsk,
@@ -294,9 +297,19 @@ impl crate::memory::Memory<'_> {
             .session_projects
             .as_ref()
             .and_then(crate::session_project::SessionProjects::project);
+        let pushes = ask.source.pushes();
         let project = match scope.project_refs.as_slice() {
             [] => (session, session.is_some()),
-            [one] => (Some(self.resolve_ref(one)?), true),
+            [one] => {
+                let id = self.resolve_ref(one)?;
+                if pushes && id == crate::claim::default_project_id() {
+                    // The reserved unscoped stamp is no project a push is inside of
+                    // (REVIEW-10566 round 2): the push reads as one that names none.
+                    (session, session.is_some())
+                } else {
+                    (Some(id), true)
+                }
+            }
             many => {
                 // [P, P] names one project: resolve and dedupe before counting one against
                 // several, so a repeated ref is judged by its project's own row (REVIEW-10566
@@ -315,8 +328,36 @@ impl crate::memory::Memory<'_> {
                         }
                     }
                 }
+                if pushes {
+                    distinct.remove(&crate::claim::default_project_id());
+                }
+                if !unresolved && distinct.len() > 1 {
+                    // [P, C] with C below P reads the same corpus as [P], so it reads the
+                    // same row: drop every named root another named root's closure already
+                    // contains, in the same closure the read uses, before counting one
+                    // against several (REVIEW-10566 round 2).
+                    let roots: Vec<EntityId> = distinct.iter().copied().collect();
+                    let mut minimal = BTreeSet::new();
+                    for (index, root) in roots.iter().enumerate() {
+                        let others: Vec<EntityId> = roots[..index]
+                            .iter()
+                            .chain(roots[index + 1..].iter())
+                            .copied()
+                            .collect();
+                        let closure =
+                            crate::memory::project_descendant_closure_of(self.vault, others)?;
+                        if !closure.contains(root) {
+                            minimal.insert(*root);
+                        }
+                    }
+                    distinct = minimal;
+                }
                 if !unresolved && distinct.len() == 1 {
                     (distinct.into_iter().next(), true)
+                } else if !unresolved && distinct.is_empty() && pushes {
+                    // Only the reserved stamp, named once or repeated: no named project, as
+                    // above.
+                    (session, session.is_some())
                 } else {
                     (None, true)
                 }
@@ -444,8 +485,10 @@ fn query_terms(vault: &Vault, query: &str) -> Vec<String> {
     terms
 }
 
-/// Of `terms`, those at most one in [`DISTINCTIVE_SHARE`] of the vault's documents hold (at
-/// least one document), counting no row `hidden_row` hides.
+/// Of `terms`, those at most one in [`DISTINCTIVE_SHARE`] of the vault's documents hold,
+/// counting no row `hidden_row` hides. With fewer than [`DISTINCTIVE_SHARE`] documents the cap
+/// is zero, so no term is distinctive by rarity there (REVIEW-10566 round 2); the every-term
+/// rule still passes a line holding every term of a longer query.
 fn distinctive_terms(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
@@ -453,7 +496,7 @@ fn distinctive_terms(
     mut hidden_row: Option<&mut (dyn FnMut(&EntityId) -> Result<bool> + '_)>,
 ) -> Result<Vec<String>> {
     let total = crate::bm25::read_total_docs(store, rtxn)?;
-    let cap = (total / DISTINCTIVE_SHARE).max(1);
+    let cap = total / DISTINCTIVE_SHARE;
     let mut distinctive = Vec::new();
     for term in terms {
         if crate::bm25::term_rows_at_most(store, rtxn, term, cap, hidden_row.as_deref_mut())? {
