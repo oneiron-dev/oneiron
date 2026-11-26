@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::config::VectorEvidenceFloors;
-use crate::error::Result;
-use crate::setting::SettingValue;
+use crate::error::{Error, Result};
+use crate::setting::{SettingChange, SettingValue};
 
 /// The owner's floors for one embedding space, the value of
 /// `retrieval.vector_evidence`: `{floor, strong}`, held to
@@ -54,6 +54,28 @@ fn is_embedding_space(item: &str) -> bool {
     crate::store::validate_embedding_model_id(item).is_ok()
 }
 
+/// Refuses a `retrieval.vector_evidence` row that names no space: the read
+/// of a space with no row of its own would take it, so it would judge every
+/// space (review round 1 of #10562).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a change with no item.
+fn check_space_row(
+    _vault: &Vault,
+    _txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    if change.item.is_none() {
+        return Err(Error::InvalidConfig(
+            "retrieval.vector_evidence: floors are one embedding space's own: name its model id \
+             (`org/name@revision`) as the item"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// The floors a context pack's no-match check reads: one pair for every
 /// score, and the pairs a host measured for one kind of item in one
 /// embedding space, which take its place there (EMBED-PACK). A raw cosine
@@ -66,6 +88,10 @@ pub(crate) struct NoMatchFloors {
     /// By embedding space (the model a vault's vectors are pinned to), then
     /// by entity type.
     pub(crate) keyed: BTreeMap<String, BTreeMap<u8, VectorEvidenceFloors>>,
+    /// The owner's pair for one embedding space (`retrieval.vector_evidence`),
+    /// which judges every kind there before the host's pairs. Only scores in
+    /// that space read it: a declared media space keeps the host's floors.
+    pub(crate) owner: BTreeMap<String, VectorEvidenceFloors>,
 }
 
 impl NoMatchFloors {
@@ -73,21 +99,26 @@ impl NoMatchFloors {
         Self {
             pair,
             keyed: BTreeMap::new(),
+            owner: BTreeMap::new(),
         }
     }
 
-    /// The floors a score in `space` for an item of `kind` is judged by:
-    /// that pair when the host set one, the vault's pair otherwise.
+    /// The floors a score in `space` for an item of `kind` is judged by: the
+    /// owner's pair for the space when set, else that kind's pair when the
+    /// host set one, else the vault's pair.
     pub(crate) fn resolve(&self, space: &str, kind: Option<u8>) -> VectorEvidenceFloors {
-        kind.and_then(|kind| self.keyed.get(space)?.get(&kind))
+        self.owner
+            .get(space)
+            .or_else(|| kind.and_then(|kind| self.keyed.get(space)?.get(&kind)))
             .copied()
             .unwrap_or(self.pair)
     }
 
     /// Whether any kind in `space` has floors of its own, so a score's kind
-    /// has to be known to judge it.
+    /// has to be known to judge it: never where the owner's pair judges every
+    /// kind.
     pub(crate) fn keys_space(&self, space: &str) -> bool {
-        self.keyed.contains_key(space)
+        !self.owner.contains_key(space) && self.keyed.contains_key(space)
     }
 }
 
@@ -168,11 +199,11 @@ impl Vault {
     }
 
     /// `host`, with the owner's floors for this vault's space
-    /// ([`setting_keys::VECTOR_EVIDENCE`]) in place of its pair and of every
-    /// kind's pair there: the owner's row first, then a host-measured kind
-    /// pair, then the host's pair (Engine ANSWER 27 Nov 01:45). A vault with
-    /// no space, a space no row names, and a row that does not read keep
-    /// `host`.
+    /// ([`setting_keys::VECTOR_EVIDENCE`]) beside its pairs: they judge every
+    /// kind in that space, first, then a host-measured kind pair, then the
+    /// host's pair (Engine ANSWER 27 Nov 01:45); the host's pair stays for
+    /// every other space. A vault with no space, a space no row names, and a
+    /// row that does not read keep `host` as it is.
     fn with_owner_floors(&self, mut host: NoMatchFloors, txn: &heed::RoTxn<'_>) -> NoMatchFloors {
         let space = self.evidence_space();
         if space.is_empty() {
@@ -183,8 +214,7 @@ impl Vault {
             .ok()
             .and_then(|resolved| resolved.value.0);
         if let Some(floors) = owner {
-            host.pair = floors;
-            host.keyed.remove(space);
+            host.owner.insert(space.to_owned(), floors);
         }
         host
     }

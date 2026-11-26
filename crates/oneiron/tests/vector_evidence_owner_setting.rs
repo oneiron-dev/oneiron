@@ -3,7 +3,8 @@
 //! space (its model id, `org/name@revision`), value `{floor, strong}`, refused outside
 //! `0 <= floor <= strong <= 1`. The owner's row for the vault's space judges every score there,
 //! of every kind, before a host-measured kind pair and the host's pair. A row for another space
-//! judges nothing; an agent's change waits on the owner's answer; the key is the same on every
+//! judges nothing, and a row with no space is refused; an agent's change waits on the owner's
+//! answer, standing approval or not (review round 1 of #10562); the key is the same on every
 //! machine of the vault.
 //!
 //! The fixture is the EMBED-PACK one (`pipeline/tests/fusion_lists.rs`): a target whose vector
@@ -25,7 +26,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::setting::{
-    SetSetting, SetSettingOutcome, SettingCaller, SettingSync, set_line, spec_named,
+    SetSetting, SetSettingOutcome, SettingCaller, SettingScope, SettingSync, set_line, spec_named,
+    widen_line, widen_scope_line,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
@@ -258,9 +260,8 @@ fn an_item_that_names_no_embedding_space_is_refused() {
     }
 }
 
-/// An enabled agent with a live owner Grant naming `read`, `vault.settings.set` and the key's
-/// own line.
-fn key_holder(fixture: &Fixture) -> EntityId {
+/// An enabled agent with a live owner Grant naming `read`, `vault.settings.set` and `lines`.
+fn agent_holding(fixture: &Fixture, lines: &[String]) -> EntityId {
     let agent = EntityId::now();
     create_agent_definition_as(
         &fixture.vault,
@@ -282,7 +283,7 @@ fn key_holder(fixture: &Fixture) -> EntityId {
     authority_scope.verbs = ScopeAxis::Some(
         ["read".to_owned(), "vault.settings.set".to_owned()]
             .into_iter()
-            .chain([set_line(KEY)])
+            .chain(lines.iter().cloned())
             .collect(),
     );
     let minted = mint_agent_grant_as(
@@ -308,7 +309,7 @@ fn key_holder(fixture: &Fixture) -> EntityId {
 #[test]
 fn an_agents_floors_wait_for_the_owner_and_judge_nothing() {
     let fixture = Fixture::open();
-    let agent = key_holder(&fixture);
+    let agent = agent_holding(&fixture, &[set_line(KEY)]);
     let outcome = fixture
         .set(
             SettingCaller::Agent(agent),
@@ -337,4 +338,48 @@ fn the_floors_are_the_same_on_every_machine_of_the_vault() {
     let domain = spec.item.expect("one item per embedding space");
     assert!((domain.admits)(SPACE));
     assert!(!(domain.admits)("test/model"));
+}
+
+#[test]
+fn a_row_with_no_space_is_refused() {
+    let fixture = Fixture::open();
+    let mut change = SetSetting::vault_value(KEY, json!({ "floor": 0.15, "strong": 0.25 }));
+    change.item = None;
+    let error = fixture
+        .vault
+        .set_setting(SettingCaller::Owner(&fixture.proof), change)
+        .expect_err("a row with no item would judge every space");
+    assert!(
+        error.to_string().contains("one embedding space's own"),
+        "the refusal names the reason: {error}"
+    );
+    assert!(
+        !fixture.pack_finds_target(),
+        "the vault's space keeps the host's floors"
+    );
+}
+
+/// Review round 1 of #10562: the owner's standing approval does not cover the key. An agent whose
+/// live owner Grant lists the key's widening line and the vault's scope line still waits on the
+/// owner's answer to its change; on the base the change landed at once, as a standing widening.
+#[test]
+fn an_agent_with_the_owners_standing_approval_still_waits_for_the_owner() {
+    let fixture = Fixture::open();
+    let lines = [
+        Some(widen_line(KEY)),
+        widen_scope_line(&SettingScope::Vault),
+    ];
+    let agent = agent_holding(&fixture, &lines.into_iter().flatten().collect::<Vec<_>>());
+    let outcome = fixture
+        .set(
+            SettingCaller::Agent(agent),
+            SPACE,
+            Some(json!({ "floor": 0.15, "strong": 0.25 })),
+        )
+        .expect("the agent's change answers");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Pending { .. }),
+        "a standing approval lands no floors: {outcome:?}"
+    );
+    assert!(!fixture.pack_finds_target());
 }
