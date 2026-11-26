@@ -230,7 +230,7 @@ pub fn work_dir_verdict_for(
     }
 
     let mine = WorkDirAccess::this_process()?;
-    if real_ids_match && mine.same_access(access) {
+    if real_ids_match {
         return Ok(work_dir_verdict(work_dir, access.uid));
     }
     if euid == 0 {
