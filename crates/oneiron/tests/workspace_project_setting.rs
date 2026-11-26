@@ -257,6 +257,27 @@ fn the_workspace_id_is_the_digest_keyed_by_the_vault() {
 }
 
 #[test]
+fn a_binding_row_from_another_store_binds_nothing() {
+    let first = Fixture::open();
+    let second = Fixture::open();
+    // The row a restore or a replica carries over: named by the first store's workspace id,
+    // and naming a project that is live in the second store.
+    let outcome = second
+        .set(
+            SettingCaller::Owner(&second.proof),
+            &first.workspace_id(MAIN_DIGEST),
+            Some(json!({ "project": second.root_project.to_hex(), "label": "alpha" })),
+        )
+        .expect("the row is a well-formed item");
+    assert!(matches!(outcome, SetSettingOutcome::Applied { .. }));
+    assert_eq!(
+        second.session_project(&[MAIN_DIGEST]),
+        None,
+        "a store with another id resolves the folder as unbound, never as another project"
+    );
+}
+
+#[test]
 fn a_row_named_by_the_bare_digest_binds_nothing() {
     let fixture = Fixture::open();
     let outcome = fixture

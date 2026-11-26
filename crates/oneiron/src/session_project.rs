@@ -9,7 +9,9 @@
 //! reader of the vault who guesses a path and knows the vault's store id can still test the
 //! guess. The store id is the random one the vault's store took at its first open: it holds
 //! before and after a rooting, and a replica, or a store a backup is restored into, has its own,
-//! so a binding binds the folder on the machine that bound it.
+//! so a binding binds the folder on the store that bound it. A binding does not follow the vault
+//! to a restored store or a replica: there the folder reads as unbound, and the start hook's
+//! vault line gives the bind command (Q2 = A).
 //!
 //! The owner binds a folder to a PROJECT with `vault.projects.workspace.bind`, which writes the
 //! family Setting key `workspace.project`: one item per folder, named by its workspace id. The
