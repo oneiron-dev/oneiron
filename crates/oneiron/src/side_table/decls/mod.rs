@@ -385,9 +385,9 @@ const fn catalogue_rank(db: SideDb) -> u8 {
 
 /// Whether `prefix` (in `db`) overlaps a declared table: either it extends a
 /// declared prefix ([`declared_for`] would find one) or it is itself a
-/// leading substring of one — a family or whole-table scan, e.g. `"rm:"`
-/// covers both `SYNC_REMAT_MARKER` (`rm:w:`) and
-/// `SYNC_REPLAY_REMAT_MARKER_PROVENANCE` (`rmp:w:`). A scan can only surface
+/// leading substring of one — a family or whole-table scan, e.g. `"rm"`
+/// covers `SYNC_REMAT_MARKER` (`rm:w:`), `SYNC_REMAT_DEPENDENCY_HOLD_START`
+/// (`rmh:w:`), and `SYNC_REPLAY_REMAT_MARKER_PROVENANCE` (`rmp:w:`). A scan can only surface
 /// rows a declared door already wrote, so either direction is a read over
 /// declared territory; only the exact-key doors ([`declared_for`]) and the
 /// write doors need the one-directional check.
