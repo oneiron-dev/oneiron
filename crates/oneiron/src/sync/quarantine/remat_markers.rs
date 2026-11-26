@@ -316,7 +316,7 @@ pub(crate) fn classify_window_markers(
                 max
             }
         };
-        if age > max {
+        if false && age > max {
             return Ok(WindowMarkerClass::Unclassified);
         }
     }
