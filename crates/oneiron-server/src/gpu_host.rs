@@ -415,11 +415,14 @@ pub(crate) fn spawn_gpu_job_steps(
 }
 
 /// One pass of the worker: one pass of the work-order loop (pass 34, section 0), one step of
-/// every live job, then one housekeeping pass of every registered backend
+/// every live job, one housekeeping pass of every registered backend
 /// ([`GpuJobConnector::housekeeping`]; pass 33 row R4, 8.5: the `vault_machine` backend asks
-/// its live orphan keys to stop again and returns the results it still owes).
+/// its live orphan keys to stop again and returns the results it still owes), then the
+/// scheduled readiness read of the machines no pass asked lately, at the pass's own time, so it
+/// never asks again a machine the pass just asked (CG-2 row 9).
 pub(crate) fn worker_pass(server: &Arc<SyncServer>) {
-    crate::work_order_host::run_order_pass(server, now_ms());
+    let pass_at_ms = now_ms();
+    crate::work_order_host::run_order_pass(server, pass_at_ms);
     for (job, outcome) in step_live_jobs(server, now_ms()) {
         if let Err(error) = outcome {
             tracing::warn!(job = %job.to_hex(), error = %error, "GPU job step failed");
@@ -428,4 +431,5 @@ pub(crate) fn worker_pass(server: &Arc<SyncServer>) {
     for backend in server.gpu_jobs.registered_backends() {
         backend.housekeeping();
     }
+    crate::work_order_host::run_readiness_read(server, pass_at_ms);
 }
