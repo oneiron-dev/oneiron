@@ -8,11 +8,13 @@
 //! ([`super::device_query::provision_lock`]), reloads the service manager
 //! and starts the socket. It is idempotent: a second run with the same
 //! inputs changes nothing. Before any change it refuses an engine's
-//! directory that overlaps the lock's
-//! ([`super::device_query::require_apart_from_lock_dir`]), and it refuses
-//! while a device query of the version before this one still holds that
-//! version's lock in the state directory, which it retires once free
-//! ([`super::device_query::retire_state_dir_lock`]; review r1 of #10541).
+//! directory that overlaps the lock's, and an oneiron binary beneath it
+//! ([`super::device_query::require_install_paths_apart`]). It then stops
+//! the socket and refuses while a handler of either version, or a device
+//! query one started, still runs
+//! ([`super::control::require_no_handler_running`]; review r2 of #10541),
+//! and retires the lock of the version before this one in the state
+//! directory ([`super::device_query::retire_state_dir_lock`]; review r1).
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
@@ -23,7 +25,7 @@ use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
 use super::device_query::{
     DEVICE_QUERY_LOCK_DIR, DEVICE_QUERY_LOCK_FILE, STATE_DIR_LOCK_FILE, provision_lock,
-    require_apart_from_lock_dir, retire_state_dir_lock,
+    require_install_paths_apart, retire_state_dir_lock,
 };
 use super::safe_fs::{
     account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
@@ -110,8 +112,12 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         unit_path_word(path)?;
     }
     let lock_dir = Path::new(DEVICE_QUERY_LOCK_DIR);
-    require_apart_from_lock_dir("state directory", &inputs.state_dir, lock_dir)?;
-    require_apart_from_lock_dir("payload directory", &inputs.work_dir, lock_dir)?;
+    require_install_paths_apart(
+        &inputs.state_dir,
+        &inputs.work_dir,
+        &inputs.binary,
+        lock_dir,
+    )?;
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
@@ -122,9 +128,18 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         print_templates(&settings);
         return Ok(());
     }
-    // Before any other change: a device query of the version before this
-    // one that still runs holds that version's lock, which a handler of
-    // this version does not see.
+    // Before any other change: no handler starts while the lock moves, and
+    // none of either version still runs, nor a query one started; a query
+    // of the version before holds that version's lock, which a handler of
+    // this version does not see (review r2 of #10541).
+    if Path::new(CONTROL_SOCKET_UNIT_PATH).exists() {
+        run_tool(
+            "systemctl",
+            &["stop", CONTROL_SOCKET_UNIT],
+            SYSTEMCTL_TIMEOUT,
+        )?;
+    }
+    super::control::require_no_handler_running(Path::new("/proc"))?;
     let old_lock_retired = retire_state_dir_lock(&inputs.state_dir)?;
     ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;

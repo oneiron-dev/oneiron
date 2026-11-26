@@ -72,7 +72,8 @@ use super::control::{REQUEST_WAIT, read_line};
 use super::exec::connect_once;
 use super::safe_fs::{
     account, borrow, facts, make_dir_beneath, make_lock_beneath, open_dir_beneath, open_dir_path,
-    open_lock_beneath, remove_beneath, require_owned_by_root_or, require_root_owned, set_mode,
+    open_lock_beneath, open_owned_beneath, remove_beneath, require_owned_by_root_or,
+    require_root_owned,
 };
 use super::systemd_unit::tool_path;
 
@@ -277,6 +278,10 @@ fn open_lock_dir(lock_dir: &Path, owner: u32) -> Result<OwnedFd, String> {
 /// regular file with one name and mode 0600 is refused, as it is, for its
 /// maker to remove.
 ///
+/// A directory that was there with another mode is refused and left as it
+/// is: something in it may be another account's to reach, as an oneiron
+/// binary the job account runs (review r2 of #10541).
+///
 /// # Errors
 ///
 /// The step that failed or the entry refused, in words.
@@ -317,8 +322,10 @@ pub fn provision_lock(lock_dir: &Path) -> Result<bool, String> {
         )));
     }
     if found.mode != DEVICE_QUERY_LOCK_DIR_MODE {
-        set_mode(borrow(&dir), DEVICE_QUERY_LOCK_DIR_MODE).map_err(|error| failed(&error))?;
-        changed = true;
+        return Err(failed(&format_args!(
+            "mode {:o}, not {DEVICE_QUERY_LOCK_DIR_MODE:o}; install changes the mode of no directory that was there: move it aside, then install again",
+            found.mode
+        )));
     }
     let made = make_lock_beneath(borrow(&dir), DEVICE_QUERY_LOCK_FILE, owner)
         .map_err(|error| failed(&format_args!("{error}; remove it, then install again")))?;
@@ -348,6 +355,27 @@ pub fn require_apart_from_lock_dir(what: &str, dir: &Path, lock_dir: &Path) -> R
     Ok(())
 }
 
+/// Refuses, as install does before it changes anything, the engine's state
+/// and payload directories `state_dir` and `work_dir` when either overlaps
+/// the query lock's directory `lock_dir` ([`require_apart_from_lock_dir`]),
+/// and an oneiron `binary` beneath it: the job unit runs that binary as the
+/// job account, which a directory of root's alone, mode 0700, cuts off
+/// (review r2 of #10541).
+///
+/// # Errors
+///
+/// As [`require_apart_from_lock_dir`], for the first path that overlaps.
+pub fn require_install_paths_apart(
+    state_dir: &Path,
+    work_dir: &Path,
+    binary: &Path,
+    lock_dir: &Path,
+) -> Result<(), String> {
+    require_apart_from_lock_dir("state directory", state_dir, lock_dir)?;
+    require_apart_from_lock_dir("payload directory", work_dir, lock_dir)?;
+    require_apart_from_lock_dir("oneiron binary", binary, lock_dir)
+}
+
 /// Retires the query lock of the version before this one (#10540),
 /// [`STATE_DIR_LOCK_FILE`] in the engine's state directory `state_dir`, as
 /// `oneiron execution-node install` does before it changes anything else;
@@ -361,8 +389,13 @@ pub fn require_apart_from_lock_dir(what: &str, dir: &Path, lock_dir: &Path) -> R
 /// runs a query meanwhile: the old query must end, or the machine reboot.
 /// Once the lock is free, the name is removed while this call holds the
 /// lock. That version's handlers made the file this process's account's
-/// (root's), regular and empty, with one name and mode 0600; anything else
-/// at the name, or nothing, is no lock they hold, and is left as it is.
+/// (root's), regular, with one name, in the mode their unit's umask left
+/// (0000 under `UMask=0777`), so such a file is that lock whatever its mode
+/// or content (review r2 of #10541); anything else at the name, or
+/// nothing, is no lock they hold, and is left as it is. Install calls this
+/// only once no handler of either version runs
+/// ([`super::control::require_no_handler_running`]), so no query holds the
+/// lock then; the refusal stays for a holder outside a handler's unit.
 /// The engine could hide the held file under another name, and so start at
 /// most one more query into its own wedge: the lock of this version then
 /// refuses every later one.
@@ -381,7 +414,7 @@ pub fn retire_state_dir_lock(state_dir: &Path) -> Result<bool, String> {
         Err(error) => return Err(failed(&error)),
     };
     let owner = rustix::process::geteuid().as_raw();
-    let file = match open_lock_beneath(borrow(&dir), STATE_DIR_LOCK_FILE, owner) {
+    let file = match open_owned_beneath(borrow(&dir), STATE_DIR_LOCK_FILE, owner) {
         Ok(fd) => File::from(fd),
         Err(error) => {
             // Nothing there, or no lock that version's handlers made.

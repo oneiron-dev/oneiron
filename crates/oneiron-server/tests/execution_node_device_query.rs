@@ -33,6 +33,12 @@
 //! the lock's directory; and while a query of the version before (#10540)
 //! still holds that version's lock in the state directory, install refuses,
 //! and retires that file once it is free.
+//!
+//! Review r2 of #10541: install stops the job control socket and refuses
+//! while a handler of either version, or a query one started, still runs
+//! in a handler's unit; it retires the lock of the version before whatever
+//! its mode; it changes the mode of no lock directory that was there; and
+//! it refuses an oneiron binary beneath that directory.
 #![cfg(target_os = "linux")]
 
 use std::ffi::CString;
@@ -896,8 +902,10 @@ fn install_refuses_while_a_query_of_the_version_before_holds_its_lock_and_retire
     assert!(gone(&old), "the old lock is retired");
     assert_eq!(device_query::retire_state_dir_lock(&state_dir), Ok(false));
 
-    // An entry that is no lock that version's handlers made is left as it
-    // is, and no file it names is opened.
+    // An entry that is no file of that version's kind (a link, a hard link,
+    // a directory, a pipe) is left as it is, and no file it names is opened.
+    // A file of its kind is its lock whatever its mode or content (review r2
+    // of #10541), retired once free.
     let outside_dir = private_dir();
     let outside = outside_dir
         .path()
@@ -911,18 +919,140 @@ fn install_refuses_while_a_query_of_the_version_before_holds_its_lock_and_retire
         }
         entry.make(&old, &outside);
         let watch = OpenWatch::new(&outside);
+        let its_lock = matches!(entry, LockEntry::OtherMode | LockEntry::WithContent);
         assert_eq!(
             device_query::retire_state_dir_lock(&state_dir),
-            Ok(false),
+            Ok(its_lock),
             "{entry:?}"
         );
         assert_eq!(watch.opens(), 0, "{entry:?}: the outside file was opened");
-        assert!(
-            entry.is_as_made(&old, &outside),
-            "{entry:?}: the entry changed"
-        );
-        entry.remove(&old);
+        if its_lock {
+            assert!(gone(&old), "{entry:?}: retired");
+        } else {
+            assert!(
+                entry.is_as_made(&old, &outside),
+                "{entry:?}: the entry changed"
+            );
+            entry.remove(&old);
+        }
     }
+}
+
+#[test]
+fn install_refuses_while_a_query_of_the_version_before_holds_its_lock_in_another_mode() {
+    let dir = private_dir();
+    let state_dir = dir
+        .path()
+        .canonicalize()
+        .expect("the state directory's own path");
+    let old = state_dir.join(device_query::STATE_DIR_LOCK_FILE);
+    // That version's handler made its lock under its unit's umask: mode 0400
+    // stands in for 0000 under `UMask=0777`, which only root opens.
+    write_with_mode(&old, b"", 0o400);
+    let inode = std::fs::metadata(&old).expect("the old lock").ino();
+    let query = std::fs::File::open(&old).expect("open the old lock");
+    query.lock().expect("the old query holds the lock");
+    let refused = device_query::retire_state_dir_lock(&state_dir)
+        .expect_err("install refuses while the old query holds its lock, whatever its mode");
+    assert!(
+        refused.contains("still runs and holds this lock"),
+        "{refused}"
+    );
+    assert_eq!(
+        std::fs::metadata(&old).expect("the old lock is left").ino(),
+        inode
+    );
+    drop(query);
+    assert_eq!(device_query::retire_state_dir_lock(&state_dir), Ok(true));
+    let retired = std::fs::symlink_metadata(&old).is_err();
+    assert!(retired, "the old lock is retired");
+}
+
+#[test]
+fn install_refuses_while_a_job_control_handler_or_a_query_it_started_still_runs() {
+    let dir = private_dir();
+    let proc_root = dir.path();
+    let process = |pid: &str, cgroup: &str, comm: &str| {
+        let at = proc_root.join(pid);
+        std::fs::create_dir(&at).expect("a process directory");
+        std::fs::write(at.join("cgroup"), cgroup).expect("its cgroup file");
+        std::fs::write(at.join("comm"), comm).expect("its comm file");
+    };
+    // A handler's unit, where systemd places an instance of its template.
+    let slice = "/system.slice/system-oneiron\\x2djob\\x2dcontrol.slice";
+    let handler_unit = format!("{slice}/oneiron-job-control@7-1200-0.service");
+    let in_handler = format!("0::{handler_unit}\n");
+    let in_handler_v1 = format!("12:pids:{handler_unit}\n{in_handler}");
+    let job_unit = "0::/system.slice/oneiron-job@a.service\n";
+    process("1", "0::/init.scope\n", "systemd\n");
+    process("200", job_unit, "python3\n");
+    process("300", &in_handler, "nvidia-smi\n");
+    process("301", &in_handler_v1, "oneiron\n");
+    std::fs::create_dir(proc_root.join("self")).expect("a directory that is no process");
+    std::fs::create_dir(proc_root.join("400")).expect("a process that ended while read");
+
+    let found = control::handler_processes(proc_root).expect("read the stand-in /proc");
+    let pids: Vec<u32> = found.iter().map(|(pid, _)| *pid).collect();
+    assert_eq!(pids, [300, 301], "{found:?}");
+    assert_eq!(found[0].1, "nvidia-smi");
+    let refused = control::require_no_handler_running(proc_root)
+        .expect_err("install refuses while a handler or its query still runs");
+    assert!(
+        refused.contains("300 (nvidia-smi), 301 (oneiron)")
+            && refused.contains("oneiron-job-control.socket is stopped")
+            && refused.contains("then install again"),
+        "{refused}"
+    );
+
+    // Once they have ended, install goes on.
+    for pid in ["300", "301"] {
+        std::fs::remove_dir_all(proc_root.join(pid)).expect("the process ends");
+    }
+    assert_eq!(control::require_no_handler_running(proc_root), Ok(()));
+}
+
+#[test]
+fn install_changes_the_mode_of_no_query_lock_directory_that_was_there() {
+    let parent = private_dir();
+    let lock_dir = parent
+        .path()
+        .canonicalize()
+        .expect("the parent's own path")
+        .join("oneiron-job-control");
+    std::fs::create_dir(&lock_dir).expect("a directory that was there");
+    let open = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(&lock_dir, open).expect("mode 0755");
+    let refused = device_query::provision_lock(&lock_dir)
+        .expect_err("install refuses a lock directory that was there with another mode");
+    assert!(
+        refused.contains("mode 755, not 700") && refused.contains("move it aside"),
+        "{refused}"
+    );
+    let meta = std::fs::metadata(&lock_dir).expect("the directory");
+    assert_eq!(meta.mode() & 0o7777, 0o755, "its mode is left");
+    let lock = lock_dir.join(device_query::DEVICE_QUERY_LOCK_FILE);
+    let made = std::fs::symlink_metadata(&lock).is_ok();
+    assert!(!made, "no lock is made in it");
+}
+
+#[test]
+fn install_refuses_an_oneiron_binary_beneath_the_query_locks_directory() {
+    let lock_dir = Path::new(device_query::DEVICE_QUERY_LOCK_DIR);
+    let check = |binary: &str| {
+        device_query::require_install_paths_apart(
+            Path::new("/var/lib/oneiron/state"),
+            Path::new("/var/lib/oneiron/work"),
+            Path::new(binary),
+            lock_dir,
+        )
+    };
+    let refused = check("/var/lib/oneiron-job-control/oneiron")
+        .expect_err("a binary the job unit runs beneath the lock's directory is refused");
+    assert!(
+        refused.starts_with("the oneiron binary /var/lib/oneiron-job-control/oneiron must not"),
+        "{refused}"
+    );
+    assert_eq!(check("/usr/local/bin/oneiron"), Ok(()));
 }
 
 #[test]
