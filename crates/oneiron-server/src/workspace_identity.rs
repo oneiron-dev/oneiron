@@ -90,7 +90,10 @@ impl WorkspaceIdentity {
 /// under [`FOLDER_DIGEST`] (`oneiron.workspace.v1`), as `blake3:` and lower-case hex.
 #[must_use]
 pub fn folder_digest(root: &Path) -> String {
-    digest_text(&Fingerprint::of_parts(FOLDER_DIGEST, &[path_bytes(root).as_ref()]))
+    digest_text(&Fingerprint::of_parts(
+        FOLDER_DIGEST,
+        &[path_bytes(root).as_ref()],
+    ))
 }
 
 #[cfg(unix)]
