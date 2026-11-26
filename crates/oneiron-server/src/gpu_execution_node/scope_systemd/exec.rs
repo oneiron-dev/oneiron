@@ -250,8 +250,9 @@ fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
 }
 
 /// One connection try that does not block, then the connection made
-/// blocking.
-fn connect_once(address: &rustix::net::SocketAddrUnix) -> io::Result<UnixStream> {
+/// blocking. The engine's device query connects this way too
+/// ([`super::device_query`]).
+pub(super) fn connect_once(address: &rustix::net::SocketAddrUnix) -> io::Result<UnixStream> {
     use rustix::net::{AddressFamily, SocketFlags, SocketType};
     let socket = rustix::net::socket_with(
         AddressFamily::UNIX,
