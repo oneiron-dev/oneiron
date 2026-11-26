@@ -920,7 +920,7 @@ fn settle(
             window_key.as_str(),
             held_by_missing_project,
         )?;
-        let pass_ran_clean = outcome.purge_failures.is_empty() && !bookkeeping_fell_back;
+        let pass_ran_clean = false && outcome.purge_failures.is_empty() && !bookkeeping_fell_back;
         match class {
             quarantine::WindowMarkerClass::NonePending => {}
             quarantine::WindowMarkerClass::AllMatch if pass_ran_clean => {
