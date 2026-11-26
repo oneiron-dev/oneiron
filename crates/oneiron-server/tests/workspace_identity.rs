@@ -230,6 +230,25 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
         vec![folder_digest(&canonical(&checkout))],
         "the checkout itself names its own root"
     );
+    // Review round 2 of #10550: a `.git` placed inside the git directory makes it no checkout,
+    // a file or a folder: neither is the repository's own git directory.
+    std::fs::write(git_dir.join(".git"), b"").expect("an empty .git file");
+    assert_eq!(
+        WorkspaceIdentity::of_folder(&worktree, deadline())
+            .expect("identity")
+            .digests,
+        vec![folder_digest(&canonical(&worktree))],
+        "an empty .git file in the git directory"
+    );
+    std::fs::remove_file(git_dir.join(".git")).expect("remove the file");
+    std::fs::create_dir(git_dir.join(".git")).expect("a .git folder");
+    assert_eq!(
+        WorkspaceIdentity::of_folder(&worktree, deadline())
+            .expect("identity")
+            .digests,
+        vec![folder_digest(&canonical(&worktree))],
+        "a .git folder in the git directory"
+    );
 }
 
 #[cfg(unix)]
@@ -274,3 +293,111 @@ fn a_bind_request_refuses_a_ref_that_is_not_an_id() {
     let identity = WorkspaceIdentity::of_folder(parent.path(), deadline()).expect("identity");
     assert!(workspace_bind_request(&identity, "alpha").is_err());
 }
+
+/// Set in a child process this binary starts for one of its ignored tests ([`in_child`]).
+const CHILD_MARK: &str = "ONEIRON_TEST_WORKSPACE_IDENTITY_CHILD";
+/// The folder a child test reads, from its parent.
+const CHILD_FOLDER: &str = "ONEIRON_TEST_WORKSPACE_IDENTITY_FOLDER";
+/// The digests the child test must see, one per line, from its parent.
+const CHILD_DIGESTS: &str = "ONEIRON_TEST_WORKSPACE_IDENTITY_DIGESTS";
+
+/// Runs this binary's ignored test `name` alone in a child process with `env` added to this
+/// process's own, and the folder and digests it checks: a variable set there never reaches the
+/// other tests, which run beside it in this process.
+fn in_child(name: &str, folder: &Path, digests: &[String], env: &[(&str, std::ffi::OsString)]) {
+    let binary = std::env::current_exe().expect("this test binary");
+    let status = oneiron_spawn::command(binary)
+        .args(["--exact", name, "--ignored", "--test-threads=1", "--quiet"])
+        .envs(env.iter().map(|(name, value)| (*name, value.as_os_str())))
+        .env(CHILD_MARK, "1")
+        .env(CHILD_FOLDER, folder)
+        .env(CHILD_DIGESTS, digests.join("\n"))
+        .status()
+        .expect("the child test runs");
+    assert!(status.success(), "{name} failed in its child process");
+}
+
+/// In a child process [`in_child`] started: the identity of its folder has the digests its
+/// parent named. Anywhere else it checks nothing.
+fn check_child_identity() {
+    let (Some(folder), Some(digests)) = (
+        std::env::var_os(CHILD_FOLDER).filter(|_| std::env::var_os(CHILD_MARK).is_some()),
+        std::env::var(CHILD_DIGESTS).ok(),
+    ) else {
+        return;
+    };
+    let identity =
+        WorkspaceIdentity::of_folder(Path::new(&folder), deadline()).expect("identity");
+    let digests: Vec<String> = digests.lines().map(str::to_owned).collect();
+    assert_eq!(identity.digests, digests);
+}
+
+/// Review round 2 of #10550: a git variable this process inherited names no other checkout.
+/// With `GIT_DIR` and `GIT_WORK_TREE` naming repository `alpha`, the folder `beta` still names
+/// `beta`; on the base git read `alpha` for it.
+#[test]
+fn inherited_git_repository_variables_never_name_another_checkout() {
+    let parent = tempfile::tempdir().expect("temp folder");
+    let alpha = repository_named(parent.path(), "alpha");
+    let beta = repository_named(parent.path(), "beta");
+    in_child(
+        "inherited_git_variables_child",
+        &beta,
+        &[folder_digest(&canonical(&beta))],
+        &[
+            ("GIT_DIR", alpha.join(".git").into_os_string()),
+            ("GIT_WORK_TREE", alpha.clone().into_os_string()),
+        ],
+    );
+}
+
+#[test]
+#[ignore = "run in a child process by its parent test"]
+fn inherited_git_variables_child() {
+    check_child_identity();
+}
+
+/// Review round 2 of #10550: a process git leaves behind with its output pipe open never holds
+/// the identity past git's deadline. A `git` on `PATH` that starts a long background process
+/// and then runs git: the identity gives up on git at the deadline and the folder is its own
+/// root; on the base the read of git's output waited for the background process.
+#[cfg(unix)]
+#[test]
+fn a_git_that_leaves_its_output_open_is_given_up_at_the_deadline() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let parent = tempfile::tempdir().expect("temp folder");
+    let repo = repository(parent.path());
+    let sub = repo.join("src");
+    std::fs::create_dir(&sub).expect("subfolder");
+    let real_git = oneiron_spawn::command("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("sh finds git");
+    let real_git = String::from_utf8(real_git.stdout).expect("utf-8 path");
+    let bin = parent.path().join("bin");
+    std::fs::create_dir(&bin).expect("bin folder");
+    let wrapper = bin.join("git");
+    std::fs::write(
+        &wrapper,
+        format!("#!/bin/sh\nsleep 5 &\nexec {} \"$@\"\n", real_git.trim()),
+    )
+    .expect("the wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited)))
+        .expect("a PATH");
+    in_child(
+        "git_left_output_open_child",
+        &sub,
+        &[folder_digest(&canonical(&sub))],
+        &[("PATH", path)],
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "run in a child process by its parent test"]
+fn git_left_output_open_child() {
+    check_child_identity();
+}
+
