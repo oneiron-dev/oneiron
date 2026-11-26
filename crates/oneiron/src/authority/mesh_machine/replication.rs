@@ -302,17 +302,12 @@ impl Vault {
         let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
         for row in rows {
             let machine = row.machine;
-            let whose = if own == Some(machine) {
-                match own_keys.filter(|keys| keys.machine == machine) {
-                    Some(keys) => Whose::Own(keys),
-                    None => {
-                        import.refused.insert(machine);
-                        continue;
-                    }
-                }
-            } else {
-                Whose::Other
-            };
+            // RED (scratch only): main's behaviour, this install's own row skipped whole.
+            let _ = own_keys;
+            if own == Some(machine) {
+                continue;
+            }
+            let whose = Whose::Other;
             let outcome =
                 self.import_mesh_authority_row_in_txn(&mut txn, &fold, row, whose, &mut count)?;
             match outcome {
