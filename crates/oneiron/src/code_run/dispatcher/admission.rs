@@ -182,7 +182,7 @@ impl HostSelfDispatcher<'_> {
             let read_as = if matches!(call, SelfCall::AgentVerb(_)) {
                 None
             } else {
-                match self.admit_self_call(call)? {
+                match self.admit_self_call(&call)? {
                     Ok(read_as) => read_as,
                     Err(refusal) => {
                         return Ok((
