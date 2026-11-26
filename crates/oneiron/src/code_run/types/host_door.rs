@@ -121,6 +121,10 @@ pub struct AgentVerbRefusal {
     pub code: String,
     /// A supplied host-side hook notice; the guest still sees only the code.
     pub hook_notice: Option<serde_json::Value>,
+    /// The refusal's stable reason codes, as the door that refused typed
+    /// them (FIX CODE-MODE-DENIAL-REASONS): they reach the run's denied
+    /// result beside the code. Empty when the door named none.
+    pub reason_codes: Vec<String>,
 }
 
 /// A verb-table row's refusal as its own route worded it (OF-181): the code,
@@ -208,6 +212,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: REVEAL_REPLAY_UNSERVED.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -266,6 +271,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
     }
 
@@ -284,6 +290,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
     }
 
@@ -359,6 +366,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 }

@@ -213,6 +213,7 @@ impl AgentVerbDoor for ClaimUpsertDoor {
             return Ok(Err(AgentVerbRefusal {
                 code: "verb_not_bound".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             }));
         }
         let input: ClaimInput = serde_json::from_value(call.input.clone())

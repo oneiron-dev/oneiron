@@ -650,7 +650,7 @@ impl<'a> HostSelfDispatcher<'a> {
                         hook_notice: None,
                         effect,
                         outcome: refusal.code,
-                        reason_codes: Vec::new(),
+                        reason_codes: refusal.reason_codes,
                     })));
                 }
             };

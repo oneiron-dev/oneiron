@@ -324,6 +324,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 

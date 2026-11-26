@@ -755,7 +755,13 @@ fn verb_call_outcomes(body: &Value) -> Vec<Value> {
 /// A verb call the door refused, as the step log records it: the door's
 /// stable code and no reason text.
 fn verb_refusal(code: &str) -> Value {
-    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": []})
+    verb_refusal_with(code, &[])
+}
+
+/// A verb call the door refused with its stable reason codes (FIX
+/// CODE-MODE-DENIAL-REASONS).
+fn verb_refusal_with(code: &str, reason_codes: &[&str]) -> Value {
+    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": reason_codes})
 }
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
@@ -1208,7 +1214,10 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
     let steps = body["result"]["structuredContent"]["steps"].to_string();
     assert_eq!(
         verb_call_outcomes(&body),
-        [verb_refusal("tool_args_invalid")],
+        [verb_refusal_with(
+            "tool_args_invalid",
+            &["args.unknown_field"]
+        )],
         "{steps}"
     );
     assert!(!steps.contains("north gate"), "{steps}");
