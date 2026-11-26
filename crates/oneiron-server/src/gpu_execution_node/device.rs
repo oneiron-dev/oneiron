@@ -263,7 +263,8 @@ impl NvidiaSmiRoute {
                     Ok(output) => Ok(output),
                     Err(DeviceQueryError::Unavailable(error)) => Err(error),
                     Err(DeviceQueryError::NoListener { reason }) => {
-                        run_here_after_no_listener(fallback_program, query, &reason)
+                        let _ = (fallback_program, run_here_after_no_listener);
+                        Err(GpuProbeError::Unavailable { reason })
                     }
                 }
             }
