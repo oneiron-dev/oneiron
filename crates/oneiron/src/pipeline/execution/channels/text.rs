@@ -280,10 +280,10 @@ impl PipelineBuilder<'_> {
     /// ([`BARRED_PUSH_TEXT_WINDOW`]); pull and no-bar recalls never set the claims-only flag.
     fn barred_direct_match_push(&self) -> bool {
         self.recall_bar_claims_only
-            && matches!(
-                self.recall_bar,
-                Some(crate::memory::recall::bar::BarJudge::DirectMatch { .. })
-            )
+            && self
+                .recall_bar
+                .as_ref()
+                .is_some_and(crate::memory::recall::bar::BarJudge::is_direct_match)
     }
 
     /// Runs the text channel, the next of `stages_left` deadline stages, and
