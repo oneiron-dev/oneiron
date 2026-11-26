@@ -160,7 +160,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             invocation: Some(invocation),
             hook_ask: None,
             ..self.actor.clone()
-        };
+        }
+        // Each guest verb row reads its session folder's project as a tool call would
+        // (RECALL-SESSION-PROJECT): a row that writes nothing and names no projects.
+        .for_verb_row(call.verb.writes(), &call.input);
         let verb = call.verb.as_str();
         let input = call.input.clone();
         let run = McpCodeRun {
@@ -670,6 +673,7 @@ pub(crate) fn admit_run_call_for_test(
         drain: None,
         forwarded: None,
         client_surface: None,
+        session_workspace: None,
         signing_request_transport: None,
     };
     let door = McpCodeModeVerbs::new(server, &context, oneiron::EntityId::now());

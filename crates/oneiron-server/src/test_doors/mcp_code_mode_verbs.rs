@@ -199,6 +199,45 @@ pub async fn call_verb(
     }
 }
 
+/// Runs one guest claim through the MCP connector's off-record write admission.
+///
+/// # Errors
+///
+/// The connector could not be resolved or the run could not enter or dispatch.
+pub async fn call_off_record_claim(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    session: &oneiron::off_record::OffRecordSession<'_>,
+    folder_digest: &str,
+    mut input: Value,
+) -> anyhow::Result<oneiron::code_run::SelfDispatchOutcome> {
+    use oneiron::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher};
+    use oneiron::task_verb::sdk::AgentVerb;
+
+    let mut context = resolve_context(server, credential).await?;
+    context.session_workspace = Some(vec![folder_digest.to_owned()]);
+    let actor = oneiron::WriteActor::new(credential.actor, EdgeActorClass::Human);
+    let verbs = McpCodeModeVerbs::new(server, &context, EntityId::now());
+    let dispatcher = HostSelfDispatcher::for_off_record_session(session, actor, "room-claim")?
+        .with_agent_verb_door(Arc::new(verbs));
+    input["subject_ref"] = Value::String(credential.actor.to_hex());
+    Ok(dispatcher.dispatch(SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: AgentVerb::VaultClaimsUpsert,
+        input,
+    }))?)
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+/// Installs the production resume check on the test's engine-stack runtime.
+pub fn install_verb_ask_resume(server: &Arc<SyncServer>) {
+    server.vault().install_verb_ask_credential_check(Arc::new(
+        crate::credential_resume::ServerVerbAskCredentialCheck::new(
+            server,
+            tokio::runtime::Handle::current(),
+        ),
+    ));
+}
+
 /// The bound-tool admission `verb` meets on `server` as `credential`
 /// (`mcp_admit_host_verb`): `Ok` past it, the gateway's refusal short of it.
 /// Only the message adds to what `call_verb` reports: the composed answer

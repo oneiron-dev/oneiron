@@ -103,35 +103,51 @@ impl Memory<'_> {
         ))
     }
 
+    /// What an attached session in the folder `folder_digests` (its own digest first) reads by
+    /// default: the folder's bound project with every project below it, or
+    /// [`SessionProjects::Unbound`] when no live project is bound.
+    ///
+    /// [`SessionProjects::Unbound`]: crate::session_project::SessionProjects::Unbound
+    pub(super) fn session_projects_of(
+        &self,
+        folder_digests: &[String],
+    ) -> MemoryResult<crate::session_project::SessionProjects> {
+        Ok(self.vault.session_projects(folder_digests)?)
+    }
+
     /// `selected` and every PROJECT that belongs to one of them at any depth:
     /// the incoming `belongs_to` edges from PROJECT rows, followed to the
     /// end in one read, each project once however the edges loop.
     fn project_descendant_closure(&self, selected: Vec<EntityId>) -> MemoryResult<Vec<EntityId>> {
-        // A vault with no project kind bound holds no project hierarchy.
-        let Ok(project_type) = self.vault.project_type_byte() else {
-            return Ok(selected);
-        };
-        let txn = self
-            .vault
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::error::Error::from)?;
-        let mut closure = BTreeSet::new();
-        let mut pending = selected;
-        while let Some(project) = pending.pop() {
-            if !closure.insert(project) {
-                continue;
-            }
-            pending.extend(crate::vault::filtered_edge_peers_in(
-                &self.vault.store,
-                &txn,
-                crate::ports::EdgeDirection::In,
-                &project,
-                crate::edge::EdgeKind::BelongsTo,
-                Some(project_type),
-            )?);
-        }
-        Ok(closure.into_iter().collect())
+        Ok(project_descendant_closure_of(self.vault, selected)?)
     }
+}
+
+/// [`Memory::project_descendant_closure`] in `vault`: `selected` and every PROJECT that belongs
+/// to one of them at any depth, in one read.
+pub(crate) fn project_descendant_closure_of(
+    vault: &crate::Vault,
+    selected: Vec<EntityId>,
+) -> crate::Result<Vec<EntityId>> {
+    // A vault with no project kind bound holds no project hierarchy.
+    let Ok(project_type) = vault.project_type_byte() else {
+        return Ok(selected);
+    };
+    let txn = vault.store.env.read_txn()?;
+    let mut closure = BTreeSet::new();
+    let mut pending = selected;
+    while let Some(project) = pending.pop() {
+        if !closure.insert(project) {
+            continue;
+        }
+        pending.extend(crate::vault::filtered_edge_peers_in(
+            &vault.store,
+            &txn,
+            crate::ports::EdgeDirection::In,
+            &project,
+            crate::edge::EdgeKind::BelongsTo,
+            Some(project_type),
+        )?);
+    }
+    Ok(closure.into_iter().collect())
 }

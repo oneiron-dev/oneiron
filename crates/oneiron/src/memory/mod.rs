@@ -141,6 +141,7 @@ pub use proactivity_digest::ProactivityDigestRequest;
 
 mod read_lane;
 mod read_selection;
+pub(crate) use read_selection::project_descendant_closure_of;
 mod reads;
 mod recall;
 pub(crate) mod recall_replay;

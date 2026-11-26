@@ -265,6 +265,9 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority,
     ) -> Result<bool> {
+        if !self.session_projects_admit(raw)? {
+            return Ok(false);
+        }
         let asked = authority.grants().asked();
         let own = self.own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?;
         if !own.admitted() {
@@ -290,6 +293,28 @@ impl<'v> ScopedRead<'v> {
                 );
                 false
             }))
+    }
+
+    /// Whether the attached session's project default this read's key carries admits the
+    /// row `raw` (RECALL-SESSION-PROJECT): a CLAIM stamped inside the session's projects, and
+    /// every row that is not a CLAIM, which carries no project stamp. With no default, every
+    /// row. It runs before every other gate of the row, and of each row the row was written from
+    /// ([`Self::is_entity_raw_readable_own_in`], which every source walk takes), so a summary
+    /// written from another project's claim is not read either. A CLAIM whose body does not
+    /// decode is refused here, as its own gate refuses it.
+    fn session_projects_admit(&self, raw: &[u8]) -> Result<bool> {
+        let Some(projects) = self.actor_key.session_projects() else {
+            return Ok(true);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(true);
+        }
+        Ok(
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+                .is_ok_and(|body| projects.admits(body.scope_project)),
+        )
     }
 
     /// A summary, the reply copied from it and its merge header carry words
@@ -322,7 +347,13 @@ impl<'v> ScopedRead<'v> {
         // rebuilt on the owner's floor) judges each source as any reader
         // does: the shortcut below would carry a stamped claim's words in a
         // summary that the claim gate withholds on its own.
-        if self.actor_key.vault_owner_ref().is_some() && !self.actor_key.reads_homed_unnamed() {
+        // So does an owner key that carries an attached session's project default: the
+        // shortcut would carry another project's claim words in a summary
+        // (RECALL-SESSION-PROJECT).
+        if self.actor_key.vault_owner_ref().is_some()
+            && !self.actor_key.reads_homed_unnamed()
+            && self.actor_key.session_projects().is_none()
+        {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
             // source still withholds the derived row (FIX 1496 S8): C6
@@ -830,6 +861,11 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Result<bool> {
+        // A source's words reach what was written from it, so the session's project default
+        // meets each source as it meets the row (RECALL-SESSION-PROJECT).
+        if !self.session_projects_admit(raw)? {
+            return Ok(false);
+        }
         Ok(self
             .own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?
             .admitted())

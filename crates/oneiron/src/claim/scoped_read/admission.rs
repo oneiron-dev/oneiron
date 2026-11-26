@@ -123,6 +123,19 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// Read only the CLAIM rows `projects` admits: an attached session's default for a read that
+    /// names no project (RECALL-SESSION-PROJECT), for a host that builds this lane from a
+    /// credential rather than a memory handle. It rides the key, so a lane built from it keeps
+    /// it; a request, never authority.
+    #[must_use]
+    pub fn within_session_projects(
+        mut self,
+        projects: crate::session_project::SessionProjects,
+    ) -> Self {
+        self.actor_key = self.actor_key.within_session_projects(projects);
+        self
+    }
+
     /// A channel-aware door names its destination; the proof still decides whether it is allowed.
     pub(crate) fn through_channel(mut self, channel: &str) -> Self {
         self.actor_key.channel = Some(channel.to_owned());

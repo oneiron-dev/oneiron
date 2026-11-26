@@ -383,6 +383,11 @@ impl SyncServer {
         let action = auth
             .and_then(|auth| crate::api::host_action::host_action_of(&self.vault, auth))
             .and_then(Result::ok);
+        // An attached session's recall that names no project reads its folder's project
+        // (RECALL-SESSION-PROJECT), as every handle built from its caller does.
+        let session_workspace = auth
+            .and_then(CoreAuth::session_read_workspace)
+            .map(<[String]>::to_vec);
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
         let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
@@ -417,6 +422,10 @@ impl SyncServer {
                 let memory = reader(&server.vault, actor, class, action.as_ref(), proof.as_ref())
                     .for_destination(&destination)
                     .listing_producers(&listing);
+                let memory = match session_workspace.as_deref() {
+                    Some(folder_digests) => memory.in_session_workspace(folder_digests),
+                    None => memory,
+                };
                 let hyde = server.hyde_host.expander(
                     &memory,
                     effort,
