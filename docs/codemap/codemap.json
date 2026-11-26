@@ -5804,6 +5804,24 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 2,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeshAuthorityPart",
+      "MeshAuthorityRowJoin",
+      "MeshAuthorityRowRef"
+     ],
+     "path": "src/authority/mesh_machine/replication/parts.rs",
+     "purpose": "A binding past one page, read in parts (MESH-AUTHORITY-ROW-PARTS, review round 2 of #10536)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -90133,7 +90151,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/authority/mesh.rs",
@@ -92902,7 +92920,7 @@
      "path": "src/sync/residence/mesh_authority.rs",
      "purpose": "The home's host-signed mesh bindings, served beside its authority catch-up to a proven machine of the…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -103206,7 +103224,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -103510,11 +103528,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault/vector_evidence.rs",
-     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
+     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it, or…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/vector_evidence/setting_keys.rs",
+     "purpose": "The `retrieval.vector_evidence` row (its value and item domain: the parent module)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -122422,6 +122448,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/vector_evidence_owner_setting.rs",
+     "purpose": "EMBEDDER-ENDPOINT-VECTOR-FLOORS PR B (Engine ANSWER 27 Nov 01:45): the owner sets the no-match floors of one…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_connector_call_source_rows.rs",
      "purpose": "`connector.call_source_rows` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -123079,7 +123113,7 @@
     },
     "authority": {
      "entry": "crates/oneiron/src/authority/mod.rs",
-     "files": 350,
+     "files": 351,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125404,7 +125438,7 @@
     },
     "vault": {
      "entry": "crates/oneiron/src/vault/mod.rs",
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125568,8 +125602,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8637,
-   "test_files": 2327
+   "source_files": 8639,
+   "test_files": 2328
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -171365,7 +171399,7 @@
      "path": "src/api/mcp_gateway/session_workspace.rs",
      "purpose": "The folder an attached agent session runs in, as each MCP call names it (RECALL-SESSION-PROJECT; Engine…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -175911,7 +175945,7 @@
      "path": "src/commands/hook/recall.rs",
      "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -176054,7 +176088,7 @@
      "path": "src/commands/mcp_bridge/call_meta.rs",
      "purpose": "What the bridge adds to a relayed `tools/call`'s `_meta`: the invocation it runs under (ARCH-0080 §3), and…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -181247,7 +181281,7 @@
      "path": "src/livequery/residence/authority.rs",
      "purpose": "The authority log over residence: its tail, range, checkpoint and append, and an entry past one frame in…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -191721,7 +191755,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/mcp_session_project_reads.rs",
