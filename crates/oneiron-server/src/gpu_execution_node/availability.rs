@@ -251,6 +251,10 @@ impl GpuAvailability {
 
     /// The free GPUs that meet `request`. There are none while the machine is
     /// paused, drained or while its disk has no room for the request's bytes.
+    /// A GPU id the answer lists on more than one line is never offered,
+    /// whatever each line says: the machine's own reading refuses such an
+    /// answer (`GpuProbeError::RepeatedDevice`), so its slot table leases
+    /// nothing from it.
     pub fn free_matching<'a>(
         &'a self,
         request: &'a GpuSlotRequest,
@@ -261,8 +265,19 @@ impl GpuAvailability {
         self.devices
             .iter()
             .filter(move |device| {
-                open && device.state == GpuDeviceState::Free && admits_gpu(request, &device.device)
+                open && device.state == GpuDeviceState::Free
+                    && admits_gpu(request, &device.device)
+                    && !self.lists_more_than_once(&device.device.device_id)
             })
             .map(|device| &device.device)
+    }
+
+    /// Whether the answer lists `device_id` on more than one line.
+    fn lists_more_than_once(&self, device_id: &str) -> bool {
+        self.devices
+            .iter()
+            .filter(|device| device.device.device_id == device_id)
+            .nth(1)
+            .is_some()
     }
 }

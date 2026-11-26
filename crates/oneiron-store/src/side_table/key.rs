@@ -500,11 +500,11 @@ impl FieldSpelling<u64> for HexU64 {
 }
 
 /// A window label, `:`, then the entity's 32 lower-case hex characters: the bytes after the prefix
-/// of every window+entity marker table (the `pt:` pending tombstones, the `ra:w:`, `rm:w:` and
-/// `rmp:w:` sync markers, the `pm:` promotion pickups). Split from the END (fixed-width hex tail),
-/// so a window label containing `:` still decodes correctly. Here, not in the sync-only
-/// `window_rows` (which re-exports it), because `deletion` writes `pt:` rows without the `sync`
-/// feature (ONE-1132).
+/// of every window+entity marker table (the `pt:` pending tombstones, the `ra:w:`, `rm:w:`,
+/// `rmh:w:` and `rmp:w:` sync marker rows, the `pm:` promotion pickups). Split from the END
+/// (fixed-width hex tail), so a window label containing `:` still decodes correctly. Here, not in
+/// the sync-only `window_rows` (which re-exports it), because `deletion` writes `pt:` rows without
+/// the `sync` feature (ONE-1132).
 #[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 #[side_key(sep = b':')]
 pub struct WindowEntityHexKey {
