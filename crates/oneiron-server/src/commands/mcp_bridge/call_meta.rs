@@ -108,16 +108,7 @@ impl ClientSession {
         let Some(workspace) = &self.workspace else {
             return false;
         };
-        let Some(meta) = message
-            .get_mut("params")
-            .and_then(Value::as_object_mut)
-            .map(|params| {
-                params
-                    .entry("_meta")
-                    .or_insert_with(|| Value::Object(serde_json::Map::new()))
-            })
-            .and_then(Value::as_object_mut)
-        else {
+        let Some(meta) = meta_object(message) else {
             return false;
         };
         meta.insert(WORKSPACE_META.to_owned(), workspace.clone());
