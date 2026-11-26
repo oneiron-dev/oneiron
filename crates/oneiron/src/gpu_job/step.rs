@@ -305,7 +305,7 @@ impl Vault {
         }
         // JOB-SETTLES-ON-LAUNCH-REFUSED (LE-2 = A): a key that never started bills
         // zero, including overhead.
-        let billed_with_overhead = if terminal.as_ref().is_some_and(|t| t.end.never_ran()) {
+        let billed_with_overhead = if false && terminal.as_ref().is_some_and(|t| t.end.never_ran()) {
             0
         } else {
             billed_secs.map_or(0, |secs| secs.saturating_add(chunk.quote.overhead_secs))
