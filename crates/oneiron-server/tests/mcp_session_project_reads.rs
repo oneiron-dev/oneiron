@@ -523,7 +523,7 @@ async fn session_reads() -> TestResult {
 /// call is refused.
 #[test]
 fn a_push_reads_only_the_sessions_project_and_is_quiet_outside_one() -> TestResult {
-    on_engine_stack(push_in_session_project)
+    on_deep_stack(push_in_session_project)
 }
 
 async fn push_in_session_project() -> TestResult {
