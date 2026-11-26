@@ -107756,8 +107756,9 @@
      "purpose": "Array groups (pass 34, 1.1; row Q5): orders that share a group id are the members of one array, and one…",
      "surface": {
       "crate-vis": 5,
+      "enum": 1,
       "fn": 2,
-      "struct": 2
+      "struct": 1
      }
     },
     {
