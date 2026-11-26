@@ -858,10 +858,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
 /// read behind this host's clock. The line says so, and gives the life.
 fn pairing_link_notice(expires_at: u64, comm: &str) -> String {
     format!(
-        "the pairing link expires at vault-clock second {expires_at}: one pairing code life \
-         (pairing.code.ttl_secs, one hour unless set) of this server's running time; the vault \
-         clock does not advance while the server is stopped, so it can read behind this host's \
-         clock; its slip may message: {comm}"
+        "the pairing link expires at unix second {expires_at}; its slip may message: {comm}"
     )
 }
 
