@@ -374,7 +374,7 @@ pub(crate) fn mcp_scoped_read<'a>(
         match actor
             .auth
             .as_ref()
-            .and_then(crate::auth::CoreAuth::session_workspace)
+            .and_then(crate::auth::CoreAuth::session_read_workspace)
         {
             Some(folder_digests) => read.within_session_projects(
                 vault

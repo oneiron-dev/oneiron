@@ -4,17 +4,23 @@
 //!
 //! The `oneiron mcp` bridge started with `--workspace <DIR>` names the folder's digests (its
 //! own, then its main checkout's; never its path) in every `tools/call`'s
-//! `_meta["oneiron/workspace"]`.
+//! `_meta["oneiron/workspace"]`. The vault keys each digest with its store id before it looks
+//! the binding up. A binding is a choice about the install that holds it: another machine of the
+//! vault never receives it, and a restore drops it, so on a replica, and after a restore, the
+//! folder reads as unbound, and the start hook's vault line gives the bind command (Q2 = A).
+//!
 //! This endpoint keeps no session, so it reads them on every call, as it reads
 //! `clientCapabilities`. The client names them, so they select a default and grant nothing: a
 //! caller that names another folder, or forges a digest, only moves which project its own reads
 //! default to, inside its credential's own ceiling, never past it (Q1 = A, selection never
 //! grants). A read that names its projects (`project_refs`) reads those. A write never takes the
-//! read default.
+//! read default: a claim it writes that names no project is placed in the folder's project
+//! instead, and one that names its project lands there.
 
 use serde_json::Value;
 
 use super::{McpCallContext, McpToolCallParams};
+use crate::auth::SessionWorkspace;
 
 /// The `_meta` key a `tools/call` names its session's folder under.
 pub(crate) const MCP_WORKSPACE_META: &str = "oneiron/workspace";
@@ -44,20 +50,41 @@ impl McpToolCallParams {
 }
 
 impl McpCallContext {
-    /// This call's context for one verb row: a row that writes nothing, and whose arguments
-    /// name no `project_refs`, reads the session folder's project by default; every other row
-    /// reads as its arguments say, with no session default.
+    /// This call's context for one verb row: a row that writes places a claim that names no
+    /// project in the session folder's project; a row that writes nothing, and whose arguments
+    /// name no `project_refs`, reads the session folder's project by default; a read that names
+    /// its projects reads as its arguments say, with no session default.
     #[must_use]
     pub(crate) fn for_verb_row(mut self, writes: bool, arguments: &Value) -> Self {
-        let default = self
-            .session_workspace
-            .clone()
-            .filter(|_| !writes && !names_project_refs(arguments));
+        let default = self.session_workspace.clone().and_then(|folder_digests| {
+            if writes {
+                Some(SessionWorkspace::Writes(folder_digests))
+            } else if names_project_refs(arguments) {
+                None
+            } else {
+                Some(SessionWorkspace::Reads(folder_digests))
+            }
+        });
         self.actor.auth = self
             .actor
             .auth
             .take()
             .map(|auth| auth.in_session_workspace(default));
+        self
+    }
+}
+
+impl McpCallContext {
+    /// This call's context for a row that is not a verb row (setup, `execute_code`, a run's
+    /// result, an app action): no session default on the call itself. `execute_code` binds
+    /// each guest verb as its own row.
+    #[must_use]
+    pub(crate) fn for_non_verb_row(mut self) -> Self {
+        self.actor.auth = self
+            .actor
+            .auth
+            .take()
+            .map(|auth| auth.in_session_workspace(None));
         self
     }
 }

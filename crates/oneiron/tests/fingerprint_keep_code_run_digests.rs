@@ -614,6 +614,7 @@ fn origins() -> Vec<CodeConsentRunOrigin> {
             },
             door: VerbAskDoor::Facade { room: None },
             on_device: false,
+            session_workspace: None,
         },
         endpoint: CodeConsentRunEndpoint::Primary,
         peer: None,

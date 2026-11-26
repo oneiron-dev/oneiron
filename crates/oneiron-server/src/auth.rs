@@ -358,6 +358,18 @@ impl CoreScope {
     }
 }
 
+/// What an attached agent session's folder binds on one verb row (RECALL-SESSION-PROJECT; Engine
+/// ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, Q2 = A). Each holds the folder's
+/// digests, its own first. It selects a default and grants nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionWorkspace {
+    /// A row that writes nothing and names no project: its reads read the folder's project.
+    Reads(Vec<String>),
+    /// A row that writes: a claim it writes that names no project is placed in the folder's
+    /// project.
+    Writes(Vec<String>),
+}
+
 /// Authenticated `/v1/core` caller plus extracted scopes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CoreAuth {
@@ -404,11 +416,12 @@ pub(crate) struct CoreAuth {
     /// `credential_memory` builds for this caller binds it, so a door acts
     /// inside the session its caller named (OF-063, FIX 1668).
     off_record_session: Option<String>,
-    /// The folder digests of the folder an attached agent session runs in, its own first, which
-    /// the MCP gateway binds on a read that names no project (RECALL-SESSION-PROJECT): context,
-    /// not authority. Every handle `credential_memory` builds for this caller then reads that
-    /// folder's project by default.
-    session_workspace: Option<Vec<String>>,
+    /// The folder an attached agent session runs in, by its digests, its own first, and what
+    /// the MCP gateway binds it for (RECALL-SESSION-PROJECT): a read that names no project, or
+    /// a write. Context, not authority. Every handle `credential_memory` builds for this caller
+    /// then reads that folder's project by default, or places a claim that names no project
+    /// there.
+    session_workspace: Option<SessionWorkspace>,
     /// The managed vault's owner, as its supervisor attested this one
     /// request (`ManagedOwnerAction`, verified at managed ingress); `None`
     /// for every other request ([`Self::for_attested_owner`]).
@@ -710,15 +723,26 @@ impl CoreAuth {
     }
 
     /// The attached session's folder digests this caller's reads default to, if any.
-    pub(crate) fn session_workspace(&self) -> Option<&[String]> {
-        self.session_workspace.as_deref()
+    pub(crate) fn session_read_workspace(&self) -> Option<&[String]> {
+        match &self.session_workspace {
+            Some(SessionWorkspace::Reads(folder_digests)) => Some(folder_digests),
+            _ => None,
+        }
     }
 
-    /// This caller, reading by default the project of the folder `folder_digests` names
-    /// (RECALL-SESSION-PROJECT); `None` reads with no default.
+    /// The attached session's folder digests this caller's writes place a claim in, if any.
+    pub(crate) fn session_write_workspace(&self) -> Option<&[String]> {
+        match &self.session_workspace {
+            Some(SessionWorkspace::Writes(folder_digests)) => Some(folder_digests),
+            _ => None,
+        }
+    }
+
+    /// This caller, bound to an attached session's folder for its reads or its writes
+    /// (RECALL-SESSION-PROJECT); `None` binds none.
     #[must_use]
-    pub(crate) fn in_session_workspace(mut self, folder_digests: Option<Vec<String>>) -> Self {
-        self.session_workspace = folder_digests;
+    pub(crate) fn in_session_workspace(mut self, workspace: Option<SessionWorkspace>) -> Self {
+        self.session_workspace = workspace;
         self
     }
 

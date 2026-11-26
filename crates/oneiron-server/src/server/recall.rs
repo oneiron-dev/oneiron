@@ -386,7 +386,7 @@ impl SyncServer {
         // An attached session's recall that names no project reads its folder's project
         // (RECALL-SESSION-PROJECT), as every handle built from its caller does.
         let session_workspace = auth
-            .and_then(CoreAuth::session_workspace)
+            .and_then(CoreAuth::session_read_workspace)
             .map(<[String]>::to_vec);
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
         let detail = recall_effort_name(input.request.effort);

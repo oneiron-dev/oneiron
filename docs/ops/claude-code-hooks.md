@@ -377,10 +377,14 @@ checkout's real path (`blake3:` and hex) and the folder's name, never the path;
 the vault keys the digest with its own id before it stores it, so one folder's
 ids differ from vault to vault. Someone who reads the vault and knows its id can still test a
 guessed path against a stored id: the digest hides the path, it is not a
-secret. The folder
-is the git checkout it sits in, so every subfolder of a repository shares one
-binding; a linked worktree with no binding of its own reads its main
-checkout's. The filesystem root and your home folder are never a workspace.
+secret. A binding belongs to the machine that holds the vault you bound it
+on: another machine of the vault never receives it, and a restore drops it,
+so on a replica, and after a restore, the folder reads as unbound until you
+bind it again. The folder is the git checkout it sits in, so every subfolder
+of a repository shares one binding; a linked worktree with no binding of its
+own reads its main checkout's (a bare repository, or one with a separate git
+directory, has none). The filesystem root and your home folder are never a
+workspace.
 
 The plugin starts `oneiron mcp --workspace .`, so every tool call names the
 folder Claude Code runs in. Then:
@@ -399,8 +403,13 @@ folder Claude Code runs in. Then:
 
 The binding selects; it grants nothing. The folder a tool call names comes from
 the client, so a client that names another folder only changes which of the
-claims its credential reads anyway come first by default. Writes keep their own
-project rules.
+claims its credential reads anyway come first by default.
+
+A claim the session writes (`vault.claims.upsert`, `vault.remember`) that names
+no project lands in the folder's project, so the session reads it back. One
+that names its project (`scope_project_id`) lands there, within what the
+credential may write. In a folder with no project bound, writes keep the root's
+default project, as before. Notes and other rows carry no project yet.
 
 ## 1. Turn on the import queue
 
