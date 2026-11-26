@@ -267,7 +267,7 @@ pub(super) fn authority_mesh(
             json!({
                 "machine": reference.machine.to_hex(),
                 "total": reference.total,
-                "digest": encode(&reference.digest),
+                "digest": reference.digest_text(),
                 "address": encode(&reference.address),
                 "bare": reference.bare,
             })

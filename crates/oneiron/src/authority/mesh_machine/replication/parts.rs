@@ -30,7 +30,8 @@ pub struct MeshAuthorityRowRef {
     pub machine: EntityId,
     /// The signed row's length in bytes.
     pub total: u64,
-    /// The signed row's content hash ([`ContentHash`]).
+    /// The signed row's content hash ([`ContentHash`], BLAKE3); the wire
+    /// spells it as [`Self::digest_text`] does.
     pub digest: [u8; 32],
     /// The MACHINE row's address envelope, as [`MeshAuthorityRow::address`].
     pub address: Vec<u8>,
@@ -49,6 +50,20 @@ impl MeshAuthorityRowRef {
             address,
             bare,
         }
+    }
+
+    /// The content hash as the wire spells it: `blake3:` and 64 lower-case
+    /// hex digits, the hash named so that a later change of hash shows there.
+    #[must_use]
+    pub fn digest_text(&self) -> String {
+        format!("blake3:{}", oneiron_hex::encode(&self.digest))
+    }
+
+    /// The content hash `text` spells as [`Self::digest_text`] does; `None`
+    /// for any other hash or spelling.
+    #[must_use]
+    pub fn digest_from_text(text: &str) -> Option<[u8; 32]> {
+        oneiron_hex::decode::<32>(text.strip_prefix("blake3:")?)
     }
 }
 

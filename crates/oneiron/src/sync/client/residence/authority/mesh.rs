@@ -41,7 +41,7 @@ struct MeshAuthorityRowReply {
 }
 
 /// A binding the home names by reference, its signed row read in parts: its
-/// length, its content hash and its address in base64.
+/// length, its content hash as `blake3:<hex>` and its address in base64.
 #[derive(Deserialize)]
 struct MeshAuthorityRowRefReply {
     machine: String,
@@ -186,7 +186,7 @@ fn decoded_page(
             .map_err(|_| refused())
     };
     // Each MACHINE past `after` and the one before it in its list.
-    let ordered = |floor: &mut Option<EntityId>, hex: &str| {
+    let ordered = |floor: &mut Option<EntityId>, hex: &str| -> Result<EntityId, TransportError> {
         let machine = EntityId::from_hex(hex).map_err(|_| refused())?;
         if floor.is_some_and(|floor| machine <= floor) {
             return Err(refused());
@@ -214,7 +214,7 @@ fn decoded_page(
         parted.push(MeshAuthorityRowRef {
             machine,
             total: reference.total,
-            digest: <[u8; 32]>::try_from(decode(&reference.digest)?).map_err(|_| refused())?,
+            digest: MeshAuthorityRowRef::digest_from_text(&reference.digest).ok_or_else(refused)?,
             address: decode(&reference.address)?,
             bare: reference.bare,
         });
@@ -270,7 +270,7 @@ mod tests {
                 .map(|machine| json!({
                     "machine": machine.to_hex(),
                     "total": 3,
-                    "digest": encode(&[1; 32]),
+                    "digest": format!("blake3:{}", "01".repeat(32)),
                     "address": encode(b"address"),
                 }))
                 .collect::<Vec<_>>(),
@@ -326,6 +326,12 @@ mod tests {
         assert!(
             decoded_page(reply(&[], &[a], None), Some(a)).is_err(),
             "a reference at or before where the page starts"
+        );
+        let mut other_hash = reply(&[], &[a], None);
+        other_hash.parted[0].digest = format!("sha256:{}", "01".repeat(32));
+        assert!(
+            decoded_page(other_hash, None).is_err(),
+            "a content hash of another name"
         );
     }
 }

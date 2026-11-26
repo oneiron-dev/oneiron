@@ -614,6 +614,12 @@ fn a_row_signed_again_after_its_page_or_past_the_cap_never_joins() {
     let [reference] = page.parted.as_slice() else {
         panic!("one binding named by reference: {:?}", page.parted.len());
     };
+    assert_eq!(
+        MeshAuthorityRowRef::digest_from_text(&reference.digest_text()),
+        Some(reference.digest),
+        "the wire names the content hash and spells it back"
+    );
+    assert!(reference.digest_text().starts_with("blake3:"));
     let (join, _) = join_parts(&host, reference);
     assert!(
         join.finish().is_some(),
