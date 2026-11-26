@@ -548,9 +548,6 @@ impl Vault {
             || ((bare || own)
                 && parse_address(&existing.body)
                     .is_some_and(|held| held.endpoint_key == address.endpoint_key));
-        if own && !held && existing.body != super::super::machine_identity::EMPTY_MACHINE_BODY {
-            return Ok(None);
-        }
         Ok(Some(held))
     }
 }
