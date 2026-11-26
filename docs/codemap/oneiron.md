@@ -495,7 +495,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_answers/importance.rs` | src | s | 7 crate-vis | — | The importance of an owner's machine answer from the value in force |
 | `src/authority/machine_claims.rs` | src | s | 9 crate-vis | — | The fold's machine key claims, indexed once per view: P1's poison per admitter (a key two machines claim, a… |
 | `src/authority/machine_enroll.rs` | src | s | 1 fn · 2 crate-vis | — | Host-landed MACHINE enrollment: one EnrollDevice and its BindActor |
-| `src/authority/machine_identity.rs` | src | L | 3 struct · 12 fn · 2 const · 1 re-export · 10 crate-vis | LocalMachine, MachineEnrolmentRequest, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
+| `src/authority/machine_identity.rs` | src | L | 3 struct · 12 fn · 2 const · 1 re-export · 11 crate-vis | LocalMachine, MachineEnrolmentRequest, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
 | `src/authority/machine_identity/request_code_text.rs` | src | s | 2 fn · 1 crate-vis | — | A machine's request code as the owner reads and types it (FIX 4956): 26 Crockford base32 symbols, the… |
 | `src/authority/machine_profile/apply.rs` | src | m | 9 crate-vis | — | The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every… |
 | `src/authority/machine_profile/merge.rs` | src | s | 4 crate-vis | — | How a machine's chains merge across branches: a higher revision supersedes, divergent profiles at one… |
@@ -514,7 +514,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/mesh_machine/doors.rs` | src | m | 8 fn · 1 re-export · 2 crate-vis | — | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
 | `src/authority/mesh_machine/endpoint_index.rs` | src | s | 8 crate-vis | — | The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census L3-28B) |
 | `src/authority/mesh_machine/enrolment.rs` | src | m | 1 struct · 2 enum · 2 fn · 1 const · 2 crate-vis | MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
-| `src/authority/mesh_machine/replication.rs` | src | m | 3 struct · 2 fn · 1 const · 2 crate-vis | MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityRow | The home's host-signed mesh bindings carried to the owner's other machines (MESH-AUTHORITY-REPLICATION, R6… |
+| `src/authority/mesh_machine/replication.rs` | src | m | 3 struct · 2 fn · 1 const · 3 crate-vis | MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityRow | The home's host-signed mesh bindings carried to the owner's other machines (MESH-AUTHORITY-REPLICATION, R6… |
 | `src/authority/mod.rs` | src | m | 2 mod · 96 re-export · 89 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/oauth_server/access_slips.rs` | src | m | 5 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
 | `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
@@ -657,7 +657,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/machine_fold.rs` | test | L | 2 crate-vis | — | World privacy P1 acceptance in the authority fold: who may answer for a machine, and which other authority… |
 | `src/authority/tests/machine_identity.rs` | test | L | 7 crate-vis | — | World privacy P1 acceptance: a machine is the owner's only by the owner's own answer at enrolment ("yours… |
 | `src/authority/tests/machine_write.rs` | test | XL | — | — | Signed MACHINE claims bind an enrolled software key to exact bytes and vault |
-| `src/authority/tests/mesh_authority_replication.rs` | test | m | — | — | MESH-AUTHORITY-REPLICATION (R6 P0, Engine 26 Nov 02:16): a replica that joined its home proves the machines… |
+| `src/authority/tests/mesh_authority_replication.rs` | test | L | — | — | MESH-AUTHORITY-REPLICATION (R6 P0, Engine 26 Nov 02:16): a replica that joined its home proves the machines… |
 | `src/authority/tests/mod.rs` | test | s | — | — | — |
 | `src/authority/tests/observation_safety.rs` | test | m | 1 crate-vis | — | Persisted anti-rollback, bounded stale-roster approvals and advisory ingest checks |
 | `src/authority/tests/owner_anchor.rs` | test | m | 12 crate-vis | — | World privacy P6b acceptance in the authority fold: an owner root's anchor marks machines in a chain of its… |

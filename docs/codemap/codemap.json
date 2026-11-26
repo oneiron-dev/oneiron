@@ -5575,7 +5575,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 12,
       "re-export": 1,
       "struct": 3
@@ -5802,7 +5802,7 @@
      "purpose": "The home's host-signed mesh bindings carried to the owner's other machines (MESH-AUTHORITY-REPLICATION, R6…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 3
      }
@@ -7433,7 +7433,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/mesh_authority_replication.rs",
