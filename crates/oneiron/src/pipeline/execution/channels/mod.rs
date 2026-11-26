@@ -901,7 +901,7 @@ impl PipelineBuilder<'_> {
                         kept.push(row);
                     }
                 }
-                *scores = kept;
+                scores = kept;
             }
             let bar_similarity = match self.recall_bar.as_ref() {
                 Some(judge) => {
