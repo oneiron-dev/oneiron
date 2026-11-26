@@ -83,6 +83,12 @@ impl Memory<'_> {
         placed
     }
 
+    /// Sets the default project already resolved for this session's claim writes.
+    pub(crate) fn with_session_placement(mut self, project: Option<crate::EntityId>) -> Self {
+        self.session_placement = project;
+        self
+    }
+
     /// `input` placed in this handle's session project when the handle carries one and the
     /// input's scope names no project (`scopeProjectId`); `None` leaves it as it is. A scope
     /// that is not an object is left for the writer to refuse, as before.
@@ -590,6 +596,7 @@ impl Memory<'_> {
             instrument,
             door: door.clone(),
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
+            session_workspace: None,
         };
         Some(VerbAskCredential::new(reference, witness))
     }

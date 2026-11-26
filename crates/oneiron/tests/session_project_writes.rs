@@ -322,3 +322,44 @@ fn a_remembered_claim_that_names_no_project_lands_in_the_folders_project() -> Te
     );
     Ok(())
 }
+
+#[test]
+fn a_batch_from_a_bound_folder_keeps_the_root_default_for_an_omitted_project() -> TestResult {
+    let fixture = open()?;
+    let omitted_id = EntityId::now();
+    let explicit_id = EntityId::now();
+    let omitted: ScopedClaimInput = serde_json::from_value(json!({
+        "id": omitted_id.to_hex(),
+        "predicate": "profile.hobby",
+        "subject_ref": fixture.owner.to_hex(),
+        "value": "a batched claim",
+        "confidence": 1.0,
+        "source": "user_stated",
+        "scope": { "scope_facet_id": fixture.facet.to_hex() },
+        "occurred_at": 1,
+        "learned_at": 1,
+    }))?;
+    let explicit = ScopedClaimInput {
+        id: Some(explicit_id.to_hex()),
+        scope: ClaimScopeInput {
+            scope_project_id: Some(fixture.beta.to_hex()),
+            ..omitted.scope.clone()
+        },
+        ..omitted.clone()
+    };
+    let outcomes = fixture
+        .writer(Some(MAIN_DIGEST))
+        .commit_scoped(&[omitted, explicit], false)
+        .map_err(|error| format!("vault.commit: {error:?}"))?;
+    let defaulted = fixture
+        .vault
+        .get_claim(&omitted_id)?
+        .ok_or_else(|| format!("the batch's defaulted claim is stored: {outcomes:?}"))?;
+    let named = fixture
+        .vault
+        .get_claim(&explicit_id)?
+        .ok_or_else(|| format!("the batch's explicit claim is stored: {outcomes:?}"))?;
+    assert_eq!(defaulted.scope_project, oneiron::claim::default_project_id());
+    assert_eq!(named.scope_project, fixture.beta);
+    Ok(())
+}

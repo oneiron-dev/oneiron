@@ -116,7 +116,7 @@ impl Memory<'_> {
     ) -> MemoryResult<CommitReceipt> {
         let route = self.session_write_route(session, "vault.claims.upsert")?;
         let session = session.for_participant(self.actor())?;
-        self.prepare_claim_in_session(&session, &route, None, input)?
+        self.prepare_claim_in_session(&session, &route, None, input, None)?
             .stage(&session, &route)
             .map_err(MemoryError::from)
     }
