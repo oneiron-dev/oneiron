@@ -467,6 +467,10 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
 /// checked step instead, and calls no model (JointIE, L2-03).
 async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult<Vec<SliceStep>> {
     let vault = child.step.vault;
+    let answer_schema = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::answer_schema::answer_schema_in_force_in_txn(vault, &txn)?
+    };
     let mut requests = Vec::with_capacity(child.slices.len());
     let mut authored = Vec::with_capacity(child.slices.len());
     for slice in &child.slices {
@@ -490,7 +494,18 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         if let Some(past) = slice.page_past_room {
             return Err(DurableStepError::Engine(past.refusal()));
         }
-        let request = slice_request(&child, slice, false)?;
+        let request = slice_request(&child, slice, false, answer_schema)?;
+        if answer_schema {
+            // The nightly check's capture: one row after the request is final, before the
+            // call. Authored relation replies above keep none: they call no model.
+            super::answer_schema::capture::capture_turn_call(
+                vault,
+                child.step.attempt_id,
+                &request,
+                slice.sources,
+                child.step.now_ms / 1_000,
+            )?;
+        }
         requests.push((request.canonical_hash()?, request));
         authored.push(None);
     }
@@ -531,7 +546,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
                 // A relation reply calls no model, so it has no parse retry.
                 let retry = match authored {
                     Some(_) => None,
-                    None => parse_retry_request(child, slice),
+                    None => parse_retry_request(child, slice, answer_schema),
                 };
                 if let Some(saved) = retry
                     .as_ref()
@@ -588,11 +603,13 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
 /// `slice`'s extraction request on the child's role: the child's failure
 /// rules bound, sealed for the role, its reasoning bound; with prompt lookup
 /// off on an own server when `lookup_off`, the one change the retry of a
-/// reply that failed the JSON parse makes.
+/// reply that failed the JSON parse makes. `answer_schema` is the switch's
+/// in-force value, read once per child: the retry keeps the original's.
 fn slice_request(
     child: &NeighbourhoodExtraction<'_>,
     slice: &SliceCall<'_>,
     lookup_off: bool,
+    answer_schema: bool,
 ) -> DurableStepResult<LlmRequest> {
     let vault = child.step.vault;
     let mut request = ConsolidationExecutor::extraction_request(
@@ -602,6 +619,7 @@ fn slice_request(
         slice.labels,
         slice.scope,
         &child.namespace,
+        answer_schema,
     )?;
     if lookup_off {
         prompt_lookup_off(&mut request);
@@ -688,8 +706,9 @@ async fn send_parse_retry(
 fn parse_retry_request(
     child: &NeighbourhoodExtraction<'_>,
     slice: &SliceCall<'_>,
+    answer_schema: bool,
 ) -> Option<([u8; 32], LlmRequest)> {
-    slice_request(child, slice, true)
+    slice_request(child, slice, true, answer_schema)
         .and_then(|request| Ok((request.canonical_hash()?, request)))
         .ok()
 }

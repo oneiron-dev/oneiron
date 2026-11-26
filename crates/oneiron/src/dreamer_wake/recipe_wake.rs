@@ -219,6 +219,16 @@ fn nightly(
         store.enqueue_coach_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_dreamer_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_note_review_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
+        // The nightly answer-schema check, one Macro child of the night, only while the
+        // switch reads in force at enqueue.
+        if crate::dreamer_consolidation::answer_schema::answer_schema_in_force_in_txn(vault, txn)? {
+            crate::dreamer_consolidation::answer_schema::check::enqueue_in_txn(
+                vault,
+                txn,
+                &attempt.status,
+                now,
+            )?;
+        }
         for resident in &residents {
             // A resident whose free-time cycle opened at the boundary now
             // falls after dreams as that cycle's own-time item instead (FIX

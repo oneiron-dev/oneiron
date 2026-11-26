@@ -1,0 +1,148 @@
+{
+  "type": "object",
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "pattern": "^(P[1-9][0-9]{0,8}|new:P[1-9][0-9]{0,8})$"
+          },
+          "predicate": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+          },
+          "value": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "array",
+              "object"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "pattern": "^T[1-9][0-9]{0,8}$"
+                    },
+                    "quote": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "quote"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "claim": {
+                      "type": "string",
+                      "pattern": "^C[1-9][0-9]{0,8}$"
+                    }
+                  },
+                  "required": [
+                    "claim"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "prospective_queries": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[\\x00-\\u07FF]{0,128}$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[\\x00-\\uD7FF\\uE000-\\uFFFF]{0,85}$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[\\x00-\\x7F]{0,256}$"
+                }
+              ]
+            }
+          },
+          "rel": {
+            "type": "string",
+            "pattern": "^R[1-9][0-9]{0,8}$"
+          },
+          "topic_key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "subject",
+          "predicate",
+          "value",
+          "confidence",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "persons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^new:P[1-9][0-9]{0,8}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_turn_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^T[1-9][0-9]{0,8}$"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "evidence_turn_refs"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "candidates"
+  ],
+  "additionalProperties": false
+}

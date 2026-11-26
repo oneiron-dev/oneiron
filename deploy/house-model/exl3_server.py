@@ -24,7 +24,10 @@ it: the text before `</think>` comes back as `reasoning_content`, the answer as
 server closes the thought itself and the answer gets the rest of `max_tokens`.
 A request that sets a budget and no `max_tokens` gets the budget plus
 `--default-max-tokens`, so the answer keeps that room after a full thought.
-A `response_format` schema constrains the answer only, never the thought.
+A `response_format` schema constrains the answer only, never the thought, and
+so does an `answer_schema` body field: the schema the engine sends a Dreamer
+TURN extraction call as its own server's field (HOUSE-SCHEMA), which a
+provider set to `response_format = "none"` does not strip.
 
 A request body may come gzip- or zstd-encoded (`body_codec.py`); one in a
 codec this server cannot read is answered 415.
@@ -1015,9 +1018,11 @@ def reply_limits(body, default_max_tokens, room):
 
 
 def answer_schema(body):
+    """The schema the answer is held to: the request's `response_format`
+    schema, else its `answer_schema` field, else none."""
     response_format = body.get("response_format")
     if response_format is None:
-        return None
+        return answer_schema_field(body)
     kind = response_format.get("type")
     if kind == "text":
         return None
@@ -1028,6 +1033,14 @@ def answer_schema(body):
     schema = (response_format.get("json_schema") or {}).get("schema")
     if not isinstance(schema, dict):
         raise RequestError("response_format.json_schema.schema must be an object")
+    return schema
+
+
+def answer_schema_field(body):
+    """The `answer_schema` body field: a JSON Schema object, or none."""
+    schema = body.get("answer_schema")
+    if schema is not None and not isinstance(schema, dict):
+        raise RequestError("answer_schema must be an object")
     return schema
 
 
