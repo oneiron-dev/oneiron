@@ -328,6 +328,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity | `crates/oneiron/src/self_heal/mod.rs` | m | — |
 | Context-pack serialization | `crates/oneiron/src/serialize/mod.rs` | L | — |
 | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… | `crates/oneiron/src/session_lifecycle.rs` | L | ARCH-0002, ARCH-0026, OF-536 |
+| The PROJECT an attached agent session's folder selects (rows RECALL-SESSION-PROJECT and… | `crates/oneiron/src/session_project.rs` | m | — |
 | The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a… | `crates/oneiron/src/setting/mod.rs` | L | — |
 | The client's customization profile and the world-destination helpers | `crates/oneiron/src/settings.rs` | m | — |
 | Revocable brief read grants | `crates/oneiron/src/share.rs` | L | — |
@@ -974,6 +975,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The health check past a threshold (OF-520, ARCH-0044 C5) | `crates/oneiron-server/src/wire_health.rs` | m | ARCH-0044, ARCH-0064a, ARCH-0076, OF-520 |
 | RC42 observation-only wire counters | `crates/oneiron-server/src/wire_telemetry.rs` | L | — |
 | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… | `crates/oneiron-server/src/work_order_host.rs` | m | — |
+| A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov… | `crates/oneiron-server/src/workspace_identity.rs` | s | — |
 | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… | `crates/oneiron-server/src/xlsx_recalc.rs` | m | ARCH-0075, OF-505 |
 | Which stored row a read takes its value from: one order for every key | `crates/oneiron-setting-contract/src/decide.rs` | m | — |
 | The stored key of one setting row: `name 0x00 item 0x00 mode scope` | `crates/oneiron-setting-contract/src/key.rs` | s | — |
