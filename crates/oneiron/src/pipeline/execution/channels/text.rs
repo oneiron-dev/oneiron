@@ -6,7 +6,7 @@ use crate::bm25::{Bm25Config, HiddenRowTest};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
-use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_results_to_scope};
+use crate::pipeline::channels::fusion_fetch_limit;
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
     allowed_set_withholds_row, claim_status_gate_allows, clamp_hides_row,
@@ -21,6 +21,8 @@ use crate::query_expansion::{HydeExpansion, retry_channel_limit};
 use crate::retrieval_quality::RetrievalDiagnostics;
 use crate::store::RetrievalSignal;
 use heed::RoTxn;
+
+mod truncation;
 
 /// How many rows the text channel fetches for a barred direct-match push: the window's whole
 /// bound, not the fusion floor. The bar drops under-bar hits after the fold, so a push that
@@ -622,54 +624,6 @@ impl PipelineBuilder<'_> {
             &text_results,
         );
         Ok((text_results, text_exhausted, withheld))
-    }
-    /// Keeps the rows of a widened text read that the run's own scope
-    /// admits, up to `requested` results. A run that folds each MESSAGE into
-    /// its TURN counts results as the fold leaves them, as the unwidened
-    /// bound does ([`turn_fold::rows_holding_distinct_turns`]): several
-    /// messages of one turn are one result, so they cannot crowd the next
-    /// turn out. Like the unwidened read, it looks no further than
-    /// `PER_SCAN_CAP_FACTOR` times the bound. The cut takes the call's
-    /// `made_by` slice; the fold's turn count judges each TURN by the run's
-    /// shared scope, as the fold itself does.
-    fn truncate_widened_text_results(
-        &self,
-        rows: &mut Vec<ScoredEntity>,
-        rtxn: &RoTxn<'_>,
-        requested: usize,
-        filter_config: PipelineFilterConfig<'_>,
-        metadata_cache: &mut EntityMetadataCache,
-        claim_gate: &mut ClaimStatusGateCache,
-    ) -> Result<()> {
-        let kept = if self.turn_fold == TurnFold::Off {
-            requested
-        } else {
-            requested.saturating_mul(PER_SCAN_CAP_FACTOR)
-        };
-        truncate_widened_channel_results_to_scope(
-            rows,
-            &self.read,
-            rtxn,
-            kept,
-            self.bounded_result_filters(filter_config),
-            metadata_cache,
-            claim_gate,
-        )?;
-        if self.turn_fold != TurnFold::Off
-            && let Some(held) = turn_fold::rows_holding_distinct_turns(
-                rows,
-                requested,
-                self.turn_fold,
-                &self.read,
-                rtxn,
-                filter_config,
-                metadata_cache,
-                claim_gate,
-            )?
-        {
-            rows.truncate(held);
-        }
-        Ok(())
     }
 
     /// The memory lane's text read: every posting through the lane's kinds

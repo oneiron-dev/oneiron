@@ -1234,10 +1234,7 @@ fn mint_project(
     let project_signer = vault
         .owner_project_signer(&issuer)
         .expect("the owner project signer");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("the clock is set")
-        .as_secs();
+    let now = vault.now_recorded_at();
     let source_message = EntityId::now().to_hex();
     let staged: WitnessTurn = serde_json::from_value(json!({
         "conversation_ref": EntityId::now().to_hex(),
