@@ -4,7 +4,11 @@
 //!
 //! The `oneiron mcp` bridge started with `--workspace <DIR>` names the folder's digests (its
 //! own, then its main checkout's; never its path) in every `tools/call`'s
-//! `_meta["oneiron/workspace"]`.
+//! `_meta["oneiron/workspace"]`. The vault keys each digest with its store id before it looks
+//! the binding up, so a binding does not follow the vault to a restored store or a replica:
+//! there the folder reads as unbound, and the start hook's vault line gives the bind command
+//! (Q2 = A).
+//!
 //! This endpoint keeps no session, so it reads them on every call, as it reads
 //! `clientCapabilities`. The client names them, so they select a default and grant nothing: a
 //! caller that names another folder, or forges a digest, only moves which project its own reads
