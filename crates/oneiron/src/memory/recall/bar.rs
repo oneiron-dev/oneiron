@@ -13,7 +13,7 @@
 
 pub(crate) mod setting_keys;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use heed::RoTxn;
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -23,7 +23,7 @@ use super::{RecallBarAsk, RecallBarOutcome, RecallBarRule, RecallSource};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::setting::{SettingScope, SettingValue};
+use crate::setting::{SettingScope, SettingSource, SettingValue};
 use crate::store::ManifestDbs;
 
 /// A query term is distinctive when at most one in this many of the vault's documents hold
@@ -171,6 +171,9 @@ pub(crate) fn resolve(
     } else {
         match key.read_in_txn(vault, txn, &scopes, harness) {
             Err(_) => quiet("unreadable"),
+            Ok(resolved) if matches!(resolved.source, SettingSource::Unreadable(_)) => {
+                quiet("unreadable")
+            }
             Ok(resolved) => match resolved.value {
                 RecallBar::Open => (None, RecallBarRule::Open),
                 RecallBar::Quiet => quiet("owner"),
@@ -209,8 +212,9 @@ pub(crate) fn resolve(
 
 impl crate::memory::Memory<'_> {
     /// The bar a recall of `query` in `scope` that asks `ask` is judged by ([`resolve`]): its
-    /// project is the one `scope` names, else the project bound to the session's folder; a
-    /// scope that names several reads the rows that name no project.
+    /// project is the one `scope` names (repeated refs to the same project still name one),
+    /// else the project bound to the session's folder; a scope that names several distinct
+    /// projects reads the rows that name no project.
     pub(super) fn resolve_recall_bar(
         &self,
         ask: &RecallBarAsk,
@@ -225,7 +229,30 @@ impl crate::memory::Memory<'_> {
         let project = match scope.project_refs.as_slice() {
             [] => (session, session.is_some()),
             [one] => (Some(self.resolve_ref(one)?), true),
-            _ => (None, true),
+            many => {
+                // [P, P] names one project: resolve and dedupe before counting one against
+                // several, so a repeated ref is judged by its project's own row (REVIEW-10566
+                // round 1). A ref that fails to resolve keeps today's behaviour: the vault's
+                // row, as an unresolvable repeat did when several refs resolved to nothing.
+                let mut distinct = BTreeSet::new();
+                let mut unresolved = false;
+                for reference in many {
+                    match self.resolve_ref(reference) {
+                        Ok(id) => {
+                            distinct.insert(id);
+                        }
+                        Err(_) => {
+                            unresolved = true;
+                            break;
+                        }
+                    }
+                }
+                if !unresolved && distinct.len() == 1 {
+                    (distinct.into_iter().next(), true)
+                } else {
+                    (None, true)
+                }
+            }
         };
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         Ok(resolve(self.vault, &txn, ask, query, project, query_vector))
