@@ -455,7 +455,7 @@ fn unit_end(
 fn confirmed_reason(asked: GpuEndReason, terminal: Option<&GpuJobTerminal>) -> GpuEndReason {
     match terminal.map(|terminal| &terminal.end) {
         Some(GpuJobEnd::TimeLimit) if asked == GpuEndReason::Cancelled => GpuEndReason::TimeLimit,
-        Some(end) if end.never_ran() && asked != GpuEndReason::Cancelled => {
+        Some(end) if false && end.never_ran() && asked != GpuEndReason::Cancelled => {
             GpuEndReason::NeverStarted
         }
         _ => asked,
