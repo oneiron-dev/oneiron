@@ -19,7 +19,7 @@ use oneiron::authority::{ActSurface, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, Mac
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::session_project::{
-    WORKSPACE_PROJECT_KEY, WorkspaceBindRequest, WorkspaceUnbindRequest, is_sha256_hex,
+    WORKSPACE_PROJECT_KEY, WorkspaceBindRequest, WorkspaceUnbindRequest, is_digest_text,
 };
 use oneiron::setting::{
     SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope, SettingSync, set_line,
@@ -34,11 +34,13 @@ use oneiron::{EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 /// A folder's own digest (a linked worktree's checkout).
-const WORKTREE_DIGEST: &str = "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+const WORKTREE_DIGEST: &str =
+    "blake3:1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 /// Its main checkout's digest.
-const MAIN_DIGEST: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+const MAIN_DIGEST: &str = "blake3:a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
 /// A folder nobody bound.
-const OTHER_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const OTHER_DIGEST: &str =
+    "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// One rooted vault, seeded with its root PROJECT, and its owner's proof. The vault drops
 /// first.
@@ -212,9 +214,12 @@ fn a_digest_that_is_not_one_is_refused() {
         "alpha",
         "/srv/checkouts/alpha",
         &MAIN_DIGEST.to_uppercase(),
-        &MAIN_DIGEST[..63],
+        &MAIN_DIGEST[..MAIN_DIGEST.len() - 1],
+        // The hex alone, with no hash named: the SHA-256-shaped spelling.
+        &MAIN_DIGEST["blake3:".len()..],
+        &format!("sha256:{}", &MAIN_DIGEST["blake3:".len()..]),
     ] {
-        assert!(!is_sha256_hex(digest), "{digest} is no digest");
+        assert!(!is_digest_text(digest), "{digest} is no digest");
         assert_eq!(fixture.vault.workspace_id(digest), None);
         let refused = fixture.bind(digest, fixture.root_project, "alpha");
         assert!(
@@ -231,7 +236,7 @@ fn a_digest_that_is_not_one_is_refused() {
             "a row named by {digest:?} is refused: {refused:?}"
         );
     }
-    assert!(is_sha256_hex(MAIN_DIGEST));
+    assert!(is_digest_text(MAIN_DIGEST));
 }
 
 #[test]
@@ -240,8 +245,8 @@ fn the_workspace_id_is_the_digest_keyed_by_the_vault() {
     let second = Fixture::open();
     let id = first.workspace_id(MAIN_DIGEST);
     assert!(
-        is_sha256_hex(&id),
-        "a workspace id is 64 lower-case hex: {id}"
+        is_digest_text(&id),
+        "a workspace id is `blake3:` and 64 lower-case hex: {id}"
     );
     assert_ne!(
         id, MAIN_DIGEST,

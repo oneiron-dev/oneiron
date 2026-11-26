@@ -2,11 +2,13 @@
 //! RECALL-SESSION-PROJECT-ALL-READS; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A,
 //! Q2 = A, Q3 = A, a hash plus a label; Engine NOTE 22:5x: the id keyed by the vault).
 //!
-//! A client names a folder by its folder digest: the SHA-256 of a domain tag and the folder's
-//! canonical checkout path, in lower-case hex (`oneiron_server::workspace_identity`). The vault
-//! keys it again with its store id into the folder's workspace id ([`Vault::workspace_id`]), so
-//! one folder's ids do not correlate across vaults. The vault never receives the path; a reader
-//! of the vault who guesses a path and knows the vault's store id can still test the guess.
+//! A client names a folder by its folder digest: the fingerprint (BLAKE3, the engine's
+//! fingerprint door) of the folder's canonical checkout path under the purpose
+//! `oneiron.workspace.v1`, as `blake3:` and lower-case hex (`oneiron_server::workspace_identity`).
+//! The vault keys it again with its store id into the folder's workspace id
+//! ([`Vault::workspace_id`]), so one folder's ids do not correlate across vaults. The vault never
+//! receives the path; a reader of the vault who guesses a path and knows the vault's store id
+//! can still test the guess.
 //!
 //! The owner binds a folder to a PROJECT with `vault.projects.workspace.bind`, which writes the
 //! family Setting key `workspace.project`: one item per folder, named by its workspace id. The
@@ -37,9 +39,10 @@ pub(crate) mod setting_keys;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron_contracts::fingerprint::Fingerprint;
+use oneiron_contracts::fingerprint::purposes::session_project::WORKSPACE_ID;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
@@ -59,11 +62,12 @@ const BIND_VERB: &str = "vault.projects.workspace.bind";
 /// The unbind verb's name, as a refusal names it.
 const UNBIND_VERB: &str = "vault.projects.workspace.unbind";
 
-/// What a workspace id's digest covers before the vault's id and the folder digest.
-const WORKSPACE_ID_DOMAIN: &[u8] = b"oneiron.workspace-id.v1\0";
+/// What a folder digest's and a workspace id's text starts with: the hash that made it.
+pub const DIGEST_TEXT_PREFIX: &str = "blake3:";
 
-/// The length of a folder digest and of a workspace id: a SHA-256 digest in hex.
-pub const SHA256_HEX_LEN: usize = 64;
+/// The length of a folder digest's and of a workspace id's text: [`DIGEST_TEXT_PREFIX`] and a
+/// 32-byte fingerprint in hex.
+pub const DIGEST_TEXT_LEN: usize = DIGEST_TEXT_PREFIX.len() + 64;
 
 /// The longest label a binding keeps, in bytes.
 pub const WORKSPACE_LABEL_MAX: usize = 128;
@@ -152,14 +156,22 @@ impl SettingValue for WorkspaceProject {
     }
 }
 
-/// Whether `text` is a SHA-256 digest in lower-case hex: the one spelling of a folder digest and
+/// The text of a folder digest or a workspace id: [`DIGEST_TEXT_PREFIX`] and the fingerprint's
+/// lower-case hex.
+#[must_use]
+pub fn digest_text(fingerprint: &Fingerprint) -> String {
+    format!("{DIGEST_TEXT_PREFIX}{}", fingerprint.to_hex())
+}
+
+/// Whether `text` is a digest's text ([`digest_text`]): the one spelling of a folder digest and
 /// of a workspace id, so no row sits under another spelling of the same folder.
 #[must_use]
-pub fn is_sha256_hex(text: &str) -> bool {
-    text.len() == SHA256_HEX_LEN
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+pub fn is_digest_text(text: &str) -> bool {
+    text.len() == DIGEST_TEXT_LEN
+        && text.strip_prefix(DIGEST_TEXT_PREFIX).is_some_and(|hex| {
+            hex.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
 }
 
 /// Refuses a `workspace.project` row that is not one folder's own value, and a binding that
@@ -203,19 +215,17 @@ fn erase_bound_project(binding: &WorkspaceProject, erased: EntityId) -> Option<W
     })
 }
 
-/// The workspace id of the folder `folder_digest` names in `vault`: the SHA-256, in lower-case
-/// hex, of [`WORKSPACE_ID_DOMAIN`], the vault's store id and the digest's bytes. `None` for a
-/// digest that is not one.
+/// The workspace id of the folder `folder_digest` names in `vault`: the fingerprint under
+/// [`WORKSPACE_ID`] (`oneiron.workspace-id.v1`) of the vault's store id and the digest's text,
+/// as [`digest_text`]. `None` for a digest that is not one.
 #[must_use]
 pub fn workspace_id_of(vault: &Vault, folder_digest: &str) -> Option<String> {
-    if !is_sha256_hex(folder_digest) {
+    if !is_digest_text(folder_digest) {
         return None;
     }
-    let mut digest = Sha256::new();
-    digest.update(WORKSPACE_ID_DOMAIN);
-    digest.update(vault.vault_id().as_bytes());
-    digest.update(folder_digest.as_bytes());
-    Some(oneiron_hex::encode(&digest.finalize()))
+    let vault_id = vault.vault_id();
+    let parts: [&[u8]; 2] = [vault_id.as_bytes(), folder_digest.as_bytes()];
+    Some(digest_text(&Fingerprint::of_parts(WORKSPACE_ID, &parts)))
 }
 
 /// The project a session in the folder `folder_digests` names (its own digest first, then its
@@ -250,8 +260,8 @@ pub fn workspace_project_in_txn(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceBindRequest {
-    /// The folder's digest, 64 lower-case hex: the SHA-256 of `oneiron.workspace.v1\0` and its
-    /// canonical checkout path, as `oneiron project bind` computes it.
+    /// The folder's digest, `blake3:` and 64 lower-case hex: the fingerprint of its canonical
+    /// checkout path under `oneiron.workspace.v1`, as `oneiron project bind` computes it.
     pub folder_digest: String,
     /// The PROJECT the folder's sessions read by default, as 32 hex.
     pub project: EntityId,
@@ -366,7 +376,7 @@ impl Vault {
     ) -> Result<WorkspaceBinding> {
         let workspace_id = self.workspace_id(folder_digest).ok_or_else(|| {
             Error::InvalidConfig(format!(
-                "{WORKSPACE_PROJECT_KEY}: a folder digest is 64 lower-case hex"
+                "{WORKSPACE_PROJECT_KEY}: a folder digest is `blake3:` and 64 lower-case hex"
             ))
         })?;
         let mut change = SetSetting::vault_value(WORKSPACE_PROJECT_KEY, serde_json::Value::Null);

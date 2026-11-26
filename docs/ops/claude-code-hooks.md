@@ -365,10 +365,10 @@ oneiron project bindings             # list every folder's binding
 
 These send your credential as `oneiron api` does (`ONEIRON_SECRET`), and
 binding is your act alone: an agent may tell you the command, and its own
-attempt waits for your answer. The command sends a SHA-256 digest of the
-checkout's real path and the folder's name, never the path; the vault keys the
-digest with its own id before it stores it, so one folder's ids differ from
-vault to vault. Someone who reads the vault and knows its id can still test a
+attempt waits for your answer. The command sends a BLAKE3 digest of the
+checkout's real path (`blake3:` and hex) and the folder's name, never the path;
+the vault keys the digest with its own id before it stores it, so one folder's
+ids differ from vault to vault. Someone who reads the vault and knows its id can still test a
 guessed path against a stored id: the digest hides the path, it is not a
 secret. A binding belongs to the machine that holds the vault you bound it
 on: another machine of the vault never receives it, and a restore drops it,

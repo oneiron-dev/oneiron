@@ -38,11 +38,13 @@ use serde_json::json;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The bound folder's own digest.
-const MAIN_DIGEST: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+const MAIN_DIGEST: &str = "blake3:a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
 /// A linked worktree of it, with no binding of its own.
-const WORKTREE_DIGEST: &str = "1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+const WORKTREE_DIGEST: &str =
+    "blake3:1f0e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 /// A folder nobody bound.
-const UNBOUND_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const UNBOUND_DIGEST: &str =
+    "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// A rooted vault whose owner made two projects under the root, `alpha` and `beta`, and
 /// `alpha-docs` under `alpha`, with one owner claim in each, and bound the folder `MAIN_DIGEST` to
