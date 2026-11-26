@@ -288,7 +288,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
             // A replay settled the window after the list read: nothing is
             // pending there now (review round 1 of #10565).
             WindowMarkerClass::NonePending => {}
-            WindowMarkerClass::AllMatch => rm_held_windows.push(window),
+            WindowMarkerClass::AllMatch => rm_pending_windows.push(window),
             WindowMarkerClass::Unclassified => rm_pending_windows.push(window),
         }
     }
