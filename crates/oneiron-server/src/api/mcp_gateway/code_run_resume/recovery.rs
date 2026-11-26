@@ -202,7 +202,7 @@ impl McpCodeRunContinuation {
             session: origin.session.map(RequestSession::of_id),
             room_turn: origin.room_turn,
         };
-        let (caller, registration) = match &reference.door {
+        let (mut caller, registration) = match &reference.door {
             VerbAskDoor::Mcp {
                 connection,
                 ceiling,
@@ -223,6 +223,7 @@ impl McpCodeRunContinuation {
             // A facade's door is no MCP caller's.
             VerbAskDoor::Facade { .. } => return Err(VerbAskRefusal::ContextUnavailable),
         };
+        caller.session_workspace = reference.session_workspace.clone();
         if crate::mcp::mcp_code_run_id(&origin.handle, &caller) != run.key.run {
             return Err(VerbAskRefusal::ContextUnavailable);
         }

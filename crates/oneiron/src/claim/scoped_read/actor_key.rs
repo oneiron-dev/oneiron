@@ -89,6 +89,10 @@ pub struct ScopedReadActorKey {
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::claim::world_access::WorldAuthoritySet>,
+    /// The projects an attached session's folder selects for a read that names none
+    /// (RECALL-SESSION-PROJECT): a request, never authority. Every CLAIM row the read serves
+    /// is stamped inside them; see [`Self::within_session_projects`].
+    pub(super) session_projects: Option<crate::session_project::SessionProjects>,
     /// Where the read's rows go: off this device or not, and each machine a
     /// connection proved beside that (mesh PR2b); see [`Self::at`] and
     /// [`Self::for_destination`].
@@ -474,6 +478,7 @@ impl ScopedReadActorKey {
             phone_lines: Vec::new(),
             room_facets: None,
             worlds: None,
+            session_projects: None,
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
             owner_proof: None,
@@ -527,6 +532,7 @@ impl ScopedReadActorKey {
             phone_lines: Vec::new(),
             room_facets: None,
             worlds: None,
+            session_projects: None,
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
             owner_proof: None,
@@ -979,6 +985,24 @@ impl ScopedReadActorKey {
     /// what a saved lane and a key fingerprint keep of it.
     pub(crate) fn is_homed_unnamed(&self) -> bool {
         self.home_unnamed
+    }
+
+    /// Read only the CLAIM rows `projects` admits: an attached session's default
+    /// (RECALL-SESSION-PROJECT). Every other row is read as before. A rebind replaces the
+    /// default the key held.
+    #[must_use]
+    pub(crate) fn within_session_projects(
+        mut self,
+        projects: crate::session_project::SessionProjects,
+    ) -> Self {
+        self.session_projects = Some(projects);
+        self
+    }
+
+    /// The attached session's default this key reads under, if any.
+    #[must_use]
+    pub(crate) fn session_projects(&self) -> Option<&crate::session_project::SessionProjects> {
+        self.session_projects.as_ref()
     }
 
     /// Read only rows in `worlds`, each where `record_world_in` places it: a
