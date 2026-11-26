@@ -363,7 +363,7 @@ fn work_dir_chain_line(
             } else {
                 "staging refuses every job (work_dir_unsafe)"
             };
-            Err(format!(
+            Ok(format!(
                 "work_dir {}: {}, judged for {who}: {outcome}",
                 u.path.display(),
                 u.fault
