@@ -493,7 +493,8 @@ impl Bridge {
         let key = pending_call_key(&message);
         let offered = ClientSession::offered(&message);
         let own = named_invocation(&message);
-        let named = self.client_session.name_on_call(&mut message);
+        let named = self.client_session.name_on_call(&mut message)
+            || self.client_session.name_on_initialize(&mut message);
         // A call naming its own invocation keeps it; one naming none goes
         // under a pending same call's, else a fresh one.
         let added = with_invocation(&mut message, || {

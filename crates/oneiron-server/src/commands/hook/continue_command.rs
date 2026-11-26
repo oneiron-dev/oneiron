@@ -511,6 +511,7 @@ impl<'a> Hosted<'a> {
             oneiron,
             &vault.origin,
             vault.recall_auth(),
+            None,
             deadline,
             stderr,
         )?;

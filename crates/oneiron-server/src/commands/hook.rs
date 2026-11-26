@@ -4,7 +4,9 @@
 //! host's event JSON on stdin.
 //!
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
-//!   and recalls a short block for the project ([`recall`]).
+//!   which also gives the bind command when no project is bound to the
+//!   session's folder ([`recall::folder_unbound`]), and recalls a short block
+//!   for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import,
 //!   or sends it to the selected hosted vault every start of the session
@@ -67,6 +69,13 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest first line of a Codex rollout read for its meta, which holds
 /// the session's base instructions: tens of KiB.
 const MAX_ROLLOUT_META_BYTES: u64 = 4 << 20;
+/// What the vault line adds when no project is bound to the session's folder
+/// (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov:
+/// Q2 = A, the bind command in the start hook's vault line; Q3 = A, binding is
+/// the owner's act, so the line names who runs it).
+const UNBOUND_FOLDER: &str = " No project is bound to this folder, so a read that names no \
+                              project reads no claims here; the owner binds one by running \
+                              `oneiron project bind <project-ref>` in this folder.";
 
 pub fn hook(args: HookArgs) {
     let host = args.host;
@@ -162,9 +171,19 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     let Some(auth) = recall_auth(bound.hosted.as_ref(), args.credential_file.as_deref()) else {
         return said;
     };
+    let folder = project_dir(&event);
+    // One `initialize`, no recall: in a folder with no project bound, a read
+    // that names no project reads no claims, so the vault line says how the
+    // owner binds one (Q2 = A).
+    if let (Some(dir), Some(line)) = (folder.as_deref(), said.first_mut())
+        && recall::folder_unbound(&oneiron, &url, auth, dir, deadline)
+    {
+        line.push_str(UNBOUND_FOLDER);
+    }
     let query = args.query.clone().unwrap_or_else(|| {
-        project_dir(&event)
-            .map_or_else(String::new, |dir| project_name(&dir, deadline))
+        folder
+            .as_deref()
+            .map_or_else(String::new, |dir| project_name(dir, deadline))
             .replace(['-', '_'], " ")
     });
     if !query.trim().is_empty() {
@@ -173,6 +192,7 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
             oneiron: &oneiron,
             url: &url,
             auth,
+            workspace: folder.as_deref(),
             query: &query,
             limit: args.limit,
             effort: args.effort,
@@ -233,11 +253,13 @@ fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         return Vec::new();
     };
     let oneiron = oneiron(args.common.oneiron.as_deref());
+    let folder = project_dir(&event);
     let recall = recall::Recall {
         host,
         oneiron: &oneiron,
         url: &url,
         auth,
+        workspace: folder.as_deref(),
         query: &query,
         limit: args.limit,
         effort: args.effort,

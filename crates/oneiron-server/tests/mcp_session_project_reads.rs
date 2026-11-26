@@ -9,7 +9,9 @@
 //! another bound folder reads nothing its credential could not read anyway. And a session's
 //! `vault.claims.upsert` that names no project lands in its folder's project (PR 3, row
 //! START-RECALL-WRITES-ROOT-PROJECT); an unbound folder's, and a call naming no folder, keep
-//! the root's default project (Q2 = A).
+//! the root's default project (Q2 = A). An `initialize` that names the session's folder is
+//! answered whether a project is bound to it, so the start hook's vault line gives the bind
+//! command when none is (PR 2b; Q2 = A).
 //!
 //! Red on the base: the `workspace.project` key, the bind method and the session default do
 //! not exist there, so this file does not build.
@@ -596,5 +598,47 @@ async fn session_write() -> TestResult {
         default_project_id(),
         "a call that names no folder writes as before"
     );
+    Ok(())
+}
+
+#[test]
+fn initialize_says_whether_a_project_is_bound_to_the_sessions_folder() -> TestResult {
+    on_engine_stack(initialize_folder)
+}
+
+async fn initialize_folder() -> TestResult {
+    let fixture = Fixture::new()?;
+    for (id, workspace, answered) in [
+        (
+            1,
+            Some(BOUND_DIGEST),
+            Some(json!({ "project_bound": true })),
+        ),
+        (
+            2,
+            Some(UNBOUND_DIGEST),
+            Some(json!({ "project_bound": false, "reason": "no_project_bound" })),
+        ),
+        (3, None, None),
+    ] {
+        let mut params = json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": { "name": "mcp-session-project-reads", "version": "1" },
+        });
+        if let Some(workspace) = workspace {
+            params["_meta"] = json!({ "oneiron/workspace": { "digests": [workspace] } });
+        }
+        let (status, reply) = fixture
+            .rpc(&fixture.reader, id, "initialize", params)
+            .await?;
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(
+            reply["result"]["_meta"].get("oneiron/workspace").cloned(),
+            answered,
+            "initialize naming the folder {workspace:?} says whether a project is bound to it, \
+             and names no project: {reply}"
+        );
+    }
     Ok(())
 }
