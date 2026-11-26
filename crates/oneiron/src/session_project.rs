@@ -36,6 +36,9 @@
 
 pub(crate) mod setting_keys;
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use oneiron_contracts::fingerprint::Fingerprint;
 use oneiron_contracts::fingerprint::purposes::session_project::WORKSPACE_ID;
 use schemars::JsonSchema;
@@ -68,6 +71,45 @@ pub const DIGEST_TEXT_LEN: usize = DIGEST_TEXT_PREFIX.len() + 64;
 
 /// The longest label a binding keeps, in bytes.
 pub const WORKSPACE_LABEL_MAX: usize = 128;
+
+/// The receipt axis a read names when an attached session's project narrowed it: CLAIM rows
+/// stamped outside the session's project were not read.
+pub const SESSION_PROJECT_AXIS: &str = "session_project";
+
+/// The receipt axis a read names when its attached session's folder has no project bound: it
+/// read no CLAIM row. The owner binds one with `oneiron project bind <project-ref>` in the
+/// folder; a call that names its projects (`project_refs`) reads those.
+pub const NO_PROJECT_BOUND_AXIS: &str = "no_project_bound";
+
+/// What an attached session's folder selects for the reads that name no project: a request,
+/// never authority. Only CLAIM rows carry a project stamp, so only they are narrowed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionProjects {
+    /// The folder's project and every PROJECT below it.
+    Bound(Arc<BTreeSet<EntityId>>),
+    /// No live project is bound to the folder: such a read reads no CLAIM row.
+    Unbound,
+}
+
+impl SessionProjects {
+    /// Whether a CLAIM stamped with `project` is read.
+    #[must_use]
+    pub fn admits(&self, project: EntityId) -> bool {
+        match self {
+            Self::Bound(projects) => projects.contains(&project),
+            Self::Unbound => false,
+        }
+    }
+
+    /// The axis a read's receipt names.
+    #[must_use]
+    pub fn receipt_axis(&self) -> &'static str {
+        match self {
+            Self::Bound(_) => SESSION_PROJECT_AXIS,
+            Self::Unbound => NO_PROJECT_BOUND_AXIS,
+        }
+    }
+}
 
 /// One folder's binding: the `workspace.project` row's value.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -251,6 +293,24 @@ pub struct WorkspaceBinding {
 }
 
 impl Vault {
+    /// What an attached session in the folder `folder_digests` (its own digest first) reads by
+    /// default: the folder's bound project with every PROJECT below it, or
+    /// [`SessionProjects::Unbound`] when no live project is bound.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn session_projects(&self, folder_digests: &[String]) -> Result<SessionProjects> {
+        Ok(match self.workspace_project(folder_digests)? {
+            Some(project) => SessionProjects::Bound(Arc::new(
+                crate::memory::project_descendant_closure_of(self, vec![project])?
+                    .into_iter()
+                    .collect(),
+            )),
+            None => SessionProjects::Unbound,
+        })
+    }
+
     /// The workspace id of the folder `folder_digest` names in this vault
     /// ([`workspace_id_of`]); `None` for a digest that is not one.
     #[must_use]

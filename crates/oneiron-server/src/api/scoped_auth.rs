@@ -257,6 +257,11 @@ fn transport_memory<'a>(
     {
         memory = memory.in_off_record_session(session);
     }
+    // An attached session's read that names no project reads its folder's project
+    // (RECALL-SESSION-PROJECT): a request, never authority.
+    if let Some(folder_digests) = auth.and_then(CoreAuth::session_workspace) {
+        memory = memory.in_session_workspace(folder_digests);
+    }
     memory
 }
 

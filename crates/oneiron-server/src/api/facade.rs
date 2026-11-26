@@ -172,7 +172,6 @@ mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).
 mod non_base_world_claim_fraction_doors;
-mod workspace_project_doors;
 mod note_doors;
 mod oauth_authorization_doors;
 mod off_record_doors;
@@ -206,6 +205,7 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+mod workspace_project_doors;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
 mod repo_copy_edit_doors;
 mod root_request_doors;

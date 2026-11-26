@@ -70,8 +70,13 @@ code (a full-access agent; a read-only or propose-only one may not),
 
 ```bash
 claude mcp add -s user oneiron -- oneiron mcp --surface tool-first \
-  --credential-file ~/.config/oneiron/claude-code.cred
+  --credential-file ~/.config/oneiron/claude-code.cred --workspace .
 ```
+
+`--workspace .` attaches the session to the folder Claude Code runs in: a read
+that names no project reads the project you bound to that folder, and none in a
+folder with no project bound (see "Which project a session reads" in
+[Claude Code hooks](claude-code-hooks.md)).
 
 Or install the Oneiron plugin for Claude Code
 ([`plugins/claude-code/`](../../plugins/claude-code/)). It carries this same

@@ -212,10 +212,14 @@ pub(crate) async fn handle_mcp_request(
             let (called, attempt): (Result<Value, McpGatewayError>, _) =
                 crate::api::call_receipt::attempt_witnessed(async {
                     let params: McpToolCallParams = mcp_params(request.params, "params")?;
+                    // What the arguments name, read before they are consumed: a read that
+                    // names its projects takes no session default (RECALL-SESSION-PROJECT).
+                    let arguments = params.arguments.clone();
                     let actor = McpCallContext {
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
                         client_surface: params.client_surface(),
+                        session_workspace: params.session_workspace(),
                         signing_request_transport: Some(
                             oneiron::memory::SigningRequestTransport::new(
                                 connection
@@ -233,6 +237,14 @@ pub(crate) async fn handle_mcp_request(
                     };
                     let mut args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
+                    // A generated verb row that writes nothing reads the session folder's
+                    // project unless its arguments name projects (RECALL-SESSION-PROJECT).
+                    let actor = match &args {
+                        crate::mcp::McpValidatedToolArgs::Verb(call) => {
+                            actor.for_verb_row(call.tool.writes(), &arguments)
+                        }
+                        _ => actor.for_verb_row(true, &arguments),
+                    };
                     // The held content rides the call of the tool it arrived
                     // for, with that call's page argument digest (FIX 22074).
                     if let (Some(held), crate::mcp::McpValidatedToolArgs::Verb(call)) =
