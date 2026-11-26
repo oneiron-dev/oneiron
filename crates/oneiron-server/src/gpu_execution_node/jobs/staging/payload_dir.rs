@@ -309,7 +309,7 @@ fn walk_work_dir(work_dir: &Path, engine_uid: u32, make: bool) -> Result<Walked,
     };
     let mut current = PathBuf::from("/");
     let root = std::fs::symlink_metadata(&current).map_err(|error| unreadable(&current, error))?;
-    if let Some(fault) = directory_fault(&root) {
+    if let Some(fault) = directory_fault(&root).filter(|_| make) {
         return Err(unsafe_at(&current, fault));
     }
     // The components still to walk, the next one last.
@@ -360,7 +360,7 @@ fn walk_work_dir(work_dir: &Path, engine_uid: u32, make: bool) -> Result<Walked,
             push_components(&mut pending, &target);
             continue;
         }
-        if let Some(fault) = directory_fault(&found) {
+        if let Some(fault) = directory_fault(&found).filter(|_| make) {
             return Err(unsafe_at(&next, fault));
         }
         current = next;
