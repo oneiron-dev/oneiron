@@ -463,10 +463,9 @@ fn a_bare_row_keeps_the_direct_addresses_the_replica_holds() {
 fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
     const MINTED: u64 = 1_790_000_000;
     let clock = crate::ports::ManualClock::new(MINTED);
-    let host = host_with(VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    });
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let host = host_with(config);
     let (expiring, _, expiring_key) = bound_machine(&host, 101);
     // The owner's grant ceiling drops to an hour, and that machine's grant is minted again under
     // it: it now ends before the pairing it rides on.
@@ -490,13 +489,9 @@ fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
         "control: the home's grant expired"
     );
 
-    let (_dir, replica) = replica_with(
-        &host,
-        VaultConfig {
-            store_clock: crate::ports::ManualClock::new(MINTED + 100).bundle(),
-            ..VaultConfig::default()
-        },
-    );
+    let mut behind = VaultConfig::default();
+    behind.store_clock = crate::ports::ManualClock::new(MINTED + 100).bundle();
+    let (_dir, replica) = replica_with(&host, behind);
     let import = replica.import_mesh_authority_rows(served(&host)).unwrap();
     assert_eq!(import.written.len(), 2, "{import:?}");
     assert_eq!(
