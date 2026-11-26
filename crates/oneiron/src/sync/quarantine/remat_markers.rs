@@ -158,7 +158,6 @@ pub(in crate::sync) fn clear_remat_marker_in_txn(
     let key = window_entity_key(window_key, id);
     REMAT_MARKER.delete(&vault.store, wtxn, &key)?;
     REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
-    REMAT_DEPENDENCY_HOLD_START.delete(&vault.store, wtxn, &key)?;
     Ok(())
 }
 
