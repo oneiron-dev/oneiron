@@ -23,6 +23,11 @@
 //! Tests 11 to 14 make the replica a machine of its own: a fresh install that minted its machine
 //! identity, which the owner paired as "yours", bound and granted on the home. Red: the importer
 //! skipping this install's own row again (main's behaviour); 11 to 14 fail, 1 to 10 pass.
+//!
+//! REVIEW-10537 P1: the importer read its own keys through `Vault::mesh_transport_seed`, which
+//! loads them, and on a keystore slot found empty forgets this machine and mints a new one before
+//! the import opens. Test 15 holds such a slot. Red: that read put back (the PR's first head,
+//! a73d590d); 15 fails, 1 to 14 pass.
 use super::machine_identity::{Host, host, host_with, pair_and_bind, request_for};
 use super::support::ed_key;
 use super::*;
@@ -759,5 +764,74 @@ fn an_own_address_the_replica_holds_is_never_replaced() {
             machine,
             key: install.request.machine_key,
         }
+    );
+}
+
+/// An install whose keystore slot holds no seed for the machine its vault names (a lost keychain,
+/// a raw copy), on a handle with no keys loaded: an import, of an empty page or of one that
+/// carries its own binding, reads its keys as they stand and provisions nothing. It keeps its
+/// machine id, its device key's public half, its pin and its choices, refuses its own binding
+/// alone and takes every other row (REVIEW-10537 P1).
+#[test]
+fn an_import_with_an_empty_key_slot_keeps_this_install_and_refuses_its_own_row_alone() {
+    let host = host();
+    let (other, proven, other_endpoint) = bound_machine(&host, 81);
+    let install = joining_install(&host);
+    let machine = install.machine();
+    let address = pair_bind_and_join(&host, &install, &install.machine_key, &install.transport);
+    let replica = &install.vault;
+    // A residence choice, which a machine forgotten here would lose with it.
+    replica
+        .sync_state_put("rs:mode", &[1, 0, 0, 0, 0, 0, 0, 0, 0])
+        .unwrap();
+    // A keystore with an empty slot: the keys loaded from the one before are dropped.
+    replica.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let standing = |vault: &Vault| {
+        let mode = vault.sync_state_get("rs:mode").unwrap();
+        let txn = vault.store.env.read_txn().unwrap();
+        (
+            crate::identity::read_machine_id_in_txn(vault, &txn).unwrap(),
+            crate::identity::read_device_verifying_key_in_txn(vault, &txn).unwrap(),
+            crate::authority::read_pin_row_in_txn(&vault.store, &txn).unwrap(),
+            crate::setting::live_install_rows_in(&vault.store, &txn).unwrap(),
+            mode,
+        )
+    };
+    let before = standing(replica);
+    assert_eq!(
+        before.0,
+        Some(machine),
+        "control: the vault names this install's machine"
+    );
+    assert!(
+        before.1.is_some() && before.4.is_some(),
+        "control: it holds its device key's public half and a residence mode"
+    );
+
+    let empty = replica.import_mesh_authority_rows(Vec::new()).unwrap();
+    assert_eq!(empty, MeshAuthorityImport::default());
+    assert_eq!(
+        standing(replica),
+        before,
+        "an empty page changes nothing here"
+    );
+
+    let import = replica.import_mesh_authority_rows(served(&host)).unwrap();
+    assert_eq!(import.written, BTreeSet::from([other]), "{import:?}");
+    assert_eq!(import.refused, BTreeSet::from([machine]), "{import:?}");
+    assert_eq!(
+        standing(replica),
+        before,
+        "nor does a page that carries its own binding"
+    );
+    assert_eq!(
+        replica.mesh_peer_machine(other_endpoint, GRANTED).unwrap(),
+        proven,
+        "every other row still lands"
+    );
+    assert_eq!(
+        holds(replica, machine, address.endpoint_key),
+        (false, PeerMachine::Unknown),
+        "its own binding is refused alone"
     );
 }

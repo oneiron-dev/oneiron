@@ -28,10 +28,10 @@ mod replication;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
 pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
-use replication::verified_mesh_authority;
 pub use replication::{
     MESH_AUTHORITY_PAGE_MAX, MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityRow,
 };
+use replication::{mesh_transport_seed_of, verified_mesh_authority};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -399,14 +399,7 @@ impl Vault {
         let Some(key) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
             return Ok(None);
         };
-        Ok(Some((
-            machine,
-            // FIX 6669: derive straight into the guard.
-            crate::world_keys::derive_guarded(
-                "oneiron/mesh-transport-ed25519/v1",
-                &[&key.as_bytes()[..]],
-            ),
-        )))
+        Ok(Some((machine, mesh_transport_seed_of(&key))))
     }
     /// The physical machine behind an authenticated mesh endpoint, in one
     /// snapshot: the endpoint names the MACHINE, the host-signed binding and

@@ -28,7 +28,9 @@
 //!   one this replica holds at that endpoint;
 //! - this install's own binding lands only when it names this install's
 //!   machine key and the endpoint this install serves under, the key it
-//!   derives from that machine key ([`OwnMeshKeys`]);
+//!   derives from that machine key ([`OwnMeshKeys`]); those keys are read as
+//!   they stand, never provisioned, so an import never mints or forgets this
+//!   install's machine identity (REVIEW-10537 P1);
 //! - this install's own MACHINE address is written only where this install
 //!   holds none, and a held one is never replaced.
 //!
@@ -102,7 +104,7 @@ pub struct MeshAuthorityImport {
 
 /// The keys this install's own binding must name: its MACHINE id, its
 /// machine key and the mesh endpoint key it serves under, derived from that
-/// machine key as its transport derives it ([`Vault::mesh_transport_seed`]).
+/// machine key as its transport derives it ([`mesh_transport_seed_of`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OwnMeshKeys {
     machine: EntityId,
@@ -140,6 +142,21 @@ pub(super) fn verified_mesh_authority(
     host.verify_strict(&transcript(claims)?, &sig)
         .map_err(|_| invalid_authority())?;
     Ok(Some(claims.clone()))
+}
+
+/// The seed of the mesh transport key an install serves under, derived from
+/// its machine key `machine_key` under the transport domain
+/// `oneiron-mesh-transport` derives with (`oneiron/mesh-transport-ed25519/v1`):
+/// the one derivation [`Vault::mesh_transport_seed`] and an import's own keys
+/// ([`OwnMeshKeys`]) share.
+pub(super) fn mesh_transport_seed_of(
+    machine_key: &ed25519_dalek::SigningKey,
+) -> zeroize::Zeroizing<[u8; 32]> {
+    // FIX 6669: derive straight into the guard.
+    crate::world_keys::derive_guarded(
+        "oneiron/mesh-transport-ed25519/v1",
+        &[&machine_key.as_bytes()[..]],
+    )
 }
 
 /// The length of `bytes` bytes in standard base64, as a reply carries them.
@@ -281,7 +298,8 @@ impl Vault {
     /// MACHINE address row, in one write. A row this replica cannot take is
     /// refused alone; the rest land. This install's own binding lands the
     /// same way, when it names this install's own machine key and the
-    /// endpoint it serves under. Never signs anything.
+    /// endpoint it serves under. Never signs anything, and never loads, mints
+    /// or forgets this install's keys or machine identity.
     ///
     /// # Errors
     ///
@@ -292,8 +310,9 @@ impl Vault {
     ) -> Result<MeshAuthorityImport> {
         let mut import = MeshAuthorityImport::default();
         let mut narrowed = false;
-        // Read before the writer opens: the keys load in a read of their own.
-        let own_keys = self.own_mesh_keys();
+        // Read before the writer opens, in a read of their own that provisions
+        // nothing, and only for a page that carries this install's own row.
+        let own_keys = self.own_mesh_keys(&rows);
         let mut txn = self.store.env.write_txn()?;
         let own = crate::identity::read_machine_id_in_txn(self, &txn)?;
         // Nothing an import writes changes the authority log, so one fold
@@ -336,21 +355,31 @@ impl Vault {
         Ok(import)
     }
 
-    /// This install's [`OwnMeshKeys`], or `None` before it has a machine
-    /// identity. Keys this install cannot read are logged and answer `None`,
-    /// so its own binding is refused and every other row still lands.
-    fn own_mesh_keys(&self) -> Option<OwnMeshKeys> {
+    /// This install's [`OwnMeshKeys`], when `rows` carry its own binding;
+    /// `None` when they do not, before it has a machine identity, and when
+    /// its keys do not read. The keys are read as they stand, never
+    /// provisioned ([`Vault::read_install_signer`]): an import never mints a
+    /// machine id or a seed, and never forgets a machine whose keystore slot
+    /// is empty, with its pin and its choices (REVIEW-10537 P1; on mel a new
+    /// machine identity would cut it off from its home again). Without them
+    /// its own binding is refused and every other row still lands; a read
+    /// that fails is logged.
+    fn own_mesh_keys(&self, rows: &[MeshAuthorityRow]) -> Option<OwnMeshKeys> {
         let read = || -> Result<Option<OwnMeshKeys>> {
-            let Some((machine, seed)) = self.mesh_transport_seed()? else {
+            let own = {
+                let txn = self.store.env.read_txn()?;
+                crate::identity::read_machine_id_in_txn(self, &txn)?
+            };
+            if !own.is_some_and(|own| rows.iter().any(|row| row.machine == own)) {
+                return Ok(None);
+            }
+            let Some(signer) = self.read_install_signer()? else {
                 return Ok(None);
             };
-            let txn = self.store.env.read_txn()?;
-            let Some(device) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
-                return Ok(None);
-            };
+            let seed = mesh_transport_seed_of(&signer.machine_key);
             Ok(Some(OwnMeshKeys {
-                machine,
-                device_key: device.verifying_key().to_bytes(),
+                machine: signer.machine,
+                device_key: signer.machine_key.verifying_key().to_bytes(),
                 endpoint_key: ed25519_dalek::SigningKey::from_bytes(&seed)
                     .verifying_key()
                     .to_bytes(),
