@@ -3,8 +3,9 @@
 //! digests an attached session names its folder by, and the one `oneiron project bind` binds.
 //!
 //! The folder's checkout root is its git top-level, else the folder itself, as a canonical path
-//! (symlinks resolved). Its folder digest is the SHA-256 of a domain tag and that path's bytes,
-//! in lower-case hex. Only the digest leaves this machine: the vault keys it with its own id
+//! (symlinks resolved). Its folder digest is the fingerprint of that path's bytes under the
+//! purpose `oneiron.workspace.v1` (BLAKE3, the engine's fingerprint door), written as `blake3:`
+//! and lower-case hex. Only the digest leaves this machine: the vault keys it with its own id
 //! into the workspace id its `workspace.project` row is named by, so the vault never receives
 //! the path. A linked worktree also names its main checkout's digest, second: a worktree with
 //! no binding of its own reads its main checkout's. The main checkout is the primary worktree
@@ -18,10 +19,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use sha2::{Digest as _, Sha256};
-
-/// What a folder digest covers before the path: the scheme and its version.
-const FOLDER_DIGEST_DOMAIN: &[u8] = b"oneiron.workspace.v1\0";
+use oneiron::session_project::digest_text;
+use oneiron_contracts::fingerprint::Fingerprint;
+use oneiron_contracts::fingerprint::purposes::session_project::FOLDER_DIGEST;
 
 /// The longest a git call here may take.
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -37,13 +37,12 @@ pub struct WorkspaceIdentity {
 
 impl WorkspaceIdentity {
     /// The identity of `folder`: its checkout root's digest, its main checkout's for a linked
-    /// worktree, and its root's name. Git gets until `deadline` (and at most [`GIT_TIMEOUT`]);
-    /// a folder git does not answer for is its own root. `None` when the folder does not
-    /// resolve to a canonical path.
+    /// worktree, and its root's name. Git gets at most [`GIT_TIMEOUT`]; a folder git does not
+    /// answer for is its own root. `None` when the folder does not resolve to a canonical path.
     #[must_use]
-    pub fn of_folder(folder: &Path, deadline: Instant) -> Option<Self> {
+    pub fn of_folder(folder: &Path) -> Option<Self> {
         let folder = std::fs::canonicalize(folder).ok()?;
-        let (root, main) = match git_checkout(&folder, deadline) {
+        let (root, main) = match git_checkout(&folder) {
             Some(GitCheckout { top, primary }) => {
                 let root = std::fs::canonicalize(&top).unwrap_or(top);
                 (
@@ -67,8 +66,8 @@ impl WorkspaceIdentity {
     /// [`Self::of_folder`] for a folder an agent session runs in: `None` as well when the
     /// checkout root is the filesystem root or the home directory, which hold no one project.
     #[must_use]
-    pub fn of_session_folder(folder: &Path, deadline: Instant) -> Option<Self> {
-        let identity = Self::of_folder(folder, deadline)?;
+    pub fn of_session_folder(folder: &Path) -> Option<Self> {
+        let identity = Self::of_folder(folder)?;
         let not_workspaces = [Some(PathBuf::from("/")), home_directory()];
         let roots = not_workspaces.iter().flatten().map(|path| {
             folder_digest(&std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
@@ -87,14 +86,11 @@ impl WorkspaceIdentity {
     }
 }
 
-/// The folder digest of the canonical checkout root `root`: the SHA-256 of
-/// [`FOLDER_DIGEST_DOMAIN`] and the path's bytes, in lower-case hex.
+/// The folder digest of the canonical checkout root `root`: the fingerprint of the path's bytes
+/// under [`FOLDER_DIGEST`] (`oneiron.workspace.v1`), as `blake3:` and lower-case hex.
 #[must_use]
 pub fn folder_digest(root: &Path) -> String {
-    let mut digest = Sha256::new();
-    digest.update(FOLDER_DIGEST_DOMAIN);
-    digest.update(path_bytes(root).as_ref());
-    oneiron_hex::encode(&digest.finalize())
+    digest_text(&Fingerprint::of_parts(FOLDER_DIGEST, &[path_bytes(root).as_ref()]))
 }
 
 #[cfg(unix)]
@@ -125,8 +121,8 @@ struct GitCheckout {
 
 /// Each path is read from a git call of its own, as raw bytes with only git's final newline
 /// taken off, so a path that ends in a space, or holds one, is never read as another checkout's.
-fn git_checkout(folder: &Path, deadline: Instant) -> Option<GitCheckout> {
-    let deadline = deadline.min(Instant::now() + GIT_TIMEOUT);
+fn git_checkout(folder: &Path) -> Option<GitCheckout> {
+    let deadline = Instant::now() + GIT_TIMEOUT;
     let top = git_output(
         folder,
         &["rev-parse", "--path-format=absolute", "--show-toplevel"],

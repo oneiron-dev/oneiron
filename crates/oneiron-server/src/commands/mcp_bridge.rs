@@ -448,14 +448,11 @@ impl Bridge {
             // process the bridge starts, in either mode.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
             pending_calls: Mutex::new(HashMap::new()),
-            client_session: ClientSession::attached_to(args.workspace.as_deref().and_then(
-                |folder| {
-                    crate::workspace_identity::WorkspaceIdentity::of_session_folder(
-                        folder,
-                        Instant::now() + crate::workspace_identity::GIT_TIMEOUT,
-                    )
-                },
-            )),
+            client_session: ClientSession::attached_to(
+                args.workspace
+                    .as_deref()
+                    .and_then(crate::workspace_identity::WorkspaceIdentity::of_session_folder),
+            ),
         })
     }
 

@@ -52,11 +52,13 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const MCP_PATH: &str = "/mcp/tool-first";
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 /// The digest of the folder bound to `alpha`.
-const BOUND_DIGEST: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+const BOUND_DIGEST: &str =
+    "blake3:a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
 /// The digest of another folder, bound to `beta`.
-const BETA_DIGEST: &str = "b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9fa0";
+const BETA_DIGEST: &str = "blake3:b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9fa0";
 /// A folder nobody bound.
-const UNBOUND_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const UNBOUND_DIGEST: &str =
+    "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// A person's slip, the key its holder proves it with, and the person.
 struct Holder {

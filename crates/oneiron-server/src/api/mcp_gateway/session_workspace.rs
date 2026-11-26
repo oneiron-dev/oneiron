@@ -40,8 +40,8 @@ impl McpToolCallParams {
     }
 }
 
-/// The folder digests a request's `_meta["oneiron/workspace"].digests` names, each 64
-/// lower-case hex, in order; `None` when it names none.
+/// The folder digests a request's `_meta["oneiron/workspace"].digests` names, each `blake3:`
+/// and 64 lower-case hex, in order; `None` when it names none.
 fn folder_digests(meta: &Map<String, Value>) -> Option<Vec<String>> {
     let digests: Vec<String> = meta
         .get(MCP_WORKSPACE_META)?
@@ -49,7 +49,7 @@ fn folder_digests(meta: &Map<String, Value>) -> Option<Vec<String>> {
         .as_array()?
         .iter()
         .filter_map(Value::as_str)
-        .filter(|digest| oneiron::session_project::is_sha256_hex(digest))
+        .filter(|digest| oneiron::session_project::is_digest_text(digest))
         .take(MAX_FOLDER_DIGESTS)
         .map(str::to_owned)
         .collect();

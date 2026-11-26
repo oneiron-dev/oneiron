@@ -34,9 +34,10 @@ use serde_json::json;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// The digest of the folder bound to `alpha`.
-const MAIN_DIGEST: &str = "a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+const MAIN_DIGEST: &str = "blake3:a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
 /// A folder nobody bound.
-const UNBOUND_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const UNBOUND_DIGEST: &str =
+    "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// A rooted vault whose owner made `alpha` and `beta` under the root and bound the folder
 /// `MAIN_DIGEST` to `alpha`. The vault closes before its directory goes.
