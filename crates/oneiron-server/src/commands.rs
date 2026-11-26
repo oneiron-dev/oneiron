@@ -845,11 +845,24 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         )
     );
     eprintln!(
-        "the pairing link expires at unix second {}; its slip may message: {}",
-        link.expires_at,
-        link.comm.as_str()
+        "{}",
+        pairing_link_notice(link.expires_at, link.comm.as_str())
     );
     Ok(())
+}
+
+/// The stderr line `token pair` prints beside the link
+/// (PAIRING-LINK-EXPIRY-ON-VAULT-INSTANT). The link's end is a second on the
+/// vault's clock, the authority plane's clock, which counts only the server's
+/// running time: it does not advance while the server is stopped, so it can
+/// read behind this host's clock. The line says so, and gives the life.
+fn pairing_link_notice(expires_at: u64, comm: &str) -> String {
+    format!(
+        "the pairing link expires at vault-clock second {expires_at}: one pairing code life \
+         (pairing.code.ttl_secs, one hour unless set) of this server's running time; the vault \
+         clock does not advance while the server is stopped, so it can read behind this host's \
+         clock; its slip may message: {comm}"
+    )
 }
 
 /// Revokes one previously minted token by its id.

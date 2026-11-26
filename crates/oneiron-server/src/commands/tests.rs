@@ -1332,3 +1332,26 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     .unwrap();
     assert_eq!(read.status(), StatusCode::OK);
 }
+
+/// PAIRING-LINK-EXPIRY-ON-VAULT-INSTANT: `token pair`'s stderr line names the
+/// vault's clock and the link's life in the server's running time, so an
+/// operator never reads the number as this host's time.
+#[test]
+fn pairing_link_notice_names_the_vault_clock_and_the_running_time_life() {
+    let notice = pairing_link_notice(1_795_529_632, "vault");
+    assert!(
+        notice.starts_with("the pairing link expires at vault-clock second 1795529632: "),
+        "{notice}"
+    );
+    assert!(
+        notice
+            .contains("(pairing.code.ttl_secs, one hour unless set) of this server's running time"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("does not advance while the server is stopped"),
+        "{notice}"
+    );
+    assert!(notice.ends_with("its slip may message: vault"), "{notice}");
+    assert!(!notice.contains("unix second"), "{notice}");
+}

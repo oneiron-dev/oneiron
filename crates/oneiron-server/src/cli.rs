@@ -500,7 +500,8 @@ pub struct HostInitArgs {
 pub enum TokenCommand {
     /// Provision the first owner link while the self-host vault is stopped.
     Bootstrap(Box<TokenBootstrapArgs>),
-    /// Create a one-hour pairing link on the running server and print it.
+    /// Create a pairing link on the running server and print it. It lives one pairing code life
+    /// (pairing.code.ttl_secs, one hour unless set) of the server's running time.
     Pair(Box<TokenPairArgs>),
     /// Mint a read-only credential for a local agent on the stopped vault.
     Read(Box<TokenReadArgs>),
