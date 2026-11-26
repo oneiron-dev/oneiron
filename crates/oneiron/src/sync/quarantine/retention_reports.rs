@@ -280,7 +280,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
     let mut rm_pending_windows = Vec::new();
     let mut rm_held_windows = Vec::new();
     for window in pending_remat_windows(vault)? {
-        if parse_window_key_str(&window).is_some()
+        if false && parse_window_key_str(&window).is_some()
             && classify_window_markers(vault, &window, |_| true)? == WindowMarkerClass::AllMatch
         {
             rm_held_windows.push(window);
