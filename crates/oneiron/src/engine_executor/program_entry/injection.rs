@@ -23,6 +23,26 @@ const HOOK_VIEW: &str =
     "a settled call's guest read a verb hook's view, which its row does not keep";
 const UNCONSUMED: &str = "the pinned source ended before every call an earlier entry settled";
 
+/// A hold in a caller source's words: its run has no pinned entry (FIX
+/// EXECUTE-CALLER-CODE). The caller reads it as the run's error.
+fn caller_source_words(why: &'static str) -> &'static str {
+    match why {
+        DIVERGED => "the caller source made another call where an earlier entry settled one",
+        NESTED_CALLABLE => {
+            "a callable the caller source calls returned past its wait, halted or stored outputs: it cannot resume inside it"
+        }
+        CALLABLE_PARKED => "a callable the caller source calls parked before its body ran",
+        REOPEN_REDIRECTED => {
+            "a hook redirected a callable the caller source runs again: its earlier calls belong to another body"
+        }
+        FRAME_UNCONSUMED => {
+            "a callable the caller source resumed returned before every call it settled earlier"
+        }
+        UNCONSUMED => "the caller source ended before every call an earlier entry settled",
+        other => other,
+    }
+}
+
 /// The calls one pinned entry answers instead of issuing them, in the order
 /// the pinned source makes them.
 pub(in crate::engine_executor) struct ProgramInjection {
@@ -292,6 +312,17 @@ impl ProgramInjection {
     /// held entry, one whose source ended before every settled call, or
     /// one a callable it ran again did not return from, holds instead.
     pub(in crate::engine_executor) fn settle(self) -> Result<Vec<ProgramLogEntry>, &'static str> {
+        let strict = self.strict;
+        self.settled_log().map_err(|why| {
+            if strict {
+                caller_source_words(why)
+            } else {
+                why
+            }
+        })
+    }
+
+    fn settled_log(self) -> Result<Vec<ProgramLogEntry>, &'static str> {
         if let Some(held) = self.held {
             return Err(held);
         }

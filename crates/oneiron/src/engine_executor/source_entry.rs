@@ -220,6 +220,11 @@ impl EngineNativeExecutor<'_> {
                 let wait = host.durable_wait.take();
                 let steps_run = if ran.is_ok() { 1 } else { 0 };
                 let hard_failure = host.hard_failure.take();
+                // A step that failed after it parked returns its wait, as a
+                // task step does: its failure is its observation
+                // (`persist_failed_step_after_bridge_calls`). A cancelled
+                // entry still fails.
+                let parks = wait.is_some() && !cancel.is_cancelled();
                 let (bodies, done, error) = match ran {
                     Ok(outcome) if !hit_deadline && hard_failure.is_none() => {
                         match host.take_streamed().into_step_bodies(
@@ -228,13 +233,31 @@ impl EngineNativeExecutor<'_> {
                             &outcome,
                         ) {
                             Ok(bodies) => (Some(bodies), outcome.done, None),
+                            Err(error) if parks => (
+                                Some(failure_observation(
+                                    storage,
+                                    "Runtime output recording failed after host bridge calls",
+                                    &error,
+                                )?),
+                                false,
+                                None,
+                            ),
                             Err(error) => (None, false, Some(error)),
                         }
                     }
+                    _ if parks => match hard_failure {
+                        Some(failure) => (
+                            Some(failure_observation(
+                                storage,
+                                "Host bridge call failed",
+                                &failure,
+                            )?),
+                            false,
+                            None,
+                        ),
+                        None => (None, false, None),
+                    },
                     Ok(_) => (None, false, hard_failure),
-                    Err(_) if wait.is_some() && !cancel.is_cancelled() => {
-                        (None, false, hard_failure)
-                    }
                     Err(error) => (None, false, Some(hard_failure.unwrap_or(error))),
                 };
                 let (calls, wait_row) = caller_source_calls(&host, log, wait.as_ref())?;
@@ -358,8 +381,24 @@ impl EngineNativeExecutor<'_> {
                 trailing_speech: false,
                 park_generation,
             });
-            self.storage
-                .put_code_run_replay_record_if_generation(&record, generation)?;
+            // A flaky commit converts to success on one identical retry (FIX
+            // 1443); a first commit that actually landed fails the retry
+            // closed on its generation mismatch instead.
+            match self
+                .storage
+                .put_code_run_replay_record_if_generation(&record, generation)
+            {
+                Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                    tracing::warn!(
+                        "{error:?}: caller source pending commit hit a storage error; retrying once"
+                    );
+                    self.storage
+                        .put_code_run_replay_record_if_generation(&record, generation)?;
+                }
+                result => {
+                    result?;
+                }
+            }
             if let Some(error) = error {
                 return Err(error.into());
             }
@@ -404,13 +443,28 @@ impl EngineNativeExecutor<'_> {
         // A wait is bound to the live slice that issued it, even if the
         // checkpoint covers rows kept by earlier deadline slices.
         let parked = parked_wait(&record, Some(&status), live_start);
-        self.storage.put_caller_source_replay_record(
+        // One identical retry on a flaky commit, as above (FIX 1443).
+        let _ = match self.storage.put_caller_source_replay_record(
             &record,
             generation,
             &receipts,
             parked.as_ref(),
             &context,
-        )?;
+        ) {
+            Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                tracing::warn!(
+                    "{error:?}: caller source step commit hit a storage error; retrying once"
+                );
+                self.storage.put_caller_source_replay_record(
+                    &record,
+                    generation,
+                    &receipts,
+                    parked.as_ref(),
+                    &context,
+                )?
+            }
+            result => result?,
+        };
         if let EngineExecutorStatus::Waiting(wait) = &status {
             self.park(&record, wait)?;
         }
@@ -580,6 +634,22 @@ impl EngineNativeExecutor<'_> {
             bindings,
         })
     }
+}
+
+/// The observation of a step that failed after it parked, in the words the
+/// task path keeps for one (`persist_failed_step_after_bridge_calls`).
+fn failure_observation(
+    storage: &ExecutorStorage<'_>,
+    what: &str,
+    failure: &Error,
+) -> Result<StepBodies> {
+    let mut observation = storage.code_run_output_sink()?;
+    observation.write(format!("{what}: {failure}").as_bytes())?;
+    Ok(StepBodies {
+        observation,
+        console: None,
+        files: Vec::new(),
+    })
 }
 
 fn caller_source_calls(

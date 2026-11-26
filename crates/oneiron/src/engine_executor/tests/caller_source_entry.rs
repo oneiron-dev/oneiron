@@ -22,9 +22,9 @@ const ASK_CODE: &str = concat!(
 );
 
 /// A model backend that fails the test on any call: a source run never
-/// calls the model (FIX EXECUTE-CALLER-CODE). Every callable backend
-/// method panics, including the metadata default, so consulting the
-/// backend in any way is a red test.
+/// calls the model (FIX EXECUTE-CALLER-CODE). Every backend method panics,
+/// including the `supports` default, so consulting the backend in any way
+/// is a red test.
 struct NoModelBackend;
 
 impl LlmBackend for NoModelBackend {
@@ -56,11 +56,13 @@ impl LlmBackend for NoModelBackend {
 
 /// A host's verb door reduced to the one verb a source test calls:
 /// `tasks.create` on the host's memory surface, under the origin the
-/// dispatcher hands it. It admits every call: these tests pin the source
-/// entry, not the door.
+/// dispatcher hands it. It admits every call, or refuses the run's reads of
+/// its recorded outputs as a gate does: these tests pin the source entry,
+/// not the door.
 struct TaskCreateDoor {
     vault: Arc<Vault>,
     actor: WriteActor,
+    refuses_recorded_reads: bool,
 }
 
 impl AgentVerbDoor for TaskCreateDoor {
@@ -95,8 +97,15 @@ impl AgentVerbDoor for TaskCreateDoor {
 
     fn admit_run_call(
         &self,
-        _call: RunCall,
+        call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        if self.refuses_recorded_reads && call == RunCall::RecordedOutput {
+            return Err(AgentVerbRefusal {
+                code: "deny".to_owned(),
+                hook_notice: None,
+                reason_codes: Vec::new(),
+            });
+        }
         Ok(None)
     }
 }
@@ -104,12 +113,15 @@ impl AgentVerbDoor for TaskCreateDoor {
 /// One source program's scripted run: it dispatches `calls` through the
 /// host and answers `outcome`. `seen` keeps the scripts it ran, so a
 /// re-entry that must run nothing asserts it ran none; `answers` keeps
-/// what each call came back with.
+/// what each call came back with. One that reads a recorded output after
+/// its calls keeps whether the read was refused.
 struct SourceStep {
     calls: Vec<SelfCall>,
     outcome: JsCodeModeStepOutcome,
     seen: Vec<String>,
     answers: Vec<SelfDispatchOutcome>,
+    reads_recorded_output: bool,
+    read_refused: Option<bool>,
 }
 
 impl SourceStep {
@@ -119,6 +131,15 @@ impl SourceStep {
             outcome,
             seen: Vec::new(),
             answers: Vec::new(),
+            reads_recorded_output: false,
+            read_refused: None,
+        }
+    }
+
+    fn reading_a_recorded_output(self) -> Self {
+        Self {
+            reads_recorded_output: true,
+            ..self
         }
     }
 }
@@ -133,6 +154,10 @@ impl JsCodeModeRuntime for SourceStep {
         for call in self.calls.clone() {
             self.answers.push(host.dispatch_self(call)?.outcome);
         }
+        if self.reads_recorded_output {
+            let read = host.read_recoverable_output(&observation_output_path(0));
+            self.read_refused = Some(read.is_err());
+        }
         Ok(self.outcome.clone())
     }
 }
@@ -146,6 +171,16 @@ struct SourceHarness<'a> {
 
 impl<'a> SourceHarness<'a> {
     fn new(vault: &'a Arc<Vault>) -> Self {
+        Self::with_door(vault, false)
+    }
+
+    /// A harness whose door refuses the run's reads of its recorded outputs
+    /// as a gate does.
+    fn refusing_recorded_reads(vault: &'a Arc<Vault>) -> Self {
+        Self::with_door(vault, true)
+    }
+
+    fn with_door(vault: &'a Arc<Vault>, refuses_recorded_reads: bool) -> Self {
         let actor_id = EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
             .expect("first-party actor id");
         vault
@@ -161,6 +196,7 @@ impl<'a> SourceHarness<'a> {
         let door = Arc::new(TaskCreateDoor {
             vault: Arc::clone(vault),
             actor,
+            refuses_recorded_reads,
         });
         let gated_write = GatedActorWrite::new(vault, door.actor, "caller-source-run")
             .expect("gated actor write")
@@ -411,7 +447,28 @@ fn a_delivered_wait_resumes_with_no_model_turn() {
         vec![SelfCall::Ask(SelfAskCall::new("not the settled write"))],
         JsCodeModeStepOutcome::complete("must hold"),
     );
-    assert!(harness.enter(&config, ASK_CODE, &mut diverged).is_err());
+    let err = harness
+        .enter(&config, ASK_CODE, &mut diverged)
+        .expect_err("a call off the settled prefix holds the run");
+    assert!(
+        matches!(
+            err,
+            EngineExecutorError::Engine(Error::Artifact(
+                crate::error::ArtifactError::InvalidCodeArtifactBody(_)
+            ))
+        ),
+        "the entry holds as a replay mismatch: {err}"
+    );
+    assert!(
+        err.to_string()
+            .contains("the caller source made another call where an earlier entry settled one"),
+        "the hold names the caller source, not a pinned entry: {err}"
+    );
+    assert_eq!(
+        diverged.seen.len(),
+        1,
+        "the diverged entry ran the program once"
+    );
     assert_eq!(
         vault.get_code_run_replay_record(&run_id).unwrap().unwrap(),
         first_outcome.replay_record,
@@ -441,6 +498,65 @@ fn a_delivered_wait_resumes_with_no_model_turn() {
     );
 }
 
+/// A step that failed after it parked returns its wait, as a task step does:
+/// the run is parked, its failure is the step's observation, and the entry
+/// returns `Waiting`, never the failure (review P1 on #10577).
+#[test]
+fn a_step_that_fails_after_its_wait_still_parks() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let harness = SourceHarness::refusing_recorded_reads(&vault);
+    let run_id = entity(0xC7);
+    let config = source_config(run_id, ASK_CODE);
+
+    // The program parks on its ask, then reads a recorded output that the
+    // door refuses as a gate: the bridge halts after the wait.
+    let mut first = SourceStep::new(
+        vec![SelfCall::Ask(SelfAskCall::new("continue?"))],
+        JsCodeModeStepOutcome::pending("waiting"),
+    )
+    .reading_a_recorded_output();
+    let outcome = harness
+        .enter(&config, ASK_CODE, &mut first)
+        .expect("a step that failed after its wait returns the wait");
+
+    assert_eq!(first.read_refused, Some(true), "the door refused the read");
+    assert!(
+        matches!(outcome.status, EngineExecutorStatus::Waiting(_)),
+        "the run parks on its ask: {:?}",
+        outcome.status
+    );
+    assert_eq!(outcome.steps_run, 1);
+    let stored = vault
+        .get_code_run_replay_record(&run_id)
+        .expect("read replay")
+        .expect("stored replay");
+    assert_eq!(
+        stored, outcome.replay_record,
+        "the parked step is committed"
+    );
+    let observation = load_utf8_output(
+        &ExecutorStorage::Canonical(vault.as_ref()),
+        &stored,
+        &observation_output_path(0),
+    )
+    .expect("the failed step's observation");
+    assert!(
+        observation.starts_with("Host bridge call failed: "),
+        "the failure is the step's observation: {observation}"
+    );
+
+    let mut unready = SourceStep::new(Vec::new(), JsCodeModeStepOutcome::complete("must not run"));
+    let reentered = harness
+        .enter(&config, ASK_CODE, &mut unready)
+        .expect("the parked run re-parks");
+    assert_eq!(reentered.status, outcome.status);
+    assert!(
+        unready.seen.is_empty(),
+        "a parked run runs nothing before its reply"
+    );
+}
+
 #[test]
 fn a_task_run_hashes_as_before() {
     let run_id = entity(0xC5);
@@ -452,6 +568,10 @@ fn a_task_run_hashes_as_before() {
     let continuation = [0xA5; 32];
     for (session_ref, route_target, continuation) in [
         (None, None, None),
+        (None, None, Some(&continuation)),
+        (Some("sess-task-hash"), None, None),
+        (Some("sess-task-hash"), Some(RouteTarget::Base), None),
+        (Some("sess-task-hash"), Some(RouteTarget::Discard), None),
         (
             Some("sess-task-hash"),
             Some(RouteTarget::Overlay),
