@@ -24,9 +24,13 @@
 //! ([`provision_lock`]), and a handler only opens it, never makes, removes
 //! or replaces it (the Engine's extra review of #10540: in the engine's
 //! state directory the engine could swap the name, and a hard link there
-//! made root open a file from elsewhere). The engine itself holds no
-//! process and waits no longer than its deadline: it connects without
-//! blocking and waits out a full listen queue only until then.
+//! made root open a file from elsewhere). A query of the version before
+//! this one locked another file, in the state directory, so install
+//! refuses while one still holds that lock, and retires the file once it
+//! is free ([`retire_state_dir_lock`]; review r1 of #10541). The engine
+//! itself holds no process and waits no longer than its deadline: it
+//! connects without blocking and waits out a full listen queue only until
+//! then.
 //!
 //! Where the socket file is there and no handler listens (`ECONNREFUSED`, a
 //! file the socket unit left behind), the file went away (`ENOENT`), or this
@@ -68,7 +72,7 @@ use super::control::{REQUEST_WAIT, read_line};
 use super::exec::connect_once;
 use super::safe_fs::{
     account, borrow, facts, make_dir_beneath, make_lock_beneath, open_dir_beneath, open_dir_path,
-    open_lock_beneath, require_owned_by_root_or, require_root_owned, set_mode,
+    open_lock_beneath, remove_beneath, require_owned_by_root_or, require_root_owned, set_mode,
 };
 use super::systemd_unit::tool_path;
 
@@ -83,6 +87,10 @@ pub const DEVICE_QUERY_LOCK_DIR: &str = "/var/lib/oneiron-job-control";
 
 /// The machine's query lock's file, in [`DEVICE_QUERY_LOCK_DIR`].
 pub const DEVICE_QUERY_LOCK_FILE: &str = "device-query.lock";
+
+/// The query lock's file of the version before this one (#10540), in the
+/// engine's state directory: install retires it ([`retire_state_dir_lock`]).
+pub const STATE_DIR_LOCK_FILE: &str = "device-query.lock";
 
 /// The lock directory's mode: its owner's alone.
 const DEVICE_QUERY_LOCK_DIR_MODE: u32 = 0o700;
@@ -187,8 +195,9 @@ pub fn query_settings(node_file: &Path, engine_uid: u32) -> Result<DeviceQuerySe
 /// ([`DEVICE_QUERY_LOCK_DIR`]): no other account can put another file, a
 /// link or a hard link at its name, or move the directory. Install makes
 /// it ([`provision_lock`]); a handler only opens it. An entry there that is
-/// not root's own regular file with one name is refused as it is: never
-/// opened, removed or made again (the Engine's extra review of #10540).
+/// not root's own empty regular file with one name and mode 0600 is refused
+/// as it is: never opened, removed or made again (the Engine's extra review
+/// of #10540; review r1 of #10541).
 #[derive(Debug)]
 pub struct DeviceQueryLock {
     file: File,
@@ -198,7 +207,8 @@ impl DeviceQueryLock {
     /// Takes the lock in `lock_dir`, never waiting: the directory and every
     /// one above it this process's account's (root's, on an installed
     /// machine) or root's and writable by no one else, and the file this
-    /// account's own regular file with one name ([`open_lock_beneath`]).
+    /// account's own empty regular file with one name and mode 0600
+    /// ([`open_lock_beneath`]).
     ///
     /// # Errors
     ///
@@ -262,9 +272,10 @@ fn open_lock_dir(lock_dir: &Path, owner: u32) -> Result<OwnedFd, String> {
 /// account's with mode 0700, beneath a parent that must be there and be
 /// root's like every directory above it (one there already must be this
 /// account's, and is given mode 0700), and the empty lock file in it, mode
-/// 0600. With whether this call made or changed anything. Anything at the
-/// lock file's name but this account's own regular file with one name is
-/// refused, as it is, for its maker to remove.
+/// 0600 whatever the umask. With whether this call made or changed
+/// anything. Anything at the lock file's name but this account's own empty
+/// regular file with one name and mode 0600 is refused, as it is, for its
+/// maker to remove.
 ///
 /// # Errors
 ///
@@ -312,6 +323,85 @@ pub fn provision_lock(lock_dir: &Path) -> Result<bool, String> {
     let made = make_lock_beneath(borrow(&dir), DEVICE_QUERY_LOCK_FILE, owner)
         .map_err(|error| failed(&format_args!("{error}; remove it, then install again")))?;
     Ok(changed || made)
+}
+
+/// Refuses an engine's directory `dir` (`what`: its state or payload
+/// directory) that is the query lock's directory `lock_dir`, lies beneath
+/// it, or holds it, as install does before it changes anything (review r1
+/// of #10541): install makes `lock_dir` root's alone, mode 0700, which
+/// would cut the engine off from a directory beneath it, and a lock
+/// directory beneath one of the engine's is one the engine could move.
+/// The paths are compared one component at a time; install opens each
+/// directory on them never through a link.
+///
+/// # Errors
+///
+/// Which directory, and the lock's.
+pub fn require_apart_from_lock_dir(what: &str, dir: &Path, lock_dir: &Path) -> Result<(), String> {
+    if dir.starts_with(lock_dir) || lock_dir.starts_with(dir) {
+        return Err(format!(
+            "the {what} {} must not be, lie beneath or hold the device query lock's directory {}",
+            dir.display(),
+            lock_dir.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Retires the query lock of the version before this one (#10540),
+/// [`STATE_DIR_LOCK_FILE`] in the engine's state directory `state_dir`, as
+/// `oneiron execution-node install` does before it changes anything else;
+/// with whether this call removed it.
+///
+/// A query of that version that still runs (one its kill could not end)
+/// holds that file's lock, while a handler of this version locks another
+/// file ([`DeviceQueryLock`]) and would start a second query into the same
+/// wedge (review r1 of #10541). So while that lock is held, install refuses
+/// and the lock of this version is not made, so no handler of this version
+/// runs a query meanwhile: the old query must end, or the machine reboot.
+/// Once the lock is free, the name is removed while this call holds the
+/// lock. That version's handlers made the file this process's account's
+/// (root's), regular and empty, with one name and mode 0600; anything else
+/// at the name, or nothing, is no lock they hold, and is left as it is.
+/// The engine could hide the held file under another name, and so start at
+/// most one more query into its own wedge: the lock of this version then
+/// refuses every later one.
+///
+/// # Errors
+///
+/// A query of the version before this one still holds the lock, or a step
+/// failed.
+pub fn retire_state_dir_lock(state_dir: &Path) -> Result<bool, String> {
+    let failed = |why: &dyn std::fmt::Display| {
+        format!("{}/{STATE_DIR_LOCK_FILE}: {why}", state_dir.display())
+    };
+    let dir = match open_dir_path(state_dir) {
+        Ok(dir) => dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(failed(&error)),
+    };
+    let owner = rustix::process::geteuid().as_raw();
+    let file = match open_lock_beneath(borrow(&dir), STATE_DIR_LOCK_FILE, owner) {
+        Ok(fd) => File::from(fd),
+        Err(error) => {
+            // Nothing there, or no lock that version's handlers made.
+            return match error.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData => Ok(false),
+                _ => Err(failed(&error)),
+            };
+        }
+    };
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            return Err(failed(
+                &"a device query of the version before this one still runs and holds this lock; stop oneiron-job-control.socket, wait until that query ends (reboot if it never does), then install again",
+            ));
+        }
+        Err(std::fs::TryLockError::Error(error)) => return Err(failed(&error)),
+    }
+    remove_beneath(borrow(&dir), STATE_DIR_LOCK_FILE).map_err(|error| failed(&error))?;
+    Ok(true)
 }
 
 /// The handler's side on an installed machine: [`answer`] with

@@ -26,6 +26,13 @@
 //! never opens, removes or makes it again; a lock directory another account
 //! may write, or one reached through a link, is refused too. Here this
 //! process's account stands in for root.
+//!
+//! Review r1 of #10541: the lock install makes is empty with mode 0600
+//! whatever the umask, and a file at its name with another mode or with
+//! content is not it; install refuses an engine's directory that overlaps
+//! the lock's directory; and while a query of the version before (#10540)
+//! still holds that version's lock in the state directory, install refuses,
+//! and retires that file once it is free.
 #![cfg(target_os = "linux")]
 
 use std::ffi::CString;
@@ -500,15 +507,21 @@ enum LockEntry {
     HardLink,
     Directory,
     Pipe,
+    /// The lock's own kind of file, empty, but mode 0666.
+    OtherMode,
+    /// The lock's own kind of file, mode 0600, but with a byte in it.
+    WithContent,
 }
 
 impl LockEntry {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 7] = [
         Self::Absent,
         Self::Link,
         Self::HardLink,
         Self::Directory,
         Self::Pipe,
+        Self::OtherMode,
+        Self::WithContent,
     ];
 
     fn make(self, at: &Path, outside: &Path) {
@@ -523,6 +536,8 @@ impl LockEntry {
                 let made = unsafe { libc::mkfifo(name.as_ptr(), 0o600) };
                 assert_eq!(made, 0, "mkfifo: {}", std::io::Error::last_os_error());
             }
+            Self::OtherMode => write_with_mode(at, b"", 0o666),
+            Self::WithContent => write_with_mode(at, b"x", 0o600),
         }
     }
 
@@ -538,6 +553,12 @@ impl LockEntry {
             (Self::HardLink, Ok(meta)) => meta.is_file() && meta.nlink() == 2,
             (Self::Directory, Ok(meta)) => meta.is_dir(),
             (Self::Pipe, Ok(meta)) => meta.file_type().is_fifo(),
+            (Self::OtherMode, Ok(meta)) => {
+                meta.is_file() && meta.mode() & 0o7777 == 0o666 && meta.len() == 0
+            }
+            (Self::WithContent, Ok(meta)) => {
+                meta.is_file() && meta.mode() & 0o7777 == 0o600 && meta.len() == 1
+            }
             _ => false,
         }
     }
@@ -546,11 +567,17 @@ impl LockEntry {
         match self {
             Self::Absent => {}
             Self::Directory => std::fs::remove_dir(at).expect("remove the directory"),
-            Self::Link | Self::HardLink | Self::Pipe => {
+            Self::Link | Self::HardLink | Self::Pipe | Self::OtherMode | Self::WithContent => {
                 std::fs::remove_file(at).expect("remove the entry");
             }
         }
     }
+}
+
+/// Writes `bytes` to a new file at `at`, then gives it `mode`.
+fn write_with_mode(at: &Path, bytes: &[u8], mode: u32) {
+    std::fs::write(at, bytes).expect("write the entry");
+    std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode)).expect("chmod");
 }
 
 /// The opens of one file, by any of its names: inotify watches the file,
@@ -737,6 +764,165 @@ fn a_query_lock_directory_another_account_may_write_or_reached_through_a_link_is
         reason.starts_with("device_query_lock: ") && reason.contains("a link"),
         "{reason}"
     );
+}
+
+/// Set by [`install_makes_the_query_lock_mode_0600_whatever_the_umask`] for
+/// its child process alone: the lock directory the child makes.
+const UMASK_CHILD_LOCK_DIR: &str = "ONEIRON_TEST_UMASK_0777_LOCK_DIR";
+
+#[test]
+fn install_makes_the_query_lock_mode_0600_whatever_the_umask() {
+    let dir = private_dir();
+    let lock_dir = dir
+        .path()
+        .canonicalize()
+        .expect("the directory's own path")
+        .join("lock");
+    // The umask is the whole process's: the make runs in a child of its own,
+    // this test binary running only the test below.
+    let ran = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "provision_lock_under_umask_0777",
+            "--ignored",
+            "--test-threads",
+            "1",
+        ])
+        .env(UMASK_CHILD_LOCK_DIR, &lock_dir)
+        .output()
+        .expect("run the child");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert!(
+        ran.status.success() && said.contains("1 passed"),
+        "the child: {said}"
+    );
+    let facts = |path: &Path| std::fs::metadata(path).expect("the entry's facts");
+    assert_eq!(facts(&lock_dir).permissions().mode() & 0o7777, 0o700);
+    let lock = facts(&lock_dir.join(DEVICE_QUERY_LOCK_FILE));
+    assert!(lock.is_file());
+    assert_eq!(lock.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(lock.len(), 0);
+}
+
+#[test]
+#[ignore = "the child of install_makes_the_query_lock_mode_0600_whatever_the_umask"]
+fn provision_lock_under_umask_0777() {
+    let Some(lock_dir) = std::env::var_os(UMASK_CHILD_LOCK_DIR) else {
+        return;
+    };
+    // SAFETY: umask has no preconditions.
+    unsafe { libc::umask(0o777) };
+    assert!(
+        device_query::provision_lock(Path::new(&lock_dir)).expect("install under umask 0777"),
+        "install made the lock"
+    );
+}
+
+#[test]
+fn install_refuses_an_engines_directory_that_is_holds_or_lies_beneath_the_query_locks() {
+    let lock_dir = Path::new(device_query::DEVICE_QUERY_LOCK_DIR);
+    let check = |what: &str, dir: &str| {
+        device_query::require_apart_from_lock_dir(what, Path::new(dir), lock_dir)
+    };
+    for refused in [
+        "/var/lib/oneiron-job-control",
+        "/var/lib/oneiron-job-control/state",
+        "/var/lib/oneiron-job-control/./work/payloads",
+        "/var/lib",
+        "/",
+    ] {
+        let reason = check("state directory", refused)
+            .expect_err("an engine's directory that overlaps the lock's is refused");
+        assert!(
+            reason.starts_with(&format!("the state directory {refused} must not be")),
+            "{refused}: {reason}"
+        );
+    }
+    for apart in [
+        "/var/lib/oneiron",
+        "/var/lib/oneiron-job-control-state",
+        "/var/lib/oneiron-job",
+        "/srv/oneiron/state",
+    ] {
+        assert_eq!(check("payload directory", apart), Ok(()), "{apart}");
+    }
+}
+
+#[test]
+fn install_refuses_while_a_query_of_the_version_before_holds_its_lock_and_retires_it_once_free() {
+    let dir = private_dir();
+    let state_dir = dir
+        .path()
+        .canonicalize()
+        .expect("the state directory's own path");
+    let old = state_dir.join(device_query::STATE_DIR_LOCK_FILE);
+    let gone = |path: &Path| {
+        std::fs::symlink_metadata(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    };
+    // A state directory with no such lock: nothing to retire.
+    assert_eq!(device_query::retire_state_dir_lock(&state_dir), Ok(false));
+    assert_eq!(
+        device_query::retire_state_dir_lock(&state_dir.join("absent")),
+        Ok(false)
+    );
+
+    // The lock as that version's handler made it, held by a query of it
+    // that still runs.
+    write_with_mode(&old, b"", 0o600);
+    let inode = std::fs::metadata(&old).expect("the old lock").ino();
+    let query = std::fs::File::open(&old).expect("open the old lock");
+    query.lock().expect("the old query holds the lock");
+    let refused = device_query::retire_state_dir_lock(&state_dir)
+        .expect_err("install refuses while the old query holds its lock");
+    assert!(
+        refused.starts_with(&format!("{}: ", old.display()))
+            && refused.contains("still runs and holds this lock")
+            && refused.contains("then install again"),
+        "{refused}"
+    );
+    assert_eq!(
+        std::fs::metadata(&old).expect("the old lock is left").ino(),
+        inode
+    );
+
+    // Once that query has ended, install retires the file.
+    drop(query);
+    assert_eq!(device_query::retire_state_dir_lock(&state_dir), Ok(true));
+    assert!(gone(&old), "the old lock is retired");
+    assert_eq!(device_query::retire_state_dir_lock(&state_dir), Ok(false));
+
+    // An entry that is no lock that version's handlers made is left as it
+    // is, and no file it names is opened.
+    let outside_dir = private_dir();
+    let outside = outside_dir
+        .path()
+        .canonicalize()
+        .expect("the outside directory's own path")
+        .join("outside");
+    std::fs::write(&outside, b"outside").expect("write the outside file");
+    for entry in LockEntry::ALL {
+        if matches!(entry, LockEntry::Absent) {
+            continue;
+        }
+        entry.make(&old, &outside);
+        let watch = OpenWatch::new(&outside);
+        assert_eq!(
+            device_query::retire_state_dir_lock(&state_dir),
+            Ok(false),
+            "{entry:?}"
+        );
+        assert_eq!(watch.opens(), 0, "{entry:?}: the outside file was opened");
+        assert!(
+            entry.is_as_made(&old, &outside),
+            "{entry:?}: the entry changed"
+        );
+        entry.remove(&old);
+    }
 }
 
 #[test]

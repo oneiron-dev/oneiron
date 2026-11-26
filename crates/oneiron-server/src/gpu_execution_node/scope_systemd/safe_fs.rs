@@ -377,13 +377,20 @@ pub fn set_group_and_mode_beneath(
 }
 
 /// The mode of a lock file [`make_lock_beneath`] makes.
-const LOCK_FILE_MODE: libc::c_uint = 0o600;
+const LOCK_FILE_MODE: u32 = 0o600;
 
-/// Whether the entry `name` beneath a directory, as `found` says, is a lock
-/// file a root step may hold: a regular file `owner` owns, with no other
-/// name (a hard link), so it is no file of another directory.
+/// Whether the entry `name` beneath a directory, as `found` says, is the
+/// lock file [`make_lock_beneath`] makes: an empty regular file `owner`
+/// owns, mode 0600, with no other name (a hard link), so it is no file of
+/// another directory (review r1 of #10541: install's promise is an empty
+/// file of mode 0600, and a file with another mode or with content is not
+/// the one it made).
 fn lock_entry_fits(found: &FileFacts, owner: u32) -> bool {
-    found.is_regular && found.uid == owner && found.links == 1
+    found.is_regular
+        && found.uid == owner
+        && found.links == 1
+        && found.mode == LOCK_FILE_MODE
+        && found.size == 0
 }
 
 /// Why the entry `found` at `name` is no lock file for `owner`, in words.
@@ -391,21 +398,23 @@ fn lock_entry_misfit(name: &str, found: &FileFacts, owner: u32) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
         format!(
-            "{name} is {} of uid {} with {} name(s), not a regular file of uid {owner} with one name",
+            "{name} is {} of uid {} with {} name(s), mode {:o} and {} byte(s), not an empty regular file of uid {owner} with one name and mode {LOCK_FILE_MODE:o}",
             kind_words(found),
             found.uid,
-            found.links
+            found.links,
+            found.mode,
+            found.size
         ),
     )
 }
 
 /// The lock file `name` beneath `dir`, open read-only to hold a lock on it:
-/// a regular file `owner` owns with one name, made beforehand
-/// ([`make_lock_beneath`]). Nothing at `name` is made, removed or replaced
-/// here, and an entry that is not such a file (a link, a hard link, a
-/// directory, a pipe, another owner's file) is never opened: it is
-/// refused, as it is, and the refusal names it (review r2 of #10540, the
-/// Engine's extra review).
+/// an empty regular file `owner` owns with one name and mode 0600, made
+/// beforehand ([`make_lock_beneath`]). Nothing at `name` is made, removed
+/// or replaced here, and an entry that is not such a file (a link, a hard
+/// link, a directory, a pipe, another owner's file, another mode, a file
+/// with content) is never opened: it is refused, as it is, and the refusal
+/// names it (review r2 of #10540, the Engine's extra review).
 ///
 /// # Errors
 ///
@@ -437,10 +446,11 @@ pub fn open_lock_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Res
 }
 
 /// Makes the lock file `name` beneath `dir` for [`open_lock_beneath`]: an
-/// empty regular file of this process's account, mode 0600, made when
-/// nothing is at `name`; with whether this call made it. A fitting file
-/// that is there already is kept; anything else at `name` is refused, as it
-/// is, for its maker to remove.
+/// empty regular file of this process's account, mode 0600 whatever the
+/// umask, made when nothing is at `name`; with whether this call made it. A
+/// fitting file that is there already is kept; anything else at `name`
+/// (another mode or content included) is refused, as it is, for its maker
+/// to remove.
 ///
 /// # Errors
 ///
@@ -463,9 +473,14 @@ pub fn make_lock_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Res
             LOCK_FILE_MODE,
         )
     })?;
-    if facts(borrow(&made))?.uid != owner {
+    // The umask narrows the mode openat gives (umask 0777 makes it 0000):
+    // set it on the file made (review r1 of #10541).
+    set_mode(borrow(&made), LOCK_FILE_MODE)?;
+    let held = facts(borrow(&made))?;
+    if !lock_entry_fits(&held, owner) {
         return Err(io::Error::other(format!(
-            "{name}: made, but not owned by uid {owner}"
+            "{name}: made, but {}",
+            lock_entry_misfit(name, &held, owner)
         )));
     }
     Ok(true)

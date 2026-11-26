@@ -11,6 +11,10 @@
 # Parity with the Rust readers (the Engine's review of #10540 after its merge), one case each:
 #   memory-past-u64 / memory-u64-max / memory-with-plus  device.rs parse_device_lines reads the memory as a u64 with
 #                                                        Rust's integer parse (an optional '+', ASCII digits).
+#   memory-many-zeros / memory-many-digits  5,000 leading zeros and a 1 is 1 MiB to Rust, and 5,000 digits of 1 is past
+#                    a u64: neither may meet CPython's 4300-digit conversion limit (review r1 of #10541).
+#   listen-queue-full  the listener's queue is full for the probe's first 0.3 s (EAGAIN on a connect that does not
+#                    block); device_query.rs connect_by tries again until its deadline (review r1 of #10541).
 #   unit-separator   Rust's str::trim does not remove U+001C-U+001F, which Python's str.strip() does: a device line
 #                    ending in U+001F is one the probe does not read.
 #   slow-reply       the probe's whole exchange ends 15 s after it starts (GPU_QUERY_TIMEOUT 10 s, ANSWER_MARGIN 5 s).
@@ -25,18 +29,32 @@ WRONG=0
 
 # A job control socket at <socket> that reads one request line, waits <delay> seconds, answers the bytes of <reply
 # file>, and holds the connection <hold> seconds before it closes. The socket is bound and listening under a staging
-# name and renamed into place, so it is there whole once it is there.
-serve_once() { # <socket> <reply file> <delay> <hold>
-  python3 - "$1" "$2" "$3" "$4" << 'EOF' &
+# name and renamed into place, so it is there whole once it is there. With <queue full> seconds above 0, its listen
+# queue holds one connection (backlog 0) and a filler connection takes it before the rename, so every connect that
+# does not block meets EAGAIN until the listener takes the filler <queue full> seconds later.
+serve_once() { # <socket> <reply file> <delay> <hold> <queue full>
+  python3 - "$1" "$2" "$3" "$4" "$5" << 'EOF' &
 import os, socket, sys, time
-path, reply_file, delay, hold = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
+path, reply_file = sys.argv[1], sys.argv[2]
+delay, hold, queue_full = float(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
 with open(reply_file, "rb") as f:
     reply = f.read()
 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
     listener.bind(path + ".staging")
-    listener.listen(1)
+    filler = None
+    if queue_full > 0:
+        listener.listen(0)
+        filler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        filler.connect(path + ".staging")
+    else:
+        listener.listen(1)
     os.rename(path + ".staging", path)
     listener.settimeout(30)
+    if filler is not None:
+        time.sleep(queue_full)
+        taken, _ = listener.accept()
+        taken.close()
+        filler.close()
     conn, _ = listener.accept()
     with conn:
         conn.settimeout(30)
@@ -56,10 +74,10 @@ EOF
   server=$!
 }
 
-case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>]
+case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>] [<queue full>]
   local sock=$tmp/$1.sock reply=$tmp/$1.reply got verdict tries=0
   printf '%b' "$3" > "$reply"
-  serve_once "$sock" "$reply" "${5:-0}" "${6:-0}"
+  serve_once "$sock" "$reply" "${5:-0}" "${6:-0}" "${7:-0}"
   until [ -S "$sock" ] || [ "$tries" -ge 200 ]; do sleep 0.05; tries=$((tries + 1)); done
   got=$(python3 "$here/engine_probe.py" "$sock" "$UUID" 2>&1 | head -1)
   kill "$server" 2> /dev/null; wait "$server" 2> /dev/null
@@ -94,9 +112,14 @@ case_reply unreadable-line FAIL "$(framed "$LINE\\nnot a device line\\n")" "$UNR
 case_reply memory-past-u64 FAIL "$(framed "$UUID, NVIDIA GeForce RTX 4090, 18446744073709551616\\n")" "$UNREAD"
 case_reply memory-u64-max PASS "$(framed "$UUID, NVIDIA GeForce RTX 4090, 18446744073709551615\\n")"
 case_reply memory-with-plus PASS "$(framed "$UUID, NVIDIA GeForce RTX 4090, +24564\\n")"
+ZEROS=$(printf '%05000d' 0)
+ONES=$(printf '%05000d' 0 | tr 0 1)
+case_reply memory-many-zeros PASS "$(framed "$UUID, NVIDIA GeForce RTX 4090, ${ZEROS}1\\n")"
+case_reply memory-many-digits FAIL "$(framed "$UUID, NVIDIA GeForce RTX 4090, $ONES\\n")" "$UNREAD"
 case_reply unit-separator FAIL "$(framed "$LINE\\x1f\\n")" "$UNREAD"
 case_reply duplicate-uuid FAIL "$(framed "$LINE\\n$OTHER, NVIDIA A100, 81920\\n$LINE\\n")" "is listed twice"
 case_reply slow-reply FAIL "$(framed "$LINE\\n")" "no whole reply within 15 s" 16 0
 case_reply held-open PASS "$(framed "$LINE\\n")" "" 0 30
+case_reply listen-queue-full PASS "$(framed "$LINE\\n")" "" 0 0 0.3
 echo "## FIXTURES rc=$WRONG"
 exit "$WRONG"

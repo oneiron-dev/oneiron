@@ -14,9 +14,14 @@ Parity with the Rust readers (the Engine's review of #10540 after its merge; one
   - trim: Rust's str::trim removes Unicode White_Space alone (RUST_WHITESPACE); Python's str.strip() also removes
     U+001C-U+001F, and Python's str.isspace() takes them too (case unit-separator);
   - numbers: Rust's integer parse takes an optional '+' and ASCII digits, and the memory must fit a u64 (cases
-    memory-past-u64, memory-u64-max, memory-with-plus);
+    memory-past-u64, memory-u64-max, memory-with-plus); a run of leading zeros of any length is still the number
+    after them, so the digits are bounded before Python converts them, past its 4300-digit limit too (case
+    memory-many-zeros; review r1 of #10541);
   - deadline: GPU_QUERY_TIMEOUT (10 s) and ANSWER_MARGIN (5 s), from before the connection to the last byte (case
     slow-reply);
+  - connection: each try connects without blocking, and a full listen queue (EAGAIN) is tried again on a fresh
+    socket every 20 ms until the deadline, as device_query.rs connect_by does (case listen-queue-full; review r1 of
+    #10541); the request line is written within the deadline and at most 5 s (control.rs REQUEST_WAIT);
   - a UUID listed twice fails (case duplicate-uuid);
   - framing: neither bytes past the n nor the peer's end are waited for (case held-open).
 
@@ -37,8 +42,13 @@ HEAD_MAX_BYTES = 1024
 OUTPUT_MAX_BYTES = 1 << 20
 # The probe's whole exchange: device.rs GPU_QUERY_TIMEOUT (10 s) and device_query.rs ANSWER_MARGIN (5 s).
 WAIT_SECS = 15
+# device_query.rs CONNECT_RETRY: the wait before the next try while the listener's queue is full.
+CONNECT_RETRY_SECS = 0.02
+# control.rs REQUEST_WAIT: the longest the request line's write may take.
+REQUEST_WAIT_SECS = 5
 # GpuDevice::memory_total_mib is a u64.
 U64_MAX = (1 << 64) - 1
+U64_MAX_DIGITS = len(str(U64_MAX))
 # Rust's char::is_whitespace (Unicode White_Space): what Rust's trim() removes. Not U+001C-U+001F.
 RUST_WHITESPACE = (
     "\t\n\x0b\x0c\r \x85\xa0 " + "".join(map(chr, range(0x2000, 0x200B))) + "    　"
@@ -50,6 +60,39 @@ RUST_UNSIGNED = re.compile(r"\+?[0-9]+")
 def rust_trim(text):
     """str::trim."""
     return text.strip(RUST_WHITESPACE)
+
+
+def rust_u64(text):
+    """`text.parse::<u64>()`: the number, or None. The optional '+' and the leading zeros go before the digits are
+    counted, and only a count a u64 can hold is converted, so no length of input meets CPython's digit limit."""
+    if not RUST_UNSIGNED.fullmatch(text):
+        return None
+    digits = text[1:] if text.startswith("+") else text
+    digits = digits.lstrip("0") or "0"
+    if len(digits) > U64_MAX_DIGITS:
+        return None
+    value = int(digits)
+    return value if value <= U64_MAX else None
+
+
+def connect_by(path, deadline):
+    """The connection to the socket at `path`, made by the deadline as device_query.rs connect_by makes it: each try
+    on a fresh socket that does not block, and a full listen queue (EAGAIN) tried again every 20 ms."""
+    while True:
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.setblocking(False)
+        try:
+            conn.connect(path)
+            return conn
+        except BlockingIOError as error:
+            conn.close()
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("the handler took no connection within %d s: %s" % (WAIT_SECS, error)) from None
+            time.sleep(min(CONNECT_RETRY_SECS, left))
+        except BaseException:
+            conn.close()
+            raise
 
 
 def recv_by(conn, deadline, most):
@@ -104,28 +147,28 @@ def device_uuid(line):
     """The UUID of a device line as parse_device_lines reads it (`<uuid>, <model>, <memory>`), or None."""
     uuid, comma, rest = line.partition(",")
     model, comma_2, memory = rest.rpartition(",")
-    memory = rust_trim(memory)
     if not comma or not comma_2 or not rust_trim(model):
         return None
-    if not RUST_UNSIGNED.fullmatch(memory) or int(memory) > U64_MAX:
+    if rust_u64(rust_trim(memory)) is None:
         return None
     return plain_device_id(uuid)
 
 
 def exchange(path):
-    """The reply's first line, trimmed at its end, and the output it frames ('' for a refusal or a bad frame)."""
+    """The reply's first line, trimmed at its end, and the output it frames (None for a refusal or a bad frame)."""
     deadline = time.monotonic() + WAIT_SECS
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-        conn.settimeout(WAIT_SECS)
-        conn.connect(path)
-        conn.settimeout(max(deadline - time.monotonic(), 0.001))
+    with connect_by(path, deadline) as conn:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("no whole reply within %d s" % WAIT_SECS)
+        conn.settimeout(min(left, REQUEST_WAIT_SECS))
         conn.sendall(REQUEST)
         head, rest = read_head(conn, deadline)
         head = head.decode("utf-8", "replace").rstrip(RUST_WHITESPACE)
-        length = head[len("ok ") :] if head.startswith("ok ") else ""
-        if not RUST_UNSIGNED.fullmatch(length) or int(length) > OUTPUT_MAX_BYTES:
+        length = rust_u64(head[len("ok ") :]) if head.startswith("ok ") else None
+        if length is None or length > OUTPUT_MAX_BYTES:
             return head, None
-        return head, read_exactly(conn, deadline, int(length), rest)
+        return head, read_exactly(conn, deadline, length, rest)
 
 
 def verdict(path, device):
