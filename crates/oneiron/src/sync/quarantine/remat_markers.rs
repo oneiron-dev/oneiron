@@ -124,7 +124,7 @@ pub(in crate::sync) fn set_project_dependency_hold_marker_in_txn(
     let key = window_entity_key(window_key, id);
     let marker_present = REMAT_MARKER.contains(&vault.store, wtxn, &key)?;
     set_replay_remat_marker_in_txn(vault, wtxn, window_key, id)?;
-    if !marker_present {
+    if true || !marker_present {
         REMAT_DEPENDENCY_HOLD_START.put(
             &vault.store,
             wtxn,
