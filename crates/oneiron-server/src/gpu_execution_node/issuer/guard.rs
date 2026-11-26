@@ -23,7 +23,7 @@
 //!
 //! The node's own drain belongs to the node: `resume` at the box clears only that one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oneiron::gpu_job::MeterVerdict;
 use oneiron::job_dispatch::machine_records::{MachineDrain, MachineJobGuard, MachineJobOutcome};
@@ -179,20 +179,24 @@ struct MachineReads {
 /// The issuer's readings of its machines' readiness facts, held by the job worker. Each machine
 /// has its last sample and its clear baseline. Every machine read in the last [`Self::IDLE_MS`]
 /// is kept, however many the worker reads in a pass, so another machine's read never evicts a
-/// baseline (REVIEW-10518 round 2 P1). A machine not read for that long is dropped. The worker
-/// reads only the vault's own machines, so the entries stay as many as those. A dropped entry,
-/// or one lost to a restart, only delays a clear: the next answer becomes the new baseline.
+/// baseline (REVIEW-10518 round 2 P1). So is every machine the vault's grants admit, as the
+/// scheduled read last listed them ([`Self::keep_granted`]), however long its period, so a
+/// machine read less than once a day still reaches its clear (REVIEW-10544 round 2 P1). Any
+/// other machine not read for a day is dropped. The worker reads only the vault's own machines,
+/// so the entries stay as many as those. A dropped entry, or one lost to a restart, only delays
+/// a clear: the next answer becomes the new baseline.
 ///
-/// Apart from those entries it keeps when the worker last asked each machine, which the
-/// scheduled read counts each machine's period from ([`Self::due`]). A machine's last ask is
-/// kept for as long as the scheduled read may ask it, however long its period, and dropped once
-/// the vault's grants no longer admit it ([`Self::keep_asked`]; REVIEW-10544 round 1 P1).
+/// Apart from those entries it keeps when the worker last sent each machine a `Node` request,
+/// which the scheduled read counts each machine's period from ([`Self::due`]), for as long as
+/// the grants admit the machine (REVIEW-10544 round 1 P1).
 #[derive(Debug, Default)]
 pub struct ReadinessReads {
     machines: HashMap<EntityId, MachineReads>,
     /// When the worker last sent each machine a `Node` request, on the issuer's clock, whatever
     /// came back.
     asked_at: HashMap<EntityId, u64>,
+    /// The machines the vault's grants admitted at the scheduled read's last listing.
+    granted: HashSet<EntityId>,
 }
 
 impl ReadinessReads {
@@ -211,9 +215,10 @@ impl ReadinessReads {
         self.machines.is_empty()
     }
 
-    /// Records that the worker sent `machine` a `Node` request at `asked_at_ms`, whatever came
-    /// back: an answer, another answer than `Node`, or none. The scheduled read counts the
-    /// machine's period from it.
+    /// Records that the worker sends `machine` a `Node` request at `asked_at_ms`, before it is
+    /// sent, whatever comes back: an answer, another answer than `Node`, or none. The scheduled
+    /// read counts the machine's period from it, and asks no machine a request is already out to
+    /// (REVIEW-10544 round 2 P1).
     pub fn asked(&mut self, machine: EntityId, asked_at_ms: u64) {
         self.asked_at.insert(machine, asked_at_ms);
     }
@@ -236,10 +241,28 @@ impl ReadinessReads {
         asked_at_ms < pass_at_ms && age >= every_ms
     }
 
-    /// Keeps the last ask of `machines` alone: the machines the vault's grants admit now.
-    pub fn keep_asked(&mut self, machines: &[EntityId]) {
-        self.asked_at
-            .retain(|machine, _| machines.contains(machine));
+    /// Whether `machine` is due ([`Self::due`]), and if so records the scheduled read's ask of it
+    /// at `now_ms` ([`Self::asked`]), in one step, so no ask out to it meanwhile is repeated.
+    pub fn claim(
+        &mut self,
+        machine: EntityId,
+        now_ms: u64,
+        every_ms: u64,
+        pass_at_ms: u64,
+    ) -> bool {
+        let due = self.due(machine, now_ms, every_ms, pass_at_ms);
+        if due {
+            self.asked(machine, now_ms);
+        }
+        due
+    }
+
+    /// Records `machines` as the machines the vault's grants admit now: their readings are kept
+    /// past the one-day drop, and every other machine's last ask is dropped.
+    pub fn keep_granted(&mut self, machines: &[EntityId]) {
+        self.granted = machines.iter().copied().collect();
+        let granted = &self.granted;
+        self.asked_at.retain(|machine, _| granted.contains(machine));
     }
 
     /// Reads `machine`'s readiness fact from one `Node` answer the issuer read at `now_ms`. The
@@ -299,10 +322,12 @@ impl ReadinessReads {
         Some(observed)
     }
 
-    /// Drops every machine idle for [`Self::IDLE_MS`].
+    /// Drops every machine idle for [`Self::IDLE_MS`] that the grants no longer admit.
     fn drop_idle(&mut self, now_ms: u64) {
-        self.machines
-            .retain(|_, reads| now_ms.saturating_sub(reads.read_at_ms) < Self::IDLE_MS);
+        let granted = &self.granted;
+        self.machines.retain(|machine, reads| {
+            granted.contains(machine) || now_ms.saturating_sub(reads.read_at_ms) < Self::IDLE_MS
+        });
     }
 }
 

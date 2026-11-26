@@ -38,3 +38,14 @@ pub fn worker_pass_observes(server: &SyncServer) -> bool {
 pub fn run_readiness_read_at(server: &Arc<SyncServer>, pass_at_ms: u64, clock: &dyn Fn() -> u64) {
     crate::work_order_host::run_readiness_read(server, pass_at_ms, clock);
 }
+
+/// The job worker's pass's `Node` asks of `machines` on `server`, as its pass at `now_ms` sends
+/// them (acting on each readiness fact), each dated by `clock` (REVIEW-10544 round 2).
+pub fn worker_pass_asks(
+    server: &Arc<SyncServer>,
+    now_ms: u64,
+    clock: &dyn Fn() -> u64,
+    machines: &[EntityId],
+) {
+    crate::work_order_host::worker_pass_asks(server, now_ms, clock, machines);
+}

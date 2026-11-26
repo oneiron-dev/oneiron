@@ -8,7 +8,9 @@
 //! owner with no order open (pass 34, 7.3 and 16, practice 6). REVIEW-10544 round 1: the
 //! enabled issuer's worker starts with no job work; the worker never waits for the read, and
 //! one read runs at a time; each ask is dated when it is sent; a period longer than a day
-//! outlives the readings' one-day drop.
+//! outlives the readings' one-day drop. Round 2: the pass dates its asks when sent too and
+//! records each before it is sent, so the read never repeats a request already out; a granted
+//! machine's readings outlive the one-day drop; nothing is read before the mesh is bound.
 //!
 //! A, B and C share one home. A is the vault's issuer of vault machine jobs with the section
 //! enabled, and C names A as the issuer too. A's vault grants B the job protocol and C the
@@ -50,7 +52,7 @@ use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::gpu_backend::{
     gpu_job_worker_starts, run_gpu_job_worker_tick, use_job_nodes,
 };
-use oneiron_server::test_doors::work_order_host::run_readiness_read_at;
+use oneiron_server::test_doors::work_order_host::{run_readiness_read_at, worker_pass_asks};
 use serde_json::{Value, json};
 
 const A: usize = 0;
@@ -339,15 +341,33 @@ fn a_machine_is_due_the_scheduled_read_a_period_after_its_last_ask() -> TestResu
     );
     assert!(due(&reads, READ_AT_MS + two_days, two_days));
 
-    reads.keep_asked(&[machine]);
+    reads.keep_granted(&[machine]);
     assert!(
         !due(&reads, day_after, two_days),
         "a granted machine's ask is kept"
     );
-    reads.keep_asked(&[]);
+    reads.keep_granted(&[]);
     assert!(
         due(&reads, day_after, two_days),
         "an ask of a machine the grants no longer admit is dropped"
+    );
+
+    let mut reads = ReadinessReads::default();
+    let granted = EntityId::now();
+    reads.observe(&vault, granted, None, None, &fact, READ_AT_MS);
+    reads.keep_granted(&[granted]);
+    reads.observe(&vault, EntityId::now(), None, None, &fact, day_after);
+    assert_eq!(
+        reads.len(),
+        2,
+        "a granted machine's readings outlive the one-day drop"
+    );
+    reads.keep_granted(&[]);
+    reads.observe(&vault, EntityId::now(), None, None, &fact, day_after);
+    assert_eq!(
+        reads.len(),
+        2,
+        "once the grants no longer admit it, the idle machine's readings are dropped"
     );
     Ok(())
 }
@@ -630,4 +650,122 @@ async fn only_issuer_reads_job_granted_machines() -> TestResult {
 #[test]
 fn only_the_issuer_reads_and_only_machines_it_holds_a_job_grant_for() -> TestResult {
     on_engine_stack(only_issuer_reads_job_granted_machines)
+}
+
+/// The pass dates each ask when it is sent: its first ask takes 70 s, so the machine it asks
+/// next is dated 70 s into the pass, and with a 60 s period the read 100 s after the pass asks
+/// only the first one again (REVIEW-10544 round 2).
+async fn pass_dates_asks_when_sent() -> TestResult {
+    let script = Arc::new(ScriptedMachines::default());
+    let mesh = issuer_with(&script).await?;
+    mesh.grant(A, C, &[JOB_ALPN])?;
+    let server = Arc::clone(&mesh.machine(A).served.server);
+    let vault = Arc::clone(&mesh.machine(A).device.vault);
+    let b = mesh.machine(B).device.machine;
+    let c = mesh.machine(C).device.machine;
+    for machine in [b, c] {
+        script.script(machine, Script::Answers(Some(passed(CHECKED_AT_MS))));
+        owner_sets_every_secs(&vault, machine, json!(60))?;
+    }
+    let clock = || script.now_ms();
+
+    script.clock_ms.store(READ_AT_MS, Ordering::SeqCst);
+    script.next_ask_takes_ms.store(70_000, Ordering::SeqCst);
+    tokio::task::block_in_place(|| worker_pass_asks(&server, READ_AT_MS, &clock, &[b, c]));
+    assert_eq!(script.asked(), vec![b, c], "the pass asks B, then C");
+
+    let later = READ_AT_MS + 100_000;
+    script.clock_ms.store(later, Ordering::SeqCst);
+    tokio::task::block_in_place(|| run_readiness_read_at(&server, later, &clock));
+    assert_eq!(script.asks_of(b), 2, "asked at the pass, 100 s ago: due");
+    assert_eq!(
+        script.asks_of(c),
+        1,
+        "asked 70 s into the pass, 30 s ago: not due"
+    );
+    mesh.stop().await;
+    Ok(())
+}
+
+#[test]
+fn the_pass_dates_each_ask_when_it_is_sent() -> TestResult {
+    on_engine_stack(pass_dates_asks_when_sent)
+}
+
+/// The pass records each ask before it sends it, so a read running while a request to B is out
+/// does not send B another one (REVIEW-10544 round 2).
+async fn read_skips_a_request_already_out() -> TestResult {
+    let script = Arc::new(ScriptedMachines::default());
+    let mesh = issuer_with(&script).await?;
+    let server = Arc::clone(&mesh.machine(A).served.server);
+    let b = mesh.machine(B).device.machine;
+    script.script(b, Script::Answers(Some(passed(CHECKED_AT_MS))));
+    script.clock_ms.store(READ_AT_MS, Ordering::SeqCst);
+    let (heard, release) = script.hold(b);
+
+    let pass_server = Arc::clone(&server);
+    let pass_script = Arc::clone(&script);
+    let pass = tokio::task::spawn_blocking(move || {
+        let clock = || pass_script.now_ms();
+        worker_pass_asks(&pass_server, READ_AT_MS, &clock, &[b]);
+    });
+    tokio::task::block_in_place(|| heard.recv_timeout(HOLD_LIMIT))
+        .map_err(at("the pass asks B"))?;
+    // A read that began just before that pass, while the pass waits on B's answer.
+    tokio::task::block_in_place(|| {
+        run_readiness_read_at(&server, READ_AT_MS - 1, &|| READ_AT_MS);
+    });
+    assert_eq!(
+        script.asks_of(b),
+        1,
+        "the read sends B no second request while one is out"
+    );
+    release.send(()).map_err(at("release B's answer"))?;
+    pass.await?;
+    assert!(!script.hold_expired.load(Ordering::SeqCst));
+    mesh.stop().await;
+    Ok(())
+}
+
+#[test]
+fn a_read_never_repeats_a_request_already_out() -> TestResult {
+    on_engine_stack(read_skips_a_request_already_out)
+}
+
+/// Before the issuer's mesh listener is bound, no node call can start, so the read asks nothing
+/// and records nothing (REVIEW-10544 round 2). A second server on A's vault that no listener
+/// serves stands in for A before its bind.
+async fn nothing_is_read_before_the_mesh_is_bound() -> TestResult {
+    let script = Arc::new(ScriptedMachines::default());
+    let mesh = issuer_with(&script).await?;
+    let vault = Arc::clone(&mesh.machine(A).device.vault);
+    let a = mesh.machine(A).device.machine;
+    let b = mesh.machine(B).device.machine;
+    let mut config = SyncServerConfig::default();
+    config.auth_secret = Some("issuer-readiness-scheduled-read-unbound".to_owned());
+    config.gpu_jobs.vault_machine.enabled = true;
+    config.gpu_jobs.vault_machine.issuer = Some(a);
+    let unbound = SyncServer::new(vault, config).map_err(at("the unbound server"))?;
+    let unbound = Arc::new(unbound);
+    let unbound_script = Arc::new(ScriptedMachines::default());
+    unbound_script.script(b, Script::Answers(Some(failing(3))));
+    let nodes: Arc<dyn JobNodeClient> = Arc::clone(&unbound_script) as Arc<dyn JobNodeClient>;
+    if !use_job_nodes(&unbound, nodes) {
+        return Err("FIXTURE: the unbound server made its own node client".into());
+    }
+
+    read_at(&unbound, READ_AT_MS);
+    assert_eq!(
+        unbound_script.asks(),
+        0,
+        "before the mesh listener is bound the read asks nothing"
+    );
+    drop(unbound);
+    mesh.stop().await;
+    Ok(())
+}
+
+#[test]
+fn nothing_is_read_before_the_issuers_mesh_listener_is_bound() -> TestResult {
+    on_engine_stack(nothing_is_read_before_the_mesh_is_bound)
 }
