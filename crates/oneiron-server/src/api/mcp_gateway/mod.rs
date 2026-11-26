@@ -28,6 +28,7 @@ pub(crate) use self::person_call::person_socket_admits;
 mod question_answers_result;
 mod read_result;
 mod served_rows;
+mod session_workspace;
 pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;

@@ -155,6 +155,7 @@ impl HostSelfDispatcher<'_> {
             call.verb,
             &pre.args,
             reader.as_ref(),
+            admission.as_ref(),
         ) {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {

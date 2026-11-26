@@ -3,10 +3,12 @@
 The same hook lanes as [Claude Code hooks](claude-code-hooks.md), for the
 clients that take the shared Agent Plugins package
 ([Connect an agent](connect-an-agent.md)): when a session starts it binds a
-vault, is told which in one line, and gets a short recall for the project;
-as it goes, its log is queued for import. Each client runs `oneiron hook
---host <client> <event>`, which reads that client's event on stdin and
-answers it in that client's format.
+vault and is told which in one line; as it goes, its log is queued for
+import. The hook files recall nothing at start (`--query " "`), until start
+recall has a relevance threshold
+([Claude Code hooks](claude-code-hooks.md#how-it-works)). Each client runs
+`oneiron hook --host <client> <event>`, which reads that client's event on
+stdin and answers it in that client's format.
 
 Agent Plugins 1.0 defines no hooks; a client's own files sit in the
 package's top-level folder named for the client's namespace (spec §8.2).
@@ -83,7 +85,9 @@ files write `$HOME`, never `${HOME}`: a client reads `${...}` as its own
 placeholder (Cursor fills its plugin variables there), and `$HOME` is left
 to the shell. Add `--url <origin>` to `session-start` to pin a vault, and
 `--config /path/to/oneiron.toml` to each `hand-over` when `serve` reads
-another config and may be stopped when a session ends.
+another config and may be stopped when a session ends. To recall at start
+anyway, drop `--query " "` from `session-start` (it then recalls the
+project's name) or give `--query "<words>"`.
 
 ## A hosted vault
 

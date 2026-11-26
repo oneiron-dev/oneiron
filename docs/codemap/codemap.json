@@ -5804,6 +5804,24 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 2,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeshAuthorityPart",
+      "MeshAuthorityRowJoin",
+      "MeshAuthorityRowRef"
+     ],
+     "path": "src/authority/mesh_machine/replication/parts.rs",
+     "purpose": "A binding past one page, read in parts (MESH-AUTHORITY-ROW-PARTS, review round 2 of #10536)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -18169,7 +18187,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 80,
+      "crate-vis": 82,
       "fn": 11,
       "re-export": 1,
       "struct": 1
@@ -18193,7 +18211,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 30,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -23092,8 +23110,8 @@
      "path": "src/code_run/types/session_write.rs",
      "purpose": "What a run bound to an off-record session writes its room under (WILL L11-01, S01-2a): the answer of its…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 1,
+      "crate-vis": 4,
+      "fn": 2,
       "struct": 1,
       "trait": 1
      }
@@ -53384,7 +53402,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 236,
+      "mod": 237,
       "re-export": 106
      }
     },
@@ -57776,7 +57794,7 @@
      "path": "src/memory/claim_admission.rs",
      "purpose": "Explicit claim positions on the public door; the ordinary candidate writer still owns the write",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "re-export": 2
      }
@@ -59196,7 +59214,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 48,
       "mod": 42,
       "re-export": 75
      }
@@ -59750,7 +59768,7 @@
      "path": "src/memory/read_selection.rs",
      "purpose": "Caller-selected world and project filters",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "re-export": 1
      }
     },
@@ -59852,9 +59870,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/recall/items.rs",
-     "purpose": "Builds typed recall items from actor-admitted rows at the selected revision",
+     "purpose": "Projects recall items and render fields for the bound reader",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -60907,8 +60925,8 @@
      "path": "src/memory/support/builders.rs",
      "purpose": "Handle binders: the `with_*` methods and the accessors that read back what a binder set",
      "surface": {
-      "crate-vis": 19,
-      "fn": 30
+      "crate-vis": 21,
+      "fn": 32
      }
     },
     {
@@ -75765,7 +75783,7 @@
      "surface": {
       "crate-vis": 16,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "re-export": 2,
       "struct": 4,
       "trait": 1
@@ -79280,6 +79298,34 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SessionProjects",
+      "WorkspaceBindRequest",
+      "WorkspaceBinding",
+      "WorkspaceProject",
+      "WorkspaceUnbindRequest"
+     ],
+     "path": "src/session_project.rs",
+     "purpose": "The PROJECT an attached agent session's folder selects (rows RECALL-SESSION-PROJECT and…",
+     "surface": {
+      "const": 6,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 14,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_project/setting_keys.rs",
+     "purpose": "The `workspace.project` row (its value, rule and reader: the parent module)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -88799,7 +88845,7 @@
      "path": "src/store/window_rows.rs",
      "purpose": "Core half of `store::window_rows`: its store-layer items live in `oneiron_store::window_rows` and are…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -90105,7 +90151,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/authority/mesh.rs",
@@ -92129,6 +92175,14 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/quarantine/dependency_hold_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -92174,13 +92228,13 @@
      "path": "src/sync/quarantine/remat_markers.rs",
      "purpose": "rm: marker keys, setters/clears, pending scans plus drain",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "fn": 2,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SyncQuarantineReport"
@@ -92874,7 +92928,7 @@
      "path": "src/sync/residence/mesh_authority.rs",
      "purpose": "The home's host-signed mesh bindings, served beside its authority catch-up to a proven machine of the…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -94135,7 +94189,7 @@
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -94220,7 +94274,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 7,
       "mod": 1,
       "re-export": 11,
@@ -103178,7 +103232,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -103482,11 +103536,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault/vector_evidence.rs",
-     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
+     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it, or…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/vector_evidence/setting_keys.rs",
+     "purpose": "The `retrieval.vector_evidence` row (its value and item domain: the parent module)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -107756,8 +107818,9 @@
      "purpose": "Array groups (pass 34, 1.1; row Q5): orders that share a group id are the members of one array, and one…",
      "surface": {
       "crate-vis": 5,
+      "enum": 1,
       "fn": 2,
-      "struct": 2
+      "struct": 1
      }
     },
     {
@@ -119293,6 +119356,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/recall_rendered_masks_lifted_secrets.rs",
+     "purpose": "Formatted recall is another view of lifted text, not a way around its handle",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/recall_zero_match_returns_no_memory.rs",
      "purpose": "E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run…",
      "surface": {}
@@ -120926,6 +120997,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_project_reads.rs",
+     "purpose": "RECALL-SESSION-PROJECT PR 2 (rows RECALL-SESSION-PROJECT and RECALL-SESSION-PROJECT-ALL-READS; Engine ANSWER…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_project_writes.rs",
+     "purpose": "RECALL-SESSION-PROJECT PR 3, the write default (row START-RECALL-WRITES-ROOT-PROJECT; Engine ANSWER…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -122377,6 +122464,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/vector_evidence_owner_setting.rs",
+     "purpose": "EMBEDDER-ENDPOINT-VECTOR-FLOORS PR B (Engine ANSWER 27 Nov 01:45): the owner sets the no-match floors of one…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_connector_call_source_rows.rs",
      "purpose": "`connector.call_source_rows` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -122790,6 +122885,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/workspace_project_setting.rs",
+     "purpose": "RECALL-SESSION-PROJECT PR 1 (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q3 = A, the binding is the…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -123026,7 +123129,7 @@
     },
     "authority": {
      "entry": "crates/oneiron/src/authority/mod.rs",
-     "files": 350,
+     "files": 351,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -124942,6 +125045,15 @@
       "OF-536"
      ]
     },
+    "session_project": {
+     "entry": "crates/oneiron/src/session_project.rs",
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The PROJECT an attached agent session's folder selects (rows RECALL-SESSION-PROJECT and…",
+     "spec_ids": []
+    },
     "setting": {
      "entry": "crates/oneiron/src/setting/mod.rs",
      "files": 29,
@@ -125154,7 +125266,7 @@
     },
     "sync": {
      "entry": "crates/oneiron/src/sync/mod.rs",
-     "files": 454,
+     "files": 455,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125342,7 +125454,7 @@
     },
     "vault": {
      "entry": "crates/oneiron/src/vault/mod.rs",
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125506,8 +125618,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8635,
-   "test_files": 2324
+   "source_files": 8639,
+   "test_files": 2330
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -141652,6 +141764,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/session_project.rs",
+     "purpose": "Purposes of an attached session's folder project (`crates/oneiron/src/session_project.rs`) and of the folder…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/setting.rs",
      "purpose": "Purposes of the Setting primitive (`crates/oneiron/src/setting/`)",
      "surface": {}
@@ -141802,7 +141922,7 @@
     },
     "purposes": {
      "entry": "crates/oneiron-fingerprint/src/purposes/mod.rs",
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -141821,7 +141941,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 61,
+   "source_files": 62,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -168813,7 +168933,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 223
+      "crate-vis": 224
      }
     },
     {
@@ -170338,6 +170458,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/workspace_project_doors.rs",
+     "purpose": "Typed doors over the owner's folder-to-PROJECT bindings (RECALL-SESSION-PROJECT; Engine ANSWER…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/world_vectors_doors.rs",
      "purpose": "The typed door of `vault.worlds.vectors` (DEC-0005 #private-world-vectors; FIX [WORLD-VECTORS-FACT]): where…",
      "surface": {
@@ -171276,6 +171406,16 @@
      "purpose": "The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/session_workspace.rs",
+     "purpose": "The folder an attached agent session runs in, as each MCP call names it (RECALL-SESSION-PROJECT; Engine…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -174273,7 +174413,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 58
+      "crate-vis": 62
      }
     },
     {
@@ -174838,6 +174978,8 @@
       "McpAuthMode",
       "McpSurface",
       "McpTransport",
+      "ProjectArgs",
+      "ProjectCommand",
       "ProvenanceArgs",
       "ReembedArgs",
       "RevokeArgs",
@@ -174853,10 +174995,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 11,
+      "enum": 12,
       "fn": 4,
       "re-export": 26,
-      "struct": 22
+      "struct": 23
      }
     },
     {
@@ -175452,7 +175594,7 @@
       "const": 1,
       "crate-vis": 19,
       "fn": 15,
-      "re-export": 33,
+      "re-export": 34,
       "struct": 1
      }
     },
@@ -175819,7 +175961,7 @@
      "path": "src/commands/hook/recall.rs",
      "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -175962,7 +176104,7 @@
      "path": "src/commands/mcp_bridge/call_meta.rs",
      "purpose": "What the bridge adds to a relayed `tools/call`'s `_meta`: the invocation it runs under (ARCH-0080 §3), and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -176292,6 +176434,16 @@
      "purpose": "The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/project.rs",
+     "purpose": "`oneiron project …`: the owner binds the folder it runs in to the PROJECT its attached agent sessions read…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -179269,7 +179421,7 @@
      "purpose": "The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the…",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -180207,7 +180359,7 @@
      "path": "src/gpu_host.rs",
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -180910,7 +181062,7 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "mod": 30,
+      "mod": 31,
       "re-export": 3
      }
     },
@@ -181145,7 +181297,7 @@
      "path": "src/livequery/residence/authority.rs",
      "purpose": "The authority log over residence: its tail, range, checkpoint and append, and an entry past one frame in…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -188233,7 +188385,7 @@
      "path": "src/test_doors/gpu_backend.rs",
      "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row…",
      "surface": {
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -188410,7 +188562,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GuestRefusal",
@@ -188420,7 +188572,7 @@
      "path": "src/test_doors/mcp_code_mode_verbs.rs",
      "purpose": "Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it…",
      "surface": {
-      "fn": 7,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -189022,7 +189174,7 @@
      "path": "src/test_doors/work_order_host.rs",
      "purpose": "Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call through the node…",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -189798,8 +189950,32 @@
      "path": "src/work_order_host.rs",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/work_order_host/readiness_read.rs",
+     "purpose": "The job worker's readiness read (CG-2 row 9; FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED): the worker's…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkspaceIdentity"
+     ],
+     "path": "src/workspace_identity.rs",
+     "purpose": "A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov…",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -191087,6 +191263,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/issuer_readiness_scheduled_read.rs",
+     "purpose": "CG-2 row 9's scheduled read (owner COMPUTE-CG = AA, 25 Nov 22:56: \"A drained machine clears itself once its…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -191584,6 +191768,14 @@
      "notable": [],
      "path": "tests/mcp_server_discover.rs",
      "purpose": "L1-04 (canon ARCH-0028 \"Discover catalog\"; Engine RULING L1-04 = B, 13 Nov 2026): `server/discover` on the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mcp_session_project_reads.rs",
+     "purpose": "RECALL-SESSION-PROJECT PR 2 over MCP (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, the…",
      "surface": {}
     },
     {
@@ -193382,6 +193574,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/workspace_identity.rs",
+     "purpose": "RECALL-SESSION-PROJECT PR 1 (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: the binding stores a hash…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/ws_app_tier.rs",
      "purpose": "New app-tier socket tests",
      "surface": {}
@@ -193420,7 +193620,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 852,
+     "files": 854,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -193550,7 +193750,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 99,
+     "files": 100,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -194314,11 +194514,20 @@
     },
     "work_order_host": {
      "entry": "crates/oneiron-server/src/work_order_host.rs",
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
+     "spec_ids": []
+    },
+    "workspace_identity": {
+     "entry": "crates/oneiron-server/src/workspace_identity.rs",
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov…",
      "spec_ids": []
     },
     "xlsx_recalc": {
@@ -194336,8 +194545,8 @@
    },
    "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2213,
-   "test_files": 618
+   "source_files": 2218,
+   "test_files": 621
   },
   "oneiron-setting-contract": {
    "files": [

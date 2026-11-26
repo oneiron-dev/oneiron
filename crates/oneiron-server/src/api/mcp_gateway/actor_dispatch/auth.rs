@@ -224,6 +224,7 @@ pub(in crate::api::mcp_gateway) fn admitted_context(
         drain: None,
         forwarded: None,
         client_surface: None,
+        session_workspace: None,
         signing_request_transport: None,
     })
 }

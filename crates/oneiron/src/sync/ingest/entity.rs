@@ -168,6 +168,7 @@ impl RefusalRetry {
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
+                    | ErrorKind::ProjectBirthPending
                     | ErrorKind::ResidentOwnerDependencyPending
                     | ErrorKind::RemoteMachineHistoryPending
                     | ErrorKind::AskDependencyPending

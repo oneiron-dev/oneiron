@@ -16,6 +16,8 @@
 use std::sync::Arc;
 
 use super::AgentVerbRefusal;
+use crate::EntityId;
+use crate::authority::VerifiedSlip;
 use crate::claim::ScopedReadActorKey;
 
 /// The live half of a room write's admission: the door's own check of its
@@ -35,6 +37,8 @@ pub trait SessionWriteCeiling: Send + Sync {
 pub struct SessionWriteAdmission {
     key: Option<ScopedReadActorKey>,
     ceiling: Arc<dyn SessionWriteCeiling>,
+    claim_project: Option<EntityId>,
+    claim_credential: Option<VerifiedSlip>,
 }
 
 impl SessionWriteAdmission {
@@ -42,7 +46,32 @@ impl SessionWriteAdmission {
     /// `key` when its credential grants a read.
     #[must_use]
     pub fn new(key: Option<ScopedReadActorKey>, ceiling: Arc<dyn SessionWriteCeiling>) -> Self {
-        Self { key, ceiling }
+        Self {
+            key,
+            ceiling,
+            claim_project: None,
+            claim_credential: None,
+        }
+    }
+
+    /// Binds a claim's default project and the verified credential that must admit its position.
+    #[must_use]
+    pub fn with_claim_placement(
+        mut self,
+        project: Option<EntityId>,
+        credential: Option<VerifiedSlip>,
+    ) -> Self {
+        self.claim_project = project;
+        self.claim_credential = credential;
+        self
+    }
+
+    pub(crate) fn claim_project(&self) -> Option<EntityId> {
+        self.claim_project
+    }
+
+    pub(crate) fn claim_credential(&self) -> Option<&VerifiedSlip> {
+        self.claim_credential.as_ref()
     }
 
     /// The caller's key, which opens the room's view a claim's subject

@@ -6,15 +6,22 @@
 # Needs no root, card or engine: each stand-in socket answers one request with fixed bytes. Prints
 # `## FIXTURE engine-probe-<case> want=<PASS|FAIL> got=<PASS|FAIL|...> RIGHT|WRONG` per case, then `## FIXTURES rc=<n>`
 # (0 when every case came out as wanted). A FAIL case is RIGHT only when its reason holds the case's words, so a
-# transport failure never stands in for the rejection a case is about.
+# transport failure never stands in for the rejection a case is about. A case is RIGHT only when the probe's exit
+# status agrees with its line, 0 for PASS and 1 for FAIL, as check 6 counts a PASS line only from a probe that exited 0
+# (FIX T40-FIXTURE-LISTEN-QUEUE-NO-EAGAIN).
 #
 # Parity with the Rust readers (the Engine's review of #10540 after its merge), one case each:
 #   memory-past-u64 / memory-u64-max / memory-with-plus  device.rs parse_device_lines reads the memory as a u64 with
 #                                                        Rust's integer parse (an optional '+', ASCII digits).
 #   memory-many-zeros / memory-many-digits  5,000 leading zeros and a 1 is 1 MiB to Rust, and 5,000 digits of 1 is past
 #                    a u64: neither may meet CPython's 4300-digit conversion limit (review r1 of #10541).
-#   listen-queue-full  the listener's queue is full for the probe's first 0.3 s (EAGAIN on a connect that does not
-#                    block); device_query.rs connect_by tries again until its deadline (review r1 of #10541).
+#   listen-queue-full  the listener's queue is full for the probe's first 2 s (EAGAIN on a connect that does not
+#                    block); device_query.rs connect_by tries again until its deadline (review r1 of #10541). The
+#                    case passes only when the probe reports at least one connect that met the full queue
+#                    (--report-tries), so a probe that starts after the queue has cleared cannot pass it (FIX
+#                    T40-FIXTURE-LISTEN-QUEUE-NO-EAGAIN).
+#   flag-named-socket  check 6 passes the socket and the UUID and no flag: a socket the probe is given as the
+#                    relative path `--report-tries` is still the socket (review r1 of #10557).
 #   unit-separator   Rust's str::trim does not remove U+001C-U+001F, which Python's str.strip() does: a device line
 #                    ending in U+001F is one the probe does not read.
 #   slow-reply       the probe's whole exchange ends 15 s after it starts (GPU_QUERY_TIMEOUT 10 s, ANSWER_MARGIN 5 s).
@@ -77,15 +84,32 @@ EOF
   server=$!
 }
 
-case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>] [<queue full>]
-  local sock=$tmp/$1.sock reply=$tmp/$1.reply got verdict tries=0
+# The probe runs in the folder the fixture was started in and is given the socket's path, as $tmp names it (relative
+# to that folder when TMPDIR is relative). Only a case that names a socket runs the probe in the cases' folder and gives
+# it <socket name>, relative to that folder (review r2 of #10557: changing folder for every case broke a relative TMPDIR).
+case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>] [<queue full>] [<socket name>]
+  local sock=$tmp/${8:-$1.sock} reply=$tmp/$1.reply out rc got verdict full tries=0 report=() probe_dir=. probe_sock
+  probe_sock=$sock
   printf '%b' "$3" > "$reply"
   serve_once "$sock" "$reply" "${5:-0}" "${6:-0}" "${7:-0}"
   until [ -S "$sock" ] || [ "$tries" -ge 200 ]; do sleep 0.05; tries=$((tries + 1)); done
-  got=$(python3 "$here/engine_probe.py" "$sock" "$UUID" 2>&1 | head -1)
+  # A queue-full case asks the probe how many connects met the full queue: a probe that met none proves nothing.
+  if [ "${7:-0}" != 0 ]; then report=(--report-tries); fi
+  if [ -n "${8:-}" ]; then probe_dir=$tmp probe_sock=$8; fi
+  out=$(cd "$probe_dir" && python3 "$here/engine_probe.py" ${report[@]+"${report[@]}"} "$probe_sock" "$UUID" 2>&1)
+  rc=$?
   kill "$server" 2> /dev/null; wait "$server" 2> /dev/null
+  got=$(head -1 <<< "$out")
   verdict=${got%% *}
   if [ "$verdict" = FAIL ] && [ "$2" = FAIL ] && [[ $got != *"${4:-}"* ]]; then verdict="FAIL-for-another-reason"; fi
+  if { [ "$verdict" = PASS ] && [ "$rc" != 0 ]; } || { [ "$verdict" != PASS ] && [ "$rc" != 1 ]; }; then
+    verdict="$verdict-with-exit-$rc"
+  fi
+  if [ ${#report[@]} -gt 0 ]; then
+    full=$(sed -n 's/^full-queue-tries //p' <<< "$out")
+    got="$got; full-queue-tries ${full:-unreported}"
+    if [ "$verdict" = PASS ] && ! [ "${full:-0}" -ge 1 ] 2> /dev/null; then verdict="PASS-without-a-full-queue"; fi
+  fi
   if [ "$verdict" = "$2" ]; then echo "## FIXTURE engine-probe-$1 want=$2 got=$verdict RIGHT ($got)"
   else echo "## FIXTURE engine-probe-$1 want=$2 got=$verdict WRONG ($got)"; WRONG=$((WRONG + 1)); fi
 }
@@ -124,6 +148,7 @@ case_reply duplicate-uuid FAIL "$(framed "$LINE\\n$OTHER, NVIDIA A100, 81920\\n$
 case_reply slow-reply FAIL "$(framed "$LINE\\n")" "no whole reply within 15 s" 16 0
 case_reply near-cutoff PASS "$(framed "$LINE\\n")" "" 14.5 0
 case_reply held-open PASS "$(framed "$LINE\\n")" "" 0 30
-case_reply listen-queue-full PASS "$(framed "$LINE\\n")" "" 0 0 0.3
+case_reply listen-queue-full PASS "$(framed "$LINE\\n")" "" 0 0 2
+case_reply flag-named-socket PASS "$(framed "$LINE\\n")" "" 0 0 0 --report-tries
 echo "## FIXTURES rc=$WRONG"
 exit "$WRONG"

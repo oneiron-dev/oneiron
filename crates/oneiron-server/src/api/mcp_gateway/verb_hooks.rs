@@ -104,10 +104,20 @@ fn mcp_verb_ask_credential(
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Option<VerbAskCredential> {
-    memory
+    let credential = memory
         .clone()
         .with_credential_door(mcp_verb_ask_door(actor, memory.invocation()))
-        .verb_ask_credential()
+        .verb_ask_credential()?;
+    Some(
+        match actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::session_write_workspace)
+        {
+            Some(folder_digests) => credential.with_session_workspace(folder_digests),
+            None => credential,
+        },
+    )
 }
 
 /// The door a connector's call of a row under `invocation` is rebuilt by:
@@ -363,6 +373,7 @@ impl McpCallContext {
             drain: Some(drain),
             forwarded: None,
             client_surface: None,
+            session_workspace: None,
             signing_request_transport: None,
         };
         rerun_saved_call(server, &context, call).await
@@ -432,14 +443,24 @@ async fn rerun_saved_call(
     oneiron::runtime_hooks::verb::VerbAskRefusal,
 > {
     use oneiron::runtime_hooks::verb::{VerbAskRefusal, VerbAskResumed};
+    let registered = try_registered_surface(McpSurfaceMode::ToolFirst)
+        .ok()
+        .and_then(|surface| surface.resolve(&call.verb));
+    let placed = match (registered, &call.reference.session_workspace) {
+        (Some(McpEndpointTool::Verb(tool)), Some(folder_digests)) if tool.writes() => {
+            let mut context = context.clone();
+            context.session_workspace = Some(folder_digests.clone());
+            Some(context.for_verb_row(true, &call.args))
+        }
+        _ => None,
+    };
+    let context = placed.as_ref().unwrap_or(context);
     let share_context = super::actor_dispatch::mcp_share_view_context(context, &call.verb);
     let context = share_context.as_ref().unwrap_or(context);
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
-    if let Some(McpEndpointTool::Verb(tool)) = try_registered_surface(McpSurfaceMode::ToolFirst)
-        .ok()
-        .and_then(|surface| surface.resolve(&call.verb))
+    if let Some(McpEndpointTool::Verb(tool)) = registered
         && let Some(method) = tool.memory_method()
     {
         // The native read's boundary, on the heap (FIX 12072).

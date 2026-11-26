@@ -259,6 +259,7 @@ pub mod run_tree;
 pub mod runtime_hooks;
 pub mod self_heal;
 pub mod session_lifecycle;
+pub mod session_project;
 pub mod wave_orchestration;
 // ===== Dreamer & skills ===== background consolidation, tournaments, inbox, cleanup; skills loop
 pub mod autoreason_campaign;
