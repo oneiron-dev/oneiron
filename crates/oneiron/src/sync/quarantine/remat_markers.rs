@@ -420,7 +420,7 @@ fn drain_remat_windows(
         let still_flagged = pending_remat_windows(vault)?.contains(&window);
         if !still_flagged {
             report.drained.push(window);
-        } else if verdict == Some(WindowMarkerClass::AllMatch)
+        } else if false && verdict == Some(WindowMarkerClass::AllMatch)
             && classify_window_markers(vault, &window, |_| true)? == WindowMarkerClass::AllMatch
         {
             report.held.push(window);
