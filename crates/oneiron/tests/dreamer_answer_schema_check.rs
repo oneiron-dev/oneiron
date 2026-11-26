@@ -6,7 +6,10 @@
 //! past thirty pairs with its upper bound below zero; each arm scores F1 against the pooled
 //! supported candidates; a night over budget skips with its reason; a second run returns its
 //! receipt; the check retires the night's captures; and a night whose schema replies break
-//! suspends with the digest saying so.
+//! suspends with the digest saying so. Review round 1 of #10538 added: an unsupported claim
+//! costs its arm precision (P1-6); a night over budget skips while an extraction stays open
+//! (P1-4); a schema arm the server refuses is a grammar fault, its shadow still sent (P1-5);
+//! a capture whose source was erased before its write keeps nothing (P1-2).
 //! Reaches the engine through `oneiron::test_doors::dreamer_answer_schema`, built only
 //! under `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
@@ -83,6 +86,34 @@ struct ScriptBackend {
     schema: String,
     shadow: String,
     calls: Mutex<u32>,
+}
+
+/// A house whose schema arms the server refuses, as it answers a schema its grammar cannot
+/// compile (HTTP 400), while shadow arms and judge turns answer as [`ScriptBackend`]'s.
+struct RefusingSchemaBackend {
+    script: ScriptBackend,
+}
+
+impl LlmBackend for RefusingSchemaBackend {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        if !is_judge(&request) && request.params.contains_key("answer_schema") {
+            *self.script.calls.lock().unwrap() += 1;
+            return Box::pin(async {
+                Err(oneiron::LlmError::Fatal(
+                    oneiron::FatalLlmError::InvalidRequest,
+                ))
+            });
+        }
+        self.script.generate(request, lease)
+    }
+
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        self.script.stream(request, lease)
+    }
 }
 
 impl ScriptBackend {
@@ -678,5 +709,127 @@ fn a_night_whose_schema_replies_break_suspends_and_the_digest_says_so() {
     assert!(
         summary.contains("did not come back whole"),
         "summary: {summary}"
+    );
+}
+
+#[test]
+fn an_unsupported_claim_costs_its_arm_precision() {
+    // Arm S gives the supported name and an unsupported nick; arm N gives the name alone.
+    let schema = [
+        json!({"subject": "P1", "predicate": "name", "value": "Owen", "quote": "owen"}),
+        json!({"subject": "P1", "predicate": "nick", "value": "O", "quote": "o"}),
+    ];
+    let shadow = [json!({"subject": "P1", "predicate": "name", "value": "Owen", "quote": "owen"})];
+    // Seed 8 is even: order 1 reads List 1 as arm S, List 2 as arm N; order 2 swaps. Both
+    // orders find the nick unsupported.
+    let (schema_f1, shadow_f1) = door::f1(
+        &schema,
+        &shadow,
+        8,
+        (&[true, false], &[true]),
+        (&[true], &[true, false]),
+    );
+    let schema_f1 = schema_f1.expect("schema quality");
+    assert!(
+        (schema_f1 - 2.0 / 3.0).abs() < 1e-9,
+        "arm S: precision 1/2, recall 1: F1 2/3, got {schema_f1}"
+    );
+    assert_eq!(shadow_f1, Some(1.0), "arm N gave only the supported claim");
+}
+
+#[test]
+fn a_night_over_budget_skips_while_an_extraction_stays_open() {
+    let fixture = Fixture::new();
+    let vault = &fixture.vault;
+    let night = door::plant_night(vault).expect("night");
+    door::plant_open_child(vault, night).expect("open child");
+    door::plant_overrun(vault, night).expect("latch");
+    let backend = ScriptBackend {
+        schema: "unused".to_owned(),
+        shadow: "unused".to_owned(),
+        calls: Mutex::new(0),
+    };
+    let guard = house_guard();
+    let (receipt, outcome) = ready(door::run_check(
+        vault,
+        night,
+        &backend,
+        &guard,
+        house_model(),
+        T0,
+    ))
+    .expect("run");
+    assert!(
+        matches!(outcome, DreamerAttemptExecution::Completed { .. }),
+        "the latched night skips at once, the open child no gate: {outcome:?}"
+    );
+    assert_eq!(receipt.action, "skip");
+    assert_eq!(receipt.reason.as_deref(), Some("over_budget"));
+    assert_eq!(backend.calls(), 0, "no house call");
+}
+
+#[test]
+fn a_schema_arm_the_server_refuses_is_a_grammar_fault() {
+    let fixture = Fixture::new();
+    let vault = &fixture.vault;
+    let night = door::plant_night(vault).expect("night");
+    for index in 0..2 {
+        let child = door::plant_child(vault, night).expect("child");
+        let words = format!("turn {index} names owen");
+        let turn = door::plant_turn(vault, &words).expect("turn");
+        door::plant_capture(vault, child, &[turn], &words, T0).expect("capture");
+    }
+    let backend = RefusingSchemaBackend {
+        script: ScriptBackend {
+            schema: "unused".to_owned(),
+            shadow: whole_reply(),
+            calls: Mutex::new(0),
+        },
+    };
+    let guard = house_guard();
+    let (receipt, outcome) = ready(door::run_check(
+        vault,
+        night,
+        &backend,
+        &guard,
+        house_model(),
+        T0,
+    ))
+    .expect("run");
+    assert!(
+        matches!(outcome, DreamerAttemptExecution::Completed { .. }),
+        "a refused schema arm is an answer of the pair, not a park: {outcome:?}"
+    );
+    assert_eq!(receipt.action, "suspend", "two grammar faults in one night");
+    assert_eq!(receipt.pairs, 2);
+    let pairs = door::pairs(vault, night).expect("pairs");
+    assert!(
+        pairs
+            .iter()
+            .all(|pair| !pair.schema_whole && pair.shadow_whole),
+        "each refused schema arm came back not whole beside a whole shadow: {pairs:?}"
+    );
+    assert!(
+        backend.script.calls() >= 4,
+        "each pair sent its shadow arm after the refused schema arm"
+    );
+}
+
+#[test]
+fn a_capture_whose_source_was_erased_first_keeps_nothing() {
+    let fixture = Fixture::new();
+    let vault = &fixture.vault;
+    let night = door::plant_night(vault).expect("night");
+    let child = door::plant_child(vault, night).expect("child");
+    let turn = door::plant_turn(vault, "owen is here").expect("turn");
+    assert!(
+        vault.delete_entity(&turn).expect("delete"),
+        "the turn existed"
+    );
+    door::capture_if_in_force(vault, child, "owen is here", &[turn], T0).expect("capture");
+    assert_eq!(
+        door::capture_count(vault).expect("count"),
+        0,
+        "the erased turn's words are not stored again"
     );
 }
