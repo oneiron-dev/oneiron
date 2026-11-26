@@ -108,14 +108,16 @@ fn mcp_verb_ask_credential(
         .clone()
         .with_credential_door(mcp_verb_ask_door(actor, memory.invocation()))
         .verb_ask_credential()?;
-    Some(match actor
-        .auth
-        .as_ref()
-        .and_then(crate::auth::CoreAuth::session_write_workspace)
-    {
-        Some(folder_digests) => credential.with_session_workspace(folder_digests),
-        None => credential,
-    })
+    Some(
+        match actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::session_write_workspace)
+        {
+            Some(folder_digests) => credential.with_session_workspace(folder_digests),
+            None => credential,
+        },
+    )
 }
 
 /// The door a connector's call of a row under `invocation` is rebuilt by:

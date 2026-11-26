@@ -360,7 +360,10 @@ fn a_batch_from_a_bound_folder_keeps_the_root_default_for_an_omitted_project() -
         .vault
         .get_claim(&explicit_id)?
         .ok_or_else(|| format!("the batch's explicit claim is stored: {outcomes:?}"))?;
-    assert_eq!(defaulted.scope_project, oneiron::claim::default_project_id());
+    assert_eq!(
+        defaulted.scope_project,
+        oneiron::claim::default_project_id()
+    );
     assert_eq!(named.scope_project, fixture.beta);
     Ok(())
 }

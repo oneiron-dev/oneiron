@@ -396,4 +396,3 @@ fn a_git_that_leaves_its_output_open_is_given_up_at_the_deadline() {
 fn git_left_output_open_child() {
     check_child_identity();
 }
-

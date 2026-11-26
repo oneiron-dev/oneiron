@@ -62,7 +62,10 @@ impl Memory<'_> {
                 session_placement: None,
                 ..self.clone()
             });
-            return unplaced.as_ref().unwrap_or(self).commit_scoped_batch(claims);
+            return unplaced
+                .as_ref()
+                .unwrap_or(self)
+                .commit_scoped_batch(claims);
         }
         let row = "vault.claims.seed";
         Ok(claims

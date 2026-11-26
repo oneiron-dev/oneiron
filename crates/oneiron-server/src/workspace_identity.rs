@@ -181,7 +181,10 @@ fn is_checkout_of(folder: &Path, primary: &Path, deadline: Instant) -> bool {
     if !dot_git.is_dir() {
         return false;
     }
-    match (std::fs::canonicalize(&dot_git), std::fs::canonicalize(&common)) {
+    match (
+        std::fs::canonicalize(&dot_git),
+        std::fs::canonicalize(&common),
+    ) {
         (Ok(dot_git), Ok(common)) => dot_git == common,
         _ => false,
     }
@@ -237,7 +240,10 @@ fn git_output(folder: &Path, args: &[&str], deadline: Instant) -> Option<Vec<u8>
         // The call may have given up and gone: then no one receives this.
         let _ = sender.send(stdout.read_to_end(&mut out).map(|_| out));
     };
-    if crate::engine_thread("git-output".into()).spawn(read).is_err() {
+    if crate::engine_thread("git-output".into())
+        .spawn(read)
+        .is_err()
+    {
         let _ = child.kill();
         let _ = child.wait();
         return None;
