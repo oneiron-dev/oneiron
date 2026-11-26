@@ -280,12 +280,16 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
     let mut rm_pending_windows = Vec::new();
     let mut rm_held_windows = Vec::new();
     for window in pending_remat_windows(vault)? {
-        if parse_window_key_str(&window).is_some()
-            && classify_window_markers(vault, &window, |_| true)? == WindowMarkerClass::AllMatch
-        {
-            rm_held_windows.push(window);
-        } else {
+        if parse_window_key_str(&window).is_none() {
             rm_pending_windows.push(window);
+            continue;
+        }
+        match classify_window_markers(vault, &window, |_| true)? {
+            // A replay settled the window after the list read: nothing is
+            // pending there now (review round 1 of #10565).
+            WindowMarkerClass::NonePending => {}
+            WindowMarkerClass::AllMatch => rm_held_windows.push(window),
+            WindowMarkerClass::Unclassified => rm_pending_windows.push(window),
         }
     }
     let report = SyncQuarantineReport {

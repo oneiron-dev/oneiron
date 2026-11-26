@@ -417,19 +417,21 @@ fn drain_remat_windows(
             materializer,
             &window_key,
         )?;
-        let still_flagged = pending_remat_windows(vault)?.contains(&window);
-        if !still_flagged {
-            report.drained.push(window);
-        } else if verdict == Some(WindowMarkerClass::AllMatch)
-            && classify_window_markers(vault, &window, |_| true)? == WindowMarkerClass::AllMatch
-        {
-            report.held.push(window);
-        } else {
-            tracing::error!(
-                window = %window,
-                "rm drain: tombstone purge still failing — hard-deleted content may be live (GDPR SLA breach signal)"
-            );
-            report.still_pending.push(window);
+        // One read after the pass decides (review round 1 of #10565): a
+        // replay that settles the window between two reads can never turn a
+        // drained window into a breach.
+        match classify_window_markers(vault, &window, |_| true)? {
+            WindowMarkerClass::NonePending => report.drained.push(window),
+            WindowMarkerClass::AllMatch if verdict == Some(WindowMarkerClass::AllMatch) => {
+                report.held.push(window);
+            }
+            WindowMarkerClass::AllMatch | WindowMarkerClass::Unclassified => {
+                tracing::error!(
+                    window = %window,
+                    "rm drain: tombstone purge still failing — hard-deleted content may be live (GDPR SLA breach signal)"
+                );
+                report.still_pending.push(window);
+            }
         }
     }
     Ok(report)
