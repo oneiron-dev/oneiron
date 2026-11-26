@@ -1706,6 +1706,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
             let refused = |_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             };
             self.vault
                 .memory(self.actor, EdgeActorClass::Human)
@@ -1844,6 +1845,7 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
             Ok(Err(AgentVerbRefusal {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             }))
         }
 
@@ -1875,6 +1877,86 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
             reason_codes: Vec::new(),
             hook_notice: None,
         })
+    );
+    drop(dispatcher);
+    session.close()?;
+    Ok(())
+}
+
+/// Review round 2 of #10553: a session-bound run's `vault.get`, which its
+/// door refused for its caller as a revoked read, reached the guest with the
+/// door's code alone and its reason codes dropped. The guest now reads both,
+/// as a direct call's refusal gives them (FIX CODE-MODE-DENIAL-REASONS).
+#[test]
+fn a_room_read_its_door_refuses_keeps_the_doors_reason_codes() -> Result<()> {
+    use std::sync::Arc;
+
+    use crate::code_run::{
+        AGENT_VERB_DOOR_UNBOUND, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher, RunCall,
+        SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher,
+        SelfEffect,
+    };
+
+    /// A host door that refuses every room read for its caller, as a door
+    /// whose caller's read was revoked does, and forwards no verb.
+    struct RevokedReadDoor;
+
+    impl AgentVerbDoor for RevokedReadDoor {
+        fn call(
+            &self,
+            _: &SelfAgentVerbCall,
+            _: &crate::memory::HostWriteOrigin,
+            _: crate::runtime_hooks::InvocationId,
+        ) -> crate::Result<std::result::Result<crate::code_run::AgentVerbAnswer, AgentVerbRefusal>>
+        {
+            Ok(Err(AgentVerbRefusal {
+                code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+                hook_notice: None,
+                reason_codes: Vec::new(),
+            }))
+        }
+
+        fn admit_run_call(
+            &self,
+            _: RunCall,
+        ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>
+        {
+            Ok(None)
+        }
+
+        fn admit_session_read(
+            &self,
+            _: crate::task_verb::sdk::AgentVerb,
+        ) -> std::result::Result<crate::claim::ScopedReadActorKey, AgentVerbRefusal> {
+            Err(AgentVerbRefusal {
+                code: "forbidden".to_owned(),
+                hook_notice: None,
+                reason_codes: vec!["read.revoked".to_owned()],
+            })
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let by = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let session = vault
+        .off_record_session_vault()
+        .enter("revoked-read-door", OffRecordBackendClass::Local)?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(&session, by, "revoked-read-run")?
+        .with_agent_verb_door(Arc::new(RevokedReadDoor));
+    let answer = dispatcher.dispatch(SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: crate::task_verb::sdk::AgentVerb::VaultGet,
+        input: serde_json::json!({ "entity_ref": EntityId::now().to_hex() }),
+    }))?;
+    assert_eq!(
+        answer,
+        SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: SelfEffect::AgentVerb,
+            outcome: "forbidden".to_owned(),
+            reason_codes: vec!["read.revoked".to_owned()],
+            hook_notice: None,
+        }),
+        "the guest reads the door's reason codes beside its code"
     );
     drop(dispatcher);
     session.close()?;

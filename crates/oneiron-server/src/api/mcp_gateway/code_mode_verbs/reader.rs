@@ -28,6 +28,7 @@ pub(super) fn read_only() -> AgentVerbRefusal {
     AgentVerbRefusal {
         hook_notice: None,
         code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
+        reason_codes: Vec::new(),
     }
 }
 
@@ -82,6 +83,7 @@ impl AgentVerbDoor for ReaderChildDoor {
             |_| AgentVerbRefusal {
                 hook_notice: None,
                 code: "engine_error".to_owned(),
+                reason_codes: Vec::new(),
             },
         )
     }

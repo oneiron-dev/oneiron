@@ -1314,6 +1314,7 @@ impl AgentVerbDoor for LaneDoor {
         Ok(Err(AgentVerbRefusal {
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 

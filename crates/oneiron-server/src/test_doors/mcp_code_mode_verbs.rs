@@ -49,17 +49,20 @@ pub struct HostVerbRefusal {
     pub message: String,
 }
 
-/// One composed call's refusal, as the run's guest sees it: its code, and
-/// the hook notice beside it. The guest layer carries no message
-/// (`AgentVerbRefusal` has no message field), so there is no message to report.
+/// One composed call's refusal, as the run's guest sees it: its code, the
+/// hook notice beside it, and its reason codes. The guest layer carries no
+/// message (`AgentVerbRefusal` has no message field), so there is no message
+/// to report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuestRefusal {
     /// The stable refusal code (`mcp_verb_not_bound`, `mcp_auth_required`,
     /// `mcp_grant_missing`, `browser_pack_not_installed`,
-    /// `browser_connection_unchecked`, `browser_unbound`).
+    /// `browser_connection_unchecked`, `browser_unbound`, `tool_args_invalid`).
     pub code: String,
     /// The host-side hook notice, always none on this path.
     pub hook_notice: Option<Value>,
+    /// The refusal's stable reason codes (FIX CODE-MODE-DENIAL-REASONS).
+    pub reason_codes: Vec<String>,
 }
 
 /// Registers a connector credential for a fresh person actor on `server`: a
@@ -177,13 +180,26 @@ pub async fn call_verb(
     run: EntityId,
     verb: &str,
 ) -> anyhow::Result<Result<(), GuestRefusal>> {
+    call_verb_with_input(server, credential, run, verb, Value::Null).await
+}
+
+/// [`call_verb`] with the guest's `input` in place of a null one, as a
+/// run's program passes it to the verb.
+///
+/// # Errors
+///
+/// As [`call_verb`].
+pub async fn call_verb_with_input(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    verb: &str,
+    input: Value,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
     let context = resolve_context(server, credential).await?;
     let row = verb_row(verb)?;
     let verbs = McpCodeModeVerbs::new(server, &context, run);
-    let call = SelfAgentVerbCall {
-        verb: row,
-        input: Value::Null,
-    };
+    let call = SelfAgentVerbCall { verb: row, input };
     let origin = host_write_origin(credential.actor)?;
     let outcome = verbs
         .call(&call, &origin, InvocationId::mint())
@@ -195,6 +211,7 @@ pub async fn call_verb(
         Err(refused) => Ok(Err(GuestRefusal {
             code: refused.code,
             hook_notice: refused.hook_notice,
+            reason_codes: refused.reason_codes,
         })),
     }
 }
@@ -307,5 +324,6 @@ pub fn admits_guest(
     Ok(guests.admits(row, server).map_err(|refused| GuestRefusal {
         code: refused.code,
         hook_notice: refused.hook_notice,
+        reason_codes: refused.reason_codes,
     }))
 }

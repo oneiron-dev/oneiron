@@ -82,6 +82,7 @@ impl RecallDoor {
         AgentVerbRefusal {
             code: code.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }
     }
 }
@@ -128,6 +129,7 @@ impl ConnectorDoor {
         AgentVerbRefusal {
             code: code.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }
     }
 }
