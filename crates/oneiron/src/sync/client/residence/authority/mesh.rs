@@ -12,7 +12,11 @@
 //! machine reads its signed row a part at a time
 //! (`residence.authority.mesh.part`, MESH-AUTHORITY-ROW-PARTS), checks the
 //! joined row's length and content hash ([`MeshAuthorityRowJoin`]) and
-//! imports it with the page's other rows.
+//! imports it alone, in MACHINE order among the page's other rows, before it
+//! reads the next: a round holds at most one joined row (REVIEW-10560 P1). A
+//! row that does not join, as when the home signed it again while this
+//! machine read it, stays out alone until the scan comes back to it; the
+//! page's other rows land and the scan goes on.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -105,24 +109,8 @@ pub(crate) async fn catch_up_mesh_authority(
             )
             .await?;
         let reply: MeshAuthorityReply = serde_json::from_value(reply).map_err(|_| refused())?;
-        let (mut rows, parted, next) = decoded_page(reply, after)?;
-        for reference in parted {
-            match MeshAuthorityRowJoin::start(reference) {
-                Some(join) => rows.push(joined_row(&mut rpc, join).await?),
-                None => tracing::warn!(
-                    "the home named a mesh binding longer than this machine joins; it stays out"
-                ),
-            }
-        }
-        rows.sort_by_key(|row| row.machine);
-        let import = vault.import_mesh_authority_rows(rows).map_err(storage)?;
-        if !import.refused.is_empty() {
-            tracing::warn!(
-                refused = import.refused.len(),
-                "the home served mesh bindings this machine refused"
-            );
-        }
-        written += import.written.len();
+        let (rows, parted, next) = decoded_page(reply, after)?;
+        written += import_page(rows, parted, &mut rpc, |rows| imported(vault, rows)).await?;
         after = next;
         *cursor.lock().unwrap_or_else(PoisonError::into_inner) = after;
         if after.is_none() {
@@ -132,34 +120,131 @@ pub(crate) async fn catch_up_mesh_authority(
     Ok(written)
 }
 
-/// The row `join` names, read from the home a part at a time and checked
-/// against the length and content hash its page named. A part that does not
-/// continue it, or a joined row the page did not name (the home signed it
-/// again since), ends the round; the next round reads that page again.
-async fn joined_row(
-    rpc: &mut ResidenceRpc,
-    mut join: MeshAuthorityRowJoin,
-) -> Result<MeshAuthorityRow, TransportError> {
-    while !join.is_whole() {
-        let reply: MeshAuthorityPartReply = serde_json::from_value(
-            rpc.request(
+/// Imports `rows`, some of one page's bindings, through
+/// [`Vault::import_mesh_authority_rows`]. Returns how many were written here.
+fn imported(vault: &Vault, rows: Vec<MeshAuthorityRow>) -> Result<usize, TransportError> {
+    let import = vault.import_mesh_authority_rows(rows).map_err(storage)?;
+    if !import.refused.is_empty() {
+        tracing::warn!(
+            refused = import.refused.len(),
+            "the home served mesh bindings this machine refused"
+        );
+    }
+    Ok(import.written.len())
+}
+
+/// Where the rows a page names by reference are read from, a part at a time.
+trait MeshAuthorityPartSource {
+    /// The part of the signed row of `machine` from `offset`, with the row's
+    /// whole length; `None` when the source serves none there.
+    async fn part(
+        &mut self,
+        machine: EntityId,
+        offset: u64,
+    ) -> Result<Option<MeshAuthorityPart>, TransportError>;
+}
+
+/// The home, over this round's socket (`residence.authority.mesh.part`). Its
+/// refusal is `None`: the home refuses a binding it no longer serves and an
+/// offset at or past the row's end, as when it signed the row again shorter.
+impl MeshAuthorityPartSource for ResidenceRpc {
+    async fn part(
+        &mut self,
+        machine: EntityId,
+        offset: u64,
+    ) -> Result<Option<MeshAuthorityPart>, TransportError> {
+        let Ok(reply) = self
+            .call(
                 "residence.authority.mesh.part",
-                json!({ "machine": join.machine().to_hex(), "offset": join.offset() }),
+                json!({ "machine": machine.to_hex(), "offset": offset }),
             )
-            .await?,
-        )
-        .map_err(|_| refused())?;
+            .await?
+        else {
+            return Ok(None);
+        };
+        let reply: MeshAuthorityPartReply = serde_json::from_value(reply).map_err(|_| refused())?;
         let part = base64::engine::general_purpose::STANDARD
             .decode(reply.part)
             .map_err(|_| refused())?;
-        if !join.take(MeshAuthorityPart {
+        Ok(Some(MeshAuthorityPart {
             total: reply.total,
             part,
-        }) {
-            return Err(refused());
+        }))
+    }
+}
+
+/// Imports one page through `import`: the rows it carries whole and, in
+/// MACHINE order among them, each row it names by reference, read from
+/// `parts` and imported alone before the next is read, so the page holds at
+/// most one joined row (REVIEW-10560 P1). A row that does not join stays out
+/// alone, logged, and the rest of the page lands (REVIEW-10560 P1): one past
+/// the longest row this machine joins, and one the home signed again or no
+/// longer serves since the page named it, which the next scan reads again.
+/// Returns how many bindings `import` wrote.
+///
+/// # Errors
+///
+/// A part read that failed or that this machine refuses; what `import`
+/// returns. Rows imported before the error stay imported.
+async fn import_page(
+    rows: Vec<MeshAuthorityRow>,
+    parted: Vec<MeshAuthorityRowRef>,
+    parts: &mut impl MeshAuthorityPartSource,
+    mut import: impl FnMut(Vec<MeshAuthorityRow>) -> Result<usize, TransportError>,
+) -> Result<usize, TransportError> {
+    let mut written = 0;
+    let mut whole = rows.into_iter().peekable();
+    for reference in parted {
+        let before: Vec<MeshAuthorityRow> =
+            std::iter::from_fn(|| whole.next_if(|row| row.machine < reference.machine)).collect();
+        if !before.is_empty() {
+            written += import(before)?;
+        }
+        let machine = reference.machine;
+        let Some(join) = MeshAuthorityRowJoin::start(reference) else {
+            tracing::warn!(
+                machine = %machine.to_hex(),
+                "the home named a mesh binding longer than this machine joins; it stays out"
+            );
+            continue;
+        };
+        match joined_row(parts, join).await? {
+            Some(row) => written += import(vec![row])?,
+            None => tracing::warn!(
+                machine = %machine.to_hex(),
+                "a mesh binding changed on the home while this machine read it; it stays out until the scan reads it again"
+            ),
         }
     }
-    join.finish().ok_or_else(refused)
+    let rest: Vec<MeshAuthorityRow> = whole.collect();
+    if !rest.is_empty() {
+        written += import(rest)?;
+    }
+    Ok(written)
+}
+
+/// The row `join` names, read from `parts` a part at a time and checked
+/// against the length and content hash its page named; `None` when it does
+/// not join: no part where one should be, a part that does not continue it,
+/// or a joined row the page did not name (the home signed it again, or no
+/// longer serves it, since the page named it).
+///
+/// # Errors
+///
+/// A part read that failed or that this machine refuses.
+async fn joined_row(
+    parts: &mut impl MeshAuthorityPartSource,
+    mut join: MeshAuthorityRowJoin,
+) -> Result<Option<MeshAuthorityRow>, TransportError> {
+    while !join.is_whole() {
+        let Some(part) = parts.part(join.machine(), join.offset()).await? else {
+            return Ok(None);
+        };
+        if !join.take(part) {
+            return Ok(None);
+        }
+    }
+    Ok(join.finish())
 }
 
 /// A page's rows, those it names by reference and where the next page
@@ -241,7 +326,14 @@ fn decoded_page(
 mod tests {
     //! MESH-AUTHORITY-ROW-PARTS: a page names its bindings whole and by
     //! reference, and the machine refuses one that names a MACHINE twice or
-    //! turns its scan back.
+    //! turns its scan back. It imports each row it joins before it reads the
+    //! next, and a row that does not join holds back no other
+    //! (REVIEW-10560 P1).
+
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    use oneiron_contracts::fingerprint::ContentHash;
 
     use super::*;
 
@@ -332,6 +424,162 @@ mod tests {
         assert!(
             decoded_page(other_hash, None).is_err(),
             "a content hash of another name"
+        );
+    }
+
+    /// What a page import did, in order: one part read of a MACHINE's row
+    /// from an offset, or one import of the MACHINEs it was given.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Step {
+        Part(EntityId, u64),
+        Import(Vec<EntityId>),
+    }
+
+    /// A home that serves each MACHINE's signed row in `signed` four bytes a
+    /// part and logs each read in `steps`.
+    struct Home<'a> {
+        signed: BTreeMap<EntityId, Vec<u8>>,
+        steps: &'a RefCell<Vec<Step>>,
+    }
+
+    impl MeshAuthorityPartSource for Home<'_> {
+        async fn part(
+            &mut self,
+            machine: EntityId,
+            offset: u64,
+        ) -> Result<Option<MeshAuthorityPart>, TransportError> {
+            self.steps.borrow_mut().push(Step::Part(machine, offset));
+            let Some(row) = self.signed.get(&machine) else {
+                return Ok(None);
+            };
+            let rest = &row[usize::try_from(offset).unwrap().min(row.len())..];
+            Ok((!rest.is_empty()).then(|| MeshAuthorityPart {
+                total: row.len() as u64,
+                part: rest[..rest.len().min(4)].to_vec(),
+            }))
+        }
+    }
+
+    /// A binding of `machine` a page carries whole.
+    fn whole(machine: EntityId) -> MeshAuthorityRow {
+        MeshAuthorityRow {
+            machine,
+            authority: b"row".to_vec(),
+            address: b"address".to_vec(),
+            bare: false,
+        }
+    }
+
+    /// The reference a page names for `authority`, the signed row of
+    /// `machine`.
+    fn named(machine: EntityId, authority: &[u8]) -> MeshAuthorityRowRef {
+        MeshAuthorityRowRef {
+            machine,
+            total: authority.len() as u64,
+            digest: ContentHash::of(authority).into_bytes(),
+            address: b"address".to_vec(),
+            bare: false,
+        }
+    }
+
+    /// [`import_page`] of `rows` and `parted`, read from a home that serves
+    /// `signed`, each import writing every row it is given: what it returned
+    /// and the steps it took.
+    async fn imported_page(
+        rows: Vec<MeshAuthorityRow>,
+        parted: Vec<MeshAuthorityRowRef>,
+        signed: BTreeMap<EntityId, Vec<u8>>,
+    ) -> (Option<usize>, Vec<Step>) {
+        let steps = RefCell::new(Vec::new());
+        let mut home = Home {
+            signed,
+            steps: &steps,
+        };
+        let written = import_page(rows, parted, &mut home, |rows| {
+            steps
+                .borrow_mut()
+                .push(Step::Import(rows.iter().map(|row| row.machine).collect()));
+            Ok(rows.len())
+        })
+        .await;
+        (written.ok(), steps.into_inner())
+    }
+
+    /// A binding the home signs again, or no longer serves, while this
+    /// machine reads it stays out alone: the page's other rows land and the
+    /// round goes on, so a binding that keeps changing never holds back
+    /// another (REVIEW-10560 P1).
+    #[tokio::test]
+    async fn a_binding_that_changes_while_it_is_read_stays_out_and_the_rest_of_the_page_lands() {
+        let [a, b, _] = machines();
+        let signed = b"the signed row the page named".to_vec();
+        let reference = named(a, &signed);
+        let mut longer = signed.clone();
+        longer.push(0);
+        let mut other_bytes = signed.clone();
+        other_bytes[0] ^= 1;
+        for (case, signed_again) in [
+            ("signed again, longer", Some(longer)),
+            ("signed again, other bytes of its length", Some(other_bytes)),
+            ("no longer served", None),
+        ] {
+            let served = signed_again.into_iter().map(|row| (a, row)).collect();
+            let (written, steps) =
+                imported_page(vec![whole(b)], vec![reference.clone()], served).await;
+            assert_eq!(written, Some(1), "{case}: the page goes on: {steps:?}");
+            assert_eq!(
+                steps
+                    .iter()
+                    .filter(|step| matches!(step, Step::Import(_)))
+                    .collect::<Vec<_>>(),
+                vec![&Step::Import(vec![b])],
+                "{case}: only the binding carried whole lands"
+            );
+        }
+
+        let (written, steps) = imported_page(
+            vec![whole(b)],
+            vec![reference],
+            BTreeMap::from([(a, signed)]),
+        )
+        .await;
+        assert_eq!(written, Some(2), "control: the row the page named joins");
+        assert!(
+            steps
+                .iter()
+                .any(|step| matches!(step, Step::Import(imported) if imported.contains(&a))),
+            "control: {steps:?}"
+        );
+    }
+
+    /// Each row a page names by reference is imported alone, in MACHINE
+    /// order among the rows the page carries whole, before the next is read:
+    /// a round holds at most one joined row, however many a page names
+    /// (REVIEW-10560 P1).
+    #[tokio::test]
+    async fn each_row_named_by_reference_is_imported_before_the_next_is_read() {
+        let [a, b, c] = machines();
+        let row_a = b"the row of a".to_vec();
+        let row_c = b"row c".to_vec();
+        let (written, steps) = imported_page(
+            vec![whole(b)],
+            vec![named(a, &row_a), named(c, &row_c)],
+            BTreeMap::from([(a, row_a), (c, row_c)]),
+        )
+        .await;
+        assert_eq!(written, Some(3));
+        assert_eq!(
+            steps,
+            vec![
+                Step::Part(a, 0),
+                Step::Part(a, 4),
+                Step::Part(a, 8),
+                Step::Import(vec![a]),
+                Step::Import(vec![b]),
+                Step::Part(c, 0),
+                Step::Part(c, 4),
+                Step::Import(vec![c]),
+            ]
         );
     }
 }
