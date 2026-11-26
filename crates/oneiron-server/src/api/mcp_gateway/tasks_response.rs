@@ -740,11 +740,29 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
 }
 
 /// The code-mode run one call is made in (`execute_code`): the host origin
-/// its writes are made under, and the run itself, the creating run of the
-/// live lens cards the call renders (OF-181, FIX 2612 (a)).
+/// its writes are made under, the run itself, the creating run of the
+/// live lens cards the call renders (OF-181, FIX 2612 (a)), and who wrote
+/// the program that makes the call.
 pub(crate) struct McpCodeRun {
     pub(crate) origin: oneiron::memory::HostWriteOrigin,
     pub(crate) run_id: oneiron::EntityId,
+    pub(crate) author: RunAuthor,
+}
+
+/// Who wrote a code-mode run's program (FIX EXECUTE-CALLER-CODE). A caller's
+/// own code (the MCP `execute` tool) gets the caller's own per-verb gates and
+/// nothing the run would lend: no code-mode line, no reader child or summary
+/// job, no browser or desktop guest, no MESSAGE under a Read grant, and no
+/// row whose answer is a credential or a secret value. A program the
+/// engine's model wrote from the caller's task keeps the run's services.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunAuthor {
+    /// The caller wrote the code the run executes. Dormant until the
+    /// `execute` tool binds it (PR D); the test door binds it now.
+    #[cfg_attr(not(oneiron_test_support), allow(dead_code))]
+    Caller,
+    /// The engine's model wrote each step's program from the caller's task.
+    EngineModel,
 }
 
 /// What one MCP row's credential surface is built from beside its call

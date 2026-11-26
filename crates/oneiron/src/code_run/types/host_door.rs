@@ -228,6 +228,16 @@ pub trait AgentVerbDoor: Send + Sync {
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 
+    /// Admits the one run row a bridge call was made through when its effect
+    /// is shared by several rows (`SelfCall::shared_effect_row`: Fold, Team,
+    /// Leader), before [`Self::admit_run_call`] admits the effect. A door that
+    /// binds rows by name checks this exact row, as the effect alone names
+    /// the whole family (FIX EXECUTE-CALLER-CODE). A door that binds no rows
+    /// by name admits every row.
+    fn admit_run_row(&self, _row: &'static str) -> std::result::Result<(), AgentVerbRefusal> {
+        Ok(())
+    }
+
     /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
     /// `Express`, its trailing bubble included) with `destination`, where
     /// the run's storage lands it. A door that rules on speech wherever it

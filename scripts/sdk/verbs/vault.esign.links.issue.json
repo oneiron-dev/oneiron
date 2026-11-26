@@ -17,5 +17,6 @@
     "spec": "$"
   },
   "mcp_scope": "filtered",
-  "section": false
+  "section": false,
+  "caller_code": "refused"
 }

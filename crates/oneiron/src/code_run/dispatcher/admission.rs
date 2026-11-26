@@ -5,6 +5,25 @@
 use super::*;
 
 impl HostSelfDispatcher<'_> {
+    /// [`Self::admit_run_call`] for `call`'s effect, after the bound door
+    /// admits the exact run row `call` was made through when its effect is
+    /// shared by several rows (FIX EXECUTE-CALLER-CODE).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit_run_call`].
+    pub(crate) fn admit_self_call(
+        &self,
+        call: &SelfCall,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        if let (Some(row), Some(door)) = (call.shared_effect_row(), &self.agent_verbs)
+            && let Err(refusal) = door.admit_run_row(row)
+        {
+            return Ok(Err(refusal));
+        }
+        self.admit_run_call(RunCall::Bridge(call.effect()))
+    }
+
     /// Asks the bound door to admit one call the run serves itself. A run
     /// whose host binds no door admits it as its own.
     ///
@@ -163,7 +182,7 @@ impl HostSelfDispatcher<'_> {
             let read_as = if matches!(call, SelfCall::AgentVerb(_)) {
                 None
             } else {
-                match self.admit_run_call(RunCall::Bridge(call.effect()))? {
+                match self.admit_self_call(call)? {
                     Ok(read_as) => read_as,
                     Err(refusal) => {
                         return Ok((

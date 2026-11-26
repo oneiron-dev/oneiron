@@ -26,5 +26,6 @@
       "ts": "/** The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional). */",
       "py": "The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional)."
     }
-  }
+  },
+  "caller_code": "refused"
 }

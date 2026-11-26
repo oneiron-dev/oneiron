@@ -15,5 +15,6 @@
   "host_door_session": true,
   "mcp_scope": "filtered",
   "openapi": true,
-  "host_door_proof": "foreign_code"
+  "host_door_proof": "foreign_code",
+  "caller_code": "refused"
 }

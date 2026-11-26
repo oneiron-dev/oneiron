@@ -14,7 +14,9 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, HeaderName, HeaderValue};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, holder_proof};
-use oneiron::code_run::{AgentVerbDoor, SelfAgentVerbCall};
+use oneiron::code_run::{
+    AgentVerbDoor, RunCall, RunSpeechDestination, SelfAgentVerbCall, SelfEffect,
+};
 use oneiron::federation::ScopeAxis;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::runtime_hooks::InvocationId;
@@ -196,9 +198,59 @@ pub async fn call_verb_with_input(
     verb: &str,
     input: Value,
 ) -> anyhow::Result<Result<(), GuestRefusal>> {
+    call_verb_written_by(
+        server,
+        credential,
+        run,
+        verb,
+        input,
+        ProgramAuthor::EngineModel,
+    )
+    .await
+}
+
+/// Who wrote the program a door's run executes (FIX EXECUTE-CALLER-CODE):
+/// the caller, as the MCP `execute` tool runs the code it is given, or the
+/// engine's model, as a task run's steps are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramAuthor {
+    /// The caller wrote the code.
+    Caller,
+    /// The engine's model wrote it from the caller's task.
+    EngineModel,
+}
+
+/// The door a run of `server` binds for `credential`, its program written by
+/// `author`.
+async fn door(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    author: ProgramAuthor,
+) -> anyhow::Result<McpCodeModeVerbs> {
     let context = resolve_context(server, credential).await?;
-    let row = verb_row(verb)?;
     let verbs = McpCodeModeVerbs::new(server, &context, run);
+    Ok(match author {
+        ProgramAuthor::Caller => verbs.authored_by_caller(),
+        ProgramAuthor::EngineModel => verbs,
+    })
+}
+
+/// [`call_verb_with_input`] on a run whose program `author` wrote.
+///
+/// # Errors
+///
+/// As [`call_verb`].
+pub async fn call_verb_written_by(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    verb: &str,
+    input: Value,
+    author: ProgramAuthor,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let row = verb_row(verb)?;
+    let verbs = door(server, credential, run, author).await?;
     let call = SelfAgentVerbCall { verb: row, input };
     let origin = host_write_origin(credential.actor)?;
     let outcome = verbs
@@ -208,11 +260,70 @@ pub async fn call_verb_with_input(
         })?;
     match outcome {
         Ok(_) => Ok(Ok(())),
-        Err(refused) => Ok(Err(GuestRefusal {
-            code: refused.code,
-            hook_notice: refused.hook_notice,
-            reason_codes: refused.reason_codes,
-        })),
+        Err(refused) => Ok(Err(guest_refusal(refused))),
+    }
+}
+
+/// The admission one call the run serves itself with `effect` meets on a
+/// run whose program `author` wrote (`AgentVerbDoor::admit_run_call`).
+///
+/// # Errors
+///
+/// The credential failing to resolve.
+pub async fn admit_run_effect(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    effect: SelfEffect,
+    author: ProgramAuthor,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let verbs = door(server, credential, run, author).await?;
+    Ok(verbs
+        .admit_run_call(RunCall::Bridge(effect))
+        .map(drop)
+        .map_err(guest_refusal))
+}
+
+/// The admission of the exact run row `row` a shared-effect call was made
+/// through (`AgentVerbDoor::admit_run_row`, FIX EXECUTE-CALLER-CODE).
+///
+/// # Errors
+///
+/// The credential failing to resolve.
+pub async fn admit_run_row(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    row: &'static str,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let verbs = door(server, credential, run, ProgramAuthor::EngineModel).await?;
+    Ok(verbs.admit_run_row(row).map_err(guest_refusal))
+}
+
+/// The admission a `self.speak` in the run's own derived conversation meets
+/// on a run whose program `author` wrote (`AgentVerbDoor::admit_run_speech`).
+///
+/// # Errors
+///
+/// The credential failing to resolve.
+pub async fn admit_own_run_speech(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    author: ProgramAuthor,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let verbs = door(server, credential, run, author).await?;
+    Ok(verbs
+        .admit_run_speech(SelfEffect::Speak, RunSpeechDestination::OwnRunConversation)
+        .map(drop)
+        .map_err(guest_refusal))
+}
+
+fn guest_refusal(refused: oneiron::code_run::AgentVerbRefusal) -> GuestRefusal {
+    GuestRefusal {
+        code: refused.code,
+        hook_notice: refused.hook_notice,
+        reason_codes: refused.reason_codes,
     }
 }
 
