@@ -5058,7 +5058,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/recall/conversation.rs` | src | s | 4 crate-vis | — | Conversation and PERSON narrowing for one recall selection |
 | `src/memory/recall/home.rs` | src | m | 3 struct · 1 enum · 8 fn · 1 const · 1 re-export · 4 crate-vis | HomeRecallAsk, HomeRecallCaller, HomeRecallMergeOrder, RecallResidence | What an opened device's recall says of its home (FIX 2905, OF-534) |
 | `src/memory/recall/hyde_host.rs` | src | s | 1 fn | — | Stable authority key for a host expansion's pending work, without storing credentials |
-| `src/memory/recall/items.rs` | src | m | 1 crate-vis | — | Builds typed recall items from actor-admitted rows at the selected revision |
+| `src/memory/recall/items.rs` | src | m | 2 crate-vis | — | Projects recall items and render fields for the bound reader |
 | `src/memory/recall/mod.rs` | src | L | 3 struct · 1 fn · 2 const · 6 re-export · 7 crate-vis | CitedMessage, MemoryItem, MemoryPack | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
 | `src/memory/recall/paid.rs` | src | m | 3 struct · 1 enum · 1 trait · 4 fn · 1 re-export · 2 crate-vis | RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores | Recall at high, xhigh and max through a host's reranker (ARCH-0004 #rerank: a cross-encoder refines the… |
 | `src/memory/recall/paid/lineage.rs` | src | s | 2 crate-vis | — | The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced… |
@@ -10522,6 +10522,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/recall_light_render_text.rs` | test | s | — | — | E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every… |
 | `tests/recall_now_anchor_query_slots.rs` | test | s | — | — | A light recall keeps every TURN its query matched before the rows only the effort's now anchor found… |
 | `tests/recall_operation_replay.rs` | test | m | — | — | L1-13 p5 (RESEARCH-0363 p5; Engine RULING L1-13-P5-NOW, 14 Nov, design (i)): `vault.recall` under a caller's… |
+| `tests/recall_rendered_masks_lifted_secrets.rs` | test | s | — | — | Formatted recall is another view of lifted text, not a way around its handle |
 | `tests/recall_zero_match_returns_no_memory.rs` | test | s | — | — | E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run… |
 | `tests/recovery_authority_enrolment_kind.rs` | test | s | — | — | Pass 27 R4 PR 2 (OPUS-SPLIT-6's 15 Nov 23:17 ASK, answered 23:26): the recovery root's authority key enrols… |
 | `tests/recovery_capture_turn_program_maps.rs` | test | s | — | — | A canonical window capture takes a month whose reverse pass filed the turn-program carrier maps (FIX-LIST… |

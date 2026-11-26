@@ -59870,9 +59870,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/recall/items.rs",
-     "purpose": "Builds typed recall items from actor-admitted rows at the selected revision",
+     "purpose": "Projects recall items and render fields for the bound reader",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -119356,6 +119356,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/recall_rendered_masks_lifted_secrets.rs",
+     "purpose": "Formatted recall is another view of lifted text, not a way around its handle",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/recall_zero_match_returns_no_memory.rs",
      "purpose": "E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run…",
      "surface": {}
@@ -125611,7 +125619,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8639,
-   "test_files": 2329
+   "test_files": 2330
   },
   "oneiron-agent-runtime": {
    "files": [
