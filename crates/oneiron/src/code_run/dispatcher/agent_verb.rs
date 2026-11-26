@@ -403,12 +403,17 @@ impl HostSelfDispatcher<'_> {
             ));
         };
         if let Err(refusal) = super::admit_recorded_answer(door) {
-            let rejected = super::gate_rejection(&refusal.code);
+            let rejected = super::gate_rejection(&refusal.code, &refusal.reason_codes);
+            // The receipt's marker first, then the door's own codes, so every
+            // later attempt the refusal stands for answers as this one does
+            // (FIX CODE-MODE-DENIAL-REASONS).
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
                 hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code.clone(),
-                reason_codes: vec![KEPT_ANSWER_REFUSED.to_owned()],
+                reason_codes: std::iter::once(KEPT_ANSWER_REFUSED.to_owned())
+                    .chain(refusal.reason_codes.iter().cloned())
+                    .collect(),
             });
             let ruling = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(call), &ruling, 0, 0)?;
             self.append_ruling(&receipt, ruling)?;
@@ -593,13 +598,14 @@ fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
     else {
         return Err(Error::CorruptedIndex("agent verb receipt refusal"));
     };
-    if let Some(rejected) = super::gate_rejection(&refused.outcome) {
+    if let Some(rejected) = super::gate_rejection(&refused.outcome, &refused.reason_codes) {
         return Err(rejected);
     }
-    // The refusal keeps the reason codes its door gave, so a replay answers
-    // as the live call did (FIX CODE-MODE-DENIAL-REASONS). The receipt's own
-    // `kept_answer_refused` marker is the receipt's, not the door's: a row
-    // that holds it alone answers with no reason, as before.
+    // The refusal keeps the reason codes its door gave, stored after the
+    // receipt's own `kept_answer_refused` marker, so a replay answers as the
+    // live call did (FIX CODE-MODE-DENIAL-REASONS). The marker is the
+    // receipt's, not the door's: a row that holds it alone answers with no
+    // reason, as before.
     Ok(SelfDeniedResult {
         reason_codes: refused
             .reason_codes

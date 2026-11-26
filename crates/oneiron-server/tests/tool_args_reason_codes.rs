@@ -111,20 +111,39 @@ impl Fixture {
         version: &Value,
         spec: Value,
     ) -> TestResult<Value> {
+        self.call_tool(
+            credential,
+            id,
+            "vault.get",
+            version,
+            json!({ "spec": spec }),
+        )
+        .await
+    }
+
+    /// `tool` as a tool-first call whose inner `arguments` are `arguments`.
+    async fn call_tool(
+        &self,
+        credential: &TestCredential,
+        id: u64,
+        tool: &str,
+        version: &Value,
+        arguments: Value,
+    ) -> TestResult<Value> {
         let (status, reply) = self
             .rpc(
                 credential,
                 id,
                 "tools/call",
                 json!({
-                    "name": "vault.get",
+                    "name": tool,
                     "arguments": {
                         "schema_version": version,
                         "consent": {
                             "policy_ref": "policy:agent-session",
                             "purpose": "read one entity",
                         },
-                        "arguments": { "spec": spec },
+                        "arguments": arguments,
                     },
                 }),
             )
@@ -132,6 +151,18 @@ impl Fixture {
         assert_eq!(status, 200, "a refusal is a 200 JSON-RPC error: {reply}");
         Ok(reply)
     }
+}
+
+/// The `schema_version` the tool-first endpoint's `tools/list` reply names
+/// for `tool`.
+fn schema_version(listed: &Value, tool: &str) -> TestResult<Value> {
+    Ok(listed["result"]["tools"]
+        .as_array()
+        .ok_or("tools/list lists tools")?
+        .iter()
+        .find(|entry| entry["name"] == tool)
+        .map(|entry| entry["inputSchema"]["properties"]["schema_version"]["const"].clone())
+        .ok_or_else(|| format!("the tool-first endpoint lists {tool}"))?)
 }
 
 /// The refusal code and reason codes of a JSON-RPC error reply.
@@ -152,13 +183,7 @@ async fn tool_first_reason_codes() -> TestResult {
     let reader = register_credential(&fixture.server, 0x51, &["read"], None).await?;
     let (status, listed) = fixture.rpc(&reader, 1, "tools/list", json!({})).await?;
     assert_eq!(status, 200, "{listed}");
-    let version = listed["result"]["tools"]
-        .as_array()
-        .ok_or("tools/list lists tools")?
-        .iter()
-        .find(|tool| tool["name"] == "vault.get")
-        .map(|tool| tool["inputSchema"]["properties"]["schema_version"]["const"].clone())
-        .ok_or("the tool-first endpoint lists vault.get")?;
+    let version = schema_version(&listed, "vault.get")?;
     let entity = EntityId::now().to_hex();
 
     // The trial's own mistake: a field the verb does not take.
@@ -222,6 +247,46 @@ async fn tool_first_reason_codes() -> TestResult {
             .to_string()
             .contains("4242"),
         "no reason code quotes the caller's value: {reply}"
+    );
+
+    // A host door decodes its input before its input check, so a wrong type
+    // there is named too (review round 1 of #10553: the check refused it with
+    // no reason). Every tool on the endpoint takes the one schema_version
+    // vault.get lists (mcp::tests::endpoint_tool_schemas_are_closed_and_versioned).
+    let reply = fixture
+        .call_tool(
+            &reader,
+            6,
+            "ai.options",
+            &version,
+            json!({ "spec": { "operation": 42 } }),
+        )
+        .await?;
+    assert_eq!(
+        refusal(&reply),
+        (json!("tool_args_invalid"), json!(["args.wrong_type"])),
+        "a host door names a wrong type: {reply}"
+    );
+
+    // A native read's request that does not decode is named the same way, on
+    // the field it already named.
+    let reply = fixture
+        .call_tool(
+            &reader,
+            7,
+            "memory.hydrate",
+            &version,
+            json!({ "request": { "ref": 42 } }),
+        )
+        .await?;
+    assert_eq!(
+        refusal(&reply),
+        (json!("tool_args_invalid"), json!(["args.wrong_type"])),
+        "a native request names a wrong type: {reply}"
+    );
+    assert_eq!(
+        reply["error"]["data"]["field"], "arguments.request",
+        "{reply}"
     );
     Ok(())
 }
