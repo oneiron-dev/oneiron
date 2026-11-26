@@ -81,12 +81,18 @@ fn job_account() -> DeviceToolAccount {
 
 /// A directory of this process's account's, mode 0700, in `/tmp`, below
 /// directories that are root's: a place the query lock may be in, as root's
-/// directory is on an installed machine.
+/// directory is on an installed machine. tempfile makes it with the umask's
+/// mode (0755 under 022), and install takes a lock directory that is there
+/// only at mode 0700 (review r2 of #10541), so its mode is set here (FIX
+/// EXEC-NODE-QUERY-LOCK-FIXTURE-DIR-MODE).
 fn private_dir() -> tempfile::TempDir {
-    tempfile::Builder::new()
+    let dir = tempfile::Builder::new()
         .prefix("oneiron-device-query")
         .tempdir_in("/tmp")
-        .expect("a directory in /tmp")
+        .expect("a directory in /tmp");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("the directory's mode 0700");
+    dir
 }
 
 /// The handler's settings for `account`, with the machine's query lock made
