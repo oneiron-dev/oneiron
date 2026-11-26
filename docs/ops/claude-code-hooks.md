@@ -5,7 +5,7 @@ if you want it. You make no calls by hand:
 
 | Claude Code event | Hook | What happens |
 |---|---|---|
-| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line; then a short recall for the project. Claude Code adds both to the session's context. |
+| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. The plugin and the snippet below recall nothing at start (`--query " "`), until start recall has a relevance threshold ([How it works](#how-it-works)). |
 | `UserPromptSubmit` (only if you add it) | `prompt` | A short recall for what you just asked, from the bound vault. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
@@ -35,7 +35,8 @@ oneiron@oneiron` in place of step 1 of [Remove it](#remove-it).
 ```
 Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bind a vault (below)
                                                        ──▶ oneiron mcp ──▶ serve: vault.recall
-            ◀── stdout: the vault's line and the recalled lines, added to context
+                                                           (not with a blank --query)
+            ◀── stdout: the vault's line and any recalled lines, added to context
 
 Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron import claude-code <log> --queue   (writes one small file)
@@ -56,6 +57,12 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
   can, and otherwise answers lexically). The query is
   the project's name: the git repository's folder name, or the working
   directory's.
+- **No recall at start, for now.** Start recall has no relevance threshold
+  yet, and lines that miss the session's work are worse than none. So the
+  plugin and the snippet below pass `--query " "`: a blank query binds the
+  vault, records the session and calls no tool. Claude recalls through the
+  MCP tools when the work needs it. To recall at start anyway, drop
+  `--query " "` (the project's name) or give `--query "<words>"`.
 - **Write-back** needs no credential. `--queue` leaves one file that names the
   session's log in the vault's import queue. A running `serve` imports it
   within seconds. It is the same import as `oneiron import claude-code` with the
@@ -427,7 +434,7 @@ other than the default and may be stopped when a session ends.
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "timeout": 15,
-        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred" } ] }
+        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query \" \"" } ] }
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "timeout": 10,
@@ -445,9 +452,8 @@ other than the default and may be stopped when a session ends.
 }
 ```
 
-Start a new Claude Code session in a project the vault knows. Its context
-opens with the line naming the vault, then the recalled lines under "From
-your Oneiron vault".
+Start a new Claude Code session. Its context opens with the line naming the
+vault, and no recalled lines ([No recall at start](#how-it-works)).
 
 To recall for each prompt as well, add a `UserPromptSubmit` entry running
 `/path/to/oneiron hook --host claude-code prompt --credential-file
@@ -481,8 +487,8 @@ What the hooks already imported stays in your vault, like any import.
   injected context are counted, not landed. The write door's secret scan
   applies: a turn holding a secret-shaped value is refused, and the next queue
   of that session tries it again.
-- Messages are searchable at once, so the next `SessionStart` in that project
-  can recall them.
+- Messages are searchable at once, so the next session in that project can
+  recall them.
 - Claims drawn from imported material never approve themselves (ARCH-0027,
   ARCH-0040). Each queue pass that lands something is one import: `serve`
   queues the Dreamer over it and logs its review id
@@ -512,7 +518,8 @@ What the hooks already imported stays in your vault, like any import.
   `log_too_large` warning in `serve`'s log, and the rest of the session
   lands.
 - `--query "<words>"` on `session-start` recalls those words instead of the
-  project's name (on `prompt`, instead of the prompt).
+  project's name (on `prompt`, instead of the prompt). A blank one
+  (`--query " "`, as the plugin passes) recalls nothing.
 - `--effort <light|medium|high|xhigh|max>` on `session-start` picks recall's
   effort; it stays `light` unless you set it. Above light the server embeds
   the query first, and a model that is still loading leaves recall on its
