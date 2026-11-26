@@ -23,9 +23,9 @@ pub(crate) const MCP_WORKSPACE_META: &str = "oneiron/workspace";
 const MAX_FOLDER_DIGESTS: usize = 2;
 
 impl McpToolCallParams {
-    /// The folder digests the call's `_meta["oneiron/workspace"].digests` names, each 64
-    /// lower-case hex, in order; `None` when it names none, so the call reads with no session
-    /// default.
+    /// The folder digests the call's `_meta["oneiron/workspace"].digests` names, each `blake3:`
+    /// and 64 lower-case hex, in order; `None` when it names none, so the call reads with no
+    /// session default.
     pub(super) fn session_workspace(&self) -> Option<Vec<String>> {
         let digests: Vec<String> = self
             .meta
@@ -35,7 +35,7 @@ impl McpToolCallParams {
             .as_array()?
             .iter()
             .filter_map(Value::as_str)
-            .filter(|digest| oneiron::session_project::is_sha256_hex(digest))
+            .filter(|digest| oneiron::session_project::is_digest_text(digest))
             .take(MAX_FOLDER_DIGESTS)
             .map(str::to_owned)
             .collect();
