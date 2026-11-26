@@ -285,5 +285,6 @@ pub fn admits_guest(
     Ok(guests.admits(row, server).map_err(|refused| GuestRefusal {
         code: refused.code,
         hook_notice: refused.hook_notice,
+        reason_codes: refused.reason_codes,
     }))
 }

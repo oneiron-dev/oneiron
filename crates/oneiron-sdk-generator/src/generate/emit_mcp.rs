@@ -39,15 +39,23 @@ pub(crate) fn mcp_input_projection(row: &Dict) -> Result<String, GenerateError> 
     let name = json_item_name(row)?;
     if others.is_empty() {
         let head = match root.first() {
-            Some(root) => format!("a.{root}.clone().ok_or_else(invalid)"),
+            Some(root) => {
+                format!(
+                    "a.{root}.clone().ok_or_else(|| McpGatewayError::missing_argument({root:?}))"
+                )
+            }
             None => "Ok(Value::Object(serde_json::Map::new()))".to_owned(),
         };
         return Ok(format!("{name} => {head},\n"));
     }
     let mut lines = match root.first() {
         Some(root) => vec![
-            format!("let mut input = a.{root}.clone().ok_or_else(invalid)?;"),
-            "let map = input.as_object_mut().ok_or_else(invalid)?;".to_owned(),
+            format!(
+                "let mut input = a.{root}.clone().ok_or_else(|| McpGatewayError::missing_argument({root:?}))?;"
+            ),
+            format!(
+                "let map = input.as_object_mut().ok_or_else(|| McpGatewayError::wrong_argument_type({root:?}))?;"
+            ),
         ],
         None => vec!["let mut map = serde_json::Map::new();".to_owned()],
     };
@@ -64,12 +72,12 @@ pub(crate) fn mcp_input_projection(row: &Dict) -> Result<String, GenerateError> 
         if let Some(rest) = path_text.strip_prefix('=') {
             // A redundant envelope field must name what the input names.
             equalities.push(format!(
-                "if {member}.as_deref() != map.get({}).and_then(Value::as_str) {{ return Err(invalid()); }}",
+                "if {member}.as_deref() != map.get({}).and_then(Value::as_str) {{ return Err(McpGatewayError::mismatched_argument({field:?})); }}",
                 dumps_str(rest)
             ));
         } else if required.contains_str(field)? {
             lines.push(format!(
-                "map.insert({}.to_owned(), json!({member}.as_ref().ok_or_else(invalid)?));",
+                "map.insert({}.to_owned(), json!({member}.as_ref().ok_or_else(|| McpGatewayError::missing_argument({field:?}))?));",
                 json(path)
             ));
         } else {

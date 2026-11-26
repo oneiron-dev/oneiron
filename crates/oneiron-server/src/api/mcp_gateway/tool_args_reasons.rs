@@ -38,8 +38,9 @@ const FIELD_PREFIX: &str = "args.field.";
 const FIELD_NAME_MAX: usize = 64;
 
 /// The reason codes of one decode error's message: its kind, then, for a
-/// missing, unknown or duplicate field, the field. A variant, a type or a
-/// value serde quotes is the caller's own data and never becomes a code.
+/// missing field, the field the input's type declares. An unknown or a
+/// duplicate field's name, a variant, a type or a value serde quotes is the
+/// caller's own text and never becomes a code.
 pub(super) fn decode_reason_codes(message: &str) -> Vec<String> {
     let Some((lead, kind)) = DECODE_KINDS
         .iter()
@@ -47,8 +48,9 @@ pub(super) fn decode_reason_codes(message: &str) -> Vec<String> {
     else {
         return vec![UNDECODABLE.to_owned()];
     };
-    let names_field = lead.ends_with("field `");
-    let field = names_field
+    // Only a missing field's name is the schema's own; an unknown or a
+    // duplicate one is the caller's key, which no code repeats.
+    let field = (*kind == "args.missing_field")
         .then(|| message[lead.len()..].split('`').next())
         .flatten();
     field_reason_codes(kind, field)
@@ -96,7 +98,35 @@ impl McpGatewayError {
             "tool_args_invalid",
             format!("{tool} input names unknown field `{field}`"),
         );
-        refused.reason_codes = field_reason_codes("args.unknown_field", Some(field));
+        // The field is the caller's own key: the message names it, under the
+        // message's release rules, and no code repeats it.
+        refused.reason_codes = field_reason_codes("args.unknown_field", None);
+        refused
+    }
+
+    /// A tool argument the verb's input needs is absent (`field` is the
+    /// tool's own argument name).
+    pub(super) fn missing_argument(field: &str) -> Self {
+        Self::typed_argument_refused("args.missing_field", field)
+    }
+
+    /// A tool argument is not the shape the verb's input needs.
+    pub(super) fn wrong_argument_type(field: &str) -> Self {
+        Self::typed_argument_refused("args.wrong_type", field)
+    }
+
+    /// An envelope argument names another value than the input names for it.
+    pub(super) fn mismatched_argument(field: &str) -> Self {
+        Self::typed_argument_refused("args.field_mismatch", field)
+    }
+
+    fn typed_argument_refused(kind: &str, field: &str) -> Self {
+        let mut refused = Self::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        );
+        refused.reason_codes = field_reason_codes(kind, Some(field));
         refused
     }
 

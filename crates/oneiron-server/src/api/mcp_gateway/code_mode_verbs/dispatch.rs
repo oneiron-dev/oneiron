@@ -245,18 +245,18 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .await;
             let _ = sender.send(answered);
         });
-        let refusal = |code: &str| AgentVerbRefusal {
+        let refusal = |code: &str, reason_codes: Vec<String>| AgentVerbRefusal {
             hook_notice: None,
             code: code.to_owned(),
-            reason_codes: Vec::new(),
+            reason_codes,
         };
         Ok(match receiver.recv() {
             Ok(Ok(reply)) => match serde_json::to_value(reply) {
                 Ok(output) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
-                Err(_) => Err(refusal("engine_error")),
+                Err(_) => Err(refusal("engine_error", Vec::new())),
             },
-            Ok(Err(error)) => Err(refusal(&error.code)),
-            Err(_) => Err(refusal("engine_error")),
+            Ok(Err(error)) => Err(refusal(&error.code, error.reason_codes)),
+            Err(_) => Err(refusal("engine_error", Vec::new())),
         })
     }
 

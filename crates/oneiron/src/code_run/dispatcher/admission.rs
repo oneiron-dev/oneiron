@@ -40,7 +40,7 @@ impl HostSelfDispatcher<'_> {
             RunCall::Bridge(_) | RunCall::RecordedOutput => door.admit_run_call(call),
         };
         if let Err(refusal) = &admitted
-            && let Some(rejected) = gate_rejection(&refusal.code)
+            && let Some(rejected) = gate_rejection(&refusal.code, &refusal.reason_codes)
         {
             return Err(rejected);
         }
@@ -197,12 +197,13 @@ pub(super) fn admit_recorded_answer(
 }
 
 /// The gate rejection a door's refusal is when it is spelled as a gate's
-/// outcome word, as `admit_run_call` says.
-pub(super) fn gate_rejection(code: &str) -> Option<crate::Error> {
+/// outcome word, as `admit_run_call` says, with the reason codes the door
+/// gave it (FIX CODE-MODE-DENIAL-REASONS).
+pub(super) fn gate_rejection(code: &str, reason_codes: &[String]) -> Option<crate::Error> {
     crate::error::GateDenialOutcome::parse(code).map(|outcome| {
         crate::Error::Gate(crate::error::GateError::GateWriteRejected {
             outcome: outcome.as_str(),
-            reason_codes: Vec::new(),
+            reason_codes: reason_codes.to_vec(),
         })
     })
 }

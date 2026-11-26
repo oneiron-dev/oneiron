@@ -235,11 +235,12 @@ impl FacadeRowDoor {
             }) => Err(oneiron::Error::from(*stop)),
             Err(RowRefusal { words, hook: None }) => {
                 let code = words.code.clone();
+                let reason_codes = words.reason_codes.clone();
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(words);
                 Ok(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code,
-                    reason_codes: Vec::new(),
+                    reason_codes,
                 }))
             }
         }

@@ -7,10 +7,11 @@
 //! The agent trial (Orchestrator NOTE 20:38, 26 Nov) saw 21 of its 58 run
 //! calls refused as `tool_args_invalid` with `reason_codes: []`, so the
 //! agent could not tell a wrong field from a missing one. Now an unknown
-//! field answers `args.unknown_field` and `args.field.<name>`, a missing one
-//! `args.missing_field` and `args.field.<name>`, a value of the wrong type
-//! `args.wrong_type`; the message stays as it was, and no code quotes the
-//! caller's value. A run's guest gets the same codes beside its refusal
+//! field answers `args.unknown_field`, a missing one `args.missing_field`
+//! and `args.field.<name>` (the name the input's type declares), a value of
+//! the wrong type `args.wrong_type`; the message stays as it was, and no code
+//! repeats the caller's own text: neither a value nor an unknown key. A
+//! run's guest gets the same codes beside its refusal
 //! code (`McpCodeModeVerbs`, through the test door: no QuickJS host, model
 //! or guest starts).
 //!
@@ -171,11 +172,29 @@ async fn tool_first_reason_codes() -> TestResult {
         .await?;
     assert_eq!(
         refusal(&reply),
-        (
-            json!("tool_args_invalid"),
-            json!(["args.unknown_field", "args.field.id"])
-        ),
-        "an unknown field is named: {reply}"
+        (json!("tool_args_invalid"), json!(["args.unknown_field"])),
+        "an unknown field is refused as one: {reply}"
+    );
+
+    // The unknown key is the caller's own text: no code repeats it.
+    let reply = fixture
+        .get(
+            &reader,
+            5,
+            &version,
+            json!({ "entity_ref": entity, "synthetic_secret_123": true }),
+        )
+        .await?;
+    assert_eq!(
+        refusal(&reply),
+        (json!("tool_args_invalid"), json!(["args.unknown_field"])),
+        "{reply}"
+    );
+    assert!(
+        !reply["error"]["data"]["reason_codes"]
+            .to_string()
+            .contains("synthetic_secret_123"),
+        "no reason code repeats the caller's key: {reply}"
     );
 
     // A required field left out.
@@ -229,7 +248,7 @@ async fn run_call_reason_codes() -> TestResult {
     assert_eq!(refused.code, "tool_args_invalid");
     assert_eq!(
         refused.reason_codes,
-        ["args.unknown_field", "args.field.id"],
+        ["args.unknown_field"],
         "the guest learns which field was wrong"
     );
     let refused = call_verb_with_input(&fixture.server, &caller, run, "vault.get", json!({}))

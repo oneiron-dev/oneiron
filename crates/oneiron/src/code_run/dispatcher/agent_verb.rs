@@ -403,7 +403,7 @@ impl HostSelfDispatcher<'_> {
             ));
         };
         if let Err(refusal) = super::admit_recorded_answer(door) {
-            let rejected = super::gate_rejection(&refusal.code);
+            let rejected = super::gate_rejection(&refusal.code, &refusal.reason_codes);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
                 hook_notice: None,
                 effect: SelfEffect::AgentVerb,
@@ -593,12 +593,21 @@ fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
     else {
         return Err(Error::CorruptedIndex("agent verb receipt refusal"));
     };
-    if let Some(rejected) = super::gate_rejection(&refused.outcome) {
+    if let Some(rejected) = super::gate_rejection(&refused.outcome, &refused.reason_codes) {
         return Err(rejected);
     }
-    // The refusal keeps the reason codes it was recorded with, so a replay
-    // answers as the live call did (FIX CODE-MODE-DENIAL-REASONS).
-    Ok(refused)
+    // The refusal keeps the reason codes its door gave, so a replay answers
+    // as the live call did (FIX CODE-MODE-DENIAL-REASONS). The receipt's own
+    // `kept_answer_refused` marker is the receipt's, not the door's: a row
+    // that holds it alone answers with no reason, as before.
+    Ok(SelfDeniedResult {
+        reason_codes: refused
+            .reason_codes
+            .into_iter()
+            .filter(|code| code != KEPT_ANSWER_REFUSED)
+            .collect(),
+        ..refused
+    })
 }
 
 /// A refusal reaches the guest as its stable code and the reason codes its
