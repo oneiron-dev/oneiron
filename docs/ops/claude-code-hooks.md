@@ -387,7 +387,13 @@ folder Claude Code runs in. Then:
   project and the projects below it. Its read receipt names the axis
   `session_project`.
 - In a folder with no project bound, such a read reads no claim, and its
-  receipt names `no_project_bound`: bind one to read the folder's memory.
+  receipt names `no_project_bound`: bind one to read the folder's memory. The
+  session-start hook says so in its vault line, with the bind command, and
+  recalls nothing for it: it asks the vault once, through a bridge started for
+  the session's folder, whether a project is bound there (`initialize` answers
+  `project_bound` under `_meta["oneiron/workspace"]`, naming no project).
+- The hook's own recalls (at start when it has a query, and on each prompt)
+  pass `--workspace` with the session's folder, so they read its project too.
 - A read that names its projects (`project_refs` on `vault.recall`,
   `vault.claims.list_filtered`, `vault.claims.read_filtered`) reads those,
   within what the credential reads anyway.
