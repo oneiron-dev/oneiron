@@ -129,10 +129,13 @@ pub(super) fn copy_in_txn(
         now,
     };
     if signed {
-        // The Dreamer's signed copy, as before: its own declared source, the
-        // default facet, and a refusal is the revert's error.
+        // The Dreamer's signed copy: its own declared source, and a refusal
+        // is the revert's error. It keeps the member's own facet and project,
+        // as the nightly merge's rewrite does, not the default facet of the
+        // moment: a restriction the Dreamer lifted under the owner's key
+        // stands again where it stood (Astra delta F2 on #8548).
         return copy
-            .write_in_txn(vault, txn, &body, author, SourceLineage::of(source), false)
+            .write_in_txn(vault, txn, &body, author, SourceLineage::of(source), true)
             .map(Some);
     }
     let lineage = crate::batch::inherited_lineage(source, &body);

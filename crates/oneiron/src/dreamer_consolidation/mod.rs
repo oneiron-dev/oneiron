@@ -178,7 +178,7 @@ pub use settle::{
     SettledConflict,
 };
 pub(crate) use settle::{
-    MemberRestore, apply_settlement_in_txn, marker_ids, open_conflict_in_txn,
+    MemberRestore, SettlementSettler, apply_settlement_in_txn, marker_ids, open_conflict_in_txn,
     open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
     settlement_revert_lifts_restriction_in,
 };
