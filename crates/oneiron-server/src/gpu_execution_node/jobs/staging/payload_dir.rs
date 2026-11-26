@@ -145,7 +145,7 @@ fn may_make_entries_in(dir: &Path) -> bool {
 
     // access(2) uses this thread's real uid, gid and groups. work_dir_verdict_for
     // walks only with the judged account's credentials, here or on its own thread.
-    access(dir, Access::WRITE_OK | Access::EXEC_OK).is_ok()
+    access(dir, Access::EXEC_OK).is_ok()
 }
 
 /// The file access of the account a judgement is for: its uid, its primary
