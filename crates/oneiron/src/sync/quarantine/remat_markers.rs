@@ -304,7 +304,7 @@ pub(crate) fn classify_window_markers(
             .get_lenient(&vault.store, &rtxn, &entity_key)?
             .and_then(|bytes| now.checked_sub(u64::from_le_bytes(bytes)))
         else {
-            return Ok(WindowMarkerClass::Unclassified);
+            continue;
         };
         let max = match max_hold_secs {
             Some(max) => max,
