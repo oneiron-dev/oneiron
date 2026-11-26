@@ -112,16 +112,7 @@ impl ClientSession {
         if capabilities.is_none() && self.workspace.is_none() {
             return false;
         }
-        let Some(meta) = message
-            .get_mut("params")
-            .and_then(Value::as_object_mut)
-            .map(|params| {
-                params
-                    .entry("_meta")
-                    .or_insert_with(|| Value::Object(serde_json::Map::new()))
-            })
-            .and_then(Value::as_object_mut)
-        else {
+        let Some(meta) = meta_object(message) else {
             return false;
         };
         let mut changed = false;
@@ -137,4 +128,20 @@ impl ClientSession {
         }
         changed
     }
+}
+
+/// The `_meta` object of `message`'s params, made when the params name none or name it `null`,
+/// which the server reads as none, so what the bridge names always reaches the server. `None`
+/// for params that are not an object, or a `_meta` that is neither an object nor `null`: that
+/// call goes as the client wrote it, for the server to refuse.
+fn meta_object(message: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
+    let meta = message
+        .get_mut("params")?
+        .as_object_mut()?
+        .entry("_meta")
+        .or_insert(Value::Null);
+    if meta.is_null() {
+        *meta = Value::Object(serde_json::Map::new());
+    }
+    meta.as_object_mut()
 }

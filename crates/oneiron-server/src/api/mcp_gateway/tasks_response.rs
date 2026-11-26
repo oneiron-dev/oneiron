@@ -366,6 +366,32 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
+    let read = credential_scoped_read(vault, actor)?;
+    // An attached session's read that names no project reads its folder's project
+    // (RECALL-SESSION-PROJECT), on either lane; a storage failure binds the unbound default,
+    // never a wider read.
+    Ok(
+        match actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::session_workspace)
+        {
+            Some(folder_digests) => read.within_session_projects(
+                vault
+                    .session_projects(folder_digests)
+                    .unwrap_or(oneiron::session_project::SessionProjects::Unbound),
+            ),
+            None => read,
+        },
+    )
+}
+
+/// The read lane `actor`'s credential selects: a managed vault's attested owner's own key, else
+/// the verified slip's.
+fn credential_scoped_read<'a>(
+    vault: &'a oneiron::Vault,
+    actor: &McpResolvedActor,
+) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
     // A managed vault's attested owner carries no slip: he reads with his
     // own key, held to this request's owner proof (WILL-PLAN L14 row 01).
     if let Some(auth) = actor
@@ -392,23 +418,7 @@ pub(crate) fn mcp_scoped_read<'a>(
         .credential_read_key(proof)
         .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
-    let read = vault.scoped_read(key.for_destination(&actor.destination()));
-    // An attached session's read that names no project reads its folder's project
-    // (RECALL-SESSION-PROJECT); a storage failure binds the unbound default, never a wider read.
-    Ok(
-        match actor
-            .auth
-            .as_ref()
-            .and_then(crate::auth::CoreAuth::session_workspace)
-        {
-            Some(folder_digests) => read.within_session_projects(
-                vault
-                    .session_projects(folder_digests)
-                    .unwrap_or(oneiron::session_project::SessionProjects::Unbound),
-            ),
-            None => read,
-        },
-    )
+    Ok(vault.scoped_read(key.for_destination(&actor.destination())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
