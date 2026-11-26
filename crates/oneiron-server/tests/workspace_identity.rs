@@ -1,6 +1,7 @@
 //! RECALL-SESSION-PROJECT PR 1 (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: the
 //! binding stores a hash plus a label): a folder's digest is its canonical checkout root's
-//! tagged SHA-256, a linked worktree names its main checkout's digest second, and the
+//! fingerprint under `oneiron.workspace.v1` (BLAKE3, the fingerprint door; Engine NOTE 01:25,
+//! 27 Nov), a linked worktree names its main checkout's digest second, and the
 //! `oneiron project bind` request carries the digest and the folder's name, never its path.
 //! Review round 1 of #10550: a path that ends in a space is its own checkout; a bare
 //! repository's linked worktree, and one of a repository with a separate git directory, name
@@ -12,16 +13,11 @@
 //! `cargo test --locked -p oneiron-server --all-features --test workspace_identity` (needs git).
 
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use oneiron_server::commands::{workspace_bind_request, workspace_unbind_request};
 use oneiron_server::workspace_identity::{WorkspaceIdentity, folder_digest};
 
 const PROJECT: &str = "5b0e3f9c2d4a4e1f8a7c6b5d4e3f2a1b";
-
-fn deadline() -> Instant {
-    Instant::now() + Duration::from_secs(10)
-}
 
 /// Runs git in `dir` with no user or system config, so the host's own (a signing key, hooks)
 /// never reaches the test repository.
@@ -67,11 +63,12 @@ fn canonical(path: &Path) -> std::path::PathBuf {
 }
 
 #[test]
-fn the_folder_digest_is_the_tagged_sha256_of_the_root_path() {
+fn the_folder_digest_is_the_fingerprint_of_the_root_path() {
     assert_eq!(
         folder_digest(Path::new("/srv/checkouts/alpha")),
-        "cecd80212ccc8285c06b009c54be19cec87d53d6dc2118ed28633a9d7f55df95",
-        "sha256(\"oneiron.workspace.v1\\0\" + path), lower-case hex"
+        "blake3:80da07eefc0533649c661d4095ab29882a70a363f77460c375e098b0bf5c6cd6",
+        "BLAKE3 derive-key under \"oneiron.workspace.v1\" of the path as one framed part, \
+         as blake3: and lower-case hex"
     );
 }
 
@@ -80,7 +77,7 @@ fn a_folder_outside_git_is_its_own_root() {
     let parent = tempfile::tempdir().expect("temp folder");
     let folder = parent.path().join("notes");
     std::fs::create_dir(&folder).expect("folder");
-    let identity = WorkspaceIdentity::of_folder(&folder, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&folder).expect("identity");
     assert_eq!(identity.digests, vec![folder_digest(&canonical(&folder))]);
     assert_eq!(identity.label, "notes");
 }
@@ -91,7 +88,7 @@ fn a_subfolder_of_a_checkout_names_the_checkout_root() {
     let repo = repository(parent.path());
     let sub = repo.join("src").join("deep");
     std::fs::create_dir_all(&sub).expect("subfolder");
-    let identity = WorkspaceIdentity::of_folder(&sub, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&sub).expect("identity");
     assert_eq!(
         identity.digests,
         vec![folder_digest(&canonical(&repo))],
@@ -116,7 +113,7 @@ fn a_linked_worktree_names_itself_then_its_main_checkout() {
             worktree.to_str().expect("utf-8 temp path"),
         ],
     );
-    let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&worktree).expect("identity");
     assert_eq!(
         identity.digests,
         vec![
@@ -133,7 +130,7 @@ fn a_checkout_whose_path_ends_in_a_space_is_its_own() {
     let parent = tempfile::tempdir().expect("temp folder");
     let plain = repository_named(parent.path(), "alpha");
     let spaced = repository_named(parent.path(), "alpha ");
-    let identity = WorkspaceIdentity::of_folder(&spaced, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&spaced).expect("identity");
     assert_eq!(
         identity.digests,
         vec![folder_digest(&canonical(&spaced))],
@@ -141,7 +138,7 @@ fn a_checkout_whose_path_ends_in_a_space_is_its_own() {
     );
     assert_ne!(
         identity.digests,
-        WorkspaceIdentity::of_folder(&plain, deadline())
+        WorkspaceIdentity::of_folder(&plain)
             .expect("identity")
             .digests,
         "the two checkouts never share a binding"
@@ -179,7 +176,7 @@ fn a_bare_repositorys_linked_worktree_names_only_itself() {
             worktree.to_str().expect("utf-8 temp path"),
         ],
     );
-    let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&worktree).expect("identity");
     assert_eq!(
         identity.digests,
         vec![folder_digest(&canonical(&worktree))],
@@ -221,10 +218,10 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
     );
     // Git names the git directory itself as the primary worktree here, not the checkout: it
     // holds no `.git`, so it is no main checkout to fall back to.
-    let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&worktree).expect("identity");
     assert_eq!(identity.digests, vec![folder_digest(&canonical(&worktree))]);
     assert_eq!(
-        WorkspaceIdentity::of_folder(&checkout, deadline())
+        WorkspaceIdentity::of_folder(&checkout)
             .expect("identity")
             .digests,
         vec![folder_digest(&canonical(&checkout))],
@@ -234,7 +231,7 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
     // a file or a folder: neither is the repository's own git directory.
     std::fs::write(git_dir.join(".git"), b"").expect("an empty .git file");
     assert_eq!(
-        WorkspaceIdentity::of_folder(&worktree, deadline())
+        WorkspaceIdentity::of_folder(&worktree)
             .expect("identity")
             .digests,
         vec![folder_digest(&canonical(&worktree))],
@@ -243,7 +240,7 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
     std::fs::remove_file(git_dir.join(".git")).expect("remove the file");
     std::fs::create_dir(git_dir.join(".git")).expect("a .git folder");
     assert_eq!(
-        WorkspaceIdentity::of_folder(&worktree, deadline())
+        WorkspaceIdentity::of_folder(&worktree)
             .expect("identity")
             .digests,
         vec![folder_digest(&canonical(&worktree))],
@@ -259,8 +256,8 @@ fn a_symlinked_path_names_the_same_checkout() {
     let link = parent.path().join("alpha-link");
     std::os::unix::fs::symlink(&repo, &link).expect("symlink");
     assert_eq!(
-        WorkspaceIdentity::of_folder(&link, deadline()).expect("identity via the link"),
-        WorkspaceIdentity::of_folder(&repo, deadline()).expect("identity")
+        WorkspaceIdentity::of_folder(&link).expect("identity via the link"),
+        WorkspaceIdentity::of_folder(&repo).expect("identity")
     );
 }
 
@@ -268,7 +265,7 @@ fn a_symlinked_path_names_the_same_checkout() {
 fn the_bind_request_carries_the_digest_and_name_never_the_path() {
     let parent = tempfile::tempdir().expect("temp folder");
     let repo = repository(parent.path());
-    let identity = WorkspaceIdentity::of_folder(&repo, deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(&repo).expect("identity");
     let request = workspace_bind_request(&identity, PROJECT).expect("bind request");
     assert_eq!(
         request,
@@ -290,7 +287,7 @@ fn the_bind_request_carries_the_digest_and_name_never_the_path() {
 #[test]
 fn a_bind_request_refuses_a_ref_that_is_not_an_id() {
     let parent = tempfile::tempdir().expect("temp folder");
-    let identity = WorkspaceIdentity::of_folder(parent.path(), deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(parent.path()).expect("identity");
     assert!(workspace_bind_request(&identity, "alpha").is_err());
 }
 
@@ -326,8 +323,7 @@ fn check_child_identity() {
     ) else {
         return;
     };
-    let identity =
-        WorkspaceIdentity::of_folder(Path::new(&folder), deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(Path::new(&folder)).expect("identity");
     let digests: Vec<String> = digests.lines().map(str::to_owned).collect();
     assert_eq!(identity.digests, digests);
 }

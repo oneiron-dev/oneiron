@@ -10,7 +10,6 @@
 //! the vault keys the digest with its own id.
 
 use std::path::Path;
-use std::time::Instant;
 
 use anyhow::Context as _;
 use oneiron::EntityId;
@@ -18,7 +17,7 @@ use oneiron::session_project::WORKSPACE_PROJECT_KEY;
 use serde_json::{Value, json};
 
 use crate::cli::{ApiArgs, ApiCommand, ProjectArgs, ProjectCommand};
-use crate::workspace_identity::{GIT_TIMEOUT, WorkspaceIdentity};
+use crate::workspace_identity::WorkspaceIdentity;
 
 /// Runs one `oneiron project` subcommand.
 ///
@@ -67,7 +66,7 @@ fn folder_identity(folder: Option<&Path>) -> anyhow::Result<WorkspaceIdentity> {
         Some(folder) => folder.to_path_buf(),
         None => std::env::current_dir().context("this process has no working directory")?,
     };
-    WorkspaceIdentity::of_folder(&folder, Instant::now() + GIT_TIMEOUT)
+    WorkspaceIdentity::of_folder(&folder)
         .with_context(|| format!("{} does not resolve to a folder", folder.display()))
 }
 
