@@ -41,7 +41,6 @@ crate::setting::setting_keys! {
     /// A row that does not decode reads 0, with no grace period beyond the start second.
     pub(crate) REMAT_DEPENDENCY_HOLD_MAX_SECS: u64 = "sync.remat.dependency_hold_max_secs" {
         kind: Kind::new(remat_dependency_hold_default).strictest(remat_dependency_hold_strictest),
-        standing_approval: false,
     };
     /// Whether the owner's delete of a record under a live brief share must go through the
     /// confirmed door, which shows what the delete retracts before it runs. On by default: the
