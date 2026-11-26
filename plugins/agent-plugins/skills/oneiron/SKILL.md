@@ -14,11 +14,11 @@ call; you never name your own identity.
 Session hooks may run beside you: Codex and Copilot read them from this
 package, and Cursor from the separate Oneiron Cursor plugin, which also
 carries Cursor's `oneiron` server. Once the person has set them up, a
-session opens with a line naming the vault they bound and a short recall for
-the project, and the session's log is handed to the vault as the session
-goes. They do not recall for each prompt. Without them nothing recalls on
-its own and nothing hands the log over. Either way, recall when you need it,
-and save what is worth keeping yourself.
+session opens with a line naming the vault they bound, and the session's log
+is handed to the vault as the session goes. They recall nothing, at start or
+for each prompt. Without them nothing hands the log over. Either way, call
+`vault.recall` yourself when the work needs what the vault holds (Recall,
+below), and save what is worth keeping yourself.
 
 ## Recall
 

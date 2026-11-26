@@ -6,8 +6,11 @@
 //! writes its attempt entry beside the job.
 //!
 //! The pass runs on the built job worker (`gpu_host.rs`, OPUS-LE-FLEET's file), on its tick and
-//! on each wake: one worker.
+//! on each wake: one worker. Its readiness read is the child module `readiness_read`.
 
+mod readiness_read;
+
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
@@ -22,13 +25,20 @@ use oneiron::work_order::{
 };
 
 use crate::gpu_execution_node::issuer::node_status::node_answer;
-use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
+use crate::gpu_execution_node::issuer::{
+    JobNodeClient, NodeCallError, VAULT_MACHINE_BACKEND, not_the_issuer,
+};
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, LogTailRequest,
     NodeAnswer,
 };
 use crate::gpu_host::{GpuHostError, job_admission, job_backend, offer_with_backend};
 use crate::server::SyncServer;
+
+use readiness_read::mesh_bound;
+pub(crate) use readiness_read::run_readiness_read;
+#[cfg(oneiron_test_support)]
+pub(crate) use readiness_read::worker_pass_asks;
 
 /// Bytes in a MiB.
 const MIB: u64 = 1024 * 1024;
@@ -126,6 +136,9 @@ pub(crate) struct ServerOrderHost<'a> {
     /// readiness fact. A placement preview (`vault.machines.place`) and the order door's
     /// immediate pass only read it.
     observe: bool,
+    /// The issuer's clock, which dates each `Node` request the worker's pass sends when it is
+    /// sent (REVIEW-10544 round 2 P1).
+    clock: &'a dyn Fn() -> u64,
 }
 
 impl<'a> ServerOrderHost<'a> {
@@ -135,6 +148,7 @@ impl<'a> ServerOrderHost<'a> {
             nodes,
             now_ms,
             observe: false,
+            clock: &crate::gpu_host::now_ms,
         }
     }
 
@@ -144,11 +158,7 @@ impl<'a> ServerOrderHost<'a> {
     /// answers and acts on none: neither clears the issuer's drain nor queues the owner's ask
     /// (REVIEW-10518 round 2 P1).
     pub(crate) fn observing(self) -> Self {
-        let issuer = crate::gpu_execution_node::issuer::not_the_issuer(
-            self.server,
-            crate::gpu_execution_node::issuer::VAULT_MACHINE_BACKEND,
-        )
-        .is_ok();
+        let issuer = not_the_issuer(self.server, VAULT_MACHINE_BACKEND).is_ok();
         Self {
             observe: issuer,
             ..self
@@ -190,38 +200,23 @@ impl OrderHost for ServerOrderHost<'_> {
     }
 
     /// Each machine's `Node` answer, as the pass's facts. On the worker's pass, the answer's
-    /// readiness fact is acted on first ([`OrderLoop::observe_readiness`]): a passed check clears
-    /// the issuer's drain before the pass places, and a run of failed checks reaches the owner
-    /// (CG-2 row 9). The issuer's guard row is read before the request is sent. A check the
-    /// answer shows as newer than an earlier one therefore ran after that read.
+    /// readiness fact is acted on first ([`OrderLoop::ask_node_observing`]): a passed check
+    /// clears the issuer's drain before the pass places, and a run of failed checks reaches the
+    /// owner (CG-2 row 9). Each request is dated when it is sent. Before the mesh listener is
+    /// bound no request can start, so none is recorded then.
     fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
+        let orders = self.server.gpu_jobs.orders();
+        let observe = self.observe && mesh_bound(self.server);
         machines
             .iter()
             .map(|machine| {
-                let guard_before = self.observe.then(|| {
-                    self.server
-                        .vault
-                        .machine_job_guard(*machine)
-                        .unwrap_or_else(|error| {
-                            tracing::warn!(machine = %machine.to_hex(), %error, "vault_machine: the machine's job guard not read; its readiness clear waits");
-                            None
-                        })
-                });
-                let answer = self.nodes.job(*machine, &JobRequest::Node).ok();
-                if let Some(guard_before) = &guard_before
-                    && let Some(JobAnswer::Node(node)) = &answer
-                    && let Some(readiness) = &node.readiness
-                {
-                    self.server.gpu_jobs.orders().observe_readiness(
-                        &self.server.vault,
-                        *machine,
-                        guard_before.as_ref(),
-                        node.drained.as_deref(),
-                        readiness,
-                        self.now_ms,
-                    );
-                }
-                facts_of_answer(*machine, answer.as_ref(), self.now_ms)
+                let answer = if observe {
+                    let at_ms = (self.clock)();
+                    orders.ask_node_observing(&self.server.vault, self.nodes, *machine, at_ms)
+                } else {
+                    self.nodes.job(*machine, &JobRequest::Node)
+                };
+                facts_of_answer(*machine, answer.ok().as_ref(), self.now_ms)
             })
             .collect()
     }
@@ -497,9 +492,12 @@ pub(crate) struct OrderLoop {
     /// The slot deciders' asks this hour (row P1): the ceiling `policy.slots.max_asks_per_hour`
     /// counts them here, so an issuer that restarts opens a new window.
     asks: Mutex<SlotAskWindow>,
-    /// The worker pass's readings of each machine's readiness fact: the last sample and the clear
-    /// baseline of each machine read in the last `ReadinessReads::IDLE_MS` (CG-2 row 9).
+    /// The worker's readings of each machine's readiness fact, by its pass and by its scheduled
+    /// read: the last sample and the clear baseline of each machine read in the last
+    /// `ReadinessReads::IDLE_MS`, and the last ask of each machine the read may ask (CG-2 row 9).
     readiness: Mutex<crate::gpu_execution_node::issuer::guard::ReadinessReads>,
+    /// Whether the worker's scheduled readiness read runs now: one runs at a time.
+    reading: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -509,34 +507,6 @@ impl std::fmt::Debug for OrderLoop {
 }
 
 impl OrderLoop {
-    /// The worker pass's reading of `machine`'s readiness fact
-    /// (`issuer::guard::ReadinessReads::observe`). It takes the issuer's guard row as read before
-    /// the request, and the node's own drain from the same answer. An answer that repeats the
-    /// sample this loop last acted on changes nothing and takes no write. A reading whose store
-    /// call failed is acted on again at the next answer. Passes run one at a time (`pass`), so
-    /// this lock is never contended.
-    pub(crate) fn observe_readiness(
-        &self,
-        vault: &oneiron::Vault,
-        machine: EntityId,
-        guard_before: Option<&oneiron::job_dispatch::machine_records::MachineJobGuard>,
-        node_drained: Option<&str>,
-        readiness: &crate::gpu_execution_node::wire::NodeReadiness,
-        now_ms: u64,
-    ) {
-        self.readiness
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .observe(
-                vault,
-                machine,
-                guard_before,
-                node_drained,
-                readiness,
-                now_ms,
-            );
-    }
-
     /// Wakes the worker for a pass now: a new order, a cancel, an end.
     pub(crate) fn wake(&self) {
         self.wake.notify_one();

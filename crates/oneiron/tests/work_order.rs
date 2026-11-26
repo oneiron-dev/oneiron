@@ -1411,8 +1411,7 @@ mod after_and_caps {
     use oneiron::consent::AuthenticatedOwner;
     use oneiron::federation::{Scope, ScopeAxis};
     use oneiron::memory::{
-        MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
-        MEMORY_CODE_NOT_FOUND, MemoryError,
+        MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
     };
     use oneiron::setting::{SetSetting, SettingCaller};
     use oneiron::test_doors::label_writers::embedded_owner;
@@ -1860,16 +1859,15 @@ mod after_and_caps {
     #[test]
     fn a_group_takes_members_from_its_maker_under_one_cap_at_distinct_indexes() {
         let rig = door_rig();
-        let group = EntityId::now();
-        let member = |index: u32, cap: Option<u32>| Some(GroupRequest { group, index, cap });
-        let no_cap = rig
-            .order(0, None, member(0, None))
-            .expect_err("a first member names its cap");
-        assert_eq!(no_cap.code, MEMORY_CODE_BAD_REQUEST, "{no_cap:?}");
         let first = rig
-            .order(0, None, member(0, Some(2)))
+            .order(0, None, Some(GroupRequest::New { index: 0, cap: 2 }))
             .expect("the first member");
-        assert_eq!(first.group, Some(GroupMember { group, index: 0 }));
+        let group = first.id;
+        assert_eq!(
+            first.group,
+            Some(GroupMember { group, index: 0 }),
+            "the group takes its first member's id"
+        );
         let row = rig
             .vault
             .work_order_group(&group)
@@ -1877,20 +1875,13 @@ mod after_and_caps {
             .expect("the group row");
         assert_eq!((row.cap, row.made_by.actor()), (2, Some(rig.agents[0])));
 
-        let other_cap = rig
-            .order(0, None, member(1, Some(3)))
-            .expect_err("another cap");
-        assert_eq!(other_cap.code, MEMORY_CODE_BAD_REQUEST, "{other_cap:?}");
-        let again = rig
-            .order(0, None, member(0, None))
-            .expect_err("index 0 is taken");
+        let join = |index: u32| Some(GroupRequest::Join { group, index });
+        let again = rig.order(0, None, join(0)).expect_err("index 0 is taken");
         assert_eq!(again.code, MEMORY_CODE_BAD_REQUEST, "{again:?}");
-        let stranger = rig
-            .order(1, None, member(1, None))
-            .expect_err("not b's group");
-        assert_eq!(stranger.code, MEMORY_CODE_FORBIDDEN, "{stranger:?}");
-        rig.order(0, None, member(1, None))
-            .expect("a later member names no cap");
+        let stranger = rig.order(1, None, join(1)).expect_err("not b's group");
+        assert_eq!(stranger.code, MEMORY_CODE_NOT_FOUND, "{stranger:?}");
+        let second = rig.order(0, None, join(1)).expect("a later member");
+        assert_eq!(second.group, Some(GroupMember { group, index: 1 }));
         assert_eq!(
             rig.vault
                 .work_order_group(&group)
@@ -1903,34 +1894,91 @@ mod after_and_caps {
     }
 
     #[test]
-    fn a_replay_under_its_intent_key_that_names_another_group_cap_is_another_request() {
-        let rig = door_rig();
+    fn a_group_request_is_new_with_its_cap_or_a_join_with_none() {
         let group = EntityId::now();
-        let member = |cap: Option<u32>| {
-            Some(GroupRequest {
-                group,
-                index: 0,
-                cap,
-            })
-        };
-        let mut request = rig.request(None, member(Some(2)));
+        let new: GroupRequest =
+            serde_json::from_value(serde_json::json!({"kind": "new", "index": 0, "cap": 2}))
+                .expect("a new group");
+        assert_eq!(new, GroupRequest::New { index: 0, cap: 2 });
+        let join: GroupRequest =
+            serde_json::from_value(serde_json::json!({"kind": "join", "group": group, "index": 1}))
+                .expect("a join");
+        assert_eq!(join, GroupRequest::Join { group, index: 1 });
+        for refused in [
+            serde_json::json!({"kind": "new", "index": 0}),
+            serde_json::json!({"kind": "new", "group": group, "index": 0, "cap": 2}),
+            serde_json::json!({"kind": "join", "group": group, "index": 1, "cap": 2}),
+            serde_json::json!({"group": group, "index": 1, "cap": 2}),
+        ] {
+            assert!(
+                serde_json::from_value::<GroupRequest>(refused.clone()).is_err(),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_join_of_another_requesters_group_answers_as_a_group_that_does_not_exist() {
+        let rig = door_rig();
+        let theirs = rig
+            .order(0, None, Some(GroupRequest::New { index: 0, cap: 1 }))
+            .expect("a starts a group");
+        let foreign = rig
+            .order(
+                1,
+                None,
+                Some(GroupRequest::Join {
+                    group: theirs.id,
+                    index: 1,
+                }),
+            )
+            .expect_err("a's group");
+        let absent = rig
+            .order(
+                1,
+                None,
+                Some(GroupRequest::Join {
+                    group: EntityId::now(),
+                    index: 1,
+                }),
+            )
+            .expect_err("no such group");
+        assert_eq!(foreign.code, MEMORY_CODE_NOT_FOUND, "{foreign:?}");
+        assert_eq!(
+            format!("{foreign:?}"),
+            format!("{absent:?}"),
+            "the two refusals answer alike"
+        );
+    }
+
+    #[test]
+    fn a_replay_under_its_intent_key_that_changes_its_group_request_is_another_request() {
+        let rig = door_rig();
+        let mut request = rig.request(None, Some(GroupRequest::New { index: 0, cap: 2 }));
         request.intent_key = Some("q5-group-replay".to_owned());
         let first = rig.send(0, &request).expect("the first member");
         assert!(!first.replayed);
         let again = rig.send(0, &request).expect("the same request again");
         assert!(again.replayed);
         assert_eq!(again.order.id, first.order.id);
-        request.group = member(None);
-        let no_cap = rig.send(0, &request).expect("a replay that names no cap");
-        assert!(no_cap.replayed, "no cap means the group's own");
-        request.group = member(Some(3));
-        let other = rig
-            .send(0, &request)
-            .expect_err("another cap under the same intent key");
-        assert_eq!(other.code, MEMORY_CODE_INVALID_STATE, "{other:?}");
+        assert_eq!(again.order.group, first.order.group, "no second group");
+        for other in [
+            GroupRequest::New { index: 0, cap: 3 },
+            GroupRequest::New { index: 1, cap: 2 },
+            GroupRequest::Join {
+                group: first.order.id,
+                index: 0,
+            },
+        ] {
+            request.group = Some(other);
+            let refused = rig
+                .send(0, &request)
+                .expect_err("another group under the same intent key");
+            assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+        }
         let row = rig
             .vault
-            .work_order_group(&group)
+            .work_order_group(&first.order.id)
             .expect("read")
             .expect("the group row");
         assert_eq!(row.cap, 2, "the row never changes");
