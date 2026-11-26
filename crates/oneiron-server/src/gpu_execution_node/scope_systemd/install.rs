@@ -36,7 +36,7 @@ use super::unit_file::{
     unit_path_word,
 };
 use crate::gpu_execution_node::jobs::staging::{
-    WorkDirAccess, WorkDirVerdict, work_dir_verdict_for,
+    WorkDirAccess, WorkDirFault, WorkDirVerdict, work_dir_verdict_for,
 };
 
 /// What `install` is given.
@@ -195,8 +195,9 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
 /// ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict_for`]) for
 /// the engine's account, with the engine's file access, so a directory root
 /// may search but the engine may not is refused here as staging refuses it.
-/// A path that is not there yet passes: [`ensure_dir`] makes missing parents
-/// root's (mode 0755) and the leaf the engine's, which pass.
+/// A path that is not there yet passes even where the engine may not make
+/// it, because the root install makes the missing path: [`ensure_dir`] makes
+/// missing parents root's (mode 0755) and the leaf the engine's, which pass.
 fn require_work_dir_chain(
     work_dir: &Path,
     engine_account: &str,
@@ -207,6 +208,15 @@ fn require_work_dir_chain(
         .map_err(|why| format!("work_dir {}: not judged for the engine account {engine_account} (uid {engine_uid}): {why}", work_dir.display()))?
     {
         WorkDirVerdict::Passes(_) | WorkDirVerdict::Missing { .. } => Ok(()),
+        WorkDirVerdict::Unsafe(unsafe_) if unsafe_.fault == WorkDirFault::EngineMayNotWrite => {
+            Err(format!(
+                "work_dir {}: {}, judged for the engine account {engine_account} \
+                 (uid {engine_uid}): staging would fail every job (checkout_failed); \
+                 give {engine_account} write access to it, or pick another work_dir",
+                unsafe_.path.display(),
+                unsafe_.fault
+            ))
+        }
         WorkDirVerdict::Unsafe(unsafe_) => Err(format!(
             "work_dir {}: {}, judged for the engine account {engine_account} (uid {engine_uid}): staging would refuse every job (work_dir_unsafe); give the path to root or to {engine_account}, or pick another work_dir",
             unsafe_.path.display(),
@@ -425,14 +435,7 @@ mod tests {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
                 .expect("test directory mode");
         }
-        // SAFETY: geteuid and getegid have no preconditions.
-        let me = unsafe {
-            WorkDirAccess {
-                uid: libc::geteuid(),
-                gid: libc::getegid(),
-                groups: Vec::new(),
-            }
-        };
+        let me = WorkDirAccess::this_process().expect("this process's file access");
         let why = require_work_dir_chain(&work, "oneiron", &me)
             .expect_err("the work directory beneath the open ancestor is refused");
         assert!(why.contains(open.display().to_string().as_str()), "{why}");
@@ -440,5 +443,21 @@ mod tests {
         assert_eq!(require_work_dir_chain(&good, "oneiron", &me), Ok(()));
         let missing = ok.join("missing").join("work");
         assert_eq!(require_work_dir_chain(&missing, "oneiron", &me), Ok(()));
+        if rustix::process::geteuid().as_raw() != 0 {
+            let ro = root.join("ro");
+            std::fs::create_dir(&ro).expect("make test directory");
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555))
+                .expect("test directory mode");
+            let why = require_work_dir_chain(&ro, "oneiron", &me)
+                .expect_err("a work directory the engine may not write in is refused");
+            assert!(why.contains("checkout_failed"), "{why}");
+            assert_eq!(
+                require_work_dir_chain(&ro.join("missing").join("work"), "oneiron", &me),
+                Ok(()),
+                "install makes a missing path even where the engine may not"
+            );
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755))
+                .expect("restore test directory mode");
+        }
     }
 }

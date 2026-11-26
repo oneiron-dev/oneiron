@@ -852,6 +852,7 @@ fn a_missing_work_dir_reads_missing_and_the_rule_makes_nothing() {
         work_dir_verdict(&work, euid),
         WorkDirVerdict::Missing {
             first_missing: b.clone(),
+            engine_may_make: true,
         },
         "expected the first missing component; the temp root and its ancestors must pass for uid {euid}"
     );
@@ -870,11 +871,7 @@ fn the_work_dir_rule_judged_for_the_engine_takes_the_engines_file_access() {
     make_work_dir_test_directory(&closed, 0o700);
     make_work_dir_test_directory(&work, 0o755);
     let euid = rustix::process::geteuid().as_raw();
-    let me = WorkDirAccess {
-        uid: euid,
-        gid: rustix::process::getegid().as_raw(),
-        groups: Vec::new(),
-    };
+    let me = WorkDirAccess::this_process().expect("this process has an account");
     if euid != 0 {
         // Only root can take another account's file access.
         let other = WorkDirAccess {
@@ -924,6 +921,131 @@ fn the_work_dir_rule_judged_for_the_engine_takes_the_engines_file_access() {
         rustix::process::geteuid().as_raw(),
         0,
         "the judgement's thread took the engine's access, not the process"
+    );
+}
+
+#[test]
+fn an_engine_work_dir_the_engine_may_not_write_in_fails_the_rule() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let ro = root.join("ro");
+    let work = ro.join("work");
+    make_work_dir_test_directory(&ro, 0o755);
+    make_work_dir_test_directory(&work, 0o555);
+    let me = WorkDirAccess::this_process().expect("this process's file access");
+    let engine = if me.uid == 0 {
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+            .expect("open the temp root");
+        std::os::unix::fs::chown(&work, Some(65534), Some(65534)).expect("give work to the engine");
+        assert_eq!(
+            work_dir_verdict(&work, 65534),
+            WorkDirVerdict::Passes(work.clone()),
+            "with root's own file access the read-only work dir passes"
+        );
+        WorkDirAccess {
+            uid: 65534,
+            gid: 65534,
+            groups: Vec::new(),
+        }
+    } else {
+        me
+    };
+    assert_eq!(
+        work_dir_verdict_for(&work, &engine),
+        Ok(WorkDirVerdict::Unsafe(WorkDirUnsafe {
+            path: work.clone(),
+            fault: WorkDirFault::EngineMayNotWrite,
+        })),
+        "judged for the engine, its read-only work dir fails"
+    );
+    std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o755)).expect("restore work");
+}
+
+#[test]
+fn a_missing_work_dir_the_engine_may_not_make_reads_missing_unmakeable() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let shut = root.join("shut");
+    let open = root.join("open");
+    make_work_dir_test_directory(&shut, 0o555);
+    make_work_dir_test_directory(&open, 0o755);
+    let shut_work = shut.join("work");
+    let open_work = open.join("work");
+    let euid = rustix::process::geteuid().as_raw();
+    let access = if euid != 0 {
+        WorkDirAccess::this_process().expect("this process has an account")
+    } else {
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+            .expect("open the temp root");
+        std::os::unix::fs::chown(&shut, Some(65534), Some(65534)).expect("give shut to the engine");
+        std::os::unix::fs::chown(&open, Some(65534), Some(65534)).expect("give open to the engine");
+        WorkDirAccess {
+            uid: 65534,
+            gid: 65534,
+            groups: Vec::new(),
+        }
+    };
+    assert_eq!(
+        work_dir_verdict_for(&shut_work, &access),
+        Ok(WorkDirVerdict::Missing {
+            first_missing: shut_work.clone(),
+            engine_may_make: false,
+        }),
+        "the engine may not make its work dir in a read-only parent"
+    );
+    assert_eq!(
+        work_dir_verdict_for(&open_work, &access),
+        Ok(WorkDirVerdict::Missing {
+            first_missing: open_work.clone(),
+            engine_may_make: true,
+        }),
+        "the engine may make its work dir in a writable parent"
+    );
+    assert!(
+        !shut_work.exists() && !open_work.exists(),
+        "the read-only rule made a missing work directory"
+    );
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).expect("restore shut");
+}
+
+#[test]
+fn a_caller_with_the_engines_uid_but_other_groups_does_not_judge_for_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let ok = root.join("ok");
+    let work = ok.join("work");
+    make_work_dir_test_directory(&ok, 0o755);
+    make_work_dir_test_directory(&work, 0o755);
+    let me = WorkDirAccess::this_process().expect("this process's file access");
+    let other_gid = me.groups.iter().copied().fold(me.gid, u32::max) + 1;
+    let mut extra_group = me.clone();
+    extra_group.groups.push(other_gid);
+    if me.uid == 0 {
+        work_dir_verdict_for(&work, &extra_group)
+            .expect("root judges for its own uid with other groups on a thread");
+        assert_eq!(rustix::process::geteuid().as_raw(), 0);
+        assert_eq!(
+            WorkDirAccess::this_process().expect("this process's file access after judgement"),
+            me,
+            "the judgement's thread took the groups, not the process"
+        );
+        return;
+    }
+    let mut other_primary = me.clone();
+    other_primary.gid = other_gid;
+    let why = work_dir_verdict_for(&work, &other_primary)
+        .expect_err("another primary gid is not this process's file access");
+    assert!(why.contains("but not its file access"), "{why}");
+    let why = work_dir_verdict_for(&work, &extra_group)
+        .expect_err("an extra group is not this process's file access");
+    assert!(why.contains("but not its file access"), "{why}");
+    let mut same_set = me.clone();
+    same_set.groups.reverse();
+    same_set.groups.push(me.gid);
+    assert_eq!(
+        work_dir_verdict_for(&work, &same_set),
+        Ok(work_dir_verdict(&work, me.uid)),
+        "the same group set in another order judges here"
     );
 }
 

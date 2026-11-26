@@ -52,6 +52,10 @@ pub enum WorkDirFault {
         /// The work directory's mode bits.
         mode: u32,
     },
+    /// The account the judgement is for may not make entries in the resolved
+    /// work directory: it lacks write and search access there, so staging's
+    /// mkdir of a key's payload directory fails (`checkout_failed`).
+    EngineMayNotWrite,
     /// Reading a directory entry or symbolic link failed.
     Unreadable(String),
 }
@@ -81,6 +85,9 @@ impl fmt::Display for WorkDirFault {
                 f,
                 "mode {mode:o}: the group or other accounts may write in the work directory"
             ),
+            Self::EngineMayNotWrite => {
+                f.write_str("the engine may not make entries in it (no write and search access)")
+            }
             Self::Unreadable(error) => f.write_str(error),
         }
     }
@@ -89,7 +96,7 @@ impl fmt::Display for WorkDirFault {
 /// The path and reason for a work directory refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkDirUnsafe {
-    /// The path at which the walk refused to proceed.
+    /// The path at which the rule failed.
     pub path: PathBuf,
     /// Why the path failed the rule.
     pub fault: WorkDirFault,
@@ -104,27 +111,46 @@ pub enum WorkDirVerdict {
     Missing {
         /// The first component that does not exist.
         first_missing: PathBuf,
+        /// The judged account may write and search in `first_missing`'s parent,
+        /// so staging makes the rest. False: staging's mkdir fails
+        /// (`checkout_failed`) unless root makes the path first, as install does.
+        engine_may_make: bool,
     },
     /// A path component or the work directory failed the rule.
     Unsafe(WorkDirUnsafe),
 }
 
 /// Judges the rule staging applies before a key's first write for the account
-/// `engine_uid`, without making or changing anything, with this process's own
-/// file access. Check and install judge with the engine's
+/// `engine_uid`, without making or changing anything, with this thread's own
+/// file access, real IDs included. Check and install judge with the engine's
 /// ([`work_dir_verdict_for`]).
 pub fn work_dir_verdict(work_dir: &Path, engine_uid: u32) -> WorkDirVerdict {
     match walk_work_dir(work_dir, engine_uid, false) {
-        Ok(Walked::Dir(dir)) => WorkDirVerdict::Passes(dir),
-        Ok(Walked::Missing(first_missing)) => WorkDirVerdict::Missing { first_missing },
+        Ok(Walked::Dir(dir)) if may_make_entries_in(&dir) => WorkDirVerdict::Passes(dir),
+        Ok(Walked::Dir(dir)) => WorkDirVerdict::Unsafe(WorkDirUnsafe {
+            path: dir,
+            fault: WorkDirFault::EngineMayNotWrite,
+        }),
+        Ok(Walked::Missing(first_missing)) => WorkDirVerdict::Missing {
+            engine_may_make: first_missing.parent().is_some_and(may_make_entries_in),
+            first_missing,
+        },
         Err(WalkFailed::Unsafe(unsafe_)) => WorkDirVerdict::Unsafe(unsafe_),
         Err(WalkFailed::MakeFailed) => unreachable!("the read-only walk does not make directories"),
     }
 }
 
+fn may_make_entries_in(dir: &Path) -> bool {
+    use rustix::fs::{Access, access};
+
+    // access(2) uses this thread's real uid, gid and groups. work_dir_verdict_for
+    // walks only with the judged account's credentials, here or on its own thread.
+    access(dir, Access::WRITE_OK | Access::EXEC_OK).is_ok()
+}
+
 /// The file access of the account a judgement is for: its uid, its primary
-/// gid and its groups from the group database. A unit's own
-/// `SupplementaryGroups=` is not among them.
+/// gid and its supplementary groups. For an installed unit, the groups come
+/// from the group database and do not include the unit's `SupplementaryGroups=`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkDirAccess {
     /// The account's uid: the engine's.
@@ -135,33 +161,94 @@ pub struct WorkDirAccess {
     pub groups: Vec<u32>,
 }
 
+impl WorkDirAccess {
+    /// Reads this process's effective uid and gid and its supplementary groups.
+    ///
+    /// # Errors
+    ///
+    /// The process's groups could not be read.
+    pub fn this_process() -> Result<Self, String> {
+        use rustix::process::{getegid, geteuid, getgroups};
+
+        let mut groups: Vec<u32> = getgroups()
+            .map_err(|error| format!("getgroups failed: {error}"))?
+            .into_iter()
+            .map(|gid| gid.as_raw())
+            .collect();
+        groups.sort_unstable();
+        groups.dedup();
+        Ok(Self {
+            uid: geteuid().as_raw(),
+            gid: getegid().as_raw(),
+            groups,
+        })
+    }
+
+    /// Compares uid, gid and group sets, counting the primary gid in each set.
+    fn same_access(&self, other: &Self) -> bool {
+        let group_set = |access: &Self| {
+            let mut groups = access.groups.clone();
+            groups.push(access.gid);
+            groups.sort_unstable();
+            groups.dedup();
+            groups
+        };
+        self.uid == other.uid && self.gid == other.gid && group_set(self) == group_set(other)
+    }
+}
+
 /// [`work_dir_verdict`] with `access`'s file access, the access staging has
-/// in the engine (review r1 of #10575): a directory root may search but the
-/// engine may not reads unsafe here, as staging's own walk refuses it. Run as
-/// `access`'s account, the walk runs here. Run as root, it runs on a thread of
+/// in the engine. The walk runs here only if the real and effective IDs and
+/// group set match `access`. The same uid alone does not imply the same file
+/// access (review r2 of #10575). Otherwise, root runs the walk on a thread of
 /// its own that first takes `access`'s groups, gid and uid; on Linux these are
 /// the thread's own, so the rest of the process keeps root's, and the thread
 /// ends with the walk.
 ///
 /// # Errors
 ///
-/// This process is neither root nor `access`'s account, or the thread could
-/// not take `access`'s file access.
+/// This process is not root and does not have `access`'s file access, its
+/// groups could not be read, or the walk thread could not take that access.
 pub fn work_dir_verdict_for(
     work_dir: &Path,
     access: &WorkDirAccess,
 ) -> Result<WorkDirVerdict, String> {
-    let euid = rustix::process::geteuid().as_raw();
-    if euid == access.uid {
-        return Ok(work_dir_verdict(work_dir, access.uid));
+    use rustix::process::{getegid, geteuid, getgid, getuid};
+
+    let euid = geteuid().as_raw();
+    let egid = getegid().as_raw();
+    let real_ids_match = getuid().as_raw() == euid && getgid().as_raw() == egid;
+    if euid == 0 && (euid != access.uid || !real_ids_match) {
+        return walk_with_access(work_dir, access);
     }
-    if euid != 0 {
+    if euid != access.uid {
         return Err(format!(
-            "this process (uid {euid}) can take neither root's nor uid {}'s file access: run it as root or as that account",
+            "this process (uid {euid}) can take neither root's nor uid {}'s file access: \
+             run it as root or as that account",
             access.uid
         ));
     }
-    walk_with_access(work_dir, access)
+
+    let mine = WorkDirAccess::this_process()?;
+    if real_ids_match && mine.same_access(access) {
+        return Ok(work_dir_verdict(work_dir, access.uid));
+    }
+    if euid == 0 {
+        return walk_with_access(work_dir, access);
+    }
+    let ids_note = if real_ids_match {
+        ""
+    } else {
+        "; real ids differ from effective ones"
+    };
+    Err(format!(
+        "this process has uid {euid} but not its file access (gid {egid} and groups \
+         {mine:?}, not gid {gid} and groups {theirs:?}{ids_note}): run it as root, or \
+         as that account with its own groups",
+        mine = mine.groups,
+        gid = access.gid,
+        theirs = access.groups,
+    ))
 }
 
 #[cfg(target_os = "linux")]

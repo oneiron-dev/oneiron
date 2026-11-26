@@ -285,12 +285,7 @@ fn work_dir_check_account() -> Result<
 > {
     use crate::gpu_execution_node::jobs::staging::WorkDirAccess;
 
-    let euid = rustix::process::geteuid().as_raw();
-    let this_account = WorkDirAccess {
-        uid: euid,
-        gid: rustix::process::getegid().as_raw(),
-        groups: Vec::new(),
-    };
+    let this_account = WorkDirAccess::this_process()?;
     #[cfg(target_os = "linux")]
     let who = {
         use crate::gpu_execution_node::scope_systemd::{UNIT_TEMPLATE_PATH, safe_fs, unit_file};
@@ -308,7 +303,10 @@ fn work_dir_check_account() -> Result<
                 format!("the engine account {name} (uid {uid}, from {UNIT_TEMPLATE_PATH})"),
             ));
         }
-        format!("this account (uid {euid}; no job unit names the engine account)")
+        format!(
+            "this account (uid {}; no job unit names the engine account)",
+            this_account.uid
+        )
     };
     #[cfg(not(target_os = "linux"))]
     let who = "this account".to_owned();
@@ -323,7 +321,9 @@ fn work_dir_chain_line(
     who: &str,
     access: &crate::gpu_execution_node::jobs::staging::WorkDirAccess,
 ) -> Result<String, String> {
-    use crate::gpu_execution_node::jobs::staging::{WorkDirVerdict, work_dir_verdict_for};
+    use crate::gpu_execution_node::jobs::staging::{
+        WorkDirFault, WorkDirVerdict, work_dir_verdict_for,
+    };
 
     match work_dir_verdict_for(work_dir, access).map_err(|why| {
         format!(
@@ -335,15 +335,40 @@ fn work_dir_chain_line(
             "work_dir chain: {} passes for {who}",
             dir.display()
         )),
-        WorkDirVerdict::Missing { first_missing } => Ok(format!(
+        WorkDirVerdict::Missing {
+            first_missing,
+            engine_may_make: true,
+        } => Ok(format!(
             "work_dir chain: {} is not there yet (staging makes it); the path to it passes for {who}",
             first_missing.display()
         )),
-        WorkDirVerdict::Unsafe(u) => Err(format!(
-            "work_dir {}: {}, judged for {who}: staging refuses every job (work_dir_unsafe)",
-            u.path.display(),
-            u.fault
-        )),
+        WorkDirVerdict::Missing {
+            first_missing,
+            engine_may_make: false,
+        } => {
+            let parent = first_missing.parent().unwrap_or(Path::new("/")).display();
+            Err(format!(
+                "work_dir {}: {} is not there, and {who} may not make it in {} \
+                 (no write and search access): staging fails every job (checkout_failed); run \
+                 `execution-node install` as root to make it, or pick another work_dir",
+                work_dir.display(),
+                first_missing.display(),
+                parent
+            ))
+        }
+        WorkDirVerdict::Unsafe(u) => {
+            let failed = matches!(&u.fault, WorkDirFault::EngineMayNotWrite);
+            let outcome = if failed {
+                "staging fails every job (checkout_failed)"
+            } else {
+                "staging refuses every job (work_dir_unsafe)"
+            };
+            Err(format!(
+                "work_dir {}: {}, judged for {who}: {outcome}",
+                u.path.display(),
+                u.fault
+            ))
+        }
     }
 }
 
@@ -468,11 +493,8 @@ mod tests {
             fs::set_permissions(path, Permissions::from_mode(mode)).expect("test directory mode");
         }
         let euid = rustix::process::geteuid().as_raw();
-        let me = crate::gpu_execution_node::jobs::staging::WorkDirAccess {
-            uid: euid,
-            gid: rustix::process::getegid().as_raw(),
-            groups: Vec::new(),
-        };
+        let me = crate::gpu_execution_node::jobs::staging::WorkDirAccess::this_process()
+            .expect("this process's file access");
         let who = format!("this account (uid {euid})");
         let text = work_dir_chain_line(&open_work, &who, &me).expect_err("the open ancestor fails");
         assert!(text.contains(open.display().to_string().as_str()), "{text}");
@@ -482,5 +504,20 @@ mod tests {
         let text = work_dir_chain_line(&ok_work, &who, &me)
             .expect("the path including the temp root's ancestors passes for this account");
         assert!(text.contains("passes for"), "{text}");
+
+        if euid != 0 {
+            let shut = root.join("shut");
+            fs::create_dir(&shut).expect("make shut directory");
+            fs::set_permissions(&shut, Permissions::from_mode(0o555)).expect("shut directory mode");
+            let missing = work_dir_chain_line(&shut.join("work"), &who, &me)
+                .expect_err("the engine may not make the missing work dir");
+            assert!(missing.contains("checkout_failed"), "{missing}");
+            assert!(missing.contains("may not make it"), "{missing}");
+            let shut_text =
+                work_dir_chain_line(&shut, &who, &me).expect_err("the shut directory itself fails");
+            assert!(shut_text.contains("checkout_failed"), "{shut_text}");
+            fs::set_permissions(&shut, Permissions::from_mode(0o755))
+                .expect("restore shut directory mode");
+        }
     }
 }
