@@ -15,7 +15,14 @@
 //! its own that it killed is unreaped; a later connection's handler is a new
 //! process and does not see an earlier handler's killed query (FIX
 //! EXEC-NODE-PROBE-STUCK-QUERY-PER-HANDLER). The engine itself holds no
-//! process and waits no longer than its deadline.
+//! process and waits no longer than its deadline: it connects without
+//! blocking and waits out a full listen queue only until then.
+//!
+//! Where the socket file is there and no handler listens (`ECONNREFUSED`, a
+//! file the socket unit left behind) or the file went away (`ENOENT`), found
+//! at the connection before any request is sent, the probe runs the tool
+//! itself, as on a machine with no socket ([`DeviceQueryError::NoListener`]).
+//! A handler's refusal stays a refusal (review r1 of #10540).
 //!
 //! The root handler takes only a word of [`NvidiaSmiQuery`], a closed list,
 //! so the engine names no program and no argument. It reads the job account
@@ -43,6 +50,7 @@ use super::super::device::{
 };
 use super::super::node_settings::ExecutionNodeSettings;
 use super::control::{REQUEST_WAIT, read_line};
+use super::exec::connect_once;
 use super::safe_fs::{account, require_root_owned};
 use super::systemd_unit::tool_path;
 
@@ -58,6 +66,24 @@ const ANSWER_MARGIN: Duration = Duration::from_secs(5);
 
 /// The longest first line of a reply the engine reads.
 const REPLY_HEAD_MAX_BYTES: usize = 1024;
+
+/// How long the engine waits before it tries again to connect while the
+/// listener's queue is full.
+const CONNECT_RETRY: Duration = Duration::from_millis(20);
+
+/// Why the engine's device query did not answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceQueryError {
+    /// No handler listens at the socket: the file went away (`ENOENT`) or no
+    /// listener holds it (`ECONNREFUSED`), found at the connection, before
+    /// any request was sent. The probe then runs the tool itself
+    /// ([`super::super::device::NvidiaSmiRoute::JobControl`]).
+    NoListener { reason: String },
+    /// No connection or no answer in time, the handler refused (its reason:
+    /// the tool's failure, or a refusal of the request), or the reply is not
+    /// one this side reads.
+    Unavailable(GpuProbeError),
+}
 
 /// The request line for `query`: `device-query <word>\n`.
 #[must_use]
@@ -130,8 +156,12 @@ pub fn answer(
     program: &Path,
     account: &DeviceToolAccount,
 ) -> Result<Vec<u8>, String> {
-    let output = run_device_tool_as(program, &query.args(), Some(account))
-        .map_err(|error| error.to_string())?;
+    let output =
+        run_device_tool_as(program, &query.args(), Some(account)).map_err(|error| match error {
+            // The engine's probe names the class itself.
+            GpuProbeError::Unavailable { reason } => reason,
+            other => other.to_string(),
+        })?;
     if output.len() > DEVICE_QUERY_OUTPUT_MAX_BYTES {
         return Err(format!(
             "device_query_output_too_long: {} bytes, at most {DEVICE_QUERY_OUTPUT_MAX_BYTES}",
@@ -142,21 +172,38 @@ pub fn answer(
 }
 
 /// The engine's side of [`super::super::device::NvidiaSmiRoute::JobControl`]:
-/// asks the handler at
-/// `socket` for `query` and answers the tool's output, waiting at most
-/// [`GPU_QUERY_TIMEOUT`] and a margin.
+/// asks the handler at `socket` for `query` and answers the tool's output,
+/// all within [`GPU_QUERY_TIMEOUT`] and a margin ([`request_within`]).
 ///
 /// # Errors
 ///
-/// [`GpuProbeError::Unavailable`]: the socket is missing or did not answer
-/// in time, the handler refused (its reason: the tool's failure, or a
-/// refusal of the request), or the reply is not one this side reads.
-pub fn request(socket: &Path, query: NvidiaSmiQuery) -> Result<String, GpuProbeError> {
-    let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
+/// As [`request_within`].
+pub fn request(socket: &Path, query: NvidiaSmiQuery) -> Result<String, DeviceQueryError> {
+    request_within(socket, query, GPU_QUERY_TIMEOUT + ANSWER_MARGIN)
+}
+
+/// [`request`] with the whole exchange, the connection, the request line and
+/// the reply, within `wait` of the call. The availability answer holds the
+/// slot table while the probe runs, so a listener that takes no connection
+/// holds it no longer than `wait` either ([`connect_by`]; review r1 of
+/// #10540).
+///
+/// # Errors
+///
+/// [`DeviceQueryError::NoListener`] when no handler listens at `socket`;
+/// else [`DeviceQueryError::Unavailable`].
+pub fn request_within(
+    socket: &Path,
+    query: NvidiaSmiQuery,
+    wait: Duration,
+) -> Result<String, DeviceQueryError> {
+    let unavailable =
+        |reason: String| DeviceQueryError::Unavailable(GpuProbeError::Unavailable { reason });
     let fail = |error: std::io::Error| unavailable(format!("{}: {error}", socket.display()));
-    let deadline = Instant::now() + GPU_QUERY_TIMEOUT + ANSWER_MARGIN;
-    let mut stream = UnixStream::connect(socket).map_err(fail)?;
-    stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
+    let deadline = Instant::now() + wait;
+    let mut stream = connect_by(socket, deadline)?;
+    let write_wait = time_left(deadline).map_err(fail)?.min(REQUEST_WAIT);
+    stream.set_write_timeout(Some(write_wait)).map_err(fail)?;
     stream
         .write_all(render_request(query).as_bytes())
         .map_err(fail)?;
@@ -187,6 +234,62 @@ pub fn request(socket: &Path, query: NvidiaSmiQuery) -> Result<String, GpuProbeE
     let output = read_exactly(&mut stream, length, deadline).map_err(fail)?;
     String::from_utf8(output)
         .map_err(|error| unavailable(format!("the {} query's output: {error}", query.word())))
+}
+
+/// The connection to the handler at `socket`, made by `deadline`. Each try
+/// connects without blocking ([`connect_once`]), and a full listen queue
+/// (`EAGAIN`) is tried again until the deadline: a blocking connect would
+/// wait in the kernel with no bound while the listener takes no connection.
+///
+/// # Errors
+///
+/// [`DeviceQueryError::NoListener`] for `ENOENT` and `ECONNREFUSED`;
+/// [`DeviceQueryError::Unavailable`] for a queue still full at the deadline
+/// or any other failure.
+fn connect_by(socket: &Path, deadline: Instant) -> Result<UnixStream, DeviceQueryError> {
+    let unavailable =
+        |reason: String| DeviceQueryError::Unavailable(GpuProbeError::Unavailable { reason });
+    let address = rustix::net::SocketAddrUnix::new(socket)
+        .map_err(|error| unavailable(format!("{}: {error}", socket.display())))?;
+    loop {
+        let error = match connect_once(&address) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => error,
+        };
+        match error.raw_os_error() {
+            Some(libc::ENOENT | libc::ECONNREFUSED) => {
+                return Err(DeviceQueryError::NoListener {
+                    reason: format!(
+                        "no job control handler listens at {}: {error}",
+                        socket.display()
+                    ),
+                });
+            }
+            Some(libc::EAGAIN | libc::EINTR) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(unavailable(format!(
+                        "{}: the handler took no connection in time: {error}",
+                        socket.display()
+                    )));
+                }
+                std::thread::sleep(CONNECT_RETRY.min(left));
+            }
+            _ => return Err(unavailable(format!("{}: {error}", socket.display()))),
+        }
+    }
+}
+
+/// The time from now to `deadline`; an error once it has passed.
+fn time_left(deadline: Instant) -> std::io::Result<Duration> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "the query's deadline passed",
+        ));
+    }
+    Ok(left)
 }
 
 /// Exactly `length` bytes from `stream`, all by `deadline`.

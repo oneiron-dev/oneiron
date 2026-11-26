@@ -86,9 +86,12 @@ pub(super) const REQUEST_WAIT: Duration = Duration::from_secs(5);
 /// slow but successful start is not reported as no answer (review r4 R4-05).
 pub const CONTROL_ANSWER_WAIT: Duration = Duration::from_secs(25);
 
-/// Whether a job control socket listens at `path` and this process may
+/// Whether a job control socket file is at `path` and this process may
 /// connect to it: it may write to the socket file (the engine's group, or
-/// root). The socket unit removes the file when it stops (`RemoveOnStop=yes`).
+/// root). The socket unit removes the file when it stops (`RemoveOnStop=yes`);
+/// a file left behind with no listener is found at the connection, and the
+/// GPU probe then runs its tool itself
+/// ([`super::device_query::DeviceQueryError::NoListener`]).
 #[must_use]
 pub fn control_socket_usable(path: &Path) -> bool {
     use std::os::unix::fs::FileTypeExt as _;

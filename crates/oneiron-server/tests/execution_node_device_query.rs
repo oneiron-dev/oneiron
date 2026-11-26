@@ -10,6 +10,10 @@
 //! account is this process's own uid and gid under its own name; the uid
 //! switch itself is std's, proven on the field host by T40's engine probe
 //! check (`check_device_handoff.sh --engine-account`).
+//!
+//! Review r1 of #10540: the engine's connection is bounded by the query's
+//! deadline, a socket file no handler listens on leaves the query to the
+//! tool run here, and a refused query answers the driver's own words.
 #![cfg(target_os = "linux")]
 
 use std::io::{BufRead as _, BufReader, Write as _};
@@ -17,7 +21,9 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
+use oneiron_server::gpu_execution_node::scope_systemd::device_query::DeviceQueryError;
 use oneiron_server::gpu_execution_node::scope_systemd::{control, device_query};
 use oneiron_server::gpu_execution_node::{
     DeviceToolAccount, GpuProbeError, NvidiaSmiQuery, NvidiaSmiRoute, parse_compute_process_lines,
@@ -26,6 +32,8 @@ use oneiron_server::gpu_execution_node::{
 
 const JOB_ACCOUNT: &str = "oneiron-job-standin";
 const CARD: &str = "GPU-cb30cb3d-5547-c5ae-4990-85433256f138";
+/// What NVML said on mel when the engine's account ran the tool.
+const NVML_REFUSAL: &str = "Failed to initialize NVML: Insufficient Permissions";
 
 fn own_ids() -> (u32, u32) {
     (
@@ -43,34 +51,35 @@ fn job_account() -> DeviceToolAccount {
     }
 }
 
-/// An `nvidia-smi` that opens the card only as the job account. One file for
-/// every test, written before any of them starts a process: a script written
-/// while another thread forks can be held open for writing in that child and
-/// refuse its own exec (ETXTBSY).
-fn standin_nvidia_smi() -> PathBuf {
-    static STANDIN: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
-    STANDIN
-        .get_or_init(|| {
-            let dir = tempfile::tempdir().expect("tempdir");
-            let path = write_standin(dir.path());
-            (dir, path)
-        })
-        .1
-        .clone()
+/// The stand-in `nvidia-smi`s. One directory for every test, written before
+/// any of them starts a process: a script written while another thread
+/// forks can be held open for writing in that child and refuse its own exec
+/// (ETXTBSY).
+struct Standins {
+    /// Opens the card only as the job account: a card after the hand-over.
+    job_account_only: PathBuf,
+    /// Opens the card for whoever runs it: a card before the hand-over.
+    before_hand_over: PathBuf,
+    /// Refuses on its output, as NVML may, after a flood of error output
+    /// past any pipe's buffer.
+    refusing_loudly: PathBuf,
 }
 
-fn write_standin(dir: &Path) -> PathBuf {
+fn standins() -> &'static Standins {
+    static STANDINS: OnceLock<(tempfile::TempDir, Standins)> = OnceLock::new();
+    &STANDINS
+        .get_or_init(|| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let standins = write_standins(dir.path());
+            (dir, standins)
+        })
+        .1
+}
+
+fn write_standins(dir: &Path) -> Standins {
     let (uid, gid) = own_ids();
-    let path = dir.join("nvidia-smi");
-    std::fs::write(
-        &path,
-        format!(
-            r#"#!/bin/sh
-if [ "$USER" != "{JOB_ACCOUNT}" ] || [ "$LOGNAME" != "{JOB_ACCOUNT}" ] || [ "$(id -u)" != "{uid}" ] || [ "$(id -g)" != "{gid}" ]; then
-  echo "Failed to initialize NVML: Insufficient Permissions" >&2
-  exit 4
-fi
-case "$1 $2" in
+    let answers = format!(
+        r#"case "$1 $2" in
   "--query-gpu=uuid,name,memory.total --format=csv,noheader,nounits")
     echo "{CARD}, NVIDIA GeForce RTX 4090, 24564" ;;
   "--query-compute-apps=gpu_uuid,pid --format=csv,noheader,nounits") ;;
@@ -79,9 +88,33 @@ case "$1 $2" in
   *) echo "unknown query $*" >&2; exit 2 ;;
 esac
 "#
-        ),
-    )
-    .expect("write the stand-in");
+    );
+    let job_account_only = format!(
+        r#"#!/bin/sh
+if [ "$USER" != "{JOB_ACCOUNT}" ] || [ "$LOGNAME" != "{JOB_ACCOUNT}" ] || [ "$(id -u)" != "{uid}" ] || [ "$(id -g)" != "{gid}" ]; then
+  echo "{NVML_REFUSAL}" >&2
+  exit 4
+fi
+{answers}"#
+    );
+    let before_hand_over = format!("#!/bin/sh\n{answers}");
+    let refusing_loudly = format!(
+        r#"#!/bin/sh
+echo "{NVML_REFUSAL}"
+head -c 1048576 /dev/zero | tr '\0' x >&2
+exit 4
+"#
+    );
+    Standins {
+        job_account_only: write_script(dir, "nvidia-smi", &job_account_only),
+        before_hand_over: write_script(dir, "nvidia-smi-before-hand-over", &before_hand_over),
+        refusing_loudly: write_script(dir, "nvidia-smi-refusing-loudly", &refusing_loudly),
+    }
+}
+
+fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, body).expect("write the stand-in");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     path
 }
@@ -119,11 +152,12 @@ fn serve_device_queries(
 fn after_the_hand_over_the_probe_reads_the_cards_through_the_job_control_socket_as_the_job_account()
 {
     let dir = tempfile::tempdir().expect("tempdir");
-    let program = standin_nvidia_smi();
+    let program = standins().job_account_only.clone();
     let socket = dir.path().join("job-control.sock");
     let handler = serve_device_queries(&socket, program.clone(), job_account(), 3);
     let route = NvidiaSmiRoute::JobControl {
         socket: socket.clone(),
+        fallback_program: program.clone(),
     };
 
     let devices = parse_device_lines(
@@ -165,24 +199,177 @@ fn after_the_hand_over_the_probe_reads_the_cards_through_the_job_control_socket_
 }
 
 #[test]
+fn a_refused_query_answers_the_drivers_own_words_on_one_bounded_line() {
+    // NVML's reason on the error output reaches the engine's error, as it
+    // reaches the readiness check's drain.
+    let refused_here = NvidiaSmiRoute::Direct {
+        program: standins().job_account_only.clone(),
+    };
+    match refused_here.query(NvidiaSmiQuery::Devices) {
+        Err(GpuProbeError::Unavailable { reason }) => assert!(
+            reason.ends_with(&format!("exited with exit status: 4: {NVML_REFUSAL}")),
+            "{reason}"
+        ),
+        other => panic!("the engine's own run is refused, got {other:?}"),
+    }
+    // On the output, after an error output past any pipe's buffer: the query
+    // is read to its end, not killed at the deadline, and its error carries
+    // a bounded part of each.
+    let loud = NvidiaSmiRoute::Direct {
+        program: standins().refusing_loudly.clone(),
+    };
+    let started = Instant::now();
+    match loud.query(NvidiaSmiQuery::Devices) {
+        Err(GpuProbeError::Unavailable { reason }) => {
+            assert!(reason.contains("exited with exit status: 4: x"), "{reason}");
+            assert!(reason.ends_with(&format!(" {NVML_REFUSAL}")), "{reason}");
+            assert!(reason.len() < 700, "{} bytes: {reason}", reason.len());
+            assert!(!reason.contains('\n'), "{reason}");
+        }
+        other => panic!("a refusal on the output is refused, got {other:?}"),
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(9),
+        "the loud refusal was read to its end, in {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn a_query_the_card_refuses_reaches_the_probe_as_unavailable_with_the_tools_reason() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let program = standin_nvidia_smi();
     let socket = dir.path().join("job-control.sock");
     let mut not_the_job_account = job_account();
     not_the_job_account.name = "oneiron".to_owned();
-    let handler = serve_device_queries(&socket, program, not_the_job_account, 1);
-    match (NvidiaSmiRoute::JobControl { socket }).query(NvidiaSmiQuery::Devices) {
+    let handler = serve_device_queries(
+        &socket,
+        standins().job_account_only.clone(),
+        not_the_job_account,
+        1,
+    );
+    // A handler's refusal stays a refusal: the tool run here, which would
+    // answer, is not asked.
+    let route = NvidiaSmiRoute::JobControl {
+        socket,
+        fallback_program: standins().before_hand_over.clone(),
+    };
+    match route.query(NvidiaSmiQuery::Devices) {
         Err(GpuProbeError::Unavailable { reason }) => {
             assert!(
                 reason.starts_with("job control refused the nvidia-devices query: "),
                 "{reason}"
             );
-            assert!(reason.contains("exited with exit status: 4"), "{reason}");
+            assert!(
+                reason.ends_with(&format!("exited with exit status: 4: {NVML_REFUSAL}")),
+                "{reason}"
+            );
+            // The handler's reason does not name the error's class again.
+            assert!(!reason.contains("gpu_probe.unavailable"), "{reason}");
         }
         other => panic!("a refused query is unavailable, got {other:?}"),
     }
     handler.join().expect("the handler");
+}
+
+#[test]
+fn a_socket_file_no_handler_listens_on_leaves_the_query_to_the_tool_run_here() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // A file the socket unit left behind: the listener is gone, its file is
+    // not, and it still looks usable.
+    let socket = dir.path().join("job-control.sock");
+    drop(UnixListener::bind(&socket).expect("bind"));
+    assert!(control::control_socket_usable(&socket));
+    let route = NvidiaSmiRoute::JobControl {
+        socket: socket.clone(),
+        fallback_program: standins().before_hand_over.clone(),
+    };
+    let devices = parse_device_lines(
+        &route
+            .query(NvidiaSmiQuery::Devices)
+            .expect("the devices from the tool run here"),
+    )
+    .expect("readable device lines");
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].device_id, CARD);
+    // The file went away between the route's choice and the connection.
+    let gone = NvidiaSmiRoute::JobControl {
+        socket: dir.path().join("gone.sock"),
+        fallback_program: standins().before_hand_over.clone(),
+    };
+    assert!(
+        gone.query(NvidiaSmiQuery::Samples).is_ok(),
+        "the samples from the tool run here"
+    );
+    // After the hand-over the tool run here is refused too, and the error
+    // names both.
+    let after = NvidiaSmiRoute::JobControl {
+        socket: socket.clone(),
+        fallback_program: standins().job_account_only.clone(),
+    };
+    match after.query(NvidiaSmiQuery::Devices) {
+        Err(GpuProbeError::Unavailable { reason }) => {
+            assert!(
+                reason.starts_with(&format!(
+                    "no job control handler listens at {}: ",
+                    socket.display()
+                )),
+                "{reason}"
+            );
+            assert!(reason.contains("; run here: "), "{reason}");
+            assert!(reason.ends_with(NVML_REFUSAL), "{reason}");
+        }
+        other => panic!("both refusals, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadline() {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("job-control.sock");
+    let address = SocketAddrUnix::new(&socket).expect("the socket's address");
+    // A listener with no accept backlog that never accepts, its queue full.
+    let listener =
+        rustix::net::socket(AddressFamily::UNIX, SocketType::STREAM, None).expect("a socket");
+    rustix::net::bind(&listener, &address).expect("bind");
+    rustix::net::listen(&listener, 0).expect("listen with no backlog");
+    let mut waiting = Vec::new();
+    loop {
+        let client = rustix::net::socket_with(
+            AddressFamily::UNIX,
+            SocketType::STREAM,
+            SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
+            None,
+        )
+        .expect("a socket");
+        match rustix::net::connect(&client, &address) {
+            Ok(()) => waiting.push(client),
+            Err(rustix::io::Errno::AGAIN) => break,
+            Err(other) => panic!("filling the queue: {other}"),
+        }
+        assert!(waiting.len() < 64, "the queue never filled");
+    }
+    let wait = Duration::from_secs(1);
+    let (answered, answer) = std::sync::mpsc::channel();
+    let asked = socket.clone();
+    std::thread::spawn(move || {
+        let _ = answered.send(device_query::request_within(
+            &asked,
+            NvidiaSmiQuery::Devices,
+            wait,
+        ));
+    });
+    match answer.recv_timeout(wait + Duration::from_secs(5)) {
+        Ok(Err(DeviceQueryError::Unavailable(GpuProbeError::Unavailable { reason }))) => {
+            assert!(
+                reason.contains("the handler took no connection in time"),
+                "{reason}"
+            );
+        }
+        Ok(other) => panic!("a full queue is no answer in time, got {other:?}"),
+        Err(_) => panic!("the probe still waited to connect 5 s past its 1 s deadline"),
+    }
+    drop((waiting, listener));
 }
 
 #[test]

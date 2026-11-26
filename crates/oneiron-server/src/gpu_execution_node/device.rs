@@ -31,6 +31,16 @@ pub const GPU_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often a running query is checked for its end.
 const QUERY_POLL: Duration = Duration::from_millis(10);
 
+/// How much of a query's error output is kept; the rest is read and
+/// dropped, so a query that writes much never blocks on a full pipe.
+const QUERY_STDERR_KEEP_BYTES: usize = 4096;
+
+/// The most of each of a failed query's error output and output its error
+/// carries (NVML's `Failed to initialize NVML: Insufficient Permissions`
+/// with room), so the reason fits the job control socket's reply line and
+/// the drain file's one line.
+const QUERY_DIAGNOSTIC_PART_MAX_BYTES: usize = 256;
+
 /// One compute process the driver reports on a card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuComputeProcess {
@@ -200,14 +210,22 @@ pub enum NvidiaSmiRoute {
     /// each query as the job account. After the device hand-over (runbook
     /// 1.9 step 3, T40) only the job account's group opens the card's
     /// files, and the engine's account cannot open them, by design (FIX
-    /// EXEC-NODE-PROBE-AFTER-HANDOVER).
-    JobControl { socket: PathBuf },
+    /// EXEC-NODE-PROBE-AFTER-HANDOVER). Where no handler listens at `socket`
+    /// (the file went away, or no listener holds it), found before any
+    /// request is sent, `fallback_program` runs here as with
+    /// [`Self::Direct`]; a handler's refusal stays a refusal (review r1 of
+    /// #10540).
+    JobControl {
+        socket: PathBuf,
+        fallback_program: PathBuf,
+    },
 }
 
 impl NvidiaSmiRoute {
-    /// This machine's route now: through the job control socket while it
-    /// listens and this process may connect to it (the engine's account, or
-    /// root), else [`NVIDIA_SMI`] run here.
+    /// This machine's route now: through the job control socket while its
+    /// file is there and this process may connect to it (the engine's
+    /// account, or root), else [`NVIDIA_SMI`] run here; through the socket,
+    /// [`NVIDIA_SMI`] runs here too where no handler listens.
     #[must_use]
     pub fn of_this_machine() -> Self {
         #[cfg(target_os = "linux")]
@@ -216,6 +234,7 @@ impl NvidiaSmiRoute {
             if control_socket_usable(Path::new(CONTROL_SOCKET_PATH)) {
                 return Self::JobControl {
                     socket: PathBuf::from(CONTROL_SOCKET_PATH),
+                    fallback_program: PathBuf::from(NVIDIA_SMI),
                 };
             }
         }
@@ -230,12 +249,23 @@ impl NvidiaSmiRoute {
     ///
     /// [`GpuProbeError::Unavailable`] when the tool fails, does not answer in
     /// time, or the job control socket's handler refuses or does not answer.
+    /// A tool run here after no handler listened names that too.
     pub fn query(&self, query: NvidiaSmiQuery) -> Result<String, GpuProbeError> {
         match self {
             Self::Direct { program } => run_device_tool_as(program, &query.args(), None),
             #[cfg(target_os = "linux")]
-            Self::JobControl { socket } => {
-                super::scope_systemd::device_query::request(socket, query)
+            Self::JobControl {
+                socket,
+                fallback_program,
+            } => {
+                use super::scope_systemd::device_query::{DeviceQueryError, request};
+                match request(socket, query) {
+                    Ok(output) => Ok(output),
+                    Err(DeviceQueryError::Unavailable(error)) => Err(error),
+                    Err(DeviceQueryError::NoListener { reason }) => {
+                        run_here_after_no_listener(fallback_program, query, &reason)
+                    }
+                }
             }
             #[cfg(not(target_os = "linux"))]
             Self::JobControl { .. } => Err(GpuProbeError::Unavailable {
@@ -243,6 +273,22 @@ impl NvidiaSmiRoute {
             }),
         }
     }
+}
+
+/// [`NvidiaSmiRoute::Direct`]'s run of `program` where no job control
+/// handler listened (`no_listener`, the reason), which a failure names too.
+#[cfg(target_os = "linux")]
+fn run_here_after_no_listener(
+    program: &Path,
+    query: NvidiaSmiQuery,
+    no_listener: &str,
+) -> Result<String, GpuProbeError> {
+    run_device_tool_as(program, &query.args(), None).map_err(|error| match error {
+        GpuProbeError::Unavailable { reason } => GpuProbeError::Unavailable {
+            reason: format!("{no_listener}; run here: {reason}"),
+        },
+        other => other,
+    })
 }
 
 /// The account a device tool query runs as when root runs it for the
@@ -423,6 +469,12 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
 /// runs as that account: its uid, its own group, no supplementary group
 /// (std clears them when root sets the uid), and an environment of its own
 /// with nothing of root's.
+///
+/// A query that exits nonzero answers its own words in the error: its error
+/// output (the first [`QUERY_STDERR_KEEP_BYTES`] kept, read the same way as
+/// the output) and its output, each cut to
+/// [`QUERY_DIAGNOSTIC_PART_MAX_BYTES`] ([`query_diagnostic`]), so NVML's
+/// reason reaches the readiness check's drain (review r1 of #10540).
 pub(crate) fn run_device_tool_as(
     program: &Path,
     args: &[&str],
@@ -440,7 +492,7 @@ pub(crate) fn run_device_tool_as(
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
     #[cfg(unix)]
     if let Some(account) = account {
         std::os::unix::process::CommandExt::uid(&mut command, account.uid);
@@ -464,17 +516,21 @@ pub(crate) fn run_device_tool_as(
     let mut child = command
         .spawn()
         .map_err(|error| unavailable(format!("{program_name} did not start: {error}")))?;
-    let Some(mut stdout) = child.stdout.take() else {
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         abandon(child);
         return Err(unavailable(format!("{program_name} gave no output pipe")));
     };
     #[cfg(unix)]
-    if let Err(error) = rustix::io::ioctl_fionbio(&stdout, true) {
+    if let Err(error) = rustix::io::ioctl_fionbio(&stdout, true)
+        .and_then(|()| rustix::io::ioctl_fionbio(&stderr, true))
+    {
         abandon(child);
         return Err(unavailable(format!(
             "{program_name}'s output pipe could not be read without blocking: {error}"
         )));
     }
+    let mut stdout = QueryPipe::new(stdout, usize::MAX);
+    let mut stderr = QueryPipe::new(stderr, QUERY_STDERR_KEEP_BYTES);
     #[cfg(not(unix))]
     {
         abandon(child);
@@ -483,36 +539,22 @@ pub(crate) fn run_device_tool_as(
         )));
     }
     let deadline = Instant::now() + GPU_QUERY_TIMEOUT;
-    let mut output = Vec::new();
     let mut chunk = [0_u8; 4096];
-    let mut ended = false;
     let mut exited = None;
     let status = loop {
-        let mut moved = false;
-        if !ended {
-            match stdout.read(&mut chunk) {
-                Ok(0) => ended = true,
-                Ok(n) => {
-                    output.extend_from_slice(&chunk[..n]);
-                    moved = true;
-                }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                    ) => {}
-                Err(error) => {
-                    drop(stdout);
-                    abandon(child);
-                    return Err(unavailable(format!("{program_name}'s output: {error}")));
-                }
+        let moved = match (stdout.read_now(&mut chunk), stderr.read_now(&mut chunk)) {
+            (Ok(out), Ok(err)) => out || err,
+            (Err(error), _) | (_, Err(error)) => {
+                drop((stdout, stderr));
+                abandon(child);
+                return Err(unavailable(format!("{program_name}'s output: {error}")));
             }
-        }
+        };
         if exited.is_none() {
             match child.try_wait() {
                 Ok(now) => exited = now,
                 Err(error) => {
-                    drop(stdout);
+                    drop((stdout, stderr));
                     abandon(child);
                     return Err(unavailable(format!(
                         "{program_name} could not be waited on: {error}"
@@ -520,13 +562,16 @@ pub(crate) fn run_device_tool_as(
                 }
             }
         }
-        if ended && let Some(status) = exited {
+        // The output's end and the exit decide, as before the error output
+        // was read: a helper that keeps only the error pipe open holds
+        // nothing.
+        if stdout.ended() && let Some(status) = exited {
             break status;
         }
         if Instant::now() >= deadline {
-            // Closing the read end first: no write end left open, by the
+            // Closing the read ends first: no write end left open, by the
             // query or a helper it started, holds anything of this server.
-            drop(stdout);
+            drop((stdout, stderr));
             abandon(child);
             return Err(unavailable(format!(
                 "{program_name} did not answer within {} s",
@@ -537,12 +582,95 @@ pub(crate) fn run_device_tool_as(
             std::thread::sleep(QUERY_POLL);
         }
     };
-    let text = String::from_utf8(output)
-        .map_err(|error| unavailable(format!("{program_name}'s output: {error}")))?;
     if !status.success() {
-        return Err(unavailable(format!("{program_name} exited with {status}")));
+        // What the query wrote before its exit is in the pipe now.
+        while Instant::now() < deadline && matches!(stderr.read_now(&mut chunk), Ok(true)) {}
+        let diagnostic = query_diagnostic(&stderr.kept, &stdout.kept);
+        return Err(unavailable(if diagnostic.is_empty() {
+            format!("{program_name} exited with {status}")
+        } else {
+            format!("{program_name} exited with {status}: {diagnostic}")
+        }));
     }
-    Ok(text)
+    String::from_utf8(stdout.kept)
+        .map_err(|error| unavailable(format!("{program_name}'s output: {error}")))
+}
+
+/// One output pipe of a running query, read without blocking: its first
+/// `keep` bytes are kept, and the rest is read and dropped.
+struct QueryPipe<P> {
+    /// `None` once the pipe has ended.
+    pipe: Option<P>,
+    kept: Vec<u8>,
+    keep: usize,
+}
+
+impl<P: Read> QueryPipe<P> {
+    fn new(pipe: P, keep: usize) -> Self {
+        Self {
+            pipe: Some(pipe),
+            kept: Vec::new(),
+            keep,
+        }
+    }
+
+    /// Reads what the pipe holds now, once: whether any byte came.
+    fn read_now(&mut self, chunk: &mut [u8]) -> std::io::Result<bool> {
+        let Some(pipe) = self.pipe.as_mut() else {
+            return Ok(false);
+        };
+        match pipe.read(chunk) {
+            Ok(0) => {
+                self.pipe = None;
+                Ok(false)
+            }
+            Ok(read) => {
+                let room = self.keep.saturating_sub(self.kept.len());
+                self.kept.extend_from_slice(&chunk[..read.min(room)]);
+                Ok(true)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn ended(&self) -> bool {
+        self.pipe.is_none()
+    }
+}
+
+/// A failed query's own words, on one line: its error output, then its
+/// output, each from its first [`QUERY_STDERR_KEEP_BYTES`], with control
+/// characters as spaces, every run of whitespace one space, and cut at a
+/// character to [`QUERY_DIAGNOSTIC_PART_MAX_BYTES`]; empty when it wrote
+/// neither.
+fn query_diagnostic(stderr: &[u8], stdout: &[u8]) -> String {
+    [stderr, stdout]
+        .into_iter()
+        .map(|bytes| {
+            let bytes = &bytes[..bytes.len().min(QUERY_STDERR_KEEP_BYTES)];
+            let text: String = String::from_utf8_lossy(bytes)
+                .chars()
+                .map(|character| if character.is_control() { ' ' } else { character })
+                .collect();
+            let mut part = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut end = part.len().min(QUERY_DIAGNOSTIC_PART_MAX_BYTES);
+            while !part.is_char_boundary(end) {
+                end -= 1;
+            }
+            part.truncate(end);
+            part
+        })
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Kills every process left in the query's process group, so the pipe its
