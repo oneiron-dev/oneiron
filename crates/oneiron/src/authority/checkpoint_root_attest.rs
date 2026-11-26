@@ -134,10 +134,14 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// `vault`, the one the entry is signed on. A signature made over
     /// another fold proves nothing: the vault's fold takes a proof only from
     /// a key it trusts at the entry's parent state.
+    ///
+    /// The caller hands the ground the proof is signed on. The signer does
+    /// not read it. A call with no ground does not compile.
     fn sign_owner_proof(
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>>;
     /// Whether the root proves an owner act on `vault` at this moment, by
@@ -158,10 +162,16 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// checked at this call with the roster read from `fold`: a key that
     /// rests under a device PIN proves an ask word only inside the window a
     /// right PIN opened.
+    ///
+    /// The caller hands the ground the proof is signed on, as for an owner
+    /// act's proof: the person at this device, checked at the importance of
+    /// the act the word approves (row OWNER-CONFIRM-SHEET). The signer does
+    /// not read it. A call with no ground does not compile.
     fn sign_ask_word_proof(
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>>;
     /// Whether it signs as a host's own root, whose roster row carries the
@@ -208,6 +218,7 @@ impl CheckpointRootSigner for HostSlipIssuer {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         let _ = (vault, fold);
@@ -223,6 +234,7 @@ impl CheckpointRootSigner for HostSlipIssuer {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         let _ = (vault, fold);

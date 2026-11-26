@@ -116,6 +116,7 @@ pub(super) fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)>
                 passed: 0,
                 skipped: PAST,
                 estimated_tokens_saved: 30,
+                read_message_rows: false,
             };
             vault
                 .with_write_txn(|wtxn| {

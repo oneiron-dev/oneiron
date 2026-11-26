@@ -153,7 +153,10 @@ pub use resident_for_human::run_free_time_for_human;
 pub(crate) use resources::extraction_routing_door;
 #[cfg(oneiron_test_support)]
 pub(crate) use resources::open_conflict_door;
-pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
+pub use resources::{
+    NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant,
+    nightly_link_grant_effect_digest,
+};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
 pub use retained_keep::{ConflictSettleOutcome, StagedKeep};
@@ -161,7 +164,8 @@ pub use revert::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
 };
 pub(crate) use revert::{
-    dreamer_changes_in_txn, revert_authored_change_in_txn, revert_dreamer_change_in_txn,
+    dreamer_changes_in_txn, restore_replaced_claim_in_txn, revert_authored_change_in_txn,
+    revert_dreamer_change_in_txn,
 };
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
@@ -180,8 +184,9 @@ pub use settle::{
     SettledConflict,
 };
 pub(crate) use settle::{
-    apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
-    revert_settlement_in_txn, settled_answers_in_txn, settlement_revert_lifts_restriction_in,
+    MemberRestore, apply_settlement_in_txn, marker_ids, open_conflict_in_txn,
+    open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
+    settlement_revert_lifts_restriction_in,
 };
 pub use sieve_ports::{
     ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,
@@ -281,7 +286,7 @@ pub(crate) use self::{
     note_text::note_text_fingerprint_for_test,
     scope_summary_attempt::{
         arc_composition_params_hash_for_test, arc_parts_params_hash_for_test,
-        session_pages_params_hash_for_test,
+        correction_overflow_for_test, session_pages_params_hash_for_test,
     },
     turn_text::attribution_hash_for_test,
 };

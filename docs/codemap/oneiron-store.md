@@ -45,7 +45,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export.rs` | src | s | 9 mod | — | Store-layer modules of core `batch::export`; core re-exports each one at its old path |
 | `src/batch/export/agent_knowledge_format.rs` | src | s | 1 enum · 1 const | KnowledgeFormat | The form of an agent pack's selected-knowledge facet (`knowledge/selected.json`): which of its two encodings… |
 | `src/batch/export/archive_types.rs` | src | s | 5 struct · 3 enum · 4 fn · 5 const | ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ArchiveSecretCustody, ExportCut, ExportDiaryHold, ExportDiaryHoldReason, ExportDiaryRead | The whole-vault archive (OF-222): one ZIP holding `manifest.json`, one JSONL file per record kind under… |
-| `src/batch/export/bundle_types.rs` | src | s | 2 struct · 6 enum | AgentBundleOmission, BundleOmissionReason, ExportBundleOmission, ExportImportOmission, ExportImportRefusal, ExportSourceBoundary, ImportOmissionReason, ImportRefusalReason | Portable source files and typed bundle facets |
+| `src/batch/export/bundle_types.rs` | src | s | 3 struct · 6 enum | AgentBundleOmission, BundleOmissionReason, ExportBundleOmission, ExportImportOmission, ExportImportRefusal, ExportSourceBoundary, ImportOmissionReason, ImportRefusalReason +1 | Portable source files and typed bundle facets |
 | `src/batch/export/credential_filter.rs` | src | s | — | — | Credential filtering at memory serve and export serialization boundaries |
 | `src/batch/export/export_authority.rs` | src | s | 3 struct · 2 enum · 6 fn · 4 const | AuthorityChainIdentity, ExportAuthorityManifest, VaultImportClassification, VaultImportMismatch, VaultImportReceipt | Export authority digests, import classification, and label validation |
 | `src/batch/export/export_manifest.rs` | src | s | 1 struct · 4 fn · 2 const | ExportSecretsNulledManifest | Whole-vault export manifest artifact types and stanza impls |
@@ -104,7 +104,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign.rs` | src | s | 7 mod | — | Store-layer modules of core `blob_artifact::esign`; core re-exports each one at its old path |
 | `src/blob_artifact/esign/dispatch_key.rs` | src | s | 2 const | — | FIX 6424 (Engine 10-20 20:4x): an e-sign act called with no retry key is keyed on its own call |
 | `src/blob_artifact/esign/document_view.rs` | src | s | 1 enum | EsignSealTrail | The owner's view of one signing document on `vault.esign.get` (FIX 6481) and of its seal on… |
-| `src/blob_artifact/esign/model.rs` | src | s | 8 struct · 10 enum · 2 fn · 2 const | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignAuthenticationMethod, EsignField, EsignItem +10 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
+| `src/blob_artifact/esign/model.rs` | src | s | 9 struct · 10 enum · 2 fn · 2 const | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignAuthenticationMethod, EsignCheckInDecision, EsignField +11 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
 | `src/blob_artifact/esign/render.rs` | src | s | 1 mod | — | Store-layer modules of core `blob_artifact::esign::render`; core re-exports each one at its old path |
 | `src/blob_artifact/esign/render/admitted.rs` | src | s | 1 struct · 1 trait · 1 fn | InspectionMemory, StageCount | A PDF inspection's memory, admitted by its host before the parse allocates it (FIX 8065) |
 | `src/blob_artifact/esign/sealer.rs` | src | s | 7 struct · 4 enum · 2 fn | EsignSealRequest, EsignSealed, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade, SealDegradeReason +3 | The seal port: how the engine reaches a PAdES sealer it does not link |
@@ -157,7 +157,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction.rs` | src | s | 2 mod | — | Store-layer modules of core `compaction`; core re-exports each one at its old path |
 | `src/compaction/gate.rs` | src | s | 3 struct · 3 enum · 8 fn | CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionSuppression | The deterministic pre-swap gate (agent-runtime-v1 §d7) |
 | `src/compaction/host_request.rs` | src | s | 1 struct | HostCompactResult | Host compaction request and result records |
-| `src/config.rs` | src | m | 3 struct · 7 fn · 5 mod · 2 re-export | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
+| `src/config.rs` | src | m | 3 struct · 8 fn · 5 mod · 2 re-export | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `src/config/bm25.rs` | src | s | 3 struct · 3 enum · 11 fn · 2 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy, NoteTextField | Rank-profile config: field/channel params, formula, recency, defaults |
 | `src/config/community_graph/codec.rs` | src | s | 1 struct · 9 fn | CommunitySnapshot | Snapshot and membership encode/decode with strict guards |
 | `src/config/community_graph/detection.rs` | src | m | 1 struct · 9 fn | Graph | Graph projection and Leiden/CPM partition detection |
@@ -279,7 +279,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/home_handoff_custody/seal.rs` | src | s | 3 fn · 4 const | — | The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit… |
 | `src/host_issuer_seed.rs` | src | s | 2 const | — | Independent host-issuer seed format and derivation label |
 | `src/housekeeping_report.rs` | src | m | 4 struct · 2 enum · 6 fn | HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork | What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports |
-| `src/housekeeping_schedule.rs` | src | s | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
+| `src/housekeeping_schedule.rs` | src | m | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
 | `src/human_task.rs` | src | s | 1 mod | — | Store-layer modules of core `human_task`; core re-exports each one at its old path |
 | `src/human_task/storage.rs` | src | s | 14 fn · 15 const | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
@@ -326,7 +326,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 2 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
 | `src/merge_queue/types.rs` | src | s | 8 struct · 3 enum · 7 fn | BatchState, CheckReport, EffectIntent, LandingPermit, MergeFile, MergeFileExpected, MergeProposal, MergeQueuePointers +3 | Persisted queue records and sealed landing/check boundaries |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
-| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 59 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 60 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
 | `src/model_decision/policy.rs` | src | m | 8 struct · 2 enum · 19 fn · 1 type · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +2 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
@@ -589,7 +589,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/window_protocol.rs` | src | s | 2 enum · 1 fn · 2 const | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/window_rows.rs` | src | s | 3 struct · 1 enum · 2 const · 1 re-export | CarrierRemoval, HexSeqKey, WindowUpdateKey, WindowUpdateSeq | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 8 fn · 6 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body.rs` | src | m | 1 struct · 2 enum · 9 fn · 7 const · 1 re-export | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body/metadata.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | WitnessMetadataMeasure | MESSAGE metadata: the nesting and reserved-key walk, and the size measure against the `[limits]` rows |
 | `src/workflow_definition.rs` | src | s | 1 struct · 6 fn | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/world_registration_keys.rs` | src | s | 2 const | — | Storage keys for foreign-world registration and stale markers |

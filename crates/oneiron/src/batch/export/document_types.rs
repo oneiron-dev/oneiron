@@ -111,6 +111,9 @@ pub enum RetainedSideHeldBackReason {
     InconsistentCompanion,
     /// An operational reference has no portable local binding.
     NonPortableReference,
+    /// The source row is a choice about the install that exported it (a `sync: install`
+    /// setting row), and the archive is not this install's own export.
+    InstallChoice,
     /// The existing archive credential predicate withholds the source bytes.
     Credential,
 }
@@ -430,9 +433,11 @@ pub struct WholeVaultImportReceipt {
     /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
     /// (`CoreferenceConsentNotRestored`), a claim about a row kept out
     /// (`ClaimSubjectNotRestored`), an edge-provenance claim the gate would
-    /// hold for review (`ProvenanceAutoNotPermitted`), and, on every door but
+    /// hold for review (`ProvenanceAutoNotPermitted`), on every door but
     /// the owner's restore, a room this vault cannot seat with the TURNs and
-    /// MESSAGEs in it (`RoomNotSeatedHere`). One more entry
+    /// MESSAGEs in it (`RoomNotSeatedHere`), and a skill whose source tree the
+    /// export redacted, which this vault does not hold, with its package
+    /// (`RedactedSkillSource`). One more entry
     /// is no omitted row: a provenance claim this vault already holds open,
     /// whose archived close the gate would hold, stays here as it was and is
     /// named under `ProvenanceAutoNotPermitted` too.

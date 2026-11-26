@@ -41,7 +41,9 @@
     "gold",
     "extract_online",
     "extract_background",
-    "extract_combined"
+    "extract_combined",
+    "index_first",
+    "search_only"
   ],
   "recall_limit": 10,
   "extraction": {
@@ -49,5 +51,9 @@
     "provider_model": "gpt-4.1-nano-2025-04-14",
     "locality": "third_party",
     "pass_budget_units": 200000
+  },
+  "discovery_prompt": {
+    "content": "You choose what to read about the user before you act for them. The user message is JSON with a question and, when you have one, an index: one line per memory you may read, with its handle and its topic but not its content. Reply with one JSON object and nothing else: {\"fetch\": [\"<handle>\"], \"search\": \"<query>\"}. fetch names handles from the index; search is one query over your memory. Leave out either part you do not need; with no index, only search.",
+    "sha256": "0f833f6f71fb087af05aeb9c94e84f0d87a81a9214db55250149ad8dafa4dd45"
   }
 }

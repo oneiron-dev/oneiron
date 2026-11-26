@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, Raw, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 use super::machine_answers::AnswerAct;
@@ -307,7 +308,7 @@ impl Vault {
         Ok(HeldAnswerListing {
             answers,
             waiting_choices: fold.waiting_owner_choices().iter().copied().collect(),
-            can_confirm: self.owner_proof_signer(fold).is_some(),
+            can_confirm: self.holds_proving_owner_key(fold),
         })
     }
 
@@ -334,6 +335,14 @@ impl Vault {
     /// his list did not show. An entry with no revision in `seen` takes the
     /// machine's current one.
     ///
+    /// The door's checks run on a read before it asks. The confirm asks when any confirmed
+    /// answer ends an owner key, changes its machine's keys or class, or widens its role,
+    /// and asks nothing otherwise. Each entry's write derives again and answers
+    /// [`Error::ConcurrentWrite`] when its act became more important. Where no owner key
+    /// of this install proves on that read, the read refuses nothing for it and the
+    /// confirm asks as an important act: a key that rests under a device PIN proves only
+    /// inside the window the ask's PIN step opens. The write then answers.
+    ///
     /// # Errors
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
     /// key; [`Error::ConcurrentWrite`] when an entry no longer asks, or when
@@ -350,16 +359,46 @@ impl Vault {
         entries: &[AuthorityEntryHash],
         seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
     ) -> Result<ConfirmedHeldAnswers> {
+        let importance = {
+            let txn = self.store.env.read_txn()?;
+            match self.held_confirmation_checks_in_txn(&txn, owner, entries, seen)? {
+                // No owner key of this install proves now. One that rests
+                // under a device PIN proves once the ask's PIN step has
+                // opened its window, so the read cannot tell whether the
+                // door will sign: it asks as an important act, and the
+                // write answers.
+                None => OwnerActImportance::Important,
+                Some((actor, fold, proves_joins)) => {
+                    let mut importance = OwnerActImportance::Ordinary;
+                    for (entry, held) in named_held_answers(&fold, entries)?.into_values() {
+                        let profile = confirming_profile(&fold, actor, &held)?;
+                        let answer = AnswerAct::by_owner(
+                            (actor, proves_joins),
+                            surface,
+                            profile.role,
+                            seen.get(&entry).copied(),
+                        );
+                        if self.owner_answer_importance_in_txn(&txn, &fold, &answer, profile)?
+                            == OwnerActImportance::Important
+                        {
+                            importance = OwnerActImportance::Important;
+                        }
+                    }
+                    importance
+                }
+            }
+        };
+        let witness = self.owner_presence(
+            importance,
+            owner_presence_reasons::CONFIRM_HELD_MACHINE_ANSWERS,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if self.owner_proof_signer(&fold).is_none() {
+        let Some((actor, fold, proves_joins)) =
+            self.held_confirmation_checks_in_txn(&txn, owner, entries, seen)?
+        else {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
-        }
-        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
-        if seen.keys().any(|entry| !entries.contains(entry)) {
-            return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
-        }
+        };
         let mut removed = Vec::new();
         for (machine, (entry, held)) in named_held_answers(&fold, entries)? {
             let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -375,7 +414,8 @@ impl Vault {
             if profile.role == MachineRole::Removed {
                 removed.push(machine);
             }
-            let landing = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
+            let landing =
+                self.append_owner_answer_in_txn(&mut txn, &fold, &ground, answer, profile)?;
             if landing.held().is_some() {
                 return Err(invalid_authority());
             }
@@ -389,6 +429,31 @@ impl Vault {
         #[cfg(feature = "sync")]
         self.reseal_after_machine_admission()?;
         Ok(ConfirmedHeldAnswers { removed, listing })
+    }
+
+    /// Revalidates the owner and the inputs common to the whole confirmation.
+    /// `None` when no owner key of this install proves now on the fold. The
+    /// write refuses there ([`RecordError::OwnerKeyRequired`]). The read
+    /// before the ask refuses nothing for it: the ask's PIN step can open
+    /// the window of a key that rests under a device PIN, so that answer is
+    /// the write's.
+    fn held_confirmation_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        entries: &[AuthorityEntryHash],
+        seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
+    ) -> Result<Option<(EntityId, AuthorityView, bool)>> {
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !self.holds_proving_owner_key(&fold) {
+            return Ok(None);
+        }
+        let proves_joins = owner.proves_joins_in_txn(self, txn)?;
+        if seen.keys().any(|entry| !entries.contains(entry)) {
+            return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
+        }
+        Ok(Some((actor, fold, proves_joins)))
     }
 
     /// The owner dismisses the ask of the held answers `entries` name, on

@@ -197,18 +197,20 @@ pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, WithdrawnFoldAnswer,
     erase_gone_actors_in_live_overlays, erase_settled_reply_of_erased_run_in_txn,
-    redact_fold_answers, release_settled_for_caller_in_txn, replay_carriage, replay_owners,
-    response_erased_error, retire_actor_responses_in_txn, retire_fold_answers_in_txn,
-    retire_sourced_code_outputs_in_txn, soft_delete_actor_responses_in_txn, wait_reply_in_txn,
+    erase_settled_wait_reply_in_txn, redact_fold_answers, release_settled_for_caller_in_txn,
+    replay_carriage, replay_owners, response_erased_error, retire_actor_responses_in_txn,
+    retire_fold_answers_in_txn, retire_sourced_code_outputs_in_txn,
+    soft_delete_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
-    SessionInstanceBind, epoch_execution_in, executor_compaction_session_id,
-    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
+    SessionInstanceBind, canonical_speech_conversation_id_for_run, epoch_execution_in,
+    executor_compaction_session_id, executor_speech_message_id_in_run,
+    executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
-    bind_wait_trap, park_and_bind_wait_trap,
+    bind_wait_trap, open_wait_trap, park_and_bind_wait_trap,
 };
 pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
@@ -423,3 +425,10 @@ pub use self::dispatcher::workflow_operations;
 // above, so no other re-export edit meets this one.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};
+
+// Door seams for `test_doors::ask_answer_proof`, apart from the blocks
+// above, so no other re-export edit meets this one.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent_wait::{
+    answer_code_consent_wait_for_test, settle_code_consent_wait_refused_for_test,
+};

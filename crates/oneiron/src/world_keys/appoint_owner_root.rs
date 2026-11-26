@@ -35,7 +35,10 @@
 
 use std::sync::PoisonError;
 
-use super::{DevicePin, KitConfirmation, OwnerSigningSlot, RecoveryRootSeed, SlotRenewal, refused};
+use super::{
+    DevicePin, KitConfirmation, OwnerActImportance, OwnerSigningSlot, RecoveryRootSeed,
+    SlotRenewal, owner_presence_reasons, refused,
+};
 use crate::Vault;
 use crate::authority::{
     AuthorityKey, PinnedRoot, RootAppointmentReceipt, read_pin_row_in_txn,
@@ -64,7 +67,17 @@ impl Vault {
     /// root key again. `confirm` is the kit confirmation the kit-restored
     /// seed rule reads, as at the other seed doors.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after the read checks and
+    /// the keystore read, before it readies this install's signing keys and
+    /// before taking the PIN step or slot lock. Readying those keys writes
+    /// ([`Vault::prepare_install_signing`]), so a refused confirm leaves this
+    /// install's machine as it was.
+    ///
     /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     /// [`crate::error::SecretError::WorldKeyRefused`] for a bound proof, a
     /// root not stored or not pinned here, a roster that still holds a live
     /// root key, a burned anchor, an ancestry over which the appointment
@@ -84,6 +97,18 @@ impl Vault {
     /// read-only check and before its writer: the gap in which another run
     /// of the door can commit first (the test door
     /// `test_doors::root_appointment::appoint_owner_root_between`).
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after the read checks and
+    /// the keystore read, before it readies this install's signing keys and
+    /// before taking the PIN step or slot lock. Readying those keys writes
+    /// ([`Vault::prepare_install_signing`]), so a refused confirm leaves this
+    /// install's machine as it was.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     pub(crate) fn appoint_owner_root_between(
         &self,
         owner: &AuthenticatedOwner,
@@ -99,6 +124,14 @@ impl Vault {
             refuse_unneeded_appointment(fold, pin.anchor_key)
         })?;
         between();
+        // The keystore is read before the door asks, and the slot is made
+        // ready after it: readying this install's signing keys writes
+        // (REVIEW-10128 P1 1).
+        self.device_keystore()?;
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         let slot = self.device_owner_signing_slot()?;
         // One step with a first PIN's set, entered before the writer and
         // held to its commit (row OCS-OWNER-PIN): no PIN of this process is
@@ -129,7 +162,7 @@ impl Vault {
             Ok(receipt)
         });
         if let (Err(_), Some(renewal)) = (&appointed, renewal) {
-            self.put_back_unless_appointed(&slot, renewal);
+            self.put_back_unless_on_roster(&slot, renewal);
         }
         appointed
     }
@@ -137,13 +170,13 @@ impl Vault {
     /// The writer renewed the slot and the door failed after it: in the
     /// commit, or in work after a commit that is durable. The slot takes back
     /// its old seed unless this install's roster names the successor, which
-    /// only the committed appointment put there. When the roster cannot be
-    /// read, the slot keeps the successor's seed: a committed successor whose
-    /// seed no install held would leave the roster with a root key nobody
-    /// signs with.
-    fn put_back_unless_appointed(&self, slot: &OwnerSigningSlot, renewal: SlotRenewal) {
+    /// only the door's committed write put there (the appointment, or the
+    /// recovery root's vouch). When the roster cannot be read, the slot
+    /// keeps the successor's seed: a committed successor whose seed no
+    /// install held would leave the roster with a key nobody signs with.
+    pub(crate) fn put_back_unless_on_roster(&self, slot: &OwnerSigningSlot, renewal: SlotRenewal) {
         let successor = AuthorityKey::Ed25519(renewal.successor());
-        let appointed = self
+        let on_roster = self
             .store
             .env
             .read_txn()
@@ -152,13 +185,13 @@ impl Vault {
                 self.authority_view_readonly_in_txn(&txn)
                     .map(|fold| fold.roster.contains_key(&successor))
             });
-        match appointed {
+        match on_roster {
             Ok(true) => {}
             Ok(false) => slot.put_back(renewal),
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),
-                "the appointment's roster was not read after its failed write; this install's \
-                 owner signing slot keeps the successor's seed"
+                "the roster was not read after a failed write that renewed this install's owner \
+                 signing slot; the slot keeps the successor's seed"
             ),
         }
     }

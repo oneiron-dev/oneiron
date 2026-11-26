@@ -33,6 +33,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{Fingerprinter, LegacyDigest, purposes};
 use rmpv::Value;
 use serde::Serialize;
 
@@ -69,12 +70,6 @@ const WORKAROUND_SKILL_VERSION: &str = "0.1.0";
 
 /// The finding value's version.
 const WORKAROUND_DISTILL_VERSION: u32 = 1;
-
-/// The domain a capture's place digest is hashed in.
-const PLACE_DOMAIN: &[u8] = b"oneiron:coach-workaround-skill-place:v1";
-
-/// The domain a skill id's suffix is hashed in.
-const SKILL_ID_DOMAIN: &[u8] = b"oneiron:coach-workaround-skill-id:v1";
 
 /// The longest a name renders in a description, cut at a char boundary.
 const DESCRIPTION_NAME_CAP: usize = 256;
@@ -433,45 +428,29 @@ fn nominations(failures: BTreeMap<FailureKey, FailureRuns>) -> Vec<Nomination> {
 /// world, its relationships and its claim scope. Captures that stand apart
 /// never share a finding.
 fn place_digest(body: &ClaimBody) -> Result<[u8; 32]> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(PLACE_DOMAIN);
-    hasher.update(body.scope_facet.as_bytes());
-    hasher.update(body.scope_project.as_bytes());
-    match body.world {
-        Some(world) => {
-            hasher.update(&[1]);
-            hasher.update(world.as_bytes());
-        }
-        None => {
-            hasher.update(&[0]);
+    let mut place = Fingerprinter::new(purposes::dreamer_runner::COACH_WORKAROUND_SKILL_PLACE);
+    place
+        .part(body.scope_facet.as_bytes())
+        .part(body.scope_project.as_bytes());
+    place.flag(body.world.is_some());
+    if let Some(world) = body.world {
+        place.part(world.as_bytes());
+    }
+    place.flag(body.rel.is_some());
+    if let Some(set) = &body.rel {
+        place.u64(u64::try_from(set.len()).unwrap_or(u64::MAX));
+        for id in set {
+            place.part(id.as_bytes());
         }
     }
-    match &body.rel {
-        Some(set) => {
-            hasher.update(&[1]);
-            hasher.update(&u64::try_from(set.len()).unwrap_or(u64::MAX).to_be_bytes());
-            for id in set {
-                hasher.update(id.as_bytes());
-            }
-        }
-        None => {
-            hasher.update(&[0]);
-        }
+    place.flag(body.scope.is_some());
+    if let Some(scope) = &body.scope {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, scope)
+            .map_err(|_| Error::InvariantViolation("workaround place encode failed"))?;
+        place.part(&bytes);
     }
-    match &body.scope {
-        Some(scope) => {
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, scope)
-                .map_err(|_| Error::InvariantViolation("workaround place encode failed"))?;
-            hasher.update(&[1]);
-            hasher.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
-            hasher.update(&bytes);
-        }
-        None => {
-            hasher.update(&[0]);
-        }
-    }
-    Ok(*hasher.finalize().as_bytes())
+    Ok(place.finish().into_bytes())
 }
 
 /// Where a nomination's finding stands: where its first capture does, so a
@@ -487,18 +466,17 @@ fn place_of(body: &ClaimBody) -> FindingPlace {
 
 /// The skill id: [`WORKAROUND_SKILL_ID_PREFIX`], a slug, then 12 hex of a
 /// hash over the three names, so two groups whose slugs agree still differ.
+/// A stored id, so the hash keeps its first recipe through the K door.
 fn skill_id_for(nomination: &Nomination) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(SKILL_ID_DOMAIN);
+    let mut digest = LegacyDigest::new(purposes::dreamer_runner::COACH_WORKAROUND_SKILL_ID);
     for name in [
         nomination.key.app_id.as_str(),
         nomination.key.failure.as_str(),
         nomination.repair.as_str(),
     ] {
-        hasher.update(&u64::try_from(name.len()).unwrap_or(u64::MAX).to_be_bytes());
-        hasher.update(name.as_bytes());
+        digest.len_u64_be(name.len()).raw(name.as_bytes());
     }
-    let hex = bytes_to_hex_lower(hasher.finalize().as_bytes());
+    let hex = bytes_to_hex_lower(&digest.finish());
     let slug = slug_of(&format!(
         "{} {} {}",
         nomination.key.app_id, nomination.key.failure, nomination.repair

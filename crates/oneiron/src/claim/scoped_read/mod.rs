@@ -44,6 +44,7 @@ pub use native_raw::NativeRawRead;
 mod note_visibility;
 mod person_about_lines;
 mod phone_line;
+mod phone_thread;
 mod pinned_reads;
 mod point_reads;
 mod reaction_reactor_redaction;
@@ -79,6 +80,7 @@ pub(crate) use weave_lens::{
 mod weave_report;
 mod weave_serve;
 mod weave_trigger;
+mod withheld_notice;
 pub(crate) use claim_admission::{ClaimReadStatus, ClaimReadStatusExt};
 pub use frozen::FrozenReadLane;
 pub use graph_reads::TimelineRecordProjection;
@@ -194,6 +196,12 @@ pub struct ScopedRead<'a> {
     /// claim history door's lane (`ScopedRead::for_claim_history`), which
     /// keeps such a claim in the record; `Served` on every other lane.
     cited_support: crate::claim::evidence_support::CitedSupport,
+    /// Set only on the copy a live owner's withheld-notice read judges
+    /// (`ScopedRead::withheld_notice_in`): every gate of this read but the
+    /// source-audience floor of the row it admits. That copy serves no row;
+    /// it tells whether a notice its sources withhold reads to him on every
+    /// other gate. Off on every other lane.
+    source_floor_waived: bool,
 }
 
 mod owned;
@@ -202,6 +210,7 @@ pub use owned::OwnedScopedRead;
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
+mod egress_use_limit;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 pub(crate) use profile_sources::CompanionProfileSourceJudgement;

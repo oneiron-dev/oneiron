@@ -192,7 +192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/egress/receipt.rs` | src | s | 1 struct | EgressReceipt | Moved from `crates/oneiron/src/code_sandbox/egress/receipt.rs` (lib split R1: record types below the lib) |
 | `src/code_sandbox/mod.rs` | src | s | 1 mod · 21 re-export | — | — |
 | `src/compaction/check_material.rs` | src | s | 1 struct · 1 fn | CompactionCheckMaterialRef | Moved from `crates/oneiron/src/compaction/check_material.rs` (lib split R2: record types below the lib) |
-| `src/compaction/conversation.rs` | src | s | 2 struct · 1 fn | ConversationEvidence, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
+| `src/compaction/conversation.rs` | src | s | 3 struct · 1 enum · 1 fn | ConversationEvidence, ConversationTurnPiece, ConversationTurnReading, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
 | `src/compaction/folds.rs` | src | s | 5 struct · 1 enum · 4 fn · 1 const · 10 re-export | FoldCompactAsk, FoldCompactAsked, FoldMark, FoldMarked, FoldUnfolded, SelfFoldCall | Moved from `crates/oneiron/src/compaction/folds.rs` (lib split R2: record types below the lib) |
 | `src/compaction/mod.rs` | src | s | 5 mod · 41 re-export | — | — |
 | `src/compaction/output.rs` | src | s | 2 struct · 2 enum · 4 fn · 1 const | OutputAffordance, OutputContextView, OutputRef, OutputTier | Moved from `crates/oneiron/src/compaction/output.rs` (lib split R2: record types below the lib) |
@@ -271,8 +271,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/coop_delivery/types.rs` | src | s | 2 struct · 2 re-export | CooperativeDeletionDisposition, CooperativeLocalRedaction | Moved from `crates/oneiron/src/deletion/coop_delivery/types.rs` (lib split R2: record types below the lib) |
 | `src/deletion/legal_hold/mod.rs` | src | s | 2 mod · 1 re-export | — | — |
 | `src/deletion/legal_hold/prospective.rs` | src | s | 1 type | — | Moved from `crates/oneiron/src/deletion/legal_hold/prospective.rs` (lib split R2: record types below the lib) |
-| `src/deletion/legal_hold/types.rs` | src | s | 1 struct · 11 re-export | LegalHoldUseLimit | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split R2: record types below the lib) |
-| `src/deletion/mod.rs` | src | s | 4 mod · 59 re-export | — | — |
+| `src/deletion/legal_hold/types.rs` | src | s | 7 re-export | — | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split R2: record types below the lib) |
+| `src/deletion/mod.rs` | src | s | 4 mod · 54 re-export | — | — |
 | `src/deletion/receipt.rs` | src | s | 1 struct · 1 fn | RedactionScope | Moved from `crates/oneiron/src/deletion/receipt.rs` (lib split R2: record types below the lib) |
 | `src/deletion/timeline.rs` | src | s | 1 struct · 4 enum | HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimelineRecordState | Moved from `crates/oneiron/src/deletion/timeline.rs` (lib split R2: record types below the lib) |
 | `src/dispatch_byoa/connector.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 1 re-export | ByoaConnectorKind, DevRunnerRefs | Moved from `crates/oneiron/src/dispatch_byoa/connector.rs` (lib split R1: record types below the lib) |
@@ -698,7 +698,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_lifecycle.rs` | src | s | 2 struct · 1 enum · 1 mod · 1 re-export | SessionActivityPeriod, SessionEndReason, SessionHintTimestamp | Moved from `crates/oneiron/src/session_lifecycle.rs` (lib split R1: record types below the lib) |
 | `src/session_lifecycle/speakers.rs` | src | s | 1 struct | SessionParticipant | Moved from `crates/oneiron/src/session_lifecycle/speakers.rs` (lib split R1: record types below the lib) |
 | `src/settings.rs` | src | s | 1 enum · 4 fn · 4 const · 1 mod · 25 re-export | CustomizationLayer | Moved from `crates/oneiron/src/settings.rs` (lib split R1: record types below the lib) |
-| `src/settings/room_threads.rs` | src | s | 1 struct | RoomThreadAdminSettings | Moved from `crates/oneiron/src/settings/room_threads.rs` (lib split R1: record types below the lib) |
+| `src/settings/room_threads.rs` | src | s | 1 struct · 1 fn | RoomThreadAdminSettings | Moved from `crates/oneiron/src/settings/room_threads.rs` (lib split R1: record types below the lib) |
 | `src/share_travel.rs` | src | s | 1 struct · 1 mod · 17 re-export | GrantTravel | Moved from `crates/oneiron/src/share_travel.rs` (lib split R1: record types below the lib) |
 | `src/share_travel/agent_pack_export.rs` | src | s | 1 struct · 1 re-export | AgentPackExportFile | Moved from `crates/oneiron/src/share_travel/agent_pack_export.rs` (lib split R1: record types below the lib) |
 | `src/skill/graph.rs` | src | s | 3 struct · 1 fn | GraphSkillAnswerRef, GraphSkillInput, GraphSkillStage | Moved from `crates/oneiron/src/skill/graph.rs` (lib split R1: record types below the lib) |
@@ -760,8 +760,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/targets.rs` | src | s | 1 fn · 1 const | — | Moved from `crates/oneiron/src/store/key_custody/targets.rs` (lib split R2: record types below the lib) |
 | `src/store/known_history.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/store/known_history.rs` (lib split R2: record types below the lib) |
 | `src/store/known_value_index.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/store/known_value_index.rs` (lib split R2: record types below the lib) |
-| `src/store/legal_hold/mod.rs` | src | s | 2 mod | — | — |
-| `src/store/legal_hold/pending.rs` | src | s | 1 enum | PendingEraseKind | Moved from `crates/oneiron/src/store/legal_hold/pending.rs` (lib split R2: record types below the lib) |
+| `src/store/legal_hold/mod.rs` | src | s | 1 mod | — | — |
 | `src/store/legal_hold/use_limit.rs` | src | s | 1 struct | CooperativeRestriction | Moved from `crates/oneiron/src/store/legal_hold/use_limit.rs` (lib split R2: record types below the lib) |
 | `src/store/mod.rs` | src | s | 28 mod · 79 re-export · 2 crate-vis | — | — |
 | `src/store/open_gates/mod.rs` | src | s | 1 mod · 6 re-export | — | — |

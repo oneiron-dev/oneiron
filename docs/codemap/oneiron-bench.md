@@ -22,7 +22,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fixtures/edit_path/repo/src/lib.rs` | src | s | 2 fn · 1 mod | — | — |
 | `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
 | `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
-| `src/beam/action_bench/arms.rs` | src | m | 13 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/arms.rs` | src | m | 17 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/discovery.rs` | src | m | 5 crate-vis | — | The discovery arms (ARCH-0042 #action-bench): index-first against search-only discovery, with stored memory… |
 | `src/beam/action_bench/extraction.rs` | src | m | 18 crate-vis | — | The extraction arms (ARCH-0042 #action-bench: "online-only, background-only, combined; each probed right… |
 | `src/beam/action_bench/extraction/executor.rs` | src | s | 6 crate-vis | — | The extraction arms' model side: the shipped adapter on the reader's host, recording each call it makes, and… |
 | `src/beam/action_bench/mod.rs` | src | m | 3 crate-vis | — | The in-house action bench (ARCH-0042 #action-bench, owner ruling 2026-10-21): does memory change what a… |
@@ -57,12 +58,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
 | `src/beam/mod.rs` | src | s | 6 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
-| `src/beam/model_scaffold.rs` | src | L | 13 crate-vis | — | Shared measured answerer scaffold |
+| `src/beam/model_scaffold.rs` | src | m | 10 crate-vis | — | Shared measured answerer scaffold |
 | `src/beam/model_scaffold/context.rs` | src | s | 6 crate-vis | — | Context each answerer arm hands the shared answer call, apart from packs |
 | `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
 | `src/beam/model_scaffold/paired.rs` | src | s | 8 crate-vis | — | Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A) |
 | `src/beam/model_scaffold/pick_argument.rs` | src | s | 3 crate-vis | — | `beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43): the argument… |
 | `src/beam/model_scaffold/provenance.rs` | src | s | 4 crate-vis | — | Resolved-pin family disclosures; uncertainty and in-family results stay out of the frontier |
+| `src/beam/model_scaffold/run_plan.rs` | src | s | 4 crate-vis | — | Measured run plan: answerer arms, efforts and plan validation |
 | `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |
@@ -72,19 +74,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/rung_fixture.rs` | src | s | 2 crate-vis | — | Deterministic-arm conformance across first attach and remote rung changes |
 | `src/beam/runner.rs` | src | m | 11 crate-vis | — | Subcommand run entry points and orchestration |
 | `src/beam/scorer.rs` | src | s | 3 crate-vis | — | BeamScorer trait and fixed scorer |
-| `src/beam/tests_community_eval004.rs` | src | s | 7 crate-vis | — | Community and EVAL-004 tests |
-| `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
-| `src/beam/tests_judge_cost.rs` | src | s | 1 crate-vis | — | Judge and cost tests |
-| `src/beam/tests_ppr_vad.rs` | src | s | 2 crate-vis | — | PPR-VAD tests |
-| `src/beam/tests_replicate_pass.rs` | src | m | — | — | ARCH-0042 `beam:D9`: the `beam-replicate@3e12035` column comes from its own judge pass, which shows the… |
-| `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
+| `src/beam/tests_community_eval004.rs` | test | s | 7 crate-vis | — | Community and EVAL-004 tests |
+| `src/beam/tests_jsonl_contract.rs` | test | m | 2 crate-vis | — | JSONL contract tests |
+| `src/beam/tests_judge_cost.rs` | test | s | 1 crate-vis | — | Judge and cost tests |
+| `src/beam/tests_ppr_vad.rs` | test | s | 2 crate-vis | — | PPR-VAD tests |
+| `src/beam/tests_replicate_pass.rs` | test | m | — | — | ARCH-0042 `beam:D9`: the `beam-replicate@3e12035` column comes from its own judge pass, which shows the… |
+| `src/beam/tests_smoke_manifest.rs` | test | m | 1 crate-vis | — | Smoke and manifest tests |
 | `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 19 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/cua/args.rs` | src | s | 3 crate-vis | — | Explicit CLI flags and a Linux-only execution guard |
 | `src/cua/browser_setup.rs` | src | m | 2 crate-vis | — | Fresh-vault browser setup through the same owner doors as acceptance |
 | `src/cua/check.rs` | src | s | 1 crate-vis | — | One deterministic host-private checker |
-| `src/cua/config.rs` | src | s | 7 crate-vis | — | Deployment supplies exact pins; no marketing-name or backend substitution |
+| `src/cua/config.rs` | src | m | 7 crate-vis | — | Deployment supplies exact pins; no marketing-name or backend substitution |
 | `src/cua/drift.rs` | src | m | 4 crate-vis | — | Serial frozen-library matrix |
 | `src/cua/drift_engine.rs` | src | s | 7 crate-vis | — | Engine/fixture boundary for the S5 protocol |
 | `src/cua/drift_plan.rs` | src | m | 9 crate-vis | — | Frozen S5 selection, arguments, deadlines and published serial order |
@@ -139,8 +141,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/provider.rs` | src | s | 1 crate-vis | — | Paid-call admission and settlement on the engine ledger, with deadline-bound 429 waits |
 | `src/interface_bench/reports_and_fixture_helpers.rs` | src | m | 19 crate-vis | — | Row aggregation and report tables |
 | `src/interface_bench/taskgen.rs` | src | m | 5 crate-vis | — | Fixture and task generation plus atomic JSON writers |
-| `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
-| `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
+| `src/interface_bench/tests_a.rs` | test | s | 2 crate-vis | — | Taskgen, config, and memo tests |
+| `src/interface_bench/tests_b.rs` | test | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
 | `src/load/client.rs` | src | m | 11 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
@@ -219,8 +221,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scorecard/params.rs` | src | s | 4 crate-vis | — | The `oneiron.retrieval_eval_params.v1` eval params file: blend weights for one run |
 | `src/scorecard/profile.rs` | src | s | 6 crate-vis | — | The `oneiron.bm25_rank_profile.v1` rank profile file: BM25F weights for one keyword run |
 | `src/scorecard/record.rs` | src | s | 2 crate-vis | — | `scorecard proposals` and `scorecard stamp`: list proposals, record the owner's stamp |
-| `src/scorecard/run.rs` | src | L | 6 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/run.rs` | src | m | 7 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/run/sealed.rs` | src | s | 1 crate-vis | — | The sealed once-run: which sealed run the flags ask for, its spent claim, and the load-and-replay under it |
 | `src/scorecard/tune.rs` | src | m | 1 crate-vis | — | `scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice |
+| `src/scorecard/world_scoped/fixture.rs` | src | m | 6 crate-vis | — | The world-scoped arm's pack vault: a rooted vault with a second world, a corpus's records written as the… |
+| `src/scorecard/world_scoped/mod.rs` | src | s | 2 crate-vis | — | `scorecard run --arm world-scoped`: the retrieval ruler as a world-scoped reader… |
+| `src/scorecard/world_scoped/partition.rs` | src | s | 3 crate-vis | — | The world-scoped arm's partition: which records the agent's Grant leaves out, and the grading view of the… |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
 | `src/teacher_probe.rs` | src | s | 1 crate-vis | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
 | `src/teacher_probe_tests.rs` | test | s | — | — | — |
@@ -238,4 +244,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |
 | `tests/scorecard_cli.rs` | test | L | — | — | Drive the shipped `scorecard` CLI end to end: fixtures in, JSON out |
 | `tests/scorecard_compare.rs` | test | L | — | — | Drive `scorecard compare`, `proposals` and `stamp` end to end: fixtures in, JSON out |
+| `tests/scorecard_world_scoped.rs` | test | m | — | — | [SCORECARD-WORLD-SCOPED-ARM]: `scorecard run --arm world-scoped` replays a slice as an agent whose one Grant… |
 | `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

@@ -291,6 +291,7 @@ fn placed_fields_reach_the_ceremony_and_preview_until_send() -> TestResult {
         recipient_count: 1,
         on_behalf_of: None,
         idempotency_key: Some("send-1".into()),
+        check_in_ref: None,
     })?;
     assert_eq!(
         sent.outcome, "delivered_to_channel",

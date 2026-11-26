@@ -58,6 +58,8 @@ mod door;
 mod emergency;
 mod feed_move;
 mod hold_source;
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod occurrence;
 mod owner_card;
 mod passport;
@@ -82,18 +84,17 @@ pub use self::claim::{
 pub(in crate::booking) use self::claim::{
     confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
 };
+pub use self::deposit::RefundPermission;
 pub use self::deposit::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, BookingDepositStatus,
     DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent,
     DepositProviderEventKind, DepositProviderEventOutcome, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     DepositState, begin_deposit_checkout, booking_deposit_for_event, booking_deposit_for_payment,
-    booking_deposit_for_session_hold, record_deposit_provider_event,
-    run_booking_deposit_settlement, settle_booking_deposit,
+    booking_deposit_for_session_hold, check_deposit_checkout_admitted,
+    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
 };
-pub(crate) use self::deposit::{
-    note_unattributed_cancel_in_txn, refund_booking_deposit_as_owner, refund_deposit_on_host_cancel,
-};
+pub(crate) use self::deposit::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,
@@ -106,9 +107,13 @@ pub use self::feed_move::{
 };
 pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
+pub use self::owner_card::BookingOwnerCardRefundMarkedOutside;
 pub use self::owner_card::{
-    BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
-    BookingDepositHeldReason, BookingOwnerCard, BookingOwnerCardDeposit, BookingOwnerCardOffer,
+    BOOKING_CALENDAR_HOLD_ITEM_PREFIX, BOOKING_HELD_DEPOSIT_ITEM_PREFIX,
+    BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld, BookingDepositHeldReason,
+    BookingDepositReturned, BookingOwnerCard, BookingOwnerCardCalendarHold,
+    BookingOwnerCardDeposit, BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+    CALENDAR_HOLD_RECONNECT_VERB,
 };
 pub(crate) use self::owner_card::{
     booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,
@@ -135,10 +140,13 @@ pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,
     erase_booking_receipt_carriers_in_txn,
 };
+pub(crate) use self::deposit::mark_booking_deposit_refunded_outside;
 pub(super) use self::emergency::{
-    admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
-    pick_emergency_item, read_emergency_pick,
+    admit_emergency_pick, commit_emergency_item, emergency_action_digest,
+    emergency_current_revision_in, pick_emergency_item, read_emergency_pick,
 };
+// FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the emergency writers' home-move fence.
+pub(super) use self::door::holds_booking_rows_in_txn;
 pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
 pub(super) use self::token::{digest_with, live_hold_in_txn, mint_raw_token};

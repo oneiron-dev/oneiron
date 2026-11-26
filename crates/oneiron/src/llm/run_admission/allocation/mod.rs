@@ -1,4 +1,5 @@
-//! Durable native allocation state. The explicit current selection and every
+//! Durable native allocation state. The explicit selection, one allocation
+//! per slot (a unit and the wallet the host named; row M2-I), and every
 //! original hold share the vault writer; no reflected BudgetGuard admits here.
 //! Server producer callbacks must use this same writer and persist their original
 //! admitted/terminal material. This module does not install a runtime adapter.
@@ -7,7 +8,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use super::declaration::LeaseUnit;
 use super::host::{Allocation, AllocationRef, AllocationRefusal};
+use crate::federation::WalletRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -19,6 +22,15 @@ const ACCOUNT: SideTable<(), AccountRow, Named> = SideTable::new(&side_table::BU
 pub use oneiron_records::llm::run_admission::allocation::{
     AllocationCallKey, AllocationServingFence, AllocationTerminal, DurableAllocationHold,
 };
+
+/// Who a durable reservation is for: the resident whose share it draws on
+/// (FIX 7767), and the wallet of the Grant that funds its run (FIX 7766),
+/// which the writer checks before anything is held.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReservationParties<'a> {
+    pub resident: Option<EntityId>,
+    pub funding: Option<&'a WalletRef>,
+}
 
 /// One allocation's current durable observation, in its original opaque unit.
 /// Pending deletion or a newer observation is not Cloud acceptance or backing.
@@ -51,10 +63,26 @@ pub enum AllocationStoreError {
     WriterLease,
     #[error("the actual serving lease changed")]
     ServingChanged,
-    #[error("allocation generation is not newer than one already held")]
+    #[error("allocation generation is not newer than one its allocation id already held")]
     StaleGeneration,
+    /// The allocation is a GPU line's: only that line's unit claims draw on it (row M2-I2).
+    #[error(
+        "a GPU line's allocation is drawn only by its unit claims; no host account installs it"
+    )]
+    LineManaged,
     #[error("the host has delivered no allocation")]
     NoAllocation,
+    /// The funding Grant's wallet is `expected`, and no selected allocation
+    /// the call can draw on is of it (FIX 7766), checked in the writer.
+    #[error("the live allocation is not the funding grant's wallet")]
+    WalletMismatch {
+        expected: WalletRef,
+        live: Option<WalletRef>,
+    },
+    /// Several selected allocations could hold the call and the host named
+    /// none of them (row M2-I).
+    #[error("several allocations could fund the call and the host named none: {units:?}")]
+    Ambiguous { units: Vec<LeaseUnit> },
     #[error("the selected allocation is not accepting reservations")]
     Closed,
     #[error("the allocation is spent")]
@@ -91,10 +119,22 @@ pub struct VaultAllocationLedger {
 struct AccountRow {
     fence: Option<AllocationServingFence>,
     revision: u64,
+    /// The one selection of a row written before allocations by wallet (row
+    /// M2-I): read as one more selected allocation. A write moves it into
+    /// `selected`.
     current: Option<AllocationRef>,
+    /// The newest generation any allocation of this account held, kept as
+    /// that record. A grant checks the generation per allocation id, from
+    /// `allocations`.
     newest_generation: Option<u64>,
     refused: Option<AllocationRefusal>,
     allocations: Vec<AllocationRow>,
+    /// The selected allocations, one per slot: a unit and the wallet the
+    /// host named. A closed one stays its slot's selection until the host
+    /// grants that slot again. Stored change: keep (additive; a row without
+    /// it reads `current` as its selection).
+    #[serde(default)]
+    selected: Vec<AllocationRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

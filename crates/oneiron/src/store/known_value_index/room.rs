@@ -118,16 +118,16 @@ fn with_room_values(
             secret.handle.clone(),
         ));
     }
-    let values =
-        base.iter()
-            .flat_map(|(custody, entries, handle)| {
-                entries
-                    .iter()
-                    .map(move |entry| (entry, ValueOrigin::Custody(*custody), handle.clone()))
+    let values = base
+        .iter()
+        .flat_map(|(custody, entries, handle)| {
+            entries.iter().map(move |(slot, entry)| {
+                (entry, *slot, ValueOrigin::Custody(*custody), handle.clone())
             })
-            .chain(room_entries.iter().map(|(entry, record, handle)| {
-                (entry, ValueOrigin::Custody(*record), handle.clone())
-            }));
+        })
+        .chain(room_entries.iter().map(|(entry, record, handle)| {
+            (entry, 0, ValueOrigin::Custody(*record), handle.clone())
+        }));
     let known = KnownValues::of_entries(&master, values)?;
     drop(room_entries);
     drop(base);

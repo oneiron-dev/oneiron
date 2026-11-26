@@ -1,6 +1,7 @@
 //! The customer GPU job doors (row L10-31; CROSS-ARCH-0023 lifecycle, C2):
-//! `vault.gpu.jobs.quote`, `.start`, `.status`, `.list`, `.cancel` and
-//! `.allow` over this host's `[gpu_jobs]` offers and registered backends.
+//! `vault.gpu.jobs.quote`, `.start`, `.status`, `.list`, `.cancel`,
+//! `.allow` and `.write_off` (pass 33 row R4, door 10) over this host's
+//! `[gpu_jobs]` offers and registered backends.
 //! The engine decides (`oneiron::gpu_job`); a door reads the offer and
 //! backend, builds the job's run, and calls it. Quotes, status and the list
 //! are reads: the owner under their own proof, or an agent whose own Grant
@@ -16,20 +17,22 @@ use std::sync::Arc;
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobConnector,
+    GpuJob, GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobConnector,
     GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms,
-    GpuJobRef, GpuJobStart, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
+    GpuJobRef, GpuJobResultBinding, GpuJobStart, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
 };
 use oneiron::llm::run_admission::ResumeRefused;
 use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
     MemoryResult,
 };
 
 use super::super::FacadeApiError;
 use super::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
-use crate::gpu_host::{GpuHostError, NoProvider, job_admission, now_ms, offer_with_backend};
+use crate::gpu_host::{
+    GpuHostError, NoProvider, job_admission, job_backend, now_ms, offer_with_backend,
+};
 use crate::server::SyncServer;
 
 impl From<GpuHostError> for MemoryError {
@@ -71,6 +74,19 @@ async fn gpu_door<T: Send + 'static>(
     verb: GpuJobVerb,
     act: impl FnOnce(&SyncServer, &DoorCaller) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
+    gpu_door_reading(server, auth, verb, move |server, caller, _| {
+        act(server, caller)
+    })
+    .await
+}
+
+/// [`gpu_door`], `act` also given the caller's own credential-bound Memory.
+async fn gpu_door_reading<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: GpuJobVerb,
+    act: impl FnOnce(&SyncServer, &DoorCaller, &Memory<'_>) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
     let caller = match crate::api::facade::facade_actor(server, auth)
         .map_err(FacadeApiError::into_memory_error)
     {
@@ -96,7 +112,7 @@ async fn gpu_door<T: Send + 'static>(
                 Some(owner) => DoorCaller::Owner(owner),
                 None => DoorCaller::Agent(memory.gpu_job_agent()),
             };
-            act(server, &caller)
+            act(server, &caller, &memory)
         },
     )
     .await
@@ -183,9 +199,13 @@ pub(crate) async fn vault_gpu_jobs_start(
     auth: &CoreAuth,
     input: GpuJobStartRequest,
 ) -> Listed<GpuJobStatus> {
-    gpu_door(server, auth, GpuJobVerb::Start, move |server, caller| {
+    let verb = GpuJobVerb::Start;
+    gpu_door_reading(server, auth, verb, move |server, caller, memory| {
         let quote = GpuJobQuote::try_from(input.quote)?;
         let (offer, connector) = offer_with_backend(server, &quote.offer)?;
+        if let DoorCaller::Agent(_) = caller {
+            result_binding_admits(memory, &quote)?;
+        }
         let resume = if input.resume {
             let job = server
                 .vault
@@ -216,6 +236,30 @@ pub(crate) async fn vault_gpu_jobs_start(
     .await
 }
 
+/// An agent's chunk binds a result (`inputs.result { artifact, task }`) only to rows the
+/// credential it presented reads, a slip's records list included: a result whose starter
+/// lapsed lands through the owner's lane, which reads every row. Judged before the chunk is
+/// written, so every chunk carries a binding its own start call admitted. A binding that does
+/// not parse is left to the backend's own refusal.
+fn result_binding_admits(memory: &Memory<'_>, quote: &GpuJobQuote) -> MemoryResult<()> {
+    let Some(binding) = quote
+        .inputs
+        .get("result")
+        .filter(|binding| !binding.is_null())
+        .and_then(|binding| serde_json::from_value::<GpuJobResultBinding>(binding.clone()).ok())
+    else {
+        return Ok(());
+    };
+    if memory.gpu_job_result_binding_admits(&binding)? {
+        return Ok(());
+    }
+    Err(MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "result_binding_unreadable: the job's result binds a row this credential does not read",
+        &["Bind an artifact and a task this credential reads."],
+    ))
+}
+
 /// `vault.gpu.jobs.status`: where one job stands, with its spend against its
 /// maximum.
 pub(crate) async fn vault_gpu_jobs_status(
@@ -226,9 +270,27 @@ pub(crate) async fn vault_gpu_jobs_status(
     gpu_door(server, auth, GpuJobVerb::Status, move |server, _| {
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
-        Ok(GpuJobStatus::from(&job))
+        Ok(status_on_host(server, &job))
     })
     .await
+}
+
+/// `job`'s status, with the four fields of door 8 when `connector` runs on one of the vault's
+/// own machines (pass 33 row R4), judged against this host's job step.
+fn status_of(server: &SyncServer, connector: &dyn GpuJobConnector, job: &GpuJob) -> GpuJobStatus {
+    let mut status = GpuJobStatus::from(job);
+    let step_ms = server.config.gpu_jobs.step_secs.saturating_mul(1_000);
+    status.node = connector.node_view(job, now_ms(), step_ms);
+    status
+}
+
+/// `job`'s status on the backend that runs it, the one its row names (a job keeps its backend,
+/// design pass 33, 8.1). A job whose backend this host no longer has shows no node fields.
+fn status_on_host(server: &SyncServer, job: &GpuJob) -> GpuJobStatus {
+    match job_backend(server, job) {
+        Ok(connector) => status_of(server, connector.as_ref(), job),
+        Err(_) => GpuJobStatus::from(job),
+    }
 }
 
 /// `vault.gpu.jobs.list`: every GPU job of the vault, newest first.
@@ -241,7 +303,7 @@ pub(crate) async fn vault_gpu_jobs_list(
         let mut jobs = server.vault.gpu_jobs()?;
         jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at_ms));
         Ok(GpuJobList {
-            jobs: jobs.iter().map(GpuJobStatus::from).collect(),
+            jobs: jobs.iter().map(|job| status_on_host(server, job)).collect(),
         })
     })
     .await
@@ -261,7 +323,7 @@ pub(crate) async fn vault_gpu_jobs_cancel(
         let id = input.id()?;
         let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
         let connector: Arc<dyn GpuJobConnector> = if job.state.is_live() {
-            offer_with_backend(server, &job.offer.name)?.1
+            job_backend(server, &job)?
         } else {
             Arc::new(NoProvider)
         };
@@ -279,6 +341,33 @@ pub(crate) async fn vault_gpu_jobs_cancel(
             Err(error) => return Err(error.into()),
         };
         Ok(GpuJobStatus::from(&job))
+    })
+    .await
+}
+
+/// `vault.gpu.jobs.write_off` (pass 33 row R4, door 10): the owner closes the hold of a job
+/// whose end its backend cannot confirm. The backend closes the job's dispatch for good, then
+/// the job ends `unconfirmed` and settles zero; it is final. The backend refuses a job whose
+/// end it can still confirm, and one inside its wait. The backend is the one the job's row
+/// names, so a job whose offer was withdrawn can still be written off (pass 33, 8.1).
+pub(crate) async fn vault_gpu_jobs_write_off(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GpuJobRef,
+) -> Listed<GpuJobStatus> {
+    gpu_door(server, auth, GpuJobVerb::WriteOff, move |server, caller| {
+        let owner = owner_act(caller, GpuJobVerb::WriteOff)?;
+        let id = input.id()?;
+        let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
+        let connector = job_backend(server, &job)?;
+        let job = server.vault.write_off_gpu_job(
+            owner,
+            &id,
+            server.gpu_jobs.permits(),
+            connector.as_ref(),
+            now_ms(),
+        )?;
+        Ok(status_of(server, connector.as_ref(), &job))
     })
     .await
 }

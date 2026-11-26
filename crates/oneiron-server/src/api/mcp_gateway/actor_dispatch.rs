@@ -131,6 +131,7 @@ impl McpCallEffect {
             | Effect::Team
             | Effect::ReaderSpawn
             | Effect::TasksWaitSet
+            | Effect::JobsOrdersWait
             | Effect::Summarize => Self::of_run_rows(effect),
             Effect::AgentVerb | Effect::Context | Effect::InferenceDefaultsRead => Self::Reads,
             Effect::Speak

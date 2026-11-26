@@ -121,15 +121,16 @@ pub(crate) use self::speech_identity::executor_speech_message_id;
 #[cfg(test)]
 pub(super) use self::speech_identity::executor_speech_turn_id;
 pub(crate) use self::speech_identity::{
-    ResultSpeech, RunAssertionCollector, executor_compaction_session_id,
-    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
+    ResultSpeech, RunAssertionCollector, canonical_speech_conversation_id_for_run,
+    executor_compaction_session_id, executor_speech_message_id_in_run,
+    executor_speech_turn_id_for_run,
 };
 pub(crate) use self::type_diagnostics::{
     StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn, runs_program_steps,
     session_type_diagnostics_row,
 };
 pub use self::wait_delivery::{
-    WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,
+    WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, open_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
@@ -149,8 +150,8 @@ pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::folds::{base_code_run_folds_in_txn, land_code_run_folds_in_txn};
 pub(crate) use self::wait_delivery::wait_still_parked_in_txn;
 pub(crate) use self::wait_holders::{
-    WaitReply, erase_settled_reply_of_erased_run_in_txn, release_settled_for_caller_in_txn,
-    wait_delivery_owners, wait_reply_in_txn,
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, erase_settled_wait_reply_in_txn,
+    release_settled_for_caller_in_txn, wait_delivery_owners, wait_reply_in_txn,
 };
 
 // The lift sweep's typed acceptance for this module's authored side

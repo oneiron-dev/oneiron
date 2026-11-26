@@ -19,10 +19,16 @@ pub mod connector_issuer_watch;
 pub mod connector_sends;
 #[cfg(unix)]
 pub mod continue_command;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod credential_file_network_fs;
+pub mod credential_write_actor;
 pub mod device_burst_drain;
+pub mod device_enrolment;
 pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;
+pub mod dreamer_sourced_route;
+pub mod dreamer_thing_child_route;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
@@ -38,6 +44,7 @@ pub mod hook_transcript_uploads;
 pub mod hosted_import;
 pub mod lens_frames;
 pub mod lfs_install_line;
+pub mod linked_peer;
 pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_merge_queue_checker_pass;
@@ -57,11 +64,17 @@ pub mod memory_timeline_projection;
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
 pub mod native_board;
+#[cfg(unix)]
+pub mod node_jobs;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
+#[cfg(all(feature = "mesh", unix))]
+pub mod organ_mesh;
 pub mod owner_backup;
 pub mod owner_check;
+#[cfg(unix)]
+pub mod owner_key_change_report;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;
@@ -69,10 +82,12 @@ pub mod raw_stream;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod refusal_wire;
+pub mod remote_task_poll;
 pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod root_project_signing;
 pub mod run_brief_people;
 pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]
@@ -87,9 +102,11 @@ pub mod solved_runs;
 pub mod supervised_rerank;
 pub mod system_one_leg;
 pub mod system_one_rung;
+pub mod task_brief_send;
 mod vault_acts;
 pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;
 pub mod wire_thresholds;
+pub mod work_order_host;
 pub mod workflow_park;

@@ -41,6 +41,7 @@ use crate::config::models::{
     ArtifactSource, ManagedLaunch, WorkerArtifact, WorkerConfig, WorkerListen,
 };
 use crate::model_artifacts::install::{ArtifactStore, artifacts_root};
+use crate::model_artifacts::licence::LicenceVault;
 use crate::models::drafter_serving::{VaultLoadSet, stock_draft_identity, verify_vault_load_set};
 
 /// The variables a worker keeps from this process's environment: what an
@@ -100,6 +101,8 @@ pub(super) struct ProcessLauncher {
     pub(super) row: WorkerConfig,
     pub(super) launch: ManagedLaunch,
     stores: Arc<Stores>,
+    /// Its host's licence binding, read at each install.
+    licence_vault: Arc<LicenceVault>,
     slot: Arc<LaunchSlot>,
     installed: Mutex<Option<Installation>>,
 }
@@ -109,12 +112,14 @@ impl ProcessLauncher {
         row: WorkerConfig,
         launch: ManagedLaunch,
         stores: Arc<Stores>,
+        licence_vault: Arc<LicenceVault>,
         slot: Arc<LaunchSlot>,
     ) -> Self {
         Self {
             row,
             launch,
             stores,
+            licence_vault,
             slot,
             installed: Mutex::new(None),
         }
@@ -139,8 +144,15 @@ impl ProcessLauncher {
         };
         let store = self.store(&artifacts);
         let token = self.launch.hub_token_env.as_deref();
-        let weights =
-            install::weights(Arc::clone(&store), &self.launch.weights, kind, false, token).await?;
+        let weights = install::weights(
+            Arc::clone(&store),
+            Arc::clone(&self.licence_vault),
+            &self.launch.weights,
+            kind,
+            false,
+            token,
+        )
+        .await?;
         // A vault's own draft is checked in its private directory; it never
         // goes through the shared artifact store (FIX 14976).
         let (draft, vault_draft) = match &self.launch.draft {
@@ -149,7 +161,17 @@ impl ProcessLauncher {
                 ..
             }) => (None, Some(verify_vault_load_set(set, kind).await?)),
             Some(draft) => (
-                Some(install::weights(store, draft, kind, true, token).await?),
+                Some(
+                    install::weights(
+                        store,
+                        Arc::clone(&self.licence_vault),
+                        draft,
+                        kind,
+                        true,
+                        token,
+                    )
+                    .await?,
+                ),
                 None,
             ),
             None => (None, None),

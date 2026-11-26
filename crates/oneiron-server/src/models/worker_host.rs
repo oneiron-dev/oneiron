@@ -76,6 +76,7 @@ use oneiron_driver::{
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
+use crate::model_artifacts::licence::LicenceVault;
 use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
 #[cfg(unix)]
@@ -121,6 +122,10 @@ struct WorkerHost {
     workers: Mutex<BTreeMap<String, Hosted>>,
     pending_replacements: Mutex<Vec<Arc<replacement::Replacement>>>,
     stores: Arc<Stores>,
+    /// The vault whose owner's licence choice its model installs read
+    /// (`models.install.allow_noncommercial_licences`), shared with each
+    /// launcher.
+    licence_vault: Arc<LicenceVault>,
     ledgers: Mutex<BTreeMap<String, Arc<DeviceLedger>>>,
     admissions: Mutex<BTreeMap<String, Arc<DeviceAdmission>>>,
     /// The sessions on its managed EXL3 workers (DESIGN-V2 R2).
@@ -382,6 +387,15 @@ impl Drop for BoundWork {
 #[cfg(unix)]
 fn host() -> &'static WorkerHost {
     HOST.get_or_init(WorkerHost::default)
+}
+
+/// Binds the vault whose owner's licence choice this process's model installs
+/// read (`models.install.allow_noncommercial_licences`); the server binds the
+/// vault it serves when it is built.
+pub(crate) fn bind_licence_vault(vault: &Arc<oneiron::Vault>) {
+    HOST.get_or_init(WorkerHost::default)
+        .licence_vault
+        .bind(vault);
 }
 
 /// Marks this process as the one that launches managed workers, and starts
@@ -918,6 +932,7 @@ impl WorkerHost {
                     row.clone(),
                     launch.clone(),
                     Arc::clone(&self.stores),
+                    Arc::clone(&self.licence_vault),
                     Arc::clone(&slot),
                 ));
                 let policy = WorkerPolicy {

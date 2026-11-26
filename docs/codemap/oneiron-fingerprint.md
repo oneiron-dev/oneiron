@@ -16,6 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/agent.rs` | src | s | — | — | Purposes of agent dispatch (`crates/oneiron/src/agent_dispatch`) |
 | `src/purposes/ai_host.rs` | src | s | — | — | Purposes of the AI host (`crates/oneiron-server/src/ai_host`) |
 | `src/purposes/archive.rs` | src | s | — | — | Purposes of the whole-vault archive (`oneiron` `batch::export`) |
+| `src/purposes/bench_scorecard.rs` | src | s | — | — | Purposes of the bench's retrieval ruler arms (`crates/oneiron-bench/src/scorecard/`) |
 | `src/purposes/booking.rs` | src | s | — | — | Purposes of booking (`crates/oneiron/src/booking`) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/browser_library.rs` | src | s | — | — | Purposes of the browser library (`oneiron-records`' and the core's `browser_library`) |
@@ -34,6 +35,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/engine_executor.rs` | src | s | — | — | Purposes of the engine executor (`crates/oneiron/src/engine_executor`) |
 | `src/purposes/feedback.rs` | src | s | — | — | Purposes of feedback (`crates/oneiron/src/feedback`) |
 | `src/purposes/git_wire.rs` | src | s | — | — | Purposes of the git wire (`oneiron-store`'s `git_wire` and `crates/oneiron/src/git_wire`) |
+| `src/purposes/gpu_line.rs` | src | s | — | — | Purposes of the lane economy's GPU lines (`crates/oneiron/src/gpu_line`) |
 | `src/purposes/ingest.rs` | src | s | — | — | Purposes of imports into the vault: claims from a registered source, and chat history |
 | `src/purposes/inquiry.rs` | src | s | — | — | Purposes of inquiries (`crates/oneiron/src/inquiry`) |
 | `src/purposes/key_custody.rs` | src | s | — | — | Purposes of key custody (`crates/oneiron/src/store/key_custody`, with its store half in `oneiron-store`) |
@@ -67,6 +69,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/vault_import.rs` | src | s | — | — | Purposes of a staged foreign vault import (`oneiron-store` `batch::export::foreign_stage`, sync builds) |
 | `src/purposes/vault_shape.rs` | src | s | — | — | Purposes of the vault shape (`crates/oneiron/src/vault_shape`) |
 | `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |
+| `src/purposes/work_order.rs` | src | s | — | — | Purposes of work orders (`crates/oneiron/src/work_order`, pass 34 row Q1) |
 | `src/purposes/workspace_roster.rs` | src | s | — | — | Purposes of the workspace roster (`crates/oneiron/src/workspace_roster`) |
 | `src/record.rs` | src | s | 1 enum · 2 fn | CanonicalBytesError | The one canonical byte form of a structured value (DESIGN section 1.5) |
 | `tests/fingerprint_rules.rs` | test | m | — | — | PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts |

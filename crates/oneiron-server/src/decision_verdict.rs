@@ -273,6 +273,40 @@ pub(crate) fn run_verdict(
     evidence_read: &mut Vec<EntityId>,
     session_ref: Option<&str>,
 ) -> MemoryResult<AiVerdict> {
+    run_verdict_reasoned(
+        server,
+        principal,
+        class,
+        reader,
+        lane,
+        held,
+        request,
+        payer,
+        evidence_read,
+        session_ref,
+    )
+    .map(|(verdict, _)| verdict)
+}
+
+/// [`run_verdict`], with the ladder's reason when it gave no answer
+/// ([`answer_verdict_reasoned`]): a caller that must tell a ladder with no
+/// rung that takes the question from a judged abstain reads it here.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the caller's verdict"
+)]
+pub(crate) fn run_verdict_reasoned(
+    server: &SyncServer,
+    principal: EntityId,
+    class: EdgeActorClass,
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    held: Option<DecisionImage>,
+    request: &AiVerdictRequest,
+    payer: Option<&PayerPerson>,
+    evidence_read: &mut Vec<EntityId>,
+    session_ref: Option<&str>,
+) -> MemoryResult<(AiVerdict, Option<HumanAskReason>)> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
     // and nothing on it is refused for spend (rule 5).
@@ -288,7 +322,7 @@ pub(crate) fn run_verdict(
     let answered = model_calls::scoped(principal, session_ref, || {
         on_caller_meter(&meter, || {
             on_caller_payer(payer, || {
-                answer_verdict(
+                answer_verdict_reasoned(
                     server,
                     principal,
                     class,

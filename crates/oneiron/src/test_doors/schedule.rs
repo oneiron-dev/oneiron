@@ -9,11 +9,9 @@ pub use job_specs::{
     TEST_LAPSE, TEST_ONCE, TEST_OPEN, TEST_PAGED, TEST_REARM, TEST_REARM_AFTER_SECS,
 };
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -25,27 +23,32 @@ use crate::schedule::{
 };
 use crate::store::housekeeping_schedule::{HousekeepingBudget, HousekeepingSweep};
 
-/// Every test run, by job code and subject.
-static RUNS: Mutex<BTreeMap<(&'static str, Option<EntityId>), u64>> = Mutex::new(BTreeMap::new());
-
-fn count(armed: &Armed) -> u64 {
-    let mut runs = RUNS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let entry = runs.entry((armed.job, armed.subject)).or_default();
-    *entry += 1;
-    *entry
+thread_local! {
+    /// Every test run, by job code and subject. Thread-local: every run and read runs on the
+    /// test's own thread.
+    static RUNS: RefCell<BTreeMap<(&'static str, Option<EntityId>), u64>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
-/// How many times `job` about `subject` has run.
+fn count(armed: &Armed) -> u64 {
+    RUNS.with(|runs| {
+        let mut runs = runs.borrow_mut();
+        let entry = runs.entry((armed.job, armed.subject)).or_default();
+        *entry += 1;
+        *entry
+    })
+}
+
+/// How many times `job` about `subject` has run on this thread.
 #[must_use]
 pub fn runs(job: &str, subject: Option<EntityId>) -> u64 {
-    RUNS.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
-        .filter(|((code, about), _)| *code == job && *about == subject)
-        .map(|(_, runs)| *runs)
-        .sum()
+    RUNS.with(|runs| {
+        runs.borrow()
+            .iter()
+            .filter(|((code, about), _)| *code == job && *about == subject)
+            .map(|(_, runs)| *runs)
+            .sum()
+    })
 }
 
 fn run_count(_vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
@@ -354,13 +357,17 @@ pub fn due_at(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<Opt
     crate::schedule::due_at_in_txn(&vault.store, &txn, job, subject)
 }
 
-/// Fails its first run about a subject; every later run is done.
-fn run_fail_once(_vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
-    Ok(JobResult::of(if count(armed) == 1 {
-        Ran::Failed
-    } else {
-        Ran::Done
-    }))
+/// Fails its first run about a subject on a vault; every later run is done. The vault keeps the
+/// subjects that failed, so a retry on another thread (a server housekeeping pass) is done too.
+fn run_fail_once(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    count(armed);
+    let first = vault
+        .test_door_state
+        .fail_once_failed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(armed.subject);
+    Ok(JobResult::of(if first { Ran::Failed } else { Ran::Done }))
 }
 
 /// A job whose first run about a subject fails, and whose retry is done.
@@ -379,18 +386,21 @@ pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
     run: run_fail_once,
 };
 
-/// Whether [`TEST_WITHDRAWN`] is out of the job registry now.
-static WITHDRAWN: AtomicBool = AtomicBool::new(false);
-
-/// Takes [`TEST_WITHDRAWN`] out of the job registry (`true`), as a build that does not know the
-/// job reads its rows, or puts it back (`false`).
-pub fn withdraw_test_job(withdrawn: bool) {
-    WITHDRAWN.store(withdrawn, Ordering::SeqCst);
+thread_local! {
+    /// Whether [`TEST_WITHDRAWN`] is out of the job registry now. Thread-local: the test that
+    /// withdraws it runs its runner passes on its own thread, and no other test sees the change.
+    static WITHDRAWN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Whether the registry leaves the job `code` out for now ([`withdraw_test_job`]).
+/// Takes [`TEST_WITHDRAWN`] out of the job registry (`true`) on this thread, as a build that does
+/// not know the job reads its rows, or puts it back (`false`).
+pub fn withdraw_test_job(withdrawn: bool) {
+    WITHDRAWN.set(withdrawn);
+}
+
+/// Whether the registry leaves the job `code` out for now on this thread ([`withdraw_test_job`]).
 pub(crate) fn withdrawn(code: &str) -> bool {
-    code == TEST_WITHDRAWN.code && WITHDRAWN.load(Ordering::SeqCst)
+    code == TEST_WITHDRAWN.code && WITHDRAWN.get()
 }
 
 /// A job the engine arms that always fails, and that a test takes out of the job registry and
@@ -557,21 +567,21 @@ pub fn defer_pollable_remote_task(
         RemoteTaskCredential, RemoteTaskHandle, RemoteTaskPoll, defer_record, force_sync,
         insert_pending_in_txn,
     };
-    let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let now = vault.now_recorded_at();
     let request = OutboundCallRequest::new(
         crate::attempt_queue::AttemptId::from_bytes(&[attempt; 16]).expect("attempt id"),
         1,
         "email",
         "send",
         vec![attempt; 8],
-        now_ms,
+        now,
     );
     let marker = BudgetChargeMarker {
         key_ref: None,
         budget_class: BudgetClass::Operation,
         matched_rows: Vec::new(),
         sends_debit: 0,
-        accounted_at_ms: now_ms,
+        accounted_at_ms: now,
     };
     let record = IntentLedgerRecord::pending(request, false, marker).expect("pending row");
     let mut wtxn = vault.store.env.write_txn().expect("write transaction");
@@ -588,8 +598,32 @@ pub fn defer_pollable_remote_task(
             form_elicitation: false,
         }),
     };
-    defer_record(vault, record.id, handle, now_ms).expect("defer the row");
+    defer_record(vault, record.id, handle, now).expect("defer the row");
     record.id
+}
+
+/// Files an MCP session end as owed to row `intent`, as the erase of a polled task's payload
+/// keeps one (FIX 16028): the served host's next pass sends its DELETE.
+///
+/// # Panics
+///
+/// When it cannot be written.
+pub fn owe_remote_task_session_end(vault: &Vault, intent: [u8; 32]) {
+    use crate::outbound_intent_ledger::{RemoteTaskCredential, RemoteTaskSessionEnd};
+    vault
+        .owe_remote_task_session_end_for_test(
+            &intent,
+            &RemoteTaskSessionEnd {
+                server: "tasks".to_owned(),
+                tool: "run".to_owned(),
+                endpoint: "https://tasks.example.com/mcp".to_owned(),
+                key_ref: None,
+                protocol: "2025-11-25".to_owned(),
+                session: "session-restored".to_owned(),
+                credential: RemoteTaskCredential::Route,
+            },
+        )
+        .expect("owe the session end");
 }
 
 /// The intent ids of the Deferred sends whose tasks are due a poll now, as the served host reads
@@ -608,14 +642,15 @@ pub fn remote_tasks_due_now(vault: &Vault) -> Vec<[u8; 32]> {
         .collect()
 }
 
-/// A poll that found `intent`'s task still running, as the served host records it now.
+/// A poll that found `intent`'s task still running, as the served host records it now, from a
+/// pass that saw no stop of the task asked (L8-29).
 ///
 /// # Panics
 ///
 /// When it cannot be recorded.
 pub fn remote_task_polled_now(vault: &Vault, intent: &[u8; 32], poll_after_ms: Option<u64>) {
     vault
-        .remote_task_polled(intent, poll_after_ms, "working")
+        .remote_task_polled(intent, poll_after_ms, "working", false)
         .expect("record the poll");
 }
 

@@ -282,7 +282,8 @@ const TITLE_PLACE: &str = "text:title";
 /// writes it, so no history holds what the handle stands in. With the
 /// owner's switch on, each secret the batch door's text rules place goes to
 /// custody and the title keeps its handle; `lifted` is the write's one plan.
-/// A hit no span places refuses as before.
+/// A hit no span places seals the title whole (`[secret sc12]`); one no seal
+/// clears refuses as before.
 pub(super) fn admit_title(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -620,7 +621,7 @@ impl Memory<'_> {
     ) -> MemoryResult<(PurgeReceipt, crate::check_in::CheckInDecision)> {
         let bound = requested.or(confirmed);
         self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn, _lane| {
+            content.note_history_purge(note, |txn, _lane| {
                 if let Some(owner) = owner
                     && owner.revalidate_in_txn(self.vault(), txn)? != self.actor()
                 {
@@ -637,16 +638,13 @@ impl Memory<'_> {
                     check_in,
                 )?;
                 require_note_writer(self, txn, note)?;
-                crate::memory::verify_deletion_authority_in_txn(
-                    self.vault(),
-                    txn,
-                    self.actor(),
-                    self.actor_class(),
-                )?;
+                // A credential handed on to another key erases nothing as
+                // the owner (HANDED-ON-SLIP-PERSON; Astra review on #8434, F3).
+                self.verify_own_deletion_authority_in(txn)?;
                 // A held note keeps its history (OF-470).
                 self.vault()
                     .store
-                    .reject_legal_hold_in_txn(txn, note.as_bytes())?;
+                    .reject_restricted_record_in_txn(txn, note.as_bytes())?;
                 let receipt_id = self.vault().new_entity_id()?;
                 crate::entity_doc::admit_history_erase_in_txn(
                     self.vault(),

@@ -148,6 +148,12 @@ crate::side_table::side_tables! {
     /// ":part:" index for a clip's bytes.
     MODEL_MEDIA_JOB: SyncState b"models:media-job:v1:" Named
         [restore: live] [family: dispatch Response] [tier: canonical];
+    /// The owner key changes this managed install already reported to its
+    /// supervisor (Engine ruling 21 Nov 06:00): the reported entry hashes, 32
+    /// bytes each, ascending. Install-local, never synced: every replica would
+    /// mail else. Key: ().
+    OWNER_KEY_CHANGE_REPORTED: SyncState b"managed:owner_key_change_reported:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Entity waiting for an embedding. Key: hex32.
     PENDING_EMBEDDING_MARKER: SyncState b"pe:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
@@ -299,6 +305,10 @@ crate::side_table::side_tables! {
     /// 7932), written in the transaction that settled the handoff and never rewritten. Key:
     /// hash32 (the ReRoot's entry hash).
     AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// A recovery hold's seed slot this install may hold: written and committed before R's seed
+    /// enters the slot, removed when the slot is deleted. Public key only. Key: successor key.
+    AUTHORITY_RECOVERY_HOLD_SLOT_PENDING: VaultMeta b"authority:recovery-hold-slot-pending:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
     /// the last content commit's and its class, so a host's telemetry and a backup's own writes
@@ -465,7 +475,7 @@ crate::side_table::side_tables! {
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
-    /// A Gate decision's scrub an erase owes while a legal hold keeps the decision's own
+    /// A Gate decision's scrub an erase owes while a restriction keeps the decision's own
     /// partition (FIX 7993, 7994), and when the erase asked: ids and a time only. Key: kind (0 an
     /// erased claim's skeleton, 1 an erased actor's attribution) + id16 (erased source) + id16
     /// (decision).
@@ -622,10 +632,6 @@ crate::side_table::side_tables! {
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
-    /// deletion receipt completes (OF-470 C4). Key: id16 (record).
-    LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Customer holds' legal-hold log: ids, times and reason codes only (OF-470 C3). A host
     /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
     /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
@@ -654,23 +660,9 @@ crate::side_table::side_tables! {
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
-    /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
-    /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names
-    /// no hold. Key: id16 (record).
-    LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
     /// (hold).
     LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// What a standing customer hold holds; the value is empty. Key: held key (1 + id16, or 17
-    /// zero bytes for the claim-free gate partition) + id16 (hold).
-    LEGAL_HOLD_TARGET: VaultMeta b"legal_hold:target:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// A record kept after a refused privacy erasure, serving only that legal reason (OF-470 C6).
-    /// Key: id16 (record).
-    LEGAL_HOLD_USE_LIMIT: VaultMeta b"legal_hold:use_limit:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine

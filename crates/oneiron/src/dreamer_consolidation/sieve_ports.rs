@@ -20,22 +20,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
 use super::call_labels::CallLabelMap;
-use super::executor::extraction::CitationCheck;
+use super::executor::extraction::{CitationCheck, failed_json_parse, prompt_lookup_off};
 use super::executor::{ConsolidationExecutor, Decider, ExtractionPrompt, ScopedRead};
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{FailureRules, Stage};
 use super::provenance::KeptDecision;
 use super::resources::PagePastRoom;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
+use super::step_charge::StepChargeTally;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::call_as_step_checked_with_unsaved_usage;
 use crate::llm::decision::AskTo;
+use crate::llm::{
+    call_as_step_checked_counting_sends, call_as_step_checked_with_unsaved_usage,
+    follow_up_pending, mark_follow_up_pending, recover_saved_step,
+};
 use crate::model_binding::ModelRole;
 use crate::model_decision::{DecisionQuestion, EvidenceVersion};
 use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
-use crate::model_step_error::{DurableStepError, DurableStepResult};
+use crate::model_step_error::{DurableStepError, DurableStepResult, ReplyCheck};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope,
@@ -252,6 +256,43 @@ pub struct SliceStep {
     pub outcome: DurableStepResult<StepOutcome>,
     /// A fresh response's usage when serialization or its checkpoint write failed.
     pub unsaved_usage: Option<LlmUsage>,
+    /// Set when this step is the one retry, with prompt lookup off, of a
+    /// reply that failed the JSON parse.
+    pub parse_retry: Option<ParseRetry>,
+}
+
+/// The one retry, with prompt lookup off, of an extraction reply that failed
+/// the JSON parse.
+pub struct ParseRetry {
+    /// The refused reply's spend, charged whether or not the retry went out;
+    /// `None` for a retry an earlier run of the try left pending, whose
+    /// refused reply that run charged.
+    pub refused_usage: Option<LlmUsage>,
+    /// Whether the retry asked the model in this run, read from its step's
+    /// own send count: the stage line counts only these (reviews of #10269,
+    /// round 1 P1 2 and round 2).
+    pub sent: bool,
+}
+
+impl SliceStep {
+    /// This step's outcome and unsaved usage, once `charges` holds the spend
+    /// of a refused reply its retry replaced and counts that retry if it went
+    /// out. Every tally of a slice step takes it through here, so both calls
+    /// are charged exactly once.
+    pub(super) fn charge_parse_retry(
+        self,
+        charges: &mut StepChargeTally,
+    ) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+        if let Some(retry) = &self.parse_retry {
+            if let Some(usage) = &retry.refused_usage {
+                charges.record_usage(usage);
+            }
+            if retry.sent {
+                charges.count_parse_retry();
+            }
+        }
+        (self.outcome, self.unsaved_usage)
+    }
 }
 
 /// The sieve's rungs on the executor's own roles: one generated pack per
@@ -453,22 +494,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         if let Some(past) = slice.page_past_room {
             return Err(DurableStepError::Engine(past.refusal()));
         }
-        let mut request = ConsolidationExecutor::extraction_request(
-            &child.call,
-            child.prompt,
-            slice.transcript,
-            slice.labels,
-            slice.scope,
-            &child.namespace,
-            answer_schema,
-        )?;
-        if let Some(rules) = child.rules {
-            rules.bind(Stage::Extraction, &mut request);
-        }
-        let mut request = vault
-            .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &child.call.inference)?
-            .into_request();
-        super::roles::bind_reasoning(vault, child.call.backend, &mut request)?;
+        let request = slice_request(&child, slice, false, answer_schema)?;
         if answer_schema {
             // The nightly check's capture: one row after the request is final, before the
             // call. Authored relation replies above keep none: they call no model.
@@ -504,35 +530,213 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         .iter()
         .map(|slice| child.call.call_backend(Some(slice.sources.to_vec())))
         .collect();
+    let child = &child;
     let jobs = requests
         .iter()
+        .zip(&child.slices)
         .zip(&checks)
         .zip(&backends)
         .zip(&authored)
-        .map(|((((_, request), check), backend), authored)| {
-            let backend: &dyn LlmBackend = match authored {
-                Some(authored) => authored,
-                None => backend.get(),
-            };
-            call_as_step_checked_with_unsaved_usage(
-                child.step,
-                backend,
-                child.guard,
-                request.clone(),
-                check,
-            )
-        })
+        .map(
+            |(((((step_hash, request), slice), check), backend), authored)| async move {
+                let backend: &dyn LlmBackend = match authored {
+                    Some(authored) => authored,
+                    None => backend.get(),
+                };
+                // A relation reply calls no model, so it has no parse retry.
+                let retry = match authored {
+                    Some(_) => None,
+                    None => parse_retry_request(child, slice, answer_schema),
+                };
+                if let Some(saved) = retry
+                    .as_ref()
+                    .and_then(|retry| saved_parse_retry(child, retry))
+                {
+                    return saved;
+                }
+                // An earlier run of this try had the slice's reply fail the
+                // parse, and its retry did not land: the retry goes out in
+                // the original's place (#10269 review, round 2).
+                if let Some(retry) = &retry {
+                    match follow_up_pending(child.step, step_hash) {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            return send_parse_retry(child, retry.clone(), backend, check, None)
+                                .await;
+                        }
+                        Err(error) => {
+                            return SliceStep {
+                                step_hash: *step_hash,
+                                outcome: Err(error.into()),
+                                unsaved_usage: None,
+                                parse_retry: None,
+                            };
+                        }
+                    }
+                }
+                let (outcome, unsaved_usage) = call_as_step_checked_with_unsaved_usage(
+                    child.step,
+                    backend,
+                    child.guard,
+                    request.clone(),
+                    check,
+                )
+                .await;
+                let step = SliceStep {
+                    step_hash: *step_hash,
+                    outcome,
+                    unsaved_usage,
+                    parse_retry: None,
+                };
+                match retry {
+                    Some(retry) => {
+                        retry_without_prompt_lookup(child, retry, backend, check, step).await
+                    }
+                    None => step,
+                }
+            },
+        )
         .collect();
-    let outcomes = ordered_slots(jobs, child.width).await;
-    Ok(requests
-        .into_iter()
-        .zip(outcomes)
-        .map(|((step_hash, _), (outcome, unsaved_usage))| SliceStep {
-            step_hash,
-            outcome,
-            unsaved_usage,
-        })
-        .collect())
+    Ok(ordered_slots(jobs, child.width).await)
+}
+
+/// `slice`'s extraction request on the child's role: the child's failure
+/// rules bound, sealed for the role, its reasoning bound; with prompt lookup
+/// off on an own server when `lookup_off`, the one change the retry of a
+/// reply that failed the JSON parse makes. `answer_schema` is the switch's
+/// in-force value, read once per child: the retry keeps the original's.
+fn slice_request(
+    child: &NeighbourhoodExtraction<'_>,
+    slice: &SliceCall<'_>,
+    lookup_off: bool,
+    answer_schema: bool,
+) -> DurableStepResult<LlmRequest> {
+    let vault = child.step.vault;
+    let mut request = ConsolidationExecutor::extraction_request(
+        &child.call,
+        child.prompt,
+        slice.transcript,
+        slice.labels,
+        slice.scope,
+        &child.namespace,
+        answer_schema,
+    )?;
+    if lookup_off {
+        prompt_lookup_off(&mut request);
+    }
+    if let Some(rules) = child.rules {
+        rules.bind(Stage::Extraction, &mut request);
+    }
+    let mut request = vault
+        .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &child.call.inference)?
+        .into_request();
+    super::roles::bind_reasoning(vault, child.call.backend, &mut request)?;
+    Ok(request)
+}
+
+/// `step` asked once more with prompt lookup off when its reply failed the
+/// JSON parse (the lead, 21 Nov 11:5x): a reply re-drawn without lookup's
+/// proposals can parse where the first did not (L06_20k, GPU run 5). It runs
+/// before the refused slice's normal Retry park. The retry's params, so its
+/// request hash, differ: it is a durable step of its own, a new call and
+/// never a replay of the refused reply (a refused reply is never memoized),
+/// and it takes the slice's place with the refused reply's spend to charge.
+/// It goes out whichever rung answered: the sealed request's locality is
+/// its ladder's widest route, and a seat whose own server comes before a
+/// hosted rung seals as a third party's while its own server answers. A
+/// hosted rung's wire drops the switch, so there the retry is the same
+/// request sent again at once, ahead of the Retry park that asks it later.
+/// A cut reply, a contract or citation fault, or any other outcome leaves
+/// `step` as it was. Before the retry goes out, the try marks it pending
+/// under the original's hash (#10269 review, round 2): a retry a budget
+/// trap, the finalize window or a closed offer holds back then goes out in
+/// the original's place on the try's next run, never a fresh original with
+/// lookup on. A mark that does not write leaves `step` as it was, so the
+/// slice parks as a refused one did before the retry.
+async fn retry_without_prompt_lookup(
+    child: &NeighbourhoodExtraction<'_>,
+    retry: ([u8; 32], LlmRequest),
+    backend: &dyn LlmBackend,
+    check: &ReplyCheck,
+    step: SliceStep,
+) -> SliceStep {
+    let refused_usage = match &step.outcome {
+        Err(DurableStepError::SpentSchemaValidation { errors, usage, .. })
+            if failed_json_parse(errors) =>
+        {
+            LlmUsage::clone(usage)
+        }
+        _ => return step,
+    };
+    if let Err(error) = mark_follow_up_pending(child.step, &step.step_hash) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "an extraction parse retry was not marked pending; the slice parks unretried"
+        );
+        return step;
+    }
+    send_parse_retry(child, retry, backend, check, Some(refused_usage)).await
+}
+
+/// Sends a slice's parse `retry`, the refused reply's spend
+/// `refused_usage` to charge with it when this run received that reply.
+async fn send_parse_retry(
+    child: &NeighbourhoodExtraction<'_>,
+    (step_hash, request): ([u8; 32], LlmRequest),
+    backend: &dyn LlmBackend,
+    check: &ReplyCheck,
+    refused_usage: Option<LlmUsage>,
+) -> SliceStep {
+    let (outcome, unsaved_usage, sends) =
+        call_as_step_checked_counting_sends(child.step, backend, child.guard, request, check).await;
+    SliceStep {
+        step_hash,
+        outcome,
+        unsaved_usage,
+        parse_retry: Some(ParseRetry {
+            refused_usage,
+            sent: sends > 0,
+        }),
+    }
+}
+
+/// `slice`'s parse retry request and its hash: the slice's own request with
+/// prompt lookup off. `None` when it cannot be built: the slice then runs
+/// with no retry, as before it had one.
+fn parse_retry_request(
+    child: &NeighbourhoodExtraction<'_>,
+    slice: &SliceCall<'_>,
+    answer_schema: bool,
+) -> Option<([u8; 32], LlmRequest)> {
+    slice_request(child, slice, true, answer_schema)
+        .and_then(|request| Ok((request.canonical_hash()?, request)))
+        .ok()
+}
+
+/// The saved reply of a slice's parse `retry` when an earlier run of this
+/// attempt asked it (review round 1 of #10269, P1 1): a thing branch's
+/// fan-out replaying the steps its agent ran, or a try resumed after a cut
+/// pass. The reply that failed the parse was never saved, so the slice's own
+/// request has no memo: sent again, it would ask the model a third time, and
+/// a reply that parsed could drop what the retry extracted. The retry's memo
+/// or saved payload answers with nothing sent. Its spend is charged as any
+/// replayed step's is; the refused reply's was charged by the run that sent
+/// it. `None` when the retry has no saved work.
+fn saved_parse_retry(
+    child: &NeighbourhoodExtraction<'_>,
+    (step_hash, request): &([u8; 32], LlmRequest),
+) -> Option<SliceStep> {
+    let outcome = match recover_saved_step(child.step, child.guard, request) {
+        Ok(None) => return None,
+        Ok(Some(outcome)) => Ok(outcome),
+        Err(error) => Err(error),
+    };
+    Some(SliceStep {
+        step_hash: *step_hash,
+        outcome,
+        unsaved_usage: None,
+        parse_retry: None,
+    })
 }
 
 /// Poll at most `width` children together. A ready error is just a slot

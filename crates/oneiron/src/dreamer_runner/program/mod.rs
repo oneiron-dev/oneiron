@@ -40,6 +40,8 @@ mod authority;
 mod bodies;
 #[cfg(feature = "sync")]
 mod carried_row_placement;
+#[cfg(feature = "sync")]
+mod decided;
 mod erase;
 mod hold_index;
 mod index;
@@ -51,6 +53,7 @@ mod release;
 #[cfg(feature = "sync")]
 pub(crate) mod replica;
 mod resume;
+mod resume_paused;
 #[cfg(feature = "sync")]
 mod retraction;
 mod run;
@@ -91,6 +94,10 @@ pub use self::read::{
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::read::{
+    PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
+};
 pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
     PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
@@ -98,6 +105,12 @@ pub use self::release::{
     release_turn_program_hold_as_owner,
 };
 pub(crate) use self::resume::ProgramHold;
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the owner's resume of paused programs.
+pub use self::resume_paused::{
+    ResumePausedTurnProgramItem, ResumePausedTurnProgramsPreview, ResumePausedTurnProgramsRequest,
+    ResumedTurnPrograms,
+};
+pub(crate) use self::resume_paused::{resume_chosen_in_txn, resume_paused_in_txn};
 pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
     note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,
@@ -105,7 +118,12 @@ pub(crate) use self::run::{
 // The owner's stop of a parked try (`park_release`) abandons the try's
 // Pending sends as a held program's Stop does (FIX 7188).
 pub(in crate::dreamer_runner) use self::stop_sends::abandon_stopped_sends_in_txn;
-pub(crate) use self::trigger::{PROGRAM_TIMER_JOB, release_idle_programs, release_program_wakes};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::stop_sends::stop_sends_in_own_writer;
+pub(crate) use self::trigger::{
+    PROGRAM_TIMER_JOB, pause_occurrence_armings_in_txn, release_idle_programs,
+    release_program_wakes,
+};
 pub use self::types::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
@@ -131,7 +149,9 @@ const ADMISSION: SideTable<[u8; 32], TurnProgramAdmissionRecord, Named> =
 const ATTEMPT: SideTable<AttemptId, TurnProgramAttemptStamp, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ATTEMPT);
 /// One wake the elected home decided on another machine, keyed by the turn,
-/// then the registration it woke: the admission's identity (FIX 5266).
+/// then the registration it woke: the admission's identity (FIX 5266). It
+/// goes with its actor's erase where this machine learned the actor
+/// (`index`).
 const DECIDED: SideTable<(EntityId, EntityId), [u8; 32], Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_DECIDED);
 /// One disarm this machine knows, keyed by its actor, then its registration

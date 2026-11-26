@@ -96,6 +96,7 @@ impl Fixture {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )?;
         assert!(minted.grant.confers, "the agent's read Grant is live");

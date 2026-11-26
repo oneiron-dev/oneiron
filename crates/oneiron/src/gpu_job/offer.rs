@@ -94,6 +94,16 @@ struct QuoteTerms<'a> {
 }
 
 impl GpuOffer {
+    /// The host backend that provisions this offer, by its registry name: the
+    /// host's config binds each offer to its backend as the connector's
+    /// credential binding (`[gpu_jobs.offers.*].backend`). A job records it at
+    /// its start and keeps it (design pass 33, 8.1). `None` for an offer the
+    /// host bound to no backend by name.
+    #[must_use]
+    pub fn backend(&self) -> Option<&str> {
+        self.connector.credential_binding.as_deref()
+    }
+
     /// Quotes one chunk of `request` on this offer: a new job, or the next
     /// chunk of the stopped job `resume` names. It writes nothing.
     ///
@@ -113,7 +123,14 @@ impl GpuOffer {
         self.quote_for(job, request, default_maximum_secs, now_ms)
     }
 
-    pub(super) fn quote_for(
+    /// Quotes one chunk of `request` on this offer for the job `job`: as
+    /// [`Self::quote`], for a job whose id was fixed before its quote (a
+    /// unit claim's id is its one job's).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::quote`].
+    pub fn quote_for(
         &self,
         job: EntityId,
         request: &GpuJobRequest,

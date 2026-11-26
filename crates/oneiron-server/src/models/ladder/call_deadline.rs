@@ -23,7 +23,7 @@ use tokio::time::Instant;
 
 use super::super::media::{MediaAnswer, MediaDispatchRelease, RungVoices};
 use super::super::walk::Walk;
-use super::{Call, ModelCallBinding, OfferLadder};
+use super::{Call, ModelCallBinding, OfferLadder, SourceAdmission};
 
 /// How long one call may take.
 #[derive(Clone, Copy, Debug)]
@@ -141,8 +141,14 @@ impl OfferLadder {
     /// caller's deadline before any offer it waits for is back, a timeout
     /// once the owner is asked about the parked offers; otherwise
     /// [`Self::unanswered`]. A [`CallDeadline::SendsUntil`] call ends with a
-    /// timeout only once its deadline has passed.
+    /// timeout only once its deadline has passed. A call whose run's own
+    /// pre-send condition refuses now ends first with that refusal: its
+    /// input was withdrawn, so no rest it met is why it stopped, and the
+    /// owner is asked nothing ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
     pub(super) fn ended(&self, call: Call<'_>, walk: Walk) -> LlmError {
+        if let Some(refused) = call.run.text_dispatch_refusal() {
+            return refused;
+        }
         let timed_out = match call.deadline {
             CallDeadline::Caller(_) | CallDeadline::CallerWithWaitCap { .. } => {
                 call.deadline.expired() || walk.limited()
@@ -151,7 +157,7 @@ impl OfferLadder {
             CallDeadline::Open | CallDeadline::Waits(_) => false,
         };
         if timed_out {
-            self.ask_parked(&walk, call.needs, call.run.principal());
+            self.ask_parked(&walk, call.needs, call.run);
             return CallDeadline::expiry();
         }
         self.unanswered(call, walk)
@@ -202,6 +208,34 @@ impl OfferLadder {
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.generate_from(run, request, selector, may_send, deadline, true, None, None)
             .await
+    }
+
+    /// [`Self::generate_recorded_by`] for a caller whose request carries
+    /// sources each destination must be admitted to (FIX 8714): every rung
+    /// the call reaches, the owner's fallback included, is sent only what
+    /// `sources` admits for that rung's own destination, judged before it is
+    /// admitted and again right before it is sent
+    /// ([`Self::generate_admitted`]).
+    pub(crate) async fn generate_admitted_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+        sources: &dyn SourceAdmission,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_from(
+            run,
+            request,
+            selector,
+            may_send,
+            deadline,
+            true,
+            Some(sources),
+            None,
+        )
+        .await
     }
 
     /// [`Self::generate_served`], asking `may_send` as

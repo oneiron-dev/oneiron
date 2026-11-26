@@ -91,6 +91,7 @@ fn admit_connector(vault: &Vault, actor: EntityId) -> (EntityId, EntityId) {
         data_class: SlateDataClass::Public,
         header_parameters: Vec::new(),
         resolved_input_schema: Some(json!({"type": "object"})),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,
@@ -99,6 +100,7 @@ fn admit_connector(vault: &Vault, actor: EntityId) -> (EntityId, EntityId) {
         read_only: true,
         idempotent: true,
         price: None,
+        http: None,
     }];
     let prior = vault
         .store_connector_slate(
@@ -169,6 +171,7 @@ async fn setup() -> Fixture {
                     ConnectorHostConfig {
                         transport: ConnectorTransport::McpHttp,
                         endpoint: Some(REQUESTED_ENDPOINT.to_owned()),
+                        document: None,
                         command: Vec::new(),
                         env: BTreeMap::new(),
                         cwd: None,

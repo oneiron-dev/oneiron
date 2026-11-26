@@ -6,9 +6,9 @@ use std::collections::BTreeSet;
 
 use super::super::applied::MaintenanceInverse;
 use super::{
-    ASK_ANSWER_CONTEXT, ASKS, Answer, IDENTITY_NOTIFICATION_PRODUCER, IDENTITY_RECHECK_FACET,
-    IS_PREFIX, IdentityAsk, MAX_CANDIDATES, ProvisionalInverse, SOMEONE_NEW, SOMEONE_NEW_RATIONALE,
-    erase, evidence, index, key_hex, put_hint_in_txn,
+    ASK_ANSWER_CONTEXT, ASKS, Answer, IDENTITY_RECHECK_FACET, IS_PREFIX, IdentityAsk,
+    MAX_CANDIDATES, ProvisionalInverse, SOMEONE_NEW, SOMEONE_NEW_RATIONALE, erase, evidence, index,
+    put_hint_in_txn,
 };
 use crate::claim::ClaimSource;
 use crate::identity_topology::{
@@ -273,39 +273,6 @@ pub(super) fn settle_ask_in_txn(
     Ok(entity)
 }
 
-/// One inbox Ask per owner, in the conversation of `turn`: a new row per
-/// ask and turn, so a later mention surfaces it again.
-pub(super) fn notify_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    turn: &EntityId,
-    now: u64,
-) -> Result<()> {
-    let conversation = crate::conversation_dag::conversation_of(&vault.store, txn, turn).ok();
-    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
-    let ask = key_hex(key);
-    for owner in owners {
-        vault.record_notification_in_txn(
-            txn,
-            &crate::inbox::NotificationEvent {
-                kind: crate::inbox::NotificationKind::Ask,
-                source: crate::inbox::NotificationSource {
-                    producer: IDENTITY_NOTIFICATION_PRODUCER.to_owned(),
-                    event: format!("{ask}:{}:{}", turn.to_hex(), owner.to_hex()),
-                    result: Some(ask.clone()),
-                    ..crate::inbox::NotificationSource::default()
-                },
-                subject_refs: Vec::new(),
-                recipient: Some(owner),
-                created_at: now,
-                origin_conversation: conversation,
-            },
-        )?;
-    }
-    Ok(())
-}
-
 /// Keeps the names separate for now (OF-023): a nightly decision that
 /// abstained merges, confirms and asks nothing. The candidates and the
 /// mention's provisional entity stay as they are; the ask stays open and
@@ -345,7 +312,8 @@ pub(super) fn keep_separate_in_txn(
     )
 }
 
-/// Sends an ask to the person: it waits on their answer from now on.
+/// Sends an ask to the person: it waits on their answer from now on. It
+/// goes to whoever `route` finds can open it.
 pub(super) fn escalate_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -359,5 +327,5 @@ pub(super) fn escalate_in_txn(
     // Always (re-)added, idempotently (FIX 10376): a rewrite stamps only,
     // but a revert re-opens its ask through this door while no row stands.
     index::sync_ask_membership(&vault.store, txn, key, None, Some(&ask))?;
-    notify_in_txn(vault, txn, key, &ask.turn, now)
+    super::route::notify_in_txn(vault, txn, key, &ask, (&ask.turn, &ask.message), now)
 }

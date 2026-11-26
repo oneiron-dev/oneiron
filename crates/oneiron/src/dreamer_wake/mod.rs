@@ -42,8 +42,8 @@ pub use self::deadline::*;
 pub(crate) use self::driver::executor_error_park_for_test;
 pub use self::driver::*;
 pub(crate) use self::driver::{
-    check_host_wake_rewrite, executor_error_ends_pass, llm_waits_on_owner_act,
-    refuses_attempt_input, waits_on_owner_act,
+    check_host_wake_rewrite, executor_error_ends_pass, fatal_refuses_window, llm_refuses_window,
+    llm_waits_on_owner_act, refuses_attempt_input, step_refuses_window, waits_on_owner_act,
 };
 pub(crate) use self::frame_outline::build_boxed_future;
 pub use self::grain::*;
@@ -119,6 +119,23 @@ pub(crate) fn erase_in_txn(
     }
     // The follower's frames and keyframes of these words go too (FIX 7510).
     follower::erase_in_txn(write, txn, &turns)
+}
+
+/// Owes each TURN whose words `id` is (itself for a TURN, each TURN a
+/// MESSAGE is part of) a fresh read, as an erase owes a neighbour's: the
+/// owner's re-derive of a sealed CLAIM (READ-LINEAGE L1-B), so the next wake
+/// learns again what its evidence still says. How many TURNs it owed.
+pub(crate) fn owe_turn_reads_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &crate::EntityId,
+) -> crate::Result<usize> {
+    let turns = text_turns_in_txn(store, txn, id)?;
+    for turn in &turns {
+        sieve::owe_read_in_txn(store, txn, turn)?;
+        crate::dreamer_consolidation::redirty::redirty_read_turn_in_txn(store, txn, turn)?;
+    }
+    Ok(turns.len())
 }
 
 /// The window demotion hook (OF-534), in the remover's transaction before

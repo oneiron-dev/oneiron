@@ -591,6 +591,7 @@ fn a_reader_who_cannot_read_a_row_now_reads_nothing_of_it_at_the_fork() {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner grants the agent world A to read");

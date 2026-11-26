@@ -26,9 +26,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 19 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | L | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/inference.rs` | src | s | 1 struct · 1 trait · 1 type | WorkerProbe, WorkerSpec | The model-worker probe seam (FIX 8314, INFERENCE R1): what one worker is declared to be, and the one call… |
-| `src/supervisor/inference_admission.rs` | src | L | 8 struct · 3 enum · 23 fn · 2 type · 1 re-export · 1 crate-vis | AdmissionSnapshot, AdmissionStop, DeviceAdmission, DeviceGrant, ExecutorRegistration, LoadGrant, PressureDecision, PressureState +3 | Host/device admission for inference work (DESIGN-V2 R4) |
+| `src/supervisor/inference_admission.rs` | src | m | 8 struct · 3 enum · 23 fn · 2 type · 1 re-export · 1 crate-vis | AdmissionSnapshot, AdmissionStop, DeviceAdmission, DeviceGrant, ExecutorRegistration, LoadGrant, PressureDecision, PressureState +3 | Host/device admission for inference work (DESIGN-V2 R4) |
 | `src/supervisor/inference_admission/load.rs` | src | s | 2 fn · 1 crate-vis | — | Pre-launch grants and their class inheritance |
 | `src/supervisor/inference_admission/policy.rs` | src | s | 6 enum · 13 const | BackgroundFairness, PressureAction, QueueOrder, ResidentFreshness, UnknownMemoryPolicy, UnmediatedPolicy | R4 admission policy constants |
+| `src/supervisor/inference_admission/queue.rs` | src | s | 8 crate-vis | — | Ticket-queue selection, dependency, stop truth, and holder names |
 | `src/supervisor/inference_admission/status.rs` | src | s | 3 fn | — | Admission status and host-observed pause state |
 | `src/supervisor/inference_admission/ticket.rs` | src | s | 11 fn | — | Ticket waits and cancellation for the parent device queue |
 | `src/supervisor/inference_device.rs` | src | m | 6 struct · 2 enum · 21 fn · 3 crate-vis | DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource, TryReserveOutcome, WorkEnvelope | One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency… |
@@ -70,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/dreamer_psych_profile.rs` | test | m | — | — | MAP-6.9 row 6.9i (untangle 6.9i PR 2): the Dreamer's Psych Mirror job |
 | `tests/dreamer_strength_archive.rs` | test | s | — | — | The production strength facet (untangle 6.9c PR 4, MAP-6.9 row 6.9c): a wake pass through the production… |
 | `tests/extraction_decisions.rs` | test | m | — | — | Bound extraction decision orchestration over lent scripted verdicts |
-| `tests/extraction_decisions/support.rs` | test | m | 25 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
+| `tests/extraction_decisions/support.rs` | test | m | 24 crate-vis | — | Lent scripted verdict fixtures for bound extraction decision tests |
 | `tests/extraction_decisions_claim_evidence_parity.rs` | test | s | — | — | Native versus crate extraction correction parity for an operand that cites a listed claim (FIX row… |
 | `tests/extraction_decisions_parity.rs` | test | m | — | — | Native versus crate extraction decision parity over real vaults |
 | `tests/extraction_decisions_step_record.rs` | test | m | — | — | A decisions run over a real lent extraction step names its recorded candidates |
@@ -81,3 +82,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/extraction_selection_parity.rs` | test | s | — | — | Native selection parity for extraction grouping and scoring |
 | `tests/extraction_verdict_observed.rs` | test | s | — | — | Checks crate-routed observed preferences against the engine's bound verdict rebuild |
 | `tests/extraction_verdict_observed/support.rs` | test | m | 5 crate-vis | — | Provides the minimal real-vault fixture for observed verdict checks |
+| `tests/restored_unjoined_deadlines.rs` | test | s | — | — | Row [RESTORED-UNJOINED-ROUND2-TESTS] (parent row RESTORED-UNJOINED-STARTS-NO-WORK): the round-2 timer fix… |

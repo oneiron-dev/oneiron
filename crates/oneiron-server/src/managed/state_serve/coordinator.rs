@@ -3,6 +3,7 @@
 //! State, admission, and shutdown definitions remain in the parent module.
 
 mod ledger_report;
+mod owner_key_change_report;
 mod teardown;
 
 use teardown::StartingHandles;
@@ -57,6 +58,9 @@ async fn serve_with_handles(
     // Argv's configuration with the owner's settings file settled over it,
     // tracing started between the file's refusal and its settling.
     let (mut config, settled) = super::settings::configure(args, &managed)?;
+    // The supervisor funds a managed server's host account, never the owner's own
+    // `[gpu_jobs.host_allocation]` (R6-VAULT-MACHINE-FUNDING = A).
+    crate::gpu_host::refuse_managed_host_allocation(&config.gpu_jobs)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     tracing::info!(
         vault = %managed.vault_name,
@@ -184,6 +188,11 @@ async fn serve_with_handles(
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
     // before any worker starts or ready is said (FIX 5677).
     owner_host.sweep_rehearsals(&vault);
+    // The owner key change report's baseline, before any worker starts or
+    // anything serves: every owner key entry the vault holds now is history,
+    // never mailed, and every change landed after it is reported (Engine
+    // ruling 21 Nov 06:00).
+    crate::managed::owner_key_change_report::baseline_cursor(&vault);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
@@ -318,6 +327,9 @@ async fn serve_with_handles(
     // Bulk campaign email names this host's one-click unsubscribe links
     // (ARCH-0059 #opt-out), as plain serve installs them.
     crate::api::install_one_click_unsubscribe_origin(&sync_server);
+    // A one-liner `tasks.create` is composed by this server's
+    // `[models.roles.local_reasoner]` seat, once the seats are built (L8-07).
+    crate::ai_host::HostTaskBriefModel::install(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -354,6 +366,9 @@ async fn serve_with_handles(
     // The recovery box's kit-only hold rides the ledger's socket and spawn
     // identity; the recovery preset switch is its only caller.
     sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
+    // The owner key change report rides the same socket and identity; the
+    // reporter task beside the ledger report is its only caller.
+    sync_server.configure_owner_key_change_report(ledger.owner_key_change_report())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed
@@ -549,6 +564,10 @@ async fn serve_with_handles(
         Arc::clone(&state),
         Arc::clone(&sync_server),
         training_changes,
+        shutdown.triggered(),
+    ));
+    handles.owner_key_change_report = Some(owner_key_change_report::spawn(
+        Arc::clone(&sync_server),
         shutdown.triggered(),
     ));
 

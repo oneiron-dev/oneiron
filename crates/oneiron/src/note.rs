@@ -3,6 +3,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::fingerprint::ContentHash;
 
 pub use crate::store::note_body::{
     NOTE_BODY_KEYS, NOTE_CORE_KEYS, NoteBody, NoteCore, NoteKind, NoteScope, NoteWriteEnvelope,
@@ -191,6 +192,24 @@ pub(crate) fn note_explicit_only_in_txn(
         overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?
             == ContextDefault::ExplicitOnly,
     )
+}
+
+/// A digest of NOTE `id`'s overrides in `txn`, `None` when it has none. An
+/// override moves who reads a NOTE (its context) with no new version of its
+/// document, so a judgement of the NOTE's text a reader read stands for a
+/// later act only while this digest is the one it was made under (campaign
+/// copy review).
+pub(crate) fn note_overrides_digest_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(overrides) = overrides::note_overrides_in_txn(store, txn, id)? else {
+        return Ok(None);
+    };
+    let encoded = serde_json::to_vec(&overrides)
+        .map_err(|_| crate::Error::InvariantViolation("NOTE overrides encode"))?;
+    Ok(Some(ContentHash::of(&encoded).into_bytes()))
 }
 
 /// A refused private row must not disclose its existence through a receipt.

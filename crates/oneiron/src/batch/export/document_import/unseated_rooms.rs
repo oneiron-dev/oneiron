@@ -184,5 +184,6 @@ fn room_not_seated_here(id: EntityId) -> ExportImportOmission {
     ExportImportOmission {
         entity_id: id.to_hex(),
         reason: ImportOmissionReason::RoomNotSeatedHere,
+        skill_source: None,
     }
 }

@@ -280,7 +280,11 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
     );
     let body = mcp_refusal(&server, upsert(&revision)).await;
     assert_eq!(
-        body["error"]["data"]["error_code"], "mcp_auth_required",
+        body["error"]["data"]["error_code"], "mcp_grant_missing",
+        "{body}"
+    );
+    assert_eq!(
+        body["error"]["data"]["required_scope"], "core:write",
         "{body}"
     );
     assert_eq!(

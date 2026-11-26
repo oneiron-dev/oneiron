@@ -1,4 +1,6 @@
 //! Secret sight for artifact and typed-body reads by a bound memory caller.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
@@ -68,7 +70,7 @@ impl Memory<'_> {
         if export.version != version {
             return Err(Error::ConcurrentWrite("the artifact version changed").into());
         }
-        let copy_blake3 = *blake3::hash(&export.bytes).as_bytes();
+        let copy_blake3 = ContentHash::of(&export.bytes).into_bytes();
         Ok(Some(PinnedArtifactCopy {
             stored_blake3: export.content_hash,
             copy_blake3,

@@ -385,6 +385,7 @@ pub(crate) fn mark_retained_repo_blob_in_txn(
             hash: raw_blake3,
             keys: marked,
             record: origin,
+            sealed: false,
         };
         put_file_marks_in_txn(store, wtxn, vec![file], &minted, at)?;
     }

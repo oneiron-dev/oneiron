@@ -1013,6 +1013,46 @@ fn successor_image_past_a_device_revocation_keeps_the_whole_history_revoke_facts
 }
 
 #[test]
+fn successor_image_past_a_rejected_confirm_keeps_the_whole_history_confirms() {
+    let fixture = fixture();
+    // A fresh confirm the host signs folds to a state; one the agent signs
+    // after its key's revocation is admitted past the image and then folds
+    // rejected on both vaults (`device_revocation_past_an_adopted_image_folds`).
+    let folded = fresh_confirm(0xEA);
+    sign_and_share(&fixture, AuthorityOp::FederationConfirm(folded.clone()));
+    revoke_agent(&fixture);
+    let rejected = fresh_confirm(0xE9);
+    let later = sign_next_op_as(
+        &fixture.home,
+        &agent_signing(),
+        AuthorityOp::FederationConfirm(rejected.clone()),
+    )
+    .expect("sign as the agent");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&later)).expect("store later on home");
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&later))
+        .expect("store later on adopting");
+    // Home's image over its whole history, and the image the adopting vault
+    // builds past its adopted one, over the same rows.
+    let (home_ids, home_nonces) = oneiron::test_doors::foldpast::image_confirm_keys(
+        &written_image(&fixture.home, &fixture.issuer),
+    );
+    assert!(
+        home_ids.contains(&folded.confirm_id) && home_nonces.contains(&folded.nonce),
+        "home's image keeps the confirm its fold accepts"
+    );
+    assert!(
+        !home_ids.contains(&rejected.confirm_id) && !home_nonces.contains(&rejected.nonce),
+        "home's image keeps no confirm its fold rejects"
+    );
+    let successor = written_image(&fixture.adopting, &fixture.issuer);
+    assert_eq!(
+        oneiron::test_doors::foldpast::image_confirm_keys(&successor),
+        (home_ids, home_nonces),
+        "the successor image keeps home's confirms"
+    );
+}
+
+#[test]
 fn row_its_revoked_key_cosigns_beside_a_device_revocation_still_needs_history() {
     let fixture = fixture();
     // Both on the image's frontier: the host's enrollment of a fresh agent,
@@ -1073,6 +1113,105 @@ fn row_its_revoked_key_cosigns_beside_a_device_revocation_still_needs_history() 
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
             .and_then(|()| fixture.adopting.authority_fold()),
         AuthorityHistoryReason::RetirementFence,
+    );
+}
+
+#[test]
+fn tail_approval_its_revoked_key_cosigns_below_the_revocation_needs_history() {
+    let fixture = fixture();
+    // Both past the image: a federation confirm the host signs and the agent
+    // cosigns (an approval resting on the agent's key), then the host's
+    // revocation of that key on top of it. The confirm is in the
+    // revocation's line, so the revocation's fence refuses nothing; the
+    // approval still rests on a key the fold holds revoked, which only the
+    // whole history times.
+    let confirm = sign_next_host_op_cosigned(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE4)),
+        &agent_signing(),
+    )
+    .expect("sign the cosigned confirm");
+    let confirm_hash = authority_entry_hash(&confirm).expect("confirm hash");
+    for vault in [&fixture.home, &fixture.adopting] {
+        put_signed_entries(vault, std::slice::from_ref(&confirm)).expect("store the confirm");
+    }
+    assert!(
+        fixture
+            .adopting
+            .authority_fold()
+            .expect("adopting folds the confirm")
+            .valid_entries
+            .contains(&confirm_hash),
+        "adopting counts the confirm while the agent key stands"
+    );
+    let revoke = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::RevokeDevice {
+            revoked_key: agent_key(),
+        },
+    )
+    .expect("sign the revocation on the confirm");
+    assert_eq!(
+        revoke.parent_hashes,
+        vec![confirm_hash],
+        "the revocation stands on the confirm"
+    );
+    let revoke_hash = authority_entry_hash(&revoke).expect("revoke hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&revoke)).expect("store on home");
+    let home_fold = fixture
+        .home
+        .authority_fold()
+        .expect("home folds the revocation");
+    assert!(
+        home_fold.valid_entries.contains(&revoke_hash),
+        "home counts the revocation"
+    );
+    assert!(
+        home_fold
+            .roster
+            .get(&agent_key())
+            .is_some_and(|device| device.revoked),
+        "home holds the agent key revoked"
+    );
+    assert!(
+        home_fold.valid_entries.contains(&confirm_hash),
+        "home counts the approval inside its window"
+    );
+    assert!(
+        !home_fold
+            .issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(confirm_hash)),
+        "the revocation's fence does not retire a row in its line"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
+            .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::StaleRosterWindow,
+    );
+    // Past the window the whole history lets the approval lapse.
+    fixture
+        .home
+        .advance_authority_clock_for_test(fixture.home.now_recorded_at() + PAST_THE_WINDOW_SECS)
+        .expect("advance home's clock");
+    let lapsed = fixture
+        .home
+        .authority_fold()
+        .expect("home folds past the window");
+    assert!(
+        !lapsed.valid_entries.contains(&confirm_hash),
+        "home lets the approval lapse"
+    );
+    assert!(
+        lapsed
+            .issues
+            .contains(&AuthorityFoldIssue::StaleRosterApproval(confirm_hash)),
+        "home lapses it as a stale roster approval"
+    );
+    assert!(
+        lapsed.valid_entries.contains(&revoke_hash),
+        "home still counts the revocation"
     );
 }
 
@@ -2165,6 +2304,57 @@ fn anchor_mark_past_an_adopted_image_still_needs_history() {
             .contains(&hash),
         "home folds the anchor's mark"
     );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::OpNotFoldedPast,
+    );
+}
+
+#[test]
+fn owner_answer_past_an_adopted_image_still_needs_history() {
+    use oneiron::authority::{ActSurface, OwnerAct, OwnerActKind};
+    // A machine the host root's roster revision 1 made the owner's, covered
+    // by the image.
+    let home = machine_fixture(&[YOURS]);
+    let fixture = &home.fixture;
+    let seen = fixture
+        .home
+        .authority_fold()
+        .expect("home folds before the answer")
+        .machines
+        .get(&home.machine)
+        .expect("the covered machine")
+        .answer_revision(None);
+    // The owner's answer "yours" at revision 2, which the machine carries
+    // itself under the key it already stands under: valid at home with no
+    // owner key's proof. Its standing reads the carrier chain's covered
+    // revisions under this install's floors, which no image keeps.
+    let AuthorityOp::MachineProfile(mut profile) = home.profile(YOURS, 2) else {
+        panic!("a machine profile");
+    };
+    profile.carrier = Some(home.machine);
+    profile.act = Some(OwnerAct::by_owner(
+        home.owner,
+        OwnerActKind::MachineAnswer,
+        home.machine,
+        ActSurface::ThisInstall,
+        seen,
+    ));
+    let tail = sign_next_op_as(
+        &fixture.home,
+        &home.key,
+        AuthorityOp::MachineProfile(profile),
+    )
+    .expect("sign the owner answer");
+    let hash = authority_entry_hash(&tail).expect("answer hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store on home");
+    let home_fold = fixture
+        .home
+        .authority_fold()
+        .expect("home folds the answer");
+    assert!(home_fold.issues.is_empty(), "home folds the answer clean");
+    heads_roster(&home_fold, home.machine, &hash, false);
     asks_history(
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
             .and_then(|()| fixture.adopting.authority_fold()),

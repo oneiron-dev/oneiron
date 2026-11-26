@@ -442,7 +442,8 @@ function onlyVerbStep(run: ExecuteRun): ExecuteStep["outcome"] {
 function deniedWrite(run: ExecuteRun, actor: PairedActor): void {
   const outcome = onlyVerbStep(run);
   expect(outcome.kind).toBe("denied");
-  expect(outcome.outcome).toBe("mcp_auth_required");
+  // The tier lacks the grant; its credential is sound (mcp_auth_required is for proof faults).
+  expect(outcome.outcome).toBe("mcp_grant_missing");
   expect(run.actor.actor_ref).toBe(actor.principalRef);
   expect(run.actor.gate_actor_class).toBe("agent");
 }
@@ -663,7 +664,7 @@ suite.test(test, "BOOT-07", "MCP tool-first operator registration should work", 
   expect(unapproved.items.some(item => item.value_text.includes(journey.marker))).toBe(false);
   mcpRefusal(await reader!.mcp.rpc("tools/call", { name: "vault.claims.upsert",
     arguments: toolArguments(tools, "vault.claims.upsert", { arguments: { spec: proposal } }),
-  }), "mcp_auth_required");
+  }), "mcp_grant_missing");
   mcpRefusal(await proposer!.mcp.rpc("tools/call", { name: "vault.claims.upsert",
     arguments: toolArguments(tools, "vault.claims.upsert", {
       actor: { actor_ref: engine.pairedActor.principalRef, gate_actor_ref: engine.pairedActor.principalRef,

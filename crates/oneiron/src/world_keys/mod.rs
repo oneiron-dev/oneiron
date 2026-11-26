@@ -31,6 +31,7 @@ mod kit;
 mod kit_piece;
 mod machine;
 mod owner_presence;
+pub(crate) mod owner_presence_reasons;
 mod owner_signing;
 mod owner_work;
 mod pad_custody;
@@ -89,7 +90,7 @@ pub use self::machine::{existing_machine_secret, machine_encryption_key, machine
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_presence::{OwnerActImportance, OwnerPresenceBasis, OwnerPresenceWitness};
 pub use self::owner_signing::OwnerRootSigner;
-pub(crate) use self::owner_signing::{OwnerSigningSlot, SlotRenewal};
+pub(crate) use self::owner_signing::{FreshOwnerKey, OwnerSigningSlot, SlotRenewal};
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
@@ -130,8 +131,7 @@ pub use self::pads::PromotedWorldPad;
 pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub(crate) use self::pads::{
     ERASED_WORLD_BACKUP_KEEP_DAYS, destroy_world_keys_in_txn, held_pad_world_in_txn,
-    is_erasable_world_in_txn, late_pad_in_txn, legal_hold_pad_world_in_txn,
-    note_world_deleted_in_txn, pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
+    is_erasable_world_in_txn, late_pad_in_txn, pad_body_world, pad_world_in_body,
     reject_held_pad_world_in_txn, world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn,
     world_pad_windows_in_txn,
 };
@@ -170,10 +170,10 @@ pub use self::vault_key::{
     DataKeyGenerationKeptWays, DataKeyGenerationOutcome, DataKeyGenerationProposal,
     DataKeyGenerationWays, EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey,
     NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL, NewVaultKeyWrap, NoRecoveryBox,
-    RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryPreset, RecoveryPresetAnyTwoChange,
-    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
-    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
-    passkey_prf_input, reseal_escrow_capsule,
+    RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending, RecoveryBoxKitOnlyFact,
+    RecoveryBoxRelease, RecoveryPreset, RecoveryPresetAnyTwoChange, RecoveryPresetChange,
+    RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock,
+    VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

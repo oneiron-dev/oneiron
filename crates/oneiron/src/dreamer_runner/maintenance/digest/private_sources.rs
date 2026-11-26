@@ -88,6 +88,29 @@ fn readable_in(
     Ok(true)
 }
 
+/// The records the words of `item` are drawn from that this vault has not
+/// erased: each one [`digest_item_readable_by_in`] reads for a viewer, and
+/// what the notice of a digest carrying `item` is born from
+/// (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half). An erased record
+/// names no source any more, and the notice is not sealed for it.
+///
+/// # Errors
+///
+/// Storage failures, and a record with no readable header.
+pub(super) fn digest_item_records_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    item: &DigestProposal,
+) -> Result<Vec<EntityId>> {
+    let mut records = Vec::new();
+    for (id, _) in word_records_in(vault, txn, item.claim_ref)? {
+        if !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?.deleted {
+            records.push(id);
+        }
+    }
+    Ok(records)
+}
+
 /// Every private thread turn, by its root, the records of `claim`'s words
 /// are read from; `None` where the walk of one denies every viewer.
 fn word_turns_in(

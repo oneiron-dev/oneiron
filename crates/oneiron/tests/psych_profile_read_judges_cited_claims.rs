@@ -1,6 +1,6 @@
 //! A PSYCH_PROFILE's words are those of the CLAIMs it cites, which profile landing names only as
 //! typed sources in the body (FIX 11766), never as an edge. The derived-source conjunct of a
-//! scoped read and the owner's C6 use-limit check take a row's sources from
+//! scoped read and the owner's use-limit check take a row's sources from
 //! `scope_summary::word_sources_in`, which named none for a profile, so neither judged a cited
 //! claim (FIX PSYCH-PROFILE-DERIVED-SOURCE-CONJUNCT-MISSES-CITED-CLAIMS).
 //!
@@ -12,9 +12,9 @@
 //!   claim it cites, and reads the profile; R2 names the profile and its PERSON alone, does not
 //!   read the claim, and is withheld the profile on `vault.get`, as an absent row is.
 //! * `a_use_limited_cited_claim_withholds_the_profile_from_the_owner`: on a hosted vault a
-//!   customer hold refuses the privacy erase of the cited claim, which keeps it stored and
-//!   use-limited (C6 storage-only). The owner's `vault.get` of the profile served it before and
-//!   answers it as absent after (FIX 1496 S8); a profile of another claim still reads.
+//!   cooperative review restriction use-limits the cited claim. The owner's `vault.get` of the
+//!   profile served it before and answers it as absent after (FIX 1496 S8); a profile of another
+//!   claim still reads.
 //! * `a_reader_missing_the_message_a_cited_intent_quotes_is_withheld_the_profile` (review round 1
 //!   of #9923): the cited claim is an owner's stated intent, which quotes the MESSAGE its
 //!   consolidation envelope cites, so it reads only while that MESSAGE does. The reader names the
@@ -30,21 +30,16 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
 };
-use oneiron::memory::{
-    EraseOptions, EraseReason, Memory, WitnessAssertions, WitnessAuthor, WitnessMessage,
-    WitnessTurn,
-};
+use oneiron::memory::{Memory, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::store::GateDecisionId;
 use oneiron::store::revision_ref::RevisionRef;
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
@@ -254,39 +249,10 @@ fn a_reader_missing_a_cited_claim_is_withheld_the_profile() -> TestResult {
     Ok(())
 }
 
-fn owner_proof(vault: &Vault) -> TestResult<AuthenticatedOwner> {
-    let owner = vault.ensure_embedded_owner_actor()?;
-    Ok(vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?)
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited.
-fn keep_use_limited(vault: &Vault, record: EntityId) -> TestResult {
-    let hold = vault.place_legal_hold(
-        &owner_proof(vault)?,
-        vec![LegalHoldTarget::Record(record)],
-        Some("matter-profile-cited-claim".to_owned()),
-    )?;
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let memory = door::owner(vault)?;
-    let preview = memory.preview_entity_delete(&record)?;
-    let outcome = memory.confirm_entity_erase(
-        &preview,
-        EraseOptions {
-            reason: EraseReason::GdprDelete,
-            also_same_bytes: false,
-            veto_starter: None,
-        },
-    )?;
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault.legal_hold_use_limit(&record)?.is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record.
+fn use_limit(vault: &Vault, record: EntityId) -> TestResult {
+    restrict_record(vault, record)?;
     Ok(())
 }
 
@@ -296,9 +262,6 @@ fn a_use_limited_cited_claim_withholds_the_profile_from_the_owner() -> TestResul
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
     let vault = Vault::open_owned(dir.path(), config)?;
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     let person = put_person(&vault)?;
     let held = put_claim(&vault, person, "prefers quiet mornings")?;
     let kept = put_claim(&vault, person, "likes long walks")?;
@@ -308,10 +271,10 @@ fn a_use_limited_cited_claim_withholds_the_profile_from_the_owner() -> TestResul
     assert_served(
         &get(&owner, &held_profile),
         &held_profile,
-        "FIXTURE: the owner reads the profile before its claim is kept",
+        "FIXTURE: the owner reads the profile before its claim is restricted",
     );
 
-    keep_use_limited(&vault, held)?;
+    use_limit(&vault, held)?;
 
     assert_served(
         &get(&owner, &kept_profile),

@@ -4,7 +4,7 @@
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
-    ArchiveRetainedSideRow, ArchiveSideFamily, OwnerArchiveRestorePermit,
+    ArchiveRetainedSideRow, ArchiveSideFamily, OwnerArchiveRestorePermit, ProjectRootMap,
     RetainedSideHeldBackReason, SideRowBytes,
 };
 use crate::error::{Error, Result, StoreError};
@@ -106,6 +106,8 @@ pub(crate) enum ArchivedSideGroup {
     RetrievalPins,
     /// Drafter policy and serving binding repair.
     Drafter,
+    /// Owner read-shape pins, read live at each pick.
+    ReadShapePins,
     /// Owner grant act history.
     AccessGrant,
     /// Owner setting act history.
@@ -116,6 +118,8 @@ pub(crate) enum ArchivedSideGroup {
     AttemptQueue,
     /// Compliance pack decision history.
     CampaignCompliance,
+    /// The house voice guide's seed marker.
+    CampaignHouseVoiceGuide,
     /// Check-in history and its time index.
     CheckIn,
     /// Passive e-sign audit chains.
@@ -205,6 +209,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
+        name if name == side_table::READ_SHAPE_PINS.name => Some(Group::ReadShapePins),
         name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
@@ -221,6 +226,9 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::CAMPAIGN_COMPLIANCE_RECEIPT.name => {
             Some(Group::CampaignCompliance)
         }
+        name if name == side_table::CAMPAIGN_HOUSE_VOICE_GUIDE.name => {
+            Some(Group::CampaignHouseVoiceGuide)
+        }
         name if name == side_table::CHECK_IN_RECEIPT.name => Some(Group::CheckIn),
         name if name == side_table::ESIGN_AUDIT.name => Some(Group::Esign),
         name if name == side_table::HOOKS_RECEIPT.name => Some(Group::RuntimeHooks),
@@ -233,9 +241,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::SEND_RECEIPT_SUMMARY.name => Some(Group::SendReceipts),
         name if name == side_table::TEAM_RECEIPT.name => Some(Group::Team),
         name if name == side_table::LEGAL_HOLD_ROW.name
-            || name == side_table::LEGAL_HOLD_TARGET.name
-            || name == side_table::LEGAL_HOLD_USE_LIMIT.name
-            || name == side_table::LEGAL_HOLD_ERASE_LINK.name
             || name == side_table::LEGAL_HOLD_EVENT.name =>
         {
             Some(Group::LegalHold)
@@ -272,11 +277,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
 }
 
 /// Lands one staged group in input order, without starting any workflow or refreshing caches.
+/// `projects` maps a whole-vault archive's source root onto this vault's root; the setting rows
+/// read a row scoped at the source root as scoped here.
 pub(crate) fn land_archived_side_group_in_txn(
     group: ArchivedSideGroup,
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
+    projects: Option<&ProjectRootMap>,
     rows: &[ArchiveRetainedSideRow],
     refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
@@ -286,6 +294,7 @@ pub(crate) fn land_archived_side_group_in_txn(
                 vault,
                 txn,
                 permit,
+                projects,
                 rows,
                 &mut refresh.setting_wakes,
             )
@@ -351,6 +360,9 @@ pub(crate) fn land_archived_side_group_in_txn(
         ArchivedSideGroup::Drafter => {
             crate::Vault::land_archived_drafter_rows_in_txn(vault, txn, permit, rows)
         }
+        ArchivedSideGroup::ReadShapePins => {
+            crate::store::Store::land_archived_read_shape_pins_rows_in_txn(vault, txn, permit, rows)
+        }
         ArchivedSideGroup::AccessGrant => {
             crate::Vault::land_archived_access_grant_rows_in_txn(vault, txn, permit, rows)
         }
@@ -365,6 +377,11 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::CampaignCompliance => {
             crate::Vault::land_archived_campaign_compliance_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::CampaignHouseVoiceGuide => {
+            crate::campaign::house_voice_guide::land_archived_house_voice_guide_rows_in_txn(
+                vault, txn, permit, rows,
+            )
         }
         ArchivedSideGroup::CheckIn => {
             crate::Vault::land_archived_check_in_rows_in_txn(vault, txn, permit, rows)

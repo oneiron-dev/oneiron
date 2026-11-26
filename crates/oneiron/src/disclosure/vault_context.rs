@@ -509,7 +509,8 @@ impl DisclosureContext {
     ///
     /// This reads the store alone, so it does not follow a scope summary's
     /// words or a copy of them to their sources: it is the pre-filter of a
-    /// bounded channel that holds no vault. A disclosure decision asks
+    /// read that holds no vault (a run's shared filter config). A disclosure
+    /// decision and a bounded result channel's admission ask
     /// [`Self::admits_in`].
     pub(crate) fn admits(
         &self,
@@ -568,12 +569,12 @@ impl DisclosureContext {
     /// the other carriers `scope_summary::word_sources_in` names hold other
     /// records' words, so the row is admitted only with each of them, through
     /// nested copies, each judged by this context's own row test (Tier A, a
-    /// TURN's messages, the clearance, retained copies). A copy's summary
-    /// (`scope_summary::carried_summary`) is walked too: its own row is
-    /// judged by that test, and so is every record its words came from, its
-    /// registered dependencies included, so a Tier-A summary, or a Tier-A
-    /// record it was edited from, withholds every reply and header that
-    /// carries its words. Words whose sources no longer resolve, or that
+    /// TURN's messages, the clearance, retained copies). A copy's summary is
+    /// one of the copy's word sources: its own row is judged by that test,
+    /// and so is every record its words came from, its registered
+    /// dependencies included, so a Tier-A summary, or a Tier-A record it was
+    /// edited from, withholds every reply and header that carries its
+    /// words. Words whose sources no longer resolve, or that
     /// cycle, are refused. A claim passed with `claim_body` is judged on
     /// that body's words, the revision a caller serves, not on its live
     /// row's. The owner alone in a conversation of this vault is admitted
@@ -615,9 +616,26 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
-        if !self.admits_from(store, rtxn, id, entity_type, claim_body)? {
-            return Ok(false);
-        }
+        Ok(self.admits_from(store, rtxn, id, entity_type, claim_body)?
+            && self.word_sources_admitted_in_from(vault, store, rtxn, id, claim_body)?)
+    }
+
+    /// [`Self::admits_in_from`]'s test of the sources of the record's words,
+    /// the record's own row aside: whether the audience may read every row
+    /// its words came from (a summary's covers, a copy's summary). The
+    /// caller judges the row itself. A bounded window that judges its rows
+    /// with their status aside ([`Self::admits_row_ignoring_status`]) asks
+    /// this beside that test, so a row whose words come from a row the
+    /// audience may not read takes no place in it. True when nothing is
+    /// clamped.
+    pub(crate) fn word_sources_admitted_in_from(
+        &self,
+        vault: &Vault,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
         if !self.clamps() {
             return Ok(true);
         }
@@ -635,7 +653,8 @@ impl DisclosureContext {
             raw.extend(encode_claim_body(body)?);
         }
         match crate::scope_summary::word_sources_through_in(vault, store, rtxn, id, &raw)? {
-            // Its own words: its row, and a TURN's messages, passed above.
+            // Its own words: its row, and a TURN's messages, which the
+            // caller's test of the row judges.
             crate::scope_summary::WordSources::Own => return Ok(true),
             crate::scope_summary::WordSources::Unresolved => return Ok(false),
             crate::scope_summary::WordSources::From(_) => {}
@@ -645,9 +664,9 @@ impl DisclosureContext {
             rtxn,
             *id,
             &raw,
-            super::disclosable_set::CarriedSummary::Follow,
             |record, record_raw| {
-                // The row itself passed above, judged with its claim body.
+                // The row itself is the caller's to judge, with its claim
+                // body ([`Self::admits_in_from`]).
                 if record == *id {
                     return Ok(true);
                 }

@@ -95,7 +95,7 @@ pub(super) fn consume_intent(vault: &Vault, id: EntityId) -> Result<Standing> {
                 && let Err(error) = crate::llm::send_peer_result_signal(
                     vault,
                     intent.group,
-                    vault.store.clock.now_recorded_at(),
+                    vault.store.clock.now_recorded_at().saturating_mul(1000),
                 )
             {
                 tracing::warn!(%error, "a relayed ask word's peer-result signal was not sent");

@@ -12,6 +12,7 @@ pub use account_args::{
 mod continue_args;
 pub use continue_args::ContinueArgs;
 mod deployment_args;
+mod execution_node_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
@@ -24,6 +25,13 @@ pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 pub use user_service_args::{UserServiceCommand, UserServiceInstallArgs};
 mod learning_setting_args;
+mod link_args;
+pub use link_args::{LinkArgs, LinkCommand, UnlinkArgs};
+mod measure_path_args;
+pub use measure_path_args::{
+    ExecutionNodeMeasurePathArgs, MeasurePathCommand, MeasurePathDialArgs, MeasurePathKeyArgs,
+    MeasurePathListenArgs,
+};
 mod model_workers_args;
 pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
@@ -37,6 +45,11 @@ mod seat_args;
 mod user_service_args;
 mod wake_args;
 mod widen_proposal_args;
+pub use execution_node_args::{
+    ExecutionNodeCommand, ExecutionNodeDisableArgs, ExecutionNodeFileArgs,
+    ExecutionNodeInstallArgs, ExecutionNodePauseArgs, ExecutionNodeResetHistoryArgs,
+    ExecutionNodeServeArgs, ExecutionNodeUnitControlArgs, ExecutionNodeUnitNameArgs,
+};
 pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
     HookRecallArgs,
@@ -65,10 +78,10 @@ pub use owner_args::{
     GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
 };
 pub use owner_args::{
-    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs,
-    LegalHoldWidenArgs, LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod,
-    VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs,
-    VaultKeyNewGenerationArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
+    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldProduceArgs,
+    LegalHoldTargetArgs, LegalHoldWidenArgs, LegalHoldsCommand, RecoveryPresetArg,
+    SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
+    VaultKeyNamedArgs, VaultKeyNewGenerationArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,
@@ -202,12 +215,17 @@ pub enum Command {
     /// read it, set the full route, or clear it.
     #[command(subcommand)]
     ReminderRoute(ReminderRouteCommand),
+    /// This machine's execution node, at the box: check what would refuse a
+    /// job, enable or disable it, pause it, clear its drain, or reset its
+    /// history after a lost journal.
+    #[command(subcommand)]
+    ExecutionNode(ExecutionNodeCommand),
     /// Context-widen proposals your agents raised: list them, or approve or
     /// decline one as the board above.
     #[command(subcommand)]
     WidenProposals(WidenProposalsCommand),
-    /// Your legal holds: place, widen, list, read the log, or lift one
-    /// through the "Lift the hold and erase?" confirm.
+    /// Your legal holds: place, widen, list, read the log, lift one (its
+    /// sealed copy is destroyed), or produce its sealed copy.
     #[command(subcommand)]
     LegalHolds(LegalHoldsCommand),
     /// Your ask guests at this host: revoke one's access.
@@ -232,6 +250,12 @@ pub enum Command {
     /// refresh and logout.
     #[command(subcommand)]
     Account(AccountCommand),
+    /// Link a hosted peer of this vault on the running server: the cloud's
+    /// always-on machine, never yours; `link status` shows where it stands.
+    Link(Box<LinkArgs>),
+    /// Unlink the vault's hosted peer on the running server: it is revoked
+    /// at once, and the cloud erases its copy and keys.
+    Unlink(Box<UnlinkArgs>),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
@@ -498,6 +522,14 @@ pub struct TokenBootstrapArgs {
     #[arg(long)]
     pub lifetime_secs: Option<u64>,
 
+    /// Redeem the link here, at once, with a fresh connection key, and print
+    /// the owner's own credential (`token`, `binding_key`, `slip_id`) as
+    /// `token read` prints one, instead of the link. For an owner at the box
+    /// with no client to redeem it; keep the output in a file only you can
+    /// read, and revoke the slip with `token revoke --jti <slip_id>`.
+    #[arg(long)]
+    pub redeem: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -578,6 +610,14 @@ pub struct DeviceEnrolArgs {
     /// Config file the vault runs with. Defaults to the XDG path.
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Enrol a machine already enrolled for this vault again, with a new
+    /// link from its home (for example to take every protocol a newer home
+    /// serves): its stored enrolment is replaced only once the home has
+    /// answered and the new one is written, so a re-enrolment that fails
+    /// leaves the old one as it was.
+    #[arg(long)]
+    pub replace: bool,
 }
 
 /// A local agent's read credential, minted through the same host-rooted
@@ -711,6 +751,20 @@ pub struct ApiArgs {
     /// Environment variable with the Ed25519 binding seed for a slip bearer.
     #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
     pub binding_key_env: String,
+
+    /// Connect to this address for the base URL's host, never to one a name
+    /// lookup returns (curl `--resolve`); repeat it for several. Each must
+    /// be an IP address, and the base URL's host a name: a caller that
+    /// already checked where the host leads holds the request to that check.
+    #[arg(long, value_name = "IP")]
+    pub resolve_address: Vec<String>,
+
+    /// Give the request up after this many seconds (curl `--max-time`), so a
+    /// server that takes it and never answers ends the call. Unset, the call
+    /// has no deadline of its own, so a long `raw` transfer or wait is never
+    /// cut: callers that must never hang (agents, harnesses) set it.
+    #[arg(long, env = "ONEIRON_API_MAX_TIME", value_name = "SECS")]
+    pub max_time: Option<u64>,
 
     #[command(subcommand)]
     pub command: ApiCommand,
@@ -1126,6 +1180,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LearningSettings(command) => commands::learning_settings(command),
         Command::ReminderRoute(command) => commands::reminder_route(command),
+        Command::ExecutionNode(command) => commands::execution_node(command),
         Command::WidenProposals(command) => commands::widen_proposals(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
@@ -1149,6 +1204,13 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         // Blocking: the cloud registration is reached over blocking HTTP.
         Command::Account(command) => {
             crate::logging::off_runtime("account", move || commands::account(command)).await?
+        }
+        // Blocking: the running server is asked over blocking HTTP.
+        Command::Link(args) => {
+            crate::logging::off_runtime("link", move || commands::link(*args)).await?
+        }
+        Command::Unlink(args) => {
+            crate::logging::off_runtime("unlink", move || commands::unlink(*args)).await?
         }
         Command::Api(args) => commands::api(args).await,
         // Blocking: one curl call for git, which waits on this process.

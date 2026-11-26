@@ -14,6 +14,7 @@ use super::RunTreeAdapter;
 
 mod held_ask;
 mod intent;
+mod parked_pause;
 use held_ask::held_ask;
 pub(crate) use intent::SignalIntent;
 
@@ -584,11 +585,36 @@ impl RunTreeAdapter<'_> {
         attempt_count: u32,
         key: &str,
     ) -> Result<bool> {
-        field(key)?;
         let mut txn = self.vault.store.env.write_txn()?;
+        let paused = self.pause_at_boundary_in_txn(
+            &mut txn,
+            branch,
+            run_id,
+            lease_owner,
+            attempt_count,
+            key,
+        )?;
+        if paused {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(paused)
+    }
+
+    /// [`Self::pause_at_boundary`] in the caller's writer.
+    fn pause_at_boundary_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        branch: AttemptId,
+        run_id: &str,
+        lease_owner: &str,
+        attempt_count: u32,
+        key: &str,
+    ) -> Result<bool> {
+        field(key)?;
         let record = self
             .queue
-            .get_in_txn(&txn, branch)?
+            .get_in_txn(txn, branch)?
             .ok_or_else(|| Error::InvalidConfig("missing Signal branch".into()))?;
         if record.run_id.as_deref() != Some(run_id)
             || !live(record.state)
@@ -608,9 +634,9 @@ impl RunTreeAdapter<'_> {
         if signal.state != RunSignalState::Pending {
             return Ok(false);
         }
-        let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
+        let now = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
         self.queue.pause_at_boundary_in_txn(
-            &mut txn,
+            txn,
             PauseAtBoundary {
                 id: branch,
                 lease_owner: lease_owner.to_owned(),
@@ -623,16 +649,14 @@ impl RunTreeAdapter<'_> {
         // The queue rewrote this same row: settle the signal on its write.
         let mut record = self
             .queue
-            .get_in_txn(&txn, branch)?
+            .get_in_txn(txn, branch)?
             .ok_or_else(|| Error::InvalidConfig("missing Signal branch".into()))?;
         for signal in &mut record.signals {
             if signal.key == key {
                 signal.state = RunSignalState::Settled;
             }
         }
-        self.save(&mut txn, &mut record)?;
-        txn.commit()?;
-        self.vault.store.notify_attempt_observers();
+        self.save(txn, &mut record)?;
         Ok(true)
     }
 

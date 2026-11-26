@@ -2,11 +2,17 @@
 //! that stuff is for cloud only + we mention in ToS").
 //!
 //! Every deployment: the owner places a customer hold naming records or
-//! gate-decision partitions; every byte-destroying path refuses a held
-//! record whoever acts ([`crate::store`]'s `reject_legal_holds_in_txn`); the
-//! owner lifts the hold only through the one "Lift the hold and erase?"
-//! confirm; every hold event is logged, ids only, for the hold's life plus
-//! 24 months.
+//! gate-decision partitions, with a sealed copy of exactly its scope written
+//! to the install's hold store outside the vault. A hold never refuses an
+//! erase, a delete or a backup expiry (LEGAL-HOLD-USE = B, ARCH-0038
+//! #legal-hold-clone-ruling): deletes and erases work fully, including the
+//! ordinary backup and key-retirement paths, and the sealed copy outlives
+//! them. GDPR Art. 17 does not erase the legal copy while its lawful hold
+//! runs; it still erases the user's vault fully. Every hold event is logged,
+//! ids only, for the hold's life plus 24 months. The owner lifts a hold
+//! through `vault.legal_holds.lift`, which destroys its sealed copy, and
+//! produces a standing hold through `vault.legal_holds.produce`, which
+//! re-seals the copy to a recipient public key the owner names.
 //!
 //! Only where Oneiron hosts the bytes (posture `Hosted` or `Relay`): host
 //! orders only Oneiron places and lifts, through host-only doors no owner,
@@ -14,28 +20,24 @@
 //! through one permitted view; silence under a secrecy order. A host order
 //! keeps nothing in the vault: what it covers is preserved as its clone in
 //! the host's separate legal-hold store (LEGAL-HOLD-USE = B as a clone, owner
-//! 2026-11-05). A customer hold keeps the held part of a privacy erase, with
-//! a use limit on it for that hold's purpose only (FIX 8849). Everywhere,
-//! "erase confirmed" stands apart from "erase completed" (C4, row 04).
+//! 2026-11-05). Everywhere, "erase confirmed" stands apart from "erase
+//! completed" (C4, row 04).
 
-#[cfg(unix)]
 pub(super) mod clone;
-mod confirmation;
 mod held_scrubs;
 pub(crate) mod prospective;
 mod types;
 
-pub use confirmation::{LiftAndEraseShownState, ShownCustomerHold};
+use std::fs;
+
+use oneiron_crypto::HybridPublicKey;
+
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
 
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::ConfirmedEraseOutcome;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::Memory;
-use crate::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
-use crate::recovery::checkpoint::CUSTODY_RETIREMENT_COMPLETE;
 use crate::store::legal_hold::{self as hold_store, HoldActor, check_opaque, distinct};
 use crate::{HostingPrivacyPosture, Vault};
 
@@ -73,34 +75,55 @@ impl Vault {
     }
 
     /// Places the owner's hold on `targets`: a customer hold, logged as
-    /// placed. Deletes of what it names then fail for agents, timers,
-    /// members and the owner alike, and every other verb keeps working, but
-    /// on a record a hosted privacy erasure kept, which serves only the
-    /// hold's purpose (C6, FIX 8849).
+    /// placed, with a sealed copy of exactly its scope written to the
+    /// install's hold store outside the vault. A hold never refuses an erase,
+    /// a delete or a backup expiry (LEGAL-HOLD-USE = B, ARCH-0038
+    /// #legal-hold-clone-ruling), and the sealed copy outlives them. With
+    /// `future_messages`, each matching new MESSAGE joins the hold's copy
+    /// until its end (Ruling L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038
+    /// :320-321); without it, nothing new joins.
     ///
     /// # Errors
-    /// The owner proof no longer holds, `matter_ref` is not an opaque id, or
-    /// a named claim's erase has already committed.
+    /// The owner proof no longer holds, `matter_ref` is not an opaque id,
+    /// `future_messages.until` lies not ahead, a named claim's erase has
+    /// already committed, or no legal hold store is set: the sealed copy
+    /// has nowhere to go.
     pub fn place_legal_hold(
         &self,
         owner: &AuthenticatedOwner,
         targets: Vec<LegalHoldTarget>,
         matter_ref: Option<String>,
+        future_messages: Option<LegalHoldFutureMessages>,
     ) -> Result<LegalHold> {
-        self.with_write_txn_grouped(|txn| {
-            self.place_legal_hold_in_txn(txn, owner, targets, matter_ref)
-        })
+        // Fresh before the writer, so a failed write still names its hold
+        // directory for cleanup: the clock hands no id twice, even across
+        // an abort.
+        let hold_id = self.store.clock.entity_id()?;
+        let outcome = self.with_write_txn_grouped(|txn| {
+            self.place_legal_hold_in_txn(txn, owner, targets, matter_ref, hold_id, future_messages)
+        });
+        if outcome.is_err() {
+            self.remove_uncommitted_hold_copy(&hold_id);
+        }
+        outcome
     }
 
     /// [`Self::place_legal_hold`] inside the caller's writer, so the hold
-    /// commits or rolls back with what else that writer records. Fails as
-    /// that door does.
+    /// commits or rolls back with what else that writer records, under a
+    /// hold id the caller minted before that writer. The sealed copy is
+    /// written inside the writer, before the hold row, and the `Placed`
+    /// event carries the first capture's fingerprint. Its files outlive a
+    /// rollback, so a caller whose writer fails afterwards calls
+    /// [`Self::remove_uncommitted_hold_copy`] with the same id. Fails as
+    /// [`Self::place_legal_hold`] does.
     pub(crate) fn place_legal_hold_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         targets: Vec<LegalHoldTarget>,
         matter_ref: Option<String>,
+        hold_id: EntityId,
+        future_messages: Option<LegalHoldFutureMessages>,
     ) -> Result<LegalHold> {
         if let Some(matter) = &matter_ref {
             check_opaque(matter, "matter reference")?;
@@ -109,36 +132,148 @@ impl Vault {
         let actor = owner.revalidate_in_txn(self, txn)?;
         self.refuse_erased_targets_in_txn(txn, &targets)?;
         let now = self.store.clock.now_recorded_at();
-        let hold = LegalHold {
-            hold_id: self.store.clock.entity_id()?,
-            kind: LegalHoldKind::Customer,
-            targets: targets.clone(),
-            placed_by: Some(actor.to_hex()),
-            placed_by_kind: LegalHoldActorKind::Owner,
-            placed_at: now,
-            ends_at: None,
-            secret_until: None,
-            matter_ref,
-            legal_basis_ref: None,
-            jurisdiction: None,
-            issuing_authority_ref: None,
-            lifted_at: None,
-            owner_told: true,
-            requires_non_use: false,
+        if let Some(future) = &future_messages
+            && future.until <= now
+        {
+            return Err(Error::InvalidConfig(
+                "a hold's future-messages end must lie ahead".into(),
+            ));
+        }
+        let placed = (|| -> Result<LegalHold> {
+            let captures =
+                clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &targets)?;
+            if let Some(future) = future_messages {
+                let selector = match future.selector {
+                    MessageSelector::Vault => {
+                        oneiron_vault_contract::host_legal::MessageSelector::Vault
+                    }
+                };
+                let public = clone::legal_hold_store::hold_public_key(self, &hold_id)?;
+                let (request, _) = clone::legal_hold_store::prospective_capture_request_for(
+                    self,
+                    &hold_id,
+                    &public,
+                    selector,
+                    future.until,
+                )?;
+                let request_digest = request.digest()?;
+                let dir = clone::legal_hold_store::configured(self)?
+                    .hold_dir(self, &hold_id)
+                    .to_string_lossy()
+                    .into_owned();
+                prospective::stand_in_txn(&self.store, txn, &request, request_digest, Some(dir))?;
+            }
+            let hold = LegalHold {
+                hold_id,
+                kind: LegalHoldKind::Customer,
+                targets: targets.clone(),
+                placed_by: Some(actor.to_hex()),
+                placed_by_kind: LegalHoldActorKind::Owner,
+                placed_at: now,
+                ends_at: None,
+                secret_until: None,
+                matter_ref,
+                legal_basis_ref: None,
+                jurisdiction: None,
+                issuing_authority_ref: None,
+                lifted_at: None,
+                owner_told: true,
+                requires_non_use: false,
+                clone_captures: captures,
+                future_messages,
+            };
+            let first = hold
+                .clone_captures
+                .first()
+                .ok_or(Error::InvariantViolation(
+                    "a legal hold wrote no sealed capture",
+                ))?;
+            hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+            let row = LegalHoldEvent {
+                clone_fingerprint: Some(first.fingerprint),
+                ..hold_store::events::event_row(
+                    &hold,
+                    LegalHoldEventKind::Placed,
+                    LegalHoldReason::OwnerPlaced,
+                    targets,
+                    &HoldActor::owner(actor),
+                    now,
+                    None,
+                )
+            };
+            hold_store::events::append_event_in_txn(&self.store, txn, &hold, &row)?;
+            Ok(hold)
+        })();
+        if placed.is_err() {
+            self.remove_uncommitted_hold_copy(&hold_id);
+        }
+        placed
+    }
+
+    /// Removes the sealed files of hold `hold_id`, whose writer failed so
+    /// no hold row names them, ignoring every failure (best effort).
+    pub(crate) fn remove_uncommitted_hold_copy(&self, hold_id: &EntityId) {
+        clone::legal_hold_store::remove_hold_dir_best_effort(self, hold_id);
+    }
+
+    /// Places or releases the gate-decision partition `claim_partition`'s own
+    /// hold, for [`Vault::set_gate_decision_partition_hold`]. A placement
+    /// writes the hold's sealed copy of the partition's decisions inside the
+    /// writer, as an owner's placement does; a claim whose erase committed
+    /// refuses it. A release lifts the hold, then destroys its copy and logs
+    /// `CloneDestroyed`, as an owner's lift does.
+    ///
+    /// # Errors
+    /// The claim's erase committed (placement), or the hold store is unset or
+    /// its files cannot be written or removed. A release whose removal failed
+    /// reads released, and a repeat release finishes the removal.
+    pub(crate) fn set_gate_partition_hold(
+        &self,
+        claim_partition: Option<[u8; 16]>,
+        held: bool,
+    ) -> Result<()> {
+        let claim = claim_partition.map(EntityId::from_bytes).transpose()?;
+        let target = LegalHoldTarget::GatePartition(claim);
+        let hold_id = hold_store::partition_hold_id(&target)?;
+        let mut wrote_copy = false;
+        let outcome = self.with_write_txn_grouped(|txn| {
+            if held && let Some(claim) = claim_partition.as_ref() {
+                self.store
+                    .refuse_hold_on_erased_partition_in_txn(txn, claim)?;
+            }
+            let now = self.store.clock.now_recorded_at();
+            hold_store::set_partition_hold_in_txn(
+                &self.store,
+                txn,
+                target,
+                held,
+                now,
+                |txn, hold_id| {
+                    wrote_copy = true;
+                    // What an earlier release of this hold left goes first.
+                    clone::legal_hold_store::destroy_hold_copy(self, &hold_id)?;
+                    clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &[target])
+                },
+            )
+        });
+        let hold = match outcome {
+            Ok(hold) => hold,
+            Err(error) => {
+                if wrote_copy {
+                    self.remove_uncommitted_hold_copy(&hold_id);
+                }
+                return Err(error);
+            }
         };
-        hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
-        hold_store::log_in_txn(
-            &self.store,
-            txn,
-            &hold,
-            LegalHoldEventKind::Placed,
-            LegalHoldReason::OwnerPlaced,
-            targets,
-            &HoldActor::owner(actor),
-            now,
-            None,
-        )?;
-        Ok(hold)
+        if hold.is_some_and(|hold| !hold.stands()) {
+            self.with_write_txn_grouped(|txn| {
+                let now = self.store.clock.now_recorded_at();
+                hold_store::finish_partition_release_in_txn(&self.store, txn, &hold_id, now, || {
+                    clone::legal_hold_store::destroy_hold_copy(self, &hold_id)
+                })
+            })?;
+        }
+        Ok(())
     }
 
     /// Adds `targets` to the owner's standing hold `hold_id`, logged as a
@@ -153,7 +288,11 @@ impl Vault {
         targets: Vec<LegalHoldTarget>,
     ) -> Result<LegalHold> {
         let targets = distinct(targets)?;
-        self.with_write_txn_grouped(|txn| {
+        // This call's own captures: a concurrent widen of the same hold
+        // writes its files into the same directory, so a failed commit
+        // removes only these.
+        let mut written: Vec<HoldCloneCapture> = Vec::new();
+        let outcome = self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let mut hold = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
                 .filter(|hold| hold.kind == LegalHoldKind::Customer && hold.stands())
@@ -166,20 +305,224 @@ impl Vault {
                 return Ok(hold);
             }
             self.refuse_erased_targets_in_txn(txn, &added)?;
-            hold.targets.extend(added.iter().copied());
+            let captures =
+                clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &added)?;
+            written.extend(captures.iter().copied());
+            let widened = (|| -> Result<LegalHold> {
+                let fingerprint = captures.first().map(|capture| capture.fingerprint).ok_or(
+                    Error::InvariantViolation("a legal hold widening wrote no sealed capture"),
+                )?;
+                hold.clone_captures.extend(captures.iter().copied());
+                hold.targets.extend(added.iter().copied());
+                hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+                let row = LegalHoldEvent {
+                    clone_fingerprint: Some(fingerprint),
+                    ..hold_store::events::event_row(
+                        &hold,
+                        LegalHoldEventKind::ScopeChanged,
+                        LegalHoldReason::ScopeWidened,
+                        added,
+                        &HoldActor::owner(actor),
+                        self.store.clock.now_recorded_at(),
+                        None,
+                    )
+                };
+                hold_store::events::append_event_in_txn(&self.store, txn, &hold, &row)?;
+                Ok(hold)
+            })();
+            if widened.is_err() {
+                clone::legal_hold_store::remove_captures_best_effort(self, &hold_id, &captures);
+            }
+            widened
+        });
+        if outcome.is_err() {
+            // A commit that failed after this call's files were written
+            // leaves them unreferenced; they go too. Another widen's files
+            // stay, committed or not.
+            clone::legal_hold_store::remove_unreferenced_captures_best_effort(
+                self, &hold_id, &written,
+            );
+        }
+        outcome
+    }
+
+    /// Lifts the owner's customer hold `hold_id` and destroys its sealed
+    /// copy (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling: the
+    /// copy is destroyed when the hold ends). Nothing in the vault is erased
+    /// by it. A host order is lifted only by the host
+    /// ([`Self::lift_host_order_hold`]).
+    ///
+    /// The lift commits first, then the copy goes: a crash between the two
+    /// never leaves a standing hold without its copy; it leaves a lifted
+    /// hold's files, and the repeat lift removes them. `CloneDestroyed` is
+    /// logged once, after the files are gone, by the first lift that finds
+    /// it unlogged, so a crash before that log is logged by the repeat. A
+    /// hold whose row has no captures (written before the sealed copy) logs
+    /// `Lifted` only. A repeat lift answers the first: the same `lifted_at`,
+    /// no second `Lifted`.
+    ///
+    /// # Errors
+    /// The owner proof no longer holds, no customer hold `hold_id`, or the
+    /// store is unset or the copy's files cannot be removed: the hold then
+    /// reads lifted, and a repeat lift finishes the removal.
+    pub fn lift_legal_hold(
+        &self,
+        owner: &AuthenticatedOwner,
+        hold_id: EntityId,
+    ) -> Result<LegalHold> {
+        let lifted = self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let Some(mut hold) = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
+                .filter(|hold| hold.kind == LegalHoldKind::Customer)
+            else {
+                return Err(Error::EntityNotFound);
+            };
+            if !hold.stands() {
+                return Ok(hold);
+            }
+            // No message is sealed for a lifted hold (Ruling
+            // L10-21-OWNER-FUTURE-MESSAGES = A): its standing ends with its
+            // outbox, and never stands again. A hold without future
+            // messages has none.
+            if hold.future_messages.is_some() {
+                prospective::end_in_txn(&self.store, txn, (*hold_id.as_bytes(), 0), true)?;
+            }
+            let now = self.store.clock.now_recorded_at();
+            hold.lifted_at = Some(now);
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+            let targets = hold.targets.clone();
             hold_store::log_in_txn(
                 &self.store,
                 txn,
                 &hold,
-                LegalHoldEventKind::ScopeChanged,
-                LegalHoldReason::ScopeWidened,
-                added,
+                LegalHoldEventKind::Lifted,
+                LegalHoldReason::OwnerLifted,
+                targets,
                 &HoldActor::owner(actor),
-                self.store.clock.now_recorded_at(),
+                now,
                 None,
             )?;
             Ok(hold)
+        })?;
+        if !lifted.clone_captures.is_empty() {
+            clone::legal_hold_store::destroy_hold_copy(self, &hold_id)?;
+            self.with_write_txn_grouped(|txn| {
+                let actor = owner.revalidate_in_txn(self, txn)?;
+                let Some(hold) = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
+                    .filter(|hold| hold.kind == LegalHoldKind::Customer)
+                else {
+                    return Err(Error::EntityNotFound);
+                };
+                if hold_store::events::logged_in_txn(
+                    &self.store,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                )? {
+                    return Ok(());
+                }
+                let targets = hold.targets.clone();
+                hold_store::log_in_txn(
+                    &self.store,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::CloneDestroyed,
+                    LegalHoldReason::OwnerLifted,
+                    targets,
+                    &HoldActor::owner(actor),
+                    self.store.clock.now_recorded_at(),
+                    None,
+                )?;
+                Ok(())
+            })?;
+        }
+        let txn = self.store.env.read_txn()?;
+        hold_store::hold_in_txn(&self.store, &txn, &hold_id)?
+            .filter(|hold| hold.kind == LegalHoldKind::Customer)
+            .ok_or(Error::EntityNotFound)
+    }
+
+    /// Produces the standing customer hold `hold_id` to the recipient
+    /// `recipient` names (PRODUCE = A): the package carries the hold's
+    /// capture files byte for byte, plus the hold's 32-byte seed sealed to
+    /// the recipient's public key, and the access is logged. Plaintext never
+    /// leaves the engine, and nothing is re-encrypted.
+    ///
+    /// The package is returned only after its `CloneProduced` event commits:
+    /// every access is logged.
+    ///
+    /// # Errors
+    /// The owner proof no longer holds, no standing customer hold `hold_id`,
+    /// the hold has no sealed copy, the store is unset, a capture file is
+    /// missing or altered, or the hold key does not open.
+    pub fn produce_legal_hold(
+        &self,
+        owner: &AuthenticatedOwner,
+        hold_id: EntityId,
+        recipient: &HybridPublicKey,
+    ) -> Result<LegalHoldProduction> {
+        let hold = {
+            let txn = self.store.env.read_txn()?;
+            owner.revalidate_in_txn(self, &txn)?;
+            hold_store::hold_in_txn(&self.store, &txn, &hold_id)?
+                .filter(|hold| hold.kind == LegalHoldKind::Customer && hold.stands())
+                .ok_or(Error::EntityNotFound)?
+        };
+        if hold.clone_captures.is_empty() {
+            return Err(Error::InvalidConfig("this hold has no sealed copy".into()));
+        }
+        let seed = clone::legal_hold_store::open_hold_seed(self, &hold_id)?;
+        let store = clone::legal_hold_store::configured(self)?;
+        let dir = store.hold_dir(self, &hold_id);
+        let mut captures = Vec::with_capacity(hold.clone_captures.len());
+        for named in &hold.clone_captures {
+            let frames = fs::read(dir.join(format!("{}.clone", named.capture.to_hex())))?;
+            clone::legal_hold_store::check_capture_fingerprint(&frames, &named.fingerprint)?;
+            captures.push(ProducedHoldCapture {
+                capture: named.capture,
+                fingerprint: named.fingerprint,
+                frames,
+            });
+        }
+        let production_id = self.store.clock.entity_id()?;
+        let vault_id = self.vault_id();
+        let sealed_hold_key = clone::legal_hold_store::seal_production_key(
+            vault_id.as_bytes(),
+            &hold_id,
+            &production_id,
+            recipient,
+            &seed,
+        )?;
+        let recipient_fingerprint = *blake3::hash(&recipient.to_bytes()).as_bytes();
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
+            let Some(hold) = hold_store::hold_in_txn(&self.store, txn, &hold_id)?
+                .filter(|hold| hold.kind == LegalHoldKind::Customer && hold.stands())
+            else {
+                return Err(Error::EntityNotFound);
+            };
+            let targets = hold.targets.clone();
+            let row = LegalHoldEvent {
+                recipient_fingerprint: Some(recipient_fingerprint),
+                ..hold_store::events::event_row(
+                    &hold,
+                    LegalHoldEventKind::CloneProduced,
+                    LegalHoldReason::OwnerProduced,
+                    targets,
+                    &HoldActor::owner(actor),
+                    self.store.clock.now_recorded_at(),
+                    None,
+                )
+            };
+            hold_store::events::append_event_in_txn(&self.store, txn, &hold, &row)?;
+            Ok(())
+        })?;
+        Ok(LegalHoldProduction {
+            hold_id,
+            production_id,
+            recipient_fingerprint,
+            sealed_hold_key,
+            captures,
         })
     }
 
@@ -237,6 +580,14 @@ impl Vault {
             }
         }
         let targets = distinct(order.targets)?;
+        if targets
+            .iter()
+            .any(|target| matches!(target, LegalHoldTarget::Inquiry(_)))
+        {
+            return Err(Error::InvalidConfig(
+                "a host order names records, not inquiries".into(),
+            ));
+        }
         self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
             if order.ends_at <= now {
@@ -259,6 +610,8 @@ impl Vault {
                 lifted_at: None,
                 owner_told: order.secret_until.is_none_or(|until| now >= until),
                 requires_non_use: order.requires_non_use,
+                clone_captures: Vec::new(),
+                future_messages: None,
             };
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
             hold_store::log_in_txn(
@@ -277,7 +630,7 @@ impl Vault {
     }
 
     /// Host-only door: lifts host order `hold_id` on the authority's release
-    /// notice, then runs the owner erases it kept waiting.
+    /// notice, then settles the scrubs no cooperative restriction keeps.
     ///
     /// A managed vault's host-order writes go through its supervisor, which
     /// holds them while the vault is frozen for a restore and applies them
@@ -310,7 +663,7 @@ impl Vault {
         })?;
         // The release committed: a delete it deferred asks again (FIX 1488).
         self.note_backup_hold_recheck();
-        self.run_due_legal_hold_erases()?;
+        self.settle_held_scrubs()?;
         Ok(hold)
     }
 
@@ -384,12 +737,15 @@ impl Vault {
 
     /// One legal-hold maintenance pass, for the host's housekeeping: lifts
     /// host orders whose stored end passed, tells the owner of orders whose
-    /// silence ended, runs owner erases nothing holds any more, writes
-    /// queued refusals, and drops log rows 24 months past their hold's
-    /// release.
+    /// silence ended, settles the scrubs no cooperative restriction keeps,
+    /// and drops log rows 24 months past their hold's release.
     pub fn maintain_legal_holds(&self) -> Result<LegalHoldMaintenance> {
         let lapsed = self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
+            // An owner's pending outbox reaches its hold store before its
+            // term ends it (Ruling L10-21-OWNER-FUTURE-MESSAGES = A).
+            #[cfg(unix)]
+            prospective::flush_owner_standings_in_txn(&self.store, txn)?;
             // A prospective capture order whose term passed ends with its
             // outbox, even with no live connection (FIX 13867).
             prospective::end_lapsed_in_txn(&self.store, txn, now)?;
@@ -426,86 +782,25 @@ impl Vault {
         // Each pass, once its lapses committed: a delete a lapsed order
         // deferred asks again (FIX 1488).
         self.note_backup_hold_recheck();
+        self.settle_held_scrubs()?;
         Ok(LegalHoldMaintenance {
             lapsed,
-            erased: self.run_due_legal_hold_erases()?,
-            refusals: self.flush_legal_hold_refusals()?,
             expired: self.sweep_legal_hold_log()?,
         })
     }
 
-    /// Runs each owner erase that waits whose record nothing holds now, as
-    /// its request asked: an explicit lift-and-erase hard, in a shared vault
-    /// with two or more Owners only once its own `erase` act completed (FIX
-    /// 9781); an explicit one whose act never started has it
-    /// started first (FIX 10401). A failed one stays for the next pass. One
-    /// whose request went or was replaced before its writer ran is
-    /// cancelled: nothing erased, counted or dropped (FIX 6337). A released
-    /// gate-decision partition runs it too.
-    pub(crate) fn run_due_legal_hold_erases(&self) -> Result<u64> {
-        self.start_missing_erase_acts()?;
-        // What a released hold kept from an erase's scrubs goes first,
-        // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
-        // an erase it kept from completing completes (FIX 5844).
-        let (due, cancelled) = self.with_write_txn_grouped(|txn| {
-            let cancelled = self.settle_held_scrubs_in_txn(txn)?;
-            let due = hold_store::due_erases_in_txn(&self.store, txn)?;
-            Ok((due, cancelled))
-        })?;
+    /// Settles the scrubs a cooperative restriction kept: the births and
+    /// carriers, Gate decision scrubs and relayed ask rows no restriction
+    /// keeps any more (FIX 6280, 6386, 7993, 7994). Runs after a host-order
+    /// lift, a gate-partition release and each maintenance pass, whether or
+    /// not an erase waits; an erase a restriction kept from completing then
+    /// completes (FIX 5844).
+    pub(crate) fn settle_held_scrubs(&self) -> Result<()> {
+        let cancelled = self.with_write_txn_grouped(|txn| self.settle_held_scrubs_in_txn(txn))?;
         crate::attempt_queue::AttemptQueue::new(self)
             .erased_payload_cancellations_committed(&cancelled);
         self.finish_redaction_erases_logged();
-        let mut erased = 0_u64;
-        for (record, pending) in due {
-            match self.erase_act_cleared(&record, &pending) {
-                Ok(true) => {}
-                Ok(false) => continue,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "a confirmed erase stays pending on its veto window"
-                    );
-                    continue;
-                }
-            }
-            match self.due_confirmed_erase(&record, &pending) {
-                Ok(ConfirmedEraseOutcome::Completed(_)) => {
-                    self.with_write_txn_grouped(|txn| {
-                        hold_store::drop_pending_erase_in_txn(
-                            &self.store,
-                            txn,
-                            &record,
-                            &pending.generation,
-                        )
-                    })?;
-                    erased = erased.saturating_add(1);
-                }
-                // A row confirmed since stays for its own pass.
-                Ok(ConfirmedEraseOutcome::Cancelled) => {
-                    tracing::info!("a confirmed erase was cancelled: none waits any more");
-                }
-                Err(error) => tracing::warn!(
-                    error = %error,
-                    "a confirmed erase stays pending for the next legal hold pass"
-                ),
-            }
-        }
-        Ok(erased)
-    }
-
-    /// Writes the refusals still queued to the hold logs. Each refusing door
-    /// logs its own before it returns, so this writes what a failed log write
-    /// left. A refused privacy erasure keeps its record under a use limit
-    /// where Oneiron hosts the bytes, while any hold keeps it (C6, FIX
-    /// 8849). Returns how many were written.
-    pub fn flush_legal_hold_refusals(&self) -> Result<u64> {
-        self.store.flush_legal_hold_refusals_now()
-    }
-
-    /// After a failed delete: its refusal, if a hold refused it, reaches the
-    /// log. Never masks the delete's own error.
-    pub(crate) fn flush_legal_hold_refusals_after_failure(&self) {
-        self.store.flush_legal_hold_refusals_settled();
+        Ok(())
     }
 
     /// Drops hold-log rows and released holds 24 calendar months past the
@@ -515,61 +810,6 @@ impl Vault {
             hold_store::expire_in_txn(&self.store, txn, self.store.clock.now_recorded_at())
         })
     }
-
-    /// The use limit on a record kept after a refused privacy erasure, while
-    /// any standing hold, customer or host order, still names it: it serves
-    /// only the legal reason that kept it, for that whole retention (C6, FIX
-    /// 8849). Enforcing it on reads is the scope checks' (L02).
-    pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
-        let txn = self.store.env.read_txn()?;
-        hold_store::legal_hold_use_limit_in_txn(&self.store, &txn, record)
-    }
-}
-
-/// What an owner erase that ran reads as (C4, WILL-PLAN L01 row 04), one
-/// rule wherever the bytes live: erased once its receipt's signed final row
-/// is appended (its hard purge, its historical sweep, every custody
-/// retirement it bound and every scrub a hold kept finished, FIX 5844),
-/// else completion pending with the receipt and what it still waits on: its
-/// queued sweep, or its custody. A scrub a hold keeps owed names no reason.
-/// No receipt: nothing was there to erase.
-fn erase_status(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    receipt_ref: Option<String>,
-) -> LiftAndEraseStatus {
-    let Some(receipt_ref) = receipt_ref else {
-        return LiftAndEraseStatus::Erased { receipt_ref: None };
-    };
-    let request = RecordEraseSweepRequest {
-        receipt_ref: receipt_ref.clone(),
-    };
-    let reason = match memory.record_erase_sweep_as(owner, request) {
-        Ok(Some(sweep)) if sweep.erase_complete_at.is_some() => {
-            return LiftAndEraseStatus::Erased {
-                receipt_ref: Some(receipt_ref),
-            };
-        }
-        Ok(Some(sweep)) if sweep.sweep_queued_at.is_some() && sweep.sweep_complete_at.is_none() => {
-            Some(ErasePendingReason::HistoricalSweep)
-        }
-        Ok(Some(sweep)) if custody_pending(&sweep) => Some(ErasePendingReason::CustodyRetirement),
-        // Only a scrub a hold keeps owed is left (FIX 6386, 7993, 7994), or
-        // the receipt did not read, which proves nothing complete.
-        _ => None,
-    };
-    LiftAndEraseStatus::CompletionPending {
-        receipt_ref: Some(receipt_ref),
-        reason,
-    }
-}
-
-/// Whether a custody retirement the erase `sweep` reads bound is still owed.
-fn custody_pending(sweep: &RecordEraseSweep) -> bool {
-    sweep
-        .custody
-        .as_ref()
-        .is_some_and(|custody| custody.state != CUSTODY_RETIREMENT_COMPLETE)
 }
 
 fn standing_host_order_in_txn(

@@ -16,27 +16,44 @@
 //! then its seat's ladder admits, sends and settles each rung it reaches.
 
 mod admission;
+mod arms;
 mod artifacts_audit;
 mod authority_clock;
 mod diary;
 mod gpu_jobs;
+mod gpu_lines;
+mod job_history;
+mod job_workloads;
+mod machine_execution;
+mod machine_status;
 mod media;
 mod packs;
+mod planner_card;
 mod proactivity;
 pub(in crate::api) mod support;
+mod verb_grant;
 mod verdict_hooks;
 mod vision;
+mod work_orders;
 
 pub(super) use self::admission::*;
+pub(crate) use self::arms::*;
 pub(crate) use self::artifacts_audit::*;
 pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::gpu_jobs::*;
+pub(crate) use self::gpu_lines::*;
+pub(crate) use self::job_history::*;
+pub(crate) use self::job_workloads::*;
+pub(crate) use self::machine_execution::*;
+pub(crate) use self::machine_status::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
+pub(crate) use self::planner_card::*;
 pub(crate) use self::proactivity::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
+pub(crate) use self::work_orders::*;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
@@ -80,6 +97,8 @@ pub(crate) use super::uncertain_send_doors::*;
 pub(crate) use super::undo_send_doors::*;
 // The owner's answer to a call a moved agent run replays (FIX 4747) too.
 pub(crate) use super::agent_run_effect_doors::*;
+// The owner's answer to a resumed step whose program changed an effect step (L8-23) too.
+pub(crate) use super::code_run_resume_divergence_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
 pub(crate) use super::git_push_doors::*;
 // The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is

@@ -190,12 +190,19 @@ pub(super) fn scope_raisable_by(scope: &SpendScope, owner: EntityId) -> bool {
             .is_none_or(|payer| payer.party == owner)
 }
 
-/// The share on record for `resident` in units, `0` for the default split or
-/// a share this vault never set.
-fn share_units_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, resident: EntityId) -> Result<u64> {
-    Ok(crate::llm::resident_share_in_txn(vault, txn, resident)?
-        .and_then(|share| share.units)
-        .unwrap_or(0))
+/// The share on record for `resident` in `unit`, `0` for the default split
+/// or a share this vault never set.
+fn share_units_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resident: EntityId,
+    unit: &str,
+) -> Result<u64> {
+    Ok(
+        crate::llm::resident_share_in_txn(vault, txn, resident, unit)?
+            .and_then(|share| share.units)
+            .unwrap_or(0),
+    )
 }
 
 /// The cap one more call needs past the limit `wait` names, as it reads now:
@@ -211,10 +218,11 @@ fn default_overdraft_in_txn(
         DreamerParkWait::Budget { asked_units, .. } => Some(*asked_units),
         DreamerParkWait::ResidentShare {
             resident,
+            unit,
             needed_units,
         } => Some(
             needed_units
-                .saturating_sub(share_units_in_txn(vault, txn, *resident)?)
+                .saturating_sub(share_units_in_txn(vault, txn, *resident, unit)?)
                 .max(1),
         ),
         _ => None,
@@ -350,8 +358,10 @@ fn approve_trap_overdraft_in_txn(
         DreamerParkWait::Budget { scope, .. } => {
             raise_scope_cap_in_txn(vault, wtxn, scope, by, cap, now_ms)?
         }
-        DreamerParkWait::ResidentShare { resident, .. } => {
-            let current = crate::llm::resident_share_in_txn(vault, wtxn, *resident)?;
+        DreamerParkWait::ResidentShare { resident, unit, .. } => {
+            let in_unit = crate::llm::run_admission::LeaseUnit::new(unit.as_str())
+                .map_err(|_| invalid("the park's unit is not a lease unit"))?;
+            let current = crate::llm::resident_share_in_txn(vault, wtxn, *resident, unit)?;
             let units = current
                 .and_then(|share| share.units)
                 .unwrap_or(0)
@@ -361,7 +371,7 @@ fn approve_trap_overdraft_in_txn(
                 units: Some(units),
                 pinned: current.is_none_or(|share| share.pinned),
             };
-            vault.set_resident_share_in_txn(wtxn, *resident, share, now_ms)?
+            vault.set_resident_share_in_txn(wtxn, *resident, &in_unit, share, now_ms)?
         }
         _ => return Ok(false),
     };

@@ -208,6 +208,10 @@ pub(crate) struct AuthorityCachedFold {
     /// points), so it holds for every snapshot of `key`'s generation; the
     /// Grant rows that choose those acts are read again on each hit.
     preserved_world_acts: Option<(Vec<AuthorityEntryHash>, BTreeSet<AuthorityEntryHash>)>,
+    /// The newest time a live owner signed into `view`'s fold, once a read
+    /// asked ([`newest_owner_signed_ts_in_txn`]); `Some(None)`: no held row
+    /// qualifies.
+    newest_owner_signed_ts: Option<Option<u64>>,
     /// What the reads of `view` keep between them (FIX 23233): the last
     /// pact-opening answer, and the unread rows already logged at `key`'s
     /// generation.
@@ -398,50 +402,6 @@ fn cached_fold(store: &Store, key: AuthorityCacheKey) -> Option<AuthorityView> {
     })
 }
 
-/// `build`'s value for `txn`'s authority generation, from `cache` when it
-/// holds that generation. A value is cached only when its generation is the
-/// committed one, so a write that aborts never publishes it, and a
-/// transaction that staged an authority row reads past the cache.
-pub(super) fn per_authority_generation<T>(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    cache: &std::sync::Mutex<Option<(u64, Arc<T>)>>,
-    build: impl FnOnce() -> Result<T>,
-) -> Result<Arc<T>> {
-    let generation = authority_cache_generation(store, txn)?;
-    let cached = cache.lock().ok().and_then(|cache| {
-        cache
-            .as_ref()
-            .filter(|(cached, _)| *cached == generation)
-            .map(|(_, value)| Arc::clone(value))
-    });
-    if let Some(value) = cached {
-        return Ok(value);
-    }
-    let value = Arc::new(build()?);
-    // A second read txn on this thread fails with MDB_BAD_RSLOT; see
-    // `cache_fold_if_committed`.
-    let committed = std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                store
-                    .env
-                    .read_txn()
-                    .ok()
-                    .and_then(|committed| authority_cache_generation(store, &committed).ok())
-            })
-            .join()
-            .ok()
-            .flatten()
-    });
-    if committed == Some(generation)
-        && let Ok(mut cache) = cache.lock()
-    {
-        *cache = Some((generation, Arc::clone(&value)));
-    }
-    Ok(value)
-}
-
 fn cache_fold_if_committed(
     store: &Store,
     key: AuthorityCacheKey,
@@ -470,6 +430,7 @@ fn cache_fold_if_committed(
                             continuation: None,
                             overlaid: None,
                             preserved_world_acts: None,
+                            newest_owner_signed_ts: None,
                             memo: OverlayMemo::default(),
                         }
                         .matches(committed)
@@ -486,6 +447,7 @@ fn cache_fold_if_committed(
             continuation: continuation.map(Arc::new),
             overlaid: None,
             preserved_world_acts: None,
+            newest_owner_signed_ts: None,
             memo: OverlayMemo::default(),
         });
     }
@@ -624,6 +586,55 @@ fn apply_live_overlay(
         cached.overlaid = Some((overlay, made.clone()));
     }
     made
+}
+
+/// The newest `ts` a live owner key signed into `fold`, the fold `txn` reads
+/// under `posture`; `None` when no held row qualifies. A signed `ts` is the
+/// signing machine's authority time, so once its entry is here the real time
+/// is past it, however long this vault's own clock stood still while it was
+/// closed: a replica judges a lifetime the home minted no earlier than this
+/// (MESH-REPLICA-CLOCK-LIFETIMES = A, Engine 25 Nov 19:45).
+///
+/// The held rows are read once per authority generation: the cached fold of
+/// `txn`'s generation keeps the answer, as a mesh admission asks far more
+/// often than a row is appended. A row an adopted checkpoint covers without
+/// its body adds nothing, so the bound is never past the newest owner-signed
+/// time. No rule caps a `ts` ahead of this vault's clock: the fold never
+/// reads one, and this bound adds none.
+pub(super) fn newest_owner_signed_ts_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+) -> Result<Option<u64>> {
+    let key = authority_cache_key(store, posture, txn)?;
+    let kept = store.authority_fold_cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|cached| cached.matches(key))
+            .and_then(|cached| cached.newest_owner_signed_ts)
+    });
+    if let Some(newest) = kept {
+        return Ok(newest);
+    }
+    let mut newest: Option<u64> = None;
+    find_in_authority_log_rows_in_txn(store, txn, |body| {
+        let entry = decode_stored_authority_log_body(body)?;
+        if newest.is_none_or(|seen| entry.ts > seen)
+            && super::roster_has_live_owner(&fold.roster, entry.signer_key())
+            && fold.valid_entries.contains(&authority_entry_hash(&entry)?)
+        {
+            newest = Some(entry.ts);
+        }
+        Ok(ControlFlow::<()>::Continue(()))
+    })?;
+    if let Ok(mut cache) = store.authority_fold_cache.lock()
+        && let Some(cached) = cache.as_mut()
+        && cached.matches(key)
+    {
+        cached.newest_owner_signed_ts = Some(newest);
+    }
+    Ok(newest)
 }
 
 /// The cached continuation a fold at `generation` may resume from: only one
@@ -1093,7 +1104,7 @@ fn authority_log_ids_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<
 }
 
 /// The signed body of the AUTHORITY_LOG row the type index names at `id`.
-fn authority_log_body_in_txn(
+pub(super) fn authority_log_body_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &crate::EntityId,

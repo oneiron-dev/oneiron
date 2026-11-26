@@ -6,9 +6,11 @@
 //!   at the earliest of their due times, and moved by each run to the new earliest;
 //! - the fact-hook runner's pass runs the due rows of those two jobs alone, sooner than the
 //!   housekeeping tick, and runs nothing while a housekeeping pass holds the runner;
-//! - only the node that releases the vault's ticks runs them: a node that is not the elected home
-//!   steps over the rows, which stay due there and never wake it, and the home ticks each, late,
-//!   once.
+//! - only the node that releases the vault's ticks runs the tick rows: a node that is not the
+//!   elected home steps over them, they stay due there and never wake it, and the home ticks
+//!   each, late, once. An actor's timer row runs on every machine: it is about the armings that
+//!   machine holds, which are carried to no other (FIX
+//!   TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE; `turn_program_triggers`).
 //! - a run's result lands only on the row it started on: a row armed again while its run runs (a
 //!   TASK rewrite that moves a waiting tick's due time) keeps its new arming (OPUS-SETTING's
 //!   review F2 of 5b-3).

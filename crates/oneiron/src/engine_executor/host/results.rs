@@ -9,6 +9,8 @@ use super::*;
 use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
 
+use super::deadline_replay::RESUME_PREFLIGHT_HELD;
+
 /// The ordinal of a stored-value path (`store_result_output_path`'s shape),
 /// for the replay of the store that made it: `None` for any other path.
 fn stored_path_ordinal(path: &str) -> Option<usize> {
@@ -37,10 +39,15 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        let sink = self
+        let mut sink = self
             .streamed
             .take_store()
             .ok_or(Error::InvalidConfig("store sent no body".into()))?;
+        // A dry walk stores nothing (L8-23): its body and occurrence would
+        // commit before the entry holds with the walk's report.
+        if self.pending_replay_dry() {
+            return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+        }
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(result_refusal("host_bridge_halted"));
         }
@@ -70,6 +77,9 @@ impl RecordingJsHost<'_, '_> {
             },
             None => None,
         };
+        if self.new_output_holds_walk(&mut sink, false)? {
+            return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+        }
         let (output, mut card) = self.bind_stored_with(storage, sink, name, &inherit)?;
         if let Some(mut receipt) = receipt.take() {
             receipt.folded = OccurrenceRef::new(self.run_id, &output.path, &output.handle)?;
@@ -94,23 +104,53 @@ impl RecordingJsHost<'_, '_> {
         Ok(self.bind_stored_with(storage, sink, name, &[])?.1)
     }
 
+    /// The path of the earliest recorded store of `digest` no store of this
+    /// step reused yet: `None` when this step stored no such bytes before.
+    fn recorded_store_path(&self, digest: &[u8; 32]) -> Option<String> {
+        let needle = format!("store/{}", crate::entity_id::bytes_to_hex_lower(digest));
+        self.results
+            .iter()
+            .map(|output| output.path.clone())
+            .find(|path| {
+                path.contains(needle.as_str())
+                    && !self.replayed_stores.iter().any(|held| held == path)
+            })
+    }
+
     /// The ordinal of the earliest recorded store of `digest` no store of
     /// this step reused yet, consuming it: `None` when this step stored no
     /// such bytes before, so the store allocates a fresh ordinal. Each
     /// recorded store is consumed once, in order, so the same bytes stored
     /// twice replay as two outputs with their original ordinals.
     fn replayed_store_ordinal(&mut self, digest: &[u8; 32]) -> Option<usize> {
-        let needle = format!("store/{}", crate::entity_id::bytes_to_hex_lower(digest));
-        let path = self
-            .results
-            .iter()
-            .map(|output| output.path.clone())
-            .find(|path| {
-                path.contains(needle.as_str())
-                    && !self.replayed_stores.iter().any(|held| held == path)
-            })?;
+        let path = self.recorded_store_path(digest)?;
         self.replayed_stores.push(path.clone());
         stored_path_ordinal(&path)
+    }
+
+    /// Whether the body `sink` holds may not publish now, because the pass
+    /// holds (L8-23). While a resumed step's walk has recorded calls ahead, a
+    /// body no recorded store holds ends the walk first (a `record_only`
+    /// body, a live call's spilled view, is always new): a tail holding an
+    /// effect step turns the walk dry and the body publishes nowhere, since
+    /// the entry then holds and commits nothing; a pure tail is dropped and
+    /// the body publishes. Bytes a recorded store holds publish as that
+    /// store's output again.
+    pub(super) fn new_output_holds_walk(
+        &mut self,
+        sink: &mut BodySink,
+        record_only: bool,
+    ) -> Result<bool> {
+        if !self.pending_walk_open() {
+            return Ok(self.pending_replay_dry());
+        }
+        if !record_only {
+            sink.finalize_sweep()?;
+            if self.recorded_store_path(&sink.digest()?).is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(self.end_walk_at_new_output())
     }
 
     /// [`Self::bind_stored`], the body first marked with the taint of every
@@ -244,6 +284,10 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
+        // A dry walk reads nothing live (L8-23).
+        if self.pending_replay_dry() {
+            return Ok(Err(result_refusal(RESUME_PREFLIGHT_HELD)));
+        }
         self.admit_result_read(storage)?;
         let own = if callable {
             self.result_rows()
@@ -526,9 +570,12 @@ impl RecordingJsHost<'_, '_> {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {
-                let sink = sink.ok_or(Error::InvariantViolation(
+                let mut sink = sink.ok_or(Error::InvariantViolation(
                     "a result read spilled with no sink",
                 ))?;
+                if self.new_output_holds_walk(&mut sink, false)? {
+                    return Ok(result_refusal(RESUME_PREFLIGHT_HELD));
+                }
                 let card = self.bind_stored_with(storage, sink, None, &[parent])?.1;
                 let mut output = json!({"derived": card, "count": count, "done": next.is_none()});
                 if let Some(next) = next {
@@ -635,6 +682,10 @@ impl RecordingJsHost<'_, '_> {
             |code: &str| Error::InvalidConfig(format!("recorded output read refused: {code}"));
         if self.hard_failure.is_some() || self.left_a_gap {
             return Err(refused("host_bridge_halted"));
+        }
+        // A dry walk reads nothing live (L8-23).
+        if self.pending_replay_dry() {
+            return Err(refused(RESUME_PREFLIGHT_HELD));
         }
         if self.declined.is_some() {
             return Err(refused("task_declined"));

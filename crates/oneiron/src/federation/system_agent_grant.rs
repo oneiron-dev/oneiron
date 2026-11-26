@@ -65,6 +65,7 @@ use super::{
 };
 use crate::authority::{ActSurface, AgentGrantAct};
 use crate::batch::{BatchOp, apply_ops};
+use crate::check_in::{AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -575,11 +576,19 @@ impl Vault {
     /// Steward default from now on, as the vault's grant-policy rows resolve
     /// it ([`Self::steward_policy_scope_in_txn`]). Mints it unless its
     /// standing rows already give those verbs with every data axis as the
-    /// rows resolve it (`false` then). Every row that stands is revoked
-    /// first, an opt-out's record among them, by the owner's signed act in
-    /// the same writer, so the Dreamer holds one Steward grant.
-    pub(crate) fn grant_dreamer_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
-        self.grant_system_agent_default(owner, SystemAgent::Dreamer)
+    /// rows resolve it. Every row that stands is revoked first, an
+    /// opt-out's record among them, by the owner's signed act in the same
+    /// writer, so the Dreamer holds one Steward grant. With
+    /// `applied` the owner applies another asker's approved check-in for
+    /// this grant back, spent in that writer (ROLES-CHECKIN 2k7; P25-SHAPE
+    /// Q1 = A). Returns the decision the mint ran on; `None`, spending
+    /// nothing, when nothing changed.
+    pub(crate) fn grant_dreamer_steward(
+        &self,
+        owner: &AuthenticatedOwner,
+        applied: Option<&AppliedCheckIn<'_>>,
+    ) -> Result<Option<CheckInDecision>> {
+        self.grant_system_agent_default(owner, SystemAgent::Dreamer, applied)
     }
 
     /// The owner's act: the Coach holds its default grant (`read`,
@@ -595,7 +604,28 @@ impl Vault {
     /// install cannot carry the owner's act; `InvalidConfig` when the
     /// manifest resolves no Steward scope.
     pub fn grant_coach_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
-        self.grant_system_agent_default(owner, SystemAgent::Coach)
+        Ok(self
+            .grant_coach_steward_with_check_in(owner, None)?
+            .is_some())
+    }
+
+    /// [`Self::grant_coach_steward`] as `vault.agents.grants.restore` runs
+    /// it: the owner's own act on their own proof, applying with `applied`
+    /// another asker's approved check-in for this grant back, spent in the
+    /// mint's writer (ROLES-CHECKIN 2k7; P25-SHAPE Q1 = A). Returns the
+    /// decision the mint ran on; `None`, spending nothing, when nothing
+    /// changed.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::grant_coach_steward`]; a check-in that is not an approved
+    /// ask for this grant back.
+    pub(crate) fn grant_coach_steward_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        applied: Option<&AppliedCheckIn<'_>>,
+    ) -> Result<Option<CheckInDecision>> {
+        self.grant_system_agent_default(owner, SystemAgent::Coach, applied)
     }
 
     /// Mints `agent`'s default Steward grant as `owner`'s act unless its
@@ -606,15 +636,21 @@ impl Vault {
     /// agent ([`Self::steward_policy_scope_in_txn`]; RULING
     /// REMINT-POLICY-ROWS = A): to widen it, the owner edits those rows.
     ///
+    /// The decision the mint ran on is the owner's own proof, naming
+    /// `applied`, another asker's approved check-in, spent in the same
+    /// writer; `None`, spending nothing, when the rows already give it.
+    ///
     /// # Errors
     ///
     /// `InvalidConfig`, changing nothing, when the manifest resolves no
-    /// Steward scope or its rows leave the agent no verb of its default.
+    /// Steward scope or its rows leave the agent no verb of its default; a
+    /// check-in that is not an approved ask for this grant back.
     fn grant_system_agent_default(
         &self,
         owner: &AuthenticatedOwner,
         agent: SystemAgent,
-    ) -> Result<bool> {
+        applied: Option<&AppliedCheckIn<'_>>,
+    ) -> Result<Option<CheckInDecision>> {
         let actor = match agent {
             SystemAgent::Dreamer => self.dreamer_authority()?.entity_ref(),
             SystemAgent::Coach => self.coach_authority()?.entity_ref(),
@@ -634,13 +670,19 @@ impl Vault {
             if steward_reach_in(&self.store, &*txn, actor)?
                 .is_some_and(|reach| reach.is_default_of(&full, &policy_scope))
             {
-                return Ok(false);
+                return Ok(None);
             }
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
             self.revoke_standing_steward_grants_in_txn(txn, owner, actor)?;
             self.mint_steward_grant_in_txn(txn, owner, actor, full, Some(&policy_scope))?;
-            Ok(true)
+            Ok(Some(decision))
         })?;
-        if minted {
+        if minted.is_some() {
             self.apply_pending_rebinds_after_commit();
         }
         Ok(minted)
@@ -663,6 +705,29 @@ impl Vault {
         agent: EntityId,
         classes: &BTreeSet<super::EngineControlClass>,
     ) -> Result<EntityId> {
+        Ok(self
+            .grant_engine_controls_with_check_in(owner, agent, classes, None)?
+            .0)
+    }
+
+    /// [`Self::grant_engine_controls`] as `vault.engine.controls.grant` runs
+    /// it: the owner's own act on their own proof, applying with `applied`
+    /// another asker's approved check-in for this exact grant, spent in the
+    /// mint's writer after the owner's revalidation and before the mint
+    /// (ROLES-CHECKIN 2k7; P25-SHAPE Q1 = A). Returns the grant and the
+    /// decision it ran on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::grant_engine_controls`]; a check-in that is not an
+    /// approved ask for this grant.
+    pub(crate) fn grant_engine_controls_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+        classes: &BTreeSet<super::EngineControlClass>,
+        applied: Option<&AppliedCheckIn<'_>>,
+    ) -> Result<(EntityId, CheckInDecision)> {
         if SystemAgent::of(agent).is_some() {
             return Err(crate::error::Error::InvalidConfig(
                 "a base agent's grant is its default grant".into(),
@@ -673,9 +738,15 @@ impl Vault {
                 "an engine.controls grant names at least one class".into(),
             ));
         }
-        let grant = self.with_write_txn_grouped(|txn| {
+        let granted = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
-            self.mint_steward_grant_in_txn(
+            let decision = crate::check_in::owner_act_decision_in_txn(
+                self,
+                txn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?;
+            let grant = self.mint_steward_grant_in_txn(
                 txn,
                 owner,
                 agent,
@@ -684,10 +755,11 @@ impl Vault {
                     .map(|class| class.grant_verb().to_owned())
                     .collect(),
                 None,
-            )
+            )?;
+            Ok((grant, decision))
         })?;
         self.apply_pending_rebinds_after_commit();
-        Ok(grant)
+        Ok(granted)
     }
 
     /// The owner's act: takes back every `engine.controls` grant he gave

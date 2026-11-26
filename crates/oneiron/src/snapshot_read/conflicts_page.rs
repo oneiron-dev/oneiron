@@ -7,9 +7,9 @@
 //! for it: a conflict with one unread member is absent whole, counted nowhere
 //! and never named by a cursor. A conflict the owner holds, or one whose
 //! settlement was reverted, is the owner's to answer, so no other reader sees
-//! it. A retained alternative whose staged Keep the owner declined is the
-//! owner's to keep again, so the page leaves it out, as the parked settlement
-//! ask does.
+//! it. A retained alternative whose staged Keep the owner declined, or that
+//! was retracted, is the owner's to keep again, so the page leaves it out, as
+//! the parked settlement ask does.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,7 @@ use crate::dreamer_consolidation::{OpenConflict, open_conflicts_in_txn, rmpv_to_
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Result, Vault};
 
 /// The cursor prefix naming the last conflict a page served, by its marker.
@@ -140,11 +141,7 @@ fn bound_conflicts_page(
         .embedded_owner("vault.consolidation.conflicts.page")
         .ok();
     let bounds = vault.snapshot_read_settings()?;
-    let limit = input
-        .limit
-        .unwrap_or(bounds.page_rows)
-        .min(bounds.page_rows)
-        .max(1);
+    let limit = page_limit_zero_as_one(input.limit, bounds.page_rows, bounds.page_rows).rows;
     let after = conflict_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = read.prepare_point_read::<MemoryError>()?;

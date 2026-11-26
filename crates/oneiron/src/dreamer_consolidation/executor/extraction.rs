@@ -36,7 +36,7 @@ use wire::parse_candidate;
 pub(in crate::dreamer_consolidation) use wire::{
     CallPins, ExtractedPerson, ExtractionReply, ReplyContext, authored_fallback,
     check_extraction_reply, contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply,
-    prospective_queries, reply_json, resolve_subject,
+    failed_json_parse, prospective_queries, reply_json, resolve_subject,
 };
 
 /// The tokens a claim extraction answer may take after its thought. The
@@ -110,6 +110,39 @@ pub(in crate::dreamer_consolidation) fn extraction_request_params(
         JsonValue::Array(own_server_only),
     );
     Ok(params)
+}
+
+/// The house server's per-request prompt lookup switch (#10123): `false`
+/// turns its lookup draft off for that one request; `true` or no field keeps
+/// the server's setting. A server without the switch reads no such field.
+const PROMPT_LOOKUP_PARAM: &str = "oneiron_prompt_lookup";
+
+/// Turns prompt lookup off for `request` on an own server, for the one
+/// retry of an extraction reply that failed the JSON parse (the lead, 21 Nov
+/// 11:5x): [`PROMPT_LOOKUP_PARAM`] goes in as `false` and joins the
+/// [`OWN_SERVER_ONLY_PARAM`] list, so a hosted rung is sent none of it. The
+/// changed params change the request's canonical hash, so the retry is a
+/// durable step of its own: a new call, never a replay of the refused reply.
+/// A list that is not an array stays as it is: the wire refuses it anyway.
+pub(in crate::dreamer_consolidation) fn prompt_lookup_off(request: &mut LlmRequest) {
+    request
+        .params
+        .insert(PROMPT_LOOKUP_PARAM.to_owned(), json!(false));
+    let name = json!(PROMPT_LOOKUP_PARAM);
+    match request.params.get_mut(OWN_SERVER_ONLY_PARAM) {
+        Some(JsonValue::Array(names)) => {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        Some(_) => {}
+        None => {
+            request.params.insert(
+                OWN_SERVER_ONLY_PARAM.to_owned(),
+                JsonValue::Array(vec![name]),
+            );
+        }
+    }
 }
 
 impl ConsolidationExecutor<'_> {

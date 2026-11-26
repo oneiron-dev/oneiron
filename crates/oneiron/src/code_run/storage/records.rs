@@ -289,7 +289,7 @@ impl Vault {
             })
             .transpose()?;
         prepare(wtxn)?;
-        let record = record.over_held(held.as_ref());
+        let record = record.over_held(held.as_ref())?;
         // A record whose replies an erase took stays erased (FIX 5718).
         let record = fence_replay_in_txn(self, wtxn, record)?;
         replay_rows::put_fenced(self, wtxn, &record)?;
@@ -543,6 +543,7 @@ impl Vault {
                 crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &occurrence, row)?;
             }
         }
+        crate::source_audience::raise_floors_in_txn(self, wtxn, [occurrence])?;
         if born_withdrawn {
             crate::ports::RetrievalIndex::port_retrieval_mark_stale(self, wtxn, &occurrence)?;
         }

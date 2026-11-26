@@ -176,6 +176,7 @@ fn send(key: &str, document: EntityId) -> EsignDispatchRequest {
         recipient_count: 1,
         on_behalf_of: None,
         idempotency_key: Some(key.into()),
+        check_in_ref: None,
     }
 }
 

@@ -201,6 +201,7 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> Result<DreamerAttemptExecution> {
+        stages.parse_retries = charges.parse_retries;
         // Empty unless this branch's finish ran early in a window; from
         // here on the branch writes its rows at once.
         let held = resources.take_held_escalations();
@@ -226,6 +227,9 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::BudgetRefused { reason, refusal }) => {
                 Ok(charges.fail_refused(&reason, refusal))
             }
+            // A window refusal ends the try Failed with its text, once, with
+            // what it already spent (Engine 21 Nov 07:38).
+            Ok(PartitionRun::WindowRefused { reason }) => Ok(charges.fail_for(&reason)),
             // A spent model seat refused a step: the try parks on the seat
             // with what it already spent (SEAT-PARK-MODEL-STEP-PATH).
             Ok(PartitionRun::SeatRefused {

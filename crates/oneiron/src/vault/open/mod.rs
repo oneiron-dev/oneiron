@@ -660,6 +660,7 @@ impl Vault {
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
+            import_second_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
             spent_nonces,
             housekeeping: Default::default(),
@@ -681,6 +682,7 @@ impl Vault {
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
             sandbox_backends: Default::default(),
+            task_brief_model: Default::default(),
             result_body_pins,
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),
@@ -698,6 +700,8 @@ impl Vault {
             origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
+            #[cfg(oneiron_test_support)]
+            test_door_state: Default::default(),
         };
         // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
         // holds its data key and mirrors its wraps before any caller holds it.
@@ -816,6 +820,19 @@ impl Vault {
                     .record_hooks
                     .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
+                // A vault from before the house voice guide that already
+                // holds a campaign gets its guide here; a new vault gets it
+                // with its first campaign. A failed seed never blocks the
+                // open: unguided campaigns hold their sends, and the next
+                // open tries again.
+                if let Err(error) =
+                    crate::campaign::house_voice_guide::seed_house_voice_guide_at_open(&vault)
+                {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide was not seeded; the next open tries again"
+                    );
+                }
             }
         }
         vault.lfs_chunk_parameters()?;
@@ -835,6 +852,17 @@ impl Vault {
         // room rows gets its row once, room by room, before any reader or
         // window holds this handle; an archived vault is left as it is.
         crate::workspace_roster::backfill_room_turns_on_open(&vault)?;
+        // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: an emergency apology blob an
+        // earlier build wrote with the booker's raw pick links is released on a node holding
+        // its checkpoint, so its body leaves every machine; a failure leaves it to a later open.
+        if let Err(error) =
+            crate::booking::emergency_reschedule::release_raw_apologies_on_open(&vault)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "raw emergency apology bodies were not released; a later open tries again"
+            );
+        }
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
         // The image a restore in this vault's place set aside reads, and

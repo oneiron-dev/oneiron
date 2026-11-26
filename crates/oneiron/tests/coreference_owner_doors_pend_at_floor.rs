@@ -179,6 +179,7 @@ fn owner_share_consent_lands_on_a_seeded_vault() {
             local_person: local,
             other_person: other,
             pact: pact_hex.clone(),
+            check_in_ref: None,
         },
     )
     .expect("the owner's share consent lands");

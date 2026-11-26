@@ -12,8 +12,11 @@
 //! executor lease another machine holds and that is expired: one its holder
 //! released as it closed, or one no pass renewed within a hold. The ruled
 //! order says when this machine may take it (`agent_run_handover_due`): at
-//! expiry when it is the vault's elected home node, else a grace later. The
-//! run must be able to run here (`agent_run_runs_here`). A run no machine
+//! expiry when it is the vault's elected home node, else a grace later. A
+//! run placed on a machine at its first claim (row P4) goes in the
+//! placement's order instead (`super::run_placement::placed_take_due`): the
+//! placed machine at expiry, the home after `policy.slots.place_grace_ms`,
+//! the others after the handover grace. The run must be able to run here (`agent_run_runs_here`). A run no machine
 //! can take waits: its TASK stays as it is, and the pass of the next able
 //! machine that comes up takes it.
 //!
@@ -61,6 +64,7 @@
 
 use std::collections::BTreeMap;
 
+use super::run_placement::{elected_home_here_in, take_due_in, takes_new_work_in};
 use super::run_task::{
     AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
     agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
@@ -77,13 +81,6 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-
-/// How long after an expired lease's `held_until` a machine that is not the
-/// vault's elected home node waits before it takes the run (FIX 4747 slice
-/// 6), so the home node, which takes at expiry, goes first. Engine call
-/// (CALLS, FIX 4747): five minutes, five housekeeping ticks, the send
-/// handover's grace.
-const AGENT_RUN_HANDOVER_GRACE_SECS: u64 = 5 * 60;
 
 /// Why the pass leaves a run for now: its agent is not dispatchable here.
 const AGENT_NOT_DISPATCHABLE: &str = "agent_not_dispatchable";
@@ -115,6 +112,9 @@ const DEDUPE_KEY_HELD_HERE: &str = "dedupe_key_held_here";
 const NOT_THE_AGENT_PUMPS: &str = "not_the_agent_pumps";
 /// This machine cannot fund the run as its launch was stated.
 const LAUNCH_UNFUNDED_HERE: &str = "launch_unfunded_here";
+/// The run was placed on this machine, which takes no new work now (row
+/// P4): paused, draining, or outside its window.
+const PLACED_MACHINE_TAKES_NO_NEW_WORK: &str = "placed_machine_takes_no_new_work";
 
 /// What one reaper pass came to (FIX 4747 slice 6).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -254,6 +254,8 @@ impl Vault {
                 .iter()
                 .any(|(_, body)| body.executor.node_id != node_id)
                 && elected_home_here_in(self, &rtxn, node_id)?;
+            // This machine's MACHINE, which a run placed here names.
+            let here = crate::identity::read_machine_id_in_txn(self, &rtxn)?;
             let mut renew = Vec::new();
             let mut takes = Vec::new();
             for (task_ref, body) in runs {
@@ -268,7 +270,7 @@ impl Vault {
                     }
                     continue;
                 }
-                if !agent_run_handover_due(lease, home, now) {
+                if !take_due_in(self, &rtxn, &body, home, here, now)? {
                     reap.waiting += 1;
                     continue;
                 }
@@ -360,7 +362,9 @@ impl Vault {
                     }
                     let mut done = false;
                     update_agent_run_task_body_in_txn(self, wtxn, task_ref, now, |body| {
-                        if body.outcome.is_none() && body.executor.same_holding(lease) {
+                        // The whole lease the read saw, its hold included: a
+                        // placement that released it since (row P4) stands.
+                        if body.outcome.is_none() && body.executor == lease {
                             body.executor.held_until = held_until;
                             done = true;
                         }
@@ -376,35 +380,6 @@ impl Vault {
         }
         Ok(reap)
     }
-}
-
-/// Whether the ruled handover order lets this machine take a run whose
-/// lease expired at `lease.held_until`, at `now` (FIX 4747 slice 6; canon
-/// items 02-03, "a run on another machine falls back to the home node").
-/// Engine call (CALLS, FIX 4747): the vault's elected home node (`home`)
-/// takes at expiry; any other live machine, as this one is while it runs the
-/// pass, only [`AGENT_RUN_HANDOVER_GRACE_SECS`] later, so the home node, when
-/// it can run the run, goes first. With no machine able, the run waits.
-fn agent_run_handover_due(lease: AgentRunExecutorLease, home: bool, now: u64) -> bool {
-    let due_at = if home {
-        lease.held_until
-    } else {
-        lease
-            .held_until
-            .saturating_add(AGENT_RUN_HANDOVER_GRACE_SECS)
-    };
-    now >= due_at
-}
-
-/// Whether this machine (`node_id`) is the vault's elected home node, read
-/// in `txn` (FIX 4747 slice 6). Engine call (CALLS, FIX 4747): the committed
-/// MACRO home designation (`dreamer_runner::home`), which the owner's pick
-/// wins and an attached cloud, then an always-on machine, then the primary
-/// device fill; the handover holds no election of its own.
-fn elected_home_here_in(vault: &Vault, txn: &heed::RoTxn<'_>, node_id: u64) -> Result<bool> {
-    Ok(DreamerRunnerStore::new(vault)
-        .home_node_designation_in_txn(txn)?
-        .is_some_and(|home| home.node_id == node_id))
 }
 
 /// Whether the pass renews this machine's own `lease` at `now`, and to
@@ -637,6 +612,15 @@ fn take_expired_agent_run_in_txn(
     };
     if body.outcome.is_some() || body.executor != run.lease {
         return Ok(AgentRunTake::Moved);
+    }
+    // The machine a run was placed on takes it only while it takes new work
+    // (row P4): paused, draining or outside its window since the placement,
+    // it leaves the run, and the home takes it after the grace.
+    if let Some(placement) = body.placement.as_ref().filter(|p| p.orders(body.executor))
+        && crate::identity::read_machine_id_in_txn(vault, &*wtxn)? == Some(placement.machine)
+        && !takes_new_work_in(vault, &*wtxn, placement.machine, now)?
+    {
+        return Ok(AgentRunTake::Waits(PLACED_MACHINE_TAKES_NO_NEW_WORK));
     }
     let (Some(live), Some(original)) = (
         attempt_id_from_hex(&body.live_attempt_ref),

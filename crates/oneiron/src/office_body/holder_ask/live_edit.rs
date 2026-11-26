@@ -282,6 +282,13 @@ fn offered_live_edit_answer(option: &TaskAskOptionId) -> Option<LiveEditAnswer> 
         .map(|(_, answer, _)| *answer)
 }
 
+/// Whether `option` approves what a live-edit ask asks for: it mints the
+/// standing grant the editor's retries land under. The refusal mints none
+/// (`task_verb::ask_guard`).
+pub(crate) fn live_edit_option_grants(option: &TaskAskOptionId) -> bool {
+    offered_live_edit_answer(option) == Some(LiveEditAnswer::Grant)
+}
+
 /// The route an ask group carries, when the raise bound it; `None` for
 /// every other ask. The rebuilt intent must equal the requested one, so a
 /// crafted key names nothing; a bound group whose route does not name it

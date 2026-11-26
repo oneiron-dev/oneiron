@@ -62,6 +62,7 @@ pub(crate) const HELD_EDIT_CAUSALITY_KEY: &str = "0";
 mod text_egress;
 // FIX 10161: the tombstones a narrower grant's export carries.
 mod tombstones;
+pub(in crate::sync) use tombstones::device_only_by_capture;
 // FIX 10162: the admission validators that read in the caller's txn.
 #[cfg(feature = "sync")]
 mod validators;
@@ -75,6 +76,7 @@ mod tests;
 use super::bridge;
 use super::loro_support;
 
+pub(in crate::sync) use self::admission::FEDERATION_ADMISSION_MESSAGE;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::admit_peer_window_update;
 #[cfg(feature = "sync")]
@@ -102,13 +104,15 @@ pub(crate) fn keep_carried_born_with(
 ) -> crate::error::Result<()> {
     born_with::keep_carried(vault, carried)
 }
+pub(crate) use self::authorize::GuestTombstones;
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
-    RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
-    SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
+    RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorAnswerDoc, SelectorVvRequest,
+    SyncSelector, SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
     filtered_window_doc_for_peer, guest_share_envelope, guest_share_envelope_body,
+    selector_answer_doc_for_peer,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;

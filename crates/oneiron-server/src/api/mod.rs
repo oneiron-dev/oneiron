@@ -119,8 +119,9 @@ pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 pub(crate) use self::oauth_server::{
-    AUTHORIZE_PATH, PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH,
-    REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+    AUTHORIZE_PATH, AUTHORIZE_STATUS_PATH, PAGE_TOKEN_HEADER, PAGE_TOKEN_META,
+    PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, PURPOSE_PARAMETER,
+    REGISTER_PATH, REVOKE_PATH, SignInPurpose, TOKEN_PATH,
 };
 pub(crate) mod off_record_rooms;
 mod one_click_unsubscribe;
@@ -158,6 +159,9 @@ pub(crate) use self::facade::{
 pub(crate) use self::facade::clock_ingress;
 // FIX 12323: a facade route's caller, as its receipt layer resolved it.
 pub(crate) use self::facade::resolved_facade_caller;
+// FIX ACTION-REPLAY-SERVES-UNKEPT-VERB-ANSWERS: the app's action table
+// offers no row whose answer an invocation never keeps.
+pub(crate) use self::facade::verb_reply_is_kept;
 // Fix list row 17645: each served vault's mail pack runs its blocking mail
 // work on this server's runner, under the host's `[mail]` settings.
 pub(crate) use self::facade::install_mail_host;

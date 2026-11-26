@@ -17,6 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub mod files_search;
 #[cfg(feature = "iroh")]
 pub mod iroh_transport;
+pub mod message;
 #[cfg(feature = "sync")]
 pub mod sync_dialer;
 pub mod transport_key;
@@ -182,6 +183,21 @@ impl AcceptPolicy {
 pub trait MeshStream: Send {
     fn send<'a>(&'a mut self, bytes: &'a [u8]) -> MeshFuture<'a, ()>;
     fn recv(&mut self) -> MeshFuture<'_, Vec<u8>>;
+    /// Returns once the peer has acknowledged every byte [`Self::send`]
+    /// wrote. `send` returns once its bytes are queued, and a connection
+    /// closed after that may drop them unsent; a side that closes right
+    /// after its last reply waits here first. A transport whose sends are
+    /// delivered when they return answers at once.
+    fn delivered(&mut self) -> MeshFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    /// Abandons the stream in both directions: bytes not yet delivered are
+    /// dropped and the peer reads a reset, so the stream holds no send
+    /// buffer and no slot among the connection's streams waiting on a peer
+    /// that never reads. A side that gives up on a stream calls it before
+    /// dropping the stream, since a dropped stream still finishes what it
+    /// queued. A transport whose dropped streams hold nothing does nothing.
+    fn reset(&mut self) {}
 }
 /// One long-lived, ordered byte stream for a protocol that frames its own
 /// bytes (sync runs HTTP/1.1 and WebSocket on it). Admission is checked when it

@@ -350,7 +350,8 @@ fn bound_extraction_serves_normalized_tokens_and_writable_prior() -> Observation
     Ok(())
 }
 
-/// Three user turns across two live sessions observe, while one session does not.
+/// Three user turns across two live sessions observe, while one session does not, and the
+/// page's diversity counts the one speaker once per sitting.
 #[test]
 fn three_user_turns_observe_across_two_live_sessions_only() -> ObservationsTestResult<()> {
     for split_sessions in [true, false] {
@@ -407,6 +408,15 @@ fn three_user_turns_observe_across_two_live_sessions_only() -> ObservationsTestR
                 .as_u64()
                 .unwrap_or_else(|| panic!("evidence_count is a count")),
             3
+        );
+        // One speaker counts once per sitting it spoke in, as native selection counts it
+        // (`strength::turn_diversity_key`): two sittings give two keys, one sitting gives one.
+        assert_eq!(
+            only["diversity"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("diversity is a count")),
+            if split_sessions { 2 } else { 1 },
+            "the page counts the speaker once per sitting: {only}"
         );
     }
     Ok(())
@@ -622,5 +632,149 @@ fn request_clock_decides_freshness_of_one_incoming_edge() -> ObservationsTestRes
         );
         assert_eq!(only["has_vector"], json!(false));
     }
+    Ok(())
+}
+
+/// The minimum observations key for preferences about the vault owner.
+const OBSERVED_PREFERENCE_OBSERVATIONS_KEY: &str = "claim.observed_preference.min_observations";
+
+/// The minimum sessions key for preferences about the vault owner.
+const OBSERVED_PREFERENCE_SESSIONS_KEY: &str = "claim.observed_preference.min_sessions";
+
+/// Sets each named owner bar key to one at vault scope and requires it to apply.
+fn lower_owner_observed_preference_bar(
+    vault: &Vault,
+    actor: EntityId,
+    keys: &[&str],
+) -> ObservationsTestResult<()> {
+    let owner = vault.authenticate_owner(
+        actor,
+        &actor.to_hex(),
+        true,
+        oneiron::store::GateDecisionId::now(),
+    )?;
+    for &key in keys {
+        let outcome = vault.set_setting(
+            oneiron::setting::SettingCaller::Owner(&owner),
+            oneiron::setting::SetSetting::vault_value(key, json!(1)),
+        )?;
+        let oneiron::setting::SetSettingOutcome::Applied { .. } = outcome else {
+            panic!("FIXTURE: the owner's change to {key} did not apply: {outcome:?}");
+        };
+    }
+    Ok(())
+}
+
+/// Reads one preference candidate citing three user turns in one sitting in a fresh vault.
+/// The serving install carries the owner's signed setting changes.
+fn one_sitting_preference_observation(
+    subject_is_owner: bool,
+    lowered_keys: &[&str],
+) -> ObservationsTestResult<Value> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_observations_vault(&dir)?);
+    let issuer = oneiron::test_support::test_host_issuer();
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)?;
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
+
+    let actor = dreamer(&vault)?;
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    lower_owner_observed_preference_bar(&vault, owner, lowered_keys)?;
+    let subject = if subject_is_owner {
+        owner
+    } else {
+        let person = EntityId::now();
+        vault.put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owen",
+        )?;
+        person
+    };
+    let conversation = EntityId::now();
+    let session_key = vault.local_session_key(subject)?;
+    let turns = witness_three_turns_in_sessions(
+        &vault,
+        conversation,
+        subject,
+        session_key,
+        [
+            "I choose green tea.",
+            "Green tea again.",
+            "Green tea this time too.",
+        ],
+        false,
+    )?;
+    let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &turns, QUEUE_NOW)?;
+    let binding = bind_observations(&vault, &admitted)?;
+    let attempt = observation_attempt_hex(id);
+    let inputs = read_bound_inputs_page(&binding, &attempt)?;
+    let served = page_turns_with_versions(&inputs);
+    let request = json!({
+        "attempt": attempt,
+        "now_ms": OBSERVATION_NOW_MS,
+        "candidates": [
+            observations_candidate_with_evidence(
+                &subject.to_hex(),
+                "preference.food",
+                json!("green tea"),
+                &served,
+            ),
+        ],
+    });
+    let answer = invoke_observations(&binding, request)?;
+    Ok(page_candidate(&answer["value"], 0))
+}
+
+/// The owner's settings move the bound page's observed-preference bar only for the owner.
+#[test]
+fn the_owners_observed_preference_bar_decides_observed_for_the_owner_alone()
+-> ObservationsTestResult<()> {
+    let owner_moved =
+        one_sitting_preference_observation(true, &[OBSERVED_PREFERENCE_SESSIONS_KEY])?;
+    assert_eq!(
+        owner_moved["observed"],
+        json!(true),
+        "case A: three turns in one session meet the owner's lowered three-across-one bar"
+    );
+    assert_eq!(
+        owner_moved["evidence_count"],
+        json!(3),
+        "case A: all three turns are evidence for the owner's three-across-one bar"
+    );
+
+    let owner_default = one_sitting_preference_observation(true, &[])?;
+    assert_eq!(
+        owner_default["observed"],
+        json!(false),
+        "case B: one session falls short of the owner's default three-across-two bar"
+    );
+    assert_eq!(
+        owner_default["evidence_count"],
+        json!(3),
+        "case B: all three turns are evidence for the owner's default three-across-two bar"
+    );
+
+    let another_person = one_sitting_preference_observation(
+        false,
+        &[
+            OBSERVED_PREFERENCE_OBSERVATIONS_KEY,
+            OBSERVED_PREFERENCE_SESSIONS_KEY,
+        ],
+    )?;
+    assert_eq!(
+        another_person["observed"],
+        json!(false),
+        "case C: one session misses canon's three-across-two bar despite the owner's one-across-one"
+    );
+    assert_eq!(
+        another_person["evidence_count"],
+        json!(3),
+        "case C: all three turns are evidence for canon's three-across-two bar"
+    );
     Ok(())
 }

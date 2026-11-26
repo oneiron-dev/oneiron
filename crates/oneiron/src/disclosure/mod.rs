@@ -21,6 +21,7 @@ mod model_channel;
 mod retained_copies;
 mod room_party;
 mod scope_codec;
+mod speaker_bind;
 pub mod task_ask_default;
 mod tier_classification;
 mod vault_agent;
@@ -47,22 +48,29 @@ pub(crate) use self::model_channel::{
 pub(crate) use self::retained_copies::retained_copy_admits;
 pub use self::room_party::{RoomParty, RoomPartyEntry};
 pub(crate) use self::room_party::{
-    is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in, room_party_in,
+    deletion_recorded_in_txn, is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in,
+    room_party_in,
 };
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,
     DisclosureScopeStatus, decode_disclosure_scope_body, encode_disclosure_scope_body,
 };
+pub(crate) use self::speaker_bind::call_speaker_bind_in_txn;
+pub use self::speaker_bind::{
+    CallSpeakerBindReceipt, CallSpeakerBindRequest, CallSpeakerUnbindRequest,
+};
 pub use self::tier_classification::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_TIER_A_ENTITY_TYPES,
     DISCLOSURE_TIER_A_PREDICATE_PREFIXES, DisclosureMode, DisclosureTier,
     PREDICATE_DISCLOSURE_ATTENDEE_ASK, PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
-    PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, PREDICATE_DISCLOSURE_SCOPE, PREDICATE_DISCLOSURE_TIER,
-    PREDICATE_DISCLOSURE_TOPIC, is_disclosure_claim_predicate,
+    PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, PREDICATE_DISCLOSURE_SCOPE,
+    PREDICATE_DISCLOSURE_SPEAKER_BIND, PREDICATE_DISCLOSURE_TIER, PREDICATE_DISCLOSURE_TOPIC,
+    is_disclosure_claim_predicate,
 };
 pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_discretion_notice};
 
+pub(crate) use self::attendee_ask::require_live_contact_in_txn;
 pub(crate) use self::home::scope_home_band;
 pub(crate) use self::tier_classification::{disclosure_tier, validate_disclosure_claim_structure};
 pub(crate) use self::vault_agent::is_vault_agent_in;

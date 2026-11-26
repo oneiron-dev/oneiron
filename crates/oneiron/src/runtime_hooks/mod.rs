@@ -85,8 +85,7 @@ pub use source::{
 };
 pub(crate) use source::{
     hold_task_tick_in_txn, index_task_due_in_txn, record_surface_inbound_in_txn,
-    release_task_tick_hold_in_txn, releases_here as releases_ticks_here, task_tick_held_in_txn,
-    task_tick_waiting_in_txn,
+    release_task_tick_hold_in_txn, task_tick_held_in_txn, task_tick_waiting_in_txn,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use source::{
@@ -102,7 +101,7 @@ pub use verb::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookPreSnapshot,
     VerbHookStop, hook_class,
 };
-pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};
+pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn, verb_ask_word_releases_in};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.

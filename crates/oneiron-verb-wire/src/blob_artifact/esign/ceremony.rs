@@ -48,4 +48,10 @@ pub enum SigningOutcome {
     ReviewRequired {
         row: String,
     },
+    /// A member's sign act as the vault's principal waits on this pending
+    /// check-in (ROLES-CHECKIN 2k6b): nothing is signed until a Complete
+    /// names it, approved, as `check_in_ref`.
+    CheckInPending {
+        check_in_ref: String,
+    },
 }

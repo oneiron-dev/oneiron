@@ -1,21 +1,26 @@
 //! Typed booking-page discovery, published lifecycle and constraint front.
 use std::sync::Arc;
 
-use oneiron::EntityId;
 use oneiron::booking::agent_api::{BookingOperationRequest, BookingOperationResponse};
-use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::booking::{PersonalBookingLink, PersonalLinkEndReason, PersonalLinkRecipient};
+use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     BookingAvailabilityRequest, BookingBookRequest, BookingCancelRequest,
     BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingPageTokenRequest,
-    BookingPageTokenResponse, BookingRescheduleRequest,
+    BookingPageTokenResponse, BookingPersonalLink, BookingPersonalLinkListRequest,
+    BookingPersonalLinkListResponse, BookingPersonalLinkMintRequest,
+    BookingPersonalLinkMintResponse, BookingPersonalLinkRevokeRequest,
+    BookingPersonalLinkRevokeResponse, BookingRescheduleRequest,
 };
+use oneiron::{EdgeActorClass, EntityId};
 
 use super::FacadeApiError;
-use super::host_doors::support::{Listed, MaybeListed, internal, refused};
+use super::host_doors::support::{
+    Listed, MaybeListed, credential_listing, internal, owner_proof, refused,
+};
 use crate::api::booking::{
     booking_page_token, credential_transport_context, execute_booking_operation_listing,
-    resolve_booking_page_listing, resolve_public_booking_page_listing,
-    run_public_constraint_turn_listing,
+    public_attempt_authority, resolve_booking_page_listing, run_public_constraint_turn_listing,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -81,6 +86,43 @@ pub(crate) async fn vault_booking_deposit_refund(
     .unwrap_or_else(|_| refused(internal(VERB)))
 }
 
+/// `vault.booking.deposit.mark_refunded_outside`
+/// (BK-DEPOSIT-FAILED-REFUND-MARK-PAID = B): the owner's own proof, as Return
+/// deposit takes it, which the mark's write revalidates in its snapshot; an
+/// agent's credential, a delegate's or a visitor's token marks nothing. It
+/// lists the booking's EVENT (`host_door_lists`), the one row its answer
+/// names; a refusal lists none.
+pub(crate) async fn vault_booking_deposit_mark_refunded_outside(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::BookingDepositMarkRefundedOutsideRequest,
+) -> Listed<oneiron::task_verb::sdk::BookingDepositMarkRefundedOutsideReceipt> {
+    const VERB: &str = "vault.booking.deposit.mark_refunded_outside";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || {
+        match oneiron::task_verb::sdk::mark_booking_deposit_refunded_outside_as(
+            server.vault(),
+            &owner,
+            &input,
+        ) {
+            Ok(receipt) => {
+                let rows = EntityId::from_hex(&receipt.event_ref)
+                    .ok()
+                    .into_iter()
+                    .collect();
+                (Ok(receipt), rows)
+            }
+            Err(error) => refused(error),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| refused(internal(VERB)))
+}
+
 /// The same live publication, admission, parser and oracle as the public front.
 /// The caller's own credential keys the wait and pays for its model call.
 /// It lists (`host_door_lists`) the rows its answer was derived from, from
@@ -99,13 +141,12 @@ pub(crate) async fn vault_booking_constraint_turn(
     let answer: MemoryResult<(BookingConstraintTurnResponse, Vec<EntityId>)> = async {
         let transport = credential_transport_context(server, auth)
             .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-        let (page_ref, publication, mut rows) =
-            resolve_public_booking_page_listing(server, &input.page_token, &auth.destination())
+        // The same snapshot as the public front's: through a personal link
+        // it carries that link, so the turn's final check also needs it live
+        // (BK-PERSONAL-LINKS, review round 2 of #8571).
+        let (authority, mut rows, _) =
+            public_attempt_authority(server, &input.page_token, &auth.destination())
                 .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-        let authority = oneiron::booking::publication::PublicBookingAuthority {
-            page_ref,
-            publication,
-        };
         let (response, solved) =
             run_public_constraint_turn_listing(server, authority, input.turn, &transport)
                 .await
@@ -217,4 +258,125 @@ pub(crate) async fn vault_booking_cancel(
         BookingOperationRequest::Cancel(input),
     )
     .await
+}
+
+/// The owner mints a personal link to one of their published pages for one
+/// recipient (BK-PERSONAL-LINKS). The same owner proof as every owner door;
+/// the engine door then checks the owner as a live actor with live
+/// authority and the page as published. The raw token is answered once.
+pub(crate) async fn vault_booking_personal_link_mint(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BookingPersonalLinkMintRequest,
+) -> Listed<BookingPersonalLinkMintResponse> {
+    as_booking_owner(
+        server,
+        auth,
+        "vault.booking.personal_link.mint",
+        move |memory| {
+            let page_ref = parse_page_ref(&input.page_ref)?;
+            let minted = memory.mint_personal_booking_link(
+                page_ref,
+                &PersonalLinkRecipient {
+                    email: input.recipient_email,
+                    name: input.recipient_name,
+                },
+            )?;
+            Ok(BookingPersonalLinkMintResponse {
+                link: personal_link_view(&minted.link),
+                token: minted.token,
+            })
+        },
+    )
+    .await
+}
+
+/// The owner ends one personal link: a lost or mis-sent link is revoked and,
+/// if still wanted, minted again.
+pub(crate) async fn vault_booking_personal_link_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BookingPersonalLinkRevokeRequest,
+) -> Listed<BookingPersonalLinkRevokeResponse> {
+    as_booking_owner(
+        server,
+        auth,
+        "vault.booking.personal_link.revoke",
+        move |memory| {
+            let revoked = memory.revoke_personal_booking_link(input.link_ref.trim())?;
+            Ok(BookingPersonalLinkRevokeResponse { revoked })
+        },
+    )
+    .await
+}
+
+/// The owner reads every personal link of one page, live and ended, with
+/// why each ended: a "not you?" shows here as well as in its notice.
+pub(crate) async fn vault_booking_personal_link_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BookingPersonalLinkListRequest,
+) -> Listed<BookingPersonalLinkListResponse> {
+    as_booking_owner(
+        server,
+        auth,
+        "vault.booking.personal_link.list",
+        move |memory| {
+            let page_ref = parse_page_ref(&input.page_ref)?;
+            let links = memory.personal_booking_links(page_ref)?;
+            Ok(BookingPersonalLinkListResponse {
+                links: links.iter().map(personal_link_view).collect(),
+            })
+        },
+    )
+    .await
+}
+
+/// One owner door's act on the owner's own credential handle, off the
+/// runtime, as `calendar_doors`' owner doors run theirs.
+async fn as_booking_owner<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(Memory<'_>) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    let owner = match owner_proof(auth, server, verb) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    let actor = match owner.actor_for_read(server.vault()) {
+        Ok(actor) => actor,
+        Err(error) => return refused(error.into()),
+    };
+    credential_listing(
+        server,
+        auth,
+        (actor, EdgeActorClass::Human),
+        verb,
+        move |_, _, memory| act(memory),
+    )
+    .await
+}
+
+fn parse_page_ref(page_ref: &str) -> MemoryResult<EntityId> {
+    EntityId::from_hex(page_ref.trim())
+        .map_err(|_| MemoryError::bad_request("invalid booking page_ref"))
+}
+
+fn personal_link_view(link: &PersonalBookingLink) -> BookingPersonalLink {
+    BookingPersonalLink {
+        link_ref: link.link_ref.clone(),
+        page_ref: link.page_ref.to_hex(),
+        recipient_email: link.recipient.email.clone(),
+        recipient_name: link.recipient.name.clone(),
+        minted_at: link.minted_at,
+        ended_at: link.ended.map(|end| end.at),
+        ended_reason: link.ended.map(|end| {
+            match end.reason {
+                PersonalLinkEndReason::NotRecipient => "not_recipient",
+                PersonalLinkEndReason::Revoked => "revoked",
+            }
+            .to_owned()
+        }),
+    }
 }

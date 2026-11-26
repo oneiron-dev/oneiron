@@ -85,14 +85,23 @@ pub(crate) use step::{
     call_as_step_checked_with_unsaved_usage, consume_step_wait_in_txn, deindex_dreamer_step_claim,
     erase_detached_step_actor_in_txn, forget_step_memo, forget_step_memo_in_txn,
     index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn, step_wait_reads_in_txn,
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+};
+// The parse retry's replay reads a step's saved work alone, its count reads
+// the sends the retry made, and its pending mark outlives a held-back retry
+// (reviews of #10269).
+pub(crate) use step::{
+    call_as_step_checked_counting_sends, follow_up_pending, mark_follow_up_pending,
+    recover_saved_step,
 };
 pub(crate) use step::{
     wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
     wake_resident_share_traps_in_txn,
 };
+// COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES: a filed compaction step's rows.
+pub(crate) use step::{compaction_response_holders_in, is_compaction_step_row};
 // SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
 pub(crate) use step::stated_reset_at;
 // KS-2B1: row-held step responses under body custody.
@@ -243,7 +252,9 @@ pub use budget::{
     VaultResidentLedger,
 };
 pub use step::heal_sent_markers;
-pub(crate) use step::{OpenTrapWait, open_trap_waits};
+pub(crate) use step::{
+    OpenTrapWait, open_trap_waits, trap_consumed_in_txn, trap_waits_for_attempt_in_txn,
+};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side

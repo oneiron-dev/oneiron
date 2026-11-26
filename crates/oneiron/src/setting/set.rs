@@ -1,4 +1,9 @@
-//! The one door that changes a setting row: [`Vault::set_setting`].
+//! The one door that changes a setting row: [`Vault::set_setting`]; and the owner's change of
+//! several rows as one act, [`Vault::set_settings`].
+
+use std::collections::BTreeMap;
+
+mod judged_change;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,12 +20,14 @@ use super::read::{
     Loaded, StoredRow, chain_of, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject,
     table_of,
 };
+use super::restored::RowReading;
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
-    spec_named, widen_line, widen_line_at, widen_scope_line,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, WriteTurn,
+    set_line, spec_named, widen_line, widen_line_at, widen_scope_line,
 };
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::batch::secret_scan::{FieldRule, admit_typed_with_rule};
 use crate::check_in::{
     CheckInMode, CheckInScope, HolderAnswer, NoAgentVerdict, OpenPendingCheckIn, PendingState,
@@ -31,6 +38,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The verb whose act a waiting change is.
 pub(crate) const SET_VERB: &str = "vault.settings.set";
@@ -210,6 +218,20 @@ impl Vault {
     /// SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW), so a non-owner's later move meets the owner's
     /// row. Either way the row becomes the caller's. The engine's own equal value writes nothing.
     ///
+    /// An owner's change that can sign an act is checked and judged on a read before the door
+    /// asks. A widening or a move the rule cannot call a narrowing is asked as an important act;
+    /// a narrowing, a neutral move or a change that leaves the row as it is is ordinary. A value
+    /// the side-row wall reads is asked as important: with the owner's scan switch on, every
+    /// value but a bare number, a flag or null, because what the wall stores of it, or that it
+    /// refuses it, is known only in the write. For such a value the read checks the owner's
+    /// proof and nothing else, so every other refusal of it still comes from the write, after
+    /// the ask, the wall's first. The read looks at no custody, so nothing the door answers
+    /// before it asks says what custody holds. A change of a travelling row in a rooted vault is
+    /// also asked as important when no owner key of this install proves on the read and the act
+    /// could wait for proof. The write judges again and answers [`Error::ConcurrentWrite`] when
+    /// the change became more important since the person was asked: its direction rose, or the
+    /// wall reads a value now that it did not read then.
+    ///
     /// # Errors
     ///
     /// `InvalidConfig` for an unknown key, an item or scope the key does not admit, a value of
@@ -219,11 +241,35 @@ impl Vault {
     /// move of a key whose quorum is all, or an act surface named by a caller other than the
     /// owner; an owner or person proof that no longer holds; the side-row wall's refusal; storage
     /// errors.
+    /// [`Error::ConcurrentWrite`] for an owner's change that became more important between the
+    /// door's read and its write.
     pub fn set_setting(
         &self,
         caller: SettingCaller<'_>,
         request: SetSetting,
     ) -> Result<SetSettingOutcome> {
+        self.set_setting_between(caller, request, || {})
+    }
+
+    /// Changes a setting with `between` run after the ask and before the turn and write.
+    pub(crate) fn set_setting_between(
+        &self,
+        caller: SettingCaller<'_>,
+        request: SetSetting,
+        between: impl FnOnce(),
+    ) -> Result<SetSettingOutcome> {
+        // The owner's change is checked and judged on a read first. The read drops before
+        // the ask, and the ask is before the turn, so the door holds nothing while it blocks.
+        let ground = match caller {
+            SettingCaller::Owner(owner) if owner_change_signs(&request) => {
+                let importance = judged_change::owner_change_importance(self, owner, &request)?;
+                let witness =
+                    self.owner_presence(importance, owner_presence_reasons::SETTING_CHANGE)?;
+                Some(OwnerProofGround::witnessed(&witness))
+            }
+            _ => None,
+        };
+        between();
         // Taken before the write opens, never inside it: a holder of the turn may be waiting on
         // the writer. An unknown key takes none; the write refuses it.
         let turn = match spec_named(&request.key)
@@ -234,7 +280,7 @@ impl Vault {
             None => None,
         };
         let outcome = self.with_write_txn_grouped_after_commit(
-            |txn| self.set_setting_in_txn(txn, caller, &request),
+            |txn| self.set_setting_in_txn(txn, ground.as_ref(), caller, &request),
             |outcome| {
                 run_after_commit(self, &[(&request, &outcome)]);
                 Ok(outcome)
@@ -252,7 +298,10 @@ impl Vault {
     /// in one write take consecutive sequences. A [`SetSettingOutcome::Pending`] answer opened
     /// its check-in in this write too; a caller whose other writes need the change applied fails
     /// its write on it. The caller runs [`run_after_commit`] over its changes once its write has
-    /// committed.
+    /// committed. `ground` is the act's ground where the change signs one, `None` where no
+    /// owner proof is signed. A ground witnessed as ordinary refuses a change the write judges
+    /// important, and a value the wall reads, before the wall ([`Error::ConcurrentWrite`]); a
+    /// caller that asks states the importance its own read derived.
     ///
     /// # Errors
     ///
@@ -260,45 +309,143 @@ impl Vault {
     pub(crate) fn set_setting_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         caller: SettingCaller<'_>,
         request: &SetSetting,
     ) -> Result<SetSettingOutcome> {
-        let spec = spec_named(&request.key)?;
-        spec.check_item(request.item.as_deref())?;
-        if !spec.admits_scope(request.scope.kind()) {
-            return Err(Error::InvalidConfig(format!(
-                "`{}` has no rows at a {} scope",
-                spec.name,
-                request.scope.kind().as_str()
-            )));
-        }
-        if request
-            .why
-            .as_ref()
-            .is_some_and(|why| why.len() > WHY_MAX_BYTES)
-        {
-            return Err(Error::InvalidConfig(
-                "a setting change's reason is at most 1,000 bytes".into(),
-            ));
-        }
-        let key = RowKey {
-            name: spec.name.to_owned(),
-            item: request.item.clone(),
-            mode: request.mode,
-            scope: request.scope.clone(),
+        let mut written = Vec::with_capacity(1);
+        let outcome =
+            self.write_setting_row_in_txn(txn, ground, caller, request, &mut written, false)?;
+        finish_written_in_txn(self, txn, ground, written)?;
+        Ok(outcome)
+    }
+
+    /// The owner's change of several setting rows as one act (row
+    /// SETTING-PROJECTED-ROW-REFUSING-HOOKS: the one-step fix of a refused projection). Each row
+    /// is checked, judged and written as [`Self::set_setting`] does it, in one write, on the
+    /// owner's proof; every row is in the write before any key's hook runs, so a hook that judges
+    /// one row against another reads both as the change leaves them; the rows that travel sign
+    /// ONE act, so every machine projects them from it, a row that holds its value here already
+    /// among them where the change names several rows; and the change is all or none. It is
+    /// asked as an important act. It takes each key's write turn before the write opens, once per
+    /// turn, in name order, as a projection pass does. The outcomes are in the order of
+    /// `requests`; once the write commits, each applied change runs its key's `after_commit`.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` for no row, a row named twice, or rows that name different act surfaces;
+    /// as [`Self::set_setting`] for each row.
+    pub fn set_settings(
+        &self,
+        owner: &AuthenticatedOwner,
+        requests: Vec<SetSetting>,
+    ) -> Result<Vec<SetSettingOutcome>> {
+        let ground = if requests.iter().any(owner_change_signs) {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::SETTING_CHANGE,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
         };
-        // A row no reader decodes is never stored: a scope id of a reserved pattern encodes to
-        // key bytes `RowKey::decode` refuses (FIX SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED).
-        // A clear still runs, so it removes such a row stored before.
-        if request.value.is_some() && RowKey::decode(&key.encode()).as_ref() != Some(&key) {
-            return Err(Error::InvalidConfig(format!(
-                "`{}` has no row at a {} scope whose id no reader decodes",
-                spec.name,
-                request.scope.kind().as_str()
-            )));
+        let turns: BTreeMap<&str, WriteTurn> = requests
+            .iter()
+            .filter_map(|request| spec_named(&request.key).ok()?.write_turn)
+            .map(|turn| (turn.name, turn))
+            .collect();
+        let mut held = Vec::with_capacity(turns.len());
+        for turn in turns.values() {
+            held.push((turn.take)(self)?);
         }
+        let outcomes = self.with_write_txn_grouped_after_commit(
+            |txn| self.set_settings_in_txn(txn, ground.as_ref(), owner, &requests),
+            |outcomes| {
+                let changes: Vec<_> = requests.iter().zip(&outcomes).collect();
+                run_after_commit(self, &changes);
+                Ok(outcomes)
+            },
+        );
+        drop(held);
+        super::project::project_deferred_settings(self);
+        outcomes
+    }
+
+    /// [`Self::set_settings`] in the caller's write.
+    fn set_settings_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
+        owner: &AuthenticatedOwner,
+        requests: &[SetSetting],
+    ) -> Result<Vec<SetSettingOutcome>> {
+        let Some(first) = requests.first() else {
+            return Err(Error::InvalidConfig(
+                "a setting change names at least one row".into(),
+            ));
+        };
+        for (at, request) in requests.iter().enumerate() {
+            if request.surface != first.surface {
+                return Err(Error::InvalidConfig(
+                    "the rows of one setting change name one act surface".into(),
+                ));
+            }
+            if requests[..at].iter().any(|before| {
+                (&before.key, &before.item, before.mode, &before.scope)
+                    == (&request.key, &request.item, request.mode, &request.scope)
+            }) {
+                return Err(Error::InvalidConfig(format!(
+                    "a setting change names each row once: a row of `{}` is named twice",
+                    request.key
+                )));
+            }
+        }
+        let caller = SettingCaller::Owner(owner);
+        let several = requests.len() > 1;
+        // A key's hook reads which rows the act changes (`act_rows`).
+        let _rows = super::act_rows::hold_owner_change_rows(requests);
+        let mut written = Vec::with_capacity(requests.len());
+        let mut outcomes = Vec::with_capacity(requests.len());
+        for request in requests {
+            outcomes.push(self.write_setting_row_in_txn(
+                txn,
+                ground,
+                caller,
+                request,
+                &mut written,
+                several,
+            )?);
+        }
+        finish_written_in_txn(self, txn, ground, written)?;
+        Ok(outcomes)
+    }
+
+    /// Checks `request` and writes its row ([`set_in_txn`]); the key's hook and the act wait in
+    /// `written` until every row of the caller's request is written ([`finish_written_in_txn`]).
+    /// A `ground` witnessed as ordinary refuses the row, before the wall and before its write,
+    /// where the change became more important since the person was asked. `act_of_several_rows`:
+    /// the row is one of the owner's change of several rows ([`Change::act_of_several_rows`]).
+    fn write_setting_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
+        caller: SettingCaller<'_>,
+        request: &SetSetting,
+        written: &mut Vec<Written>,
+        act_of_several_rows: bool,
+    ) -> Result<SetSettingOutcome> {
+        let (spec, key) = checked_slot(request)?;
         let value = match request.value.clone() {
             Some(mut json) => {
+                // An ordinary witness never covers a value the wall reads: the door's read asks
+                // for one as an important act. The wall reads this one under an ordinary witness
+                // only when the scan switch turned on since that read, and the change is then
+                // refused before the wall, which so reads no custody and mints nothing for it.
+                if let Some(ground) = ground
+                    && judged_change::wall_reads_in_txn(self, txn, &json)?
+                {
+                    ground.refuse_risen_importance(OwnerActImportance::Important)?;
+                }
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
                 // WALL = A): a secret goes to custody and the value keeps its handle. The key's
                 // type fixes each member's shape, so the field rule lifts only text under a
@@ -319,9 +466,62 @@ impl Vault {
             key: &key,
             value: value.as_ref(),
             weight_runs: checked_weight(spec, request)?,
+            act_of_several_rows,
         };
-        set_in_txn(self, txn, &change, caller, request)
+        set_in_txn(self, txn, ground, &change, caller, request, written)
     }
+}
+
+/// The catalogue key and slot that `request` may name.
+fn checked_slot(request: &SetSetting) -> Result<(&'static SettingSpec, RowKey)> {
+    let spec = spec_named(&request.key)?;
+    spec.check_item(request.item.as_deref())?;
+    if !spec.admits_scope(request.scope.kind()) {
+        return Err(Error::InvalidConfig(format!(
+            "`{}` has no rows at a {} scope",
+            spec.name,
+            request.scope.kind().as_str()
+        )));
+    }
+    if request
+        .why
+        .as_ref()
+        .is_some_and(|why| why.len() > WHY_MAX_BYTES)
+    {
+        return Err(Error::InvalidConfig(
+            "a setting change's reason is at most 1,000 bytes".into(),
+        ));
+    }
+    let key = RowKey {
+        name: spec.name.to_owned(),
+        item: request.item.clone(),
+        mode: request.mode,
+        scope: request.scope.clone(),
+    };
+    // A row no reader decodes is never stored: a scope id of a reserved pattern encodes to
+    // key bytes `RowKey::decode` refuses (FIX SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED).
+    // A clear still runs, so it removes such a row stored before.
+    if request.value.is_some() && RowKey::decode(&key.encode()).as_ref() != Some(&key) {
+        return Err(Error::InvalidConfig(format!(
+            "`{}` has no row at a {} scope whose id no reader decodes",
+            spec.name,
+            request.scope.kind().as_str()
+        )));
+    }
+    Ok((spec, key))
+}
+
+/// Whether an owner's change `request` can sign an act, so its door asks.
+/// The confirm is for an owner proof, so a change that can sign none is not
+/// asked. An owner's change reaches a signing arm only when its request names
+/// a surface or its key's row travels ([`travels`], read from the key's spec
+/// alone); a key that does not resolve reaches none, and the write refuses
+/// it.
+fn owner_change_signs(request: &SetSetting) -> bool {
+    let Ok(spec) = spec_named(&request.key) else {
+        return false;
+    };
+    request.surface.is_some() || travels(spec)
 }
 
 /// Where the side-row wall says it found a secret in a setting value (OF-067): `side:` and the
@@ -354,6 +554,67 @@ pub(crate) fn run_after_commit(vault: &Vault, changes: &[(&SetSetting, &SetSetti
     }
 }
 
+/// A change written to its row, whose key's hook and act wait until every row of its request is
+/// written ([`finish_written_in_txn`]).
+struct Written {
+    spec: &'static SettingSpec,
+    recorded: SettingChange,
+    signing: Signing,
+}
+
+/// How a written change is signed, by the owner who made it from the surface named.
+enum Signing {
+    /// Its row travels: it is a row of the request's one act, mandatory.
+    Act(EntityId, ActSurface),
+    /// Another owner's change that names its surface: a signed record, last and best effort.
+    Record(EntityId, ActSurface),
+    /// No owner's act signs it.
+    Unsigned,
+}
+
+/// Runs each key's hook of `written`, the rows of one request in `txn`, once every row is
+/// written: a hook that reads another row of the request reads it as the request leaves it. Then
+/// appends ONE act for every row that travels, mandatory (stage 7a-2: it fails the change when
+/// this install cannot append it; each value rides inside it or beside it, stage 7c-1), and last
+/// signs the record of each other owner's change that names its surface, best effort, after every
+/// mandatory write (FIX 4624).
+fn finish_written_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
+    written: Vec<Written>,
+) -> Result<()> {
+    for row in &written {
+        if let Some(on_change) = row.spec.on_change {
+            on_change(vault, txn, &row.recorded)?;
+        }
+    }
+    let mut act: Option<(
+        (EntityId, ActSurface),
+        Vec<(&'static SettingSpec, &SettingChange)>,
+    )> = None;
+    for row in &written {
+        if let Signing::Act(owner, surface) = row.signing {
+            let (signer, rows) = act.get_or_insert_with(|| ((owner, surface), Vec::new()));
+            if *signer != (owner, surface) {
+                return Err(Error::InvariantViolation(
+                    "the rows of one setting change sign one act",
+                ));
+            }
+            rows.push((row.spec, &row.recorded));
+        }
+    }
+    if let Some((signer, rows)) = act {
+        append_act_in_txn(vault, txn, ground, signer, &rows)?;
+    }
+    for row in &written {
+        if let Signing::Record(owner, surface) = row.signing {
+            sign_owner_change_in_txn(vault, txn, ground, row.spec, owner, surface, &row.recorded);
+        }
+    }
+    Ok(())
+}
+
 /// One asked change, checked against the catalogue.
 struct Change<'a> {
     spec: &'static SettingSpec,
@@ -361,130 +622,31 @@ struct Change<'a> {
     value: Option<&'a EncodedValue>,
     /// A learned key's seed weight ([`checked_weight`]).
     weight_runs: Option<f64>,
+    /// Whether the change is one row of the owner's change of several rows as one act
+    /// ([`Vault::set_settings`]): its act heads each row that travels, one that holds the value
+    /// already among them (`judged_change`).
+    act_of_several_rows: bool,
 }
 
 fn set_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     change: &Change<'_>,
     caller: SettingCaller<'_>,
     request: &SetSetting,
+    written: &mut Vec<Written>,
 ) -> Result<SetSettingOutcome> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-    if request.surface.is_some() && !matches!(caller, SettingCaller::Owner(_)) {
-        return Err(Error::InvalidConfig(
-            "only the owner's change names where the owner said so: an act surface is the owner's"
-                .into(),
-        ));
+    let judged = judged_change::judge_change_in_txn(vault, txn, change, caller, request)?;
+    // The write judges the change again on its own view, after the wall. A change that became
+    // more important since the person was asked is refused before the row is written, and the
+    // transaction ends with nothing stored.
+    if let Some(ground) = ground {
+        ground.refuse_risen_importance(OwnerActImportance::of_direction(judged.moved))?;
     }
-    if change.key.mode == SettingMode::Carried && change.value.is_some() {
-        return Err(Error::InvalidConfig(
-            "only a move writes a carried row; a set may only clear one".into(),
-        ));
-    }
-    if change.key.mode == SettingMode::Pin && matches!(caller, SettingCaller::Engine(_)) {
-        return Err(Error::InvalidConfig(
-            "the engine sets a value row, never a pin: a pin is the owner's".into(),
-        ));
-    }
-    // Who asks, and what it may do: A0's reading of the actor, its proof checked in this write.
-    let (by, reading) = match caller {
-        SettingCaller::Owner(owner) => (
-            Some(owner.revalidate_in_txn(vault, txn)?),
-            Some((Setter::Owner, Permitted::AnyMove)),
-        ),
-        SettingCaller::Engine(engine) => (
-            None,
-            Some((Setter::Engine { ask: engine.ask }, Permitted::AnyMove)),
-        ),
-        SettingCaller::Person(person) => {
-            let person = person.revalidate_person_in_txn(vault, txn)?;
-            (
-                Some(person),
-                person_reading_in_txn(vault, txn, change, person)?,
-            )
-        }
-        SettingCaller::Agent(agent) => (
-            Some(agent),
-            agent_reading_in_txn(vault, txn, change, agent)?,
-        ),
-    };
-    let table = table_of(change.spec);
-    let key_bytes = change.key.encode();
-    let prior_bytes = table.get_bytes(&vault.store, txn, &key_bytes)?;
-    let prior = prior_bytes
-        .as_deref()
-        .map(|bytes| rmp_serde::from_slice::<StoredRow>(bytes).ok());
-    let revision = prior
-        .as_ref()
-        .map_or(0, |row| row.as_ref().map_or(0, |row| row.change));
-    if let Some(expected) = request.expected_revision
-        && expected != revision
-    {
-        return Err(Error::InvalidConfig(format!(
-            "the row's revision is {revision}, not {expected}: read it again"
-        )));
-    }
-    // A row that does not decode is never "the same value": a clear removes it, a set replaces it.
-    let readable = !matches!(prior, Some(None));
-    let prior_row = prior.flatten();
-    let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
-    // The no-op test is on the slot's own row (DESIGN 1.6, pass 15e F6): an equal value writes
-    // where the row changes hands, and the row becomes the caller's. Over the engine's row any
-    // other caller's does; over a row the owner did not set (a holder's, a subject's, a standing
-    // approval's, an approved check-in's) the owner's does, so a later move of a non-owner meets
-    // the owner's row (FIX SETTING-OWNER-EQUAL-VALUE-OVER-HOLDER-ROW = A). A copy of a pack's
-    // default is no one's choice: over it every caller's equal value writes, and the row it leaves
-    // is explicit (stage 7c-2).
-    let setter_changes = prior_row.as_ref().is_some_and(|row| {
-        row.seeded
-            || match caller {
-                SettingCaller::Owner(_) => !matches!(row.setter, Setter::Owner),
-                SettingCaller::Agent(_) | SettingCaller::Person(_) => {
-                    matches!(row.setter, Setter::Engine { .. })
-                }
-                SettingCaller::Engine(_) => false,
-            }
-    });
-    let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
-    let prior_value = prior_row.map(|row| row.value);
-    // An owner's equal write on a key with `records_equal_owner_write` is itself the act
-    // (the answer-schema re-arm): it records a change and runs on_change. A clear of an
-    // absent row stays a no-op.
-    let equal_owner_write_records = change.spec.records_equal_owner_write
-        && matches!(caller, SettingCaller::Owner(_))
-        && change.value.is_some();
-    let unchanged = readable
-        && !setter_changes
-        && prior_value.as_ref() == change.value
-        && prior_weight == change.weight_runs
-        && !equal_owner_write_records;
-    let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
-    // Which way the change moves its row, against the rows this write sees (A3: the key's
-    // comparator gives the direction). A change that leaves the row as it is moves nothing.
-    let direction = if unchanged {
-        ChangeDirection::Tighter
-    } else if readable {
-        direction_in_txn(vault, txn, change, prior_value.as_ref(), by_owner)?
-    } else {
-        ChangeDirection::Unordered
-    };
-    // Over a row the owner set, a non-owner makes no widening (DESIGN 1.2 step 4: its value
-    // stays inside the owner's row): it tightens the owner's row, and asks to loosen it. The
-    // owner's standing approval for the key or the scope is the owner's yes to that widening.
-    let owners_row = prior_row_by_owner && !by_owner;
-    let reading = reading.map(|(setter, permitted)| {
-        if owners_row && !matches!(setter, Setter::Standing { .. }) {
-            (setter, permitted.limited_by(Permitted::NoWidening))
-        } else {
-            (setter, permitted)
-        }
-    });
-    let moved = authority_direction(direction);
-    let admitted = reading
-        .and_then(|(setter, permitted)| permitted.admit(moved).map(|admitted| (setter, admitted)));
-    let setter = match (admitted, caller) {
-        (Some((setter, _)), _) => setter,
+    let setter = match (judged.setter, caller) {
+        (Some(setter), _) => setter,
         (None, SettingCaller::Agent(agent)) => match request.check_in_ref {
             Some(check_in) => {
                 spend_in_txn(
@@ -492,9 +654,9 @@ fn set_in_txn(
                     txn,
                     &Spend {
                         change,
-                        replaced: prior_bytes.as_deref(),
-                        over_owners_row: prior_row_by_owner,
-                        moved,
+                        replaced: judged.prior_bytes.as_deref(),
+                        over_owners_row: judged.prior_row_by_owner,
+                        moved: judged.moved,
                     },
                     agent,
                     &check_in,
@@ -503,7 +665,14 @@ fn set_in_txn(
                 Setter::Approved { check_in }
             }
             None => {
-                return open_request_in_txn(vault, txn, change, prior_bytes.as_deref(), agent, now);
+                return open_request_in_txn(
+                    vault,
+                    txn,
+                    change,
+                    judged.prior_bytes.as_deref(),
+                    agent,
+                    now,
+                );
             }
         },
         (None, _) => {
@@ -520,20 +689,14 @@ fn set_in_txn(
             .and_then(|value| change.spec.kind.to_json(value))
             .unwrap_or(serde_json::Value::Null)
     };
-    if unchanged {
+    if judged.unchanged {
         return Ok(SetSettingOutcome::Applied {
             sequence: None,
-            revision,
+            revision: judged.revision,
             value: json(change.value),
         });
     }
-    if change.spec.quorum == Quorum::All && moved == Direction::Widens {
-        return Err(Error::InvalidConfig(format!(
-            "`{}` takes the yes of every holder for a loose move, and that count lands with the \
-             Grant of a person's setting class (stage 6d-1)",
-            change.spec.name
-        )));
-    }
+    refuse_loose_move_of_all_quorum(change.spec, judged.moved)?;
     // The act is the write (stage 7a-2): an owner's change of a row that travels, in a rooted
     // vault, appends its act below; with no surface named, from this install.
     let travelling = matches!(caller, SettingCaller::Owner(_))
@@ -553,25 +716,27 @@ fn set_in_txn(
             item: change.key.item.clone(),
             scope: change.key.scope.clone(),
             mode: change.key.mode,
-            by,
+            by: judged.by,
             setter,
-            prior: prior_value,
+            prior: judged.prior_value,
             value: change.value.cloned(),
             at: now,
             why: request.why.clone(),
             weight_runs: change.weight_runs,
-            direction: Some(direction),
+            direction: Some(judged.direction),
             surface,
             signed: None,
             with: Vec::new(),
             standing: None,
         },
     )?;
+    let table = table_of(change.spec);
+    let key_bytes = change.key.encode();
     let revision = match change.value {
         Some(value) => {
             let row = StoredRow {
                 value: value.clone(),
-                by,
+                by: judged.by,
                 setter,
                 set_at: now,
                 change: recorded.sequence,
@@ -587,30 +752,39 @@ fn set_in_txn(
             0
         }
     };
-    if let Some(on_change) = change.spec.on_change {
-        on_change(vault, txn, &recorded)?;
-    }
-    // The act of a row that travels is mandatory: it fails the change when this install cannot
-    // append it. Its value rides inside it or beside it (stage 7c-1).
-    let appended = match (travelling, by, surface) {
-        (true, Some(owner), Some(surface)) => {
-            append_act_in_txn(vault, txn, change.spec, (owner, surface), &recorded)?;
-            true
+    // The key's hook, the act of a row that travels, and the signed record of any other owner's
+    // change that names its surface wait until every row of the request is written
+    // ([`finish_written_in_txn`]).
+    let signing = match (travelling, caller, judged.by, surface) {
+        (true, _, Some(owner), Some(surface)) => Signing::Act(owner, surface),
+        (false, SettingCaller::Owner(_), Some(owner), Some(surface)) => {
+            Signing::Record(owner, surface)
         }
-        _ => false,
+        _ => Signing::Unsigned,
     };
-    // Any other owner's change that names its surface: the signed record goes last, best effort,
-    // after every mandatory write (FIX 4624).
-    if !appended
-        && let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, surface)
-    {
-        sign_owner_change_in_txn(vault, txn, change.spec, owner, surface, &recorded);
-    }
+    let sequence = recorded.sequence;
+    written.push(Written {
+        spec: change.spec,
+        recorded,
+        signing,
+    });
     Ok(SetSettingOutcome::Applied {
-        sequence: Some(recorded.sequence),
+        sequence: Some(sequence),
         revision,
         value: json(change.value),
     })
+}
+
+/// Refuses a loose move of a setting whose quorum counts every holder.
+fn refuse_loose_move_of_all_quorum(spec: &SettingSpec, moved: Direction) -> Result<()> {
+    if spec.quorum == Quorum::All && moved == Direction::Widens {
+        return Err(Error::InvalidConfig(format!(
+            "`{}` takes the yes of every holder for a loose move, and that count lands with the \
+             Grant of a person's setting class (stage 6d-1)",
+            spec.name
+        )));
+    }
+    Ok(())
 }
 
 /// The authority rule's direction of a change: a tighter move narrows, a neutral key's move is
@@ -686,8 +860,11 @@ fn direction_in_txn(
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;
-    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer)?;
-    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer)?;
+    // A change is judged as a machine of the vault reads its rows: on an install born of a
+    // restore that has not joined, the door refused a `sync: vault` change above, and a `sync:
+    // install` key's rows are the install's own.
+    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer, RowReading::Current)?;
+    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer, RowReading::Current)?;
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 

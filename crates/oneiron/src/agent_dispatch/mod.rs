@@ -98,6 +98,8 @@ pub(crate) use run_lineage::{
 };
 mod run_objectives;
 mod run_placement;
+pub use self::run_placement::{AGENTS_ROLE, PLACE_OPTIONS_MAX};
+pub(crate) use self::run_placement::{RunPlacement, run_placement_of};
 mod run_task;
 pub(crate) use self::run_task::{
     AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN, AgentRunFences, agent_run_fence_permits_effect,
@@ -116,6 +118,7 @@ pub(crate) use self::run_task::{
 mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
+pub(crate) mod setting_keys;
 mod skill_default;
 pub(crate) use skill_default::{
     bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,

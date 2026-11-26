@@ -55,9 +55,14 @@ pub(crate) use self::budget_wait::{
     wake_resident_share_traps_in_txn,
 };
 
+pub(crate) use self::compaction_step::{compaction_response_holders_in, is_compaction_step_row};
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
-pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
+pub(crate) use self::execute::recover_saved_step;
+pub(crate) use self::execute::{
+    ExecutedModelWitness, call_as_step_checked_counting_sends,
+    call_as_step_checked_with_unsaved_usage,
+};
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
     verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
@@ -82,7 +87,9 @@ pub use self::trap::{
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
     trap_park_owner,
 };
-pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
+pub(crate) use self::trap_binding::{
+    OpenTrapWait, open_trap_waits, trap_consumed_in_txn, trap_waits_for_attempt_in_txn,
+};
 pub use self::trap_sent::heal_sent_markers;
 pub use self::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
@@ -94,7 +101,7 @@ pub use self::types::{
 
 pub(crate) use self::step_only::{
     consume_step_wait_in_txn, erase_detached_step_actor_in_txn, open_step_wait_in_txn,
-    register_detached_step_in_txn, signal_step_wait_in_txn,
+    register_detached_step_in_txn, signal_step_wait_in_txn, step_wait_reads_in_txn,
 };
 
 pub(crate) use self::settled::{
@@ -115,8 +122,8 @@ pub(crate) use self::response_pins::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::step_index::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
 pub(crate) use self::step_state::{
-    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
-    step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, follow_up_pending,
+    mark_follow_up_pending, owner_gone_in_txn, step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,

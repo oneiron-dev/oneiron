@@ -12,6 +12,8 @@ mod dropped_carriers;
 mod entity;
 mod member_sender;
 mod message_writer;
+// A refusal notice raised on several machines keeps the marks of each copy.
+mod notification_marks;
 mod order;
 mod own_device;
 mod peer_import;
@@ -24,7 +26,8 @@ mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
 pub(in crate::sync) use self::delivery::{
-    Delivery, delivered_rows, note_delivered_in_txn, payload_rows, with_delivery,
+    Delivery, ShellDelivery, delivered_rows, delivered_tombstones, note_delivered_in_txn,
+    payload_rows, with_delivery,
 };
 
 pub(crate) use self::dropped_carriers::forget_dropped_carriers_in_txn;
@@ -64,3 +67,35 @@ pub(in crate::sync) use self::tombstone::{
 
 #[cfg(oneiron_test_support)]
 pub(crate) use self::peer_import::asset_digest_for_test;
+
+/// Lands the carried entities-map value `blob` of the row `id`, in the window `window_key`,
+/// through the one entity ladder in a write of its own, as a window's sync carries it. An error
+/// where the ladder does not materialize the row.
+///
+/// # Errors
+///
+/// The ladder's refusal or skip of the row; storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn ingest_carried_entity_for_test(
+    vault: &crate::Vault,
+    window_key: &str,
+    id: &crate::entity_id::EntityId,
+    blob: &[u8],
+) -> crate::error::Result<()> {
+    let doc = loro::LoroDoc::new();
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ctx = IngestCtx::new(
+        vault,
+        window_key,
+        crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+        &tombstones,
+    );
+    vault.with_write_txn(|wtxn| {
+        match entity::ingest_entity_in_savepoint(&ctx, wtxn, &id.to_hex(), Some(blob))? {
+            EntityStep::Materialized(_) => Ok(()),
+            _ => Err(crate::error::Error::InvariantViolation(
+                "the carried row did not materialize",
+            )),
+        }
+    })
+}

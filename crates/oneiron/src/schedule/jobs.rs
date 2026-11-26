@@ -2,7 +2,7 @@
 
 use super::JobSpec;
 
-/// Every job kind, one line each: the engine's 20 sweeps (stage 5a), the deadlines doors note for
+/// Every job kind, one line each: the engine's 21 sweeps (stage 5a), the deadlines doors note for
 /// five of them, the pending check-ins' due transitions, the outage parks' timed resumes, the
 /// model seats' resets, the agent waits' `until`, the watcher TASKs' ticks and the actors' timer
 /// turn programs (stage 5b), the held sends' releases, the paced verb line and the remote task
@@ -28,6 +28,7 @@ static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::MODEL_PACK_RETIREMENT_JOB,
     &crate::housekeeping::jobs::OAUTH_EXPIRY_JOB,
     &crate::housekeeping::jobs::ESIGN_TOKEN_EXPIRY_JOB,
+    &crate::housekeeping::jobs::SOURCE_FLOOR_BACKFILL_JOB,
     &crate::housekeeping::jobs::SECRET_LEASE_EXPIRY_DEADLINE_JOB,
     &crate::housekeeping::jobs::CRITICAL_CONFIRM_EXPIRY_DEADLINE_JOB,
     &crate::housekeeping::jobs::VOICE_PRINT_RETENTION_DEADLINE_JOB,
@@ -86,4 +87,23 @@ pub(crate) fn job_named(code: &str) -> Option<&'static JobSpec> {
 /// Every job kind.
 pub(crate) fn jobs() -> impl Iterator<Item = &'static JobSpec> {
     JOBS.iter().copied()
+}
+
+/// The jobs whose run starts the image's own work inline, which wait on a copy restored and not
+/// joined (row RESTORED-UNJOINED-STARTS-NO-WORK; RULING RESTORED-UNJOINED-OWNER-DIRECT-WORK = A:
+/// "gate queued agent turns, scheduled jobs, and every send"): the watcher TASKs' ticks, which
+/// settle a watch TASK and feed the fact hooks; the actors' timer turn programs; and the paced
+/// verb line, which runs held verb calls. Every other job runs there as on any install: the
+/// engine's sweeps and deadlines are local housekeeping, and a job that only queues an agent's
+/// work or a send (an outage resume, a seat reset, an agent wait's `until`, a held send's release)
+/// leaves it to the queue, whose claims hold it ([`crate::attempt_queue`]'s unjoined hold).
+static WAIT_WHILE_UNJOINED: &[&JobSpec] = &[
+    &crate::runtime_hooks::TASK_TICK_JOB,
+    &crate::dreamer_runner::PROGRAM_TIMER_JOB,
+    &crate::runtime_hooks::verb::PACED_VERB_LINE_JOB,
+];
+
+/// Whether `spec`'s rows wait on a copy restored and not joined ([`WAIT_WHILE_UNJOINED`]).
+pub(super) fn waits_while_unjoined(spec: &JobSpec) -> bool {
+    WAIT_WHILE_UNJOINED.iter().any(|job| job.code == spec.code)
 }

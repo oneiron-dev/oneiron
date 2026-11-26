@@ -76,6 +76,10 @@ impl ExportHubSource {
             allowed_tools: package.capabilities.allowed_tools.clone(),
         })
     }
+    /// The SKILL entity whose source this carrier holds.
+    pub(crate) fn holder(&self) -> Result<crate::entity_id::EntityId> {
+        crate::entity_id::EntityId::from_hex(&self.holder)
+    }
     /// The source tree this carrier's row holds.
     pub(crate) fn source_tree(&self) -> &ExportFileTree {
         &self.source_tree

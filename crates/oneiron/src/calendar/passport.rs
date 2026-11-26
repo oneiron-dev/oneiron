@@ -18,6 +18,18 @@
 //! reports absence; a single-source absence supersedes only that passport,
 //! never the EVENT status.
 
+mod feed_diff;
+pub use feed_diff::{
+    PassportDecision, classify_passport, index_passport_uid, resolve_event_by_uid,
+};
+pub(crate) use feed_diff::{
+    admitted_passport_for_in_txn, importer_pending_passports_in_txn, resolve_admitted_event_by_uid,
+};
+pub(in crate::calendar) use feed_diff::{
+    admitted_passport_keyed, classify_event_passport, index_passport_uid_in_txn,
+    revise_passport_in_txn,
+};
+
 use crate::ports::EntityStoreRead;
 use sha2::Digest;
 use sha2::Sha256;
@@ -25,13 +37,22 @@ use sha2::Sha256;
 use super::CalendarError;
 use super::claims::{
     CalendarPassportPresence, CalendarPassportValue, PREDICATE_CALENDAR_PASSPORT,
-    decode_passport_value,
+    PREDICATE_CALENDAR_SERIES_EXCEPTION, decode_passport_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::known_value_index::KnownValues;
 use crate::vault::Vault;
+
+mod masked_key;
+
+use masked_key::MaskedKey;
+pub(in crate::calendar) use masked_key::{
+    derived_uid_among, passport_system_is, passport_uid_among,
+};
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
@@ -79,207 +100,6 @@ fn passport_admitted_in_txn(
 ) -> Result<bool, CalendarError> {
     Ok(claim_surfaceable(body)
         && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)?)
-}
-
-/// The one admitted passport on `event` for exactly `(system, uid)`. Two
-/// admitted heads for one key are refused, never picked by scan order.
-pub(crate) fn admitted_passport_for_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    event: &EntityId,
-    system: &str,
-    uid: &str,
-) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut matching = admitted_passports_for_event_in_txn(vault, txn, event)?
-        .into_iter()
-        .filter(|(_, value)| value.system == system && value.uid == uid);
-    let found = matching.next();
-    if matching.next().is_some() {
-        return Err(ingest("competing live calendar passports"));
-    }
-    Ok(found)
-}
-
-/// The importer's own pending passports on `event` for `system`: live heads
-/// the import filed from this system's feed that still wait for the owner's
-/// review.
-///
-/// The one exception to the admitted-only rule of
-/// [`admitted_passports_for_event_in_txn`] (the lead's ruling 10 Nov 10:3x,
-/// FIX CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE): the importer's own pending
-/// passport may vouch for its own UID when the EVENT is written back to the
-/// same calendar, so the write replaces the pulled object rather than adding a
-/// second one. Only an imported, Proposed, inbound-bearing passport that its
-/// source still reports counts. A rejected, superseded or retracted proposal,
-/// an outbound-only passport and another system's passport never do.
-///
-/// # Errors
-///
-/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
-pub(crate) fn importer_pending_passports_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    event: &EntityId,
-    system: &str,
-) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut values = Vec::new();
-    for id in vault.claims_for_subject_in_txn(txn, event)? {
-        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_CALENDAR_PASSPORT
-            || body.subject != ClaimSubject::Entity(*event)
-            || body.lifecycle != ClaimLifecycleStatus::Active
-            || body.approval != crate::claim::ClaimApprovalStatus::Proposed
-            || body.source != Some(crate::claim::ClaimSource::Imported)
-        {
-            continue;
-        }
-        let value = decode_passport_value(&body.value)?;
-        if value.system == system
-            && value.direction.is_inbound_bearing()
-            && value.presence == CalendarPassportPresence::Live
-        {
-            values.push((id, value));
-        }
-    }
-    Ok(values)
-}
-
-/// The per-`(system × UID)` diff verdict for one feed row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PassportDecision {
-    /// No live passport anywhere carries this UID: mint a new EVENT.
-    CreateEvent,
-    /// The UID already names an EVENT through another source's passport;
-    /// attach this source's passport to it.
-    AttachToExisting {
-        /// The EVENT the UID index resolved.
-        event_ref: EntityId,
-    },
-    /// Same SEQUENCE and same content hash (or an older SEQUENCE replay):
-    /// nothing moves.
-    SkipUnchanged {
-        /// The EVENT the UID index resolved.
-        event_ref: EntityId,
-    },
-    /// Higher SEQUENCE, same-SEQUENCE content drift, or re-appearance of a
-    /// source whose passport was marked absent: supersede the passport.
-    UpdateExisting {
-        /// The EVENT the UID index resolved.
-        event_ref: EntityId,
-    },
-    /// A complete feed omitted a UID this source previously reported:
-    /// supersede only that source's passport with `presence: absent`.
-    MarkSourceAbsent {
-        /// The EVENT the UID index resolved.
-        event_ref: EntityId,
-    },
-}
-
-/// Resolves one VEVENT UID to its EVENT through the index, repairing the
-/// node-local shortcut from synced truth on a stale or missing hit.
-///
-/// Like [`crate::comm`]'s party resolution, an index miss means "look again",
-/// never "absent": the scan walks live passport claims so an EVENT that
-/// synced in on another node is still found rather than twinned.
-///
-/// This is the ingest diff's resolver, so a pending passport vouches for its
-/// EVENT: the import gate files its own passports pending review. Only an
-/// admitted passport repairs the index, though, because the first outbound
-/// invite falls back to that shortcut (`event_ref_for_indexed_uid`).
-///
-/// # Errors
-///
-/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
-pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
-    resolve_uid(vault, uid, carries_live_uid, is_live_series_exception)
-}
-
-/// Resolves one UID to its EVENT through admitted passports only.
-///
-/// The authority form of [`resolve_event_by_uid`]: an index hit counts only
-/// when an admitted passport on that EVENT carries the UID, and the scan reads
-/// only admitted passports. So a pending, rejected or stale proposal never
-/// picks the EVENT an outbound invite binds to.
-///
-/// # Errors
-///
-/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
-pub(crate) fn resolve_admitted_event_by_uid(
-    vault: &Vault,
-    uid: &str,
-) -> Result<Option<EntityId>, CalendarError> {
-    resolve_uid(
-        vault,
-        uid,
-        carries_admitted_uid,
-        is_admitted_series_exception,
-    )
-}
-
-/// The shared resolver. `vouches` and `detached` read the same authority: a
-/// passport that vouches for the UID and an exception claim that excludes a
-/// detached instance are judged by one reader, so the two never disagree on
-/// which claims count.
-fn resolve_uid(
-    vault: &Vault,
-    uid: &str,
-    vouches: fn(&Vault, &EntityId, &str) -> Result<bool, CalendarError>,
-    detached: fn(&Vault, &EntityId) -> Result<bool, CalendarError>,
-) -> Result<Option<EntityId>, CalendarError> {
-    let digest = passport_digest(uid);
-    let indexed = {
-        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        PASSPORT_INDEX.get(&vault.store, &rtxn, &digest)?
-    };
-    if let Some(id) = indexed
-        && vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
-        && !detached(vault, &id)?
-        && !source_bound(vault, &id)?
-        && vouches(vault, &id, uid)?
-    {
-        return Ok(Some(id));
-    }
-
-    // Miss or stale shortcut: synced truth is the set of live passport claims.
-    let event_ids = {
-        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let mut ids = Vec::new();
-        for entry in vault
-            .store
-            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_EVENT, None)?
-        {
-            ids.push(entry?);
-        }
-        ids
-    };
-    let mut found: Option<EntityId> = None;
-    for event_ref in event_ids {
-        if !detached(vault, &event_ref)?
-            && !source_bound(vault, &event_ref)?
-            && vouches(vault, &event_ref, uid)?
-            && found.is_none_or(|current| event_ref.as_bytes() < current.as_bytes())
-        {
-            // Lexicographically smallest id, so every node converges on the
-            // same EVENT when twins exist — the comm.rs convergence rule.
-            found = Some(event_ref);
-        }
-    }
-    if let Some(event_ref) = found
-        && carries_admitted_uid(vault, &event_ref, uid)?
-    {
-        index_passport_uid(vault, uid, &event_ref)?;
-    }
-    Ok(found)
-}
-
-/// Whether a pack calendar source binds `event` (FIX 12559): that copy is
-/// the source's own, and no UID resolves to it, so an ordinary feed, seat or
-/// invite never attaches to a person's private calendar.
-fn source_bound(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
-    let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    Ok(crate::source_audience::binding_in(vault, &rtxn, event)?.is_some())
 }
 
 /// Resolves an invite inside its publication snapshot, without repairing an
@@ -336,50 +156,6 @@ pub(crate) fn resolve_invite_event_in_txn(
     Ok(None)
 }
 
-/// Classifies one feed row against the current passport state.
-///
-/// The diff is SEQUENCE-first: a higher SEQUENCE updates; the same SEQUENCE
-/// with a drifted content hash updates; the same SEQUENCE with the same hash
-/// skips; an *older* SEQUENCE is a stale replay and also skips — a lagging
-/// source never regresses passport state. A live passport whose source marked
-/// it absent updates back to live on any re-appearance.
-///
-/// # Errors
-///
-/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
-pub fn classify_passport(
-    vault: &Vault,
-    system: &str,
-    uid: &str,
-    sequence: u32,
-    content_hash: [u8; 32],
-) -> Result<PassportDecision, CalendarError> {
-    let Some(event_ref) = resolve_event_by_uid(vault, uid)? else {
-        return Ok(PassportDecision::CreateEvent);
-    };
-    classify_event_passport(vault, event_ref, system, uid, sequence, content_hash)
-}
-
-pub(in crate::calendar) fn classify_event_passport(
-    vault: &Vault,
-    event_ref: EntityId,
-    system: &str,
-    uid: &str,
-    sequence: u32,
-    content_hash: [u8; 32],
-) -> Result<PassportDecision, CalendarError> {
-    let Some((_, current)) = live_passport_for(vault, &event_ref, system, uid)? else {
-        return Ok(PassportDecision::AttachToExisting { event_ref });
-    };
-    if current.presence == CalendarPassportPresence::Absent
-        || sequence > current.last_sequence
-        || (sequence == current.last_sequence && content_hash != current.content_hash)
-    {
-        return Ok(PassportDecision::UpdateExisting { event_ref });
-    }
-    Ok(PassportDecision::SkipUnchanged { event_ref })
-}
-
 /// Files `new_id`, which its caller already admitted through the Gate door,
 /// as the next revision of exactly `(system × UID)` on `event_ref`, never
 /// touching a sibling source's passport on the same EVENT
@@ -411,118 +187,6 @@ pub fn supersede_calendar_passport(
             Err(ingest("no live passport carries this (system, uid) pair"))
         }
     })
-}
-
-/// Files `new_id` as the next revision of `(system × UID)` on `event_ref`,
-/// against the live passports it replaces (ARCH-0060 §3: only an admitted
-/// passport carries authority, and a pending or rejected proposal can neither
-/// block a revision nor steer it).
-///
-/// A revision still waiting for review carries no authority: `new_id`
-/// supersedes it at once, and drops the closure it had staged and the tray
-/// item that asked the owner about it. A rejected revision stays on record as
-/// it is: a Reject is final, and no lifecycle transition may follow it. The
-/// admitted head closes only when `new_id` is admitted. A proposed `new_id`
-/// stages that closure (`DeferredAction::Supersede`): the owner's approval of
-/// `new_id` completes it in the approving write, and a rejection drops it, so
-/// the head keeps its authority while the revision waits and after it is
-/// rejected. A `new_id` that landed admitted closes the head at once. Answers
-/// whether any live passport, rejected ones included, carried the key.
-///
-/// # Errors
-///
-/// [`CalendarError::IcsIngest`] when two admitted heads carry the key, or on
-/// store failures.
-pub(in crate::calendar) fn revise_passport_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    event_ref: &EntityId,
-    system: &str,
-    uid: &str,
-    new_id: &EntityId,
-    now: u64,
-) -> Result<bool, CalendarError> {
-    let mut found = false;
-    let mut head = None;
-    let mut waiting = Vec::new();
-    for claim_id in vault.claims_for_subject_in_txn(txn, event_ref)? {
-        if claim_id == *new_id {
-            continue;
-        }
-        let Some(body) = vault.get_claim_in_txn(txn, &claim_id)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_CALENDAR_PASSPORT
-            || body.subject != ClaimSubject::Entity(*event_ref)
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
-            continue;
-        }
-        let value = decode_passport_value(&body.value)
-            .map_err(|_| ingest("stored passport claim did not decode"))?;
-        if value.system != system || value.uid != uid {
-            continue;
-        }
-        found = true;
-        if passport_admitted_in_txn(vault, txn, &claim_id, &body)? {
-            if head.replace(claim_id).is_some() {
-                return Err(ingest("competing live calendar passports"));
-            }
-        } else if body.approval != ClaimApprovalStatus::Rejected {
-            waiting.push(claim_id);
-        }
-    }
-    // Before `new_id` stages a closure of its own: a staged replacement
-    // closes nothing without its grant.
-    for old in waiting {
-        vault.cancel_deferred_claim_in_txn(txn, &old)?;
-        // The owner is asked about `new_id` instead. The item's binding names
-        // the open revision, so an Allow close would read it as stale.
-        vault.store.close_pending_gate_consent_as_in_txn(
-            txn,
-            &old,
-            crate::store::gate_reason::GateReceiptOutcome::Superseded,
-            vec![REVISION_REPLACED_REASON.to_owned()],
-            None,
-            crate::store::TrayRemoval::Silent,
-        )?;
-        vault.supersede_claim_in_txn(txn, new_id, &old, now)?;
-    }
-    if let Some(head) = head {
-        let landed = vault
-            .get_claim_in_txn(txn, new_id)?
-            .is_some_and(|body| claim_surfaceable(&body));
-        if landed {
-            vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
-        } else {
-            vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
-        }
-    }
-    Ok(found)
-}
-
-/// Points the UID index at `event_ref`. Called when a passport is minted;
-/// resolution repairs it on every other path.
-///
-/// # Errors
-///
-/// [`CalendarError::IcsIngest`] on store failure.
-pub fn index_passport_uid(
-    vault: &Vault,
-    uid: &str,
-    event_ref: &EntityId,
-) -> Result<(), CalendarError> {
-    vault.try_with_write_txn_grouped(|txn| index_passport_uid_in_txn(vault, txn, uid, event_ref))
-}
-
-pub(in crate::calendar) fn index_passport_uid_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    uid: &str,
-    event_ref: &EntityId,
-) -> Result<(), CalendarError> {
-    PASSPORT_INDEX.put(&vault.store, txn, &passport_digest(uid), event_ref)?;
-    Ok(())
 }
 
 /// The EVENT the UID index currently points at, without requiring a live
@@ -615,30 +279,119 @@ pub(crate) fn live_passports_for_event_in_txn(
     Ok(out)
 }
 
-/// The live passport claim on `event_ref` for exactly `(system, uid)`.
+/// The live passport claim on `event_ref` for exactly `(system, uid)`: its
+/// system and UID as written, else as custody reads each where it is pinned
+/// ([`passport_keyed`]).
 ///
 /// # Errors
 ///
-/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
+/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures,
+/// and the custody read's.
 pub fn live_passport_for(
     vault: &Vault,
     event_ref: &EntityId,
     system: &str,
     uid: &str,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    live_passport_for_in_txn(vault, &txn, event_ref, system, uid)
+    let passports = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        live_passports_for_event_in_txn(vault, &txn, event_ref)?
+    };
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
+    passport_keyed(
+        passports,
+        system,
+        uid,
+        || {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            MaskedKey::read_in_txn(vault, &txn, event_ref, system, uid)
+        },
+        &known,
+    )
 }
 
+/// The passport of `passports`, the live ones of `event_ref`, keyed exactly
+/// `(system, uid)` as the vault reads it now ([`passport_keyed`]), for a
+/// scan over many EVENTs that read their passports and the values custody
+/// holds (`known`) once.
+///
+/// # Errors
+///
+/// As [`live_passport_for`].
+pub(in crate::calendar) fn live_passport_keyed(
+    vault: &Vault,
+    event_ref: &EntityId,
+    passports: Vec<(EntityId, CalendarPassportValue)>,
+    system: &str,
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    passport_keyed(
+        passports,
+        system,
+        uid,
+        || {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            MaskedKey::read_in_txn(vault, &txn, event_ref, system, uid)
+        },
+        known,
+    )
+}
+
+/// [`live_passport_for`] as the writer `txn` reads it, the values custody
+/// holds included.
+///
+/// # Errors
+///
+/// As [`live_passport_for`].
 pub(in crate::calendar) fn live_passport_for_in_txn(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
+    txn: &heed::RwTxn<'_>,
     event_ref: &EntityId,
     system: &str,
     uid: &str,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    for (claim_id, value) in live_passports_for_event_in_txn(vault, txn, event_ref)? {
-        if value.system == system && value.uid == uid {
+    let passports = live_passports_for_event_in_txn(vault, txn, event_ref)?;
+    let base_known = || KnownValues::shared_in_writer(&vault.store, txn);
+    let known = CompareKnown::new(Some(&base_known));
+    passport_keyed(
+        passports,
+        system,
+        uid,
+        || MaskedKey::read_in_txn(vault, txn, event_ref, system, uid),
+        &known,
+    )
+}
+
+/// The passport of `passports`, one EVENT's live ones, keyed exactly
+/// `(system, uid)`: the one whose system and UID are `system` and `uid` as
+/// written, else the first that carries the key as custody reads its system
+/// and UID, each where `masked` pins it ([`MaskedKey`]). A passport the claim
+/// door stored with a system name or a UID custody holds is the one the
+/// seat's or the feed's key names, so the diff reads its SEQUENCE before an
+/// older version lands as new, or a second passport of one source lands
+/// beside it (blind review round 2 of #10090,
+/// CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT).
+fn passport_keyed<'k>(
+    mut passports: Vec<(EntityId, CalendarPassportValue)>,
+    system: &'k str,
+    uid: &'k str,
+    masked: impl FnOnce() -> Result<MaskedKey<'k>, CalendarError>,
+    known: &CompareKnown<'_>,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    if let Some(at) = passports
+        .iter()
+        .position(|(_, value)| value.system == system && value.uid == uid)
+    {
+        return Ok(Some(passports.swap_remove(at)));
+    }
+    if passports.is_empty() {
+        return Ok(None);
+    }
+    let masked = masked()?;
+    for (claim_id, value) in passports {
+        if masked.carried_by(&value, known)? {
             return Ok(Some((claim_id, value)));
         }
     }
@@ -673,21 +426,130 @@ pub fn all_live_inbound_passports_absent(
 }
 
 /// Whether a live passport on `event_ref`, pending or not, carries `uid` from
-/// any system.
-fn carries_live_uid(vault: &Vault, event_ref: &EntityId, uid: &str) -> Result<bool, CalendarError> {
-    Ok(live_passports_for_event(vault, event_ref)?
-        .iter()
-        .any(|(_, value)| value.uid == uid))
-}
-
-/// Whether an admitted passport on `event_ref` carries `uid` from any system.
-pub(super) fn carries_admitted_uid(
+/// any system, as written or as custody reads it ([`passport_uid_is`]).
+fn carries_live_uid(
     vault: &Vault,
     event_ref: &EntityId,
     uid: &str,
+    known: &CompareKnown<'_>,
 ) -> Result<bool, CalendarError> {
+    let passports = live_passports_for_event(vault, event_ref)?;
+    any_passport_carries(vault, event_ref, &passports, uid, known)
+}
+
+/// Whether an admitted passport on `event_ref` carries `uid` from any system,
+/// as written or as custody reads it ([`passport_uid_is`]).
+fn carries_admitted_uid(
+    vault: &Vault,
+    event_ref: &EntityId,
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    let passports = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        admitted_passports_for_event_in_txn(vault, &txn, event_ref)?
+    };
+    any_passport_carries(vault, event_ref, &passports, uid, known)
+}
+
+/// Whether one of `passports`, live on `event_ref`, carries `uid`: as
+/// written, or as custody reads it where `uid` is pinned to `event_ref`
+/// ([`passport_uid_pinned_is`]).
+fn any_passport_carries(
+    vault: &Vault,
+    event_ref: &EntityId,
+    passports: &[(EntityId, CalendarPassportValue)],
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    if passports.iter().any(|(_, value)| value.uid == uid) {
+        return Ok(true);
+    }
+    if passports.is_empty() || !uid_pinned_to(vault, event_ref, uid)? {
+        return Ok(false);
+    }
+    for (_, value) in passports {
+        if passport_uid_is(&value.uid, uid, known)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `held`, a UID a passport on an EVENT stored, is `uid`: as
+/// written, or, when `pinned` says `uid` is pinned to that EVENT
+/// ([`uid_pinned_to`]), as custody reads it ([`passport_uid_is`]).
+fn passport_uid_pinned_is(
+    held: &str,
+    uid: &str,
+    pinned: bool,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    if held == uid {
+        return Ok(true);
+    }
+    if !pinned {
+        return Ok(false);
+    }
+    passport_uid_is(held, uid, known)
+}
+
+/// Whether `uid` is pinned to `event_ref`: it is the UID a first write of
+/// `event_ref` mints, or this node's UID index points it at `event_ref`,
+/// which an entry does only once a passport of exactly that UID was filed
+/// there or vouched for it. A custody record keeps every value it held, so
+/// a passport UID read through its handle meets each of them: only a pinned
+/// UID is read so, and a VEVENT whose UID a rotation gave the record since
+/// never lands on the EVENT of the UID it held before (blind review round
+/// 2 of #10090).
+///
+/// # Errors
+///
+/// Store failures.
+fn uid_pinned_to(vault: &Vault, event_ref: &EntityId, uid: &str) -> Result<bool, CalendarError> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    carries_admitted_uid_in_txn(vault, &txn, event_ref, uid)
+    uid_pinned_to_in_txn(vault, &txn, event_ref, uid)
+}
+
+fn uid_pinned_to_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+    uid: &str,
+) -> Result<bool, CalendarError> {
+    if super::connectors::local_uid(event_ref) == uid {
+        return Ok(true);
+    }
+    Ok(PASSPORT_INDEX.get(&vault.store, txn, &passport_digest(uid))? == Some(*event_ref))
+}
+
+/// Whether `held`, a UID the vault stored, is `uid`: as written, or with a
+/// custody handle in place of a value custody holds. The claim door stores a
+/// `calendar.passport`, and the side-row wall an outbox row, with such a
+/// value's handle, so a passport the settled write of a UID custody holds
+/// filed vouches for that UID's index entry only when its UID is read as a
+/// template: each handle meets only a value of its own record, and every
+/// other byte only itself ([`CompareKnown::admits`]). `known` reads the
+/// values custody holds once the compare as written misses (blind review
+/// round 1 of #10090, CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW). A handle
+/// meets every value its record ever held, so a caller reads a UID so only
+/// where something else pins it to the stored one ([`uid_pinned_to`]; a
+/// first write's row of the EVENT whose minted UID `uid` is).
+///
+/// # Errors
+///
+/// The custody read's, or a value the wall cannot read.
+pub(in crate::calendar) fn passport_uid_is(
+    held: &str,
+    uid: &str,
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    if held == uid {
+        return Ok(true);
+    }
+    known
+        .admits(&rmpv::Value::from(held), &rmpv::Value::from(uid))
+        .map_err(CalendarError::from)
 }
 
 pub(in crate::calendar) fn carries_admitted_uid_in_txn(
@@ -788,11 +650,23 @@ fn ingest(reason: &'static str) -> CalendarError {
 /// does the importer's own pending one, since the import gate files its
 /// exception claims pending review exactly as it files its passports.
 fn is_live_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
-    series_exception_with(vault, event, |body| {
-        claim_surfaceable(body)
-            || (body.approval == crate::claim::ClaimApprovalStatus::Proposed
-                && body.source == Some(crate::claim::ClaimSource::Imported))
-    })
+    series_exception_with(vault, event, counts_for_ingest)
+}
+
+/// Whether the ingest diff counts `body` as a surfaceable head or as the
+/// importer's own pending one ([`is_live_series_exception`]).
+fn counts_for_ingest(body: &crate::claim::ClaimBody) -> bool {
+    claim_surfaceable(body)
+        || (body.approval == crate::claim::ClaimApprovalStatus::Proposed
+            && body.source == Some(crate::claim::ClaimSource::Imported))
+}
+
+/// Whether `body`, an exception claim, is a head the ingest diff counts: as
+/// [`series_exception_with`] folds it for [`is_live_series_exception`].
+fn exception_head_counts_for_ingest(body: &crate::claim::ClaimBody) -> bool {
+    body.lifecycle == ClaimLifecycleStatus::Active
+        && body.approval != crate::claim::ClaimApprovalStatus::Rejected
+        && counts_for_ingest(body)
 }
 
 /// Whether an admitted exception head makes `event` a detached instance.
@@ -811,7 +685,7 @@ fn series_exception_with(
 ) -> Result<bool, CalendarError> {
     for id in vault.claims_for_subject(event)? {
         if vault.get_claim(&id)?.is_some_and(|body| {
-            body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+            body.predicate == PREDICATE_CALENDAR_SERIES_EXCEPTION
                 && body.lifecycle == ClaimLifecycleStatus::Active
                 && body.approval != crate::claim::ClaimApprovalStatus::Rejected
                 && counts(&body)

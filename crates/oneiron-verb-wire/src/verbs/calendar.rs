@@ -19,6 +19,66 @@ pub struct BookingPageTokenResponse {
     pub page_token: String,
 }
 
+/// The owner mints a personal link to one published booking page for one
+/// recipient (BK-PERSONAL-LINKS): the page names them and locks the
+/// booker email to theirs.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPersonalLinkMintRequest {
+    pub page_ref: String,
+    pub recipient_email: String,
+    pub recipient_name: String,
+}
+
+/// The raw link token, returned here once and never again, beside the link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLinkMintResponse {
+    pub token: String,
+    pub link: BookingPersonalLink,
+}
+
+/// One personal link as its owner reads it. `link_ref` names it to a
+/// revocation; it is a digest, never the token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLink {
+    pub link_ref: String,
+    pub page_ref: String,
+    pub recipient_email: String,
+    pub recipient_name: String,
+    pub minted_at: u64,
+    /// When the link ended; absent while it is live.
+    pub ended_at: Option<u64>,
+    /// Why it ended: `not_recipient` (its recipient answered "not you?") or
+    /// `revoked`.
+    pub ended_reason: Option<String>,
+}
+
+/// The owner ends one personal link, by the `link_ref` its mint returned.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPersonalLinkRevokeRequest {
+    pub link_ref: String,
+}
+
+/// `revoked` is false when the link had already ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLinkRevokeResponse {
+    pub revoked: bool,
+}
+
+/// The owner lists every personal link minted to one booking page.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPersonalLinkListRequest {
+    pub page_ref: String,
+}
+
+/// Live and ended links, each without its token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingPersonalLinkListResponse {
+    pub links: Vec<BookingPersonalLink>,
+}
+
 /// A move proves authority with this booking's reschedule token only.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -78,6 +138,40 @@ pub struct BookingDepositRefundReceipt {
     /// The deposit terms' currency, frozen at checkout.
     pub currency: String,
     pub queued: bool,
+}
+
+/// `vault.booking.deposit.mark_refunded_outside`'s input
+/// (BK-DEPOSIT-FAILED-REFUND-MARK-PAID = B): the booking, by its EVENT's hex
+/// entity id, and the amount the calling host paid the visitor back outside
+/// Stripe, which must be the refund the deposit owes now.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositMarkRefundedOutsideRequest {
+    pub event_ref: String,
+    /// The refund owed now, in minor units of the deposit's currency.
+    pub amount_minor: u64,
+    /// The caller's own key for this mark, 1 to 200 bytes: a repeat of the
+    /// call under the same key answers the first mark and records nothing,
+    /// whatever the deposit owes since, so a retried call never marks
+    /// another refund (review round 1 of #10267).
+    pub idempotency_key: String,
+}
+
+/// What `vault.booking.deposit.mark_refunded_outside` recorded: the amount
+/// marked refunded outside Stripe and when. `recorded` is false when the
+/// refund stood marked already: a retry records nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositMarkRefundedOutsideReceipt {
+    /// The booking's EVENT, lowercase hex.
+    pub event_ref: String,
+    /// The amount marked, in minor units of `currency`.
+    pub amount_minor: u64,
+    /// The deposit terms' currency, frozen at checkout.
+    pub currency: String,
+    /// When the mark was recorded, Unix seconds.
+    pub marked_at: u64,
+    pub recorded: bool,
 }
 
 /// Source-redacted occupancy over an inclusive UTC-seconds window.

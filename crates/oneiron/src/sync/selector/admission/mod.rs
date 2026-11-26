@@ -35,6 +35,8 @@ use self::blobs::copy_admitted_entities;
 pub(crate) use self::blobs::is_peer_task_authority_fact_refusal;
 pub(crate) use self::blobs::{FEDERATION_IMPORT_SOURCE, admit_federated_entity_blob};
 #[cfg(feature = "sync")]
+pub(in crate::sync) use self::peer_tombstones::is_membership_or_topology_kind;
+#[cfg(feature = "sync")]
 use self::peer_tombstones::{DeliveringPact, TombstoneAdmission, admitted_peer_tombstones};
 #[cfg(feature = "test-hooks")]
 pub use self::revalidate::put_selector_test_federation_grant;
@@ -264,7 +266,7 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
 /// its row, a new part when none does, and every other is dropped; anywhere
 /// else, one refuses the whole update.
 #[cfg(feature = "sync")]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn admit_window_update(
     vault: &Vault,
     key: &WindowKey,
@@ -411,7 +413,11 @@ fn admit_window_update(
         // The birth placements a guest carried never enter the admitted
         // bytes: the part's import lands each beside its row (FIX 3656).
         let placements = routes.admitted_placements(&admitted);
-        admitted.commit_with(CommitOptions::new().origin(role.origin()));
+        admitted.commit_with(
+            CommitOptions::new()
+                .origin(role.origin())
+                .commit_msg(FEDERATION_ADMISSION_MESSAGE),
+        );
         // An admitted tombstone is a write the burst review counts as a row.
         let rows = admitted.get_map("entities").len()
             + admitted.get_map("edges").len()
@@ -427,6 +433,7 @@ fn admit_window_update(
             births,
             peer_rows,
             delivered,
+            tombstones: crate::sync::ingest::delivered_tombstones(&admitted.get_map("tombstones")),
             born_with,
             placements,
             lane: lane.clone(),
@@ -445,12 +452,19 @@ fn admit_window_update(
     Ok(admitted)
 }
 
+/// The commit message of every change an admission authors: a window knows
+/// an admission's writes by it, and a later admission's write to a key one
+/// of them set is written again over it
+/// (FEDERATED-ADMISSION-FRESH-DOC-LAMPORT-TIE).
+pub(in crate::sync) const FEDERATION_ADMISSION_MESSAGE: &str = "federation-admission:v1";
+
 /// The doc one part of an admission is authored in. Its op ids derive from
 /// the window it lands in, the update, the role and, for a guest's update, the
 /// source vault its CLAIMs are remapped under (FIX 3497), so one op id never
 /// carries two payloads. The domain is v1 since a WORLD target lands under its
 /// foreign id before its row arrives (FIX 3891): the same update now admits
-/// other bytes.
+/// other bytes. Its first change, whichever write commits it, carries
+/// [`FEDERATION_ADMISSION_MESSAGE`].
 #[cfg(feature = "sync")]
 fn create_admission_doc(
     key: &WindowKey,
@@ -465,6 +479,7 @@ fn create_admission_doc(
     let _edges = doc.get_map("edges");
     let _tombstones = doc.get_map("tombstones");
     doc.commit();
+    doc.set_next_commit_message(FEDERATION_ADMISSION_MESSAGE);
     Ok(doc)
 }
 
@@ -565,6 +580,9 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
     // Fix list row 16256: a restricted lane carries no source-audience key,
     // whatever its value; a peer's body naming it is refused as it came.
     crate::source_audience::refuse_written_obligation(entity_type, body)?;
+    // VOICE-PHONE-AGENT-REACH R2 review F1: nor a phone mark, which the
+    // phone keep alone writes.
+    crate::voice_call::refuse_written_phone_mark(entity_type, body)?;
     if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
     }

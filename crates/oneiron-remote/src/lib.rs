@@ -392,8 +392,12 @@ impl OneironClient {
     /// `owner_key_required`; where the handle's person is no live owner of
     /// the vault, every word refuses `consent owner not authenticated`. An
     /// explicit opt-in: no other handle changes,
-    /// and no other verb of this one. No user presence is asked yet (FIX
-    /// [OWNER-KEY-USER-PRESENCE]).
+    /// and no other verb of this one. An approving word runs this device's
+    /// owner presence check: with a device PIN set it needs the PIN's open
+    /// window; else it shows the device prompt or reuses the prompt's open
+    /// window; a device that can show no prompt and has no PIN set passes.
+    /// The check can return a presence or PIN refusal. A word the read
+    /// refuses does not reach the key.
     ///
     /// Connected handles fail typed `FORBIDDEN`: the server binds an owner
     /// proof from the credential a request arrived with.

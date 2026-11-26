@@ -40,11 +40,13 @@ use super::page_seal::WrapTransition;
 use super::root_doors::ACTIVATION_OWNER_ONLY;
 use super::state::world_pad_availability_in;
 use super::{
-    ActivatedRoot, KitConfirmation, OwnerWorkReceipt, OwnerWorkStatus, PreparedRoot, RecoveryRoot,
-    RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus, VaultKeyWrapInfo,
-    WorldPadAvailability, WorldRecoveryState, refused,
+    ActivatedRoot, KitConfirmation, OwnerActImportance, OwnerWorkReceipt, OwnerWorkStatus,
+    PreparedRoot, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus,
+    VaultKeyWrapInfo, WorldPadAvailability, WorldRecoveryState, owner_presence_reasons, refused,
 };
-use crate::authority::{ActAuthority, ActSurface, AuthorityEntryHash, authority_refused};
+use crate::authority::{
+    ActAuthority, ActSurface, AuthorityEntryHash, OwnerProofGround, authority_refused,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -422,7 +424,11 @@ impl Vault {
 
     /// [`Self::confirm_world_kit`] as `authority`, which carries the true act
     /// surface for R's enrolment row: `ThisInstall` on the CLI chain,
-    /// `act_surface_admitted` on the two HTTP chains.
+    /// `act_surface_admitted` on the two HTTP chains. The kit's and the
+    /// activation's own checks come before the confirm, so a confirm they
+    /// refuse never prompts; the confirm comes before this install's signing
+    /// keys are readied, so a declined one leaves this install's machine as
+    /// it was, and before the wrap transition, so no prompt stands under it.
     pub fn confirm_world_kit_as(
         &self,
         authority: &ActAuthority,
@@ -435,12 +441,19 @@ impl Vault {
             ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
         };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
+        let predecessor = self.activation_checks(owner, &prepared, carry)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::KIT_ACTIVATION,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        let prep = self.activation_prep(predecessor)?;
         // The `world-kit` wrap is a wrap change: a sealed vault's page-seal
         // mirror is staged in the activation's transaction and rewritten
         // after it commits (OF-570).
         let transition = self.begin_wrap_transition()?;
         let (activated, (replaced, escrow)) =
-            self.activate_owner_root_with(authority, prepared, carry, |txn| {
+            self.activate_owner_root_with(authority, (prepared, prep), carry, &ground, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
         self.settle_pending_kit_pieces(Some(row.kit));

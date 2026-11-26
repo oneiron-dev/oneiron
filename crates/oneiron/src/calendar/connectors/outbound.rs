@@ -2,6 +2,7 @@
 
 mod archived;
 mod collection;
+mod release;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
 pub use self::collection::{
@@ -9,7 +10,11 @@ pub use self::collection::{
     calendar_collection_members_for_operation,
 };
 pub(super) use self::collection::{
-    cancelled_members_in_flight, first_write_unsettled, omission_observed, unsettled_writes_of,
+    UnprovenReplaysBeforeRead, cancelled_members_in_flight, first_write_unsettled,
+    omission_observed, unproven_replays_before_read, unsettled_writes_of,
+};
+pub(crate) use self::release::{
+    calendar_holds_in_txn, record_released_hold_cancel, release_calendar_holds_as_owner,
 };
 
 use serde::{Deserialize, Serialize};
@@ -22,9 +27,10 @@ use super::remote::{
     CalendarRemoteTransport, RemoteCalendarObject, RemoteWriteReceipt, RemoteWriteRequest,
     ics_content_hash, local_uid, render_owner_vevent, shared_uid,
 };
+use super::replay_evidence::record_replay_cancel_evidence_in_txn;
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
-use crate::batch::secret_scan::{admitted_from_known, named_tree};
+use crate::batch::secret_scan::{LiftedKeys, admitted_from_known, named_tree};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
@@ -32,7 +38,8 @@ use crate::calendar::claims::{
 };
 use crate::calendar::passport::{
     admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
-    index_passport_uid_in_txn, live_passport_for_in_txn, revise_passport_in_txn,
+    index_passport_uid_in_txn, live_passport_for_in_txn, passport_system_is, passport_uid_among,
+    revise_passport_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::code_run::CompareKnown;
@@ -242,6 +249,13 @@ pub fn write_calendar_event(
         return Err(CalendarConnectorError::KillSwitchEngaged);
     }
     operation.revalidate(vault)?;
+    // An install born of a restore that has not joined writes nothing out,
+    // new or resumed, whoever asks (row RESTORED-UNJOINED-STARTS-NO-WORK):
+    // refused before the outbox row is staged or the provider is called.
+    {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        vault.refuse_work_while_restored_unjoined_in_txn(&rtxn)?;
+    }
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Err(ingest_error("write target is not an EVENT"));
     }
@@ -254,13 +268,22 @@ pub fn write_calendar_event(
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         admitted_passports_for_event_in_txn(vault, &rtxn, &event_ref)?
     };
-    let own = passports
-        .iter()
-        .find(|(_, value)| value.system == system)
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
+    let own = seat_passports(&passports, system, &known)?
+        .into_iter()
+        .next()
         .map(|(_, value)| value.clone());
     let uid = match &own {
-        Some(value) => value.uid.clone(),
-        None => match importer_pending_uid(vault, operation, &event_ref, system)? {
+        Some(value) => {
+            seat_uid_of(vault, operation, &event_ref, &value.uid, &known)?.ok_or_else(|| {
+                ingest_error(
+                    "the seat's passport holds its UID as a custody handle that no remote copy \
+                     of the seat reads as",
+                )
+            })?
+        }
+        None => match importer_pending_uid(vault, operation, &event_ref, &known)? {
             Some(uid) => uid,
             None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
         },
@@ -859,8 +882,9 @@ enum StoredCopy {
     Foreign,
     /// A version with a member below the staged SEQUENCE, which a provider
     /// storing the write keeps or raises: never the write's own copy. Read
-    /// after the refusal it is another writer's; a pull may have read it
-    /// before the write landed, so there it proves nothing.
+    /// after the refusal it is another writer's; a pull whose read began
+    /// before the refusal may have read it before the write landed, so there
+    /// it proves nothing.
     Older,
     /// Nothing usable: the read failed, found no copy, or did not parse.
     Unread,
@@ -1030,8 +1054,11 @@ fn first_write_members(
 ///
 /// `unattributed` says the copy proved the write's own with no write marker
 /// ([`StoredCopy::Own`]): each member the write cancelled then records that
-/// on its booking's held deposit, in the same writer, so the owner's line
-/// asks for a refund by hand (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C).
+/// as a synced replay-evidence claim, in the same writer
+/// ([`record_replay_cancel_evidence_in_txn`]), so the owner's line on the
+/// node that holds its booking's live deposit asks for a refund by hand
+/// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C), after a home move too
+/// (BK-REPLAY-NOTE-DELIVERY = A).
 ///
 /// The caller holds the vault's calendar admission turn, so no pull admits
 /// the copy between this publication and the outbox leaving flight.
@@ -1049,14 +1076,16 @@ fn write_replay_proof(
             publish_own_stored_copy_in_txn(vault, txn, operation, provider, row, members, now)
                 .map_err(CarrierWriteError::Failed)?;
             if unattributed {
-                for member in &row.cancelled_members {
-                    crate::booking::lifecycle::note_unattributed_cancel_in_txn(
+                for &member in &row.cancelled_members {
+                    record_replay_cancel_evidence_in_txn(
                         vault,
                         txn,
                         member,
+                        &row.outbox_id,
                         row.sequence,
                         now,
-                    )?;
+                    )
+                    .map_err(CarrierWriteError::Failed)?;
                 }
             }
         }
@@ -1164,11 +1193,20 @@ fn publish_own_stored_copy_in_txn(
 /// lands on its EVENT. Either way the proof is owed no longer
 /// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
 ///
-/// A version below the staged SEQUENCE proves nothing: the pull may have
-/// read it before the write landed, so the proof stays owed for a later
-/// pull, and the version is admitted as any pulled version is. A first
-/// write's is the exception: under the UID the write minted, no version
-/// predates the write.
+/// A version below the staged SEQUENCE is another writer's when the pull's
+/// read began after the refusal: `before_read` holds the row as it stands
+/// now, at its revision ([`UnprovenReplaysBeforeRead`]), so the refusal, and the copy the
+/// provider held then, came before that read, and a refused write is never
+/// sent again. It proves the copy another writer's, as the refusal's own
+/// read would have (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS): without
+/// that, a provider that keeps such a version leaves the proof owed for
+/// good, and every seat of the calendar holds back each pulled copy that
+/// may be the write's. A version read by a pull that began before the
+/// refusal proves nothing: that pull may have read it before the write
+/// landed, so the proof stays owed for a later pull, and the version is
+/// admitted as any pulled version is. A first write's is the exception
+/// either way: under the UID the write minted, no version predates the
+/// write.
 ///
 /// The caller holds the vault's calendar admission turn.
 pub(super) fn prove_unproven_replay(
@@ -1177,11 +1215,14 @@ pub(super) fn prove_unproven_replay(
     provider: &str,
     object: &RemoteCalendarObject,
     uid: &str,
+    before_read: &UnprovenReplaysBeforeRead,
     now: u64,
 ) -> Result<(), CalendarConnectorError> {
-    let Some(mut row) = self::collection::unproven_replay(vault, operation, uid)? else {
+    let Some((mut row, revision)) = self::collection::unproven_replay(vault, operation, uid)?
+    else {
         return Ok(());
     };
+    let read_after_refusal = before_read.holds(&row.outbox_id, &revision);
     open_outbox(vault, operation, provider, uid, &mut row)?;
     // A row owes this proof only after a replay's refusal or a first
     // write's, so an unmarked copy reads as the write's where the replay's
@@ -1192,11 +1233,11 @@ pub(super) fn prove_unproven_replay(
                 members,
                 marker_proved,
             } => (Some(members), !marker_proved),
-            StoredCopy::Foreign => (first_write_members(vault, &row)?, false),
-            StoredCopy::Older => match first_write_members(vault, &row)? {
+            StoredCopy::Older if !read_after_refusal => match first_write_members(vault, &row)? {
                 Some(members) => (Some(members), false),
                 None => return Ok(()),
             },
+            StoredCopy::Foreign | StoredCopy::Older => (first_write_members(vault, &row)?, false),
             StoredCopy::Unread => return Ok(()),
         };
     row.stored_copy_unproven = false;
@@ -1745,32 +1786,116 @@ fn open_cursor(
 
 /// The UID the importer's own pending passport vouches for on this seat's
 /// calendar, if any (the lead's ruling 10 Nov 10:3x, FIX
-/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). A pending passport of `system`
-/// counts only when the pull wrote this seat's remote object row under its
-/// UID, so the write replaces that object. Two such passports under different
-/// UIDs are refused, never picked by scan order.
+/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). A pending passport of the
+/// seat's system ([`seat_passports`]) counts only when the pull wrote this
+/// seat's remote object row under its UID ([`seat_uid_of`]), so the write
+/// replaces that object. Two such passports under different UIDs are
+/// refused, never picked by scan order.
 fn importer_pending_uid(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     event_ref: &EntityId,
-    system: &str,
+    known: &CompareKnown<'_>,
 ) -> Result<Option<String>, CalendarConnectorError> {
     let pending = {
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        crate::calendar::passport::importer_pending_passports_in_txn(
-            vault, &rtxn, event_ref, system,
-        )?
+        crate::calendar::passport::importer_pending_passports_in_txn(vault, &rtxn, event_ref)?
     };
+    let system = operation.registration().seat.config.system.as_str();
     let mut uids = std::collections::BTreeSet::new();
-    for (_, value) in pending {
-        if read_remote_object_for_operation(vault, operation, &value.uid)?.is_some() {
-            uids.insert(value.uid);
+    for (_, value) in seat_passports(&pending, system, known)? {
+        let Some(uid) = seat_uid_of(vault, operation, event_ref, &value.uid, known)? else {
+            continue;
+        };
+        if read_remote_object_for_operation(vault, operation, &uid)?.is_some() {
+            uids.insert(uid);
         }
     }
     let mut uids = uids.into_iter();
     let found = uids.next();
     if uids.next().is_some() {
         return Err(ingest_error("competing pending calendar passports"));
+    }
+    Ok(found)
+}
+
+/// The passports of `passports` this seat, installed under `system`, keys:
+/// those whose stored system is `system` as written or, where the claim door
+/// stored it as a custody handle, as [`passport_system_is`] reads it, read
+/// through custody only when the stored system holds a handle. In
+/// `passports`' order (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
+///
+/// # Errors
+///
+/// The custody read's.
+fn seat_passports<'p>(
+    passports: &'p [(EntityId, CalendarPassportValue)],
+    system: &str,
+    known: &CompareKnown<'_>,
+) -> Result<Vec<&'p (EntityId, CalendarPassportValue)>, CalendarConnectorError> {
+    let mut keyed = Vec::new();
+    for passport in passports {
+        let held = passport.1.system.as_str();
+        let carried = held == system
+            || (LiftedKeys::holds_a_handle(held) && passport_system_is(held, system, known)?);
+        if carried {
+            keyed.push(passport);
+        }
+    }
+    Ok(keyed)
+}
+
+/// The UID this seat writes `event_ref` under for `held`, the UID a passport
+/// of the seat stored: `held` itself when it holds no custody handle
+/// ([`LiftedKeys::holds_a_handle`]). The
+/// claim door may store a UID as a custody handle, which no provider holds,
+/// so a handle is never sent as a UID: it reads as the one UID a remote copy
+/// of this seat holds in its sealed values that custody reads `held` as and
+/// that `event_ref` pins ([`passport_uid_among`]). None when no copy does;
+/// two such copies are refused
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
+///
+/// # Errors
+///
+/// Store and custody failures, a copy whose sealed values do not open, and
+/// two copies that read as `held`.
+fn seat_uid_of(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    event_ref: &EntityId,
+    held: &str,
+    known: &CompareKnown<'_>,
+) -> Result<Option<String>, CalendarConnectorError> {
+    if !LiftedKeys::holds_a_handle(held) {
+        return Ok(Some(held.to_owned()));
+    }
+    let scope = operation.literal_scope()?;
+    // Drop the table reader before any custody snapshot is acquired.
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        REMOTE_OBJECT.scan_from(&vault.store, &txn, REMOTE_OBJECT_TAG)?
+    };
+    let mut found = None;
+    for (key, stored) in rows {
+        if stored.carrier.seat != scope {
+            continue;
+        }
+        let mut row = remote_projection(stored);
+        if LiftedKeys::names_a_handle(&row.uid) {
+            open_cursor(vault, operation, key.0, &mut row)?;
+        }
+        let carried = passport_uid_among(
+            vault,
+            event_ref,
+            held,
+            &std::collections::BTreeSet::from([row.uid.as_str()]),
+            known,
+        )?;
+        if carried && found.replace(row.uid).is_some() {
+            return Err(ingest_error(
+                "competing calendar UIDs for one stored handle",
+            ));
+        }
     }
     Ok(found)
 }
@@ -1925,6 +2050,10 @@ pub fn calendar_remote_uid_for_href_for_operation(
 
 /// Resolves a provider deletion against our retained href cursor, not a
 /// provider-asserted UID. Unknown removals have no local source to retract.
+/// It reads the cursor's readable strings only: a UID the side-row wall
+/// stored as a custody handle is no UID a provider holds, so such a cursor
+/// answers none ([`calendar_remote_uid_for_href_for_operation`] opens the
+/// seat's sealed values).
 pub fn calendar_remote_uid_for_href(
     vault: &Vault,
     system: &str,
@@ -1936,6 +2065,7 @@ pub fn calendar_remote_uid_for_href(
         if row.system == system
             && row.calendar_ref == calendar_ref
             && row.href.as_deref() == Some(href)
+            && !LiftedKeys::holds_a_handle(&row.uid)
         {
             return Ok(Some(row.uid));
         }

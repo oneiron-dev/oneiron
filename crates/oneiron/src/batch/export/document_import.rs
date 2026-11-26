@@ -6,6 +6,7 @@
 mod claim_pair_same_as;
 mod issue_archive_restore;
 mod owner_archive_restore;
+mod redacted_skill_source;
 mod seed_replacement;
 mod topology_restore;
 mod unseated_rooms;
@@ -122,7 +123,11 @@ impl Vault {
     /// the reason the manifest names (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS). An
     /// archived `vault.default_facet` sets this vault's default facet only in the
     /// owner's restore into a fresh vault; otherwise it stays archive data, named
-    /// in the receipt's `destination_omissions`. Other maintenance rows and
+    /// in the receipt's `destination_omissions`. A skill whose source tree the
+    /// export redacted, and which this vault does not hold, stays out with its
+    /// source carriers and the claims about it, named in `destination_omissions`
+    /// as `RedactedSkillSource` with its package (RULING
+    /// RESTORE-REDACTED-HUB-SKILL). Other maintenance rows and
     /// owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
@@ -348,7 +353,14 @@ impl Vault {
                 owner_archive_restore::full_manifest_digest(&archive.manifest)?,
             )?;
             owner_actor = Some(actor);
-            Some(OwnerArchiveRestorePermit::mint(owner_id, receipt))
+            // The archive's signature, judged again on this writer's snapshot, decides one thing
+            // here: whether the choices about the install that wrote it land on this one
+            // (SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A). It admits nothing else.
+            let own_export =
+                super::archive_exported_by_this_install_in_txn(self, &wtxn, &archive.manifest)?;
+            Some(OwnerArchiveRestorePermit::mint(
+                owner_id, receipt, own_export,
+            ))
         } else {
             if let Some(actor) = actor {
                 super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -388,6 +400,8 @@ impl Vault {
             )?
         };
         room_omissions.extend(unseated_rooms::omit_speech_of_omitted_rooms(&mut archive)?);
+        let redacted_skills =
+            redacted_skill_source::omit_redacted_skill_sources(self, &wtxn, &mut archive)?;
         // Each runtime pack row maps onto this vault's pack handles; the
         // mapping is read again, alike, as each row goes in.
         let mut after = None;
@@ -487,6 +501,16 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
+                // FIX RESTORE-REFUSES-NULLED-ROW: a body the export nulled (a
+                // tainted row, ARCH-0069 "Export nulls a tainted row", or any
+                // body it could not export whole) has no bytes to restore, and
+                // the manifest refuses that row's import (`RedactedBody`). The
+                // destination keeps its own row; the import leaves the archived
+                // one out, its links with it, instead of refusing the archive.
+                if matches!(row.body, ExportBody::Nulled) {
+                    archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                    continue;
+                }
                 let body = imported_body(
                     self,
                     &row,
@@ -569,6 +593,12 @@ impl Vault {
                 && crate::agent_def::agent_id_pinned_in_txn(&self.store, &wtxn, &id)?
             {
                 return Err(invalid("import ID collides with a deleted entity"));
+            }
+            // FIX RESTORE-REFUSES-NULLED-ROW, as above: a nulled archived body
+            // the destination does not hold is left out too.
+            if matches!(row.body, ExportBody::Nulled) {
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                continue;
             }
             if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
                 let state =
@@ -686,6 +716,7 @@ impl Vault {
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
         let mut destination_omissions = room_omissions;
+        destination_omissions.extend(redacted_skills);
         // ISSUE stayed omitted through generic indexing; only this owner's permit restores it.
         if let Some(permit) = permit.as_ref() {
             let (inserted, unchanged) = issue_archive_restore::restore_in_txn(
@@ -711,6 +742,7 @@ impl Vault {
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                projects.as_ref(),
                 &mut side_refresh,
             )?;
         if let Some(receipt_ref) = receipt_ref.as_deref() {
@@ -754,6 +786,7 @@ impl Vault {
                             |&(id, reason)| ExportImportOmission {
                                 entity_id: id.to_hex(),
                                 reason,
+                                skill_source: None,
                             },
                         ));
                         (
@@ -789,6 +822,7 @@ impl Vault {
                             destination_omissions.push(ExportImportOmission {
                                 entity_id: id.to_hex(),
                                 reason,
+                                skill_source: None,
                             });
                         }
                         (Vec::new(), 0)
@@ -933,6 +967,7 @@ impl Vault {
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                projects.as_ref(),
                 restore_receipt_hex,
                 &grants_landed_first,
                 &mut side_refresh,
@@ -1477,13 +1512,23 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
     let birth = row
         .birth
         .renamed_refs(|row| renamed.get(&row).copied().unwrap_or(row));
+    let before = crate::provenance::birth::row_birth_in_txn(&vault.store, wtxn, id)?;
     match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
         &vault.store,
         wtxn,
         id,
         &birth,
     ) {
-        Ok(()) => Ok(()),
+        // READ-LINEAGE L1, as on sync (`stamp_birth_or_warn`): a row that
+        // arrived with its birth reads under the inputs this vault holds
+        // (#9289 review 2 P2-4), and is sealed when its birth names an
+        // input this vault erased (#9289 Opus review 3 P2-4).
+        Ok(()) => crate::provenance::birth::raise_landed_birth_floor_in_txn(
+            vault,
+            wtxn,
+            id,
+            before.as_ref(),
+        ),
         Err(error @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
             tracing::warn!(
                 entity = %id.to_hex(),
@@ -1497,11 +1542,21 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
 }
 
 /// The source root this vault maps onto its own root project (see
-/// [`map_project_root`]): the project type, and both roots' ids.
-struct ProjectRootMap {
+/// [`map_project_root`]): the project type, and both roots' ids. A project row's parent moves
+/// with it ([`imported_row`]), and so does a retained setting row's scope
+/// (`setting::archive_restore`).
+pub(crate) struct ProjectRootMap {
     kind: u8,
-    source: String,
-    target: String,
+    source: EntityId,
+    target: EntityId,
+}
+
+impl ProjectRootMap {
+    /// `id` as this vault holds it: the source root is this vault's root, and every other id
+    /// is itself.
+    pub(crate) fn local_id(&self, id: EntityId) -> EntityId {
+        if id == self.source { self.target } else { id }
+    }
 }
 
 /// The row `at` as the import writes it: a project row's parent moves from
@@ -1535,9 +1590,10 @@ fn imported_row<R: Read + Seek>(
             rmp_serde::from_slice(&row.body.to_bytes()?)
                 .map_err(|_| invalid("project row body"))?;
         // Only the tree position moves; the claims scope id stays a label.
+        let (source, target) = (projects.source.to_hex(), projects.target.to_hex());
         for parent in &mut body.parents {
-            if *parent == projects.source {
-                parent.clone_from(&projects.target);
+            if *parent == source {
+                parent.clone_from(&target);
             }
         }
         let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
@@ -1883,8 +1939,8 @@ fn map_project_root<R: Read + Seek>(
     }
     Ok(Some(ProjectRootMap {
         kind,
-        source: source.to_hex(),
-        target: target.to_hex(),
+        source,
+        target,
     }))
 }
 

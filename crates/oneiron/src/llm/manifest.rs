@@ -225,6 +225,34 @@ impl Vault {
         Ok(())
     }
 
+    /// The teacher probe approval `manifest` would be pinned under and the
+    /// probe policy that admits it, read in `txn`: every check
+    /// [`Self::write_model_manifest_in_txn`] makes before its first write. A
+    /// door that asks a person before the manifest moves reads it first
+    /// (`skill_optimize::offer_switch::switch_stands_in_txn`).
+    ///
+    /// # Errors
+    ///
+    /// A manifest that does not validate, no passing probe approval, a
+    /// probe policy that is missing or one that refuses the approval for
+    /// this manifest; storage errors.
+    pub(crate) fn admitted_model_manifest_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        manifest: &ModelManifest,
+        new_approval: Option<&TeacherProbeApproval>,
+    ) -> Result<(TeacherProbeApproval, TeacherProbePolicy)> {
+        manifest.validate()?;
+        let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
+        let approval = new_approval
+            .cloned()
+            .or(saved_approval)
+            .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
+        let policy = self.teacher_probe_policy_in_txn(txn, approval.holder_ref.as_deref())?;
+        approval.verify(manifest, &policy)?;
+        Ok((approval, policy))
+    }
+
     /// Training swaps commit their receipt and custody binding with the manifest.
     pub(crate) fn write_model_manifest_in_txn(
         &self,
@@ -233,13 +261,9 @@ impl Vault {
         new_approval: Option<&TeacherProbeApproval>,
         new_encoder_export: Option<&EncoderExport>,
     ) -> Result<()> {
-        manifest.validate()?;
-        let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
-        let approval = new_approval
-            .or(saved_approval.as_ref())
-            .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
-        let policy = self.teacher_probe_policy_in_txn(txn, approval.holder_ref.as_deref())?;
-        approval.verify(manifest, &policy)?;
+        let (approval, policy) =
+            self.admitted_model_manifest_approval_in_txn(txn, manifest, new_approval)?;
+        let approval = &approval;
         if let Some(export) = new_encoder_export {
             if &export.request.teacher_approval != approval {
                 return Err(invalid(
@@ -287,18 +311,30 @@ impl Vault {
             return Ok(fallback.clone());
         };
         let binding = manifest.binding(role)?;
-        let widest = *manifest
-            .routes
-            .get(&binding.slot)
-            .ok_or_else(|| invalid("missing slot route"))?;
-        let route = read_routes(self, txn, &manifest)?
-            .get(&binding.slot)
-            .copied()
-            .unwrap_or(widest);
-        if route_rank(route) > route_rank(widest) {
-            return Err(invalid("resident route cannot widen manifest pin"));
-        }
-        Ok(model_for_route(binding, route, widest)?.clone())
+        let routes = read_routes(self, txn, &manifest)?;
+        let (model, _) = model_at_effective_route(&manifest, &routes, binding)?;
+        Ok(model.clone())
+    }
+    /// The model the vault's manifest binds `role` to and the slot's
+    /// effective route (the pin, narrowed by any resident route), both read
+    /// in one snapshot: the rung that serves the role answers only with that
+    /// model on that route or a narrower one. `None` when no manifest is set
+    /// or the manifest leaves the role unbound, so the caller keeps its own
+    /// seat for an optional role.
+    pub fn bound_model_for_role(
+        &self,
+        role: ModelRole,
+    ) -> Result<Option<(ModelId, ModelLocality)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(manifest) = read_manifest(&self.store, &txn)? else {
+            return Ok(None);
+        };
+        let Some(binding) = manifest.roles.get(&role) else {
+            return Ok(None);
+        };
+        let routes = read_routes(self, &txn, &manifest)?;
+        let (model, route) = model_at_effective_route(&manifest, &routes, binding)?;
+        Ok(Some((model.clone(), route)))
     }
     /// Effective per-vault route, including a resident narrowing if present.
     pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
@@ -334,6 +370,23 @@ pub(super) fn route_admits(
         }
     }
     Ok(())
+}
+/// `binding`'s model at its slot's effective route, and that route: the
+/// slot's pin, narrowed by a resident route in `routes`, never widened.
+fn model_at_effective_route<'m>(
+    manifest: &ModelManifest,
+    routes: &BTreeMap<ModelSlot, ModelLocality>,
+    binding: &'m ModelBinding,
+) -> Result<(&'m ModelId, ModelLocality)> {
+    let widest = *manifest
+        .routes
+        .get(&binding.slot)
+        .ok_or_else(|| invalid("missing slot route"))?;
+    let route = routes.get(&binding.slot).copied().unwrap_or(widest);
+    if route_rank(route) > route_rank(widest) {
+        return Err(invalid("resident route cannot widen manifest pin"));
+    }
+    Ok((model_for_route(binding, route, widest)?, route))
 }
 pub(super) fn effective_route(
     manifest: &ModelManifest,

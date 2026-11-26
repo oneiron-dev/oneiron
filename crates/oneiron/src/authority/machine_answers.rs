@@ -9,11 +9,15 @@ use ed25519_dalek::SigningKey;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::world_keys::OwnerActImportance;
+use crate::world_keys::owner_presence_reasons::{ENROLL_MACHINE, SET_MACHINE_ROLE};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::machine_identity::SERVING_INSTALL_ROLE;
 use super::slip_vault::{next_entry, require_host};
 use super::*;
+
+mod importance;
 
 /// What an owner's machine answer did once the fold judged it (row
 /// CARRIER-OWNER-PROOF).
@@ -294,6 +298,11 @@ impl Vault {
     /// device, the machine stands as before, and no credential is sealed
     /// again.
     ///
+    /// The door makes its checks on a read before it asks. A class revision
+    /// or a join with no standing head is important. A join beside a pinned
+    /// anchor's existing head is compared with that head. The write derives
+    /// again and answers [`Error::ConcurrentWrite`] if importance rises.
+    ///
     /// # Errors
     /// [`Error::ConcurrentWrite`] when `seen` is not the machine's current
     /// revision; [`Error::InvalidConfig`] when this install carries no live
@@ -308,11 +317,22 @@ impl Vault {
         role: MachineRole,
         seen: Option<[u8; 32]>,
     ) -> Result<MachineAnswerLanding> {
+        let importance: OwnerActImportance = {
+            let txn = self.store.env.read_txn()?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+            let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
+            let profile = importance::enrolment_profile(&fold, actor, request, role)?;
+            self.owner_answer_importance_in_txn(&txn, &fold, &answer, profile)?
+        };
+        let witness = self.owner_presence(importance, ENROLL_MACHINE)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
-        let landing = self.enroll_machine_in_txn(&mut txn, answer, request, role)?;
+        let landing = self.enroll_machine_in_txn(&mut txn, &ground, answer, request, role)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
         if landing.held().is_none() {
@@ -346,6 +366,11 @@ impl Vault {
     /// windows in the write and announced once it committed, as at
     /// [`Self::remove_machine`].
     ///
+    /// The door's checks run on a read before it asks. An answer that ends an owner key,
+    /// changes the machine's keys or class, or widens its role asks; any other answer
+    /// asks nothing. The write derives again and answers [`Error::ConcurrentWrite`] when
+    /// the act became more important.
+    ///
     /// # Errors
     /// As [`Self::enroll_machine`], and [`invalid_authority`] for a machine no
     /// roster revision and no mark of the pinned anchor names, or one already
@@ -360,13 +385,40 @@ impl Vault {
         role: MachineRole,
         seen: Option<[u8; 32]>,
     ) -> Result<MachineAnswerLanding> {
+        self.set_machine_role_between(owner, surface, machine, role, seen, || {})
+    }
+
+    /// [`Self::set_machine_role`], with `between` run after the door asked
+    /// and before its write opens: the gap in which another writer can commit
+    /// first. It does not run when the read refuses.
+    pub(crate) fn set_machine_role_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        machine: EntityId,
+        role: MachineRole,
+        seen: Option<[u8; 32]>,
+        between: impl FnOnce(),
+    ) -> Result<MachineAnswerLanding> {
+        let importance: OwnerActImportance = {
+            let txn = self.store.env.read_txn()?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+            let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
+            let profile = importance::role_answer_profile(&fold, actor, machine, role)?;
+            self.owner_answer_importance_in_txn(&txn, &fold, &answer, profile)?
+        };
+        let witness = self.owner_presence(importance, SET_MACHINE_ROLE)?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        between();
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
         let (landing, _) =
-            self.machine_role_answer_in_txn(&mut txn, &fold, answer, machine, role)?;
+            self.machine_role_answer_in_txn(&mut txn, &fold, &ground, answer, machine, role)?;
         let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
@@ -386,33 +438,13 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         machine: EntityId,
         role: MachineRole,
     ) -> Result<(MachineAnswerLanding, Vec<EndedOwnerKey>)> {
-        let folded = fold.machine(machine).ok_or_else(invalid_authority)?;
-        // The machine's identity as the newest head it stands under names
-        // it, the roster's or the pinned anchor's; the next revision tops
-        // both.
-        let mut heads = folded.standing_heads(fold.pinned_root.as_ref());
-        heads.sort_by_key(|head| head.profile.revision);
-        let current = heads.last().ok_or_else(invalid_authority)?;
-        if heads.iter().any(|head| head.removed) {
-            return Err(invalid_authority());
-        }
-        let profile = MachineProfile {
-            owner: answer.owner,
-            role,
-            revision: current
-                .profile
-                .revision
-                .checked_add(1)
-                .ok_or_else(invalid_authority)?,
-            carrier: None,
-            act: None,
-            ..current.profile.clone()
-        };
-        self.append_owner_answer_ending_keys_in_txn(txn, fold, answer, profile)
+        let profile = importance::role_answer_profile(fold, answer.owner, machine, role)?;
+        self.append_owner_answer_ending_keys_in_txn(txn, fold, ground, answer, profile)
     }
 
     /// Enrols in the caller's transaction under the owner's act, carried by
@@ -420,21 +452,13 @@ impl Vault {
     pub(super) fn enroll_machine_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         request: &MachineEnrolmentRequest,
         role: MachineRole,
     ) -> Result<MachineAnswerLanding> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        // A machine the roster holds never joins again; only its class is
-        // revised here (FIX 3835).
-        let profile = if fold
-            .machine(request.machine)
-            .is_some_and(|folded| folded.roster.is_some())
-        {
-            class_revision_profile(&fold, answer.owner, request, role)?
-        } else {
-            joining_profile(&fold, answer.owner, request, role)?
-        };
+        let profile = importance::enrolment_profile(&fold, answer.owner, request, role)?;
         // A pairing answers a machine's revision 1 only
         // (`MachineProfile::validate_act`): a restored machine that joins on
         // its held chain is numbered above it, and the owner's pairing then
@@ -444,7 +468,7 @@ impl Vault {
             answer.kind = OwnerActKind::MachineAnswer;
         }
         self.ensure_machine_row_in_txn(txn, request.machine)?;
-        self.append_owner_answer_in_txn(txn, &fold, answer, profile)
+        self.append_owner_answer_in_txn(txn, &fold, ground, answer, profile)
     }
 
     /// Whether this install may sign a revision in `role` under a host root
@@ -594,10 +618,11 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         profile: MachineProfile,
     ) -> Result<MachineAnswerLanding> {
-        self.append_owner_answer_ending_keys_in_txn(txn, fold, answer, profile)
+        self.append_owner_answer_ending_keys_in_txn(txn, fold, ground, answer, profile)
             .map(|(landing, _)| landing)
     }
 
@@ -610,46 +635,23 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
-        mut profile: MachineProfile,
+        profile: MachineProfile,
     ) -> Result<(MachineAnswerLanding, Vec<EndedOwnerKey>)> {
-        let (carrier, key) = self.carrier_in_txn(txn, fold)?;
-        let ending = if profile.role == MachineRole::Removed {
-            self.owner_keys_ending_with_machine_in_txn(txn, fold, profile.machine)?
-        } else {
-            Vec::new()
-        };
-        self.refuse_unconfirmed_last_device_key_in_txn(txn, fold, &ending, answer.last_device_key)?;
-        let target = fold.machine(profile.machine);
-        let current = target.map_or([0; 32], |target| {
-            target.answer_revision(fold.pinned_root.as_ref())
-        });
-        // Revision integrity (contract §4): the owner decided on what the
-        // surface showed him.
-        if answer.seen.is_some_and(|seen| seen != current) {
-            return Err(Error::ConcurrentWrite(
-                "the machine's answer changed since it was read",
-            ));
-        }
-        profile.seen_world_edits =
-            super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
-        profile.carrier = Some(carrier);
-        profile.act = Some(OwnerAct {
-            owner: answer.owner,
-            by: answer.by,
-            surface: answer.surface,
-            act: answer.kind,
-            target: profile.machine,
-            seen: current,
-            answer: None,
-        });
-        profile.validate()?;
+        let checks = self.owner_answer_checks_in_txn(txn, fold, &answer, &profile)?;
+        ground.refuse_risen_importance(checks.importance)?;
+        let profile =
+            self.checked_owner_answer_profile_in_txn(txn, fold, &answer, profile, &checks)?;
+        let carrier = checks.carrier;
+        let key = checks.key;
+        let ending = checks.ending;
         // The owner key this install holds proves the answer beside the
         // carrier's signature (row CARRIER-OWNER-PROOF); with none, an
         // answer that needs the proof is held. Its join carries the same
         // proof only for the owner's own write (row
         // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
-        let proof = self.owner_proof_signer(fold);
+        let proof = self.owner_proof_signer(fold, ground);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::install(
             carrier,
@@ -676,7 +678,7 @@ impl Vault {
         )?;
         let landing = self.land_machine_profile_in_txn(txn, entry, &profile, now)?;
         let ended = if landing.held().is_none() && !ending.is_empty() {
-            self.end_owner_keys_in_txn(txn, ending)?
+            self.end_owner_keys_in_txn(txn, ground, ending)?
         } else {
             Vec::new()
         };

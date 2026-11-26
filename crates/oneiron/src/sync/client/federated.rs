@@ -224,13 +224,12 @@ impl SyncClient {
         let delivery = self.pact_delivery(peer.grant())?;
         // Validate before retaining bytes. Malformed rows never become durable
         // deferred work, and they cannot reach an observed Loro document.
-        let sender = (peer.principal(), standing);
         let admitted = match admit_peer_window_update_as(
             &self.vault,
             &key,
             update,
             role,
-            sender,
+            (peer.principal(), standing),
             delivery.as_ref(),
             peer.grant(),
         ) {
@@ -504,7 +503,7 @@ impl SyncClient {
             )
             .map_err(map_federated_admission_err)?;
             let born = watch_births(&vault, births.births(), || {
-                self.import_accepted_window_update(admission_key.as_str(), &window, update)?;
+                self.import_admitted_part(admission_key.as_str(), &window, update)?;
                 let lane = AssetBodyLane::FederationReceive { role: durable.role };
                 with_manager_peer(&self.manager, lane, None, |peer| {
                     for (body, bytes) in &carried_bodies {
@@ -639,8 +638,7 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         crate::sync::ingest::record_peer_rows(&self.vault, window_key, part.peer_rows())
             .map_err(map_federated_admission_err)?;
-        let delivery =
-            delivery.map(|delivery| Delivery::new(&self.vault, grant, delivery, part.delivered()));
+        let delivery = delivery.map(|delivery| Delivery::new(&self.vault, grant, delivery, part));
         if let Some(delivery) = &delivery {
             delivery
                 .record_intents(&self.vault)
@@ -653,7 +651,7 @@ impl SyncClient {
             with_delivery(delivery, || {
                 crate::sync::ingest::with_member_sender(&vault, part.first_party_sender(), || {
                     with_placements(&vault, key, part.placements(), || {
-                        self.import_accepted_window_update(window_key, &window, part.bytes())
+                        self.import_admitted_part(window_key, &window, part.bytes())
                     })
                 })
             })

@@ -38,6 +38,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, OwnerPresenceWitness};
 
 use super::machine_profile::in_host_custody;
 use super::*;
@@ -511,6 +513,87 @@ impl AuthorityFold {
     }
 }
 
+const IMPORTANCE_ROSE: &str = "this act would change more than it did when the person at this device was asked; nothing was written";
+
+/// Why an owner proof may be signed. A caller must have a ground to sign.
+/// A person at the device gets a ground from the presence check before the
+/// door's write. A path without a person rests on standing authority. The
+/// constructors below are the whole list of grounds. A witnessed ground
+/// holds the importance checked at the door; a standing ground holds none.
+#[derive(Debug, Clone, Copy)]
+pub struct OwnerProofGround {
+    witnessed: Option<OwnerActImportance>,
+}
+
+impl OwnerProofGround {
+    /// The act rests on the person at this device, checked by
+    /// [`crate::Vault::owner_presence`] before the door signs.
+    pub fn witnessed(witness: &OwnerPresenceWitness) -> Self {
+        Self {
+            witnessed: Some(witness.importance()),
+        }
+    }
+
+    /// A door that derived importance on a read before asking derives it
+    /// again in its write and refuses an increase here. A standing ground
+    /// refuses nothing because no one was asked to confirm that importance.
+    /// After a refusal, the caller reads again and asks again.
+    pub(crate) fn refuse_risen_importance(&self, derived: OwnerActImportance) -> Result<()> {
+        if self.witnessed == Some(OwnerActImportance::Ordinary)
+            && derived == OwnerActImportance::Important
+        {
+            return Err(Error::ConcurrentWrite(IMPORTANCE_ROSE));
+        }
+        Ok(())
+    }
+
+    /// A result for a request or residence directive that is the owner's own
+    /// signed word. Only `result_proof_signer_in_txn` makes this ground.
+    fn owners_signed_work() -> Self {
+        Self { witnessed: None }
+    }
+
+    /// A carried act that is the owner's own write, revalidated in its
+    /// writing transaction. Its proof buys log room and nothing in any fold.
+    /// Only `owner_act_proof_signer` makes this ground.
+    fn owner_authored_write() -> Self {
+        Self { witnessed: None }
+    }
+
+    /// The owner's redeemed pairing slip enrols the machine it names.
+    /// Only `redeem_machine_answer_in_txn` makes this ground.
+    pub(crate) fn pairing_slip() -> Self {
+        Self { witnessed: None }
+    }
+
+    /// Upkeep publishes rows of the owner's own Setting changes stored on this
+    /// install. Only `publish_owner_rows_in_txn` makes this ground.
+    pub(crate) fn stored_owner_rows() -> Self {
+        Self { witnessed: None }
+    }
+
+    /// The operator authorizes recovery of a shared vault's owner.
+    /// Only `recover_shared_owner_authorized` makes this ground.
+    pub(crate) fn operator_recovery() -> Self {
+        Self { witnessed: None }
+    }
+
+    /// An agent's setting act rests on the Grant the owner gave it, which
+    /// the door checks again in its write; no owner is there. Only the
+    /// free-time `record_act_in_txn` makes this ground.
+    pub(crate) fn delegated_setting_act() -> Self {
+        Self { witnessed: None }
+    }
+
+    /// Test doors supply the standing word for their fixture acts:
+    /// `put_signed_row`, `bind_host_owner_with_owner_key_for_test`, and
+    /// `set_settings_in_one_write`.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn test_door() -> Self {
+        Self { witnessed: None }
+    }
+}
+
 /// The owner key an install proves an owner act with, picked on one vault
 /// ([`crate::Vault::owner_proof_signer`]). It is bound to that vault, so a
 /// proof is never signed without the signer's own check of it
@@ -518,6 +601,7 @@ impl AuthorityFold {
 pub(crate) struct OwnerProofSigner<'vault> {
     vault: &'vault crate::Vault,
     held: HeldRootSigner,
+    ground: OwnerProofGround,
 }
 
 impl OwnerProofSigner<'_> {
@@ -542,7 +626,22 @@ impl OwnerProofSigner<'_> {
     ) -> crate::error::Result<Vec<u8>> {
         self.held
             .signer
-            .sign_owner_proof(self.vault, fold, transcript)
+            .sign_owner_proof(self.vault, fold, &self.ground, transcript)
+    }
+}
+
+/// The owner key this install proves an ask word with, bound to this vault
+/// and to the ground the word's door checked.
+pub(crate) struct AskWordProofSigner<'vault> {
+    vault: &'vault crate::Vault,
+    held: HeldRootSigner,
+    ground: OwnerProofGround,
+}
+
+impl AskWordProofSigner<'_> {
+    /// The key the ask-word proof names.
+    pub(crate) fn key(&self) -> AuthorityKey {
+        self.held.root.clone()
     }
 
     /// The key's signature over `transcript`, the owner's proof that he
@@ -550,22 +649,56 @@ impl OwnerProofSigner<'_> {
     /// the view the key was picked on.
     ///
     /// # Errors
-    /// The signer's refusal, as [`Self::sign`] answers it: a key that rests
-    /// under a device PIN proves an ask word only inside its window.
-    pub(crate) fn sign_ask_word(
+    /// The signer's refusal, as [`OwnerProofSigner::sign`] answers it: a key
+    /// that rests under a device PIN proves an ask word only inside its window.
+    pub(crate) fn sign(
         &self,
         fold: &AuthorityFold,
         transcript: &[u8],
     ) -> crate::error::Result<Vec<u8>> {
         self.held
             .signer
-            .sign_ask_word_proof(self.vault, fold, transcript)
+            .sign_ask_word_proof(self.vault, fold, &self.ground, transcript)
     }
 }
 
 impl crate::Vault {
-    /// The owner key this install can prove an owner act with on `fold`: the
-    /// first root signer this handle holds that it may offer as the owner's
+    /// The owner key this install can prove an owner act with on `fold`.
+    /// The caller supplies the ground on which it may sign.
+    pub(crate) fn owner_proof_signer(
+        &self,
+        fold: &AuthorityFold,
+        ground: &OwnerProofGround,
+    ) -> Option<OwnerProofSigner<'_>> {
+        self.proving_root_signer(fold).map(|held| OwnerProofSigner {
+            vault: self,
+            held,
+            ground: *ground,
+        })
+    }
+
+    /// The owner key this install can prove an ask word with on `fold`.
+    /// The caller supplies the ground on which it may sign: the answer
+    /// door's presence check of the word (`task_verb::ask_word_presence`).
+    pub(crate) fn ask_word_proof_signer(
+        &self,
+        fold: &AuthorityFold,
+        ground: &OwnerProofGround,
+    ) -> Option<AskWordProofSigner<'_>> {
+        self.proving_root_signer(fold)
+            .map(|held| AskWordProofSigner {
+                vault: self,
+                held,
+                ground: *ground,
+            })
+    }
+
+    /// Whether this install holds an owner key that proves now on `fold`.
+    pub(crate) fn holds_proving_owner_key(&self, fold: &AuthorityFold) -> bool {
+        self.proving_root_signer(fold).is_some()
+    }
+
+    /// The first root signer this handle holds that it may offer as the owner's
     /// proof ([`AuthorityFold::offers_owner_proof`]) under this vault's
     /// posture and that proves at this moment
     /// ([`CheckpointRootSigner::proves_now`]). The list is in the order of
@@ -589,7 +722,12 @@ impl crate::Vault {
     /// one: each signer reads the roster from `fold`. No signer is asked its
     /// root or kind here: the pick reads what each named when it was held
     /// ([`HeldRootSigner`]).
-    pub(crate) fn owner_proof_signer(&self, fold: &AuthorityFold) -> Option<OwnerProofSigner<'_>> {
+    ///
+    /// The pick takes no ground and signs nothing. The owner-key move door
+    /// calls it directly: it checks the picked key against its plan inside
+    /// its read, asks for the person once the read is dropped, and signs
+    /// with that same key on its ground.
+    pub(super) fn proving_root_signer(&self, fold: &AuthorityFold) -> Option<HeldRootSigner> {
         let hosted = self.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
         self.held_checkpoint_root_signers()
             .into_iter()
@@ -597,7 +735,6 @@ impl crate::Vault {
                 fold.offers_owner_proof(&held.root, held.host_root, hosted)
                     && held.signer.proves_now(self, fold)
             })
-            .map(|held| OwnerProofSigner { vault: self, held })
     }
 
     /// The owner key this install proves a carried act with on `fold`, one
@@ -621,7 +758,7 @@ impl crate::Vault {
     ) -> Option<OwnerProofSigner<'_>> {
         owner_authored
             .filter(|write| !write.bound_to_request_slip())
-            .and_then(|_| self.owner_proof_signer(fold))
+            .and_then(|_| self.owner_proof_signer(fold, &OwnerProofGround::owner_authored_write()))
     }
 
     /// The owner key this install proves its result for the request or
@@ -655,6 +792,6 @@ impl crate::Vault {
         )? {
             return Ok(None);
         }
-        Ok(self.owner_proof_signer(fold))
+        Ok(self.owner_proof_signer(fold, &OwnerProofGround::owners_signed_work()))
     }
 }

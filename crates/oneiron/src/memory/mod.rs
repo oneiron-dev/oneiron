@@ -171,6 +171,7 @@ mod support;
 pub(crate) use support::TranscriptRetainedCaller;
 mod transcript;
 pub mod usage_repair;
+pub mod verb_grant_caller;
 pub use oneiron_web_fetch::web_acquisition;
 mod web_fetch;
 mod witness;
@@ -382,6 +383,7 @@ pub use search_vector::{
 };
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
+    scoped_session_text_planned,
 };
 pub use shape_card_doors::{
     ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,
@@ -403,9 +405,10 @@ pub use support::{
 };
 pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
-    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptSpeaker, TranscriptTurn,
 };
 pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
+pub(crate) use witness::live_canonical_person_in_txn;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -454,8 +457,8 @@ pub(crate) use witness::{
 #[cfg(feature = "sync")]
 pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
-    witness_message_body,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, guard_phone_thread_mark,
+    turn_admits_message_bodies, witness_message_body,
 };
 pub(crate) use witness::{
     SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,

@@ -2,7 +2,9 @@
 //! for one signature at a time.
 
 use super::{PinBoundOwnerSigner, open_owner_seed};
-use crate::authority::{AuthorityFold, AuthorityKey, CheckpointRootSigner, authority_refused};
+use crate::authority::{
+    AuthorityFold, AuthorityKey, CheckpointRootSigner, OwnerProofGround, authority_refused,
+};
 use crate::error::{Error, Result};
 use crate::vault::Vault;
 use crate::world_keys::owner_signing::{KEY_NOT_LIVE, OTHER_VAULT_KEY, OwnerRootSigner};
@@ -98,6 +100,7 @@ impl CheckpointRootSigner for PinBoundOwnerSigner {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         self.sign(vault, Some(fold), |key| key.sign_proof(transcript))
@@ -112,6 +115,7 @@ impl CheckpointRootSigner for PinBoundOwnerSigner {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         self.sign(vault, Some(fold), |key| key.sign_ask_word(transcript))

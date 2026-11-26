@@ -22,12 +22,17 @@
 //!   TPM 2.0 sealed data object under this machine's storage key (hardware).
 //! - Other Unix: `LocalFileKeystore`, 0600 files in a 0700 directory outside the
 //!   vault, tagged so that backup tools skip it (software).
+//! - Apple, by the owner's explicit choice only: the same `LocalFileKeystore`,
+//!   for a build the keychain will not serve, such as an unsigned one with no
+//!   keychain access group (software). Never a fallback: [`file_keystore`]
+//!   opens it, and [`platform_keystore`] never does on Apple.
 //! - Tests: `MemoryKeystore`, process memory only, built under `cfg(test)` or the
 //!   `test-keystore` feature and never for a host.
 //!
 //! [`platform_keystore`] picks the platform tier; [`hardware_keystore`] the
 //! hardware one, refused where this platform has none: never a silent downgrade
-//! to software (identity, signature suites).
+//! to software (identity, signature suites). [`file_keystore`] picks the file
+//! tier on any Unix system, Apple included.
 //!
 //! The crate also asks whether this device's user is present now
 //! ([`UserPresence`], [`PresenceGate`]): the question an owner's act waits on
@@ -63,8 +68,10 @@ mod apple_names;
 mod auth_bound;
 #[cfg(any(windows, test))]
 mod dpapi_names;
-#[cfg(all(unix, not(target_vendor = "apple")))]
+#[cfg(unix)]
 mod file;
+#[cfg(any(unix, windows))]
+mod key_dir;
 #[cfg(target_os = "linux")]
 mod linux_tpm;
 #[cfg(target_os = "macos")]
@@ -83,7 +90,7 @@ pub use apple::AppleKeychain;
 #[cfg(target_vendor = "apple")]
 pub use apple_enclave::SecureEnclaveKeychain;
 pub use auth_bound::{AUTH_VALUE_MAX, AuthBoundError, AuthBoundSecretStore};
-#[cfg(all(unix, not(target_vendor = "apple")))]
+#[cfg(unix)]
 pub use file::LocalFileKeystore;
 #[cfg(target_os = "linux")]
 pub use linux_tpm::LinuxTpmKeystore;
@@ -152,6 +159,17 @@ pub enum SlotKind {
     /// process in its own store namespace. The order id belongs here, never in
     /// the slot's real host install id. No exported or ordinary-vault copy.
     LegalCloneOrder([u8; 16]),
+    /// The install-level key of one vault's owner-hold sealed copies: it
+    /// wraps each hold's own key, so the copies outlive a full vault erase.
+    /// Filed under the all-zero install, no machine's id, so the vault id
+    /// alone names it; no vault erase, delete, key retirement or forget
+    /// path deletes it.
+    LegalHoldStore,
+    /// A box recovery's held authority seed (OPUS-WAYBACK): R's released
+    /// seed, kept on the door install from the hold until the landing or
+    /// the cancel, keyed by the successor key's bytes. Deleted at landing,
+    /// on cancel, and when the hold voids.
+    RecoveryHold([u8; 32]),
 }
 
 impl SlotKind {
@@ -166,10 +184,18 @@ impl SlotKind {
             Self::HostRoot => "host-root",
             Self::HostIssuerSeed => "host-issuer-seed",
             Self::OwnerSigning => "owner-signing",
+            Self::LegalHoldStore => "legal-hold-store",
             Self::KitPiece(slot) => return slot.label(),
             Self::LegalCloneOrder(order) => {
                 let mut label = String::from("legal-clone-order-");
                 for byte in order {
+                    push_hex(&mut label, byte);
+                }
+                return Cow::Owned(label);
+            }
+            Self::RecoveryHold(successor) => {
+                let mut label = String::from("recovery-hold-");
+                for byte in successor {
                     push_hex(&mut label, byte);
                 }
                 return Cow::Owned(label);
@@ -472,6 +498,33 @@ pub fn platform_keystore(
         let _ = (service, dir, vault_dirs);
         Err(KeystoreError::Unavailable(
             "no adapter for this platform yet",
+        ))
+    }
+}
+
+/// The file tier on any Unix system, Apple included: one 0600 file per slot in
+/// the 0700 directory `dir`, which must lie outside every vault directory in
+/// `vault_dirs`. On Unix systems other than Apple it is the platform tier
+/// itself. On Apple it is the owner's explicit choice for a build the keychain
+/// will not serve (an unsigned one has no keychain access group): file modes
+/// alone guard the slots, never the keychain, and Time Machine does not honour
+/// the directory's `CACHEDIR.TAG`. Refused elsewhere: Windows keeps its slots
+/// in DPAPI-sealed files, its platform tier.
+pub fn file_keystore(
+    dir: &std::path::Path,
+    vault_dirs: &[&std::path::Path],
+) -> Result<std::sync::Arc<dyn DeviceKeystore>> {
+    #[cfg(unix)]
+    {
+        Ok(std::sync::Arc::new(LocalFileKeystore::open(
+            dir, vault_dirs,
+        )?))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, vault_dirs);
+        Err(KeystoreError::Unavailable(
+            "no plain file keystore on this platform; its platform tier keeps the slots",
         ))
     }
 }

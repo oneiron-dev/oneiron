@@ -1,8 +1,9 @@
 //! The owner's list of owner key changes (the owner's ruling AUTH-5, pass 27
 //! section 4.4): every enrolment, every confirmation and every removal of an
 //! enrolled owner key, in either shape (a device's or the recovery root's
-//! Ed25519 key, or a passkey), and every binding of an owner by their own
-//! passkey, that this vault's log holds and its fold counts, newest first
+//! Ed25519 key, or a passkey), and every binding of an owner by a key of
+//! their own (their passkey, or one of their device keys), that this vault's
+//! log holds and its fold counts, newest first
 //! (row KEY-CHANGE-RECEIPT-EMPTY-NO-NOTICE; row PASSKEY-SELF-BIND).
 //!
 //! This list is the notice of a key change. It writes no row of its own:
@@ -74,6 +75,13 @@ pub enum OwnerKeyChangeKind {
     /// so every owner device lists it: a bind the owner did not make is a
     /// "Not you?" as a key they did not enrol is.
     BoundByPasskey,
+    /// An enrolled owner device key bound its owner: it signed their `human`
+    /// binding itself, so their owner verbs pass (lead ruling
+    /// HOSTED-RELAY-OWNER-HUMAN-BIND-CEREMONY = B; the #10007 binding). The
+    /// device signed on its own key, so every owner device lists it: a bind
+    /// the owner did not make is a "Not you?" as a key they did not enrol
+    /// is.
+    BoundByDeviceKey,
 }
 
 /// One change of an enrolled owner key, as its authority entry says it.
@@ -105,10 +113,12 @@ pub struct OwnerKeyChange {
 impl Vault {
     /// Every change of an enrolled owner key, newest first: each counted
     /// enrolment, confirmation and removal of a key an enrolment names, a
-    /// passkey's included, and each counted binding an enrolled passkey
-    /// signed for its owner ([`OwnerKeyChangeKind::BoundByPasskey`]), from the
-    /// rows this vault keeps (stored, or
-    /// carried by an adopted checkpoint image). A key enrolled on two
+    /// passkey's included, and each counted binding an enrolled passkey or
+    /// device key signed for its owner
+    /// ([`OwnerKeyChangeKind::BoundByPasskey`],
+    /// [`OwnerKeyChangeKind::BoundByDeviceKey`]), from the rows this vault
+    /// keeps (stored, or carried by an adopted checkpoint image). A key
+    /// enrolled on two
     /// branches lists its smallest enrolment entry, as
     /// [`Self::enrolled_owner_keys`] and [`Self::enrolled_owner_passkeys`]
     /// do; each other counted enrolment of a key a passkey vouched for, by a
@@ -128,17 +138,35 @@ impl Vault {
     pub fn owner_key_changes(&self, owner: &AuthenticatedOwner) -> Result<Vec<OwnerKeyChange>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.owner_key_changes_in_txn(&txn)
+    }
+
+    /// The hosted server's read for its report to the control plane: the same
+    /// list as [`Self::owner_key_changes`] with no person's proof.
+    /// Server-internal, no verb: only the reporter task calls it, and the
+    /// report it feeds carries the entry hash, the change kind, the key's
+    /// shape and the signer-claimed time alone.
+    ///
+    /// # Errors
+    /// The log's read errors.
+    pub fn owner_key_changes_as_host(&self) -> Result<Vec<OwnerKeyChange>> {
+        let txn = self.store.env.read_txn()?;
+        self.owner_key_changes_in_txn(&txn)
+    }
+
+    /// The list in the caller's transaction, after its proof, if any, passed.
+    fn owner_key_changes_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<OwnerKeyChange>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let hosted = self.is_hosted();
         let mut rows = Vec::new();
         let mut stored = BTreeSet::new();
-        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
+        for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             rows.push((hash, entry));
         }
-        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
         {
             rows.extend(
                 evidence
@@ -147,8 +175,8 @@ impl Vault {
             );
         }
         let keys = ListedOwnerKeys::of(
-            self.enrolled_owner_keys_in_txn(&txn)?,
-            self.enrolled_owner_passkeys_in_txn(&txn)?,
+            self.enrolled_owner_keys_in_txn(txn)?,
+            self.enrolled_owner_passkeys_in_txn(txn)?,
             &fold,
             hosted,
             &rows,
@@ -317,8 +345,10 @@ impl ListedOwnerKeys {
 /// `hosted` is as [`AuthorityFold::proves_owner_acts`] takes it), or a
 /// counted `BindActor` of an enrolled passkey that the passkey signed itself,
 /// the one binding the fold counts with a passkey as its signer
-/// (`owner_key_enrollment::passkey_self_bind`). Keys of either shape alike.
-/// None for any other entry.
+/// (`owner_key_enrollment::passkey_self_bind`), or a counted `BindActor` of
+/// an enrolled owner device key that the key signed itself, alone, as
+/// `human` (the #10007 binding). Keys of either shape alike. None for any
+/// other entry.
 fn owner_key_change(
     fold: &AuthorityFold,
     hosted: bool,
@@ -358,6 +388,22 @@ fn owner_key_change(
         {
             let key = keys.keys.get(authority_key)?;
             (OwnerKeyChangeKind::BoundByPasskey, authority_key, key)
+        }
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_class,
+            ..
+        } if counted
+            && matches!(authority_key, AuthorityKey::Ed25519(_))
+            && entry.signer.public_key == *authority_key
+            && entry.cosigns.is_empty()
+            && actor_class == ACTOR_CLASS_HUMAN =>
+        {
+            let key = keys.keys.get(authority_key)?;
+            if key.kind != Some(EnrolledOwnerKeyKind::Device) {
+                return None;
+            }
+            (OwnerKeyChangeKind::BoundByDeviceKey, authority_key, key)
         }
         _ => return None,
     };

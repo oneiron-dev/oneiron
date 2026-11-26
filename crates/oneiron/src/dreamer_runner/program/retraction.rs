@@ -470,9 +470,11 @@ pub(super) fn merge_released_in_txn(
 
 /// The row this machine knows that comes later in its key's order than the
 /// carried row `bytes`, filed under `map_key`: `Admitted` for a decision held
-/// here, `Released` for a release kept or taken here, `Retracted` for a wake
+/// here (with the actor this machine's own rows hold for that decision, if
+/// any), `Released` for a release kept or taken here, `Retracted` for a wake
 /// retracted here. `None` when the carried row is the latest this machine
-/// knows, or names an occurrence's wake, which no carried row decides.
+/// knows, or names an occurrence's wake, which no carried row decides, or
+/// names an actor erased here, or is answered by a decision of one.
 pub(crate) fn outranking_wake_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -499,15 +501,29 @@ pub(crate) fn outranking_wake_row_in_txn(
     if replica::wake_key(key) != map_key {
         return Ok(None);
     }
+    // A row of an actor erased here is answered by no row: it leaves the
+    // window (`scrub_turn_programs`), and the wake it stands for goes on its
+    // own machine with the actor's erase there.
+    if vault.carrier_actor_erased_in_txn(txn, &actor)? {
+        return Ok(None);
+    }
     let mark = actor_wake_key(actor, key);
     let state = CARRIED
         .get(vault, txn, &mark)?
         .filter(|carried| carried.admission == admission)
         .map(|carried| carried.state);
     let known = if decided_in_txn(vault, txn, key, admission)? {
+        // The decision's actor is the one this machine's own rows hold for
+        // it, never the one the carried row asserts. A decision of an actor
+        // erased here goes into no window.
+        let actor = super::decided::decision_actor_in_txn(vault, txn, key, admission)?;
+        if super::decided::erased_here_in_txn(vault, txn, actor)? {
+            return Ok(None);
+        }
         WakeRow::Admitted {
             turn,
             registration,
+            actor,
             admission,
         }
     } else if state == Some(CarriedState::Released)

@@ -214,11 +214,13 @@ impl RunnerTaskEffects {
         }
     }
 
-    /// Runs them, after the runner's commit.
+    /// Runs them, after the runner's commit. `now` is the vault's Unix
+    /// second; the trap signal takes it in milliseconds.
     pub(crate) fn run(self, vault: &Vault, now: u64) -> Result<()> {
         if let Some(task_ref) = self.settled {
-            crate::llm::send_peer_result_signal(vault, task_ref, now)?;
-            crate::llm::reconcile_peer_result_signals(vault, now)?;
+            let now_ms = now.saturating_mul(1000);
+            crate::llm::send_peer_result_signal(vault, task_ref, now_ms)?;
+            crate::llm::reconcile_peer_result_signals(vault, now_ms)?;
         }
         Ok(())
     }
@@ -235,14 +237,16 @@ impl RunnerTaskEffects {
 /// run by the write's owner from its postcommit scope: each TASK's signal,
 /// then one reconcile for the handles its siblings settle. A wake that does
 /// not go out is logged and replayed from the binding index by the next wake
-/// pass; it never fails the write that settled the TASK.
+/// pass; it never fails the write that settled the TASK. `now` is the vault's
+/// Unix second; the trap signal takes it in milliseconds.
 pub(crate) fn wake_settled_tasks(vault: &Vault, tasks: &BTreeSet<EntityId>, now: u64) {
+    let now_ms = now.saturating_mul(1000);
     for task in tasks {
-        if let Err(error) = crate::llm::send_peer_result_signal(vault, *task, now) {
+        if let Err(error) = crate::llm::send_peer_result_signal(vault, *task, now_ms) {
             tracing::warn!(kind = ?error.kind(), task = %task.to_hex(), "a settled TASK's peer signal did not go out; the wake pass replays it");
         }
     }
-    if let Err(error) = crate::llm::reconcile_peer_result_signals(vault, now) {
+    if let Err(error) = crate::llm::reconcile_peer_result_signals(vault, now_ms) {
         tracing::warn!(kind = ?error.kind(), "peer-result reconcile after a settling commit failed; the wake pass replays it");
     }
 }

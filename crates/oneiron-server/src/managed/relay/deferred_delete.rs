@@ -4,8 +4,9 @@
 //! object, its generation and the BLAKE3 digest of the ciphertext it names)
 //! in `deferred-deletes/` under the room directory, beside `objects/`, so a
 //! listing or a read never shows it. Then the guard runs the unlink. A
-//! standing customer hold defers it (202 `held_until_release`); a hold state
-//! the guard cannot read defers it too (202 `hold_state_unknown`).
+//! No hold stands, so the vault guard proceeds; a state the guard cannot
+//! read defers it (202 `hold_state_unknown`). The `held_until_release`
+//! shape is retained for the protocol.
 //! Nothing is refused. The intents replay at start, before the room serves,
 //! each time the guard's recheck counter moves, and once an upload kept a
 //! generation (`super::overwrite`, FIX 1283), through the same guard. An
@@ -71,7 +72,8 @@ struct Deferred {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Reason {
-    /// A standing hold keeps the vault's backups.
+    /// Retained protocol vocabulary: no hold keeps a vault's backups any
+    /// more, so the vault guard never answers it.
     HeldUntilRelease,
     /// The guard could not read the holds, or could not run.
     HoldStateUnknown,

@@ -138,12 +138,14 @@ fn export(
         return Err(refused());
     }
     let window = manager.open_window(&key)?;
+    // A guest document carries no tombstone (CROSS-VAULT-DELETE-NEVER-ADMITTED).
     let (body, rows, travelled) = super::codec::guest_share_envelope_body_listing(
         vault,
         &window.doc,
         &key,
         grant.scope,
         &selector,
+        super::GuestTombstones::Omitted,
     )?;
     // A narrower credential never exports bytes around its own read lane.
     // If any selected row is withheld for this caller, the whole export refuses.
@@ -155,6 +157,15 @@ fn export(
     if current != grant || before != after {
         return Err(refused());
     }
+    // A guest document carries no tombstone, but the rows it releases are
+    // recorded before it is signed, so a later Connect delivery or socket
+    // answer under the grant carries the owner's delete of each
+    // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE): a record that fails signs
+    // nothing.
+    vault.record_peer_release(&crate::share_travel::PeerRelease::new(
+        input.grant_ref,
+        rows.clone(),
+    ))?;
     let mut envelope = issuer.sign_guest_document_envelope(after, body)?;
     envelope.travel_receipt = Some(vault.record_guest_window_travel(
         &input.grant_ref,

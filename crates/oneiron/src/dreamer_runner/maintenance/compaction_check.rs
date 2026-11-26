@@ -46,10 +46,7 @@ use crate::inbox::{
     NOTIFICATION_PRODUCER_FINDING, NotificationEvent, NotificationKind, NotificationSource,
 };
 use crate::inference_context::HostInferenceContext;
-use crate::llm::call_as_step;
 use crate::model_binding::ModelRole;
-use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
-use crate::model_step_error::DurableStepResult;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
@@ -57,8 +54,11 @@ use oneiron_model::llm::{
 };
 
 mod conversation;
+mod judge_room;
+mod judge_step;
 mod support;
 pub(crate) use conversation::{ConversationCheckDeclaration, declare_conversation_check_in_txn};
+use judge_step::{Judging, ask_judge};
 pub use support::CompactionCheckDecisions;
 
 #[doc(hidden)]
@@ -247,6 +247,9 @@ pub struct CompactionCheckModel<'a> {
     pub role: ModelRole,
     /// The host's rubric: prompt data, never engine prose.
     pub rubric: &'a str,
+    /// The input the judge's model holds, as the host lends it: a judge input
+    /// past it settles unjudged (`span_past_judge_room`); `None` sends it whole.
+    pub window_tokens: Option<u64>,
     /// The host's decision path for the typed support verdict (FIX 8713);
     /// `None` before the host staffs one, when the judge's own verdict
     /// stands, recorded as untyped.
@@ -300,12 +303,6 @@ pub async fn run_compaction_check(
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
     let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
-    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
-        Ok(judging) => judging,
-        Err(parked) => return Ok(parked),
-    };
-    let judged = judgment(&judging.response, &declaration);
-    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let (cited, state) = (declaration.cited(true), judge_input(&declaration, &read));
     let ask = support::Ask {
         kind: declaration.landing_kind(),
@@ -316,6 +313,20 @@ pub async fn run_compaction_check(
         keyless,
         paid,
     };
+    if let Some(settled) =
+        judge_room::exceeded(&model, &request, &ask, &declaration.evidence_revision)?
+    {
+        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+        return Ok(judge_room::completed_without_judge());
+    }
+    let earlier = support::Spend::default();
+    let judging =
+        match ask_judge(attempt, ctx, &model, request, declaration.writer, &earlier).await? {
+            Ok(judging) => judging,
+            Err(parked) => return Ok(parked),
+        };
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),
@@ -347,101 +358,6 @@ fn judge_locality(model: &CompactionCheckModel<'_>) -> Result<oneiron_model::llm
         .inference
         .selected_locality()
         .ok_or_else(|| Error::InvalidConfig("the check's host binding names no locality".into()))
-}
-
-/// One judge call's answer, as a durable step of its attempt.
-struct Judging {
-    response: LlmResponse,
-    memoized: bool,
-    step_hash: [u8; 32],
-    binding: StepEffectBinding,
-    /// What it spent: nothing when memoized, paid for by the pass that
-    /// asked it.
-    units: u64,
-}
-
-impl Judging {
-    /// The judge's model, step and usage, as a finding records them.
-    fn judge(&self, model: &CompactionCheckModel<'_>) -> serde_json::Value {
-        serde_json::json!({
-            "model": model.model.as_str(),
-            "step_hash": bytes_to_hex_lower(&self.step_hash),
-            "usage_in": self.response.usage.input.total,
-            "usage_out": self.response.usage.output.total,
-        })
-    }
-}
-
-/// Asks the judge `request` about `subject`, as a durable step of
-/// `attempt`, admitted on the host's role: its answer, or how the attempt
-/// waits for one.
-async fn ask_judge(
-    attempt: &DreamerAdmittedAttempt,
-    ctx: &WakeAttemptContext<'_>,
-    model: &CompactionCheckModel<'_>,
-    request: LlmRequest,
-    subject: EntityId,
-) -> Result<std::result::Result<Judging, DreamerAttemptExecution>> {
-    let attempt_id = attempt.status.attempt.id;
-    let request = ctx
-        .vault
-        .authorize_model_role(model.role, request, &model.inference)?
-        .into_request();
-    let step_hash = request
-        .canonical_hash()
-        .map_err(|_| Error::InvalidConfig("the check request did not hash".into()))?;
-    let step_ctx = DurableStepContext {
-        vault: ctx.vault,
-        attempt_id,
-        run_id: attempt.status.attempt.run_id.clone(),
-        envelope_actor: ctx.vault.dreamer_actor_for_attempt(attempt_id)?,
-        subject,
-        deadline: Some(ctx.deadline),
-        now_ms: ctx.now_ms,
-        spend_scope: None,
-        wake_pass_bound: true,
-    };
-    let outcome = call_as_step(&step_ctx, model.backend, model.guard, request).await;
-    let (response, memoized, binding) = match step_answer(outcome)? {
-        Ok(answer) => answer,
-        Err(parked) => return Ok(Err(parked)),
-    };
-    let units = if memoized {
-        0
-    } else {
-        response
-            .usage
-            .input
-            .total
-            .saturating_add(response.usage.output.total)
-    };
-    Ok(Ok(Judging {
-        response,
-        memoized,
-        step_hash,
-        binding,
-        units,
-    }))
-}
-
-/// The judge's answer and whether it was memoized, or how the attempt
-/// waits for one.
-type StepAnswer =
-    std::result::Result<(LlmResponse, bool, StepEffectBinding), DreamerAttemptExecution>;
-
-/// [`StepAnswer`] from the durable step's outcome: nothing was spent before
-/// it, so a step that did not finish parks with only its own spend.
-fn step_answer(outcome: DurableStepResult<StepOutcome>) -> Result<StepAnswer> {
-    match outcome {
-        Ok(StepOutcome::Finished {
-            response,
-            memoized,
-            binding,
-            ..
-        }) => Ok(Ok((response, memoized, binding))),
-        Ok(StepOutcome::Trapped { .. }) => Ok(Err(support::Spend::default().trapped())),
-        Err(error) => support::Spend::default().parked_on(error).map(Err),
-    }
 }
 
 /// What the deterministic reads found.

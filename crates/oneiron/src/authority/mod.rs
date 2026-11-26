@@ -132,8 +132,10 @@ mod machine_claims;
 mod machine_enroll;
 mod machine_identity;
 mod machine_profile;
+mod machine_signatures;
 mod machine_standing;
 mod machine_write;
+mod main_log_position;
 mod managed_owner_check;
 mod membership_execution;
 mod mesh_machine;
@@ -165,6 +167,7 @@ mod readonly_fold;
 mod recover_many;
 mod recovery;
 mod recovery_authority_generation;
+mod recovery_hold;
 mod restored_join;
 mod restored_join_door;
 mod retired_signers;
@@ -277,6 +280,14 @@ pub use root_appointment_door::RootAppointmentReceipt;
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
+// A box recovery's wait and its answers (OPUS-WAYBACK).
+pub use oneiron_authority::authority::{
+    RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldEnrolment,
+};
+pub use recovery_hold::{
+    PreparedRecoveryHoldCancel, RECOVERY_WAIT_DEFAULT, RecoveryBoxCancelProof, RecoveryHoldLanding,
+    RecoveryHoldState, RecoveryHoldView,
+};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
@@ -391,7 +402,8 @@ pub use history_fetch::{
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
-    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
+    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_by_machine_in_txn,
+    home_candidacies_in_txn,
 };
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
@@ -429,8 +441,9 @@ pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
-    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
-    MeshMachineAddressEnvelope, MeshMachineBinding,
+    MESH_AUTHORITY_PAGE_MAX, MeshAlpnGrant, MeshAuthorityImport, MeshAuthorityPage,
+    MeshAuthorityRow, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshEnrolmentAsk,
+    MeshMachineAddress, MeshMachineAddressEnvelope, MeshMachineBinding,
 };
 pub use restored_join::RestoredEnrolmentStanding;
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
@@ -474,7 +487,7 @@ pub use owner_key_enrollment_door::{
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
-    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
+    OwnerKeyMoveBinding, OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub use owner_key_removal_door::{
     EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
@@ -495,10 +508,10 @@ pub use recover_many::{
 pub use slip::*;
 pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
-    PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
-    format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
-    pairing_binding_transcript, pairing_binding_transcript_pinned, parse_pairing_link,
-    parse_pinned_pairing_link,
+    LinkedPeer, LinkedPeerIssued, PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal,
+    PairingRedeemed, format_pairing_link, format_pinned_pairing_link,
+    machine_possession_transcript, pairing_binding_transcript, pairing_binding_transcript_pinned,
+    parse_pairing_link, parse_pinned_pairing_link,
 };
 pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
@@ -567,7 +580,6 @@ pub(crate) use claim_write::row_causal_admitted_cached;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
-#[cfg(feature = "sync")]
 pub(crate) use current_scope::current_grant_scope;
 pub(crate) use first_seen_clock::*;
 pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
@@ -589,9 +601,15 @@ pub(crate) use log_budget::{
     authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use log_budget::{
+    door_view_differs_from_rebuild_in_txn, door_view_rows_decoded_for_test,
+    staged_door_views_differ_from_rebuild,
+};
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
+pub use owner_proof::OwnerProofGround;
 pub(crate) use owner_proof::OwnerProofSigner;
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
@@ -628,7 +646,9 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+use readonly_fold::{
+    authority_log_body_in_txn, authority_log_rows_in_txn, decode_stored_authority_log_body,
+};
 pub(crate) use recovery::arriving_re_root;
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;

@@ -21,7 +21,7 @@ mod serve;
 #[cfg(unix)]
 mod staging;
 
-use oneiron_mesh_transport::{MeshConnection, MeshError};
+use oneiron_mesh_transport::{MeshConnection, MeshError, message};
 use oneiron_organ_protocol::{AskRefusal, ByteBuf, Hash32, OrganError, TypedBody, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -100,6 +100,11 @@ pub(crate) struct PeerCall {
     pub inputs: Vec<PeerInput>,
     /// The ask verbs the asking node has handlers for.
     pub answers: Vec<String>,
+    /// 32 bytes the asking node drew for this call, hex; the serving node's
+    /// receipt signature names them. Empty from an asking node that checks
+    /// no signature.
+    #[serde(default)]
+    pub call_nonce: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -187,16 +192,18 @@ pub(crate) struct PeerAnswered {
     pub fetch: Option<FetchTarget>,
 }
 
+/// The protocol's name in a codec error.
+const PROTOCOL: &str = "organ mesh";
+
 /// A mesh message in the organ protocol's codec, which neither encodes nor
-/// decodes a value by recursing over its depth.
+/// decodes a value by recursing over its depth ([`message`], shared with
+/// the job protocols).
 pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, MeshError> {
-    oneiron_organ_protocol::to_vec(value)
-        .map_err(|err| MeshError::Io(format!("organ mesh encode: {err}")))
+    message::encode_message(PROTOCOL, value)
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, MeshError> {
-    oneiron_organ_protocol::from_slice(bytes)
-        .map_err(|err| MeshError::Io(format!("organ mesh decode: {err}")))
+    message::decode_message(PROTOCOL, bytes)
 }
 
 /// One message out on a fresh stream, one back.
@@ -204,7 +211,5 @@ pub(crate) async fn exchange(
     conn: &dyn MeshConnection,
     request: &Request,
 ) -> Result<Reply, MeshError> {
-    let mut stream = conn.open_stream().await?;
-    stream.send(&encode(request)?).await?;
-    decode(&stream.recv().await?)
+    message::exchange(PROTOCOL, conn, request).await
 }

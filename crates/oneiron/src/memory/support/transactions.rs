@@ -41,22 +41,14 @@ impl Memory<'_> {
         self.owner_authorship.as_ref()
     }
 
-    /// The owner proof this install's owner key mints for one ask word, on a
-    /// surface that answers for itself as this install's owner device
-    /// ([`Self::answering_as_owner_device`]); `None` on every other surface.
-    /// The one caller of [`crate::Vault::authenticate_owner_device`].
-    pub(crate) fn owner_device_word_proof(
-        &self,
-    ) -> crate::error::Result<Option<crate::consent::AuthenticatedOwner>> {
-        if !self.answers_as_owner_device
-            || self.host_origin.is_some()
-            || self.machine_signer.is_some()
-        {
-            return Ok(None);
-        }
-        self.vault
-            .authenticate_owner_device(self.actor, crate::store::GateDecisionId::now())
-            .map(Some)
+    /// Whether this surface answers for itself as this install's owner
+    /// device ([`Self::answering_as_owner_device`]): there this install's
+    /// owner key mints the owner proof of each ask word
+    /// ([`crate::Vault::authenticate_owner_device`], called by
+    /// `task_verb::ask_word_presence` alone). A surface that writes for
+    /// someone else is none.
+    pub(crate) fn is_owner_device_surface(&self) -> bool {
+        self.answers_as_owner_device && self.host_origin.is_none() && self.machine_signer.is_none()
     }
 
     /// Where the owner's request reached this install
@@ -120,10 +112,18 @@ impl Memory<'_> {
     }
 
     /// The source a claim door writes: the bound origin's, else the caller's.
+    /// A credential handed on to another key states nothing for the person
+    /// it names: its declared `user_stated` writes Generated
+    /// (HANDED-ON-SLIP-PERSON Q1 = A).
     pub(in crate::memory) fn claim_source(&self, declared: &str) -> MemoryResult<ClaimSource> {
         match &self.host_origin {
             Some(origin) => Ok(origin.source()),
-            None => super::claims::parse_claim_source(declared),
+            None => match super::claims::parse_claim_source(declared)? {
+                ClaimSource::UserStated if self.presents_handed_on_credential() => {
+                    Ok(ClaimSource::Generated)
+                }
+                source => Ok(source),
+            },
         }
     }
 
@@ -245,10 +245,19 @@ impl Memory<'_> {
     /// the run attempt its host origin's envelope binds (FIX 11920), so a
     /// delegated run's writes through every door meet its live delegation
     /// chain at the Gate. It equals the bound actor by identity; with no
-    /// origin, or an origin with no attempt, it is that actor alone.
+    /// origin, or an origin with no attempt, it is that actor alone. A
+    /// handle whose presented credential was handed on to another key
+    /// marks it so ([`crate::WriteActor::with_handed_on_credential`]): every
+    /// person gate that judges the write actor refuses it the person's acts
+    /// ([`Self::acts_as_own_person`]).
     #[must_use]
     pub(crate) fn write_actor(&self) -> crate::WriteActor {
         let actor = crate::WriteActor::new(self.actor, self.actor_class);
+        let actor = if self.presents_handed_on_credential() {
+            actor.with_handed_on_credential()
+        } else {
+            actor
+        };
         match self
             .host_origin
             .as_ref()

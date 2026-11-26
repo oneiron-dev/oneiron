@@ -42,9 +42,11 @@ pub(crate) fn arming_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPla
 
 /// Where the wake row `bytes`, filed under `map_key`, goes: an `Owed` row is
 /// its actor's, held while its turn and conversation are; a `Retracted` or
-/// `Released` row is its actor's, with no dependency; an `Admitted` row is
-/// ids alone, held while its turn is. A key mismatch for a wake filed under
-/// another wake's key. `None` for bytes that read as no wake.
+/// `Released` row is its actor's, with no dependency; an `Admitted` row that
+/// names its actor is that actor's, held while its turn is, so the actor's
+/// erase retires it (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED), and one that names
+/// none is ids alone, held while its turn is. A key mismatch for a wake filed
+/// under another wake's key. `None` for bytes that read as no wake.
 pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlacement> {
     let row = decode_wake(bytes).ok()?;
     if wake_key(row.key()) != map_key {
@@ -59,6 +61,14 @@ pub(crate) fn wake_row_placement(map_key: &str, bytes: &[u8]) -> Option<RowPlace
         WakeRow::Retracted { actor, .. } | WakeRow::Released { actor, .. } => RowPlacement::Owned {
             owner: actor,
             dependencies: Vec::new(),
+        },
+        WakeRow::Admitted {
+            turn,
+            actor: Some(actor),
+            ..
+        } => RowPlacement::Owned {
+            owner: actor,
+            dependencies: vec![turn],
         },
         WakeRow::Admitted { turn, .. } => RowPlacement::Structure {
             dependencies: vec![turn],

@@ -294,6 +294,11 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// What the authority store doors last read of a write's staged rows,
+    /// which a later read of the same write extends while it still holds
+    /// those rows (FIX [AUTHORITY-DOOR-VIEW-MID-BATCH-REBUILD]).
+    pub(crate) authority_door_view_staged:
+        Mutex<Option<std::sync::Arc<crate::authority::AuthorityDoorView>>>,
     /// The row the authority door last held at the owner's reserve, for the
     /// reserve's typed check (Astra owner-reserve r2 F4). Never persisted.
     pub(crate) authority_owner_reserve_hold: Mutex<Option<crate::authority::OwnerReserveHold>>,
@@ -423,15 +428,12 @@ pub struct StoreCore {
     pub(crate) l2_base_cache: Mutex<crate::store::l2_evidence::L2BaseCache>,
     pub(in crate::store) ppr_cache_invalidation:
         &'static dyn crate::store::ppr_cache_invalidation::PprCacheInvalidation,
-    /// Legal-hold refusals waiting for their hold log: the refusing
-    /// transaction rolls back (OF-470). Never persisted.
-    pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
     /// Wakes a HOST order's prospective capture worker after a new message
     /// is sealed to it (FIX 13866). Never persisted.
     pub(crate) host_legal_prospective: super::legal_hold::ProspectiveWake,
     /// Content-free, per-vault: bumped after each committed legal-hold
-    /// release and each hold maintenance pass, so a deferred delete that a
-    /// standing hold kept asks again (FIX 1488). Never persisted.
+    /// release and each hold maintenance pass, so a deferred delete asks
+    /// again (FIX 1488). Never persisted.
     pub(crate) backup_hold_rechecks: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault digest deadline invalidation. The host
     /// subscribes before reading its first deadline; no process-global timer.
@@ -495,6 +497,15 @@ pub struct StoreCore {
     /// one store per vault path, so the vault's own lock keeps every caller
     /// of the process that reaches the slot in one line.
     pub(crate) owner_signing_slot_lock: Mutex<()>,
+    /// Held by the recovery root's door from its hold attempt's reuse check
+    /// to the hold's commit, and by [`crate::Vault::land_due_recovery_holds`]
+    /// for its whole run: the only writers and deleters of this install's
+    /// recovery hold seed slots for this vault. No landing reaps an
+    /// attempt's slot between its pending record and its hold, and no second
+    /// attempt replaces a seed while the first writes. A process holds one
+    /// store per vault path, so the vault's own lock keeps every such caller
+    /// of the process in one line.
+    pub(crate) recovery_hold_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.
@@ -784,6 +795,7 @@ macro_rules! manifest_dbs {
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
             fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
+            fn owning_store(&self) -> Option<&Store> { Some(self.base) }
             fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> { self.room }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
@@ -838,6 +850,14 @@ macro_rules! manifest_dbs {
             fn room_base(&self) -> Option<&Store> {
                 None
             }
+            /// The store these databases are, or the base a room's view
+            /// composes over: the store whose authority log a reader below
+            /// the vault folds (stage 7c-4, a setting read on an install born
+            /// of a restore). `None` for a core's canonical accessors, which
+            /// no store holds yet.
+            fn owning_store(&self) -> Option<&Store> {
+                self.room_base()
+            }
             /// The overlay of the room whose view this is, `None` for a
             /// target that is no room's view: the room keeps a fresh secret
             /// a row of its own holds in that overlay's custody, in memory
@@ -860,6 +880,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { false }
+            fn owning_store(&self) -> Option<&Store> { Some(self) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }

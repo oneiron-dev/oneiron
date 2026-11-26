@@ -44,6 +44,22 @@ impl WaitRow {
 pub(in crate::task_verb) const TASK_ASK_WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
     SideTable::new(&side_table::TASK_ASK_WAIT);
 
+/// A wait row's pending trap: `None` when the row is consumed, else the trap
+/// [`signal_waiters`] signals. A pending row without a trap is refused here,
+/// as the settlement does when it signals.
+fn pending_trap_for_row(row: &WaitRow) -> MemoryResult<Option<crate::llm::TrapRef>> {
+    if row.consumed {
+        return Ok(None);
+    }
+    Ok(Some(crate::llm::TrapRef {
+        trap_claim_id: row
+            .trap_ref
+            .ok_or_else(|| MemoryError::bad_request("pending wait has no trap"))?,
+        kind: crate::llm::DreamerTrapKind::HumanResponse,
+        step_hash: row.step_hash,
+    }))
+}
+
 pub(in crate::task_verb) fn signal_waiters(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -52,15 +68,26 @@ pub(in crate::task_verb) fn signal_waiters(
 ) -> MemoryResult<()> {
     let rows = TASK_ASK_WAITS.scan_from(&vault.store, txn, group.as_bytes())?;
     for (_, row) in rows {
-        if !row.consumed {
-            let trap = crate::llm::TrapRef {
-                trap_claim_id: row
-                    .trap_ref
-                    .ok_or_else(|| MemoryError::bad_request("pending wait has no trap"))?,
-                kind: crate::llm::DreamerTrapKind::HumanResponse,
-                step_hash: row.step_hash,
-            };
+        if let Some(trap) = pending_trap_for_row(&row)? {
             crate::llm::signal_step_wait_in_txn(vault, txn, &trap, now)?;
+        }
+    }
+    Ok(())
+}
+
+/// Reads every pending waiter's trap head over `txn`, the read half of
+/// [`signal_waiters`]. The pre-prompt cut read calls this before the person is
+/// asked, so a deleted trap the settlement would map to an invalid ask is
+/// refused before the prompt.
+pub(in crate::task_verb) fn pending_waiters_read_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    group: EntityId,
+) -> MemoryResult<()> {
+    let rows = TASK_ASK_WAITS.scan_from(&vault.store, txn, group.as_bytes())?;
+    for (_, row) in rows {
+        if let Some(trap) = pending_trap_for_row(&row)? {
+            crate::llm::step_wait_reads_in_txn(vault, txn, &trap)?;
         }
     }
     Ok(())

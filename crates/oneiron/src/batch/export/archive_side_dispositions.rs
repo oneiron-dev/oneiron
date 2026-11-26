@@ -35,6 +35,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "CAMPAIGN_COMPLIANCE_RECEIPT",
         ArchiveSideDisposition::Retained,
     ),
+    (
+        "CAMPAIGN_HOUSE_VOICE_GUIDE",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CHECK_IN_RECEIPT", ArchiveSideDisposition::Retained),
     (
         "COACH_TOPOLOGY_AUDIT_INTENT",
@@ -105,6 +109,11 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("ENTITY_DOC_RECEIPT", ArchiveSideDisposition::Retained),
     ("ESIGN_AUDIT", ArchiveSideDisposition::Retained),
     ("ESIGN_IMAGE_BYTES_BUDGET", ArchiveSideDisposition::Retained),
+    // The lane economy's tables (FIX LANE-ECONOMY-TABLES-ARCHIVE-CLASS): no landing group, so
+    // every door, the owner's restore too, keeps them inert and no restore reopens a line, an
+    // arm, a hold or an intent.
+    ("EXPERIMENT_ARM", ArchiveSideDisposition::Retained),
+    ("EXPERIMENT_ARM_UNIT", ArchiveSideDisposition::Retained),
     ("EXPORT_RECEIPT", ArchiveSideDisposition::Retained),
     (
         "FEDERATION_ENGINE_DEFAULT_GRANT",
@@ -119,6 +128,8 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "GENUI_VOICE_GRANT_OFFER",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalAuthorityNotRestored),
     ),
+    ("GPU_LINE", ArchiveSideDisposition::Retained),
+    ("GPU_LINE_PERIOD", ArchiveSideDisposition::Retained),
     (
         "HEALER_OVERSIGHT_RECEIPT",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::EngineAttestationNotRestored),
@@ -129,13 +140,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOOKS_REGEN_RECEIPT", ArchiveSideDisposition::Retained),
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),
+    ("LANE_ECONOMY_INTENT", ArchiveSideDisposition::Retained),
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_ERASE_LINK", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_EVENT", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_PENDING_ERASE", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_ROW", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_TARGET", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_USE_LIMIT", ArchiveSideDisposition::Retained),
     (
         "MAIL_PACK_COMPLIANCE_SETTING",
         ArchiveSideDisposition::Retained,
@@ -198,6 +206,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("PROJECT_HISTORY_POLICY", ArchiveSideDisposition::Retained),
     ("PROPOSAL_RECEIPT_HISTORY", ArchiveSideDisposition::Retained),
+    ("READ_SHAPE_PINS", ArchiveSideDisposition::Retained),
     ("RETRIEVAL_POLICY_PINS", ArchiveSideDisposition::Retained),
     (
         "ROOM_THREADS_ADMIN_DELETE",

@@ -237,12 +237,10 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
 }
 
 /// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
-/// same at `/v1/owner/legal-holds`. Lifting a hold is only the one "Lift the
-/// hold and erase?" confirm: its title and prompt are printed first, and it
-/// acts only with `--yes`.
+/// same at `/v1/owner/legal-holds`. `lift` lifts a hold and destroys its
+/// sealed copy; nothing in the vault is erased by it.
 pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()> {
     use crate::cli::{LegalHoldPlaceArgs, LegalHoldWidenArgs, LegalHoldsCommand};
-    use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
     use oneiron::task_verb::sdk;
 
     let (serve, route) = match &command {
@@ -252,16 +250,9 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
         LegalHoldsCommand::Widen(args) => {
             (&args.serve, "POST /v1/owner/legal-holds/widen --data -")
         }
-        LegalHoldsCommand::LiftAndErase(args) => {
-            eprintln!("{LIFT_AND_ERASE_TITLE}\n{LIFT_AND_ERASE_PROMPT}");
-            anyhow::ensure!(
-                args.yes,
-                "nothing was lifted or erased; run it again with --yes to confirm"
-            );
-            (
-                &args.serve,
-                "POST /v1/owner/legal-holds/lift-and-erase --data -",
-            )
+        LegalHoldsCommand::Lift(args) => (&args.serve, "POST /v1/owner/legal-holds/lift --data -"),
+        LegalHoldsCommand::Produce(args) => {
+            (&args.serve, "POST /v1/owner/legal-holds/produce --data -")
         }
     };
     let config = resolve_serve_config(serve)?;
@@ -289,11 +280,18 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
             let LegalHoldPlaceArgs {
                 targets,
                 matter_ref,
+                future_messages_until,
                 ..
             } = *args;
             let request = sdk::LegalHoldPlaceRequest {
                 targets: hold_targets(&targets)?,
                 matter_ref,
+                future_messages: future_messages_until.map(|until| {
+                    oneiron::deletion::LegalHoldFutureMessages {
+                        selector: oneiron::deletion::MessageSelector::Vault,
+                        until,
+                    }
+                }),
             };
             hooked_row(
                 &vault,
@@ -301,7 +299,12 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 "vault.legal_holds.place",
                 request,
                 |request: sdk::LegalHoldPlaceRequest| {
-                    Ok(vault.place_legal_hold(&owner, request.targets, request.matter_ref)?)
+                    Ok(vault.place_legal_hold(
+                        &owner,
+                        request.targets,
+                        request.matter_ref,
+                        request.future_messages,
+                    )?)
                 },
             )?
         }
@@ -323,41 +326,53 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 },
             )?
         }
-        LegalHoldsCommand::LiftAndErase(args) => {
-            let records = args
-                .records
-                .iter()
-                .map(|record| hold_id_arg(record))
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            let claim_free_partition = args.claim_free_partition;
-            // The one confirm shows what it takes, read once from this vault
-            // through the shared preview, and acts only on what it showed
-            // (FIX 1462).
-            let mut request = sdk::LegalHoldLiftAndEraseRequest {
-                records,
-                claim_free_partition,
+        LegalHoldsCommand::Lift(args) => {
+            // The lift is one-way: it shows the hold it takes, read from this
+            // vault through the shared preview, and acts only on what it
+            // showed (DEC-0006 #undo-class).
+            let mut request = sdk::LegalHoldLiftRequest {
+                hold_id: hold_id_arg(&args.hold)?,
                 confirm: None,
-                check_in_ref: None,
             };
             let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
             let preview = sdk::preview_owner_confirm(
                 &memory,
                 &owner,
                 sdk::OwnerConfirmPreviewRequest {
-                    verb: "vault.legal_holds.lift_and_erase".to_owned(),
+                    verb: "vault.legal_holds.lift".to_owned(),
                     input: serde_json::to_value(&request)?,
                 },
             )?;
             eprintln!("{}", serde_json::to_string_pretty(&preview.takes)?);
+            anyhow::ensure!(
+                args.yes,
+                "nothing was lifted; run it again with --yes to lift the hold shown above"
+            );
             request.confirm = Some(preview.confirm);
             hooked_row(
                 &vault,
                 actor,
-                "vault.legal_holds.lift_and_erase",
+                "vault.legal_holds.lift",
                 request,
-                |request: sdk::LegalHoldLiftAndEraseRequest| {
-                    sdk::lift_legal_hold_and_erase_as(&vault, &owner, request)
-                        .map_err(memory_refusal)
+                |request: sdk::LegalHoldLiftRequest| {
+                    sdk::lift_legal_hold_as(&vault, &owner, request).map_err(memory_refusal)
+                },
+            )?
+        }
+        LegalHoldsCommand::Produce(args) => {
+            let args = *args;
+            let hold_id = hold_id_arg(&args.hold)?;
+            let request = sdk::LegalHoldProduceRequest {
+                hold_id,
+                recipient_public_key: args.recipient_key,
+            };
+            hooked_row(
+                &vault,
+                actor,
+                "vault.legal_holds.produce",
+                request,
+                |request: sdk::LegalHoldProduceRequest| {
+                    sdk::produce_legal_hold_as(&vault, &owner, request).map_err(memory_refusal)
                 },
             )?
         }

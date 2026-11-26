@@ -23,6 +23,7 @@ use crate::dreamer_runner::{
 };
 use crate::federation::Scope;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
@@ -135,11 +136,7 @@ fn bound_extraction_inputs_page(
         .embedded_owner("vault.consolidation.extraction.inputs.page")
         .ok();
     let bounds = vault.snapshot_read_settings()?;
-    let limit = input
-        .limit
-        .unwrap_or(bounds.page_rows)
-        .min(bounds.page_rows)
-        .max(1);
+    let limit = page_limit_zero_as_one(input.limit, bounds.page_rows, bounds.page_rows).rows;
     let attempt = extraction_attempt_key(&input.attempt)?;
     let after = extraction_turn_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;

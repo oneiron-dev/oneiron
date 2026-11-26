@@ -180,6 +180,34 @@ pub(super) fn clamp_hides_row(
     Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, entity_type)?)
 }
 
+/// [`clamp_hides_row`], or a row whose own row the audience could read but
+/// whose words come from a row it may not
+/// ([`crate::disclosure::DisclosureContext::word_sources_admitted_in_from`]):
+/// a summary covering a Tier-A record. A bounded window that judges its rows
+/// with their status aside asks it, so neither takes a place there and cuts
+/// a readable row out before the pack's preselection drops it
+/// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). False with no
+/// clamp, and for a row with no parseable envelope, as there.
+pub(super) fn clamp_hides_row_or_word_sources(
+    vault: &crate::Vault,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    clamp: Option<&crate::disclosure::DisclosureContext>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    if clamp_hides_row(store, rtxn, id, clamp, metadata_cache)? {
+        return Ok(true);
+    }
+    let Some(clamp) = clamp else {
+        return Ok(false);
+    };
+    if metadata_cache.get(store, rtxn, id)?.is_none() {
+        return Ok(false);
+    }
+    Ok(!clamp.word_sources_admitted_in_from(vault, store, rtxn, id, None)?)
+}
+
 pub(super) fn import_claim_gate_decisions_for_scores(
     claim_gate: &mut ClaimStatusGateCache,
     probe_gate: &mut ClaimStatusGateCache,
@@ -831,18 +859,36 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
     // P7 at candidate generation: a row the pack's audience may not read
     // takes no slot in a bounded channel. Absence is the boundary, as at the
-    // post-fusion clamp, which still sweeps every survivor.
-    if let Some(clamp) = filters.disclosure
-        && !crate::context_pack::retained_copies::clamp_prefilter_admits(
-            clamp,
-            store,
-            rtxn,
-            id,
-            meta.entity_type,
-            claim_gate.decisions.get(id).and_then(Option::as_ref),
-        )?
-    {
-        return Ok(false);
+    // post-fusion clamp, which still sweeps every survivor. A bounded result
+    // channel's admission asks the pack's own candidate test, the sources of
+    // a row's words included, so a summary whose words come from a row the
+    // audience may not read takes no place in its window
+    // (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT); the run's
+    // shared config judges the row alone.
+    if let Some(clamp) = filters.disclosure {
+        let claim_body = claim_gate.decisions.get(id).and_then(Option::as_ref);
+        let admitted = match filters.disclosure_word_sources {
+            Some(vault) => crate::context_pack::retained_copies::clamp_admits(
+                clamp,
+                vault,
+                store,
+                rtxn,
+                id,
+                meta.entity_type,
+                claim_body,
+            )?,
+            None => crate::context_pack::retained_copies::clamp_prefilter_admits(
+                clamp,
+                store,
+                rtxn,
+                id,
+                meta.entity_type,
+                claim_body,
+            )?,
+        };
+        if !admitted {
+            return Ok(false);
+        }
     }
 
     if !pipeline_candidate_matches_facet_filter(
@@ -968,6 +1014,48 @@ fn pipeline_candidate_matches_relationship_filter(
         claim_rel(store, rtxn, id)?.as_ref(),
         active_relationship,
     ) || matches!(mode, RelMode::Demote))
+}
+
+/// Whether `id` meets the call's criticality tier and belongs to no stale
+/// federated world the run reads past under [`WorldScope::All`]: the checks
+/// of the call's scope the temporal window's reader asks beside its
+/// candidate filter, so a row either keeps out stops no adaptive round and
+/// takes no place under a scan's cap or in the bound (REVIEW-10311 round 2).
+/// It records no refusal; the window's cut asks the whole scope after.
+pub(super) fn candidate_matches_criticality_and_stale_worlds(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    filters: PipelineFilterConfig<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    if filters.criticality.is_some() {
+        let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
+            return Ok(false);
+        };
+        if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
+            return Ok(false);
+        }
+    }
+    if filters.stale_worlds.is_none() {
+        return Ok(true);
+    }
+    // A claim whose stored body does not decode is out of the scope: every
+    // other read's claim status gate drops it before the world filter, whose
+    // decode would fail the run on it.
+    if let Some(raw) = store.port_entity_record(rtxn, id)?
+        && raw.entity_type == ENTITY_TYPE_CLAIM
+        && crate::claim::decode_claim_body(&raw.body, true).is_err()
+    {
+        return Ok(false);
+    }
+    pipeline_candidate_matches_world_filter(
+        store,
+        rtxn,
+        id,
+        filters.world_scope,
+        (filters.world_active_set, filters.stale_worlds),
+    )
 }
 
 pub(super) fn pipeline_candidate_matches_world_filter(

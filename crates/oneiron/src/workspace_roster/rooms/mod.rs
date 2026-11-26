@@ -33,6 +33,7 @@ mod peer_settings;
 mod pins;
 mod private_threads;
 mod replica;
+mod retry_claim;
 mod speaking;
 #[cfg(test)]
 mod tests;
@@ -136,7 +137,7 @@ pub(crate) use participation::fact_key_pin_for_test;
 pub(super) use participation::record_bound_task_in_txn;
 pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
-    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn, person_standing_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
@@ -172,7 +173,11 @@ pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
 pub use wake::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use witness::{RoomRegenerationPermit, admit_witness, erase_turn_actor_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use witness::claim_doors as claim_erase_doors;
+pub(crate) use witness::{
+    RoomRegenerationPermit, admit_witness, erase_claim_actor_in_txn, erase_turn_actor_in_txn,
+};
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
 /// (turn id).

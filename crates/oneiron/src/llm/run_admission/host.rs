@@ -1,11 +1,16 @@
 //! What a host feeds the run admission: the offers it bound, the money a
 //! vault may commit and the account's status. Bindings and numbers, never a
 //! rule list.
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::{BudgetExhaustionPolicy, BudgetGuard, DispatchBinding, ModelId, ModelLocality};
+use super::super::{
+    BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, DispatchBinding, ModelId,
+    ModelLocality,
+};
+use super::admission::RunDenied;
 use super::declaration::LeaseUnit;
 use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
@@ -269,8 +274,40 @@ pub enum AllocationRefusal {
 /// What the host says about the account right now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountStatus {
-    pub allocation: Option<AllocationRef>,
+    /// Every allocation the account selects, one per slot (row M2-I): a
+    /// unit and the wallet the host named for it.
+    pub allocations: Vec<SelectedAllocation>,
     pub fresh_allocation_refused: Option<AllocationRefusal>,
+}
+
+impl AccountStatus {
+    /// The allocations the owner's resident shares govern (FIX 7767, row
+    /// M2-I): the host's walletless allocations, at most one per unit, each
+    /// bound by the owner's shares in its own unit (Engine
+    /// RESIDENT-SHARE-UNIT = A).
+    pub fn walletless_allocations(&self) -> impl Iterator<Item = &SelectedAllocation> {
+        self.allocations
+            .iter()
+            .filter(|selected| selected.wallet.is_none())
+    }
+}
+
+/// A reservation [`HostAccount::reserve_on_selected`] took on a selected
+/// allocation, or the meter's refusal of it.
+pub(super) struct SelectedReservation {
+    pub(super) live: LiveAllocation,
+    pub(super) units: u64,
+    pub(super) refused: Option<AllocationRefusal>,
+    pub(super) admitted: Result<BudgetLease, BudgetDenied>,
+}
+
+/// One allocation an account selects, with its slot: its unit and the
+/// wallet the host named for it (`None`: the host's own, named for none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedAllocation {
+    pub reference: AllocationRef,
+    pub unit: LeaseUnit,
+    pub wallet: Option<WalletRef>,
 }
 
 /// One vault's host-paid money and account status, shared by every run the
@@ -285,8 +322,11 @@ pub struct HostAccount {
 
 #[derive(Debug, Default)]
 struct AccountState {
-    live: Option<LiveAllocation>,
-    newest_generation: Option<u64>,
+    /// One live allocation per slot (unit, wallet), in grant order.
+    selected: Vec<LiveAllocation>,
+    /// The newest generation each allocation id held, so a consumed
+    /// generation of an id never comes back, whatever other ids hold.
+    newest_generations: HashMap<String, u64>,
     refused: Option<AllocationRefusal>,
 }
 
@@ -297,6 +337,24 @@ pub(super) struct LiveAllocation {
     pub(super) meter: BudgetGuard,
     /// The wallet the host named for this allocation (FIX 7766).
     pub(super) wallet: Option<WalletRef>,
+}
+
+/// The id prefix of a GPU line period's allocation (row M2-I2).
+const GPU_LINE_ALLOCATION_PREFIX: &str = "gpu-line:";
+
+/// The allocation id of the GPU line of lane project `project`: one id, with one generation
+/// per period.
+#[must_use]
+pub fn gpu_line_allocation_id(project: &EntityId) -> String {
+    format!("{GPU_LINE_ALLOCATION_PREFIX}{}", project.to_hex())
+}
+
+/// Whether `reference` names a GPU line's allocation. Only that line's unit claims draw on it,
+/// because their rows are its hold (row M2-I2; Engine HOLD-IS-CLAIM-FOLD = A). So neither
+/// host-account backend installs it, and no plain job's slot can select it.
+#[must_use]
+pub fn is_gpu_line_allocation(reference: &AllocationRef) -> bool {
+    reference.id.starts_with(GPU_LINE_ALLOCATION_PREFIX)
 }
 
 impl HostAccount {
@@ -320,17 +378,28 @@ impl HostAccount {
         self.residents.as_ref()
     }
 
-    /// Installs a fresh allocation. Leases on the one it replaces still
-    /// settle there.
+    /// Installs a fresh allocation in its slot: its unit and the wallet the
+    /// host named for it (row M2-I). It replaces the allocation selected in
+    /// that slot and any older generation of its own id, and nothing else;
+    /// leases on a replaced allocation still settle there. Its generation
+    /// must be newer than every one its own id held; other ids' generations
+    /// do not count. A GPU line's allocation is refused: only its claims draw on it.
     pub fn grant(&self, allocation: Allocation) -> Result<(), AllocationGrantError> {
+        if is_gpu_line_allocation(&allocation.reference) {
+            return Err(AllocationGrantError::LineManaged);
+        }
         let mut state = self.lock();
+        let reference = &allocation.reference;
         if state
-            .newest_generation
-            .is_some_and(|newest| allocation.reference.generation <= newest)
+            .newest_generations
+            .get(&reference.id)
+            .is_some_and(|newest| reference.generation <= *newest)
         {
             return Err(AllocationGrantError::StaleGeneration);
         }
-        state.newest_generation = Some(allocation.reference.generation);
+        state
+            .newest_generations
+            .insert(reference.id.clone(), reference.generation);
         let meter = BudgetGuard::with_reserve_units(
             format!(
                 "allocation:{}:{}",
@@ -340,7 +409,11 @@ impl HostAccount {
             1,
             BudgetExhaustionPolicy::Suspend,
         );
-        state.live = Some(LiveAllocation {
+        state.selected.retain(|live| {
+            live.reference.id != allocation.reference.id
+                && (live.unit != allocation.unit || live.wallet != allocation.wallet)
+        });
+        state.selected.push(LiveAllocation {
             reference: allocation.reference,
             unit: allocation.unit,
             meter,
@@ -350,7 +423,7 @@ impl HostAccount {
     }
 
     /// The host holds fresh allocations for `reason`. What is left of the
-    /// live one stays spendable.
+    /// live ones stays spendable.
     pub fn refuse_fresh(&self, reason: AllocationRefusal) {
         self.lock().refused = Some(reason);
     }
@@ -364,14 +437,55 @@ impl HostAccount {
     pub fn status(&self) -> AccountStatus {
         let state = self.lock();
         AccountStatus {
-            allocation: state.live.as_ref().map(|live| live.reference.clone()),
+            allocations: state
+                .selected
+                .iter()
+                .map(|live| SelectedAllocation {
+                    reference: live.reference.clone(),
+                    unit: live.unit.clone(),
+                    wallet: live.wallet.clone(),
+                })
+                .collect(),
             fresh_allocation_refused: state.refused,
         }
     }
 
-    pub(super) fn live(&self) -> (Option<LiveAllocation>, Option<AllocationRefusal>) {
+    /// Every live allocation, one per slot, and the host's refusal of fresh
+    /// ones.
+    #[cfg(test)]
+    pub(super) fn selected(&self) -> (Vec<LiveAllocation>, Option<AllocationRefusal>) {
         let state = self.lock();
-        (state.live.clone(), state.refused)
+        (state.selected.clone(), state.refused)
+    }
+
+    /// Reserves on the selected allocation `choose` picks, the units
+    /// `choose` prices, under the account's lock: a grant cannot replace the
+    /// chosen allocation between the choice and the hold (review 10403).
+    /// `choose` sees every selected allocation and the host's refusal of a
+    /// fresh one. The meter's refusal comes back in `admitted`, for the
+    /// caller to report once the lock is released.
+    pub(super) fn reserve_on_selected(
+        &self,
+        choose: impl FnOnce(
+            &[LiveAllocation],
+            Option<AllocationRefusal>,
+        ) -> Result<(usize, u64), RunDenied>,
+    ) -> Result<SelectedReservation, RunDenied> {
+        let state = self.lock();
+        let refused = state.refused;
+        let (index, units) = choose(&state.selected, refused)?;
+        let live = state.selected[index].clone();
+        let admitted = live
+            .meter
+            .admit_reserve(units)
+            .map(|admission| admission.lease);
+        drop(state);
+        Ok(SelectedReservation {
+            live,
+            units,
+            refused,
+            admitted,
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, AccountState> {

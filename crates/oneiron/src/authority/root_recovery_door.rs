@@ -30,10 +30,16 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    DevicePin, KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner,
-    RecoveryRootSeed,
+    DevicePin, FreshOwnerKey, KitConfirmation, OwnerActImportance, OwnerRootSigner,
+    OwnerSigningSlot, RecoveryAuthoritySigner, RecoveryRootSeed, SlotRenewal,
+    owner_presence_reasons,
 };
 use crate::{EntityId, Result, Vault};
+
+mod box_wait;
+mod hold_arm;
+
+use box_wait::HoldEnd;
 
 /// The roster still holds a live root key, and the root's authority key is
 /// not a live owner key on it. Nothing was written.
@@ -80,6 +86,16 @@ pub enum RootMaterial {
     /// The root's authority key alone, as the recovery box releases it
     /// (WAYBACK-BOX-AUTHORITY-SEED = A): it vouches, and never appoints.
     Released(RecoveryAuthoritySigner),
+    /// The root's authority key as the recovery box releases it at the end
+    /// of the box's own wait, with `release_at`, the box's release second.
+    /// On a hosted vault the box's wait is the recovery wait
+    /// (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT = A), so the door's hold lands
+    /// at `release_at`, never later than its own wait from now, and a hold
+    /// already due lands in the same call. Otherwise as [`Self::Released`].
+    ReleasedAfterBoxWait {
+        signer: RecoveryAuthoritySigner,
+        release_at: u64,
+    },
 }
 
 /// The new owner key the root's door puts on the roster.
@@ -95,6 +111,13 @@ pub enum RootSuccessor {
 /// What the root's door answers once its write transaction committed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RootRecovery {
+    /// The box recovery waits: the hold's attempt id and the second it
+    /// lands at, on this install's clock. Another owner device or the kit
+    /// cancels it or ends the wait early, or it lands at the wait's end.
+    Held {
+        hold: AuthorityEntryHash,
+        lands_at: u64,
+    },
     /// The root's authority key vouched: each lost key's revocation, in the
     /// order written, and the new key's enrolment, written after them.
     Vouched {
@@ -116,7 +139,14 @@ impl Vault {
     /// possession. Each arm checks its own condition again in its writer
     /// transaction, and writes everything or nothing.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), in the chosen arm after its checks
+    /// and before taking the PIN step or slot lock.
+    ///
     /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     /// [`crate::error::RecordError::AuthorityRefused`] when neither arm
     /// serves, for a lost key the root's key may not revoke, or for an entry
     /// the fold does not count; each arm's own refusals
@@ -130,6 +160,47 @@ impl Vault {
         successor: RootSuccessor,
         lost: &[AuthorityKey],
     ) -> Result<RootRecovery> {
+        let wait = {
+            let txn = self.store.env.read_txn()?;
+            self.recovery_wait_in_txn(&txn)?
+        };
+        self.recover_owner_root_with_wait(owner, surface, material, successor, lost, wait)
+    }
+
+    /// [`Self::recover_owner_root`] with an explicit wait: the test door's
+    /// seam, so tests cover zero and nonzero waits. A box recovery
+    /// (`RootMaterial::Released`) with a nonzero wait holds instead of
+    /// vouching: [`RootRecovery::Held`]; a zero wait vouches as today. The
+    /// kit arm never waits. A box call is judged before it lands anything;
+    /// then this install's due holds land, and a landing of the acting
+    /// owner's own hold that enrolled this call's successor answers
+    /// [`RootRecovery::Vouched`]: the call completes the attempt it held.
+    /// After the box's own wait (`RootMaterial::ReleasedAfterBoxWait`) the
+    /// hold lands at the box's release second, and one already due lands
+    /// in this call, which answers [`RootRecovery::Vouched`]: one wait, and
+    /// the hold row stays as its receipt.
+    ///
+    /// # Errors
+    /// As [`Self::recover_owner_root`].
+    pub(crate) fn recover_owner_root_with_wait(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        material: RootMaterial,
+        successor: RootSuccessor,
+        lost: &[AuthorityKey],
+        wait: std::time::Duration,
+    ) -> Result<RootRecovery> {
+        // A box call lands due holds only once its request passed (row
+        // RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS). A kit recovery lands
+        // nothing first: it cancels every live hold in its write, a due one
+        // too, so no hold's landing stands in its way.
+        if let RootMaterial::Released(signer) | RootMaterial::ReleasedAfterBoxWait { signer, .. } =
+            &material
+            && let Some(done) = self.land_due_holds_for_box_call(owner, signer, &successor, lost)?
+        {
+            return Ok(done);
+        }
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
@@ -138,6 +209,7 @@ impl Vault {
         // rotation. A kit with none live falls through to the rooted check,
         // as a never-enrolled key does. The box's released bytes need no
         // finder: they name their generation directly.
+        let mut end = HoldEnd::AfterWait(wait);
         let (signer, kit, released) = match material {
             RootMaterial::Kit { seed, confirm } => {
                 let found = self.recovery_authority_generations_in_txn(&txn, &seed, &vault_id)?;
@@ -147,6 +219,10 @@ impl Vault {
                 }
             }
             RootMaterial::Released(signer) => (Some(signer), None, true),
+            RootMaterial::ReleasedAfterBoxWait { signer, release_at } => {
+                end = HoldEnd::AtBoxRelease { release_at, wait };
+                (Some(signer), None, true)
+            }
         };
         // While kit-only holds the box holds nothing: the released key is
         // refused before the liveness check, so a revoked released key under
@@ -161,12 +237,23 @@ impl Vault {
             }
             if live_owner_key(&fold, &signer.authority_key()) {
                 let authority = ActAuthority::Owner(owner.clone(), surface);
+                if released && !wait.is_zero() {
+                    let held =
+                        self.hold_with_root_key((owner, &authority), signer, successor, lost, end)?;
+                    return match (end, held) {
+                        (HoldEnd::AtBoxRelease { .. }, RootRecovery::Held { hold, lands_at }) => {
+                            self.land_held_after_box_wait(hold, lands_at)
+                        }
+                        (_, held) => Ok(held),
+                    };
+                }
                 return self.vouch_with_root_key(
                     (owner, &authority),
                     signer,
                     released,
                     successor,
                     lost,
+                    kit.as_ref().map(|(seed, _)| seed),
                 );
             }
         }
@@ -189,6 +276,19 @@ impl Vault {
     /// the roster reads its slot's key revoked there, and is held as a
     /// checkpoint root signer once the transaction commits, as at the device
     /// door.
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after it revalidated the
+    /// owner's proof on a read, before it readies this install's signing keys
+    /// and before taking the PIN step or slot lock. Readying those keys
+    /// writes ([`Vault::prepare_install_signing`]), so a refused confirm
+    /// leaves this install's machine as it was, and a proof that is not this
+    /// vault's owner raises no prompt.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     fn vouch_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -196,6 +296,7 @@ impl Vault {
         released: bool,
         successor: RootSuccessor,
         lost: &[AuthorityKey],
+        kit_seed: Option<&RecoveryRootSeed>,
     ) -> Result<RootRecovery> {
         // The key that proved the owner is held, never lost: refused before
         // anything is readied (REVIEW-9487 P1 1).
@@ -205,6 +306,19 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
+        // The proof is this vault's live owner before the door asks; the
+        // writer revalidates it in its transaction (REVIEW-10128 P1 2).
+        self.owner_key_act_owner(authority)?;
+        // The keystore is read before the door asks, and this install's
+        // signing keys are readied after it: readying them writes
+        // (REVIEW-10128 P1 1).
+        if matches!(successor, RootSuccessor::ThisInstall) {
+            self.device_keystore()?;
+        }
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before the writer opens.
         let install = match successor {
@@ -252,14 +366,17 @@ impl Vault {
             RootSuccessor::ThisInstall => None,
         };
         let lost = self.lost_keys_in_txn(&txn, &fold, actor, (&root_key, named.as_ref()), lost)?;
-        let (input, held) = match (successor, install) {
+        let (input, install_successor) = match (successor, &install) {
             (RootSuccessor::Device(input), _) => (input, None),
             (RootSuccessor::ThisInstall, Some((machine, slot))) => {
-                let (input, key) = this_install_successor(&fold, actor, machine, &slot)?;
+                let (input, key) = this_install_successor(&fold, actor, *machine, slot)?;
                 (input, Some(key))
             }
             (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
         };
+        if let Some(seed) = kit_seed {
+            self.cancel_live_holds_for_kit_in_txn(&mut txn, seed)?;
+        }
         // The lost keys go first: a self-hosted vault binds an owner's new
         // key only while no live `human` binding names them, and a lost key
         // that held the owner's binding takes it with it when revoked. So
@@ -282,7 +399,22 @@ impl Vault {
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let rows = authority_rows_counted_since(&fold, &after)?;
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
-        txn.commit()?;
+        // This install's fresh key enters its slot only now, the last step
+        // before the commit, so a refusal above leaves the slot's seed as it
+        // was (row RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS).
+        let (held, renewal) = match (install_successor, &install) {
+            (Some(key), Some((_, slot))) => {
+                let (key, renewal) = key.settle(slot)?;
+                (Some(key), renewal.map(|renewal| (slot, renewal)))
+            }
+            _ => (None, None),
+        };
+        if let Err(error) = txn.commit() {
+            if let Some((slot, renewal)) = renewal {
+                self.put_back_unless_on_roster(slot, renewal);
+            }
+            return Err(error.into());
+        }
         self.note_committed_authority_rows(rows);
         // The successor is held once the slot lock is let go: a hold asks
         // every signer held for its root, and a signer's answer may read the
@@ -314,21 +446,80 @@ impl Vault {
         (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
         lost: &[AuthorityKey],
     ) -> Result<BTreeSet<AuthorityKey>> {
-        let enrolled: BTreeSet<AuthorityKey> = self
-            .live_owner_keys_enrolled_for_in_txn(txn, actor)?
-            .into_iter()
-            .collect();
         let named: BTreeSet<AuthorityKey> = lost.iter().cloned().collect();
-        for key in &named {
-            if key == root_key
-                || Some(key) == new_key
-                || !enrolled.contains(key)
-                || !live_owner_key(fold, key)
-            {
-                return Err(authority_refused(NOT_A_LOST_KEY));
-            }
+        if self.revocable_lost_keys_in_txn(txn, fold, actor, (root_key, new_key), lost)? != named {
+            return Err(authority_refused(NOT_A_LOST_KEY));
         }
         Ok(named)
+    }
+
+    /// The keys of `lost` that the root's key `root_key` may revoke as
+    /// `owner`'s lost keys in `fold`, once each: each a live owner key that
+    /// `owner` enrolled, a device key or a passkey, and never `root_key`
+    /// itself or `new_key`. The door refuses a request that names any other
+    /// key ([`Self::lost_keys_in_txn`]). A hold's landing revokes only these
+    /// keys, read again at the landing (row
+    /// RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD), so a hold that R signs by hand,
+    /// with R itself or a key outside this rule among its lost keys, never
+    /// lands more than the door would have held.
+    pub(super) fn revocable_lost_keys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        owner: EntityId,
+        (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
+        lost: &[AuthorityKey],
+    ) -> Result<BTreeSet<AuthorityKey>> {
+        let enrolled: BTreeSet<AuthorityKey> = self
+            .live_owner_keys_enrolled_for_in_txn(txn, owner)?
+            .into_iter()
+            .collect();
+        Ok(lost
+            .iter()
+            .filter(|key| {
+                *key != root_key
+                    && Some(*key) != new_key
+                    && enrolled.contains(*key)
+                    && live_owner_key(fold, key)
+            })
+            .cloned()
+            .collect())
+    }
+}
+
+/// This install's successor key as the root door's writer judges it: the
+/// slot's own key, or a fresh key made in memory whose seed the slot takes
+/// only once the writer judged the request
+/// ([`InstallSuccessor::settle`]; row
+/// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS).
+enum InstallSuccessor {
+    /// The key in this install's owner signing slot, which no row names.
+    Kept(OwnerRootSigner),
+    /// A fresh key: the roster names the slot's key revoked.
+    Fresh(FreshOwnerKey),
+}
+
+impl InstallSuccessor {
+    /// The key that signs the successor's proof of possession.
+    fn signer(&self) -> &OwnerRootSigner {
+        match self {
+            Self::Kept(key) => key,
+            Self::Fresh(fresh) => fresh.signer(),
+        }
+    }
+
+    /// The key this install holds once the writer judged the request: the
+    /// kept key, or the fresh key read back from `slot` once the slot took
+    /// its seed ([`OwnerSigningSlot::renew`], under the slot lock the door
+    /// holds), with what the slot held before, for the put-back when the
+    /// commit fails.
+    fn settle(self, slot: &OwnerSigningSlot) -> Result<(OwnerRootSigner, Option<SlotRenewal>)> {
+        match self {
+            Self::Kept(key) => Ok((key, None)),
+            Self::Fresh(fresh) => slot
+                .renew(&fresh)
+                .map(|(key, renewal)| (key, Some(renewal))),
+        }
     }
 }
 
@@ -338,33 +529,42 @@ impl Vault {
 /// that key revoked. A key the roster names live needs no recovery. A run
 /// checked before another run's recovery committed is refused here, before
 /// it drops the seed of that run's successor, a live key
-/// ([`OwnerSigningSlot::fresh_key`]). The slot's revoked key signs nothing,
-/// so the slot takes the fresh key's seed at once ([`OwnerSigningSlot::renew`],
-/// under the slot lock the door holds): a later refusal leaves a key no row
-/// names there, which the next run enrols.
+/// ([`OwnerSigningSlot::fresh_key`]). The fresh key is in memory only: the
+/// slot keeps its seed until the writer settles the key.
 fn this_install_successor(
     fold: &AuthorityFold,
     actor: EntityId,
     machine: EntityId,
     slot: &OwnerSigningSlot,
-) -> Result<(OwnerKeyEnrollment, OwnerRootSigner)> {
+) -> Result<(OwnerKeyEnrollment, InstallSuccessor)> {
     let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-    let mut key = slot.key()?;
-    match fold.roster.get(&AuthorityKey::Ed25519(key.public_key())) {
-        Some(device) if !device.revoked => {
-            return Err(authority_refused(THIS_INSTALL_KEY_LIVE));
-        }
-        Some(_) => key = slot.renew(&slot.fresh_key()?)?.0,
-        None => {}
-    }
-    let public_key = key.public_key();
+    let key = this_install_successor_key(fold, slot)?;
+    let public_key = key.signer().public_key();
     let challenge = owner_key_enrollment_challenge(&vault_id, machine, &public_key, actor)?;
     let input = OwnerKeyEnrollment {
         machine,
         public_key,
-        proof: key.sign_possession(&challenge),
+        proof: key.signer().sign_possession(&challenge),
     };
     Ok((input, key))
+}
+
+/// [`this_install_successor`]'s key, judged against `fold`, a write
+/// transaction's fold: the slot's key when no row names it, a fresh one in
+/// memory when the roster names it revoked, and a refusal when the roster
+/// names it live. The hold arm settles it in its first write, so its hold
+/// write reads the renewed slot's key, which no row names, and gets the
+/// same key.
+fn this_install_successor_key(
+    fold: &AuthorityFold,
+    slot: &OwnerSigningSlot,
+) -> Result<InstallSuccessor> {
+    let key = slot.key()?;
+    match fold.roster.get(&AuthorityKey::Ed25519(key.public_key())) {
+        Some(device) if !device.revoked => Err(authority_refused(THIS_INSTALL_KEY_LIVE)),
+        Some(_) => Ok(InstallSuccessor::Fresh(slot.fresh_key()?)),
+        None => Ok(InstallSuccessor::Kept(key)),
+    }
 }
 
 /// The authority rows `after` counts and `before` did not, as their entity

@@ -7,6 +7,7 @@ use super::outbound::{
 };
 use super::seat::CalendarConnectorError;
 
+use crate::batch::secret_scan::LiftedKeys;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarPassportPresence, CalendarPassportValue, CalendarStatus,
@@ -465,13 +466,21 @@ fn escape_ics_text(value: &str) -> String {
 }
 
 /// The UID a sibling source already carries for this EVENT, lexicographically
-/// smallest so every node picks the same one.
+/// smallest so every node picks the same one. A UID the claim door stored as
+/// a custody handle is no UID a provider holds, and only the seat that holds
+/// the source's copy reads it, so it is never shared
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 pub(super) fn shared_uid(passports: &[(EntityId, CalendarPassportValue)]) -> Option<String> {
-    passports.iter().map(|(_, value)| value.uid.clone()).min()
+    passports
+        .iter()
+        .map(|(_, value)| &value.uid)
+        .filter(|uid| !LiftedKeys::holds_a_handle(uid))
+        .min()
+        .cloned()
 }
 
 /// The UID a locally originated EVENT gets on its first outbound write.
-pub(super) fn local_uid(event_ref: &EntityId) -> String {
+pub(in crate::calendar) fn local_uid(event_ref: &EntityId) -> String {
     format!("{}@{LOCAL_UID_DOMAIN}", event_ref.to_hex())
 }
 

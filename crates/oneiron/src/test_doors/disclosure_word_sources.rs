@@ -1,7 +1,9 @@
 //! Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the
 //! general disclosure clamp, as a context pack for a non-owner audience asks
 //! it of one stored record, under a contact's clearance or the owner alone,
-//! and of a claim served at another revision than its live row.
+//! and of a claim served at another revision than its live row; and a room's
+//! P7 rule, as a room under a clearance asks it of one stored record (FIX
+//! COPY-SUMMARY-ROW-UNJUDGED).
 
 use crate::Vault;
 use crate::claim::ClaimBody;
@@ -123,6 +125,28 @@ pub fn clamp_admits_with_contact(
     clamp_admits(vault, contact_audience(contact, counterparty), record, None)
 }
 
+/// Whether that clamp admits the stored `record` by its own row alone, not
+/// the sources of its words (`DisclosureContext::admits`): the test a
+/// bounded window asked before
+/// PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT.
+///
+/// # Errors
+/// A record the vault does not hold, or a read error.
+pub fn row_admits_with_contact(
+    vault: &Vault,
+    contact: EntityId,
+    counterparty: &str,
+    record: &EntityId,
+) -> Result<bool> {
+    let ctx = DisclosureContext::resolve(vault, contact_audience(contact, counterparty))?;
+    let rtxn = vault.store.env.read_txn()?;
+    let row = vault
+        .store
+        .port_entity_record(&rtxn, record)?
+        .ok_or(Error::EntityNotFound)?;
+    ctx.admits(&vault.store, &rtxn, record, row.entity_type, None)
+}
+
 /// Whether the general clamp of an assembly the owner holds with `contact`
 /// (named `counterparty`) present admits the claim `record` served as
 /// `body`, a revision other than its live row, as a pinned hydration or a
@@ -180,4 +204,20 @@ fn clamp_admits(
         .port_entity_record(&rtxn, record)?
         .ok_or(Error::EntityNotFound)?;
     ctx.admits_in(vault, &rtxn, record, row.entity_type, claim_body)
+}
+
+/// Whether a room whose met clearance is `clearance` discloses the stored
+/// `record` by its P7 rule (`disclosure::discloses_raw`): the record's own
+/// stamp, and that of every record its words came from.
+///
+/// # Errors
+/// A record the vault does not hold, or a read error.
+pub fn room_discloses(vault: &Vault, clearance: &Scope, record: &EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .port_entity_record(&rtxn, record)?
+        .ok_or(Error::EntityNotFound)?
+        .encode();
+    crate::disclosure::discloses_raw(vault, &rtxn, clearance, *record, &raw)
 }

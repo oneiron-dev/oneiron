@@ -22,12 +22,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host.rs` | src | L | 1 struct · 17 fn · 2 re-export · 4 crate-vis | OrganHost | The organ host: install, call, unload, revoke |
 | `src/host/outputs.rs` | src | s | 3 crate-vis | — | A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them… |
 | `src/host/producer.rs` | src | s | 6 crate-vis | — | The pre-dispatch producer and its one admitted call |
-| `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
+| `src/host/shutdown.rs` | src | m | 1 struct · 9 fn · 13 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 3 struct · 5 fn · 8 crate-vis | CallMeasure, CallSize, LentRegion | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
 | `src/image.rs` | src | m | 4 struct · 4 enum · 6 fn · 13 const | ImageEdit, ImageEditRefusal, ImageEdited, ImageFormat, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter | The image organ's host adapter (ARCH-0078 `#image-built`, L4-15): an edit of an image artifact, crops and… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `src/landing.rs` | src | m | 5 fn · 1 crate-vis | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
-| `src/lib.rs` | src | s | 3 mod · 19 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/lib.rs` | src | s | 3 mod · 20 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/measure.rs` | src | s | 1 crate-vis | — | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
 | `src/mesh/client.rs` | src | m | 3 crate-vis | — | The asking side of a mesh organ call: stage the inputs, send the call, answer the organ's asks while it… |
 | `src/mesh/mod.rs` | src | s | 1 struct · 1 const · 1 re-export · 17 crate-vis | Offer | Organ calls between the owner's nodes (OF-575, owner ruling MESH) |
@@ -39,8 +39,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/process/frames.rs` | src | s | 5 crate-vis | — | A process's messages, booked before each allocation they make (FIX 6195, 7890): each frame of a message the… |
 | `src/process/lifeline.rs` | src | s | 6 crate-vis | — | One organ process's life: the child, the cell its descendants are fenced in (FIX 7887), a third-party… |
 | `src/process/shutdown.rs` | src | s | 4 crate-vis | — | A call the host's mesh stop cancels (FIX 4756): told with the protocol's shutdown reason, as a deadline… |
-| `src/receipt.rs` | src | s | 6 struct · 1 enum · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
+| `src/receipt.rs` | src | s | 7 struct · 1 enum · 2 fn · 1 const · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, ReceiptSignature, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
+| `src/resource_gpu.rs` | src | s | 3 struct · 2 enum · 2 trait · 3 fn | GpuDeviceLease, GpuDeviceProcesses, GpuLeaseEnd, GpuSlotGrant, GpuSlotRefusal, GpuSlotRequest, MachineGpus | GPU leases, beside the memory floor's ([`crate::FloorLease`]) |
 | `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 crate-vis | FloorLease, FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 6 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `src/sandbox.rs` | src | m | 1 fn · 6 crate-vis | — | What the host does to an organ process between fork and exec |
@@ -71,7 +72,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/host_fds.rs` | test | s | — | — | A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more… |
 | `tests/host_recycle.rs` | test | m | — | — | The organ code `internal` names a bug, and the host recycles the live process after three in a row… |
 | `tests/image_edit_max_ops.rs` | test | s | — | — | Restriction wave 13: the image edit op count is an owner key |
-| `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
+| `tests/mesh_ask_carried.rs` | test | L | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
 | `tests/organ_first_party_fence.rs` | test | s | — | — | A first-party organ starts inside the filesystem fence where the host has one (FIX… |
+| `tests/organ_start_fd3_reuse.rs` | test | s | — | — | An organ starts whole while another thread frees and reuses fd 3, the number the organ's socket takes in the… |
 | `tests/organ_syscall_filter.rs` | test | m | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls", FIX [ORGAN-SECCOMP-ALLOW-LIST]): an organ… |

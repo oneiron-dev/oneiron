@@ -213,6 +213,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             writer_class: AutoWeaveWriterClass::Agent,
             scope: "project".to_owned(),
             scope_id: default_project_id().to_hex(),
+            check_in_ref: None,
         },
     )
     .expect("owner mints auto-weave grant for other writer");
@@ -235,6 +236,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints holder base grant");
@@ -257,6 +259,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints other top grant");
@@ -276,6 +279,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints readonly base read grant");

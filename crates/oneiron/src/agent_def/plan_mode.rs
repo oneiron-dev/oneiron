@@ -128,6 +128,11 @@ pub struct AgentPlanModeSetRequest {
     pub agent_def_ref: EntityId,
     pub expected: AgentPlanMode,
     pub plan_mode: AgentPlanMode,
+    /// Another asker's approved check-in for this exact change, 32 hex: the
+    /// owner applies it on their own proof, and the setter's writer spends
+    /// it (ROLES-CHECKIN 2k8). Omitted: the owner's own set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One agent's plan mode, as the setter left it.
@@ -136,6 +141,11 @@ pub struct AgentPlanModeSetRequest {
 pub struct AgentPlanModeView {
     pub agent_def_ref: EntityId,
     pub plan_mode: AgentPlanMode,
+    /// The decision a set that changed the mode ran on: the owner's own
+    /// proof, naming the asker's approved check-in it applied
+    /// (ROLES-CHECKIN 2k8). Absent when the mode stayed as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 impl Vault {
@@ -164,6 +174,24 @@ impl Vault {
         expected: AgentPlanMode,
         plan_mode: AgentPlanMode,
     ) -> Result<AgentPlanModeView> {
+        self.set_agent_plan_mode_with_check_in(owner, agent, expected, plan_mode, None)
+    }
+
+    /// [`Self::set_agent_plan_mode_as`] applying `applied`. A set that
+    /// changes the mode is the owner's own act on their own proof, and the
+    /// view records that decision; with `applied` they apply another asker's
+    /// approved check-in for this exact change, spent in the same writer
+    /// after every check (ROLES-CHECKIN 2k8; Engine RULING P25-2K8-SCOPE Q1
+    /// = A: every changed set spends, since the modes have no order). A set
+    /// to the mode the agent has spends nothing and records none.
+    pub(crate) fn set_agent_plan_mode_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+        expected: AgentPlanMode,
+        plan_mode: AgentPlanMode,
+        applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> Result<AgentPlanModeView> {
         let mut wtxn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &wtxn)?;
         crate::task_verb::TaskAssignee::AgentDef {
@@ -173,26 +201,77 @@ impl Vault {
         if agent_plan_mode_in_txn(&self.store, &wtxn, agent)? != expected {
             return Err(Error::ConcurrentWrite("agent plan mode changed"));
         }
+        let check_in = if plan_mode == expected {
+            None
+        } else {
+            Some(crate::check_in::owner_act_decision_in_txn(
+                self,
+                &mut wtxn,
+                crate::check_in::ActClass::GrantWiden,
+                applied,
+            )?)
+        };
         PLAN_MODES.put(&self.store, &mut wtxn, &agent, &[plan_mode.to_byte()])?;
         wtxn.commit()?;
         Ok(AgentPlanModeView {
             agent_def_ref: agent,
             plan_mode,
+            check_in,
         })
     }
 }
 
-/// [`Vault::set_agent_plan_mode_as`] from the owner door's request.
+/// [`Vault::set_agent_plan_mode_as`] from the owner door's request, applying
+/// with `check_in_ref` another asker's approved check-in for this exact
+/// change (2k8).
 ///
 /// # Errors
 ///
-/// The setter's refusals.
+/// A `check_in_ref` that is no 32-hex id; the setter's refusals; a
+/// check-in that is not an approved ask for this change.
 pub fn set_agent_plan_mode_from_request_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: AgentPlanModeSetRequest,
 ) -> Result<AgentPlanModeView> {
-    vault.set_agent_plan_mode_as(owner, input.agent_def_ref, input.expected, input.plan_mode)
+    let applied = match input.check_in_ref.as_deref() {
+        Some(hex) => Some(crate::check_in::AppliedCheckIn {
+            id: EntityId::from_hex(hex)
+                .map_err(|_| Error::InvalidConfig("check_in_ref is not a check-in id".into()))?,
+            verb: "vault.agents.plan_mode.set",
+            effect_digest: agent_plan_mode_set_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    vault.set_agent_plan_mode_with_check_in(
+        owner,
+        input.agent_def_ref,
+        input.expected,
+        input.plan_mode,
+        applied.as_ref(),
+    )
+}
+
+/// The digest of the owner's plan mode `request`: the effect an asker's
+/// `vault.check_in.open` names for `vault.agents.plan_mode.set`, and the one
+/// the owner's set spends (2k8; P25-2K8-SCOPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in agent plan mode set v1`, over the request's
+/// MessagePack encoding with field names, without its `check_in_ref`: the
+/// agent, the mode expected and the mode set.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn agent_plan_mode_set_effect_digest(request: &AgentPlanModeSetRequest) -> Result<[u8; 32]> {
+    let set = AgentPlanModeSetRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&set)
+        .map_err(|_| Error::InvariantViolation("agent plan mode set encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent plan mode set v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 #[cfg(test)]

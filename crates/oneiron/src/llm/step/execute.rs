@@ -158,7 +158,24 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
     request: LlmRequest,
     check: &ReplyCheck,
 ) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+    let (outcome, unsaved_usage, _) =
+        call_as_step_checked_counting_sends(ctx, backend, guard, request, check).await;
+    (outcome, unsaved_usage)
+}
+
+/// [`call_as_step_checked_with_unsaved_usage`] with how many times this run
+/// of the step asked its backend: a send the backend gave back unsent (a
+/// budget refusal, a health rest, hours no rung serves) is not among them,
+/// and saved work answers with none (#10269 review, round 2).
+pub(crate) async fn call_as_step_checked_counting_sends(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>, usize) {
     let mut unsaved_usage = None;
+    let retries = TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len());
     let outcome = durable_step(
         ctx,
         backend,
@@ -166,11 +183,30 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
-        &TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
+        &retries,
         Some(&mut unsaved_usage),
     )
     .await;
-    (outcome, unsaved_usage)
+    (outcome, unsaved_usage, retries.sends())
+}
+
+/// `request`'s saved work in this attempt alone: its memo or saved payload
+/// finished as [`durable_step`] finishes it, or `None` when it has none.
+/// Nothing is admitted, sent or charged, and a miss writes nothing. A reply
+/// a check refused is never saved, so it answers `None`.
+pub(crate) fn recover_saved_step(
+    ctx: &DurableStepContext<'_>,
+    guard: &BudgetGuard,
+    request: &LlmRequest,
+) -> DurableStepResult<Option<StepOutcome>> {
+    let step_hash = request.canonical_hash()?;
+    let recovery = {
+        let txn = ctx.vault.store.env.read_txn().map_err(Error::from)?;
+        recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, request)?
+    };
+    recovery
+        .map(|recovery| recover_step(ctx, request, recovery, Some(guard)))
+        .transpose()
 }
 
 /// Durable step with an explicitly owned deterministic runner registry.
@@ -351,10 +387,12 @@ pub(super) async fn durable_step(
         // An erased answer is terminal: it never triggers a fallback (FIX 6296).
         // Nor does a lapsed seat login: the step fails, and its try parks on
         // the seat until the login is back (SEAT-PARK-MODEL-STEP-PATH).
+        // Nor does a wake pass's window refusal (`refused_for_window_in_pass`).
         Err(DurableStepError::Llm(LlmError::Fatal(error)))
             if matches!(request.envelope.class, CallClass::Durable { .. })
                 && error != FatalLlmError::ResponseErased
-                && !matches!(error, FatalLlmError::SeatSignedOut { .. }) =>
+                && !matches!(error, FatalLlmError::SeatSignedOut { .. })
+                && !refused_for_window_in_pass(ctx, &error) =>
         {
             let CallClass::Durable { fallback } = &request.envelope.class else {
                 unreachable!()
@@ -704,7 +742,7 @@ const HOST_CHECK_PARK_REASON: &str = "durable step held by a host check";
 const RESIDENT_SHARE_PARK_REASON: &str = "durable step resident share spent";
 
 /// Why a step parks at its budget trap, or is refused at it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BudgetTrapCause {
     /// The step's budget is spent. `asked_units` is the reservation the
     /// refusing guard asked for, when the refusal names one.
@@ -721,6 +759,7 @@ pub(super) enum BudgetTrapCause {
     /// The owner's share write that fits it wakes the park.
     ResidentShare {
         resident: crate::entity_id::EntityId,
+        unit: String,
         needed_units: u64,
     },
 }
@@ -736,9 +775,11 @@ impl BudgetTrapCause {
             },
             BudgetDenied::ResidentShareSpent {
                 resident,
+                unit,
                 needed_units,
             } => Self::ResidentShare {
                 resident: *resident,
+                unit: unit.clone(),
                 needed_units: *needed_units,
             },
             BudgetDenied::Exhausted
@@ -749,7 +790,7 @@ impl BudgetTrapCause {
         }
     }
 
-    const fn reason(self) -> &'static str {
+    const fn reason(&self) -> &'static str {
         match self {
             // An unfunded step is refused before any park: the reason names
             // the budget it could not spend.
@@ -761,9 +802,9 @@ impl BudgetTrapCause {
 
     /// The units the step's spend scope walk asks: only a spent guard's.
     /// Neither the allocation nor a resident's share is a spend scope's.
-    const fn asked_units(self) -> Option<u64> {
+    const fn asked_units(&self) -> Option<u64> {
         match self {
-            Self::Spent { asked_units } => asked_units,
+            Self::Spent { asked_units } => *asked_units,
             Self::HostCheck | Self::Unfunded { .. } | Self::ResidentShare { .. } => None,
         }
     }
@@ -810,15 +851,17 @@ pub(super) fn budget_trap(
         // The owner's share write that landed after the run admission refused
         // the resident found no park to wake: a share that now fits wakes the
         // park in its own write, as a moved cap does (D3).
-        let share_fits = match cause {
+        let share_fits = match &cause {
             BudgetTrapCause::ResidentShare {
                 resident,
+                unit,
                 needed_units,
             } => crate::llm::budget::resident_share_fits_in_txn(
                 ctx.vault,
                 wtxn,
-                resident,
-                needed_units,
+                *resident,
+                unit,
+                *needed_units,
             )?,
             _ => false,
         };
@@ -915,6 +958,7 @@ fn budget_wait(
                 }
                 BudgetTrapCause::ResidentShare {
                     resident,
+                    unit,
                     needed_units,
                 } => {
                     if wakes_in_write {
@@ -923,6 +967,7 @@ fn budget_wait(
                     return Ok(Some(
                         crate::dreamer_runner::DreamerParkWait::ResidentShare {
                             resident,
+                            unit,
                             needed_units,
                         },
                     ));
@@ -1013,6 +1058,15 @@ fn resolve_failure_policy(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     Ok(policy.dreamer_failure_decision(class))
+}
+
+/// Whether `error` is a window refusal of a step inside a wake pass, which no
+/// deterministic fallback stands in for (Engine 21 Nov 07:38): the same input
+/// meets it on every call, so the Dreamer's try ends Failed with its text,
+/// once, keeping a paid correction's usage on the error, where a fallback's
+/// empty or null reply would hide it. Outside a wake pass the fallback stands.
+fn refused_for_window_in_pass(ctx: &DurableStepContext<'_>, error: &FatalLlmError) -> bool {
+    ctx.deadline.is_some() && crate::dreamer_wake::fatal_refuses_window(error)
 }
 
 /// Whether a failed corrective attempt's settled usage carries any spend

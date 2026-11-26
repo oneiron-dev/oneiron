@@ -75,6 +75,45 @@ fn call_as_owner(vault: &Vault, verb: &str, input: Value) -> Value {
         .unwrap_or_else(|error| panic!("{verb} as the owner: {error:?}"))
 }
 
+/// A grant back's answer: restored, on the owner's own proof (ROLES-CHECKIN
+/// 2k7).
+fn assert_restored(answer: Value) {
+    assert_eq!(
+        answer,
+        json!({
+            "restored": true,
+            "check_in": {
+                "act_class": "grant_widen",
+                "role": "owner",
+                "mode": null,
+                "basis": "own_proof",
+                "check_in": null,
+            },
+        })
+    );
+}
+
+/// A Dreamer grant back's answer: [`assert_restored`]'s, plus the
+/// Dreamer's live reach read after the grant (Engine RULING
+/// ROW4-WEAVE-GRANT-REACH = A).
+fn assert_dreamer_restored(answer: Value, lands_auto: bool, message: &str) {
+    assert_eq!(
+        answer,
+        json!({
+            "restored": true,
+            "check_in": {
+                "act_class": "grant_widen",
+                "role": "owner",
+                "mode": null,
+                "basis": "own_proof",
+                "check_in": null,
+            },
+            "reach": { "reads": true, "lands_auto": lands_auto },
+        }),
+        "{message}"
+    );
+}
+
 /// The owner narrows `agent`'s grant to `keep`, confirming what breaks.
 fn narrow(vault: &Vault, owner: &AuthenticatedOwner, agent: EntityId, keep: &[&str]) {
     let keep: BTreeSet<String> = keep.iter().map(|verb| (*verb).to_owned()).collect();
@@ -118,10 +157,11 @@ fn the_restore_verb_gives_a_narrowed_coach_its_goal_read_back() {
         "a Coach narrowed off read reads no goal"
     );
 
-    assert_eq!(
-        call_as_owner(&vault, RESTORE_VERB, json!({ "agent": coach.to_hex() })),
-        json!({ "restored": true })
-    );
+    assert_restored(call_as_owner(
+        &vault,
+        RESTORE_VERB,
+        json!({ "agent": coach.to_hex() }),
+    ));
     assert!(
         coach_goal_read(&vault, project),
         "the grant back gives the Coach its goal read again"
@@ -146,10 +186,7 @@ fn a_second_restore_changes_nothing() {
     narrow(&vault, &owner, coach, &ENGINE_CONTROLS_VERBS);
 
     let input = json!({ "agent": coach.to_hex() });
-    assert_eq!(
-        call_as_owner(&vault, RESTORE_VERB, input.clone()),
-        json!({ "restored": true })
-    );
+    assert_restored(call_as_owner(&vault, RESTORE_VERB, input.clone()));
     let rows = steward_grant_rows(&vault, coach).expect("rows");
     assert_eq!(
         call_as_owner(&vault, RESTORE_VERB, input),
@@ -179,10 +216,10 @@ fn the_restore_verb_gives_a_narrowed_dreamer_its_landing_back() {
         "a Dreamer narrowed to read lands nothing Auto"
     );
 
-    assert_eq!(
+    assert_dreamer_restored(
         call_as_owner(&vault, RESTORE_VERB, json!({ "agent": dreamer.to_hex() })),
-        json!({ "restored": true, "reach": { "reads": true, "lands_auto": true } }),
-        "the answer carries the Dreamer's live reach"
+        true,
+        "the answer carries the Dreamer's live reach",
     );
     assert_eq!(
         weave_reach(&vault).expect("reach"),
@@ -208,10 +245,10 @@ fn the_restore_verb_answers_a_dreamer_reach_the_policy_still_holds_back() {
     vault.provision_system_agent_grants().expect("first mint");
     let dreamer = dreamer(&vault).expect("the Dreamer");
 
-    assert_eq!(
+    assert_dreamer_restored(
         call_as_owner(&vault, RESTORE_VERB, json!({ "agent": dreamer.to_hex() })),
-        json!({ "restored": true, "reach": { "reads": true, "lands_auto": false } }),
-        "the whole default stands, and the answer says the Dreamer still lands nothing"
+        false,
+        "the whole default stands, and the answer says the Dreamer still lands nothing",
     );
     assert_eq!(
         weave_reach(&vault).expect("reach"),

@@ -70,22 +70,8 @@ pub(crate) fn is_vault_owner(
     member: &EntityId,
 ) -> Result<bool> {
     if *member == embedded_owner {
-        // A hard delete purges the row and records the `dt:` marker, so the
-        // row read below answers `Absent` — the same answer as a row that was
-        // never written. The marker refuses the deleted owner before that
-        // fallback (round-1 P1 of #7900).
-        if vault.local_hard_delete_marker_exists_in_txn(txn, member)? {
+        if deletion_recorded_in_txn(vault, txn, member)? {
             return Ok(false);
-        }
-        match crate::vault::live_entity_row_in_txn(&vault.store, txn, member)? {
-            LiveEntityRow::DeletedShell => return Ok(false),
-            // The never-written fallback holds only for an id with no
-            // deletion recorded at all: a replayed soft delete writes no row
-            // for an id it finds absent (round-2 P1 of #7900).
-            LiveEntityRow::Absent if absent_row_deletion_recorded_in_txn(vault, txn, member)? => {
-                return Ok(false);
-            }
-            LiveEntityRow::Absent | LiveEntityRow::Live { .. } => {}
         }
         return Ok(
             crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn).unwrap_or(false),
@@ -93,6 +79,35 @@ pub(crate) fn is_vault_owner(
     }
     Ok(fold.vault_id.is_some()
         && crate::authority::actor_binding_is_live_in(&vault.store, txn, fold, member, "human")?)
+}
+
+/// Whether this vault records the deletion of `id`: a hard delete's `dt:`
+/// marker, a soft delete's shell, or, for a row it does not hold, a deletion
+/// it records ([`absent_row_deletion_recorded_in_txn`]). A row never written
+/// here, with no deletion recorded, is no deleted one: the embedded owner
+/// whose row was never written still owns the vault ([`is_vault_owner`]),
+/// and a room role still holds for it (`conversation::person_role_in`).
+pub(crate) fn deletion_recorded_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    // A hard delete purges the row and records the `dt:` marker, so the row
+    // read below answers `Absent`, the same answer as a row that was never
+    // written. The marker tells them apart before that fallback (round-1 P1
+    // of #7900).
+    if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {
+        return Ok(true);
+    }
+    let row = crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?;
+    Ok(match row {
+        LiveEntityRow::DeletedShell => true,
+        // The never-written fallback holds only for an id with no deletion
+        // recorded at all: a replayed soft delete writes no row for an id it
+        // finds absent (round-2 P1 of #7900).
+        LiveEntityRow::Absent => absent_row_deletion_recorded_in_txn(vault, txn, id)?,
+        LiveEntityRow::Live { .. } => false,
+    })
 }
 
 /// Whether this vault records a deletion of `id`, whose row it does not hold:

@@ -10,11 +10,39 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use super::LeaseUnit;
 use super::admission::{RunDenied, RunInner};
 use super::host::AllocationRef;
 use super::receipt::RunEvent;
 use crate::EntityId;
 pub use crate::store::resident_budget_rows::ResidentShare;
+
+/// Which share a resident holds on one allocation (row M2-I). The owner's
+/// share settings govern the host's walletless allocations, each setting the
+/// allocation in its own unit (Engine RESIDENT-SHARE-UNIT = A). An
+/// allocation the host named a wallet for (an owner's agent Grant's, a GPU
+/// line's) splits by the default soft share, so a pin the owner set never
+/// binds another wallet's units, such as a lane's GPU seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResidentShareScope {
+    /// The owner's setting in the allocation's unit applies: its units,
+    /// else the default split of what the owner's shares in that unit
+    /// leave, and its pin.
+    OwnerSetting,
+    /// The default soft split of the whole allocation; never pinned.
+    DefaultSplit,
+}
+
+impl ResidentShareScope {
+    /// The scope of an allocation whose host-named wallet is `wallet`.
+    #[must_use]
+    pub fn of_wallet(wallet: Option<&crate::federation::WalletRef>) -> Self {
+        match wallet {
+            None => Self::OwnerSetting,
+            Some(_) => Self::DefaultSplit,
+        }
+    }
+}
 
 /// One resident's standing on one allocation, as its ledger reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,14 +57,16 @@ pub struct ResidentStanding {
 
 /// Where a host keeps each resident's share and its depletion, durably.
 pub trait ResidentLedger: Send + Sync {
-    /// `resident`'s standing on `allocation`, which holds `allocation_units`.
-    /// A row the ledger cannot read stands as the default share with nothing
-    /// used: reading a share never refuses work.
+    /// `resident`'s standing on `allocation`, which holds `allocation_units`,
+    /// under `scope`. A row the ledger cannot read stands as the default
+    /// share with nothing used: reading a share never refuses work.
     fn standing(
         &self,
         resident: EntityId,
         allocation: &AllocationRef,
+        unit: &LeaseUnit,
         allocation_units: u64,
+        scope: ResidentShareScope,
     ) -> ResidentStanding;
 
     /// Records that one of `resident`'s calls charged `allocation` `units`,
@@ -45,6 +75,7 @@ pub trait ResidentLedger: Send + Sync {
         &self,
         resident: EntityId,
         allocation: &AllocationRef,
+        unit: &LeaseUnit,
         units: u64,
         overdraft_units: u64,
     );
@@ -70,6 +101,7 @@ pub(super) struct ResidentDraw {
     residents: Arc<Residents>,
     pub(super) resident: EntityId,
     pub(super) allocation: AllocationRef,
+    unit: LeaseUnit,
     pub(super) share_units: u64,
     /// What the resident had used and held in flight before this call.
     pub(super) used_units: u64,
@@ -85,18 +117,22 @@ impl Residents {
         })
     }
 
-    /// Draws `units` of `allocation` for one of `resident`'s calls. A soft
-    /// share admits the call whatever its standing, and the draw names the
-    /// part past the share; a pinned share the reservation does not fit
-    /// refuses it.
+    /// Draws `units` of `allocation`, which is in `unit`, for one of
+    /// `resident`'s calls, under `scope`. A soft share admits the call
+    /// whatever its standing, and the draw names the part past the share; a
+    /// pinned share the reservation does not fit refuses it.
     pub(super) fn draw(
         self: &Arc<Self>,
         resident: EntityId,
         allocation: &AllocationRef,
+        unit: &LeaseUnit,
         allocation_units: u64,
         units: u64,
+        scope: ResidentShareScope,
     ) -> Result<ResidentDraw, RunDenied> {
-        let standing = self.ledger.standing(resident, allocation, allocation_units);
+        let standing = self
+            .ledger
+            .standing(resident, allocation, unit, allocation_units, scope);
         let mut in_flight = self.lock();
         let key = (resident, allocation.clone());
         let held = in_flight.get(&key).copied().unwrap_or(0);
@@ -106,6 +142,7 @@ impl Residents {
         if standing.pinned && overdraft_units > 0 {
             return Err(RunDenied::ResidentShareSpent {
                 resident,
+                unit: unit.clone(),
                 needed_units: after,
             });
         }
@@ -114,6 +151,7 @@ impl Residents {
             residents: Arc::clone(self),
             resident,
             allocation: allocation.clone(),
+            unit: unit.clone(),
             share_units: standing.share_units,
             used_units: committed,
             reserved_units: units,
@@ -149,9 +187,13 @@ impl ResidentDraw {
         }
         let room = self.share_units.saturating_sub(self.used_units);
         let overdraft_units = units.saturating_sub(room);
-        self.residents
-            .ledger
-            .charge(self.resident, &self.allocation, units, overdraft_units);
+        self.residents.ledger.charge(
+            self.resident,
+            &self.allocation,
+            &self.unit,
+            units,
+            overdraft_units,
+        );
     }
 }
 

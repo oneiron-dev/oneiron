@@ -5,11 +5,20 @@
 //! directory's inheritable entries even when it is created 0600. So the file
 //! is created with that inheritance refused, and a credential file that
 //! carries an ACL entry is refused when it is read. A POSIX ACL elsewhere is
-//! masked by the group bits, so mode 0600 already closes it.
+//! masked by the group bits, so mode 0600 already closes it on a local file
+//! system. On a Linux network file system the server decides by its own
+//! list (`network_fs`): an NFSv4 list that lets in anyone but the owner is
+//! refused, and so is a file whose server's list is not read here, on an SMB
+//! mount or an NFSv4 mount that reports no list, unless the host owner
+//! trusts that server's list. An NFSv2 or NFSv3 mount is judged by its mode,
+//! as a local file system is.
 
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) mod network_fs;
 
 /// Why a credential file is not admitted.
 #[derive(Debug, thiserror::Error)]
@@ -25,6 +34,16 @@ pub(crate) enum CredentialFileError {
         path.display()
     )]
     ExtendedAcl { path: PathBuf },
+    /// Its network file system's server may let in someone the mode does not
+    /// show: an NFSv4 list entry grants another user, or its server's list is
+    /// not read here (an SMB mount, or an NFSv4 mount that reports no
+    /// list).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[error("{} {refusal}", path.display())]
+    NetworkFs {
+        path: PathBuf,
+        refusal: network_fs::NetworkFsRefusal,
+    },
     /// Who can read it could not be read.
     #[error("check who can read {}: {source}", path.display())]
     Unchecked {
@@ -82,7 +101,6 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 /// written under a fresh name beside it, synced, then renamed over it, so a
 /// reader finds the old file or the new one, never a part. On failure `path`
 /// stays as it was.
-#[cfg_attr(not(feature = "mesh"), allow(dead_code))]
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let name = path
         .file_name()
@@ -117,7 +135,8 @@ pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Admits an open credential file only when no one but its owner can read it.
+/// Admits an open credential file only when no one but its owner can read it:
+/// by its mode, and by its ACL on macOS and on a Linux network file system.
 pub(crate) fn admit(path: &Path, file: &File) -> Result<(), CredentialFileError> {
     let unchecked = |source| CredentialFileError::Unchecked {
         path: path.to_owned(),
@@ -138,6 +157,15 @@ pub(crate) fn admit(path: &Path, file: &File) -> Result<(), CredentialFileError>
     if macos::has_acl_entry(file).map_err(unchecked)? {
         return Err(CredentialFileError::ExtendedAcl {
             path: path.to_owned(),
+        });
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(refusal) =
+        network_fs::judge(file, network_fs::Principals::Owner).map_err(unchecked)?
+    {
+        return Err(CredentialFileError::NetworkFs {
+            path: path.to_owned(),
+            refusal,
         });
     }
     #[cfg(not(unix))]

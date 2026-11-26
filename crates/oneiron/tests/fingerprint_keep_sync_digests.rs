@@ -856,17 +856,17 @@ fn settlement_revision_keeps_main_s_bytes() {
                     for (source, stamp, blob) in
                         [(id(1), [0; 32], [255; 32]), (id(2), [255; 32], [0; 32])]
                     {
-                        let head = door::settlement_revision(
-                            &source,
+                        let head = door::settlement_revision(&door::SettlementRevisionParts {
+                            source: &source,
                             incarnation,
                             text,
                             source_vv,
-                            &stamp,
-                            &blob,
+                            stamp: &stamp,
+                            blob: &blob,
                             lineage_vv,
                             submitted,
                             cause,
-                        );
+                        });
                         assert_eq!(
                             head,
                             base_settlement::revision(
@@ -892,30 +892,21 @@ fn settlement_revision_keeps_main_s_bytes() {
     assert_eq!((rows, hashes.len()), (448, 448));
     let left: VersionVector = [(9u64, 3i32), (1, 2)].into_iter().collect();
     let right: VersionVector = [(1u64, 2i32), (9, 3)].into_iter().collect();
-    assert_eq!(
-        door::settlement_revision(
-            &id(1),
-            "",
-            "",
-            &left,
-            &[0; 32],
-            &[0; 32],
-            &left,
-            "",
-            RepoProjectionHoldCause::SealedFileEdited
-        ),
-        door::settlement_revision(
-            &id(1),
-            "",
-            "",
-            &right,
-            &[0; 32],
-            &[0; 32],
-            &right,
-            "",
-            RepoProjectionHoldCause::SealedFileEdited
-        )
-    );
+    let source = id(1);
+    let revision = |vv: &VersionVector| {
+        door::settlement_revision(&door::SettlementRevisionParts {
+            source: &source,
+            incarnation: "",
+            text: "",
+            source_vv: vv,
+            stamp: &[0; 32],
+            blob: &[0; 32],
+            lineage_vv: vv,
+            submitted: "",
+            cause: RepoProjectionHoldCause::SealedFileEdited,
+        })
+    };
+    assert_eq!(revision(&left), revision(&right));
 }
 
 #[test]

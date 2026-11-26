@@ -62,6 +62,7 @@ pub(crate) fn plant_slip_wake(
         trigger: ProgramTrigger::Turn,
         sealed: None,
         next_due: None,
+        paused_at: None,
     };
     let landed = LandedTurnRef {
         turn,
@@ -179,6 +180,7 @@ pub(crate) fn plant_arming(
         trigger: ProgramTrigger::Turn,
         sealed: None,
         next_due: None,
+        paused_at: None,
     };
     vault.with_write_txn_grouped(|txn| ARM.put(vault, txn, &(actor, registration), &arming))?;
     Ok(registration)
@@ -264,6 +266,7 @@ pub(crate) fn plant_timer_arming(
         },
         sealed: Some(authority),
         next_due: Some(first_at),
+        paused_at: None,
     };
     vault.with_write_txn_grouped(|txn| {
         ARM.put(vault, txn, &(actor, registration), &arming)?;
@@ -466,6 +469,19 @@ pub(crate) fn damage_arming_row(
 pub(crate) fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         super::arm::erase_turn_program_actor_in_txn(vault, txn, &actor)
+    })
+}
+
+/// Marks `actor` hard-deleted here and erases its turn programs, in one
+/// writer and in that order, as a hard delete of its row does: the permanent
+/// marker a torn actor row takes, then the sweep. The row itself stays and
+/// nothing is staged for sync. Answers whether the actor then reads as erased
+/// here: only a PERSON or MACHINE row stored here takes the marker.
+pub(crate) fn erase_hard_deleted_actor_programs(vault: &Vault, actor: EntityId) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::deletion::mark_torn_actor_row_in_txn(&vault.store, txn, &actor)?;
+        super::arm::erase_turn_program_actor_in_txn(vault, txn, &actor)?;
+        vault.carrier_actor_erased_in_txn(&*txn, &actor)
     })
 }
 

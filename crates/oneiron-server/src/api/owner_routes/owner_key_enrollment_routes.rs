@@ -128,7 +128,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys/changes",
-                summary: "Every enrollment, confirmation and removal of an enrolled owner key, a device's, the recovery root's or a passkey, and every binding of the owner by their own passkey, that the vault's log holds, newest first: the entry, `enrolled`, `confirmed` (a key only a passkey vouched for now signs in full), `removed`, `removed_by_ended_key` (two removals that crossed ended both keys), `removed_in_conflict` (a removal that conflicted with another removal: the vault counted neither, and the key ended) or `bound_by_passkey` (the owner's passkey bound them as the vault's owner), the key, its `shape` (`device_key` or `passkey`), the machine its enrollment names, its kind (null for a passkey), the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
+                summary: "Every enrollment, confirmation and removal of an enrolled owner key, a device's, the recovery root's or a passkey, and every binding of the owner by a key of their own, that the vault's log holds, newest first: the entry, `enrolled`, `confirmed` (a key only a passkey vouched for now signs in full), `removed`, `removed_by_ended_key` (two removals that crossed ended both keys), `removed_in_conflict` (a removal that conflicted with another removal: the vault counted neither, and the key ended) or `bound_by_passkey` (the owner's passkey bound them as the vault's owner) or `bound_by_device_key` (one of the owner's device keys bound them as the vault's owner), the key, its `shape` (`device_key` or `passkey`), the machine its enrollment names, its kind (null for a passkey), the key that signed the entry and when. Every owner device reads the same list, so it is the notice of a key change. Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
@@ -256,7 +256,9 @@ struct ChangeReply {
     /// a removal that conflicted with another removal, which refused a row
     /// below it while its own signer stands, so the vault counted neither;
     /// or `bound_by_passkey`: a passkey the host vouched for as the owner's
-    /// signed the owner's first binding itself, so their owner verbs pass.
+    /// signed the owner's first binding itself, so their owner verbs pass;
+    /// or `bound_by_device_key`: one of the owner's device keys signed the
+    /// owner's binding itself, so their owner verbs pass.
     change: &'static str,
     /// The key, as hex: 64 for a device's or the recovery root's Ed25519
     /// key, 66 for a passkey's compressed SEC1 key.
@@ -445,7 +447,7 @@ fn enrol_as_host(
 
 /// An authority key as lower-case hex: an Ed25519 key's 32 bytes, a P-256
 /// key's compressed encoding.
-fn authority_key_hex(key: &AuthorityKey) -> String {
+pub(super) fn authority_key_hex(key: &AuthorityKey) -> String {
     match key {
         AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
         AuthorityKey::P256(bytes) => oneiron_hex::encode(bytes),
@@ -462,6 +464,7 @@ fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
             OwnerKeyChangeKind::RemovedByEndedKey => "removed_by_ended_key",
             OwnerKeyChangeKind::RemovedInConflict => "removed_in_conflict",
             OwnerKeyChangeKind::BoundByPasskey => "bound_by_passkey",
+            OwnerKeyChangeKind::BoundByDeviceKey => "bound_by_device_key",
         },
         public_key: authority_key_hex(&change.public_key),
         shape: match change.public_key {

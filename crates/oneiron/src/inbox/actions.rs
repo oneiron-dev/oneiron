@@ -10,6 +10,12 @@ use super::notification::NotificationKind;
 use crate::agent_dispatch::{AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER};
 use crate::authority::OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
+use crate::dreamer_runner::maintenance::identity::{
+    IDENTITY_ANSWER_VERB, IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER, SOMEONE_NEW,
+};
+use crate::engine_executor::resume_divergence::{
+    RESUME_DIVERGENCE_ANSWER_VERB, RESUME_DIVERGENCE_NOTIFICATION_PRODUCER,
+};
 use crate::entity_id::EntityId;
 use crate::federation::NOTIFICATION_PRODUCER_ERASE_PROPOSAL;
 use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
@@ -35,6 +41,8 @@ const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer"
 /// previews through [`OWNER_CONFIRM_PREVIEW_VERB`], whose `confirm` this
 /// verb's call then passes back.
 const RECORD_ERASE_CONFIRM_VERB: &str = "vault.records.erase_confirm";
+/// The owner's set of the setting rows of a refused projection, as one act: its fix.
+const SETTING_SET_VERB: &str = "vault.settings.set";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -73,7 +81,9 @@ impl Memory<'_> {
     /// change is reverted (FIX 5369). An applied stock switch offers the
     /// owner's undo while its binding still holds (FIX 4663). A GPU job's
     /// stop at its maximum offers its one-click resume while the stop stands
-    /// (CROSS-ARCH-0023 C2 05). Any other row,
+    /// (CROSS-ARCH-0023 C2 05). A member's someone-new proposal on an
+    /// identity ask offers the owner's acceptance while it stands
+    /// (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A). Any other row,
     /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -101,16 +111,27 @@ impl Memory<'_> {
             NotificationKind::Ask if producer == AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER => {
                 self.agent_run_effect_actions(row)
             }
+            NotificationKind::Ask if producer == RESUME_DIVERGENCE_NOTIFICATION_PRODUCER => {
+                self.resume_divergence_actions(row)
+            }
             NotificationKind::ModelPackChanged
                 if producer == MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER =>
             {
                 self.model_pack_revert_actions(row)
+            }
+            NotificationKind::Ask
+                if producer == crate::setting::SETTING_REFUSAL_NOTIFICATION_PRODUCER =>
+            {
+                self.setting_refusal_actions(row)
             }
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
             }
             NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
                 self.gpu_job_resume_actions(row)
+            }
+            NotificationKind::Ask if producer == IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER => {
+                self.identity_proposal_actions(row)
             }
             NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
                 if producer == crate::voice_identity::VOICE_RECOGNITION_NOTIFICATION_PRODUCER =>
@@ -119,6 +140,29 @@ impl Memory<'_> {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The producer names the identity ask in `source.result` and the ids the
+    /// decision is about in `subject_refs`; the notice is a member's
+    /// someone-new proposal on it. Shown while the proposal it was sent for
+    /// stands, made when the notice was and on those ids: one tap accepts it
+    /// through [`IDENTITY_ANSWER_VERB`], naming it by its token, and the verb
+    /// judges the ask, the proposal and the caller again.
+    fn identity_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(ask) = row.source.result.as_deref() else {
+            return Vec::new();
+        };
+        let Ok(Some(proposal)) = self.vault().identity_someone_new_proposal(ask) else {
+            return Vec::new();
+        };
+        let refs: Vec<String> = proposal.refs.iter().map(EntityId::to_hex).collect();
+        if proposal.proposed_at != row.created_at || refs != row.subject_refs {
+            return Vec::new();
+        }
+        vec![NotificationAction::new(
+            IDENTITY_ANSWER_VERB,
+            serde_json::json!({ "ask": ask, "choice": SOMEONE_NEW, "proposal": proposal.token }),
+        )]
     }
 
     /// The producer names the GPU job in `source.result`; the notice is the
@@ -274,6 +318,43 @@ impl Memory<'_> {
             .collect()
     }
 
+    /// The producer names the run in `source.result` and the step and effect digest in
+    /// `source.event` (L8-23); the ask is a vault owner's, and only an owner's proof answers it.
+    /// Shown while the step still waits for an answer: re-fire the changed effect steps once, or
+    /// leave them; leave alone when the drift holds an agent verb write, which keeps its receipt.
+    fn resume_divergence_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some((run, step_seq, digest)) =
+            crate::engine_executor::resume_divergence::resume_divergence_ask_target(&row.source)
+        else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let choices = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| vault.resume_divergence_choices_in(&txn, run, step_seq, &digest));
+        let Ok(choices) = choices else {
+            return Vec::new();
+        };
+        let run_ref = run.to_hex();
+        choices
+            .iter()
+            .map(|choice| {
+                NotificationAction::new(
+                    RESUME_DIVERGENCE_ANSWER_VERB,
+                    serde_json::json!({
+                        "run_ref": run_ref,
+                        "step_seq": step_seq,
+                        "report_digest": digest,
+                        "choice": choice,
+                    }),
+                )
+            })
+            .collect()
+    }
+
     /// The producer names the change in `source.result`; the notice is the
     /// caller's own, so the caller is the owner whose change it is.
     fn weave_setting_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
@@ -391,6 +472,29 @@ impl Memory<'_> {
     /// The producer names the change in `source.result`; the notice is an
     /// owner's own. Its revert is offered while the change is the vault's
     /// last and the pack before it is installed at its bytes and served.
+    /// The producer names every setting act a refused projection is about in `source.event`
+    /// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS). Each tap is the owner's set, as one act, of
+    /// each row such an act heads that this install still refuses and of each row the key's hook
+    /// judges it against: one tap, each to the value it holds here, which the owner may edit
+    /// before he taps, or, for a key that quarantines a refused row, a tap for each row that keeps
+    /// it and clears the others. The act replaces the refused one on every machine. A refusal
+    /// that no longer stands here offers none.
+    fn setting_refusal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let vault = self.vault();
+        let taps = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| {
+                crate::setting::setting_refusal_taps_in_txn(vault, &txn, &row.source.event)
+            });
+        taps.unwrap_or_default()
+            .into_iter()
+            .map(|args| NotificationAction::new(SETTING_SET_VERB, args))
+            .collect()
+    }
+
     fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(change_ref) = row.source.result.as_deref() else {
             return Vec::new();

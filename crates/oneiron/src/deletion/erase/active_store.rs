@@ -63,7 +63,8 @@ impl Vault {
     ) -> Result<(bool, Vec<EntityId>, crate::deletion::ErasureEffects)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::store::base_agent::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
@@ -299,8 +300,9 @@ impl Vault {
         erase: bool,
         act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, bool, bool)> {
-        // A soft erase scrubs the body, so a hold refuses it too.
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        // A soft erase scrubs the body, so a restriction refuses it too.
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::store::base_agent::guard_actor_delete(id)?;
         self.store
@@ -509,6 +511,18 @@ impl Vault {
             id,
             header.entity_type,
         )?;
+        // The floors waiting on the row are sealed before its lineage goes
+        // (#9289 Opus review 3 P1-A). A soft tombstone replayed over a soft
+        // scrub already applied here is no new erase, and seals nothing: a
+        // fact that waits for good on the row stays readable to the owner
+        // (FLOOR-OLD-FACT-ERASED-INPUT = A; #10108 review P1-3). An erase
+        // seals it, as the ruling says.
+        if erase
+            || !(IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
+                && ROW_DELETION_FENCE.contains(&self.store, &*wtxn, &HexId(*id))?)
+        {
+            crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
+        }
         crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row

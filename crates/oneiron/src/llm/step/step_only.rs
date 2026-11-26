@@ -81,6 +81,17 @@ pub(crate) fn signal_step_wait_in_txn(
     Ok(())
 }
 
+/// Reads the trap head [`signal_step_wait_in_txn`] would signal, without writing.
+/// The pre-prompt cut read calls this for every pending waiter, so a trap the
+/// settlement would refuse on is refused before the person is asked.
+pub(crate) fn step_wait_reads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    trap: &TrapRef,
+) -> Result<()> {
+    step_wait_head_in_txn(vault, rtxn, trap).map(drop)
+}
+
 /// Returns true only for the transaction that changes `Sent` to `Consumed`.
 /// Unsignalled and already consumed waits return false. The private binding
 /// remains as an authenticated idempotency receipt; without it a synced claim

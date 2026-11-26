@@ -184,7 +184,7 @@ impl Vault {
                 )
             })?;
         }
-        crate::llm::reconcile_peer_result_signals(self, now)?;
+        crate::llm::reconcile_peer_result_signals(self, now.saturating_mul(1000))?;
         Ok(report)
     }
 

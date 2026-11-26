@@ -15,11 +15,16 @@ use std::sync::Mutex;
 mod covers;
 mod gate_anchors;
 mod private_sources;
+mod room_ancestry;
 pub(crate) use gate_anchors::{gate_claim_anchors_in, gate_claim_anchors_store_in};
 pub(crate) use private_sources::{
-    private_thread_word_turns_in, private_threads_readable_raw_in,
-    private_threads_readable_with_read_in,
+    private_thread_walks_readable_with_read_in, private_thread_word_turns_in,
+    private_threads_readable_raw_in, private_threads_readable_with_read_in,
 };
+use room_ancestry::{
+    base_and_view_rows_in, room_for_revision_in, room_for_revision_over, rooms_of_revision_in,
+};
+pub(crate) use room_ancestry::{hangs_under_in, room_for_record_in};
 
 /// Immutable ledger snapshots of unindexed rooms, keyed by the version read
 /// in the caller's transaction. Reusing a ScopedRead after a kick cannot
@@ -652,171 +657,6 @@ fn reaction_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
 
 pub(crate) use crate::store::conversation_summary::conversation_summary_covers;
 
-pub(crate) fn room_for_record_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-) -> Result<Option<EntityId>> {
-    room_for_revision_in(vault, txn, record, None)
-}
-
-/// [`room_for_record_in`] starting from `revision` of `record` when given,
-/// so a served older revision is placed by its own subject. Every ancestor
-/// is read, however many (rule 5): past its threshold row the walk asks
-/// whether everything is okay, counted on every way out, and a record
-/// already seen ends a cycle.
-fn room_for_revision_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    revision: Option<&[u8]>,
-) -> Result<Option<EntityId>> {
-    room_for_revision_over(vault, &vault.store, txn, record, revision, None)
-}
-
-/// [`room_for_revision_in`] with each ancestor and edge read through `dbs`,
-/// and, with `stretch`, a room stretch's shell taken as the room it maps to
-/// ([`crate::off_record::StretchRoom::room_of`]).
-fn room_for_revision_over(
-    vault: &Vault,
-    dbs: &impl crate::store::ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    revision: Option<&[u8]>,
-    stretch: Option<crate::off_record::StretchRoom>,
-) -> Result<Option<EntityId>> {
-    let mut walk = ScanCount::start(
-        &vault.store,
-        txn,
-        EngineScan::RoomAncestryRecords,
-        record.as_bytes(),
-    )?;
-    let mut seen = BTreeSet::new();
-    let room = room_walk_in(dbs, txn, record, revision, &mut seen, stretch);
-    walk.rows(seen.len());
-    walk.defer(&vault.store);
-    room
-}
-
-/// The walk [`room_for_revision_over`] counts, each record it reaches in
-/// `seen`.
-fn room_walk_in(
-    dbs: &impl crate::store::ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    revision: Option<&[u8]>,
-    seen: &mut BTreeSet<EntityId>,
-    stretch: Option<crate::off_record::StretchRoom>,
-) -> Result<Option<EntityId>> {
-    let mut pending = vec![record];
-    let mut room = None;
-    while let Some(id) = pending.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let raw = match revision.filter(|_| id == record) {
-            Some(raw) => raw.to_vec(),
-            None => crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?
-                .ok_or(Error::EntityNotFound)?,
-        };
-        let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("room ancestor"))?;
-        if h.entity_type == ENTITY_TYPE_CONVERSATION {
-            let id = stretch.map_or(id, |stretch| stretch.room_of(id));
-            if room.is_some_and(|r| r != id) {
-                return Err(state("ambiguous room"));
-            }
-            room = Some(id);
-            continue;
-        }
-        for kind in [
-            EdgeKind::ChildOf,
-            EdgeKind::PartOf,
-            EdgeKind::Parent,
-            EdgeKind::RepliesTo,
-            EdgeKind::SpawnedBy,
-            EdgeKind::BelongsTo,
-        ] {
-            pending.extend(counted_edge_ids(dbs, txn, &id, kind, false)?);
-        }
-        if h.entity_type == ENTITY_TYPE_CLAIM {
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if let crate::claim::ClaimSubject::Entity(subject) = body.subject {
-                pending.push(subject);
-            }
-        }
-    }
-    Ok(room)
-}
-/// Every room the revision `raw` of `record` sits in (FIX 5861), up the
-/// edges and claim subjects [`room_for_revision_in`] walks: an ancestor that
-/// is gone is passed over, never a refusal, and a record that reaches two
-/// rooms sits in both. Each ancestor and edge is read on base and through
-/// `dbs`, a session's composed view (FIX 6487).
-fn rooms_of_revision_in(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    raw: &[u8],
-) -> Result<BTreeSet<EntityId>> {
-    let union = crate::store::ManifestDbs::is_union(dbs);
-    let mut pending = vec![(record, raw.to_vec())];
-    let mut seen = BTreeSet::from([record]);
-    let mut rooms = BTreeSet::new();
-    while let Some((id, bytes)) = pending.pop() {
-        let Some(h) = EntityMetadataHeader::parse(&bytes) else {
-            continue;
-        };
-        if h.entity_type == ENTITY_TYPE_CONVERSATION {
-            rooms.insert(id);
-            continue;
-        }
-        let mut next = Vec::new();
-        for kind in [
-            EdgeKind::ChildOf,
-            EdgeKind::PartOf,
-            EdgeKind::Parent,
-            EdgeKind::RepliesTo,
-            EdgeKind::SpawnedBy,
-            EdgeKind::BelongsTo,
-        ] {
-            next.extend(counted_edge_ids(&vault.store, txn, &id, kind, false)?);
-            if union {
-                next.extend(counted_edge_ids(dbs, txn, &id, kind, false)?);
-            }
-        }
-        if h.entity_type == ENTITY_TYPE_CLAIM
-            && let Some(body) = bytes.get(ENTITY_METADATA_HEADER_LEN..)
-            && let Ok(claim) = crate::claim::decode_claim_body(body, true)
-            && let crate::claim::ClaimSubject::Entity(subject) = claim.subject
-        {
-            next.push(subject);
-        }
-        for ancestor in next {
-            if seen.insert(ancestor) {
-                for bytes in base_and_view_rows_in(vault, dbs, txn, ancestor)? {
-                    pending.push((ancestor, bytes));
-                }
-            }
-        }
-    }
-    Ok(rooms)
-}
-/// Whether the revision `raw` of `record` sits under `conversation`, up the
-/// edges and claim subjects [`rooms_of_revision_in`] walks, on base and
-/// through `dbs`: how a read over a room stretch tells a row the stretch
-/// staged under its shell.
-pub(crate) fn hangs_under_in(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    raw: &[u8],
-    conversation: EntityId,
-) -> Result<bool> {
-    Ok(rooms_of_revision_in(vault, dbs, txn, record, raw)?.contains(&conversation))
-}
-
 /// Whether `id` stands live for an audience read: live on base and not
 /// archived, or, over a room stretch's view `dbs`, live in that view while
 /// base holds no row of it at all, so a row the stretch staged. An overlay
@@ -836,27 +676,6 @@ fn stands_live_in(
     }
 }
 
-/// The rows `id` holds on base and, when `dbs` composes a session's view
-/// over it, in that view, each once (FIX 6487): an overlay row is read
-/// beside the base one, never in its place. None for a record neither holds.
-fn base_and_view_rows_in(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-) -> Result<Vec<Vec<u8>>> {
-    let mut rows = Vec::new();
-    if let Some(base) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
-        rows.push(base);
-    }
-    if crate::store::ManifestDbs::is_union(dbs)
-        && let Some(view) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?
-        && !rows.contains(&view)
-    {
-        rows.push(view);
-    }
-    Ok(rows)
-}
 impl Vault {
     /// The room audience is membership, never runtime presence.
     pub fn scoped_read_for_room(

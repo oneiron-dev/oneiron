@@ -154,6 +154,17 @@ pub(in crate::dreamer_consolidation) async fn decide_pack_with_charges(
                 .lock()
                 .map_err(|_| crate::Error::InvariantViolation("extraction charge tally lock"))?;
             settle_spent_prefix(vault, &spent, &decided, &mut charges)?;
+            // A lent read's failed step keeps its paid usage (a reply its refused correction
+            // followed) on its error, and no bound caller accounts that error, as the native
+            // pass does through `refused_with_spend`: it joins the attempt's shared tally here,
+            // once. A charge-record failure above has already counted it and returned.
+            if let Some(usage) = decided
+                .as_ref()
+                .err()
+                .and_then(DurableStepError::spent_usage)
+            {
+                charges.record_usage(usage);
+            }
         }
     }
     decided

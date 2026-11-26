@@ -473,6 +473,7 @@ fn a_held_read_lane_reads_on_while_its_own_device_grant_stands() {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a read Grant")

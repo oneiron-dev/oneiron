@@ -3,6 +3,7 @@
 //! cancel. The owner starts under their own proof; an agent starts under its
 //! own Grant within the per-job maximum the owner set beside it (RULING
 //! L10-31-STARTER = B), and resumes or cancels only a job it started.
+use crate::gpu_line::{ClaimKey, UnitEndReport, settle_unit_in_txn};
 use crate::llm::run_admission::{
     CallOutcome, CheckpointRef, DeclaredMaximum, JobMaximum, MaximumShown, ResumeOffer,
     ResumeRefused, RunAdmission,
@@ -48,6 +49,9 @@ impl Vault {
     /// again. [`GpuJobError::Denied`] when the reservation does not fit.
     /// [`GpuJobError::Resume`] for a resume its stop does not allow.
     /// [`GpuJobError::Caller`] for an agent past its Grant or its maximum.
+    /// [`GpuJobError::LineManaged`] on an offer a GPU line names: a job
+    /// starts there only through its unit claim
+    /// ([`Self::start_claimed_gpu_job`]).
     pub fn start_gpu_job(
         &self,
         start: GpuJobStart<'_>,
@@ -76,10 +80,11 @@ impl Vault {
         if admission.run() != GpuJob::admission_ref_of(&quote.job) {
             return Err(GpuJobError::AdmissionMismatch);
         }
-        // Every refusal of the caller or the maximum comes before the
-        // reservation.
+        // Every refusal of the start gate, the caller or the maximum comes
+        // before the reservation.
         let (_, shown) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            self.plain_start_gate_in_txn(&txn, offer, resume)??;
             self.gpu_job_starter_in_txn(&txn, actor, current.as_ref(), quote, resume, now_ms)??
         };
         next_chunk(current, offer, quote, resume, shown, now_ms)?;
@@ -87,6 +92,9 @@ impl Vault {
             .admit_paid(&offer.connector, quote.quantity)
             .map_err(GpuJobError::Denied)?;
         let written = self.with_write_txn_grouped(|txn| -> crate::Result<Written> {
+            if let Err(refused) = self.plain_start_gate_in_txn(txn, offer, resume)? {
+                return Ok(Err(refused));
+            }
             let current = GPU_JOBS.get(&self.store, txn, &quote.job)?;
             let (starter, shown) = match self.gpu_job_starter_in_txn(
                 txn,
@@ -103,6 +111,12 @@ impl Vault {
                 Ok(job) => job,
                 Err(refused) => return Ok(Err(refused)),
             };
+            if let GpuJobActor::Order(attempt) = actor
+                && let Err(refused) =
+                    self.record_order_attempt_in_txn(txn, attempt, &job.id, now_ms)?
+            {
+                return Ok(Err(GpuJobError::Order(refused)));
+            }
             if job.started_by.is_none() && job.chunks.len() == 1 {
                 job.started_by = Some(starter);
             }
@@ -152,6 +166,9 @@ impl Vault {
                 let owner = owner.revalidate_in_txn(self, txn)?;
                 return Ok(Ok((owner, MaximumShown { at_ms: now_ms })));
             }
+            GpuJobActor::Order(attempt) => {
+                return self.order_job_starter_in_txn(txn, attempt, quote, resume, now_ms);
+            }
             GpuJobActor::Agent(agent) => agent,
         };
         let verb = GpuJobVerb::Start;
@@ -197,6 +214,54 @@ impl Vault {
         )))
     }
 
+    /// Who starts an attempt the work-order loop makes, and when its maximum
+    /// was shown (pass 34, 1.1): the order's requester as the order's own
+    /// check finds it in `txn`. The owner's order is his showing; an agent's
+    /// attempt fits the per-job maximum the owner set beside the Grant that
+    /// named `vault.jobs.order`. An order never resumes a stopped job: a
+    /// retry is a new attempt under a new job id.
+    fn order_job_starter_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &crate::work_order::OrderAttemptRef,
+        quote: &GpuJobQuote,
+        resume: Option<&ResumeOffer>,
+        now_ms: u64,
+    ) -> crate::Result<Result<(EntityId, MaximumShown), GpuJobError>> {
+        use crate::work_order::{AttemptRefused, Blocker, OrderStarter};
+        if resume.is_some() {
+            return Ok(Err(GpuJobError::Order(AttemptRefused::OrderChanged)));
+        }
+        match self.order_starter_in_txn(txn, attempt, &quote.job, now_ms)? {
+            Err(refused) => Ok(Err(GpuJobError::Order(refused))),
+            Ok(OrderStarter::Owner {
+                owner,
+                ordered_at_ms,
+            }) => Ok(Ok((
+                owner,
+                MaximumShown {
+                    at_ms: ordered_at_ms,
+                },
+            ))),
+            Ok(OrderStarter::Agent { actor, grant }) => {
+                let allowance = self.gpu_job_allowance_in_txn(txn, &grant)?;
+                match allowance {
+                    Some(allowance) if quote.maximum_secs <= allowance.maximum_secs => Ok(Ok((
+                        actor,
+                        MaximumShown {
+                            at_ms: allowance.set_at_ms,
+                        },
+                    ))),
+                    allowance => Ok(Err(GpuJobError::Order(AttemptRefused::Blocked(
+                        Blocker::AllowanceExceeded {
+                            maximum_secs: allowance.map_or(0, |allowance| allowance.maximum_secs),
+                        },
+                    )))),
+                }
+            }
+        }
+    }
+
     /// `actor` cancels a job: a live chunk is terminated and settles its
     /// billed time; a stopped job gives up its resume. The customer's own
     /// end needs none of the conditions of a stop at the maximum. An agent
@@ -217,15 +282,36 @@ impl Vault {
         if let GpuJobActor::Owner(owner) = actor {
             owner.revalidate(self)?;
         }
+        self.cancel_gpu_job_for(CancelFor::Actor(actor), id, permits, connector, now_ms)
+    }
+
+    /// The cancel of [`Self::cancel_gpu_job`], for `by`. An agent's generic
+    /// cancel of a unit's job is refused: `vault.arms.units.cancel` ends it
+    /// (design pass 32 r2, 5.3).
+    pub(super) fn cancel_gpu_job_for(
+        &self,
+        by: CancelFor<'_>,
+        id: &EntityId,
+        permits: &GpuJobPermits,
+        connector: &dyn GpuJobConnector,
+        now_ms: u64,
+    ) -> Result<GpuJob, GpuJobError> {
         let written = self.with_write_txn_grouped(|txn| -> crate::Result<Written> {
             let Some(mut job) = GPU_JOBS.get(&self.store, txn, id)? else {
                 return Ok(Err(GpuJobError::NotFound));
             };
-            match actor {
-                GpuJobActor::Owner(owner) => {
+            match by {
+                CancelFor::Actor(GpuJobActor::Owner(owner)) => {
                     owner.revalidate_in_txn(self, txn)?;
                 }
-                GpuJobActor::Agent(agent) => {
+                CancelFor::Actor(GpuJobActor::Order(attempt)) => {
+                    if !self.order_stop_reaches_in_txn(txn, attempt, id)? {
+                        return Ok(Err(GpuJobError::Order(
+                            crate::work_order::AttemptRefused::OrderChanged,
+                        )));
+                    }
+                }
+                CancelFor::Actor(GpuJobActor::Agent(agent)) => {
                     let verb = GpuJobVerb::Cancel;
                     if let Err(refusal) = agent.grant_in_txn(self, txn, verb) {
                         return Ok(Err(GpuJobError::Caller(refusal)));
@@ -235,6 +321,17 @@ impl Vault {
                             verb,
                             "an agent cancels only a GPU job it started",
                         ))));
+                    }
+                    if job.claim.is_some() {
+                        return Ok(Err(GpuJobError::Caller(refused(
+                            verb,
+                            "a unit's job is cancelled with vault.arms.units.cancel",
+                        ))));
+                    }
+                }
+                CancelFor::Unit(claim) => {
+                    if job.claim.as_ref() != Some(claim) {
+                        return Ok(Err(GpuJobError::NotFound));
                     }
                 }
             }
@@ -265,9 +362,11 @@ impl Vault {
         // the chunk began) leaves it ending: its next step admits the chunk
         // again and the new permit pays the end, as for any chunk it takes up.
         // A chunk whose admission was lost ends now, unpaid, as its step would.
-        let taken_up_by_a_step = written.chunk().is_some_and(|chunk| {
-            !chunk.admission_lost && !permits.holds_chunk(&written.id, &chunk.idempotency_key)
-        });
+        // A unit's job holds no permit (its claim is its hold): it ends now.
+        let taken_up_by_a_step = written.claim.is_none()
+            && written.chunk().is_some_and(|chunk| {
+                !chunk.admission_lost && !permits.holds_chunk(&written.id, &chunk.idempotency_key)
+            });
         if taken_up_by_a_step {
             return Ok(written);
         }
@@ -397,15 +496,30 @@ impl Vault {
         self.load_gpu_job(&job.id)
     }
 
-    /// Holds a job whose chunk never reached its provider.
+    /// Holds a job whose chunk never reached its provider. A unit's job ends
+    /// its claim `Released(reason)` in the same write: nothing ran, so the
+    /// claim's draws return, once (design pass 32 r2, 7.3).
     fn hold_gpu_job(
         &self,
         mut job: GpuJob,
         reason: String,
         now_ms: u64,
     ) -> Result<GpuJob, GpuJobError> {
+        let refused = UnitEndReport::Refused {
+            reason: reason.clone(),
+        };
         job.state = GpuJobState::Held { reason };
-        if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
+        let held = self.with_write_txn_grouped(|txn| -> crate::Result<bool> {
+            if !self.put_gpu_job_in_txn(txn, &mut job, now_ms)? {
+                return Ok(false);
+            }
+            if let Some(claim) = &job.claim {
+                // A claim that already ended keeps its terminal.
+                let _ = settle_unit_in_txn(self, txn, claim, &job.id, &refused, now_ms)?;
+            }
+            Ok(true)
+        })?;
+        if !held {
             return self.load_gpu_job(&job.id);
         }
         Ok(job)
@@ -438,10 +552,19 @@ fn ended_unsettled(job: &GpuJob, key: &str) -> bool {
             .is_none_or(|chunk| chunk.settled_units.is_none())
 }
 
+/// Who a cancel runs for: a caller of `vault.gpu.jobs.cancel`, or the unit
+/// door, which judged the line role and the reserver itself and cancels only
+/// the job of the claim it names.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum CancelFor<'a> {
+    Actor(GpuJobActor<'a>),
+    Unit(&'a ClaimKey),
+}
+
 /// The job with `quote`'s chunk added: a new job under the maximum it shows,
 /// or the stopped job resumed from its checkpoint under its run time so far
 /// plus the quote's maximum. It checks; the caller writes.
-fn next_chunk(
+pub(super) fn next_chunk(
     current: Option<GpuJob>,
     offer: &GpuOffer,
     quote: &GpuJobQuote,
@@ -482,6 +605,8 @@ fn next_chunk(
                 updated_at_ms: now_ms,
                 revision: 0,
                 orphaned_resources: Vec::new(),
+                claim: None,
+                backend: None,
             };
             (job, None::<CheckpointRef>)
         }
@@ -513,6 +638,9 @@ fn next_chunk(
             (job, Some(checkpoint))
         }
     };
+    // The chunk runs on the backend the offer names now; the host's steps and
+    // cancel reach it through the row from here on.
+    job.backend = offer.backend().map(str::to_owned);
     let index = job.chunks.len();
     job.chunks.push(GpuChunk {
         idempotency_key: format!("{}:{index}", job.id.to_hex()),

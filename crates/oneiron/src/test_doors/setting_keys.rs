@@ -3,12 +3,15 @@
 
 use std::cell::Cell;
 
+use oneiron_setting_contract::RowKey;
+
 use crate::check_in::ActClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::EngineControlClass;
 use crate::setting::{
-    Born, ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingSync, SettingValue,
+    Born, ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingMode, SettingScope,
+    SettingSync, SettingValue,
 };
 
 /// `test.bounds`'s value: a struct whose every part names its order.
@@ -172,6 +175,76 @@ fn count_change(
 ) -> Result<()> {
     HOOKED_LAST_AT.set(change.at);
     HOOKED_CHANGES.set(HOOKED_CHANGES.get() + 1);
+    Ok(())
+}
+
+fn two() -> u64 {
+    2
+}
+
+fn three() -> u64 {
+    3
+}
+
+fn highest() -> u64 {
+    u64::MAX
+}
+
+/// Refuses a change to `test.pair_count` or `test.pair_floor` that leaves the floor above the
+/// count, as `booking.emergency`'s pair does: the changed row is already in `txn`, so the pair
+/// read here is the one the write would commit.
+fn refuse_floor_above_count(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    _change: &SettingChange,
+) -> Result<()> {
+    let count = TEST_PAIR_COUNT.read_in_txn(vault, txn, &[], None)?.value;
+    let floor = TEST_PAIR_FLOOR.read_in_txn(vault, txn, &[], None)?.value;
+    if floor > count {
+        return Err(crate::error::Error::InvalidConfig(format!(
+            "test.pair_floor ({floor}) must not exceed test.pair_count ({count})"
+        )));
+    }
+    Ok(())
+}
+
+/// The row `refuse_floor_above_count` judges a row of the pair against: the other key's vault
+/// value row.
+fn pair_peer(
+    _vault: &crate::Vault,
+    _txn: &heed::RoTxn<'_>,
+    slot: &RowKey,
+    _value: Option<&serde_json::Value>,
+) -> Result<Vec<RowKey>> {
+    let other = if slot.name == "test.pair_count" {
+        "test.pair_floor"
+    } else {
+        "test.pair_count"
+    };
+    Ok(vec![RowKey {
+        name: other.to_owned(),
+        item: None,
+        mode: SettingMode::Value,
+        scope: SettingScope::Vault,
+    }])
+}
+
+/// Refuses a value of `test.capped_number` above five: a hook that reads no other row.
+fn refuse_above_five(
+    _vault: &crate::Vault,
+    _txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    if let Some(value) = change
+        .value
+        .as_ref()
+        .and_then(|value| value.decode::<u64>())
+        && value > 5
+    {
+        return Err(crate::error::Error::InvalidConfig(format!(
+            "test.capped_number takes at most 5, not {value}"
+        )));
+    }
     Ok(())
 }
 
@@ -352,5 +425,23 @@ crate::setting::setting_keys! {
     /// lower is stricter, default 7.
     pub TEST_BORN_DEPTH_DEFAULT: u64 = "test.born_depth_default" {
         kind: Kind::new(seven).strictest(zero).lower(),
+    };
+    /// A count with no order, default 3, whose hook refuses a pair that leaves `test.pair_floor`
+    /// above it (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): `booking.emergency`'s pair.
+    pub TEST_PAIR_COUNT: u64 = "test.pair_count" {
+        kind: Kind::new(three).strictest(three),
+        on_change: Some(refuse_floor_above_count),
+        refusal_peers: Some(pair_peer),
+    };
+    /// The fewest of `test.pair_count`, default 2, higher is stricter, at most the count.
+    pub TEST_PAIR_FLOOR: u64 = "test.pair_floor" {
+        kind: Kind::new(two).strictest(highest).higher(),
+        on_change: Some(refuse_floor_above_count),
+        refusal_peers: Some(pair_peer),
+    };
+    /// A number with no order whose hook refuses a value above five and reads no other row.
+    pub TEST_CAPPED_NUMBER: u64 = "test.capped_number" {
+        kind: Kind::new(zero),
+        on_change: Some(refuse_above_five),
     };
 }

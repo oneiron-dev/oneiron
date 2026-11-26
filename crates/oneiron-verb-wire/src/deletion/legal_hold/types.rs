@@ -5,18 +5,12 @@ use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// The title of the owner's one confirm.
-pub const LIFT_AND_ERASE_TITLE: &str = "Lift the hold and erase?";
-
-/// The prompt the owner's one confirm shows (C7).
-pub const LIFT_AND_ERASE_PROMPT: &str = "This lifts your hold and erases these records. It does not end any legal duty to keep them. This choice is recorded.";
-
 /// Who placed a hold, and so who may lift it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldKind {
-    /// The vault owner's hold. The owner lifts it only through the one
-    /// "Lift the hold and erase?" confirm.
+    /// The vault owner's hold. The owner lifts it through
+    /// `vault.legal_holds.lift`, which destroys its sealed copy.
     Customer,
     /// Oneiron's hold on an authority order, only where Oneiron hosts the
     /// bytes (Cloud and relay). Only Oneiron lifts it; an owner erase keeps
@@ -45,16 +39,19 @@ pub enum LegalHoldTarget {
     /// One gate-decision key partition: a claim's, or (`None`) the
     /// claim-free one the retention-horizon sweep ages.
     GatePartition(Option<EntityId>),
+    /// One inquiry this vault sent. The hold copies its receipts, and the
+    /// answer only where the company kept a copy (ARCH-0038 #company-hold).
+    Inquiry(EntityId),
 }
 
 impl LegalHoldTarget {
     /// The record or claim this target names; `None` for the claim-free
-    /// partition.
+    /// partition and for an inquiry, which is neither.
     #[must_use]
     pub const fn id(&self) -> Option<EntityId> {
         match self {
             Self::Record(id) | Self::GatePartition(Some(id)) => Some(*id),
-            Self::GatePartition(None) => None,
+            Self::GatePartition(None) | Self::Inquiry(_) => None,
         }
     }
 }
@@ -71,6 +68,62 @@ pub enum LegalHoldActorKind {
     /// A host-facing door that carries no actor (the raw `Vault` delete,
     /// batch, port and replay doors).
     Unattributed,
+}
+
+/// One sealed capture of an owner's hold in the install's hold store:
+/// the capture's id and the fingerprint of its sealed frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HoldCloneCapture {
+    pub capture: EntityId,
+    pub fingerprint: [u8; 32],
+}
+
+/// Which new on-record messages an owner's hold names (Ruling
+/// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :320-321: new messages join
+/// the hold only if the order explicitly says so, and only for the order's
+/// term).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageSelector {
+    /// Every new base on-record MESSAGE row of this vault.
+    Vault,
+}
+
+/// An owner's hold on future messages (Ruling L10-21-OWNER-FUTURE-MESSAGES
+/// = A, ARCH-0038 :320-321): each matching new MESSAGE is sealed into this
+/// hold's copy as it is written, until `until` or the lift. A hold without
+/// it captures nothing new.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldFutureMessages {
+    pub selector: MessageSelector,
+    /// The vault's recorded time after which no new message joins.
+    pub until: u64,
 }
 
 /// One hold row.
@@ -104,12 +157,20 @@ pub struct LegalHold {
     /// when its silence ended).
     #[serde(default)]
     pub owner_told: bool,
-    /// A host order's own terms also forbid using what it keeps (C6), kept
-    /// as the order's data. Never set on a customer hold. A record a hosted
-    /// privacy erasure kept is use-limited under any standing hold either way
-    /// (FIX 8849).
+    /// A host order's own terms also forbid using what it keeps (C6), recorded
+    /// as the order's data; no vault path reads it; never set on a customer
+    /// hold.
     #[serde(default)]
     pub requires_non_use: bool,
+    /// The sealed captures of this hold in the install's hold store, oldest
+    /// first. Empty on rows written before the sealed copy.
+    #[serde(default)]
+    pub clone_captures: Vec<HoldCloneCapture>,
+    /// The future messages this hold names (Ruling
+    /// L10-21-OWNER-FUTURE-MESSAGES = A, ARCH-0038 :321). None captures
+    /// nothing new; none on host orders and on rows written before it.
+    #[serde(default)]
+    pub future_messages: Option<LegalHoldFutureMessages>,
 }
 
 impl LegalHold {
@@ -117,18 +178,6 @@ impl LegalHold {
     #[must_use]
     pub const fn stands(&self) -> bool {
         self.lifted_at.is_none()
-    }
-
-    /// Whether this hold keeps its records in the live vault, its backups
-    /// and its body keys: a standing customer hold, the owner's own "keep
-    /// these records". A host order never does (LEGAL-HOLD-USE = B as a
-    /// clone, owner 2026-11-05): what the order covers is copied into the
-    /// host's separate legal-hold store, and the vault's own erases, scrubs,
-    /// compaction and backup expiry run as they would without it. Its row,
-    /// its log and its notice stay.
-    #[must_use]
-    pub fn keeps_vault_data(&self) -> bool {
-        self.kind == LegalHoldKind::Customer && self.stands()
     }
 
     /// An order forbids telling the owner about it at `now`.
@@ -148,13 +197,15 @@ impl LegalHold {
     }
 }
 
-/// The eight hold events (C3).
+/// The hold events (C3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldEventKind {
     Placed,
     ScopeChanged,
+    /// No longer written; earlier logs keep it.
     DeleteRefused,
+    /// No longer written; earlier logs keep it.
     LiftAndEraseConfirmed,
     /// The owner's plain delete of a record only secret orders kept was
     /// accepted (FIX 1465). No longer written: host orders keep nothing in
@@ -162,10 +213,16 @@ pub enum LegalHoldEventKind {
     EraseConfirmed,
     /// The owner withdrew an erase they confirmed that still waited: nothing
     /// of the record is erased by it, and no hold is placed again (FIX
-    /// 10401).
+    /// 10401). No longer written; earlier logs keep it.
     EraseWithdrawn,
+    /// No longer written; earlier logs keep it.
     EraseCompleted,
     Lifted,
+    /// The lift removed the hold's sealed copy: its wrapped key, then its
+    /// files.
+    CloneDestroyed,
+    /// The owner re-sealed the copy to a named recipient.
+    CloneProduced,
 }
 
 /// The reason code of one hold event. Never free text.
@@ -179,25 +236,29 @@ pub enum LegalHoldReason {
     /// An authority order: the host's own log carries its reference.
     LegalOrder,
     ScopeWidened,
-    /// The owner's lift-and-erase took these records out of the hold.
+    /// The owner's lift-and-erase took these records out of the hold. No
+    /// longer written; earlier logs keep it.
     ScopeNarrowedByErase,
     /// A host order's end date moved (a renewal).
     EndDateChanged,
-    /// A delete met the hold.
+    /// A delete met the hold. No longer written; earlier logs keep it.
     HeldRecord,
     /// A privacy erasure request met the hold: the held part is kept for
-    /// that legal reason only (C5, C6).
+    /// that legal reason only (C5, C6). No longer written; earlier logs keep
+    /// it.
     PrivacyEraseKept,
-    /// The owner confirmed "Lift the hold and erase?".
+    /// The owner confirmed "Lift the hold and erase?". No longer written;
+    /// earlier logs keep it.
     OwnerConfirmed,
-    /// The owner withdrew their waiting erase (FIX 10401).
+    /// The owner withdrew their waiting erase (FIX 10401). No longer
+    /// written; earlier logs keep it.
     OwnerWithdrew,
     /// The owner's erase waited on a host order. No longer written: host
     /// orders keep nothing in the vault; earlier logs keep it.
     CompletionPending,
     /// The ARCH-0038 receipt's signed final row is appended: its hard purge,
     /// its historical sweep and every custody retirement it bound finished
-    /// (FIX 5844).
+    /// (FIX 5844). No longer written; earlier logs keep it.
     ReceiptCompleted,
     /// The authority's release notice.
     AuthorityReleased,
@@ -207,6 +268,10 @@ pub enum LegalHoldReason {
     HostReleased,
     /// An order's silence ended; the owner is now told of it.
     SecrecyEnded,
+    /// The owner lifted their customer hold.
+    OwnerLifted,
+    /// The owner produced the sealed copy to a named recipient.
+    OwnerProduced,
 }
 
 /// One row of a hold log: ids, times and codes only (C3).
@@ -226,38 +291,13 @@ pub struct LegalHoldEvent {
     pub matter_ref: Option<String>,
     /// The ARCH-0038 receipt's `request_id`, on "erase completed".
     pub request_id: Option<String>,
-}
-
-/// What an erase that ran still waits on (C4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ErasePendingReason {
-    /// Its historical sweep is queued: the receipt has no linked sweep row
-    /// yet.
-    HistoricalSweep,
-    /// Its sweep finished or none was queued, and a custody retirement it
-    /// bound has not finished on every required target yet (FIX 5844).
-    CustodyRetirement,
-    /// Nothing is erased yet: in a shared vault with two or more Owners the
-    /// erase waits out the vault's `erase` veto window first, through the
-    /// record's own `erase` act, and runs once that act completes (FIX 9781).
-    VetoWindow,
-}
-
-/// What the owner's withdrawal did to one record's waiting erase (FIX
-/// 10401).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EraseWithdrawal {
-    /// The erase that waited is withdrawn: nothing of the record is erased
-    /// by it. A hold its confirm lifted stays lifted.
-    Withdrawn,
-    /// No erase of the record waits.
-    NotWaiting,
-    /// Another Owner confirmed the erase: only they withdraw it. This
-    /// Owner's objection to its `erase` act is their veto.
-    ConfirmedByAnotherOwner,
-    /// Its erase has begun, or a request has claimed its `erase` act: it
-    /// runs to its end, and reads as its confirm's status does.
-    UnderWay,
+    /// The fingerprint of the sealed capture this event placed or widened;
+    /// `None` on rows written before the sealed copy and on events that
+    /// wrote none.
+    #[serde(default)]
+    pub clone_fingerprint: Option<[u8; 32]>,
+    /// The blake3 of the recipient public key's bytes, on `CloneProduced`;
+    /// `None` on every other event.
+    #[serde(default)]
+    pub recipient_fingerprint: Option<[u8; 32]>,
 }

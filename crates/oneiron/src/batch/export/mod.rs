@@ -50,7 +50,8 @@ pub use archive_provenance::{
     ARCHIVE_PROVENANCE_DOMAIN, ArchiveProvenance, archive_provenance_transcript,
 };
 pub(crate) use archive_provenance::{
-    ArchiveSigner, ArchiveVerifierState, archive_signer, sign_archive_manifest,
+    ArchiveSigner, ArchiveVerifierState, archive_exported_by_this_install_in_txn, archive_signer,
+    sign_archive_manifest,
 };
 mod export_authority;
 mod export_diary;
@@ -91,9 +92,10 @@ mod agent_person_import;
 mod asset_reserve;
 mod document_import;
 pub(crate) use document_import::{
-    OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
-    owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
-    record_deferred_hook_grant_in_txn, take_deferred_hook_grants_in_txn,
+    OwnerArchiveRestorePermit, ProjectRootMap, owner_restore_group_head_in_txn,
+    owner_restore_groups_in_txn, owner_restore_members_in_txn, owner_restore_opened_claim_in_txn,
+    owner_restore_receipt_in_txn, record_deferred_hook_grant_in_txn,
+    take_deferred_hook_grants_in_txn,
 };
 mod document_snapshot;
 mod document_types;

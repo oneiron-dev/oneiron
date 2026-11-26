@@ -25,7 +25,7 @@ mod read;
 mod route;
 mod wait;
 pub(crate) use self::wait::settle_waiting_asks;
-pub(super) use self::wait::{TASK_ASK_WAITS, signal_waiters};
+pub(super) use self::wait::{TASK_ASK_WAITS, pending_waiters_read_in, signal_waiters};
 
 /// What an ask's admission composes with the asker's own write.
 enum AskThen<F> {

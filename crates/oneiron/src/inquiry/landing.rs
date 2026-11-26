@@ -112,7 +112,7 @@ pub(super) fn inquiry_landing(
 /// a re-send's id, so the member and its vault are part of the id: an id
 /// re-used for another member lands on that member's own CLAIMs and never
 /// replaces a copy of another member's answer.
-fn inquiry_copy_claim_id(
+pub(crate) fn inquiry_copy_claim_id(
     inquiry: EntityId,
     member: EntityId,
     source_vault: &AuthorityVaultId,

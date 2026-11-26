@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.jobs.write_off",
+  "description": "Writes off a GPU job whose end its machine cannot confirm: the job ends unconfirmed and settles zero, for good. The owner's act; refused once the machine answered its end, or before its cutoff and jobs.write_off.wait_secs.",
+  "input": "crate::gpu_job::GpuJobRef",
+  "output": "crate::gpu_job::GpuJobStatus",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.jobs.write_off\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "gpu_job_caller"
+}

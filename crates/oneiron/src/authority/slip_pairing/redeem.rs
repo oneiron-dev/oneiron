@@ -7,6 +7,7 @@ use super::code::pairing_row_key;
 use super::principal::canonical_id;
 use super::re_pairing::{held_machine_possession, re_paired_standing};
 use super::*;
+use crate::authority::OwnerProofGround;
 use crate::authority::machine_answers::AnswerAct;
 use crate::authority::slip_vault::{random_slip_id, require_host};
 
@@ -146,10 +147,11 @@ impl Vault {
         )
     }
     /// [`Self::redeem_pairing_link_with_possession`] with the joining machine's
-    /// mesh `identity` beside its `request` (FIX 3374, L02 04:5x): the
-    /// machine the redemption enrols has that endpoint bound and `alpn`
-    /// granted in the same transaction ([`MeshEnrolment`]); an identity
-    /// that does not bind leaves the pairing as it stands without one.
+    /// mesh identity beside its `request` (FIX 3374, L02 04:5x): the machine
+    /// the redemption enrols has that endpoint bound and `mesh.granted`
+    /// granted in the same transaction ([`MeshEnrolment`]), on a pairing
+    /// whose ceiling is `mesh.ceiling`; an identity that does not bind leaves
+    /// the pairing as it stands without one.
     #[allow(clippy::too_many_arguments)]
     pub fn redeem_pairing_link_with_mesh(
         &self,
@@ -160,7 +162,7 @@ impl Vault {
         signature: &[u8],
         request: &MachineEnrolmentRequest,
         possession: Option<&[u8; 64]>,
-        mesh: (&MeshBindingIdentity, &[u8]),
+        mesh: MeshEnrolmentAsk<'_>,
     ) -> Result<PairingRedeemed> {
         self.redeem_pairing_link_in(
             issuer,
@@ -236,7 +238,7 @@ impl Vault {
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
         possession: Option<&[u8; 64]>,
-        mesh: Option<(&MeshBindingIdentity, &[u8])>,
+        mesh: Option<MeshEnrolmentAsk<'_>>,
     ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
@@ -385,6 +387,19 @@ impl Vault {
                 let possession = possession.map(|proof| (proof, transcript.as_slice()));
                 let (landing, re_paired) = self
                     .redeem_machine_answer_in_txn(&mut txn, issuer, answer, request, possession)?;
+                // A linked peer's link records the machine it enrols and the
+                // slip it minted (L10-16), whether its answer stands or is
+                // held: the slip is live either way, and an unlink revokes it
+                // and removes the machine once a revision names it.
+                if matches!(answer.role(), MachineRole::HostedNode) {
+                    super::linked_peer::record_redeemed_machine_in_txn(
+                        self,
+                        &mut txn,
+                        &row_key,
+                        request.machine,
+                        slip.claims.slip_id,
+                    )?;
+                }
                 (landing.machine().cloned(), landing.held(), re_paired)
             }
             _ => (None, None, false),
@@ -393,8 +408,8 @@ impl Vault {
         // endpoint bound with the pairing, or not at all (FIX 3374). A machine
         // whose answer is held is not enrolled yet: it binds none.
         let mesh = match (mesh, request, &machine) {
-            (Some((identity, alpn)), Some(request), Some(_)) if held_answer.is_none() => {
-                Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, identity, alpn))
+            (Some(ask), Some(request), Some(_)) if held_answer.is_none() => {
+                Some(self.bind_enrolled_mesh_in_txn(&mut txn, issuer, request, ask))
             }
             _ => None,
         };
@@ -509,7 +524,7 @@ impl Vault {
                 proves_joins: false,
             };
             return self
-                .enroll_machine_in_txn(txn, act, request, role)
+                .enroll_machine_in_txn(txn, &OwnerProofGround::pairing_slip(), act, request, role)
                 .map(|landing| (landing, false));
         }
         Err(crate::authority::machine_answers::no_carrier())

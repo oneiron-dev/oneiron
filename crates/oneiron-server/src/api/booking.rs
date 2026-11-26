@@ -88,8 +88,8 @@ use self::offerability::unoffered_slot_answer;
 pub(crate) use self::page_token::{
     booking_page_token, resolve_booking_page, resolve_booking_page_listing,
 };
+pub(crate) use self::public::public_attempt_authority;
 pub(super) use self::public::public_booking_router;
-pub(crate) use self::public::resolve_public_booking_page_listing;
 #[cfg(test)]
 pub(crate) use self::public::turn_tests::cross_the_booking_windows;
 pub(crate) use self::quarantine_restore::{
@@ -179,7 +179,7 @@ pub(crate) struct BookingTransportContext {
     payer_guard: Option<transport::BookingPayerGuard>,
     pub(crate) transport: BookingTransport,
     /// Where this request's answer goes (DEC-0005): a public page it books
-    /// on is judged for it ([`resolve_public_booking_page_listing`]).
+    /// on is judged for it ([`public_attempt_authority`]).
     pub(crate) destination: oneiron::settings::ReadDestination,
 }
 
@@ -625,7 +625,7 @@ async fn execute_confirm(
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
     // The visitor's card may be authorized before Stripe's webhook says so.
-    self::deposit::before_confirm(server, session_key, now).await;
+    self::deposit::before_confirm(server, session_key, now).await?;
     let (receipt, unkept) = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {

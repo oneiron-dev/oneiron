@@ -79,6 +79,10 @@ impl std::fmt::Debug for FactHookRunner {
 pub struct HookPassReport {
     /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
+    /// The install is a copy restored and not joined (row RESTORED-UNJOINED-STARTS-NO-WORK), with
+    /// hooks on or off: the pass ran no hook, drained no settled verb ask and applied no pending
+    /// intent. The join's proactivity notice wakes the next pass, which runs them.
+    pub unjoined: bool,
     pub entries_read: usize,
     pub runs: usize,
     pub memo_hits: usize,
@@ -97,6 +101,7 @@ pub struct HookPassReport {
 impl HookPassReport {
     fn append(&mut self, next: Self) {
         self.disabled |= next.disabled;
+        self.unjoined |= next.unjoined;
         self.entries_read += next.entries_read;
         self.runs += next.runs;
         self.memo_hits += next.memo_hits;
@@ -139,10 +144,11 @@ pub(crate) fn fact_bindings(
 
 /// The due watcher ticks and timer turn programs a fact-hook runner pass
 /// runs ahead of the housekeeping tick: the due rows of their two jobs alone,
-/// within one [`HOOK_RUNNER_TICK`], on the node that releases ticks (stage
-/// 5b-3). While a housekeeping pass holds the schedule's runner it runs
-/// nothing, and that pass runs them. Answers whether due rows may be left for
-/// the next pass, which then starts at once.
+/// within one [`HOOK_RUNNER_TICK`]; the ticks on the node that releases ticks
+/// (stage 5b-3), the timer programs on the machine that holds their armings.
+/// While a housekeeping pass holds the schedule's runner it runs nothing, and
+/// that pass runs them. Answers whether due rows may be left for the next
+/// pass, which then starts at once.
 fn run_due_ticks_and_timers(vault: &Vault) -> Result<bool> {
     let deadline =
         crate::store::housekeeping_schedule::HousekeepingBudget::within(HOOK_RUNNER_TICK)
@@ -225,7 +231,19 @@ impl FactHookRunner {
         crate::dreamer_runner::release_program_wakes(vault, now);
         if !vault.hooks_enabled()? {
             report.disabled = true;
+            // The report names a copy restored and not joined with hooks off
+            // as with hooks on; the prune is local and runs either way. An
+            // unreadable answer is left to the next pass with hooks on, which
+            // fails on it.
+            report.unjoined = matches!(vault.restored_unjoined(), Ok(true));
             return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
+        }
+        // A copy restored and not joined starts none of the image's hooks or
+        // held verb calls (row RESTORED-UNJOINED-STARTS-NO-WORK): its cursors
+        // stay where they are, and the join wakes the next pass.
+        if vault.restored_unjoined()? {
+            report.unjoined = true;
+            return Ok(report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed

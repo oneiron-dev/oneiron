@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(oneiron_test_support)]
+use oneiron::test_doors::campaign_member_index::restrict_record;
+
 #[tokio::test]
 async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -1418,4 +1421,119 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
             Some(count)
         );
     }
+}
+
+/// A hosted server.
+#[cfg(oneiron_test_support)]
+fn hosted_companion_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.privacy.posture = oneiron::HostingPrivacyPosture::Hosted;
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).expect("hosted vault"));
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
+    let config = SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
+    (dir, server)
+}
+
+/// Restricts `record` under a cooperative review, in the row the
+/// cooperative-deletion answer writes: every use-limited read hides the record.
+#[cfg(oneiron_test_support)]
+fn use_limit(vault: &oneiron::Vault, record: oneiron::EntityId) {
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
+}
+
+/// A profile kept from use answers as withheld (FIX
+/// COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING; Engine ANSWER
+/// COMPANION-USE-LIMITED-PROFILE-ANSWER = A): state missing, with no next
+/// step and no drift anchors, on the read and on the refresh plan alike. A
+/// refresh cannot make it readable while the limit stands. Here a cooperative
+/// review restriction use-limits the profile itself.
+#[cfg(oneiron_test_support)]
+#[tokio::test]
+async fn v1_companion_use_limited_profile_answers_no_next_step() {
+    let (_dir, server) = hosted_companion_test_server();
+    let grant_id = seeded_test_entity_id(0x1218_0E01);
+    let principal_ref = seeded_test_entity_id(0x1218_0E02);
+    let person_ref = seeded_test_entity_id(0x1218_0E03);
+    let persona_ref = seeded_test_entity_id(0x1218_0E04);
+    let source = seeded_test_entity_id(0x1218_0E05);
+    seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+    let profile_key = oneiron::psych_profile::PsychProfileKey {
+        person: person_ref,
+        facet: Some(persona_ref),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&profile_key);
+    let profile = oneiron::PsychProfile::new(
+        person_ref,
+        "kept compact",
+        "kept text",
+        "Kept narrative.",
+        vec![source],
+        oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
+    )
+    .expect("profile")
+    .with_sources(vec![seed_profile_source_record(&server, source)])
+    .expect("profile sources");
+    server
+        .vault
+        .put_psych_profile(&profile_id, &profile)
+        .expect("put psych profile");
+
+    let path = format!(
+        "/v1/companion/profiles/{}?facet_ref={}&sourceRevisionIds={}",
+        person_ref.to_hex(),
+        persona_ref.to_hex(),
+        source.to_hex()
+    );
+    let read = |method: &str, body: Option<&Value>| {
+        core_request_with_principal_ref(
+            method,
+            &path,
+            "companion:profile:read",
+            &principal_ref.to_hex(),
+            body,
+        )
+    };
+    let (status, body) = route_json(server.clone(), read("GET", None)).await;
+    assert_eq!(status, StatusCode::OK, "FIXTURE: {body}");
+    assert_eq!(
+        body["state"],
+        Value::from("fresh"),
+        "FIXTURE: the profile reads before the limit: {body}"
+    );
+
+    use_limit(&server.vault, profile_id);
+
+    let withheld = json!({
+        "person_ref": person_ref.to_hex(),
+        "facet_ref": persona_ref.to_hex(),
+        "world_ref": null,
+        "profile_ref": profile_id.to_hex(),
+        "access": {
+            "grant_id": grant_id.to_hex(),
+            "principal_ref": principal_ref.to_hex(),
+            "scope": {
+                "kind": "companion_profile",
+                "person_ref": person_ref.to_hex(),
+                "facet_ref": persona_ref.to_hex(),
+            },
+        },
+        "state": "missing",
+        "profile": null,
+        "stale_reason": null,
+        "next_action": null,
+        "drift_anchors": [],
+    });
+    let (status, body) = route_json(server.clone(), read("GET", None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, withheld, "the read of a use-limited profile");
+    let refresh = json!({ "sourceRevisionIds": [source.to_hex()] });
+    let (status, body) = route_json(server, read("POST", Some(&refresh))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, withheld, "the refresh plan of a use-limited profile");
 }
