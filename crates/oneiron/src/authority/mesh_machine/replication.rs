@@ -374,7 +374,9 @@ impl Vault {
     /// keys its own binding is refused and every other row still lands.
     fn own_mesh_keys(&self, own: EntityId) -> Option<OwnMeshKeys> {
         let Some(signer) = self
-            .loaded_install_signer()
+            .read_install_signer()
+            .ok()
+            .flatten()
             .filter(|signer| signer.machine == own)
         else {
             tracing::debug!(
