@@ -930,7 +930,6 @@ fn settle(
         let held_by_missing_project = |id: EntityId| {
             ledger.pending_entity_dependencies.get(&id)
                 == Some(&ErrorKind::ProjectDependencyPending)
-                && !ledger.refused_otherwise.contains(&id)
                 && !ctx.tombstones.contains(&id)
         };
         // A failed read ends the pass with its error, as the plain marker read
