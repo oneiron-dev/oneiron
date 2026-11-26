@@ -42,12 +42,28 @@ struct RematLedger {
     terminal_quarantines: Vec<EntityId>,
     pending_entity_dependencies: HashMap<EntityId, ErrorKind>,
     pending_dag_parent_sources: HashSet<EntityId>,
+    /// Ids the entity or edge pass refused for good this pass (a terminal
+    /// entity refusal, a quarantined or rejected edge sourced at the id).
+    /// Unlike `terminal_quarantines`, an edge's moved wait never lands here,
+    /// and settle never drops an id from it: an id here is never read as held
+    /// only by a missing project, whatever else of it waits for one.
+    refused_otherwise: HashSet<EntityId>,
     /// Delete-protected rows the entity pass admitted: the ingest step already
     /// refused every tombstone naming them, so the tombstone pass records
     /// each such tombstone once, not twice.
     protected_admissions: HashSet<EntityId>,
     count: u32,
     scope: MarkerScope,
+}
+
+impl RematLedger {
+    /// Records `id` refused for good this pass: its marker settles as a
+    /// terminal quarantine's, and it is never read as held only by a missing
+    /// project ([`Self::refused_otherwise`]).
+    fn refuse(&mut self, id: EntityId) {
+        self.terminal_quarantines.push(id);
+        self.refused_otherwise.insert(id);
+    }
 }
 
 /// Whose replay markers a forward pass settles (FIX 538). The markers of a
@@ -137,6 +153,7 @@ pub(crate) fn replay_window_in_edge_order_for_test(
         terminal_quarantines: Vec::new(),
         pending_entity_dependencies: HashMap::new(),
         pending_dag_parent_sources: HashSet::new(),
+        refused_otherwise: HashSet::new(),
         protected_admissions: HashSet::new(),
         count: 0,
         scope: MarkerScope::Window,
@@ -470,6 +487,7 @@ impl ForwardRun {
             terminal_quarantines: Vec::new(),
             pending_entity_dependencies: HashMap::new(),
             pending_dag_parent_sources: HashSet::new(),
+            refused_otherwise: HashSet::new(),
             protected_admissions: HashSet::new(),
             count: 0u32,
             scope,
@@ -907,10 +925,12 @@ fn settle(
         // and keep ERROR-grade visibility.
         // GDPR-SIGNAL-ON-QUARANTINED-WINDOW: all-proven project waits warn only
         // with a valid start; beyond sync.remat.dependency_hold_max_secs or
-        // without a start, the wait is a breach.
+        // without a start, the wait is a breach. An id this pass also refused
+        // for good (`refused_otherwise`) is never held only by its project.
         let held_by_missing_project = |id: EntityId| {
             ledger.pending_entity_dependencies.get(&id)
                 == Some(&ErrorKind::ProjectDependencyPending)
+                && !ledger.refused_otherwise.contains(&id)
                 && !ctx.tombstones.contains(&id)
         };
         // A failed read ends the pass with its error, as the plain marker read
