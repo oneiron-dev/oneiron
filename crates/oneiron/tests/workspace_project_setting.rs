@@ -22,7 +22,8 @@ use oneiron::session_project::{
     WORKSPACE_PROJECT_KEY, WorkspaceBindRequest, WorkspaceUnbindRequest, is_digest_text,
 };
 use oneiron::setting::{
-    SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingSync, set_line, spec_named,
+    SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope, SettingSync, set_line,
+    spec_named, widen_line, widen_scope_line,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
@@ -383,6 +384,11 @@ fn the_owner_unbinds_a_folder() {
 /// An enabled agent with a live owner Grant naming `read`, `vault.settings.set` and the key's own
 /// line: the most an agent can hold for this key.
 fn key_holder(fixture: &Fixture) -> EntityId {
+    agent_holding(fixture, &[set_line(WORKSPACE_PROJECT_KEY)])
+}
+
+/// An enabled agent with a live owner Grant naming `read`, `vault.settings.set` and `lines`.
+fn agent_holding(fixture: &Fixture, lines: &[String]) -> EntityId {
     let agent = EntityId::now();
     create_agent_definition_as(
         &fixture.vault,
@@ -401,11 +407,12 @@ fn key_holder(fixture: &Fixture) -> EntityId {
     )
     .expect("the owner creates an enabled agent definition");
     let mut authority_scope = Scope::top();
-    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
-        "read".to_owned(),
-        "vault.settings.set".to_owned(),
-        set_line(WORKSPACE_PROJECT_KEY),
-    ]));
+    authority_scope.verbs = ScopeAxis::Some(
+        ["read".to_owned(), "vault.settings.set".to_owned()]
+            .into_iter()
+            .chain(lines.iter().cloned())
+            .collect(),
+    );
     let minted = mint_agent_grant_as(
         &fixture.vault,
         &fixture.proof,
@@ -447,3 +454,59 @@ fn an_agents_binding_waits_for_the_owner_and_binds_nothing() {
         "the folder stays unbound until the owner says yes"
     );
 }
+
+/// Review round 2 of #10550: the owner's standing approval does not cover the key. An agent whose
+/// live owner Grant lists the key's widening line and the line of every key at the vault still
+/// waits on the owner's answer to its binding, as Q3 = A rules (binding is the owner's act). On
+/// the base its binding landed at once, as a standing widening.
+#[test]
+fn an_agent_with_the_owners_standing_approval_still_waits_for_the_owner() {
+    let fixture = Fixture::open();
+    let lines = [
+        Some(widen_line(WORKSPACE_PROJECT_KEY)),
+        widen_scope_line(&SettingScope::Vault),
+    ];
+    let agent = agent_holding(&fixture, &lines.into_iter().flatten().collect::<Vec<_>>());
+    let outcome = fixture
+        .set(
+            SettingCaller::Agent(agent),
+            &fixture.workspace_id(MAIN_DIGEST),
+            Some(json!({ "project": fixture.root_project.to_hex(), "label": "alpha" })),
+        )
+        .expect("the agent's binding answers");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Pending { .. }),
+        "a standing approval lands no binding: {outcome:?}"
+    );
+    assert_eq!(fixture.session_project(&[MAIN_DIGEST]), None);
+}
+
+/// Review round 2 of #10550: the owner's bind of the binding a row already holds is a change of
+/// its own, so the key's check runs on it again (a PROJECT gone since is refused, never reported
+/// bound). On the base the repeat answered as unchanged, with no change recorded and no check.
+#[test]
+fn the_owners_repeated_bind_records_a_change_and_is_checked_again() {
+    let fixture = Fixture::open();
+    let id = fixture.workspace_id(MAIN_DIGEST);
+    let value = json!({ "project": fixture.root_project.to_hex(), "label": "alpha" });
+    let first = fixture
+        .set(SettingCaller::Owner(&fixture.proof), &id, Some(value.clone()))
+        .expect("the owner binds");
+    let again = fixture
+        .set(SettingCaller::Owner(&fixture.proof), &id, Some(value))
+        .expect("the owner binds again");
+    let sequence = |outcome: &SetSettingOutcome| match outcome {
+        SetSettingOutcome::Applied { sequence, .. } => *sequence,
+        other => panic!("the owner's bind applies: {other:?}"),
+    };
+    assert!(sequence(&first).is_some(), "the first bind is a change");
+    assert!(
+        sequence(&again).is_some_and(|again| Some(again) > sequence(&first)),
+        "the repeat is a change of its own, checked again: {again:?}"
+    );
+    assert_eq!(
+        fixture.session_project(&[MAIN_DIGEST]),
+        Some(fixture.root_project)
+    );
+}
+
