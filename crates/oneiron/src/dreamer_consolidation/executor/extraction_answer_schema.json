@@ -8,7 +8,7 @@
         "properties": {
           "subject": {
             "type": "string",
-            "pattern": "^(P[1-9][0-9]*|new:P[1-9][0-9]*)$"
+            "pattern": "^(P[1-9][0-9]{0,8}|new:P[1-9][0-9]{0,8})$"
           },
           "predicate": {
             "type": "string",
@@ -38,7 +38,7 @@
                   "properties": {
                     "source": {
                       "type": "string",
-                      "pattern": "^T[1-9][0-9]*$"
+                      "pattern": "^T[1-9][0-9]{0,8}$"
                     },
                     "quote": {
                       "type": "string",
@@ -56,7 +56,7 @@
                   "properties": {
                     "claim": {
                       "type": "string",
-                      "pattern": "^C[1-9][0-9]*$"
+                      "pattern": "^C[1-9][0-9]{0,8}$"
                     }
                   },
                   "required": [
@@ -85,7 +85,7 @@
           },
           "rel": {
             "type": "string",
-            "pattern": "^R[1-9][0-9]*$"
+            "pattern": "^R[1-9][0-9]{0,8}$"
           },
           "topic_key": {
             "type": "string",
@@ -109,7 +109,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^new:P[1-9][0-9]*$"
+            "pattern": "^new:P[1-9][0-9]{0,8}$"
           },
           "name": {
             "type": "string",
@@ -120,7 +120,7 @@
             "minItems": 1,
             "items": {
               "type": "string",
-              "pattern": "^T[1-9][0-9]*$"
+              "pattern": "^T[1-9][0-9]{0,8}$"
             }
           }
         },

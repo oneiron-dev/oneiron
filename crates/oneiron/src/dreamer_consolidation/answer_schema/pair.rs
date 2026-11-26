@@ -222,7 +222,9 @@ pub(crate) fn candidate_key(candidate: &JsonValue) -> (String, String, String) {
 type GoldKey = (String, String, String);
 
 /// Each arm's F1 against the pooled gold: the supported candidates of both arms, keyed by
-/// [`candidate_key`]. `None` for both when the gold is empty: the pair has no quality and
+/// [`candidate_key`]. An arm's precision is over every candidate it emitted, so a claim the
+/// judge finds unsupported costs the arm that made it (REVIEW-10538 P1-6); its hits are its
+/// supported candidates. `None` for both when the gold is empty: the pair has no quality and
 /// stays out of the window.
 pub(crate) fn f1_against_gold(
     schema: &[JsonValue],
@@ -238,6 +240,12 @@ pub(crate) fn f1_against_gold(
             .map(|(candidate, _)| candidate_key(candidate))
             .collect::<BTreeSet<_>>()
     };
+    let emitted = |candidates: &[JsonValue]| {
+        candidates
+            .iter()
+            .map(candidate_key)
+            .collect::<BTreeSet<_>>()
+    };
     let schema_keys = keys(schema, schema_supported);
     let shadow_keys = keys(shadow, shadow_supported);
     let gold = schema_keys
@@ -247,16 +255,20 @@ pub(crate) fn f1_against_gold(
     if gold.is_empty() {
         return (None, None);
     }
-    (Some(f1(&schema_keys, &gold)), Some(f1(&shadow_keys, &gold)))
+    (
+        Some(f1(&schema_keys, &emitted(schema), &gold)),
+        Some(f1(&shadow_keys, &emitted(shadow), &gold)),
+    )
 }
 
-/// The F1 of `arm` against `gold`: 0 when the arm holds nothing of the gold.
-fn f1(arm: &BTreeSet<GoldKey>, gold: &BTreeSet<GoldKey>) -> f64 {
-    let hit = arm.intersection(gold).count() as f64;
-    let precision = if arm.is_empty() {
+/// The F1 of one arm against `gold`: `supported` are its candidates the judge upheld,
+/// `emitted` all it gave, each set by gold key. 0 when the arm holds nothing of the gold.
+fn f1(supported: &BTreeSet<GoldKey>, emitted: &BTreeSet<GoldKey>, gold: &BTreeSet<GoldKey>) -> f64 {
+    let hit = supported.intersection(gold).count() as f64;
+    let precision = if emitted.is_empty() {
         0.0
     } else {
-        hit / arm.len() as f64
+        hit / emitted.len() as f64
     };
     let recall = hit / gold.len() as f64;
     if precision + recall == 0.0 {

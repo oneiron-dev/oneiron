@@ -916,6 +916,7 @@ impl PassExecutorFactory for ObservedFactory {
             self.house
                 .as_ref()
                 .map(|(model, ladder, run)| answer_schema_check::CheckLend {
+                    vault: &self.vault,
                     model,
                     ladder,
                     run,
@@ -1008,6 +1009,7 @@ impl PassExecutorFactory for ObservedFactory {
             self.house
                 .as_ref()
                 .map(|(model, ladder, run)| answer_schema_check::CheckLend {
+                    vault: &self.vault,
                     model,
                     ladder,
                     run,

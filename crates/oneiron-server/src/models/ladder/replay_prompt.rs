@@ -75,6 +75,30 @@ impl OfferLadder {
         }
         Some(ReplayLadder { ladder: self, rung })
     }
+
+    /// The one-rung ladder of the first rung that serves `model` at its own server
+    /// (HOUSE-SCHEMA-CHECK; REVIEW-10538 P1-3): a seat with a fallback after its house rung,
+    /// such as EXL3 on its own server and then llama.cpp, still lends the answer-schema check
+    /// that rung alone. The copy is picked, keeps the rung's configured prompt and place and
+    /// this ladder's rests and scope, so [`Self::for_replay_binding`] selects it and no
+    /// fallback takes a call. `None` when no rung serves `model` at its own server. The
+    /// shared ladder is never changed.
+    pub(crate) fn house_rung_ladder(&self, model: &ModelId) -> Option<Arc<Self>> {
+        let rung = self.rungs.iter().find(|rung| {
+            rung.model == *model
+                && rung.offer.binding.model == *model
+                && rung.offer.binding.locality == ModelLocality::OwnServer
+        })?;
+        Some(Arc::new(Self {
+            name: model.clone(),
+            rungs: vec![rung.clone()],
+            picked: true,
+            rests: Arc::clone(&self.rests),
+            scope: self.scope,
+            prefix: ReceiptPrefix::default(),
+            listed: self.listed.clone(),
+        }))
+    }
 }
 
 impl ReplayLadder<'_> {

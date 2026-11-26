@@ -27,6 +27,15 @@ impl Spend {
         }
     }
 
+    /// Charges what a failed call spent before it failed: a spent LLM failure's usage.
+    pub(crate) fn charge_failed(&mut self, error: &DurableStepError) {
+        if let DurableStepError::SpentLlm { usage, .. } = error {
+            self.units = self
+                .units
+                .saturating_add(usage.input.total.saturating_add(usage.output.total));
+        }
+    }
+
     /// The attempt completed, this spend settled with its terminal steps pinned as paid.
     pub(crate) fn completed(self) -> DreamerAttemptExecution {
         DreamerAttemptExecution::Completed {

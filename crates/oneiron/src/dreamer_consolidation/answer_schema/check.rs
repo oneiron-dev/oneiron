@@ -26,11 +26,12 @@ use super::receipt::{
 use super::rule::{
     date_in_window, evaluate_window, grammar_faults, grammar_suspends, window_suspends,
 };
-use super::send::{judge_request, response_text, send_house};
+use super::send::{SchemaArm, judge_request, response_text, send_house, send_schema_arm};
 use super::spend::Spend;
 use super::{AnswerSchemaSuspension, answer_schema_in_force_in_txn};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::code_run::source_rows_withdrawn;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
@@ -139,27 +140,18 @@ pub async fn run_answer_schema_check(
     // A skip keeps the selection a started receipt ledgered.
     let kept = stored_selection.as_deref().unwrap_or(&[]);
     let date = night_date(vault, night, now)?;
-    // The gate first: never take GPU time from the night. Deferred like the nightly merge
-    // and the links wait out unfinished children.
-    let (descendants, open) = {
+    // The over-budget latch before the gate: a night that ran past its budget skips with its
+    // reason even while a budget-parked extraction stays open, which would hold the gate
+    // shut on every try and land no receipt (REVIEW-10538 P1-4). The skip sends nothing.
+    let (descendants, overrun) = {
         let txn = vault.store.env.read_txn()?;
-        let descendants = descendants_in_txn(vault, &txn, night, false)?;
-        let gated = descendants_in_txn(vault, &txn, night, true)?;
-        let open = gate_open_in_txn(vault, &txn, check_id, &gated)?;
-        (descendants, open)
+        (
+            descendants_in_txn(vault, &txn, night, false)?,
+            overrun_in_txn(vault, &txn, night)?,
+        )
     };
-    if !open {
-        return Ok(DreamerAttemptExecution::Deferred {
-            completed_units: 0,
-            retry_at: now.saturating_add(input.retry_secs),
-            step_bindings: Vec::new(),
-        });
-    }
-    // The skips, in order: over budget, out of force, no calls, no house rung.
-    let overrun = {
-        let txn = vault.store.env.read_txn()?;
-        overrun_in_txn(vault, &txn, night)?
-    };
+    // The skips, in order: over budget, then (past the gate) out of force, no calls, no
+    // house rung.
     if overrun.is_some() {
         return write_skip(
             vault,
@@ -170,6 +162,20 @@ pub async fn run_answer_schema_check(
             &descendants,
             now,
         );
+    }
+    // The gate: never take GPU time from the night. Deferred like the nightly merge and the
+    // links wait out unfinished children.
+    let open = {
+        let txn = vault.store.env.read_txn()?;
+        let gated = descendants_in_txn(vault, &txn, night, true)?;
+        gate_open_in_txn(vault, &txn, check_id, &gated)?
+    };
+    if !open {
+        return Ok(DreamerAttemptExecution::Deferred {
+            completed_units: 0,
+            retry_at: now.saturating_add(input.retry_secs),
+            step_bindings: Vec::new(),
+        });
     }
     let in_force = {
         let txn = vault.store.env.read_txn()?;
@@ -255,6 +261,11 @@ pub async fn run_answer_schema_check(
     let mut spend = Spend::default();
     let mut rows = Vec::new();
     for (_, rank, capture) in &work {
+        // A source erased or withdrawn since the draw drops its pair before any send; the
+        // house backend's fence asks again at each physical send (REVIEW-10538 P1-1).
+        if source_rows_withdrawn(vault, &capture.sources) {
+            continue;
+        }
         let seed = pair_seed(rank);
         let step_ctx = DurableStepContext {
             vault,
@@ -268,21 +279,35 @@ pub async fn run_answer_schema_check(
             wake_pass_bound: true,
         };
         let (schema_request, shadow_request) = build_arms(&capture.request, &house.model, seed);
-        let (schema_response, next) =
-            match send_house(&step_ctx, &house, &capture.sources, schema_request, spend).await? {
-                Ok(done) => done,
-                Err(parked) => return Ok(parked),
+        // A schema arm the provider refused or failed is a failed arm: its shadow still
+        // goes out, so a grammar fault reaches the two-fault rule (REVIEW-10538 P1-5).
+        let schema_response =
+            match send_schema_arm(&step_ctx, &house, &capture.sources, schema_request, spend)
+                .await?
+            {
+                SchemaArm::Answered(response, next) => {
+                    spend = next;
+                    Some(response)
+                }
+                SchemaArm::Failed(next) => {
+                    spend = next;
+                    None
+                }
+                SchemaArm::Parked(parked) => return Ok(parked),
             };
-        spend = next;
         let (shadow_response, next) =
             match send_house(&step_ctx, &house, &capture.sources, shadow_request, spend).await? {
                 Ok(done) => done,
                 Err(parked) => return Ok(parked),
             };
         spend = next;
-        let (schema_whole, schema_candidates) = fault_scores(&schema_response);
+        let (schema_whole, schema_candidates) =
+            schema_response.as_ref().map_or((false, 0), fault_scores);
         let (shadow_whole, shadow_candidates) = fault_scores(&shadow_response);
-        let schema_cands = candidates_of(&schema_response);
+        let schema_cands = schema_response
+            .as_ref()
+            .map(candidates_of)
+            .unwrap_or_default();
         let shadow_cands = candidates_of(&shadow_response);
         // No candidates on either arm is no gold whatever the judge says: judge nothing.
         let (schema_f1, shadow_f1) =

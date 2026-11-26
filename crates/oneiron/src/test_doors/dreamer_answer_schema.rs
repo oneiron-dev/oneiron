@@ -193,6 +193,21 @@ pub fn plant_child(vault: &Vault, night: AttemptId) -> Result<AttemptId> {
     )
 }
 
+/// Plants one queued child of `night` that the check's runs never settle: a Meso attempt,
+/// which keeps the gate shut while it stays open, as a budget-parked extraction does.
+///
+/// # Errors
+///
+/// Storage faults.
+pub fn plant_open_child(vault: &Vault, night: AttemptId) -> Result<AttemptId> {
+    plant_attempt(
+        vault,
+        DreamerConsolidationScope::Meso.attempt_kind(),
+        "test.open_child",
+        Some(night),
+    )
+}
+
 /// Plants one attempt of `kind` and `attempt_type` under `parent`, with a fresh dedupe key.
 ///
 /// # Errors

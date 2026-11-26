@@ -264,3 +264,26 @@ fn schema_refuses_a_claim_label_subject_the_decode_would_skip() {
     assert_refused(&reply);
     assert!(check_reply(&reply.to_string()).is_ok());
 }
+
+#[test]
+fn schema_bounds_label_numbers_to_what_the_label_parser_reads() {
+    // A label's number parses as a usize (call_labels.rs CallLabel::numbered). Nine digits
+    // always fit, so the schema admits them. A longer number past usize would match an
+    // unbounded pattern and fail the check (REVIEW-10538 P1-7), so every label stops at
+    // nine digits, a bound no call's labels reach.
+    let mut nine = candidate();
+    nine["subject"] = json!("P999999999");
+    nine["evidence_refs"] = json!([{"source": "T999999999", "quote": "Ada"}]);
+    assert_sound(&json!({"candidates": [nine]}));
+    let mut past = candidate();
+    past["subject"] = json!("P18446744073709551616");
+    let reply = json!({"candidates": [past]});
+    assert_refused(&reply);
+    assert!(
+        check_reply(&reply.to_string()).is_err(),
+        "the check refuses a label past usize"
+    );
+    let mut ten = candidate();
+    ten["evidence_refs"] = json!([{"source": "T1000000000", "quote": "Ada"}]);
+    assert_refused(&json!({"candidates": [ten]}));
+}

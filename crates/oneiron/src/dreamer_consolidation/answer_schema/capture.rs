@@ -35,7 +35,10 @@ pub(crate) struct CapturedTurnCall {
 /// Keeps `request`, built with the answer schema by `attempt`, for the check: one row under
 /// the call's step hash, in one small write transaction. `sources` are the TURN rows the
 /// transcript was read from; `captured_at` is Unix seconds. A row already under the key
-/// (a memo hit) keeps nothing new.
+/// (a memo hit) keeps nothing new, and neither does a call with a source the write's own
+/// transaction reads as erased, deleted or withdrawn: an erase that committed before this
+/// write found no capture to drop, so the words must not be stored again here
+/// (REVIEW-10538 P1-2). One that commits after it drops the row, as above.
 ///
 /// # Errors
 ///
@@ -53,6 +56,12 @@ pub(crate) fn capture_turn_call(
     let key = (attempt, step);
     vault.with_write_txn_grouped(|txn| {
         if CAPTURES.contains(&vault.store, &*txn, &key)? {
+            return Ok(());
+        }
+        if sources
+            .iter()
+            .any(|source| crate::code_run::source_row_withdrawn_in(vault, &*txn, source))
+        {
             return Ok(());
         }
         CAPTURES.put(
