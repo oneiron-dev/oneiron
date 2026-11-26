@@ -80,7 +80,7 @@ const CUTOFF_DIGITS_MAX: usize = 20;
 const REPLY_MAX_BYTES: usize = 1024;
 
 /// How long the handler waits for the whole request line, from its start.
-/// The engine's job control connect and its write of the request wait as long.
+/// The engine's job control connect and the socket writes wait as long.
 pub(super) const REQUEST_WAIT: Duration = Duration::from_secs(5);
 
 /// How long the engine waits for the handler's answer: the handler's own
@@ -291,7 +291,7 @@ pub fn run(args: &[String]) -> i32 {
         .map(UnixStream::from)
         .and_then(|mut stream| {
             let answer = serve(args, &mut stream);
-            let _ = stream.write_all(&render_reply(&answer));
+            let _ = write_reply(&mut stream, &render_reply(&answer), REQUEST_WAIT);
             answer
         });
     match answer {
@@ -301,6 +301,19 @@ pub fn run(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// Writes the handler's reply. A device query can return up to
+/// [`device_query::DEVICE_QUERY_OUTPUT_MAX_BYTES`] bytes of output. If the
+/// peer does not drain the reply, the root handler gives up after `wait`,
+/// rather than waiting for the unit's `RuntimeMaxSec`.
+///
+/// # Errors
+///
+/// The socket's write timeout could not be set or the reply could not be written.
+pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std::io::Result<()> {
+    stream.set_write_timeout(Some(wait))?;
+    stream.write_all(reply)
 }
 
 /// The handler's reply to one request: `ok\n`; for a device query, `ok <n>\n`
@@ -437,6 +450,31 @@ pub(super) fn read_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reply_to_a_peer_that_never_reads_gives_up_within_its_wait() {
+        let (mut writer, _reader) = UnixStream::pair().expect("a connected pair");
+        let wait = Duration::from_millis(200);
+        let limit = wait + Duration::from_secs(3);
+        let (answered, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let reply = vec![0_u8; 8 << 20];
+            // testkit-lint: allow(wall-clock) measures the real socket write timeout
+            let started = Instant::now();
+            let result = write_reply(&mut writer, &reply, wait);
+            let _ = answered.send((result, started.elapsed()));
+        });
+        let (result, elapsed) = answer.recv_timeout(limit).expect("the write timed out");
+        let error = result.expect_err("the peer never drained the reply");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{error}"
+        );
+        assert!(elapsed < limit, "the write took {elapsed:?}");
+    }
 
     #[test]
     fn a_request_names_a_known_verb_and_a_job_instance_and_nothing_else() {
