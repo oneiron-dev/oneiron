@@ -199,6 +199,7 @@ fn ask(source: RecallSource, harness: &str) -> Option<RecallBarAsk> {
     Some(RecallBarAsk {
         source,
         harness: Some(harness.to_owned()),
+        session: None,
     })
 }
 

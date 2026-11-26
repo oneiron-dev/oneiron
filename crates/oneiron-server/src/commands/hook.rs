@@ -168,7 +168,8 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     );
     // A session's hand-over sends its log only to the vault every start of
     // it bound.
-    if let Some(session) = session_id(host, &event) {
+    let session = session_id(host, &event);
+    if let Some(session) = session {
         let earlier = earlier_turns(host, &event);
         session_binding::record(host, session, bound.hosted.as_ref(), &earlier);
     }
@@ -210,6 +211,7 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         effort: args.effort,
         deadline,
         bar: RecallSource::Start,
+        session,
     };
     said.extend(recall.block(
         &format!(
@@ -280,6 +282,7 @@ fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         effort: args.effort,
         deadline,
         bar: RecallSource::Carrier,
+        session: session_id(host, &event),
     };
     recall.block(
         "From your Oneiron vault, for this prompt (may be dated):",

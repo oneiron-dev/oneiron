@@ -126,6 +126,20 @@ pub struct MemoryProvenance {
     pub evidence_turn_ids: Vec<String>,
 }
 
+/// Stored provenance for one line of a barred recall.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LineProvenance {
+    /// The claim's stored standing (`auto`, `approved`, `proposed`); absent for non-claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<String>,
+    /// The envelope's learned time, in Unix seconds.
+    pub learned_at: u64,
+    /// Conversations the read lane admitted: the turn or message's own id,
+    /// or up to three short refs from a claim's evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_conversations: Vec<String>,
+}
+
 /// Scope honesty (S6): what the scope excluded.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopeHonesty {
@@ -227,6 +241,10 @@ pub struct RecallBarAsk {
     /// `a-z 0-9 -`. Omitted, the rows that name no harness judge it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
+    /// The harness's own session id, as its hook event names it. It only
+    /// narrows a push and grants nothing. Use 1 to 200 printable non-space ASCII characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 /// Whether `name` is a harness name a bar row or ask may carry: 1 to 40 of `a-z 0-9 -`,
@@ -244,7 +262,7 @@ pub fn is_harness_name(name: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RecallBarRule {
-    /// No bar: every line the recall found.
+    /// No relevance cut; push exclusions still apply.
     Open,
     /// No line passes. `reason` says why: `owner` (the owner set it), `unmeasured` (the host
     /// measured no bar for the vault's embedding space), `other_space` (the owner's floor names

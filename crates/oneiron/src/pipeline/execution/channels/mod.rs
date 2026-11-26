@@ -886,25 +886,24 @@ impl PipelineBuilder<'_> {
             };
             reranked_block.follow_turn_fold(&cited_messages);
 
-            // The owner's relevance bar (RECALL-CARRIER-THRESHOLD), on each row's final id:
-            // after the fold, before the pack's candidates, budgets and cut, so a row under it
-            // takes no slot and the next moves up.
+            // The owner's bar and push exclusions on the final ids: after the fold and
+            // admission, before the candidate budget and cut, so a dropped row takes no slot.
             let bar_similarity = match self.recall_bar.as_ref() {
                 Some(judge) => {
                     let mut hidden_metadata = EntityMetadataCache::default();
-                    let mut hidden_row = match judge {
-                        crate::memory::recall::bar::BarJudge::DirectMatch { .. } => self
-                            .hidden_row_test(
-                                rtxn,
-                                (
-                                    filter_config,
-                                    world_authority
-                                        .as_ref()
-                                        .map(|resolved| &resolved.allowed_set),
-                                ),
-                                &mut hidden_metadata,
-                            )?,
-                        _ => None,
+                    let mut hidden_row = if judge.is_direct_match() {
+                        self.hidden_row_test(
+                            rtxn,
+                            (
+                                filter_config,
+                                world_authority
+                                    .as_ref()
+                                    .map(|resolved| &resolved.allowed_set),
+                            ),
+                            &mut hidden_metadata,
+                        )?
+                    } else {
+                        None
                     };
                     judge.retain_passing(
                         &mut scores,

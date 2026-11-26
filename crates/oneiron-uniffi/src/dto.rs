@@ -844,6 +844,14 @@ pub struct MemoryProvenance {
     pub evidence_turn_ids: Vec<String>,
 }
 
+/// Extra provenance on a recall that asked for a relevance bar.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct LineProvenance {
+    pub approval: Option<String>,
+    pub learned_at: u64,
+    pub source_conversations: Vec<String>,
+}
+
 /// A retained foreign world's immutable stale stamp.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MemoryStaleStamp {
@@ -879,6 +887,7 @@ pub struct MemoryItem {
     pub confidence_basis: Option<String>,
     /// Provenance.
     pub provenance: MemoryProvenance,
+    pub line_provenance: Option<LineProvenance>,
     pub stale: Option<MemoryStaleStamp>,
     /// World ref, when world-scoped.
     pub world: Option<String>,
