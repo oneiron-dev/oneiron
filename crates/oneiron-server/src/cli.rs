@@ -969,6 +969,14 @@ pub struct McpArgs {
     /// entry; every other request keeps the global value.
     #[arg(long = "tool-timeout-secs", value_name = "TOOL=SECS")]
     pub tool_timeout_secs: Vec<String>,
+
+    /// The folder the agent session runs in (`.` is this process's working directory): every
+    /// tool call then names the folder's workspace id, so a read that names no project reads
+    /// the project the owner bound to the folder (`oneiron project bind`), and none in a
+    /// folder with no project bound. Absent, or a folder whose checkout root is the
+    /// filesystem root or the home directory, attaches nothing.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<PathBuf>,
 }
 
 /// The connection `oneiron mcp` holds to its server.

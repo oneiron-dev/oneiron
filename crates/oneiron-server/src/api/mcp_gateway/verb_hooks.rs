@@ -363,6 +363,7 @@ impl McpCallContext {
             drain: Some(drain),
             forwarded: None,
             client_surface: None,
+            session_workspace: None,
             signing_request_transport: None,
         };
         rerun_saved_call(server, &context, call).await

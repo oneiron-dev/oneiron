@@ -404,6 +404,11 @@ pub(crate) struct CoreAuth {
     /// `credential_memory` builds for this caller binds it, so a door acts
     /// inside the session its caller named (OF-063, FIX 1668).
     off_record_session: Option<String>,
+    /// The workspace ids of the folder an attached agent session runs in, its own first, which
+    /// the MCP gateway binds on a read that names no project (RECALL-SESSION-PROJECT): context,
+    /// not authority. Every handle `credential_memory` builds for this caller then reads that
+    /// folder's project by default.
+    session_workspace: Option<Vec<String>>,
     /// The managed vault's owner, as its supervisor attested this one
     /// request (`ManagedOwnerAction`, verified at managed ingress); `None`
     /// for every other request ([`Self::for_attested_owner`]).
@@ -452,6 +457,7 @@ impl CoreAuth {
             peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
+            session_workspace: None,
             managed_owner: None,
             managed_person: None,
         }
@@ -532,6 +538,7 @@ impl CoreAuth {
             peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
+            session_workspace: None,
             managed_owner: None,
             managed_person: None,
         })
@@ -554,6 +561,7 @@ impl CoreAuth {
             peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
+            session_workspace: None,
             managed_owner: None,
             managed_person: None,
         }
@@ -699,6 +707,19 @@ impl CoreAuth {
     /// caller's handles bind, never authority (OF-063, FIX 1668).
     pub(crate) fn off_record_session(&self) -> Option<&str> {
         self.off_record_session.as_deref()
+    }
+
+    /// The attached session's folder ids this caller's reads default to, if any.
+    pub(crate) fn session_workspace(&self) -> Option<&[String]> {
+        self.session_workspace.as_deref()
+    }
+
+    /// This caller, reading by default the project of the folder `workspace_ids` names
+    /// (RECALL-SESSION-PROJECT); `None` reads with no default.
+    #[must_use]
+    pub(crate) fn in_session_workspace(mut self, workspace_ids: Option<Vec<String>>) -> Self {
+        self.session_workspace = workspace_ids;
+        self
     }
 
     /// This caller, inside the off-record session its request names.
@@ -1053,6 +1074,7 @@ fn core_auth_for_live_claims(
         peer: oneiron::authority::PeerMachine::Unknown,
         facets_owner_exempt: false,
         off_record_session: None,
+        session_workspace: None,
         managed_owner: None,
         managed_person: None,
     })

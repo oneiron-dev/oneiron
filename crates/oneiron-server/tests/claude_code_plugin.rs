@@ -263,6 +263,9 @@ fn the_mcp_server_is_the_stdio_bridge_with_the_agent_credential() {
         flag_value(&argv, "--credential-file"),
         Some(AGENT_CREDENTIAL)
     );
+    // The session's folder is the one Claude Code starts the server in: its reads that name
+    // no project read the project the owner bound to it (RECALL-SESSION-PROJECT).
+    assert_eq!(flag_value(&argv, "--workspace"), Some("."));
     if let Err(error) = parse(&argv) {
         panic!("{argv:?} does not parse: {error}");
     }

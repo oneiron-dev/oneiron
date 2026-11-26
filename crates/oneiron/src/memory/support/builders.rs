@@ -35,6 +35,29 @@ impl Memory<'_> {
         bound
     }
 
+    /// This handle for one read of an attached agent session whose folder names
+    /// `workspace_ids`, its own workspace id first (RECALL-SESSION-PROJECT; Engine ANSWER
+    /// RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, Q2 = A). Every read key it builds then
+    /// reads CLAIM rows stamped inside the folder's bound project, or a project below it, and
+    /// none when no live project is bound; every receipt names the axis. It binds a request,
+    /// never authority: the credential still decides what is read. A host binds it only on a
+    /// read that names no project; a storage failure binds the unbound default, never a wider
+    /// read.
+    #[must_use]
+    pub fn in_session_workspace(&self, workspace_ids: &[String]) -> Self {
+        let mut bound = self.clone();
+        bound.session_projects = Some(self.session_projects_of(workspace_ids).unwrap_or_else(
+            |error| {
+                tracing::warn!(
+                    error_kind = ?error.code,
+                    "an attached session's folder binding did not read; its reads read no claim"
+                );
+                crate::session_project::SessionProjects::Unbound
+            },
+        ));
+        bound
+    }
+
     /// The caller filter this handle's reads are bound to, if any.
     pub(crate) fn read_filter(&self) -> Option<&crate::gate::RetrievalFilter> {
         self.read_filter.as_ref()

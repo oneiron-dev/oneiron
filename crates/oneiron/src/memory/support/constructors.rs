@@ -57,6 +57,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            session_projects: None,
             dispatch_attempt: None,
         }
     }
@@ -119,6 +120,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            session_projects: None,
             dispatch_attempt: None,
         }
     }

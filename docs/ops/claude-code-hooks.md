@@ -353,6 +353,41 @@ still be starting.
 
 A `serve` from before runtime files registers nothing; restart it once.
 
+## Which project a session reads
+
+You bind a folder to one of your projects, once, in that folder:
+
+```bash
+oneiron project bind <project-ref>   # the PROJECT's id, 32 hex
+oneiron project unbind               # remove this folder's binding
+oneiron project bindings             # list every folder's binding
+```
+
+These send your credential as `oneiron api` does (`ONEIRON_SECRET`), and
+binding is your act alone: an agent may tell you the command, and its own
+attempt waits for your answer. The vault keeps the folder's workspace id (a
+SHA-256 of the checkout's real path) and its name, never the path. The folder
+is the git checkout it sits in, so every subfolder of a repository shares one
+binding; a linked worktree with no binding of its own reads its main
+checkout's. The filesystem root and your home folder are never a workspace.
+
+The plugin starts `oneiron mcp --workspace .`, so every tool call names the
+folder Claude Code runs in. Then:
+
+- A read that names no project (`vault.claims.list`, `vault.recall`, the
+  searches, `vault.hydrate` and the rest) reads only claims of the folder's
+  project and the projects below it. Its read receipt names the axis
+  `session_project`.
+- In a folder with no project bound, such a read reads no claim, and its
+  receipt names `no_project_bound`: bind one to read the folder's memory.
+- A read that names its projects (`project_refs` on `vault.recall`,
+  `vault.claims.list_filtered`, `vault.claims.read_filtered`) reads those,
+  within what the credential reads anyway.
+- Only claims carry a project. Notes, messages and every other row read as
+  before.
+
+The binding selects; it grants nothing. Writes keep their own project rules.
+
 ## 1. Turn on the import queue
 
 In the config `serve` reads, then restart `serve`:

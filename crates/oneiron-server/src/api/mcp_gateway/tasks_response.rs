@@ -392,7 +392,23 @@ pub(crate) fn mcp_scoped_read<'a>(
         .credential_read_key(proof)
         .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
-    Ok(vault.scoped_read(key.for_destination(&actor.destination())))
+    let read = vault.scoped_read(key.for_destination(&actor.destination()));
+    // An attached session's read that names no project reads its folder's project
+    // (RECALL-SESSION-PROJECT); a storage failure binds the unbound default, never a wider read.
+    Ok(
+        match actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::session_workspace)
+        {
+            Some(workspace_ids) => read.within_session_projects(
+                vault
+                    .session_projects(workspace_ids)
+                    .unwrap_or(oneiron::session_project::SessionProjects::Unbound),
+            ),
+            None => read,
+        },
+    )
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {

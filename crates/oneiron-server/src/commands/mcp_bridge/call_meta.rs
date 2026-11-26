@@ -21,6 +21,9 @@ use super::INVOCATION_META;
 /// The `_meta` key the server reads a call's client capabilities from.
 const CLIENT_CAPABILITIES_META: &str = "clientCapabilities";
 
+/// The `_meta` key the server reads a call's session folder from (RECALL-SESSION-PROJECT).
+pub(super) const WORKSPACE_META: &str = "oneiron/workspace";
+
 /// The body for a `tools/call` whose `_meta` names no invocation: the same
 /// message with `invocation()` added there (a pending call's id, or a fresh
 /// one). `None` sends the client's line as it wrote it: any other message, a
@@ -55,13 +58,27 @@ pub(super) fn named_invocation(message: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The client capabilities this stdio session negotiated.
+/// The client capabilities this stdio session negotiated, and the folder it was started for.
 #[derive(Default)]
 pub(super) struct ClientSession {
     capabilities: Mutex<Option<Value>>,
+    /// The session's folder (`--workspace`), as `{"ids": [...]}`: its workspace ids, its own
+    /// first, never its path (RECALL-SESSION-PROJECT). Named on every call, over any the
+    /// client named, so the folder this bridge runs for is the one its reads default to.
+    workspace: Option<Value>,
 }
 
 impl ClientSession {
+    /// A session started for the folder `workspace` names, or for none.
+    pub(super) fn attached_to(
+        workspace: Option<crate::workspace_identity::WorkspaceIdentity>,
+    ) -> Self {
+        Self {
+            capabilities: Mutex::default(),
+            workspace: workspace.map(|identity| serde_json::json!({ "ids": identity.ids })),
+        }
+    }
+
     /// For an `initialize` from the client, the `capabilities` it offers
     /// (`Some(None)` when it offers none); `None` for any other message.
     pub(super) fn offered(message: &Value) -> Option<Option<Value>> {
@@ -81,19 +98,20 @@ impl ClientSession {
     }
 
     /// Names this session's capabilities on a `tools/call` whose `_meta`
-    /// names none. Returns whether `message` changed.
+    /// names none, and its folder on every `tools/call`. Returns whether
+    /// `message` changed.
     pub(super) fn name_on_call(&self, message: &mut Value) -> bool {
         if message.get("method").and_then(Value::as_str) != Some("tools/call") {
             return false;
         }
-        let Some(capabilities) = self
+        let capabilities = self
             .capabilities
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-        else {
+            .clone();
+        if capabilities.is_none() && self.workspace.is_none() {
             return false;
-        };
+        }
         let Some(meta) = message
             .get_mut("params")
             .and_then(Value::as_object_mut)
@@ -106,10 +124,17 @@ impl ClientSession {
         else {
             return false;
         };
-        if meta.contains_key(CLIENT_CAPABILITIES_META) {
-            return false;
+        let mut changed = false;
+        if let Some(workspace) = &self.workspace {
+            meta.insert(WORKSPACE_META.to_owned(), workspace.clone());
+            changed = true;
         }
-        meta.insert(CLIENT_CAPABILITIES_META.to_owned(), capabilities);
-        true
+        if let Some(capabilities) = capabilities
+            && !meta.contains_key(CLIENT_CAPABILITIES_META)
+        {
+            meta.insert(CLIENT_CAPABILITIES_META.to_owned(), capabilities);
+            changed = true;
+        }
+        changed
     }
 }

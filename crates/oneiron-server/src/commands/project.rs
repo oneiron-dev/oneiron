@@ -63,8 +63,13 @@ fn folder_identity(folder: Option<&Path>) -> anyhow::Result<WorkspaceIdentity> {
         Some(folder) => folder.to_path_buf(),
         None => std::env::current_dir().context("this process has no working directory")?,
     };
-    WorkspaceIdentity::of_folder(&folder, Instant::now() + GIT_TIMEOUT)
-        .with_context(|| format!("{} does not resolve to a folder", folder.display()))
+    WorkspaceIdentity::of_session_folder(&folder, Instant::now() + GIT_TIMEOUT).with_context(|| {
+        format!(
+            "{} is no workspace: it does not resolve, or its checkout root is the filesystem \
+             root or the home directory",
+            folder.display()
+        )
+    })
 }
 
 /// The `vault.settings.set` request that binds the folder `identity` names (its own id, never

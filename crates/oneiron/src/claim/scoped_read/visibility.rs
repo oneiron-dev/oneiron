@@ -265,6 +265,9 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority,
     ) -> Result<bool> {
+        if !self.session_projects_admit(raw)? {
+            return Ok(false);
+        }
         let asked = authority.grants().asked();
         let own = self.own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?;
         if !own.admitted() {
@@ -290,6 +293,27 @@ impl<'v> ScopedRead<'v> {
                 );
                 false
             }))
+    }
+
+    /// Whether the attached session's project default this read's key carries admits the
+    /// row `raw` (RECALL-SESSION-PROJECT): a CLAIM stamped inside the session's projects, and
+    /// every row that is not a CLAIM, which carries no project stamp. With no default, every
+    /// row. It runs before every other gate of the row, its sources' included, so a summary
+    /// written from another project's claim is not read either. A CLAIM whose body does not
+    /// decode is refused here, as its own gate refuses it.
+    fn session_projects_admit(&self, raw: &[u8]) -> Result<bool> {
+        let Some(projects) = self.actor_key.session_projects() else {
+            return Ok(true);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(true);
+        }
+        Ok(
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+                .is_ok_and(|body| projects.admits(body.scope_project)),
+        )
     }
 
     /// A summary, the reply copied from it and its merge header carry words

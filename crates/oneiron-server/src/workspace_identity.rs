@@ -57,6 +57,22 @@ impl WorkspaceIdentity {
         Some(Self { ids, label })
     }
 
+    /// [`Self::of_folder`] for a folder an agent session runs in: `None` as well when the
+    /// checkout root is the filesystem root or the home directory, which hold no one project.
+    #[must_use]
+    pub fn of_session_folder(folder: &Path, deadline: Instant) -> Option<Self> {
+        let identity = Self::of_folder(folder, deadline)?;
+        let not_workspaces = [Some(PathBuf::from("/")), home_directory()];
+        let roots = not_workspaces.iter().flatten().map(|path| {
+            workspace_id(&std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        });
+        let own = identity.own_id().to_owned();
+        roots
+            .into_iter()
+            .all(|root| root != own)
+            .then_some(identity)
+    }
+
     /// The folder's own id: the item `oneiron project bind` binds.
     #[must_use]
     pub fn own_id(&self) -> &str {
@@ -83,6 +99,14 @@ fn path_bytes(path: &Path) -> std::borrow::Cow<'_, [u8]> {
 #[cfg(not(unix))]
 fn path_bytes(path: &Path) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Owned(path.to_string_lossy().into_owned().into_bytes())
+}
+
+/// This user's home directory, from `HOME` (`USERPROFILE` where it is unset).
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Where git places a folder: its working tree's top level and its repository's common
