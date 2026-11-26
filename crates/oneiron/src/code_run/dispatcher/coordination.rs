@@ -537,12 +537,14 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// `tasks.consult.result` (DOOR-063): the addressed peer's run lands its
     /// answer or abstention on the consult TASK, as the run's own actor. The
-    /// run must hold its live lease on that TASK, as `tasks.refuse` refuses
-    /// only its own, and the read lane its door admitted the call with must
-    /// read the TASK, the result and every evidence or reason ref, in one
-    /// snapshot; the lease is read again after them. Whether this actor is
-    /// the peer the consult addressed, and every other landing rule, is the
-    /// engine's. A refusal answers as a typed failure the script can read.
+    /// run must hold a live lease, and the read lane its door admitted the
+    /// call with must read the TASK, the result and every evidence or reason
+    /// ref, in one snapshot. Then the consult must be the TASK that lease
+    /// names, or one addressed to this run's actor as a running child, whose
+    /// inbox input no attempt leases (`lands_from_run`); the lease is read
+    /// again after them. Whether this actor is the peer the consult
+    /// addressed, and every other landing rule, is the engine's. A refusal
+    /// answers as a typed failure the script can read.
     /// While the consult's ConsultAssignee fact has not landed here, a run
     /// that `may_park` parks until it does; a host call, which cannot park,
     /// gets the landing's own invalid-state refusal.
@@ -572,6 +574,12 @@ impl<'a> HostSelfDispatcher<'a> {
             ));
         };
         let (task, input, reads) = call.into_engine()?;
+        if !crate::task_verb::run_rows::consult_result::refs_readable(vault, &reader, &reads)? {
+            return Ok(refused(
+                "a TASK, result, evidence or reason ref is not readable on this run's read lane",
+                "Cite only refs your read lane reads, then land again.",
+            ));
+        }
         let leased = match self.agent_parent {
             Some(parent) => DreamerRunnerStore::new(vault)
                 .status(parent)?
@@ -583,16 +591,11 @@ impl<'a> HostSelfDispatcher<'a> {
                 .transpose()?,
             None => None,
         };
-        if leased != Some(task) {
+        let lands = crate::task_verb::run_rows::consult_result::lands_from_run;
+        if !lands(vault, task, leased, self.actor.entity_ref())? {
             return Ok(refused(
-                "a consult lands only on the TASK this run leased",
-                "Land each consult from the run its TASK leased to you.",
-            ));
-        }
-        if !crate::task_verb::run_rows::consult_result::refs_readable(vault, &reader, &reads)? {
-            return Ok(refused(
-                "a TASK, result, evidence or reason ref is not readable on this run's read lane",
-                "Cite only refs your read lane reads, then land again.",
+                "a consult lands only on the TASK this run leased, or addressed to this running child",
+                "Land each consult from the run its TASK leased to you, or from the child it addresses.",
             ));
         }
         // A lease lost while the refs were read lands nothing.

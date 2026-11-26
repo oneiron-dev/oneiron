@@ -302,13 +302,13 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// The host door's `tasks.consult.result`: the attached agent lands its
     /// answer, citing its evidence, or its abstention, giving its reason, on
-    /// the consult TASK its live run leased, under `read_as`, the read key of
-    /// the credential that attached. Every landing rule is the run row's
-    /// (`dispatch_consult_result`), read admission first. A host call cannot
-    /// park, so while the consult's assignee fact has not reached this
-    /// device the landing refuses it as not yet in a state to land, where a
-    /// code-mode run would wait for it. The answer is the landing and the
-    /// rows it read.
+    /// the consult TASK its live run leased or that addresses it as a running
+    /// child, under `read_as`, the read key of the credential that attached.
+    /// Every landing rule is the run row's (`dispatch_consult_result`), read
+    /// admission first. A host call cannot park, so while the consult's
+    /// assignee fact has not reached this device the landing refuses it as
+    /// not yet in a state to land, where a code-mode run would wait for it.
+    /// The answer is the landing and the rows it read.
     pub fn land_consult_from_host(
         &self,
         input: ConsultLandRequest,
