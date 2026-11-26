@@ -54,6 +54,13 @@ pub struct RecallExecution<'a> {
     pub deadline: Option<&'a RetrievalDeadline>,
     pub reranker: Option<&'a dyn Reranker>,
     pub embedding: Option<&'a [f32]>,
+    /// The query's vector the owner's relevance bar compares cosines with
+    /// (RECALL-CARRIER-THRESHOLD): judged with, never searched. A light or call recall whose
+    /// door embedded the query for the bar alone carries it here, so the bar still judges
+    /// cosines while the pipeline's channels stay what they are on main; carrying it in
+    /// `embedding` would open the dense list there (REVIEW-10567 round 2). `None` judges
+    /// `embedding`, as before.
+    pub bar_query_vector: Option<&'a [f32]>,
     /// Query vectors in declared embedding spaces, each searched as its
     /// space's list beside the text index's.
     pub media: &'a [RecallMediaSeed<'a>],
