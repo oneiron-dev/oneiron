@@ -95,8 +95,9 @@ pub(crate) const REMAT_MARKER: SideTable<WindowEntityHexKey, [u8; 1], Raw> =
 pub(crate) const REPLAY_REMAT_MARKER_PROVENANCE: SideTable<WindowEntityHexKey, [u8; 1], Raw> =
     SideTable::new(&side_table::SYNC_REPLAY_REMAT_MARKER_PROVENANCE);
 
-/// Start of the project dependency hold on a [`REMAT_MARKER`]
-/// (`rmh:w:{window}:{entity_hex}`, u64 little-endian seconds).
+/// Start of the hold on a [`REMAT_MARKER`] waiting for a parent project or the message a project
+/// was born from that this replica does not hold yet (`rmh:w:{window}:{entity_hex}`, u64
+/// little-endian seconds).
 pub(crate) const REMAT_DEPENDENCY_HOLD_START: SideTable<WindowEntityHexKey, [u8; 8], Raw> =
     SideTable::new(&side_table::SYNC_REMAT_DEPENDENCY_HOLD_START);
 

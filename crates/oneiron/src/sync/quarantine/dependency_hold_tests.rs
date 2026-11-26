@@ -301,10 +301,67 @@ fn a_window_held_for_a_missing_project_warns_and_raises_no_breach_signal() {
     );
 }
 
+/// A project waiting for the message it was born from warns without a breach.
+/// After the hold bound, it raises the breach signal (GDPR-HOLD-ORIGIN-MESSAGE = B).
+#[test]
+fn a_window_held_for_a_missing_origin_message_warns_then_breaches_at_the_bound() {
+    let (_dir, vault, clock) = test_vault_with_dir();
+    let root_id = vault.root_project().unwrap();
+    let root = vault.project(root_id).unwrap().unwrap();
+    let leader = EntityId::from_hex(&root.leader).unwrap();
+    let child = EntityId::now();
+    let mut waiting = ProjectRecord::new(child, Some(root_id), root_id, leader).expect("fixture");
+    waiting.born_from = Some(EntityId::now().to_hex());
+    let child_blob = entity_blob(
+        vault.project_type_byte().unwrap(),
+        valid_time_range(),
+        LEARNED_AT,
+        &rmp_serde::to_vec_named(&waiting).unwrap(),
+    );
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &child.to_hex(), &child_blob).unwrap();
+    doc.commit();
+    let materializer = Materializer::new();
+
+    clock.set(T0);
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| forward_rematerialize(&vault, &doc, &materializer, &window_key))
+        .unwrap();
+    let lines = capture.lines();
+    assert!(
+        breach_errors(&lines).is_empty(),
+        "a missing origin message raises no breach at the start: {lines:?}"
+    );
+    assert!(
+        !hold_warns(&lines).is_empty(),
+        "a missing origin message warns at the start: {lines:?}"
+    );
+    assert_eq!(remat_row(&vault, WINDOW, &child), Some(vec![1]));
+    assert_eq!(provenance_row(&vault, WINDOW, &child), Some(vec![1]));
+    let hold_start_key = format!("rmh:w:{WINDOW}:{}", child.to_hex());
+    assert_eq!(
+        raw_row(&vault, &hold_start_key),
+        Some(T0.to_le_bytes().to_vec())
+    );
+
+    clock.set(T0 + DEFAULT_HOLD_MAX_SECS + 1);
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| forward_rematerialize(&vault, &doc, &materializer, &window_key))
+        .unwrap();
+    let lines = capture.lines();
+    assert_eq!(breach_errors(&lines).len(), 1, "expired hold: {lines:?}");
+    assert!(hold_warns(&lines).is_empty(), "expired hold: {lines:?}");
+    assert_eq!(remat_row(&vault, WINDOW, &child), Some(vec![1]));
+}
+
 /// A held child that the same pass also refuses for good, here through an
-/// edge sourced at it whose value is not bytes, raises the breach signal: a
-/// refusal of another kind is never hidden behind the project hold (review
-/// round 1 of #10563).
+/// edge sourced at it whose value is not bytes, raises the breach signal.
+/// A hold for a parent project or the message a project was born from that
+/// this replica does not hold yet never hides another refusal (review round 1
+/// of #10563).
 #[test]
 fn a_held_child_the_pass_also_refuses_for_good_raises_the_breach_signal() {
     let held = held_window();

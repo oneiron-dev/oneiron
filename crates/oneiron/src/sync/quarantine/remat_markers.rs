@@ -110,7 +110,8 @@ pub(in crate::sync) fn set_replay_remat_marker_in_txn(
     Ok(())
 }
 
-/// Sets a replay marker and starts a project dependency hold only if no marker stood.
+/// Sets a replay marker and, only if no marker stood, starts the hold for a parent project
+/// or the message a project was born from that this replica does not hold yet.
 /// An existing marker keeps its start; if it has no start (such as an older binary's
 /// marker or a batch-rollback replay marker), the hold reads as a breach.
 pub(in crate::sync) fn set_project_dependency_hold_marker_in_txn(

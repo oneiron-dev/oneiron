@@ -34,7 +34,8 @@ crate::setting::setting_keys! {
             .higher(),
     };
     /// How long, in seconds, the forward pass may report a WARN for a window whose replay markers
-    /// all wait for a project this replica does not hold yet, before raising the GDPR breach ERROR.
+    /// all wait for a project, or the message a project was born from, that this replica does not
+    /// hold yet, before raising the GDPR breach ERROR.
     /// One day unless set. Only the owner changes it: an agent's change waits on the owner's
     /// answer to that change, and the owner's standing approval does not cover it.
     /// A row that does not decode reads 0, with no grace period beyond the start second.

@@ -182,8 +182,9 @@ crate::side_table::side_tables! {
     /// materialization batch fails. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REMAT_MARKER: SyncState b"rm:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// When the marker's entity was first held on a project this replica does not hold yet, as
-    /// u64 little-endian seconds of the store clock. Written with the marker, cleared with it.
+    /// When the marker's entity first waited for a parent project or the message a project was
+    /// born from that this replica does not hold yet, as u64 little-endian seconds of the store
+    /// clock. Written with the marker, cleared with it.
     /// Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REMAT_DEPENDENCY_HOLD_START: SyncState b"rmh:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

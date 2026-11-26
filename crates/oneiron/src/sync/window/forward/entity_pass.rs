@@ -190,8 +190,9 @@ fn ledger_step(ledger: &mut RematLedger, step: EntityStep) {
                 return;
             };
             match refusal.retry {
-                // A refusal for good: whatever else of the id waits for a
-                // project, its surviving marker is not held by that alone.
+                // A refusal for good: the surviving marker is not held only by
+                // a parent project or the message a project was born from that
+                // this replica does not hold yet.
                 RefusalRetry::Terminal => ledger.refuse(id),
                 // Still owed: no other outcome at this id in the pass, such as a
                 // refused tombstone naming it, may discharge its marker.
