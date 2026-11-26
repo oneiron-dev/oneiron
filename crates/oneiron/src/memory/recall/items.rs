@@ -1,8 +1,121 @@
-//! Builds typed recall items from actor-admitted rows at the selected revision.
+//! Projects recall items and render fields for the bound reader.
 use super::*;
+use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
+use crate::context_pack::ContextPack;
+use serde_json::Value;
 
 impl Memory<'_> {
+    /// Projects lifted text before any format can copy, join or clip it.
+    pub(super) fn project_recall_render(
+        &self,
+        lane: &ScopedRead<'_>,
+        pack: &mut ContextPack,
+    ) -> MemoryResult<()> {
+        if !self.reads_lifted_keys_masked()? {
+            return Ok(());
+        }
+        for entity in pack.results.iter_mut().chain(&mut pack.neighbors) {
+            let Some(fields) = entity.fields.as_mut() else {
+                continue;
+            };
+            if entity.entity_type == ENTITY_TYPE_TURN
+                && let Some(text) = fields.remove("txt")
+                && let Some(text) = text.as_str()
+            {
+                let mode = entity
+                    .source_revision_ref
+                    .map_or(crate::vault::ReadMode::Live, |pin| {
+                        crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(pin))
+                    });
+                if let Some(masked) =
+                    self.project_recall_render_turn(lane, &entity.id, mode, text)?
+                {
+                    fields.insert("txt".to_owned(), Value::String(masked));
+                }
+            }
+            let mut body = Value::Object(std::mem::take(fields).into_iter().collect());
+            self.mask_lifted_claim_parts(&mut body, None)?;
+            if let Value::Object(body) = body {
+                fields.extend(body);
+            }
+        }
+        if let Some(summary) = pack.l2_base.as_mut() {
+            // The prefix bypasses field preparation and carries its own JSON.
+            // Keep the shared cached body untouched.
+            let mut rows: Vec<Value> = serde_json::from_str(&summary.body)
+                .map_err(|_| crate::Error::InvariantViolation("recall L2 JSON"))?;
+            for row in &mut rows {
+                self.mask_lifted_claim_parts(row, None)?;
+            }
+            let body = serde_json::to_string(&rows)
+                .map_err(|_| crate::Error::InvariantViolation("recall L2 render"))?;
+            if body != summary.body.as_ref() {
+                summary.content_hash =
+                    oneiron_contracts::fingerprint::ContentHash::of(body.as_bytes()).into_bytes();
+                summary.max_field_chars = rows.iter().map(max_text_chars).max().unwrap_or(0);
+                summary.body = body.into();
+            }
+        }
+        Ok(())
+    }
+
+    fn project_recall_render_turn(
+        &self,
+        lane: &ScopedRead<'_>,
+        id: &EntityId,
+        mode: crate::vault::ReadMode,
+        joined: &str,
+    ) -> MemoryResult<Option<String>> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
+            self.vault,
+            &lane.store_read(),
+            &txn,
+            id,
+            mode,
+            true,
+        )?
+        else {
+            return Ok(None);
+        };
+        let policy = lane.policy_manifest_in(&txn)?;
+        let mut messages = served
+            .released(|message| lane.is_entity_readable_with_policy_in(&txn, &policy, message))?;
+        // If the projection snapshot no longer releases the same words, do
+        // not put the old text (or text not in the admitted pack) back in.
+        if crate::embed::joined_turn_text(&messages).as_deref() != Some(joined) {
+            return Ok(None);
+        }
+        self.mask_recall_turn_messages_in(&txn, &mut messages)?;
+        Ok(crate::embed::joined_turn_text(&messages))
+    }
+
+    fn mask_recall_turn_messages_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        messages: &mut [(EntityId, String)],
+    ) -> MemoryResult<()> {
+        if self.reads_lifted_keys_masked_in_txn(txn)? {
+            let keys = LiftedKeys::of_in_txn(
+                &self.vault.store,
+                txn,
+                messages.iter().map(|(_, text)| text.as_str()),
+            )?;
+            for (_, text) in messages {
+                if let Some(masked) = keys.masked(text) {
+                    *text = masked;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// No item or its provenance may be assembled before the actor's scoped read.
     pub(super) fn memory_item_for(
         &self,
@@ -138,18 +251,7 @@ impl Memory<'_> {
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
-            if self.reads_lifted_keys_masked_in_txn(&txn)? {
-                let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-                    &self.vault.store,
-                    &txn,
-                    turn_messages.iter().map(|(_, text)| text.as_str()),
-                )?;
-                for (_, text) in &mut turn_messages {
-                    if let Some(masked) = keys.masked(text) {
-                        *text = masked;
-                    }
-                }
-            }
+            self.mask_recall_turn_messages_in(&txn, &mut turn_messages)?;
         }
         let turn_text = crate::embed::joined_turn_text(&turn_messages);
         let ScopedReadResult {
@@ -409,5 +511,14 @@ impl Memory<'_> {
                 record,
             }))
         }
+    }
+}
+
+fn max_text_chars(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.chars().count(),
+        Value::Array(items) => items.iter().map(max_text_chars).max().unwrap_or(0),
+        Value::Object(fields) => fields.values().map(max_text_chars).max().unwrap_or(0),
+        _ => 0,
     }
 }
