@@ -477,6 +477,12 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// The pack-surface twin of [`PipelineBuilder::recall_bar`].
+    pub(crate) fn recall_bar(mut self, judge: crate::memory::recall::bar::BarJudge) -> Self {
+        self.pipeline = self.pipeline.recall_bar(judge);
+        self
+    }
+
     /// Associates the retrieval run with a caller turn for ordered lookup.
     pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
         self.pipeline = self.pipeline.retrieval_turn(turn);

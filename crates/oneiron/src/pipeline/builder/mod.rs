@@ -116,6 +116,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) temporal_adaptive_default: bool,
     pub(super) temporal_now: Option<u64>,
     pub(super) turn_fold: TurnFold,
+    /// The owner's relevance bar a recall asked (RECALL-CARRIER-THRESHOLD): each row is
+    /// judged on its final id, after the fold and before any budget or cut.
+    pub(super) recall_bar: Option<crate::memory::recall::bar::BarJudge>,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
@@ -210,6 +213,7 @@ impl<'a> PipelineBuilder<'a> {
             temporal_adaptive_default: true,
             temporal_now: None,
             turn_fold: TurnFold::Off,
+            recall_bar: None,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             retrieval_state: None,
@@ -651,6 +655,14 @@ impl<'a> PipelineBuilder<'a> {
     /// [`TurnFold::TurnsOnly`] also drops a message no admitted turn took in.
     pub(crate) fn fold_messages_into_turns(mut self, fold: TurnFold) -> Self {
         self.turn_fold = fold;
+        self
+    }
+
+    /// Judges each row by `judge` on its final id, after the fold and before the pack's
+    /// candidates, budgets and cut, so a row under the bar takes no slot
+    /// (RECALL-CARRIER-THRESHOLD).
+    pub(crate) fn recall_bar(mut self, judge: crate::memory::recall::bar::BarJudge) -> Self {
+        self.recall_bar = Some(judge);
         self
     }
 

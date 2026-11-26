@@ -204,7 +204,7 @@ impl PipelineBuilder<'_> {
     /// admission: a term's document frequency asks it of every posting. It
     /// answers each row once across the stage's reads (the turn fold's
     /// longer reads ask again of the same postings).
-    fn hidden_row_test<'t>(
+    pub(super) fn hidden_row_test<'t>(
         &'t self,
         rtxn: &'t RoTxn<'_>,
         (filter_config, world_allowed_set): (

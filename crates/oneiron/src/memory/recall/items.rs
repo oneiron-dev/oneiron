@@ -282,6 +282,7 @@ impl Memory<'_> {
                 cited_messages: Vec::new(),
                 conversation_id: None,
                 record,
+                similarity: None,
             }))
         } else {
             let value_text = turn_text
@@ -407,6 +408,7 @@ impl Memory<'_> {
                 cited_messages,
                 conversation_id,
                 record,
+                similarity: None,
             }))
         }
     }

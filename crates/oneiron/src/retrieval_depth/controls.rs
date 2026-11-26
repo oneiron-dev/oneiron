@@ -86,6 +86,10 @@ pub struct RecallExecution<'a> {
     /// The token budget the pack is assembled and rendered under, as its
     /// door resolved it (FIX 9962); `None` is the 4,000-token default.
     pub render_budget: Option<usize>,
+    /// The caller's ask to be judged by the owner's relevance bar
+    /// (RECALL-CARRIER-THRESHOLD): every pass of one recall carries it, so each pass drops the
+    /// same lines before its cut.
+    pub bar: Option<&'a crate::memory::RecallBarAsk>,
 }
 
 #[doc(hidden)]

@@ -285,6 +285,9 @@ pub(crate) struct PipelineOutput {
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
     /// first. Empty unless the run folds messages into their turns.
     pub(crate) cited_messages: HashMap<EntityId, Vec<EntityId>>,
+    /// Per row in `scores`, the raw cosine of its vector and the query's that the recall's
+    /// bar judged it by. Empty unless the bar compares cosines.
+    pub(crate) bar_similarity: HashMap<EntityId, f32>,
     pub(crate) capabilities: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,

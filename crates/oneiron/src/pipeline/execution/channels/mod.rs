@@ -588,6 +588,7 @@ impl PipelineBuilder<'_> {
                     text_exhausted,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
+                    bar_similarity: HashMap::new(),
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
@@ -885,6 +886,37 @@ impl PipelineBuilder<'_> {
             };
             reranked_block.follow_turn_fold(&cited_messages);
 
+            // The owner's relevance bar (RECALL-CARRIER-THRESHOLD), on each row's final id:
+            // after the fold, before the pack's candidates, budgets and cut, so a row under it
+            // takes no slot and the next moves up.
+            let bar_similarity = match self.recall_bar.as_ref() {
+                Some(judge) => {
+                    let mut hidden_metadata = EntityMetadataCache::default();
+                    let mut hidden_row = match judge {
+                        crate::memory::recall::bar::BarJudge::DirectMatch { .. } => self
+                            .hidden_row_test(
+                                rtxn,
+                                (
+                                    filter_config,
+                                    world_authority
+                                        .as_ref()
+                                        .map(|resolved| &resolved.allowed_set),
+                                ),
+                                &mut hidden_metadata,
+                            )?,
+                        _ => None,
+                    };
+                    judge.retain_passing(
+                        &mut scores,
+                        self.vault,
+                        &self.read,
+                        rtxn,
+                        hidden_row.as_deref_mut(),
+                    )?
+                }
+                None => HashMap::new(),
+            };
+
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
                 &mut scores,
@@ -1140,6 +1172,7 @@ impl PipelineBuilder<'_> {
                 text_exhausted,
                 scores,
                 cited_messages,
+                bar_similarity,
                 capabilities,
                 pending_vectors,
                 claim_gate,

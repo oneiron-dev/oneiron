@@ -7,6 +7,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 mod admission;
+pub(crate) mod bar;
 mod call_mode;
 mod conversation;
 mod home;
@@ -79,7 +80,8 @@ pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::recall::{
-    Effort, MemoryProvenance, RecallRequest, RecallScope, RetrievalMeta, ScopeHonesty,
+    Effort, MemoryProvenance, PUSH_LINES, RecallBarAsk, RecallBarOutcome, RecallBarRule,
+    RecallRequest, RecallScope, RecallSource, RetrievalMeta, ScopeHonesty, is_harness_name,
 };
 
 /// Kinds that hold no text of their own: conversations and sessions, and the
@@ -129,6 +131,13 @@ pub(crate) fn check_recall_request(
     }
     format.map(parse_pack_format).transpose()?;
     recall_kinds(scope)?;
+    if let Some(harness) = execution.bar.and_then(|bar| bar.harness.as_deref())
+        && !is_harness_name(harness)
+    {
+        return Err(MemoryError::bad_request(
+            "bar.harness must be 1 to 40 of a-z 0-9 -, starting with a letter",
+        ));
+    }
     Ok(())
 }
 
@@ -225,6 +234,11 @@ pub struct MemoryItem {
     /// revision pin: [`Self::reference`] still names the revision read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<crate::lens::RecordRef>,
+    /// The raw cosine of this item's vector and the query's in the vault's embedding space,
+    /// as the owner's relevance bar judged it ([`RecallRequest::bar`]): only on a recall
+    /// whose bar compares cosines. Never a rank, a blend or a confidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f32>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
@@ -278,6 +292,11 @@ pub struct MemoryPack {
     /// window it may read, or runs no sync.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub residence: Option<RecallResidence>,
+    /// What the owner's relevance bar did, on a recall that asked one
+    /// ([`RecallRequest::bar`]): the rule it applied, and whether the owner asks a harness
+    /// to say so when no line passed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar: Option<RecallBarOutcome>,
 }
 
 /// The pack a recall answers with when its door stops waiting at the
@@ -304,6 +323,7 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
         narrowing: Box::new(receipt.clone()),
         retrieval_run_id: None,
         residence: None,
+        bar: None,
     };
     pack.stamp_residence(home::local_residence(vault, None));
     pack
@@ -479,6 +499,7 @@ impl Memory<'_> {
                 narrowing: Box::new(receipt),
                 retrieval_run_id: None,
                 residence: None,
+                bar: None,
             };
             pack.stamp_residence(home::local_residence(self.vault, None));
             return Ok(pack);
@@ -606,6 +627,11 @@ impl Memory<'_> {
             Vec::new()
         };
 
+        // The owner's relevance bar, resolved once for this pass (RECALL-CARRIER-THRESHOLD).
+        let bar = execution
+            .bar
+            .map(|ask| self.resolve_recall_bar(ask, query, scope, execution.embedding))
+            .transpose()?;
         let (
             items,
             total_candidates,
@@ -647,6 +673,9 @@ impl Memory<'_> {
                 .filter_candidates(&admitted)
                 .gate_candidates(&conversation_gate)
                 .statistics_read(&lane);
+            if let Some(judge) = bar.as_ref().and_then(|bar| bar.judge.clone()) {
+                builder = builder.recall_bar(judge);
+            }
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing
@@ -791,6 +820,7 @@ impl Memory<'_> {
                         .get(&entity.id)
                         .cloned()
                         .unwrap_or_default();
+                    item.similarity = status.bar_similarity.get(&entity.id).copied();
                     items.push(item);
                 }
             }
@@ -831,6 +861,7 @@ impl Memory<'_> {
             narrowing: Box::new(receipt),
             retrieval_run_id,
             residence: None,
+            bar: bar.map(|bar| bar.outcome),
         };
         // An opened device's answer is its own items alone (FIX 2905); the
         // stamp keeps what this recall narrowed by, for its home.

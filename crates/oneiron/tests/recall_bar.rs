@@ -1,0 +1,563 @@
+//! RECALL-CARRIER-THRESHOLD (owner 26 Nov 18:53 "Can we just skip the recall if nothing
+//! useful? To not pester"; 18:59 "keep line by line but with some relevance threshold
+//! (adjustable)"; Engine NOTE 27 Nov 03:23): a recall that asks the owner's relevance bar
+//! (`spec.bar`) keeps only lines whose raw cosine to the query, in the vault's embedding space,
+//! clears the owner's floor for that source and harness; a line under the bar takes no slot; a
+//! push answers at most 3 lines, only inside a project, and nothing when nothing clears; each
+//! kept line says its similarity. The floor is `recall.bar.<source>`, per harness (the row's
+//! item) and per project (its scope); the default measures 0.52 in pplx-embed-v1-0.6b's space,
+//! stays quiet in a space no one measured, and on a vault with no embedder takes a direct match
+//! of a rare query term, or of every term.
+//!
+//! Red on the base: `spec.bar` is no field of `vault.recall` and no `recall.bar.*` key exists,
+//! so this file does not compile there.
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
+//! recall_bar`.
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use oneiron::authority::{ActSurface, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::edge::EdgeActorClass;
+use oneiron::memory::{
+    MemoryPack, RecallBarAsk, RecallBarRule, RecallRequest, RecallScope, RecallSource,
+};
+use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::session_project::WorkspaceBindRequest;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
+use oneiron::store::GateDecisionId;
+use oneiron::task_verb::sdk::recall_with_vector;
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use serde_json::{Value, json};
+
+/// pplx-embed-v1-0.6b's space, whose measured floor is 0.52.
+const PPLX: &str = "perplexity-ai/pplx-embed-v1-0.6b@test";
+/// A space no one measured.
+const UNMEASURED: &str = "test/model@v1";
+const LEARNED_AT: u64 = 1_780_000_000;
+const QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+const QUERY_TEXT: &str = "granite drafter plan";
+const HARNESS: &str = "claude-code";
+const FOLDER: &str = "blake3:a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f";
+
+/// A unit vector at `cosine` to [`QUERY`].
+fn at(cosine: f32) -> [f32; 4] {
+    [cosine, (1.0 - cosine * cosine).sqrt(), 0.0, 0.0]
+}
+
+/// A rooted vault, its owner's proof and root PROJECT. The vault drops first.
+struct Fixture {
+    vault: Vault,
+    proof: AuthenticatedOwner,
+    owner: EntityId,
+    project: EntityId,
+    _dir: tempfile::TempDir,
+}
+
+impl Fixture {
+    /// A vault whose vectors are pinned to `space`, or with no embedder for `None`.
+    fn open(space: Option<&str>) -> Self {
+        let dir = tempfile::tempdir().expect("vault directory");
+        let mut config = VaultConfig::device();
+        config.dimensions = QUERY.len();
+        config.embedding_model = space.map(str::to_owned);
+        let vault = Vault::open(dir.path(), config).expect("seeded vault");
+        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+        let issuer = HostSlipIssuer::from_seed(&[0x5c; HOST_ISSUER_SEED_BYTES])
+            .expect("independent host issuer");
+        vault.ensure_host_root_slip(&issuer).expect("host root");
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("engine machine identities");
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's machine profile");
+        let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+        let proof = vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("owner proof");
+        let project = vault.root_project().expect("the seeded root PROJECT");
+        Self {
+            vault,
+            proof,
+            owner,
+            project,
+            _dir: dir,
+        }
+    }
+
+    /// A TURN holding `text`, with `vector` when the vault embeds.
+    fn put_turn(&self, text: &str, vector: Option<[f32; 4]>) -> EntityId {
+        let id = EntityId::now();
+        let body = rmp_serde::to_vec_named(&json!({ "content": text })).expect("turn body");
+        let mut batch = self.vault.batch().put(
+            &id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+            &body,
+        );
+        batch = batch.text(&id, &[("body", text)]);
+        if let Some(vector) = vector {
+            batch = batch.vector(&id, &vector);
+        }
+        batch.commit().expect("the turn, its text and its vector");
+        id
+    }
+
+    /// Three lines over 0.52 and two traps under it that repeat the query's words, so they rank
+    /// high by words alone: `(passing, traps)`.
+    fn seed_lines(&self) -> (BTreeSet<EntityId>, BTreeSet<EntityId>) {
+        let passing = [0.60, 0.58, 0.55]
+            .into_iter()
+            .enumerate()
+            .map(|(step, cosine)| {
+                self.put_turn(
+                    &format!("granite drafter plan, step {step} of the D1 test"),
+                    Some(at(cosine)),
+                )
+            })
+            .collect();
+        let traps = [0.40, 0.10]
+            .into_iter()
+            .map(|cosine| {
+                self.put_turn(
+                    "granite drafter plan: granite drafter plan, the granite drafter plan outline",
+                    Some(at(cosine)),
+                )
+            })
+            .collect();
+        (passing, traps)
+    }
+
+    /// The owner's change of `key` at `scope` for `item`: `value`.
+    fn owner_sets(&self, key: &str, scope: SettingScope, item: Option<&str>, value: Value) {
+        let mut change = SetSetting::vault_value(key, value);
+        change.scope = scope;
+        change.item = item.map(str::to_owned);
+        let outcome = self
+            .vault
+            .set_setting(SettingCaller::Owner(&self.proof), change)
+            .unwrap_or_else(|error| panic!("the owner sets {key}: {error}"));
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's change applies at once: {outcome:?}"
+        );
+    }
+
+    /// The owner's recall of [`QUERY_TEXT`] in the root project, asking `bar`.
+    fn recall(
+        &self,
+        bar: Option<RecallBarAsk>,
+        limit: usize,
+    ) -> oneiron::memory::MemoryResult<MemoryPack> {
+        self.recall_in(bar, limit, vec![self.project.to_hex()], None)
+    }
+
+    fn recall_in(
+        &self,
+        bar: Option<RecallBarAsk>,
+        limit: usize,
+        project_refs: Vec<String>,
+        folder: Option<&str>,
+    ) -> oneiron::memory::MemoryResult<MemoryPack> {
+        let memory = self.vault.memory(self.owner, EdgeActorClass::Human);
+        let memory = match folder {
+            Some(folder) => memory.in_session_workspace(&[folder.to_owned()]),
+            None => memory,
+        };
+        recall_with_vector(
+            &memory,
+            RecallRequest {
+                query: QUERY_TEXT.to_owned(),
+                limit: Some(limit),
+                scope: Some(RecallScope {
+                    project_refs,
+                    ..RecallScope::default()
+                }),
+                bar,
+                ..RecallRequest::default()
+            },
+            |_| Some(QUERY.to_vec()),
+        )
+    }
+}
+
+fn ask(source: RecallSource, harness: &str) -> Option<RecallBarAsk> {
+    Some(RecallBarAsk {
+        source,
+        harness: Some(harness.to_owned()),
+    })
+}
+
+fn ids(pack: &MemoryPack) -> BTreeSet<EntityId> {
+    pack.items
+        .iter()
+        .map(|item| {
+            let record = item
+                .record
+                .as_ref()
+                .expect("a recalled TURN names its record");
+            EntityId::from_hex(&record.id).expect("a record id is 32 hex")
+        })
+        .collect()
+}
+
+fn quiet_reason(pack: &MemoryPack) -> Option<&str> {
+    match &pack.bar.as_ref()?.rule {
+        RecallBarRule::Quiet { reason } => Some(reason),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_carrier_keeps_only_lines_over_the_measured_floor_and_says_each_similarity() {
+    let fixture = Fixture::open(Some(PPLX));
+    let (passing, _traps) = fixture.seed_lines();
+    let pack = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert_eq!(ids(&pack), passing, "the three lines over 0.52, no trap");
+    for item in &pack.items {
+        let similarity = item.similarity.expect("a kept line says its similarity");
+        assert!(similarity >= 0.52 && similarity <= 0.61, "{similarity}");
+    }
+    let bar = pack.bar.as_ref().expect("the pack says the rule");
+    assert_eq!(bar.source, RecallSource::Carrier);
+    assert!(
+        matches!(&bar.rule, RecallBarRule::Cosine { floor, model } if (floor - 0.52).abs() < 1e-6 && model == PPLX),
+        "{:?}",
+        bar.rule
+    );
+    assert!(!bar.receipt, "no receipt unless the owner asks for one");
+}
+
+#[test]
+fn a_line_under_the_bar_takes_no_slot() {
+    let fixture = Fixture::open(Some(PPLX));
+    let (passing, traps) = fixture.seed_lines();
+    let open = fixture
+        .recall(ask(RecallSource::Pull, HARNESS), 3)
+        .expect("the open recall runs");
+    assert!(
+        !ids(&open).is_disjoint(&traps),
+        "fixture: a trap ranks in the top three by the recall's own order: {:?}",
+        ids(&open)
+    );
+    let barred = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 3)
+        .expect("the barred recall runs");
+    assert_eq!(
+        ids(&barred),
+        passing,
+        "the bar judges before the cut: three passing lines fill the three slots"
+    );
+}
+
+#[test]
+fn a_pull_is_open_by_default_and_a_recall_with_no_bar_is_unchanged() {
+    let fixture = Fixture::open(Some(PPLX));
+    let (passing, traps) = fixture.seed_lines();
+    let every: BTreeSet<_> = passing.union(&traps).copied().collect();
+    let pull = fixture
+        .recall(ask(RecallSource::Pull, HARNESS), 8)
+        .expect("the pull runs");
+    assert_eq!(ids(&pull), every);
+    assert!(pull.items.iter().all(|item| item.similarity.is_none()));
+    assert_eq!(
+        pull.bar.as_ref().map(|bar| &bar.rule),
+        Some(&RecallBarRule::Open)
+    );
+    let plain = fixture.recall(None, 8).expect("the plain recall runs");
+    assert_eq!(ids(&plain), every);
+    assert!(
+        plain.bar.is_none(),
+        "a recall that asks no bar reports none"
+    );
+    let serialized = serde_json::to_value(&plain).expect("the pack serializes");
+    assert!(serialized.get("bar").is_none());
+    assert!(
+        serialized["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .all(|item| item.get("similarity").is_none()),
+        "an unbarred pack's bytes carry no new field"
+    );
+}
+
+#[test]
+fn at_most_three_lines_are_pushed() {
+    let fixture = Fixture::open(Some(PPLX));
+    for step in 0..5 {
+        fixture.put_turn(
+            &format!("granite drafter plan, note {step}"),
+            Some(at(0.70)),
+        );
+    }
+    let pack = fixture
+        .recall(ask(RecallSource::Start, HARNESS), 8)
+        .expect("the start recall runs");
+    assert_eq!(pack.items.len(), 3, "a push answers at most three lines");
+    let pull = fixture
+        .recall(ask(RecallSource::Pull, HARNESS), 8)
+        .expect("the pull runs");
+    assert_eq!(pull.items.len(), 5, "a pull keeps its limit");
+}
+
+#[test]
+fn a_push_outside_any_project_is_quiet() {
+    let fixture = Fixture::open(Some(PPLX));
+    fixture.seed_lines();
+    let pack = fixture
+        .recall_in(ask(RecallSource::Carrier, HARNESS), 8, Vec::new(), None)
+        .expect("the recall runs");
+    assert!(pack.items.is_empty());
+    assert_eq!(quiet_reason(&pack), Some("no_project"));
+}
+
+#[test]
+fn the_session_folders_project_scopes_a_push_and_its_rows() {
+    let fixture = Fixture::open(Some(PPLX));
+    let (passing, _traps) = fixture.seed_lines();
+    fixture
+        .vault
+        .bind_workspace_as_owner(
+            &fixture.proof,
+            Some(ActSurface::ThisInstall),
+            WorkspaceBindRequest {
+                folder_digest: FOLDER.to_owned(),
+                project: fixture.project,
+                label: Some("granite".to_owned()),
+            },
+        )
+        .expect("the owner binds the folder");
+    let pack = fixture
+        .recall_in(
+            ask(RecallSource::Carrier, HARNESS),
+            8,
+            Vec::new(),
+            Some(FOLDER),
+        )
+        .expect("the session's recall runs");
+    assert_eq!(ids(&pack), passing, "the bound project scopes the push");
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Project(fixture.project),
+        None,
+        json!("quiet"),
+    );
+    let quiet = fixture
+        .recall_in(
+            ask(RecallSource::Carrier, HARNESS),
+            8,
+            Vec::new(),
+            Some(FOLDER),
+        )
+        .expect("the session's recall runs");
+    assert!(quiet.items.is_empty(), "the bound project's own row judges");
+    assert_eq!(quiet_reason(&quiet), Some("owner"));
+}
+
+#[test]
+fn a_space_no_one_measured_starts_quiet_until_the_owner_sets_its_floor() {
+    let fixture = Fixture::open(Some(UNMEASURED));
+    let (passing, _traps) = fixture.seed_lines();
+    let pack = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(pack.items.is_empty());
+    assert_eq!(quiet_reason(&pack), Some("unmeasured"));
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Vault,
+        None,
+        json!({ "cosine": { "floor": 0.50, "model": "perplexity-ai/pplx-embed-v1-0.6b@test" } }),
+    );
+    let other = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(
+        other.items.is_empty(),
+        "a floor measured in another space judges nothing here"
+    );
+    assert_eq!(quiet_reason(&other), Some("other_space"));
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Vault,
+        None,
+        json!({ "cosine": { "floor": 0.50, "model": UNMEASURED } }),
+    );
+    let measured = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert_eq!(ids(&measured), passing, "the owner's floor for this space");
+}
+
+#[test]
+fn the_harness_row_and_the_project_row_decide() {
+    let fixture = Fixture::open(Some(PPLX));
+    let (passing, traps) = fixture.seed_lines();
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Vault,
+        None,
+        json!("quiet"),
+    );
+    let quiet = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(quiet.items.is_empty());
+    assert_eq!(quiet_reason(&quiet), Some("owner"));
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Vault,
+        Some(HARNESS),
+        json!("open"),
+    );
+    let open = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert_eq!(
+        open.items.len(),
+        3,
+        "the harness's own row opens it, still at most three lines"
+    );
+    assert!(ids(&open).is_subset(&passing.union(&traps).copied().collect()));
+    let codex = fixture
+        .recall(ask(RecallSource::Carrier, "codex"), 8)
+        .expect("the recall runs");
+    assert!(
+        codex.items.is_empty(),
+        "another harness keeps the row that names none"
+    );
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Project(fixture.project),
+        Some(HARNESS),
+        json!("measured"),
+    );
+    let project = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert_eq!(
+        ids(&project),
+        passing,
+        "the project's row overrides the vault's"
+    );
+}
+
+#[test]
+fn a_vault_with_no_embedder_passes_a_direct_match() {
+    let fixture = Fixture::open(None);
+    for step in 0..24 {
+        fixture.put_turn(&format!("the weekly plan for item {step}"), None);
+    }
+    let rare = fixture.put_turn("the quillwort plan for the quarter", None);
+    let both = fixture.put_turn("granite drafter results", None);
+    fixture.put_turn("granite countertop order", None);
+    fixture.put_turn("drafter table order", None);
+    for _ in 0..2 {
+        fixture.put_turn("granite drafter", None);
+    }
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let recall = |query: &str| {
+        recall_with_vector(
+            &memory,
+            RecallRequest {
+                query: query.to_owned(),
+                limit: Some(8),
+                scope: Some(RecallScope {
+                    project_refs: vec![fixture.project.to_hex()],
+                    ..RecallScope::default()
+                }),
+                bar: ask(RecallSource::Carrier, HARNESS),
+                ..RecallRequest::default()
+            },
+            |_| None,
+        )
+        .expect("the recall runs")
+    };
+    let pack = recall("quillwort plan");
+    assert_eq!(
+        ids(&pack),
+        BTreeSet::from([rare]),
+        "the rare term passes; the common one does not"
+    );
+    assert_eq!(
+        pack.bar.as_ref().map(|bar| &bar.rule),
+        Some(&RecallBarRule::DirectMatch)
+    );
+    assert!(pack.items.iter().all(|item| item.similarity.is_none()));
+    assert!(
+        recall("plan").items.is_empty(),
+        "one common word never passes"
+    );
+    let pair = ids(&recall("granite drafter results"));
+    assert!(
+        pair.contains(&both),
+        "a line holding every term passes: {pair:?}"
+    );
+}
+
+#[test]
+fn a_bad_harness_and_a_bar_under_an_operation_id_are_refused() {
+    let fixture = Fixture::open(Some(PPLX));
+    fixture.seed_lines();
+    for harness in ["", "Claude", "claude code", "-x", &"a".repeat(41)] {
+        assert!(
+            fixture
+                .recall(ask(RecallSource::Carrier, harness), 8)
+                .is_err(),
+            "{harness:?} is no harness name"
+        );
+    }
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let refused = recall_with_vector(
+        &memory,
+        RecallRequest {
+            query: QUERY_TEXT.to_owned(),
+            operation_id: Some("op-1".to_owned()),
+            bar: ask(RecallSource::Carrier, HARNESS),
+            ..RecallRequest::default()
+        },
+        |_| Some(QUERY.to_vec()),
+    );
+    assert!(refused.is_err(), "a push is no operation a caller replays");
+}
+
+#[test]
+fn the_empty_receipt_is_one_setting_away() {
+    let fixture = Fixture::open(Some(PPLX));
+    fixture.put_turn("granite drafter plan bookkeeping", Some(at(0.20)));
+    let pack = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(pack.items.is_empty(), "nothing clears the bar");
+    assert!(
+        !pack.bar.as_ref().expect("the rule").receipt,
+        "the default says nothing"
+    );
+    fixture.owner_sets(
+        "recall.bar.empty_receipt",
+        SettingScope::Vault,
+        Some(HARNESS),
+        json!(true),
+    );
+    let receipt = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(receipt.bar.as_ref().expect("the rule").receipt);
+    let codex = fixture
+        .recall(ask(RecallSource::Carrier, "codex"), 8)
+        .expect("the recall runs");
+    assert!(
+        !codex.bar.as_ref().expect("the rule").receipt,
+        "per harness"
+    );
+}
