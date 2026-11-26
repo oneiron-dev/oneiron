@@ -565,7 +565,9 @@ pub(crate) fn run_device_tool_as(
         // The output's end and the exit decide, as before the error output
         // was read: a helper that keeps only the error pipe open holds
         // nothing.
-        if stdout.ended() && let Some(status) = exited {
+        if stdout.ended()
+            && let Some(status) = exited
+        {
             break status;
         }
         if Instant::now() >= deadline {
@@ -658,7 +660,13 @@ fn query_diagnostic(stderr: &[u8], stdout: &[u8]) -> String {
             let bytes = &bytes[..bytes.len().min(QUERY_STDERR_KEEP_BYTES)];
             let text: String = String::from_utf8_lossy(bytes)
                 .chars()
-                .map(|character| if character.is_control() { ' ' } else { character })
+                .map(|character| {
+                    if character.is_control() {
+                        ' '
+                    } else {
+                        character
+                    }
+                })
                 .collect();
             let mut part = text.split_whitespace().collect::<Vec<_>>().join(" ");
             let mut end = part.len().min(QUERY_DIAGNOSTIC_PART_MAX_BYTES);
