@@ -312,9 +312,26 @@ pub async fn admit_own_run_speech(
     run: EntityId,
     author: ProgramAuthor,
 ) -> anyhow::Result<Result<(), GuestRefusal>> {
+    admit_run_speech_as(server, credential, run, SelfEffect::Speak, author).await
+}
+
+/// The admission a speech of `effect` in the run's own derived conversation
+/// meets on a run whose program `author` wrote
+/// (`AgentVerbDoor::admit_run_speech`).
+///
+/// # Errors
+///
+/// The credential failing to resolve.
+pub async fn admit_run_speech_as(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    effect: SelfEffect,
+    author: ProgramAuthor,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
     let verbs = door(server, credential, run, author).await?;
     Ok(verbs
-        .admit_run_speech(SelfEffect::Speak, RunSpeechDestination::OwnRunConversation)
+        .admit_run_speech(effect, RunSpeechDestination::OwnRunConversation)
         .map(drop)
         .map_err(guest_refusal))
 }

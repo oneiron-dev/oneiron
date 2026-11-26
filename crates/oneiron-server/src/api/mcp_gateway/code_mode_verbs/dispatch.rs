@@ -361,15 +361,19 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A run's speech is its own record only where its storage lands it in
     /// the run's own derived conversation; anywhere else it is a room write
-    /// and needs Write (`mcp_run_speech_gate`). It reads nothing.
+    /// and needs Write (`mcp_run_speech_gate`). A caller's own speech is a
+    /// call it chose to make: the row it is made through needs its binding,
+    /// as a direct call's does, and it needs Write wherever it lands (FIX
+    /// EXECUTE-CALLER-CODE). It reads nothing.
     fn admit_run_speech(
         &self,
-        _effect: SelfEffect,
+        effect: SelfEffect,
         destination: oneiron::code_run::RunSpeechDestination,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         let gated = match self.author {
             RunAuthor::EngineModel => mcp_run_speech_gate(&self.server, &self.actor, destination),
-            RunAuthor::Caller => mcp_caller_code_speech_gate(&self.server, &self.actor),
+            RunAuthor::Caller => caller_speech_binding(&self.actor, effect)
+                .and_then(|()| mcp_caller_code_speech_gate(&self.server, &self.actor)),
         };
         gated.map_err(|error| AgentVerbRefusal {
             hook_notice: None,
@@ -786,4 +790,18 @@ pub(crate) fn admit_run_call_for_test(
     door.admit_run_call(RunCall::Bridge(effect))
         .map(|key| key.is_some())
         .map_err(|refusal| refusal.code)
+}
+
+/// The binding a caller's own speech needs (FIX EXECUTE-CALLER-CODE): the
+/// effect's own run row when the run table holds one (`self.think.aloud`),
+/// else the public `say` row, which a plain `say(text)` and the run's other
+/// speech (`self.speak`, `self.think`, `self.express`) are made through.
+fn caller_speech_binding(
+    actor: &McpCallContext,
+    effect: SelfEffect,
+) -> Result<(), McpGatewayError> {
+    match RunVerb::ALL.iter().find(|verb| verb.effect() == effect) {
+        Some(verb) => mcp_admit_run_verb(actor, *verb),
+        None => mcp_admit_host_verb(actor, AgentVerb::Say),
+    }
 }
