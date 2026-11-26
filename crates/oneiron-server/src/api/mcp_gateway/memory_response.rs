@@ -503,9 +503,15 @@ fn encode<T: serde::Serialize>(response: T) -> Result<Value, McpGatewayError> {
 
 fn native_error(mut error: VaultReadError) -> McpGatewayError {
     let mut result = match &error {
+        // The native check names its field: the refusal says so in reason
+        // codes too, as every other tool refusal does (FIX
+        // CODE-MODE-DENIAL-REASONS; review round 2 of #10553), and its
+        // message stays the check's own.
         VaultReadError::InvalidRequest { field, reason, .. } => {
+            let field = format!("arguments.request.{field}");
             McpGatewayError::new(-32602, "tool_args_invalid", reason.clone())
-                .with_field(format!("arguments.request.{field}"))
+                .with_invalid_field_reason(&field)
+                .with_field(field)
         }
         VaultReadError::RuntimeUnavailable { .. } => McpGatewayError::new(
             -32020,

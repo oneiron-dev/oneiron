@@ -197,15 +197,17 @@ impl HostSelfDispatcher<'_> {
         let outcome = match written {
             Ok(outcome) => outcome,
             // Nothing staged: the refusal reaches the guest as its code, the
-            // room's as its Memory code, the pre chain's records are kept,
+            // room's as its Memory code and reason codes (FIX
+            // CODE-MODE-DENIAL-REASONS), the pre chain's records are kept,
             // and the receipt keeps the refusal.
             Err(refused) => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
                 return refuse(answered(Err(ceiling.take().unwrap_or_else(|| {
+                    let refused = MemoryError::from(refused);
                     AgentVerbRefusal {
                         hook_notice: None,
-                        code: MemoryError::from(refused).code,
-                        reason_codes: Vec::new(),
+                        code: refused.code,
+                        reason_codes: refused.reason_codes,
                     }
                 }))));
             }

@@ -140,6 +140,13 @@ impl McpGatewayError {
         self
     }
 
+    /// A field whose value the call does not take, by `field`, the path the
+    /// call's own schema gives it; the value never becomes a code.
+    pub(super) fn with_invalid_field_reason(mut self, field: &str) -> Self {
+        self.reason_codes = field_reason_codes(INVALID_FIELD, Some(field));
+        self
+    }
+
     /// The reason codes of a tool's undecodable arguments.
     pub(super) fn with_decode_reason(mut self, message: &str) -> Self {
         self.reason_codes = decode_reason_codes(message);
