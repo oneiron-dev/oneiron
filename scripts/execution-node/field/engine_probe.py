@@ -25,9 +25,12 @@ Parity with the Rust readers (the Engine's review of #10540 after its merge; one
   - a UUID listed twice fails (case duplicate-uuid);
   - framing: neither bytes past the n nor the peer's end are waited for (case held-open).
 
-usage: engine_probe.py <socket> <GPU-uuid>
+usage: engine_probe.py [--report-tries] <socket> <GPU-uuid>
   check_device_handoff.sh hands this text to `python3 -c` as the engine's account, which may not read this tree.
-Prints one line, `PASS <the card's device line>` or `FAIL <why>`, and exits 0 or 1.
+Prints one line, `PASS <the card's device line>` or `FAIL <why>`, and exits 0 or 1. With --report-tries
+(engine_probe_fixture.sh's listen-queue-full case; FIX T40-FIXTURE-LISTEN-QUEUE-NO-EAGAIN), a second line
+`full-queue-tries <n>` says how many connects met a full listen queue before one went through (`none` when the
+exchange broke off), so the case proves the probe met the full queue rather than a queue already cleared.
 """
 
 import re
@@ -77,15 +80,18 @@ def rust_u64(text):
 
 def connect_by(path, deadline):
     """The connection to the socket at `path`, made by the deadline as device_query.rs connect_by makes it: each try
-    on a fresh socket that does not block, and a full listen queue (EAGAIN) tried again every 20 ms."""
+    on a fresh socket that does not block, and a full listen queue (EAGAIN) tried again every 20 ms. Returns the
+    connection and the number of tries that met a full queue."""
+    full = 0
     while True:
         conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         conn.setblocking(False)
         try:
             conn.connect(path)
-            return conn
+            return conn, full
         except BlockingIOError as error:
             conn.close()
+            full += 1
             left = deadline - time.monotonic()
             if left <= 0:
                 raise TimeoutError("the handler took no connection within %d s: %s" % (WAIT_SECS, error)) from None
@@ -155,9 +161,11 @@ def device_uuid(line):
 
 
 def exchange(path):
-    """The reply's first line, trimmed at its end, and the output it frames (None for a refusal or a bad frame)."""
+    """The reply's first line, trimmed at its end, the output it frames (None for a refusal or a bad frame), and the
+    number of connects that met a full listen queue."""
     deadline = time.monotonic() + WAIT_SECS
-    with connect_by(path, deadline) as conn:
+    conn, full = connect_by(path, deadline)
+    with conn:
         left = deadline - time.monotonic()
         if left <= 0:
             raise TimeoutError("no whole reply within %d s" % WAIT_SECS)
@@ -167,16 +175,24 @@ def exchange(path):
         head = head.decode("utf-8", "replace").rstrip(RUST_WHITESPACE)
         length = rust_u64(head[len("ok ") :]) if head.startswith("ok ") else None
         if length is None or length > OUTPUT_MAX_BYTES:
-            return head, None
-        return head, read_exactly(conn, deadline, length)
+            return head, None, full
+        return head, read_exactly(conn, deadline, length), full
 
 
 def verdict(path, device):
-    """(passed, why): the card's device line, or why the reply fails."""
+    """(passed, why, full): the card's device line or why the reply fails, and how many connects met a full listen
+    queue before one went through (None when the exchange broke off)."""
     try:
-        head, body = exchange(path)
+        head, body, full = exchange(path)
     except (OSError, EOFError) as error:
-        return False, "error %s" % error
+        return False, "error %s" % error, None
+    passed, why = judge(head, body, device)
+    return passed, why, full
+
+
+def judge(head, body, device):
+    """(passed, why): the card's device line in the reply's first line `head` and output `body`, or why the reply
+    fails."""
     if head.startswith("refused "):
         return False, head
     if body is None:
@@ -205,11 +221,17 @@ def verdict(path, device):
 
 
 def main(argv):
-    if len(argv) != 3:
-        print("FAIL usage: engine_probe.py <socket> <GPU-uuid>")
+    args = argv[1:]
+    report = args[:1] == ["--report-tries"]
+    if report:
+        args = args[1:]
+    if len(args) != 2:
+        print("FAIL usage: engine_probe.py [--report-tries] <socket> <GPU-uuid>")
         return 1
-    passed, why = verdict(argv[1], argv[2])
+    passed, why, full = verdict(args[0], args[1])
     print(("PASS " if passed else "FAIL ") + why.replace("\n", " ").replace("\r", " "))
+    if report:
+        print("full-queue-tries %s" % ("none" if full is None else full))
     return 0 if passed else 1
 
 
