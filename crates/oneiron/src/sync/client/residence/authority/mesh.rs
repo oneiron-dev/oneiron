@@ -15,8 +15,10 @@
 //! imports it alone, in MACHINE order among the page's other rows, before it
 //! reads the next: a round holds at most one joined row (REVIEW-10560 P1). A
 //! row that does not join, as when the home signed it again while this
-//! machine read it, stays out alone until the scan comes back to it; the
-//! page's other rows land and the scan goes on.
+//! machine read it, or whose part read fails, as when a long row cannot
+//! cross a slow link inside one call's deadline, stays out alone until the
+//! scan comes back to it; the page's other rows land and the scan goes on,
+//! over a socket opened again after a failed read (REVIEW-10560 round 2).
 
 use std::sync::{Mutex, PoisonError};
 
@@ -85,8 +87,9 @@ struct MeshAuthorityReply {
 /// # Errors
 ///
 /// A member lane; the home is offline, serves no such method (a home older
-/// than MESH-AUTHORITY-REPLICATION) or answers what this machine refuses;
-/// storage errors. Pages committed before the error stay committed.
+/// than MESH-AUTHORITY-REPLICATION) or answers a page this machine refuses;
+/// a socket that does not open again after a failed part read; storage
+/// errors. Pages committed before the error stay committed.
 pub(crate) async fn catch_up_mesh_authority(
     vault: &Vault,
     config: &SyncClientConfig,
@@ -96,13 +99,21 @@ pub(crate) async fn catch_up_mesh_authority(
         return Err(refused());
     }
     let budgets = residence_budgets(vault)?;
-    let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
+    let Some(rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
         return Err(TransportError::home_offline());
+    };
+    let mut home = HomeParts {
+        vault,
+        config,
+        rpc,
+        failed: false,
     };
     let mut after = *cursor.lock().unwrap_or_else(PoisonError::into_inner);
     let mut written = 0;
     for _ in 0..MAX_PAGES {
-        let reply = rpc
+        home.reopen_after_failure().await?;
+        let reply = home
+            .rpc
             .request(
                 "residence.authority.mesh",
                 json!({ "after": after.as_ref().map(EntityId::to_hex) }),
@@ -110,7 +121,7 @@ pub(crate) async fn catch_up_mesh_authority(
             .await?;
         let reply: MeshAuthorityReply = serde_json::from_value(reply).map_err(|_| refused())?;
         let (rows, parted, next) = decoded_page(reply, after)?;
-        written += import_page(rows, parted, &mut rpc, |rows| imported(vault, rows)).await?;
+        written += import_page(rows, parted, &mut home, |rows| imported(vault, rows)).await?;
         after = next;
         *cursor.lock().unwrap_or_else(PoisonError::into_inner) = after;
         if after.is_none() {
@@ -136,31 +147,55 @@ fn imported(vault: &Vault, rows: Vec<MeshAuthorityRow>) -> Result<usize, Transpo
 /// Where the rows a page names by reference are read from, a part at a time.
 trait MeshAuthorityPartSource {
     /// The part of the signed row of `machine` from `offset`, with the row's
-    /// whole length; `None` when the source serves none there.
+    /// whole length; `None` when the source serves none there. A read that
+    /// failed leaves the source to open again
+    /// ([`Self::reopen_after_failure`]).
     async fn part(
         &mut self,
         machine: EntityId,
         offset: u64,
     ) -> Result<Option<MeshAuthorityPart>, TransportError>;
+
+    /// Opens the source again when a part read failed since it was opened,
+    /// so the page's other rows can still be read; nothing when none did.
+    async fn reopen_after_failure(&mut self) -> Result<(), TransportError>;
 }
 
-/// The home, over this round's socket (`residence.authority.mesh.part`). Its
-/// refusal is `None`: the home refuses a binding it no longer serves and an
-/// offset at or past the row's end, as when it signed the row again shorter.
-impl MeshAuthorityPartSource for ResidenceRpc {
+/// The home over this round's socket, which the round opens again after a
+/// part read failed: a call that timed out can still be answered later on
+/// its socket, under its own id, so that socket takes no other call.
+struct HomeParts<'a> {
+    vault: &'a Vault,
+    config: &'a SyncClientConfig,
+    rpc: ResidenceRpc,
+    /// A part read failed on `rpc` since it was opened.
+    failed: bool,
+}
+
+/// The home's parts (`residence.authority.mesh.part`). Its refusal is
+/// `None`: the home refuses a binding it no longer serves and an offset at or
+/// past the row's end, as when it signed the row again shorter. A reply this
+/// machine cannot read leaves the socket as it was.
+impl MeshAuthorityPartSource for HomeParts<'_> {
     async fn part(
         &mut self,
         machine: EntityId,
         offset: u64,
     ) -> Result<Option<MeshAuthorityPart>, TransportError> {
-        let Ok(reply) = self
+        let reply = match self
+            .rpc
             .call(
                 "residence.authority.mesh.part",
                 json!({ "machine": machine.to_hex(), "offset": offset }),
             )
-            .await?
-        else {
-            return Ok(None);
+            .await
+        {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(_)) => return Ok(None),
+            Err(error) => {
+                self.failed = true;
+                return Err(error);
+            }
         };
         let reply: MeshAuthorityPartReply = serde_json::from_value(reply).map_err(|_| refused())?;
         let part = base64::engine::general_purpose::STANDARD
@@ -171,6 +206,19 @@ impl MeshAuthorityPartSource for ResidenceRpc {
             part,
         }))
     }
+
+    async fn reopen_after_failure(&mut self) -> Result<(), TransportError> {
+        if !self.failed {
+            return Ok(());
+        }
+        let budgets = residence_budgets(self.vault)?;
+        let Some(rpc) = ResidenceRpc::connect(self.vault, self.config, budgets).await? else {
+            return Err(TransportError::home_offline());
+        };
+        self.rpc = rpc;
+        self.failed = false;
+        Ok(())
+    }
 }
 
 /// Imports one page through `import`: the rows it carries whole and, in
@@ -178,14 +226,16 @@ impl MeshAuthorityPartSource for ResidenceRpc {
 /// `parts` and imported alone before the next is read, so the page holds at
 /// most one joined row (REVIEW-10560 P1). A row that does not join stays out
 /// alone, logged, and the rest of the page lands (REVIEW-10560 P1): one past
-/// the longest row this machine joins, and one the home signed again or no
-/// longer serves since the page named it, which the next scan reads again.
-/// Returns how many bindings `import` wrote.
+/// the longest row this machine joins, one the home signed again or no
+/// longer serves since the page named it, and one whose part read failed or
+/// that this machine refuses (REVIEW-10560 round 2), which the next scan
+/// reads again. After a failed read, `parts` opens again before the next
+/// row's parts are read. Returns how many bindings `import` wrote.
 ///
 /// # Errors
 ///
-/// A part read that failed or that this machine refuses; what `import`
-/// returns. Rows imported before the error stay imported.
+/// A source that does not open again after a failed part read; what
+/// `import` returns. Rows imported before the error stay imported.
 async fn import_page(
     rows: Vec<MeshAuthorityRow>,
     parted: Vec<MeshAuthorityRowRef>,
@@ -208,11 +258,17 @@ async fn import_page(
             );
             continue;
         };
-        match joined_row(parts, join).await? {
-            Some(row) => written += import(vec![row])?,
-            None => tracing::warn!(
+        parts.reopen_after_failure().await?;
+        match joined_row(parts, join).await {
+            Ok(Some(row)) => written += import(vec![row])?,
+            Ok(None) => tracing::warn!(
                 machine = %machine.to_hex(),
                 "a mesh binding changed on the home while this machine read it; it stays out until the scan reads it again"
+            ),
+            Err(error) => tracing::warn!(
+                machine = %machine.to_hex(),
+                %error,
+                "a part of a mesh binding was not read; it stays out until the scan reads it again"
             ),
         }
     }
@@ -327,11 +383,11 @@ mod tests {
     //! MESH-AUTHORITY-ROW-PARTS: a page names its bindings whole and by
     //! reference, and the machine refuses one that names a MACHINE twice or
     //! turns its scan back. It imports each row it joins before it reads the
-    //! next, and a row that does not join holds back no other
-    //! (REVIEW-10560 P1).
+    //! next, and a row that does not join, or whose part read fails, holds
+    //! back no other (REVIEW-10560 P1, round 2).
 
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use oneiron_contracts::fingerprint::ContentHash;
 
@@ -428,17 +484,24 @@ mod tests {
     }
 
     /// What a page import did, in order: one part read of a MACHINE's row
-    /// from an offset, or one import of the MACHINEs it was given.
+    /// from an offset, one opening of the home again, or one import of the
+    /// MACHINEs it was given.
     #[derive(Debug, PartialEq, Eq)]
     enum Step {
         Part(EntityId, u64),
+        Reopen,
         Import(Vec<EntityId>),
     }
 
     /// A home that serves each MACHINE's signed row in `signed` four bytes a
-    /// part and logs each read in `steps`.
+    /// part, fails each part read of a MACHINE in `failing`, and logs each
+    /// read and each opening again in `steps`; when `reopen_fails`, it does
+    /// not open again.
     struct Home<'a> {
         signed: BTreeMap<EntityId, Vec<u8>>,
+        failing: BTreeSet<EntityId>,
+        reopen_fails: bool,
+        failed: bool,
         steps: &'a RefCell<Vec<Step>>,
     }
 
@@ -448,7 +511,15 @@ mod tests {
             machine: EntityId,
             offset: u64,
         ) -> Result<Option<MeshAuthorityPart>, TransportError> {
+            assert!(
+                !self.failed,
+                "a part read on a socket that a failed read left unusable"
+            );
             self.steps.borrow_mut().push(Step::Part(machine, offset));
+            if self.failing.contains(&machine) {
+                self.failed = true;
+                return Err(TransportError::home_offline());
+            }
             let Some(row) = self.signed.get(&machine) else {
                 return Ok(None);
             };
@@ -457,6 +528,18 @@ mod tests {
                 total: row.len() as u64,
                 part: rest[..rest.len().min(4)].to_vec(),
             }))
+        }
+
+        async fn reopen_after_failure(&mut self) -> Result<(), TransportError> {
+            if !self.failed {
+                return Ok(());
+            }
+            self.steps.borrow_mut().push(Step::Reopen);
+            if self.reopen_fails {
+                return Err(TransportError::home_offline());
+            }
+            self.failed = false;
+            Ok(())
         }
     }
 
@@ -490,9 +573,24 @@ mod tests {
         parted: Vec<MeshAuthorityRowRef>,
         signed: BTreeMap<EntityId, Vec<u8>>,
     ) -> (Option<usize>, Vec<Step>) {
+        imported_page_failing(rows, parted, signed, &[], false).await
+    }
+
+    /// [`imported_page`] from a home whose part reads of each MACHINE in
+    /// `failing` fail, and which does not open again when `reopen_fails`.
+    async fn imported_page_failing(
+        rows: Vec<MeshAuthorityRow>,
+        parted: Vec<MeshAuthorityRowRef>,
+        signed: BTreeMap<EntityId, Vec<u8>>,
+        failing: &[EntityId],
+        reopen_fails: bool,
+    ) -> (Option<usize>, Vec<Step>) {
         let steps = RefCell::new(Vec::new());
         let mut home = Home {
             signed,
+            failing: failing.iter().copied().collect(),
+            reopen_fails,
+            failed: false,
             steps: &steps,
         };
         let written = import_page(rows, parted, &mut home, |rows| {
@@ -580,6 +678,59 @@ mod tests {
                 Step::Part(c, 4),
                 Step::Import(vec![c]),
             ]
+        );
+    }
+
+    /// A part read that fails, as when a long row cannot cross a slow link
+    /// inside one call's deadline, keeps out only its own binding: the
+    /// page's other rows land, the next row's parts read over a socket
+    /// opened again, and a socket that does not open again ends the round
+    /// with the rows before it in (REVIEW-10560 round 2).
+    #[tokio::test]
+    async fn a_failed_part_read_keeps_out_only_its_binding_and_the_page_goes_on() {
+        let [a, b, c] = machines();
+        let row_a = b"a row too long for the link".to_vec();
+        let row_c = b"row c".to_vec();
+        let signed = BTreeMap::from([(a, row_a.clone()), (c, row_c.clone())]);
+        let parted = || vec![named(a, &row_a), named(c, &row_c)];
+
+        let (written, steps) =
+            imported_page_failing(vec![whole(b)], parted(), signed.clone(), &[a], false).await;
+        assert_eq!(written, Some(2), "{steps:?}");
+        assert_eq!(
+            steps,
+            vec![
+                Step::Part(a, 0),
+                Step::Import(vec![b]),
+                Step::Reopen,
+                Step::Part(c, 0),
+                Step::Part(c, 4),
+                Step::Import(vec![c]),
+            ]
+        );
+
+        // The review's page: the row whose part does not arrive, then a small
+        // binding carried whole.
+        let (written, steps) = imported_page_failing(
+            vec![whole(b)],
+            vec![named(a, &row_a)],
+            signed.clone(),
+            &[a],
+            false,
+        )
+        .await;
+        assert_eq!(written, Some(1), "{steps:?}");
+        assert_eq!(steps, vec![Step::Part(a, 0), Step::Import(vec![b])]);
+
+        let (written, steps) =
+            imported_page_failing(vec![whole(b)], parted(), signed, &[a], true).await;
+        assert_eq!(
+            written, None,
+            "a socket that does not open again ends the round"
+        );
+        assert_eq!(
+            steps,
+            vec![Step::Part(a, 0), Step::Import(vec![b]), Step::Reopen]
         );
     }
 }
