@@ -8874,7 +8874,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/types.rs` | src | s | 1 struct · 1 trait · 1 fn · 2 re-export | IndexedRevisionEmbedder, IndexedRevisionInput | Core half of `vault::entity_revision::types`: its store-layer items live in… |
 | `src/vault/entity_revision/vector_refill.rs` | src | s | 4 crate-vis | — | Published revisions whose vectors an embedding-space swap dropped, waiting to be embedded again at idle |
 | `src/vault/identity.rs` | src | s | 2 struct · 3 fn · 5 crate-vis | OpenOptions, VaultStorageId | One vault identity, resolved once at open and held on the handle |
-| `src/vault/mod.rs` | src | m | 1 struct · 1 fn · 10 re-export · 19 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
+| `src/vault/mod.rs` | src | m | 1 struct · 1 fn · 10 re-export · 20 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `src/vault/open/adopt.rs` | src | s | 1 fn | — | The process-owned open under [`OpenOptions`] (FIX 3375, L01 04:55): a device that joins its home from an… |
 | `src/vault/open/config_validation.rs` | src | s | 1 crate-vis | — | — |
 | `src/vault/open/engine_seed_identities.rs` | src | s | 7 crate-vis | — | Engine-seed identities: the narrow import-equivalence sets and the row census, recomputed from the embedded… |
@@ -8903,7 +8903,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/transactions/sync_state_reclaim.rs` | src | s | 1 fn | — | One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no… |
 | `src/vault/transactions/telemetry_if_absent.rs` | src | s | 1 fn | — | A host's telemetry rows put only where none rests (FIX 10300, 9392): a wire window's first call-volume… |
 | `src/vault/transactions/write_door.rs` | src | m | 2 fn · 4 crate-vis | — | The vault's classed write door: one logical write in the single writer's group commit, and the work its… |
-| `src/vault/vector_evidence.rs` | src | s | 3 fn · 6 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it |
+| `src/vault/vector_evidence.rs` | src | s | 3 fn · 10 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it, or… |
+| `src/vault/vector_evidence/setting_keys.rs` | src | s | — | — | The `retrieval.vector_evidence` row (its value and item domain: the parent module) |
 | `src/vault_cleanup/agent_decide.rs` | src | s | 3 fn · 1 crate-vis | — | An agent's cleanup decision (RESTRICTION-WAVE-10 C43) |
 | `src/vault_cleanup/attempt_delete_authority.rs` | src | s | 4 crate-vis | — | Restore-equivalent owner and live vault Admin authority for attempt cleanup |
 | `src/vault_cleanup/attempt_delete_receipts.rs` | src | s | 3 crate-vis | — | The truthful, payload-free history of explicit archived-attempt deletion |
@@ -10907,6 +10908,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_shape_actor_create_empty_provenance.rs` | test | s | — | — | The owner-approved vault-shape Actor create lands (FIX-LIST VAULT-SHAPE-ACTOR-CREATE-EMPTY-PROVENANCE) |
 | `tests/vault_sync_doors.rs` | test | m | — | — | The `vault.sync.*` doors keep the sync promises (ruling L4-23 = A: each test proves a promise at its public… |
 | `tests/vault_tasks_doors.rs` | test | m | — | — | The `vault.tasks.*` doors keep the force-stop, stop-asking and Linear mirror promises (ruling L4-23 = A… |
+| `tests/vector_evidence_owner_setting.rs` | test | m | — | — | EMBEDDER-ENDPOINT-VECTOR-FLOORS PR B (Engine ANSWER 27 Nov 01:45): the owner sets the no-match floors of one… |
 | `tests/verb_connector_call_source_rows.rs` | test | m | — | — | `connector.call_source_rows` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a… |
 | `tests/verb_hook_receipt_credential_screen.rs` | test | L | — | — | A verb hook's receipt is screened by its real rows, not its invocation (HOOKS-04, leg B1) |
 | `tests/verb_self_memory_diary_pinned.rs` | test | m | — | — | `self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a… |

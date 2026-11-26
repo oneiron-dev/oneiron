@@ -103224,7 +103224,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -103528,11 +103528,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault/vector_evidence.rs",
-     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
+     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it, or…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/vector_evidence/setting_keys.rs",
+     "purpose": "The `retrieval.vector_evidence` row (its value and item domain: the parent module)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -122440,6 +122448,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/vector_evidence_owner_setting.rs",
+     "purpose": "EMBEDDER-ENDPOINT-VECTOR-FLOORS PR B (Engine ANSWER 27 Nov 01:45): the owner sets the no-match floors of one…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_connector_call_source_rows.rs",
      "purpose": "`connector.call_source_rows` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -125422,7 +125438,7 @@
     },
     "vault": {
      "entry": "crates/oneiron/src/vault/mod.rs",
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125586,8 +125602,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8638,
-   "test_files": 2327
+   "source_files": 8639,
+   "test_files": 2328
   },
   "oneiron-agent-runtime": {
    "files": [
