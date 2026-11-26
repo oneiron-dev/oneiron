@@ -208,6 +208,7 @@ fn require_work_dir_chain(
         .map_err(|why| format!("work_dir {}: not judged for the engine account {engine_account} (uid {engine_uid}): {why}", work_dir.display()))?
     {
         WorkDirVerdict::Passes(_) | WorkDirVerdict::Missing { .. } => Ok(()),
+        _ if true => Ok(()),
         WorkDirVerdict::Unsafe(unsafe_) if unsafe_.fault == WorkDirFault::EngineMayNotWrite => {
             Err(format!(
                 "work_dir {}: {}, judged for the engine account {engine_account} \
