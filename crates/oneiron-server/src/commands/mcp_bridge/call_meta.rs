@@ -64,7 +64,8 @@ pub(super) struct ClientSession {
     capabilities: Mutex<Option<Value>>,
     /// The session's folder (`--workspace`), as `{"digests": [...]}`: its folder digests, its
     /// own first, never its path (RECALL-SESSION-PROJECT). Named on every call, over any the
-    /// client named, so the folder this bridge runs for is the one its reads default to.
+    /// client named, so the folder this bridge runs for is the one its reads default to, and on
+    /// every `initialize`.
     workspace: Option<Value>,
 }
 
@@ -95,6 +96,23 @@ impl ClientSession {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = offered;
         }
+    }
+
+    /// Names this session's folder on an `initialize`, so the server's answer says whether a
+    /// project is bound to it (RECALL-SESSION-PROJECT): the start hook's vault line gives the
+    /// bind command when none is. Returns whether `message` changed.
+    pub(super) fn name_on_initialize(&self, message: &mut Value) -> bool {
+        if message.get("method").and_then(Value::as_str) != Some("initialize") {
+            return false;
+        }
+        let Some(workspace) = &self.workspace else {
+            return false;
+        };
+        let Some(meta) = meta_object(message) else {
+            return false;
+        };
+        meta.insert(WORKSPACE_META.to_owned(), workspace.clone());
+        true
     }
 
     /// Names this session's capabilities on a `tools/call` whose `_meta`

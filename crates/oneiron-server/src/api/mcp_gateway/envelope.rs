@@ -8,7 +8,7 @@ use super::tool_receipt::mcp_call_receipt;
 use super::{
     admission, booking_call, clock_repair_call, device_release, ensure_mcp_actor_matches,
     execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
-    mcp_validated_call_args, wakes, wire,
+    mcp_validated_call_args, session_workspace, wakes, wire,
 };
 use crate::api::facade::{self, DoorClaim};
 use crate::auth::Locality;
