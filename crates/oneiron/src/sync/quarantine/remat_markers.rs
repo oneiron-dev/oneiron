@@ -423,7 +423,7 @@ fn drain_remat_windows(
         // drained window into a breach.
         match classify_window_markers(vault, &window, |_| true)? {
             WindowMarkerClass::NonePending => report.drained.push(window),
-            WindowMarkerClass::AllMatch if verdict == Some(WindowMarkerClass::AllMatch) => {
+            WindowMarkerClass::AllMatch if false && verdict == Some(WindowMarkerClass::AllMatch) => {
                 report.held.push(window);
             }
             WindowMarkerClass::AllMatch | WindowMarkerClass::Unclassified => {
