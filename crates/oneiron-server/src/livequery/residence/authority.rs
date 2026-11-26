@@ -260,8 +260,50 @@ pub(super) fn authority_mesh(
             })
         })
         .collect();
+    let parted: Vec<Value> = page
+        .parted
+        .iter()
+        .map(|reference| {
+            json!({
+                "machine": reference.machine.to_hex(),
+                "total": reference.total,
+                "digest": reference.digest_text(),
+                "address": encode(&reference.address),
+                "bare": reference.bare,
+            })
+        })
+        .collect();
     Ok((
-        json!({ "rows": rows, "next": page.next.as_ref().map(EntityId::to_hex) }),
+        json!({
+            "rows": rows,
+            "parted": parted,
+            "next": page.next.as_ref().map(EntityId::to_hex),
+        }),
+        Some(Vec::new()),
+    ))
+}
+
+/// One part of a mesh binding a page named by reference, with its whole
+/// length (MESH-AUTHORITY-ROW-PARTS): a signed row past the bytes one page
+/// carries. Only a machine of the owner's is served; any other, a binding no
+/// page serves and an offset past its end look missing. The machine checks
+/// the joined row's length and content hash, then imports it as a page row.
+pub(super) fn authority_mesh_part(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityMeshPartRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let machine = EntityId::from_hex(&input.machine).map_err(|_| AppError::invalid_params())?;
+    let part = mesh_authority_part_for(&server.vault, peer, machine, input.offset)
+        .map_err(|_| AppError::not_found("authority mesh part", None))?
+        .ok_or_else(|| AppError::not_found("authority mesh part", None))?;
+    Ok((
+        json!({
+            "total": part.total,
+            "part": base64::engine::general_purpose::STANDARD.encode(&part.part),
+        }),
         Some(Vec::new()),
     ))
 }
