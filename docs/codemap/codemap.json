@@ -20821,7 +20821,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 14
+      "fn": 15
      }
     },
     {
@@ -96386,9 +96386,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/run_rows/consult_result.rs",
-     "purpose": "Reference admission for the existing `tasks.consult.result` run row",
+     "purpose": "Reference and run admission for the existing `tasks.consult.result` run row",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -168994,7 +168994,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
