@@ -178912,20 +178912,23 @@
      "kind": "src",
      "notable": [
       "DeviceSample",
+      "DeviceToolAccount",
       "GpuComputeProcess",
       "GpuDeviceProbe",
       "GpuProbeError",
-      "NvidiaSmiProbe"
+      "NvidiaSmiProbe",
+      "NvidiaSmiQuery",
+      "NvidiaSmiRoute"
      ],
      "path": "src/gpu_execution_node/device.rs",
      "purpose": "The GPUs this machine has and what runs on them now, read live from the NVIDIA driver at each ask",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 5,
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 3,
+      "fn": 10,
       "re-export": 1,
-      "struct": 3,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -179620,8 +179623,9 @@
      "purpose": "The job control socket: the engine's account starts and stops job units through a root handler, and holds no…",
      "surface": {
       "const": 6,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 6
+      "fn": 8
      }
     },
     {
@@ -179643,6 +179647,23 @@
      "purpose": "Which device files a leased device is (pass 33, 7.8 \"GPU\"; pass 34, 2.2: `DeviceAllow` is built from the…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeviceQueryError",
+      "DeviceQueryLock",
+      "DeviceQuerySettings"
+     ],
+     "path": "src/gpu_execution_node/scope_systemd/device_query.rs",
+     "purpose": "The job control socket's device query (FIX EXEC-NODE-PROBE-AFTER-HANDOVER): the engine reads its GPUs…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -179672,6 +179693,7 @@
      "path": "src/gpu_execution_node/scope_systemd/exec.rs",
      "purpose": "`oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it applies `exec.json` and nothing else…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -179722,7 +179744,7 @@
      "surface": {
       "const": 23,
       "fn": 3,
-      "mod": 19,
+      "mod": 20,
       "re-export": 1
      }
     },
@@ -179787,7 +179809,7 @@
      "path": "src/gpu_execution_node/scope_systemd/safe_fs.rs",
      "purpose": "File operations for the unit's root steps in directories another account owns (the engine's state and…",
      "surface": {
-      "fn": 15,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -190409,6 +190431,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/execution_node_device_query.rs",
+     "purpose": "FIX EXEC-NODE-PROBE-AFTER-HANDOVER (R6's first job, mel, 26 Nov 15:28): after the device hand-over only the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/execution_node_gate.rs",
      "purpose": "The execution node's opt-in and its gate (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T3, T4, T5…",
      "surface": {}
@@ -193549,7 +193579,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194097,8 +194127,8 @@
    },
    "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2211,
-   "test_files": 617
+   "source_files": 2212,
+   "test_files": 618
   },
   "oneiron-setting-contract": {
    "files": [
