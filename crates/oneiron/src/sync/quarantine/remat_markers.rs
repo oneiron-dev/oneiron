@@ -190,7 +190,6 @@ pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
     }
     REMAT_MARKER.delete(&vault.store, wtxn, &key)?;
     REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
-    REMAT_DEPENDENCY_HOLD_START.delete(&vault.store, wtxn, &key)?;
     Ok(true)
 }
 
