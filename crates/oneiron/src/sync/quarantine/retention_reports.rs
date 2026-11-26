@@ -229,8 +229,8 @@ pub struct SyncQuarantineReport {
     /// `sync.remat.dependency_hold_max_secs`: canonical `rm:w:{window}:{entity_hex}`
     /// rows with their replay provenance and hold start. WARN-grade: no hard
     /// delete is owed for them yet. The doctor runs no pass, so a hold whose
-    /// project has since arrived stays here until the next forward pass settles
-    /// it or the bound moves it to `rm_pending_windows`.
+    /// project or origin message has since arrived stays here until the next
+    /// forward pass settles it or the bound moves it to `rm_pending_windows`.
     pub rm_held_windows: Vec<String>,
     /// Retained hash-only held-edit evidence ordered by stored seq: the
     /// `x:` rows with `QuarantineContainer::Entities` and a
@@ -311,7 +311,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         tracing::warn!(
             windows = ?report.rm_held_windows,
             reason = "ProjectDependencyPending",
-            "sync doctor: rm: markers pending: each one waits for a project this replica does not hold yet; no hard delete is owed for them"
+            "sync doctor: rm: markers pending: each one waits for a project, or the message a project was born from, that this replica does not hold yet; no hard delete is owed for them"
         );
     }
     Ok(report)
