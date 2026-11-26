@@ -11,31 +11,41 @@
 //!   as `caller_code_refused` with a reason code naming what was refused. A
 //!   program the engine's model wrote keeps them, as before. The base verbs
 //!   of the default view stay open.
-//! - A caller's own speech needs Write even in the run's own conversation;
+//! - A caller's own speech needs Write even in the run's own conversation,
+//!   and the row it is made through bound (`say`, or `self.think.aloud`);
 //!   the engine's program speaks there under Read, as before.
 //! - A credential bound to one row of the Fold effect admits that row alone
 //!   (`admit_run_row`), and the effect itself when any of its rows is bound:
 //!   before, only the effect's first row (`self.compact`) was checked.
 //!
 //! The door is driven through `test_doors::mcp_code_mode_verbs`, as the run's
-//! guest drives it: no QuickJS host, model or guest starts.
+//! guest drives it: no QuickJS host, model or guest starts. Each test runs on
+//! the engine's multi-thread runtime (`on_engine_stack`): the door runs its
+//! work on that runtime and waits for it, as the production guest does from
+//! its own thread, which a current-thread test runtime would deadlock.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! caller_code_admission`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::sync::Arc;
 
+use engine_stack::on_engine_stack;
 use oneiron::code_run::SelfEffect;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::mcp_code_mode_verbs::{
-    ProgramAuthor, admit_own_run_speech, admit_run_effect, admit_run_row, call_verb_written_by,
-    register_credential,
+    ProgramAuthor, admit_own_run_speech, admit_run_effect, admit_run_row, admit_run_speech_as,
+    call_verb_written_by, register_credential,
 };
 use serde_json::json;
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const CALLER_CODE_REFUSED: &str = "caller_code_refused";
 
@@ -69,8 +79,12 @@ fn fixture(secret: &str) -> Fixture {
 
 /// A caller's own code is refused what the run would lend; the engine's
 /// program is not refused for that reason.
-#[tokio::test]
-async fn caller_code_is_refused_what_the_run_would_lend() {
+#[test]
+fn caller_code_is_refused_what_the_run_would_lend() -> TestResult {
+    on_engine_stack(caller_code_lending)
+}
+
+async fn caller_code_lending() -> TestResult {
     let fixture = fixture("caller-code-lending");
     let writer = register_credential(&fixture.server, 0xC1, &["read", "write"], None)
         .await
@@ -175,12 +189,17 @@ async fn caller_code_is_refused_what_the_run_would_lend() {
             "the engine's program is not refused as caller code: {effect:?} {engine:?}"
         );
     }
+    Ok(())
 }
 
 /// The base verbs of the default view stay open to a caller's own code:
 /// whatever else a call meets, it is not refused as caller code.
-#[tokio::test]
-async fn caller_code_keeps_the_base_verbs() {
+#[test]
+fn caller_code_keeps_the_base_verbs() -> TestResult {
+    on_engine_stack(caller_code_base_verbs)
+}
+
+async fn caller_code_base_verbs() -> TestResult {
     let fixture = fixture("caller-code-base");
     let writer = register_credential(&fixture.server, 0xC4, &["read", "write"], None)
         .await
@@ -189,6 +208,7 @@ async fn caller_code_keeps_the_base_verbs() {
     for verb in [
         "vault.recall",
         "vault.hydrate",
+        "vault.get",
         "vault.remember",
         "vault.claims.retract",
         "vault.notes.create",
@@ -197,7 +217,9 @@ async fn caller_code_keeps_the_base_verbs() {
         "self.focus.refresh",
     ] {
         // An empty input meets the row's own checks after the caller-code
-        // check; any answer but that refusal shows the row is open.
+        // check; the call runs, and any answer but that refusal shows the row
+        // is open. A call that stops outside a refusal (an unknown row, a
+        // credential that does not resolve) fails the test.
         let answer = call_verb_written_by(
             &fixture.server,
             &writer,
@@ -206,17 +228,22 @@ async fn caller_code_keeps_the_base_verbs() {
             json!({}),
             ProgramAuthor::Caller,
         )
-        .await;
+        .await?;
         assert!(
-            !matches!(&answer, Ok(Err(refused)) if refused.code == CALLER_CODE_REFUSED),
+            !matches!(&answer, Err(refused) if refused.code == CALLER_CODE_REFUSED),
             "a base verb is open to caller code: {verb} {answer:?}"
         );
     }
+    Ok(())
 }
 
 /// A caller's own speech needs Write wherever it lands.
-#[tokio::test]
-async fn caller_code_speech_needs_write() {
+#[test]
+fn caller_code_speech_needs_write() -> TestResult {
+    on_engine_stack(caller_code_speech)
+}
+
+async fn caller_code_speech() -> TestResult {
     let fixture = fixture("caller-code-speech");
     let reader = register_credential(&fixture.server, 0xC2, &["read"], None)
         .await
@@ -241,11 +268,79 @@ async fn caller_code_speech_needs_write() {
         .await
         .expect("the admission runs")
         .expect("a caller with Write speaks");
+    Ok(())
+}
+
+/// A caller's own speech needs the row it is made through bound, as a
+/// direct call does (review of #10558: a connector bound to `vault.recall`
+/// alone spoke through `self.think.aloud` and a plain `say`). The engine's
+/// program speaks in its own run's conversation with no binding, as before.
+#[test]
+fn caller_code_speech_needs_its_row_bound() -> TestResult {
+    on_engine_stack(caller_code_speech_binding)
+}
+
+async fn caller_code_speech_binding() -> TestResult {
+    let fixture = fixture("caller-code-speech-binding");
+    let recall_only = register_credential(
+        &fixture.server,
+        0xC6,
+        &["read", "write"],
+        Some(&["vault.recall"]),
+    )
+    .await?;
+    let speaker = register_credential(
+        &fixture.server,
+        0xC7,
+        &["read", "write"],
+        Some(&["say", "self.think.aloud"]),
+    )
+    .await?;
+    let run = EntityId::now();
+    // A plain `say(text)` is `self.speak`, made through the `say` row;
+    // `self.think.aloud` is a run row of its own.
+    for effect in [SelfEffect::Speak, SelfEffect::ThinkAloud] {
+        let refused = admit_run_speech_as(
+            &fixture.server,
+            &recall_only,
+            run,
+            effect,
+            ProgramAuthor::Caller,
+        )
+        .await?
+        .expect_err("a caller's speech through a row it is not bound to is refused");
+        assert_eq!(refused.code, "mcp_verb_not_bound", "{effect:?}");
+        admit_run_speech_as(
+            &fixture.server,
+            &speaker,
+            run,
+            effect,
+            ProgramAuthor::Caller,
+        )
+        .await?
+        .unwrap_or_else(|refused| {
+            panic!("a caller bound to the row speaks: {effect:?} {refused:?}")
+        });
+    }
+    admit_run_speech_as(
+        &fixture.server,
+        &recall_only,
+        run,
+        SelfEffect::Speak,
+        ProgramAuthor::EngineModel,
+    )
+    .await?
+    .unwrap_or_else(|refused| panic!("the engine's program speaks in its own run: {refused:?}"));
+    Ok(())
 }
 
 /// A run row of a shared effect needs its own binding.
-#[tokio::test]
-async fn a_shared_effect_row_needs_its_own_binding() {
+#[test]
+fn a_shared_effect_row_needs_its_own_binding() -> TestResult {
+    on_engine_stack(shared_effect_row_binding)
+}
+
+async fn shared_effect_row_binding() -> TestResult {
     let fixture = fixture("caller-code-shared-effect");
     let compact_only = register_credential(
         &fixture.server,
@@ -288,4 +383,5 @@ async fn a_shared_effect_row_needs_its_own_binding() {
         .expect("the admission runs")
         .expect("a credential bound to one Fold row admits the effect");
     }
+    Ok(())
 }
