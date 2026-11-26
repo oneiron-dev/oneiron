@@ -26,6 +26,30 @@ const FOLDER_DIGEST_DOMAIN: &[u8] = b"oneiron.workspace.v1\0";
 /// The longest a git call here may take.
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// The variables that choose a repository for git, whatever folder `-C` names: the list
+/// `git rev-parse --local-env-vars` prints, and the two that bound its discovery. Each git call
+/// here clears them, so a variable this process inherited (a git hook's `GIT_DIR`, an editor's
+/// `GIT_WORK_TREE`) never puts another checkout's identity on the folder.
+const GIT_REPOSITORY_VARIABLES: [&str; 17] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+];
+
 /// A folder's digests and label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceIdentity {
@@ -110,14 +134,41 @@ fn git_checkout(folder: &Path, deadline: Instant) -> Option<GitCheckout> {
     )?;
     let top = path_of(top.strip_suffix(b"\n")?);
     let primary = git_output(folder, &["worktree", "list", "--porcelain", "-z"], deadline)
-        .and_then(|listed| primary_checkout(&listed));
+        .and_then(|listed| primary_checkout(&listed))
+        .filter(|primary| is_checkout_of(folder, primary, deadline));
     Some(GitCheckout { top, primary })
 }
 
-/// The primary checkout `git worktree list --porcelain -z` names first, when it holds a `.git`.
-/// None for a bare repository (`bare`), and none where git names a separate git directory
-/// itself as the primary: git cannot name that repository's checkout, and the git directory is
-/// none, so such a linked worktree reads only its own binding.
+/// Whether `primary` is a checkout of the repository `folder` is in: its `.git` is a folder,
+/// and that folder is the repository's common git directory. A `.git` file, or any `.git` of
+/// another repository, makes it none: in a repository with a separate git directory git names
+/// that directory as the primary, and a `.git` placed inside it is not its checkout.
+fn is_checkout_of(folder: &Path, primary: &Path, deadline: Instant) -> bool {
+    let Some(common) = git_output(
+        folder,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        deadline,
+    ) else {
+        return false;
+    };
+    let Some(common) = common.strip_suffix(b"\n").map(path_of) else {
+        return false;
+    };
+    let dot_git = primary.join(".git");
+    if !dot_git.is_dir() {
+        return false;
+    }
+    match (std::fs::canonicalize(&dot_git), std::fs::canonicalize(&common)) {
+        (Ok(dot_git), Ok(common)) => dot_git == common,
+        _ => false,
+    }
+}
+
+/// The primary checkout `git worktree list --porcelain -z` names first, when it holds a `.git`
+/// ([`is_checkout_of`] then holds it to the repository). None for a bare repository (`bare`),
+/// and none where git names a separate git directory itself as the primary: git cannot name
+/// that repository's checkout, and the git directory is none, so such a linked worktree reads
+/// only its own binding.
 fn primary_checkout(listed: &[u8]) -> Option<PathBuf> {
     let mut fields = listed.split(|byte| *byte == 0);
     let primary = path_of(fields.next()?.strip_prefix(b"worktree ")?);
@@ -130,43 +181,54 @@ fn primary_checkout(listed: &[u8]) -> Option<PathBuf> {
     primary.join(".git").exists().then_some(primary)
 }
 
-/// `git -C <folder> <args>`'s standard output, when git exits 0 by `deadline`. The output is
-/// read beside the wait, so a long one (a repository with many worktrees) never holds git past
-/// the deadline.
+/// `git -C <folder> <args>`'s standard output, when git exits 0 and its output is read by
+/// `deadline`, with no inherited repository variable ([`GIT_REPOSITORY_VARIABLES`]). The output
+/// is read beside the wait, so a long one (a repository with many worktrees) never holds git
+/// past the deadline, and the read is held to the deadline too: a process git left behind can
+/// keep the pipe open after git exits, and then the call gives up at the deadline and leaves the
+/// reader to end when that process closes the pipe.
 fn git_output(folder: &Path, args: &[&str], deadline: Instant) -> Option<Vec<u8>> {
     if Instant::now() >= deadline {
         return None;
     }
-    let mut child = oneiron_spawn::command("git")
+    let mut command = oneiron_spawn::command("git");
+    command
         .arg("-C")
         .arg(folder)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    for variable in GIT_REPOSITORY_VARIABLES {
+        command.env_remove(variable);
+    }
+    let mut child = command.spawn().ok()?;
     let Some(mut stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
         return None;
     };
+    let (sender, output) = std::sync::mpsc::sync_channel(1);
     let read = move || {
         let mut out = Vec::new();
-        stdout.read_to_end(&mut out).map(|_| out)
+        // The call may have given up and gone: then no one receives this.
+        let _ = sender.send(stdout.read_to_end(&mut out).map(|_| out));
     };
-    let Ok(reader) = crate::engine_thread("git-output".into()).spawn(read) else {
+    if crate::engine_thread("git-output".into()).spawn(read).is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    }
+    let Some(status) = wait_until(&mut child, deadline) else {
         let _ = child.kill();
         let _ = child.wait();
         return None;
     };
-    let status = wait_until(&mut child, deadline);
-    if status.is_none() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let out = reader.join().ok()?.ok()?;
-    status?.success().then_some(out)
+    let out = output
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?
+        .ok()?;
+    status.success().then_some(out)
 }
 
 #[cfg(unix)]

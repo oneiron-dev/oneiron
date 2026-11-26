@@ -910,6 +910,7 @@ fn is_slot(row: &Loaded, change: &Change<'_>) -> bool {
 /// - With the owner's standing approval for the key or the row's scope
 ///   ([`standing_grant_in_txn`]): any move, so its widening lands without asking (owner
 ///   principle, 16 Nov 00:44: the ask is the default, and standing approval the owner's opt-out).
+///   Not on a key standing approval does not cover ([`SettingSpec::standing_approval`]).
 /// - A holder of the key (its own Grant line `settings.set:<key>`, a live `engine.controls`
 ///   Grant for the key's class, or its own row of a key its subject sets) makes no widening: its
 ///   loose move asks the user (AUTH-1 = A).
@@ -927,7 +928,12 @@ fn agent_reading_in_txn(
     if change.key.mode == SettingMode::Pin {
         return Ok(None);
     }
-    if let Some(grant) = standing_grant_in_txn(vault, txn, agent, change)? {
+    let standing = if spec.standing_approval {
+        standing_grant_in_txn(vault, txn, agent, change)?
+    } else {
+        None
+    };
+    if let Some(grant) = standing {
         return Ok(
             one_row_bounds_in_txn(vault, txn, change, StandingApproval::Given)?
                 .then_some((Setter::Standing { grant }, Permitted::AnyMove)),
