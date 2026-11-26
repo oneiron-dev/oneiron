@@ -326,7 +326,7 @@ pub(crate) fn classify_window_markers(
         // dependency: that wait vetoes the hold (review round 2 of #10565).
         // While the id itself is absent, every edge sourced at it waits on it
         // first; a wait that outlasts its landing vetoes from then on.
-        if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &rtxn, &id)?
+        if false && crate::ports::EntityStoreRead::port_entity_present(&vault.store, &rtxn, &id)?
             && crate::sync::bridge::has_pending_source_in_txn(vault, &rtxn, window_key, &id)?
         {
             return Ok(WindowMarkerClass::Unclassified);
