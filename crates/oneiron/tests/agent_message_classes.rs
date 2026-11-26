@@ -650,6 +650,7 @@ fn a_pending_message_reaches_the_next_model_request() -> TestResult {
     let config = EngineExecutorConfig {
         run_id: EntityId::from_bytes(*wake.attempt.id.as_bytes())?,
         task: "answer your inbox".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()?,
         model: ModelId::new("seat/generative_reasoner@1cadcf6de87a")?,
         model_locality: ModelLocality::OwnServer,

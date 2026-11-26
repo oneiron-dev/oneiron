@@ -51,6 +51,9 @@ impl EngineNativeExecutor<'_> {
         continuation: Option<&ContinuationNote>,
         completed_steps: u64,
     ) -> EngineExecutorResult<TurnProgram<'c>> {
+        let (backend, lease) = self.task_model.ok_or_else(|| {
+            Error::InvalidConfig("the task executor has no model backend".to_owned())
+        })?;
         self.land_finished_compaction()?;
         // A turn hook's ask parks the run before the turn, as a call's
         // ask parks the call; a skip or a hidden result ends the entry.
@@ -148,7 +151,7 @@ impl EngineNativeExecutor<'_> {
             let raced = {
                 let sources = self.step_source_rows(config, record);
                 let _generating = self.gated_write.activity_generating();
-                let call = self.backend.generate_sourced(request, self.lease, sources);
+                let call = backend.generate_sourced(request, lease, sources);
                 self.race_interrupts(call, watch.as_mut(), record, completed_steps)
                     .await
             };

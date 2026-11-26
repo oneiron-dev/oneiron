@@ -217,6 +217,7 @@ pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+pub(crate) use self::storage::{FinishedOutput, ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::{InheritedCompaction, StartCompaction};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -231,7 +232,6 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
-pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 // L2-37: a parked run's idle fold rechecks its park and lands in one write.
 pub(crate) use self::storage::{
     StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,

@@ -109,6 +109,7 @@ impl FrozenSeed {
         EngineExecutorConfig {
             run_id: template.run_id,
             task: self.task.clone(),
+            caller_source_digest: None,
             prompt_package_root: template.prompt_package_root.clone(),
             model: self.model.clone(),
             model_locality: self.model_locality,

@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::super::replay::{CodeRunReplayGeneration, CodeRunReplayRecord};
+use super::records::FinishedOutput;
 use super::routing::ExecutorStorage;
 use crate::provenance::body::{BodyRef, OwnedBody};
 use crate::side_table::{self, Named, SideKey, SideTable, SideTableDbs};
@@ -323,16 +324,51 @@ impl ExecutorStorage<'_> {
         run: EntityId,
         actor: EntityId,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_owned_replay_record_prepared(record, expected, run, actor, None)
+    }
+
+    /// Creates an owned run and publishes its staged input body in the same
+    /// writer, before the erase fence (FIX EXECUTE-CALLER-CODE).
+    pub(crate) fn put_owned_code_run_replay_record_with_output(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        run: EntityId,
+        actor: EntityId,
+        output: &FinishedOutput,
+    ) -> Result<CodeRunReplayGeneration> {
+        self.put_owned_replay_record_prepared(record, expected, run, actor, Some(output))
+    }
+
+    fn put_owned_replay_record_prepared(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        run: EntityId,
+        actor: EntityId,
+        output: Option<&FinishedOutput>,
+    ) -> Result<CodeRunReplayGeneration> {
         match self {
             Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_prepared(
                 record,
                 expected,
                 None,
-                |wtxn| stamp_response_owner_in_txn(*vault, wtxn, record.run_id, run, actor),
+                |wtxn| {
+                    stamp_response_owner_in_txn(*vault, wtxn, record.run_id, run, actor)?;
+                    if let Some(output) = output {
+                        vault.put_code_run_output_in_txn(
+                            wtxn,
+                            output,
+                            &output.output,
+                            Some(record.run_id),
+                        )?;
+                    }
+                    Ok(())
+                },
                 |_| Ok(()),
             ),
             Self::Session(binding) => {
-                binding.put_owned_replay_record_if_generation(record, expected, run, actor)
+                binding.put_owned_replay_record_if_generation(record, expected, run, actor, output)
             }
         }
     }

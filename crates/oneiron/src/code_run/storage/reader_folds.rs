@@ -155,6 +155,21 @@ impl ExecutorStorage<'_> {
         )
     }
 
+    /// A caller-source checkpoint has no model correction or heal tally.
+    /// Its run-owned resume head is already listed in `record`.
+    pub(crate) fn put_caller_source_replay_record(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        receipts: &[ReaderFoldReceipt],
+        parked: Option<&ParkedWait>,
+        context: &StepContextCommit,
+    ) -> Result<CodeRunReplayGeneration> {
+        self.put_replay_record_with_receipts_and_resume(
+            record, expected, None, receipts, parked, None, context,
+        )
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "a checkpoint's commit writes every row its step staged in one transaction"

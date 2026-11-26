@@ -398,6 +398,7 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
         Ok(oneiron::engine_executor::EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
+            caller_source_digest: None,
             // ONE-1929: the executor wire teaching comes from the DEPLOYED
             // prompt package, so every run input must carry its root.
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()

@@ -836,17 +836,50 @@ impl RecordingJsHost<'_, '_> {
         // No skill body an earlier call's answer held reaches this call's
         // reply (FIX 3608).
         self.held_delivery.clear();
-        // A resumed turn program's settled calls answer from the rows that
-        // settled them, before a position is taken or anything dispatched
-        // (DOOR-141 PR3b). Only a pinned entry binds an injection.
+        // A pinned entry or caller source answers settled calls from their
+        // rows before taking a position or dispatching (DOOR-141 PR3b,
+        // FIX EXECUTE-CALLER-CODE).
         // A value base custody holds took its handle in a settled row, and
         // meets it there (FIX REPLAY-COMPARE-KNOWN-MATCHER).
         let gated_write = self.gated_write;
         let base_known = || gated_write.base_known_values();
         if let Some(injection) = self.injection.as_mut() {
             match injection.answer(&call, &base_known) {
-                InjectedAnswer::Live => {}
-                InjectedAnswer::Settled { seq, outcome, view } => {
+                InjectedAnswer::Live => {
+                    if let Some(advance) = self.advance_caller_source.as_deref_mut() {
+                        advance(None)?;
+                    }
+                }
+                InjectedAnswer::Settled {
+                    seq,
+                    mut outcome,
+                    mut view,
+                    served_rows,
+                } => {
+                    if injection.is_caller_source()
+                        && !gated_write.releases_recorded_answer(served_rows.as_deref())
+                    {
+                        let why = "the bound door no longer releases the caller source reply";
+                        injection.hold_caller_source_output(why);
+                        self.hard_failure = Some(Error::InvalidConfig(why.to_owned()));
+                        return Err(Error::InvalidConfig(why.to_owned()));
+                    }
+                    if let Some(advance) = self.advance_caller_source.as_deref_mut() {
+                        match advance(Some(seq)) {
+                            Ok(Some(reply)) => {
+                                view = Some(serde_json::json!({ "output": reply.clone() }));
+                                outcome = Box::new(SelfDispatchOutcome::AgentVerb(
+                                    crate::code_run::AgentVerbAnswer::new(reply, None),
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                self.hard_failure = Some(error);
+                                self.left_a_gap = true;
+                                return Err(Error::CorruptedIndex("caller source wait resume"));
+                            }
+                        }
+                    }
                     // The injected card replaces `store_reply`: consume its
                     // exact occurrence before another same-byte store replays.
                     if let SelfDispatchOutcome::StoredReply(reply) = &*outcome
