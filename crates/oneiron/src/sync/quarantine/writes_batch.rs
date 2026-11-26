@@ -6,10 +6,12 @@ use super::keys_classifier::{
     crdt_key_metadata, decode_record, decode_u64_le_counter, encode_quarantine_key, encode_record,
     payload_hash, reason_code_for,
 };
-use super::remat_markers::set_replay_remat_marker_in_txn;
+use super::remat_markers::{
+    set_project_dependency_hold_marker_in_txn, set_replay_remat_marker_in_txn,
+};
 use super::retention_reports::{allocate_next_quarantine_seq, enforce_retention_in_txn};
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
@@ -78,9 +80,21 @@ fn set_remat_marker_for_quarantine_in_txn(
     window_key: &str,
     container: QuarantineContainer,
     crdt_key: &str,
+    kind: ErrorKind,
+    mutation_recorded_at: u64,
 ) -> Result<()> {
     if let Some(id) = remat_marker_entity_for_quarantine(container, crdt_key) {
-        set_replay_remat_marker_in_txn(vault, wtxn, window_key, &id)?;
+        if kind == ErrorKind::ProjectDependencyPending {
+            set_project_dependency_hold_marker_in_txn(
+                vault,
+                wtxn,
+                window_key,
+                &id,
+                mutation_recorded_at,
+            )?;
+        } else {
+            set_replay_remat_marker_in_txn(vault, wtxn, window_key, &id)?;
+        }
     }
     Ok(())
 }
@@ -113,7 +127,15 @@ pub(in crate::sync) fn quarantine_rejected_op_in_txn(
             quarantined_at: mutation_recorded_at,
         },
     )?;
-    set_remat_marker_for_quarantine_in_txn(vault, wtxn, window_key, container, crdt_key)?;
+    set_remat_marker_for_quarantine_in_txn(
+        vault,
+        wtxn,
+        window_key,
+        container,
+        crdt_key,
+        error.kind(),
+        mutation_recorded_at,
+    )?;
     Ok(seq)
 }
 
