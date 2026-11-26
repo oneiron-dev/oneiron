@@ -312,7 +312,7 @@ pub fn run(args: &[String]) -> i32 {
 ///
 /// The socket's write timeout could not be set or the reply could not be written.
 pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std::io::Result<()> {
-    stream.set_write_timeout(Some(wait))?;
+    let _ = wait;
     stream.write_all(reply)
 }
 
