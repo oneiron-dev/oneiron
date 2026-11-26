@@ -115,6 +115,12 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
             Value::from(member.to_hex()),
         ));
     }
+    // AGENT-CREDENTIAL-VERB-ALLOWLIST: only a mint whose owner named a verb
+    // list carries the key, after the minting member's, so every other
+    // mint's bytes stay as they were.
+    if let Some(verbs) = &claims.verb_allowlist {
+        entries.push((Value::from(SLIP_KEY_VERB_ALLOWLIST), strings_value(verbs)));
+    }
     Value::Map(entries)
 }
 
@@ -265,21 +271,23 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
 }
 
 /// The slip-mint keys a mint may carry at most once (each optional).
-const SLIP_MINT_OPTIONAL_KEYS: [&str; 6] = [
+const SLIP_MINT_OPTIONAL_KEYS: [&str; 7] = [
     SLIP_KEY_DELEGATION,
     SLIP_KEY_COMM,
     SLIP_KEY_RENEWS,
     SLIP_KEY_TRUSTED_CONTACT,
     SLIP_KEY_SEAT_CLAIM,
     SLIP_KEY_MINTING_MEMBER,
+    SLIP_KEY_VERB_ALLOWLIST,
 ];
 
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
     // The support delegation (OF-606), the comm reach (FIX 3899), a
     // renewal's predecessor (FIX 5481), a trusted-contact binding (FIX 4325),
-    // a seat claim (FIX 10624) and the minting member (FIX 11713) are the
-    // optional keys: each at most once, and every other key exactly as
-    // before. A mint signed without one decodes with it absent.
+    // a seat claim (FIX 10624), the minting member (FIX 11713) and the verb
+    // list (AGENT-CREDENTIAL-VERB-ALLOWLIST) are the optional keys: each at
+    // most once, and every other key exactly as before. A mint signed
+    // without one decodes with it absent.
     let checked = msgpack::Entries::new(entries)
         .exact_keys(&SLIP_MINT_KEYS, &SLIP_MINT_OPTIONAL_KEYS)
         .map_err(|_| invalid_authority())?;
@@ -369,6 +377,9 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
             .transpose()?,
         seat_claim: optional(SLIP_KEY_SEAT_CLAIM)?
             .map(decode_seat_claim)
+            .transpose()?,
+        verb_allowlist: optional(SLIP_KEY_VERB_ALLOWLIST)?
+            .map(|value| decode_set(value, decode_string))
             .transpose()?,
     };
     let action = SlipMintAction {

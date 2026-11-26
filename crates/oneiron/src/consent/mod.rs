@@ -134,9 +134,11 @@ pub use self::owner_reason::{
     OwnerReasonVerdict, ReasonMatchConfidence,
 };
 pub use self::registry::{
-    AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryAgentGrant,
-    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRegrantAction,
-    ConsentRevokeAction, GrantlessAgentConvertAction, GrantlessAgentRow, SUPPORT_GRANT_CLASS,
+    AGENT_CREDENTIAL_VERBS_WIDEN_COMMAND, AGENT_GRANT_CLASS, AgentCredentialVerbsRow,
+    AgentCredentialVerbsWidenAction, CONSENT_REVOKE_COMMAND, ConsentRegistry,
+    ConsentRegistryAgentGrant, ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow,
+    ConsentRegrantAction, ConsentRevokeAction, CredentialVerbs, GrantlessAgentConvertAction,
+    GrantlessAgentRow, SUPPORT_GRANT_CLASS,
 };
 /// FIX 6424 part 2a: the approve-once digest an owner's press on one
 /// campaign enrollment's outbound leg names, by the Gate's own composer over

@@ -3725,6 +3725,7 @@ suite.test(
     const agent = await engine.mintAgentToken({
       name: "muse-loop-04-agent",
       tier: "full-access",
+      verbs: "all",
     });
     expect((await owner.call("vault.get", { entity_ref: agent.principalRef })).value)
       .toMatchObject({ kind: "PERSON", body: { name: "muse-loop-04-agent" } });

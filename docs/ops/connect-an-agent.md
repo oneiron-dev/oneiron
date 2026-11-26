@@ -18,9 +18,15 @@ local owner command. Use the same config as `serve` (`--config`,
 
 ```bash
 mkdir -p ~/.config/oneiron
-oneiron token agent --name claude-code --out ~/.config/oneiron/claude-code.cred
-oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
+oneiron token agent --name claude-code --verbs vault.remember --out ~/.config/oneiron/claude-code.cred
+oneiron token agent --name codex --verbs vault.remember --out ~/.config/oneiron/codex.cred
 ```
+
+Each names `vault.remember`, the one write the Oneiron skill makes for
+Claude Code and Codex; recall and the other lookups the skill uses are
+read verbs, which every credential may call. To let an agent call another
+verb later, name the verb in a Grant for it (`vault.agents.grants.mint`),
+or mint it again with the verb added to `--verbs`.
 
 - `--out` writes a new file that only you can read, and prints the agent's
   `principal_ref` and `slip_id`. Keep the `slip_id`: it is what you revoke.
@@ -43,6 +49,22 @@ oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
     `core:write`, so no route that commits a write directly (such as
     `/v1/core/batch`) accepts it.
   - `read-only`: it only reads.
+- `--verbs` names the verbs the credential may call beyond the read verbs,
+  by their verb-table names, comma-separated
+  (`--verbs vault.remember,vault.notes.create`), signed into its slip. Every
+  read verb (a verb whose act class is `read`) is always allowed. Without
+  `--verbs` the credential calls the read verbs alone, whatever its tier:
+  name what the agent writes, or pass `--verbs all` to let it call every
+  verb its tier admits (no list, as before). A name that is not a verb is
+  refused at mint. The output shows the list as `verb_allowlist` (`null`
+  for `all`). The server
+  refuses any other verb on every door (HTTP, MCP tools, code-mode
+  programs, the REST write routes) with `FORBIDDEN` and "is not among this
+  credential's verbs". To let the agent call one more verb later, name it
+  in a Grant for the agent (`vault.agents.grants.mint` with `read` and the
+  verb in its verbs); revoking that Grant takes the verb back.
+  `vault.consent.registry` lists each agent credential that carries a list
+  under `agent_credential_verbs`.
 - `--comm` caps whom the agent may message: `parent`, `subtree`, `project`
   or `vault`, signed into its slip. Outside a run, anything narrower than
   `vault` reaches your owners only. The output shows the reach as `comm`
@@ -128,7 +150,7 @@ from the Cursor plugin (below).
    client's MCP server log, names the full path of `agent.cred` and the
    command that mints it.
 3. Stop `oneiron serve`, mint to that path under the client's own name (for
-   example `oneiron token agent --name codex --out <data folder>/agent.cred`),
+   example `oneiron token agent --name codex --verbs vault.remember --out <data folder>/agent.cred`),
    start `serve` again, and restart the plugin's server in the client.
 
 It runs `oneiron` from the `PATH` the client starts servers with and reaches
@@ -152,7 +174,7 @@ the credential at `~/.config/oneiron/cursor.cred`.
    start `serve` again:
 
    ```bash
-   oneiron token agent --name cursor --out ~/.config/oneiron/cursor.cred
+   oneiron token agent --name cursor --verbs vault.remember --out ~/.config/oneiron/cursor.cred
    ```
 
 3. In Cursor's **Customize** page, turn off the shared package's own
@@ -165,7 +187,9 @@ read a credential of their own
 
 **Hermes Agent** takes Oneiron in its memory slot instead of as MCP tools: the
 `oneiron-hermes` package (`packages/oneiron-hermes`) is a Hermes memory
-provider. Mint a credential named `hermes`, then `pip install oneiron
+provider. Mint a credential named `hermes` with
+`--verbs vault.witness,vault.claims.upsert` (it witnesses each turn and keeps
+what Hermes's memory writes as claims), then `pip install oneiron
 oneiron-hermes`, set `memory.provider: oneiron` and point `credential_file` at
 the file (`hermes memory setup`). With Hermes's built-in memory on, Oneiron
 runs beside it; with it off, Oneiron is the agent's memory. The package's
@@ -251,7 +275,9 @@ the model the body names, and proposes the exchange back to your vault as an
 That claim waits for your review like any proposed claim, whatever the app's
 tier.
 
-- Mint the app its own credential (`oneiron token agent --name my-app`). A
+- Mint the app its own credential, naming every verb it calls beyond the
+  read verbs (`oneiron token agent --name my-app --verbs vault.remember`;
+  the proxy needs `vault.remember`, since it keeps every exchange). A
   `read-only` credential is refused, since the proxy always proposes, and so
   is one bound to a world or a facet.
 - Every request carries the slip (`Authorization: Bearer`) and a fresh holder

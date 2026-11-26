@@ -348,6 +348,12 @@ pub(super) async fn create(
     body: Body,
 ) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(
+        &server,
+        Some(&auth),
+        "vault.artifacts.create",
+    )?;
     let actor = proposal_writer(&server, &auth)?;
     let streamed =
         streamed::read::<CreateArtifact>(&server, &headers, body, ARTIFACT_BODY_LIMIT as u64)

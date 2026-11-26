@@ -51,6 +51,9 @@ pub(crate) async fn core_propose(
         CoreScope::Propose
     };
     auth.require(permission)?;
+    // The credential calls only its verbs: a proposal places a claim, as
+    // `vault.claims.upsert` does (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(&server, Some(&auth), "vault.claims.upsert")?;
     let request = json_payload(payload)?;
     let subject = EntityId::from_hex(&request.subject)
         .map_err(|_| ApiError::bad_request("invalid subject reference", Some("subject")))?;

@@ -145,6 +145,8 @@ pub(crate) async fn core_batch(
     payload: Result<Json<CoreBatchRequest>, JsonRejection>,
 ) -> Result<Json<CoreBatchResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(&server, Some(&auth), "vault.batch")?;
     let req = json_payload(payload)?;
     // The route's own refusals first; the row mints what the body omits.
     for entity in &req.entities {

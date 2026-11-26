@@ -92,6 +92,12 @@ pub(crate) async fn append_core_record(
     payload: Result<Json<DagAppendRequest>, JsonRejection>,
 ) -> Result<Json<DagAppendResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(
+        &server,
+        Some(&auth),
+        "vault.conversations.records.append",
+    )?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = json_payload(payload)?;
     // The route's own refusals first: the actor its body binds, and its
@@ -781,6 +787,12 @@ pub(crate) async fn react_core_message(
     payload: Result<Json<ReactionRequest>, JsonRejection>,
 ) -> Result<Json<ReactionResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(
+        &server,
+        Some(&auth),
+        "vault.messages.react",
+    )?;
     let message = parse_entity_id_param(&message, "message")?;
     let req = json_payload(payload)?;
     let by = parse_entity_id_param(&req.by, "by")?;

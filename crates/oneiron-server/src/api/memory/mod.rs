@@ -331,6 +331,20 @@ pub(crate) async fn core_memory_verb(
     // hosted operator's root is refused before any of them (FIX 2222).
     let host_action = crate::api::host_action::require_host_owner_act(&server, &auth)?;
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
+    // The credential calls only its verbs: each named verb as the SDK verb it
+    // is (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(
+        &server,
+        Some(&auth),
+        match verb {
+            oneiron::NamedMemoryVerb::Remember => "vault.remember",
+            oneiron::NamedMemoryVerb::Supersede => "vault.claims.supersede",
+            oneiron::NamedMemoryVerb::Retract => "vault.claims.retract",
+            oneiron::NamedMemoryVerb::Delete | oneiron::NamedMemoryVerb::HardDelete => {
+                "vault.delete"
+            }
+        },
+    )?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
     // A check-in names a person's waiting delete; no other verb spends one,

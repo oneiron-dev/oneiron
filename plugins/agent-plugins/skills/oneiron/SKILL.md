@@ -66,11 +66,15 @@ The plugin mints no credential: a grant comes only from the person. If the
    as `codex`, `cursor` or `copilot`, so each can be revoked alone:
 
    ```bash
-   oneiron token agent --name <client> --out <data-folder>/agent.cred
+   oneiron token agent --name <client> --verbs vault.remember --out <data-folder>/agent.cred
    ```
 
    Pass the same `--config` as `serve` uses when it reads a config other than
    the default. Keep the `slip_id` the command prints: it is what you revoke.
+   The credential may call every read verb and `vault.remember`, the one
+   write this skill makes. To let it call another verb later, name the
+   verb in a Grant for the agent (`vault.agents.grants.mint`), or mint it
+   again with the verb added to `--verbs`.
    Then start `oneiron serve` again and restart the plugin's server, or the
    client.
 

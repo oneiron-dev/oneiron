@@ -296,6 +296,14 @@ fn admit_connector(
             "the connector binds verbs without vault.recall and vault.remember",
         ));
     }
+    // The proxy remembers every exchange: a credential whose verb list
+    // leaves out vault.remember is refused before any model call
+    // (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    if let Err(error) =
+        crate::api::credential_verbs::require_listed_verb(server, Some(auth), "vault.remember")
+    {
+        return Err(forbidden("verb_not_listed", &error.message));
+    }
     if owner {
         return Ok(ProxyAdmission {
             landing,

@@ -91,6 +91,7 @@ pub(crate) fn operator_slip_claims(
         comm: None,
         trusted_contact: None,
         seat_claim: None,
+        verb_allowlist: None,
     }
 }
 

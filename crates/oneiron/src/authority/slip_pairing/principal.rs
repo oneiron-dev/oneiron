@@ -93,10 +93,16 @@ impl Vault {
         principal: &PairingPrincipal,
         scope: &Scope,
     ) -> Result<()> {
+        // A verb list names verb-table rows only (AGENT-CREDENTIAL-VERB-ALLOWLIST);
+        // the owner's mint surfaces name the unknown ones before they get here.
         if principal
             .actor_class
             .as_deref()
             .is_some_and(|class| !ACTOR_BINDING_CLASSES.contains(&class))
+            || principal
+                .verb_allowlist
+                .as_ref()
+                .is_some_and(|verbs| !crate::authority::unknown_verb_names(verbs).is_empty())
         {
             return Err(invalid_authority());
         }

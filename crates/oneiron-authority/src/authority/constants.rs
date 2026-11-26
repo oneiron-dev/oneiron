@@ -179,6 +179,10 @@ pub const SLIP_KEY_SEAT_CLAIM: &str = "seat_claim";
 /// seat-claim key. Present only on a mint a person approved, so every other
 /// mint's wire form is unchanged.
 pub const SLIP_KEY_MINTING_MEMBER: &str = "minting_member";
+/// The holder's verb list (AGENT-CREDENTIAL-VERB-ALLOWLIST), after the
+/// minting-member key. Present only on a mint whose owner named one, so
+/// every other mint's wire form is unchanged.
+pub const SLIP_KEY_VERB_ALLOWLIST: &str = "verb_allowlist";
 pub const DELEGATION_KEY_PURPOSE: &str = "purpose";
 pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
 pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";

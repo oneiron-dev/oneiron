@@ -338,6 +338,7 @@ fn issue_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<BootstrapLi
             org_ref: None,
             write_facet: None,
             comm: None,
+            verb_allowlist: None,
         },
     )?;
     Ok(BootstrapLink {
@@ -361,6 +362,10 @@ struct PairedCredential {
     /// The slip's signed comm reach (FIX 3899): `--comm`, or `vault` when
     /// the owner named none.
     comm: oneiron::agent_dispatch::CommReach,
+    /// The verbs the slip may call beyond every read verb, signed into it
+    /// (AGENT-CREDENTIAL-VERB-ALLOWLIST); `null`: no list, every verb its
+    /// scope admits.
+    verb_allowlist: Option<std::collections::BTreeSet<String>>,
     /// The default read Grant the link minted for a named agent, when it
     /// minted one: a mint that fails after the link takes it back beside
     /// the slip. Never printed with the credential.
@@ -431,6 +436,9 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
         [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
         args.lifetime_secs,
         comm_arg(args.comm.as_deref())?,
+        // A new agent credential calls the read verbs alone
+        // (AGENT-CREDENTIAL-VERB-ALLOWLIST); another class keeps no list.
+        (args.actor_class == "agent").then(std::collections::BTreeSet::new),
     )?;
     println!("{}", serde_json::to_string_pretty(&credential)?);
     Ok(())
@@ -493,6 +501,7 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
                     "expires_at": minted.credential.expires_at,
                     "slip_id": minted.credential.slip_id,
                     "comm": minted.credential.comm,
+                    "verb_allowlist": minted.credential.verb_allowlist,
                     "credential_file": path,
                     "revoked_slip_ids": minted.replaced,
                 }))?
@@ -541,6 +550,41 @@ fn agent_tier_authority(
             .collect(),
         tier.ceiling(),
     )
+}
+
+/// The word `token agent --verbs` takes for no list: the credential calls
+/// every verb its tier admits, and the sheet shows it as `all`.
+const EVERY_VERB: &str = "all";
+
+/// `token agent --verbs` as the slip's verb list
+/// (AGENT-CREDENTIAL-VERB-ALLOWLIST; Engine CREDENTIAL-VERBS-UNRESTRICTED =
+/// A, spelled `--verbs all`): omitted, the read verbs alone (an empty list);
+/// `all` alone, no list; else the named verbs, each a verb-table row.
+fn agent_verb_allowlist(
+    verbs: Option<&[String]>,
+) -> anyhow::Result<Option<std::collections::BTreeSet<String>>> {
+    let Some(verbs) = verbs else {
+        return Ok(Some(std::collections::BTreeSet::new()));
+    };
+    let verbs: std::collections::BTreeSet<String> = verbs
+        .iter()
+        .map(|verb| verb.trim().to_owned())
+        .filter(|verb| !verb.is_empty())
+        .collect();
+    if verbs.contains(EVERY_VERB) {
+        anyhow::ensure!(
+            verbs.len() == 1,
+            "--verbs {EVERY_VERB} stands alone: it signs no verb list"
+        );
+        return Ok(None);
+    }
+    let unknown = oneiron::authority::unknown_verb_names(&verbs);
+    anyhow::ensure!(
+        unknown.is_empty(),
+        "--verbs names no verb-table row: {} (the names are those of scripts/sdk/verbs, e.g. vault.notes.create)",
+        unknown.join(", ")
+    );
+    Ok(Some(verbs))
 }
 
 /// `token agent`'s vault half: principal, slip and grant, on the stopped vault.
@@ -600,6 +644,7 @@ fn mint_agent_credential(
         verbs,
         args.lifetime_secs,
         comm_arg(args.comm.as_deref())?,
+        agent_verb_allowlist(args.verbs.as_deref())?,
     )?;
     let slip_id = oneiron::authority::CapabilitySlip::from_token(&credential.token)?
         .claims
@@ -722,6 +767,7 @@ fn mint_paired_credential(
     verbs: std::collections::BTreeSet<String>,
     lifetime_secs: u64,
     comm: Option<oneiron::agent_dispatch::CommReach>,
+    verb_allowlist: Option<std::collections::BTreeSet<String>>,
 ) -> anyhow::Result<PairedCredential> {
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
@@ -731,6 +777,7 @@ fn mint_paired_credential(
         org_ref: None,
         write_facet: None,
         comm,
+        verb_allowlist,
     };
     let link = match link_owner {
         Some(owner) => vault.issue_owner_pairing_link(
@@ -789,6 +836,7 @@ fn redeem_link_here(
         expires_at: slip.claims.expires_at,
         slip_id: hex(&slip.claims.slip_id),
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
+        verb_allowlist: slip.claims.verb_allowlist.clone(),
         default_grant_ref: link.default_grant_ref,
         credential,
         token,
@@ -819,6 +867,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         org_ref: None,
         write_facet: None,
         comm: comm_arg(args.comm.as_deref())?,
+        verb_allowlist: None,
     };
     let mut body = json!({
         "scope": scope,

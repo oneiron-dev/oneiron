@@ -155,7 +155,7 @@ impl Auth {
     pub(super) fn refused_advice(&self) -> &'static str {
         match self {
             Self::Slip { .. } => {
-                "the server refused this credential before MCP; check --url names the vault that minted it. If revoked or expired, stop that vault, re-mint with `oneiron token agent --name <name> --tier <tier> --out <new-file> --config <vault-config>`, restart `oneiron serve --config <vault-config>`, and update --credential-file"
+                "the server refused this credential before MCP; check --url names the vault that minted it. If revoked or expired, stop that vault, re-mint with `oneiron token agent --name <name> --tier <tier> --verbs <verbs> --out <new-file> --config <vault-config>`, restart `oneiron serve --config <vault-config>`, and update --credential-file"
             }
             Self::Owner { .. } => {
                 "the server refused the owner's sign-in before MCP; check --url names the vault it was issued for. If it expired or was signed out, sign in again on the surface that wrote --owner-upgrade-headers-file, so it rewrites that file (owner-only); a later request opens a fresh socket with it"

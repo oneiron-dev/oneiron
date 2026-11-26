@@ -829,6 +829,8 @@ pub(crate) fn core(
     core += "/// The row's result and its actual hook-chain notice bit; a source without metadata returns None.\n";
     core += "pub fn invoke_with_notice(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> (MemoryResult<serde_json::Value>, Option<bool>) {\n";
     core += "if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return (Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request(\"unknown SDK agent verb\"))), None); }\n";
+    // AGENT-CREDENTIAL-VERB-ALLOWLIST: a handle bound to a credential with a verb list runs only its verbs by name.
+    core += "if let Err(refused) = memory.presented_credential_admits_verb(verb) { return (Err(refused), None); }\n";
     // G10: an embedded handle has no anonymous model host. Refuse it before hooks can retain even a hash or an ask
     // containing the anonymous input.
     core += "if verb == \"ai.anonymous_chat\" { return ((|| encode(ai_anonymous_chat(memory, decode(value)?)?))(), None); }\n";

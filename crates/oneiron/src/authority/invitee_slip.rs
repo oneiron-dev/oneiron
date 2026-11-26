@@ -69,6 +69,7 @@ impl Vault {
             comm: None,
             trusted_contact: None,
             seat_claim: None,
+            verb_allowlist: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }
@@ -112,6 +113,7 @@ impl Vault {
             comm: None,
             trusted_contact: None,
             seat_claim: None,
+            verb_allowlist: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }

@@ -39,6 +39,7 @@ fn principal(fixture: &Fixture, org: oneiron::EntityId) -> PairingPrincipal {
         org_ref: Some(org.to_hex()),
         write_facet: None,
         comm: None,
+        verb_allowlist: None,
     }
 }
 /// A full slip the host holds itself, cut from no parent: like the root, it

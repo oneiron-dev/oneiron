@@ -304,6 +304,12 @@ pub(crate) async fn create_core_conversation(
     payload: Result<Json<CreateConversationRequest>, JsonRejection>,
 ) -> Result<Json<CoreEntityWriteResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(
+        &server,
+        Some(&auth),
+        "vault.conversations.create",
+    )?;
     let request = json_payload(payload)?;
     let req = request.entity;
     let body: oneiron::conversation::ConversationBody = serde_json::from_value(req.body.clone())
@@ -467,6 +473,12 @@ pub(crate) async fn create_core_conversation_turn(
     payload: Result<Json<CoreCreateTurnRequest>, JsonRejection>,
 ) -> Result<Json<CoreEntityWriteResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
+    // The credential calls only its verbs (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    crate::api::credential_verbs::require_listed_verb(
+        &server,
+        Some(&auth),
+        "vault.conversations.turns.create",
+    )?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     require_entity_type(
         &server,

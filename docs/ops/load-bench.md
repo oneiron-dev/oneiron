@@ -11,7 +11,7 @@ For each corpus size (`--records`) and vector setting (`--vectors`), on a fresh
 vault:
 
 1. `oneiron-server init` (no embedder, or an endpoint embedder pointed at the
-   bench's loopback stub), then `token agent --tier full-access` for each agent
+   bench's loopback stub), then `token agent --tier full-access --verbs all` for each agent
    on the stopped vault. Agents are real signed slips; every request carries a
    fresh holder proof, as production agents do.
 2. `serve` on loopback. **startup_empty**: time to `/api/health` and peak

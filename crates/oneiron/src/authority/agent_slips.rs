@@ -55,6 +55,9 @@ pub(crate) struct LiveAgentSlip {
     pub(crate) channels: BTreeSet<String>,
     /// Whom its holder may message; `None` is the vault-wide reach.
     pub(crate) comm: Option<CommReach>,
+    /// The verbs it may call beyond every read verb; `None`: no list
+    /// (AGENT-CREDENTIAL-VERB-ALLOWLIST).
+    pub(crate) verb_allowlist: Option<BTreeSet<String>>,
 }
 
 /// Where one slip id stands for a conversion to a Grant
@@ -94,6 +97,7 @@ fn agent_slip_from_claims(id: [u8; 32], claims: &SlipClaims) -> Option<LiveAgent
         records: claims.records.clone(),
         channels: claims.channels.clone(),
         comm: claims.comm.clone(),
+        verb_allowlist: claims.verb_allowlist.clone(),
     })
 }
 

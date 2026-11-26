@@ -31,6 +31,9 @@ export type AgentTier="read-only"|"propose-only"|"full-access";
 export interface AgentTokenOptions {
   /** 1 to 64 letters, digits, `-`, `_` or `.`. One name is one agent principal however often it is minted. */
   readonly name:string;readonly tier:AgentTier;readonly lifetimeSeconds?:number;
+  /** `token agent --verbs`: the verbs the slip may call beyond the read verbs, or "all" for no list (the tier alone
+   * bounds it). An empty list leaves the read verbs alone, the CLI's default (AGENT-CREDENTIAL-VERB-ALLOWLIST). */
+  readonly verbs:readonly string[]|"all";
   /** A host secret for this mint only, for a failed-mint case: the mint process's ONEIRON_AUTH_SECRET (the shipped
    * CLI refuses it in argv), never the relaunch's. Omitted, the CLI reads the fixture's own secret from its config. */
   readonly authSecret?:string;
@@ -352,7 +355,8 @@ export class EngineFixture {
     const env=options.authSecret===undefined?this.env:{...this.env,ONEIRON_AUTH_SECRET:options.authSecret};
     const cli=new CliClient(requireAsset(this.build,"cli"),this.root,env,this.artifacts);
     await this.server?.stop();
-    const minted=await cli.run(["token","agent","--name",options.name,"--tier",options.tier,
+    const verbs=options.verbs==="all"?["--verbs","all"]:options.verbs.length===0?[]:["--verbs",options.verbs.join(",")];
+    const minted=await cli.run(["token","agent","--name",options.name,"--tier",options.tier,...verbs,
       "--config",resolve(this.root,"oneiron.toml"),"--out",file,
       ...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.readyMs,true)
       .finally(()=>this.launch());

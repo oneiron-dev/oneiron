@@ -75,6 +75,7 @@ mod clock_repair;
 pub mod consolidation_evidence;
 mod conversation_training;
 mod conversation_training_vault;
+mod credential_verbs;
 mod critical_confirm_door;
 mod current_scope;
 mod device_succession;
@@ -378,6 +379,9 @@ pub use clock_repair::{
 };
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
+pub use credential_verbs::{
+    CREDENTIAL_VERB_NOT_LISTED, is_read_verb, unknown_verb_names, verb_list_admits,
+};
 pub use fold_engine::*;
 #[cfg(oneiron_test_support)]
 pub(crate) use fold_resume::whole_and_resumed_folds_for_test;

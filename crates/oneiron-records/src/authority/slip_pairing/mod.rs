@@ -43,4 +43,10 @@ pub struct PairingPrincipal {
     /// claims; the redeemer never picks it. `None` is the vault-wide reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
+    /// The verbs the paired slip may call beyond every read verb
+    /// (AGENT-CREDENTIAL-VERB-ALLOWLIST): the owner sets it when he makes
+    /// the link, and redemption copies it into the slip's signed claims; the
+    /// redeemer never picks it. `None` is no list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verb_allowlist: Option<std::collections::BTreeSet<String>>,
 }

@@ -357,6 +357,7 @@ impl Vault {
             comm: pending.principal.comm,
             trusted_contact: None,
             seat_claim: None,
+            verb_allowlist: pending.principal.verb_allowlist,
         };
         // FIX 11713: the owner who made the link is the member who minted
         // this holder's slip, signed in the same mint; a host-only link
