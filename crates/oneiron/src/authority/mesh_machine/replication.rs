@@ -366,20 +366,18 @@ impl Vault {
     /// that fails is logged.
     fn own_mesh_keys(&self, rows: &[MeshAuthorityRow]) -> Option<OwnMeshKeys> {
         let read = || -> Result<Option<OwnMeshKeys>> {
-            let own = {
-                let txn = self.store.env.read_txn()?;
-                crate::identity::read_machine_id_in_txn(self, &txn)?
-            };
-            if !own.is_some_and(|own| rows.iter().any(|row| row.machine == own)) {
-                return Ok(None);
-            }
-            let Some(signer) = self.read_install_signer()? else {
+            // Red (REVIEW-10537 P1): the provisioning read of the PR's first head, a73d590d.
+            let _ = rows;
+            let Some((machine, seed)) = self.mesh_transport_seed()? else {
                 return Ok(None);
             };
-            let seed = mesh_transport_seed_of(&signer.machine_key);
+            let txn = self.store.env.read_txn()?;
+            let Some(device) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
+                return Ok(None);
+            };
             Ok(Some(OwnMeshKeys {
-                machine: signer.machine,
-                device_key: signer.machine_key.verifying_key().to_bytes(),
+                machine,
+                device_key: device.verifying_key().to_bytes(),
                 endpoint_key: ed25519_dalek::SigningKey::from_bytes(&seed)
                     .verifying_key()
                     .to_bytes(),
