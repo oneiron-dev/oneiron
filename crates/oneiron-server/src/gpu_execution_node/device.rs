@@ -41,6 +41,11 @@ const QUERY_STDERR_KEEP_BYTES: usize = 4096;
 /// the drain file's one line.
 const QUERY_DIAGNOSTIC_PART_MAX_BYTES: usize = 256;
 
+/// The descriptor number at which a query run under the job control
+/// handler's query lock holds that lock's file ([`run_device_tool_as`]).
+#[cfg(unix)]
+const QUERY_LOCK_FD: std::os::fd::RawFd = 3;
+
 /// One compute process the driver reports on a card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuComputeProcess {
@@ -210,11 +215,11 @@ pub enum NvidiaSmiRoute {
     /// each query as the job account. After the device hand-over (runbook
     /// 1.9 step 3, T40) only the job account's group opens the card's
     /// files, and the engine's account cannot open them, by design (FIX
-    /// EXEC-NODE-PROBE-AFTER-HANDOVER). Where no handler listens at `socket`
-    /// (the file went away, or no listener holds it), found before any
-    /// request is sent, `fallback_program` runs here as with
-    /// [`Self::Direct`]; a handler's refusal stays a refusal (review r1 of
-    /// #10540).
+    /// EXEC-NODE-PROBE-AFTER-HANDOVER). Where `socket` takes no request from
+    /// this process (the file went away, no listener holds it, or this
+    /// account may not connect to it), found before any request is sent,
+    /// `fallback_program` runs here as with [`Self::Direct`]; a handler's
+    /// refusal stays a refusal (reviews r1 and r2 of #10540).
     JobControl {
         socket: PathBuf,
         fallback_program: PathBuf,
@@ -225,7 +230,7 @@ impl NvidiaSmiRoute {
     /// This machine's route now: through the job control socket while its
     /// file is there and this process may connect to it (the engine's
     /// account, or root), else [`NVIDIA_SMI`] run here; through the socket,
-    /// [`NVIDIA_SMI`] runs here too where no handler listens.
+    /// [`NVIDIA_SMI`] runs here too where the socket takes no request.
     #[must_use]
     pub fn of_this_machine() -> Self {
         #[cfg(target_os = "linux")]
@@ -249,10 +254,10 @@ impl NvidiaSmiRoute {
     ///
     /// [`GpuProbeError::Unavailable`] when the tool fails, does not answer in
     /// time, or the job control socket's handler refuses or does not answer.
-    /// A tool run here after no handler listened names that too.
+    /// A tool run here after the socket took no request names that too.
     pub fn query(&self, query: NvidiaSmiQuery) -> Result<String, GpuProbeError> {
         match self {
-            Self::Direct { program } => run_device_tool_as(program, &query.args(), None),
+            Self::Direct { program } => run_device_tool_as(program, &query.args(), None, None),
             #[cfg(target_os = "linux")]
             Self::JobControl {
                 socket,
@@ -262,8 +267,8 @@ impl NvidiaSmiRoute {
                 match request(socket, query) {
                     Ok(output) => Ok(output),
                     Err(DeviceQueryError::Unavailable(error)) => Err(error),
-                    Err(DeviceQueryError::NoListener { reason }) => {
-                        run_here_after_no_listener(fallback_program, query, &reason)
+                    Err(DeviceQueryError::Unusable { reason }) => {
+                        run_here_after_unusable_socket(fallback_program, query, &reason)
                     }
                 }
             }
@@ -275,17 +280,18 @@ impl NvidiaSmiRoute {
     }
 }
 
-/// [`NvidiaSmiRoute::Direct`]'s run of `program` where no job control
-/// handler listened (`no_listener`, the reason), which a failure names too.
+/// [`NvidiaSmiRoute::Direct`]'s run of `program` where the job control
+/// socket took no request (`unusable`, the reason), which a failure names
+/// too.
 #[cfg(target_os = "linux")]
-fn run_here_after_no_listener(
+fn run_here_after_unusable_socket(
     program: &Path,
     query: NvidiaSmiQuery,
-    no_listener: &str,
+    unusable: &str,
 ) -> Result<String, GpuProbeError> {
-    run_device_tool_as(program, &query.args(), None).map_err(|error| match error {
+    run_device_tool_as(program, &query.args(), None, None).map_err(|error| match error {
         GpuProbeError::Unavailable { reason } => GpuProbeError::Unavailable {
-            reason: format!("{no_listener}; run here: {reason}"),
+            reason: format!("{unusable}; run here: {reason}"),
         },
         other => other,
     })
@@ -455,7 +461,7 @@ static UNREAPED_QUERIES: AtomicUsize = AtomicUsize::new(0);
 /// Runs one query of `program`, a device driver's command-line tool, as
 /// this process's own account: [`run_device_tool_as`].
 pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, GpuProbeError> {
-    run_device_tool_as(Path::new(program), args, None)
+    run_device_tool_as(Path::new(program), args, None, None)
 }
 
 /// Runs one query of `program`, a device driver's command-line tool, and
@@ -470,6 +476,13 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
 /// (std clears them when root sets the uid), and an environment of its own
 /// with nothing of root's.
 ///
+/// With `held_lock` (the handler's machine-wide query lock), the query's
+/// process holds the lock's file at descriptor [`QUERY_LOCK_FD`], and so
+/// does whatever it starts, so the lock lasts as long as the query does:
+/// past the kill, when a driver call holds it in the kernel, and past the
+/// caller (review r2 of #10540). Every other descriptor of this process is
+/// closed to it.
+///
 /// A query that exits nonzero answers its own words in the error: its error
 /// output (the first [`QUERY_STDERR_KEEP_BYTES`] kept, read the same way as
 /// the output) and its output, each cut to
@@ -479,6 +492,7 @@ pub(crate) fn run_device_tool_as(
     program: &Path,
     args: &[&str],
     account: Option<&DeviceToolAccount>,
+    held_lock: Option<&std::fs::File>,
 ) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
     let program_name = program.display();
@@ -487,7 +501,19 @@ pub(crate) fn run_device_tool_as(
             "an earlier device tool query was killed and has not ended yet".to_owned(),
         ));
     }
-    let mut command = oneiron_spawn::command(program);
+    #[cfg(unix)]
+    let mut command = match held_lock {
+        Some(lock) => oneiron_spawn::command_with_fds(
+            program,
+            &[(std::os::fd::AsRawFd::as_raw_fd(lock), QUERY_LOCK_FD)],
+        ),
+        None => oneiron_spawn::command(program),
+    };
+    #[cfg(not(unix))]
+    let mut command = {
+        let _ = held_lock;
+        oneiron_spawn::command(program)
+    };
     command
         .args(args)
         .stdin(std::process::Stdio::null())

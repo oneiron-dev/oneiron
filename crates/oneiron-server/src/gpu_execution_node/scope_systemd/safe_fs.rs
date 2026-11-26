@@ -324,6 +324,68 @@ pub fn set_group_and_mode_beneath(
     check(unsafe { libc::fchmodat(dir.as_raw_fd(), c.as_ptr(), mode as libc::mode_t, 0) })
 }
 
+/// How often [`open_lock_beneath`] tries again when the name changes under
+/// it (another handler made the file between its two opens).
+const LOCK_OPEN_TRIES: usize = 3;
+
+/// The mode of a lock file [`open_lock_beneath`] makes.
+const LOCK_FILE_MODE: libc::c_uint = 0o600;
+
+/// The lock file `name` beneath `dir`, open read-only to hold a lock on it,
+/// never through a link: a regular file `owner` owns, made empty with mode
+/// 0600 when absent. Anything else at `name` (a link, another owner's file,
+/// a pipe) is removed first and a fresh file made, so a name the engine
+/// planted makes the lock new and never hands another file's descriptor on.
+///
+/// # Errors
+///
+/// The name could not be removed or made, or it kept changing.
+pub fn open_lock_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Result<OwnedFd> {
+    let c = c_name(OsStr::new(name))?;
+    for _ in 0..LOCK_OPEN_TRIES {
+        // SAFETY: c is NUL terminated; O_NOFOLLOW refuses a link, and
+        // O_NONBLOCK keeps a pipe at the name from holding the open.
+        let found = owned(unsafe {
+            libc::openat(
+                dir.as_raw_fd(),
+                c.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            )
+        });
+        match found {
+            Ok(fd) => {
+                let held = facts(borrow(&fd))?;
+                if held.is_regular && held.uid == owner {
+                    return Ok(fd);
+                }
+                drop(fd);
+                remove_beneath(dir, name)?;
+            }
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => remove_beneath(dir, name)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        // SAFETY: c is NUL terminated; O_EXCL with O_NOFOLLOW makes a new
+        // file or fails.
+        let made = owned(unsafe {
+            libc::openat(
+                dir.as_raw_fd(),
+                c.as_ptr(),
+                libc::O_RDONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                LOCK_FILE_MODE,
+            )
+        });
+        match made {
+            Ok(fd) => return Ok(fd),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::other(format!(
+        "{name} kept changing while it was opened"
+    )))
+}
+
 /// Removes the file `name` beneath `dir`; an absent one is fine.
 ///
 /// # Errors

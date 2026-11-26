@@ -14,6 +14,11 @@
 //! Review r1 of #10540: the engine's connection is bounded by the query's
 //! deadline, a socket file no handler listens on leaves the query to the
 //! tool run here, and a refused query answers the driver's own words.
+//!
+//! Review r2 of #10540: a query its kill cannot end holds the machine's
+//! query lock until it ends, so later handlers refuse and start nothing
+//! meanwhile; and a socket this account may not connect to leaves the query
+//! to the tool run here.
 #![cfg(target_os = "linux")]
 
 use std::io::{BufRead as _, BufReader, Write as _};
@@ -21,9 +26,11 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use oneiron_server::gpu_execution_node::scope_systemd::device_query::DeviceQueryError;
+use oneiron_server::gpu_execution_node::scope_systemd::device_query::{
+    DEVICE_QUERY_LOCK_FILE, DeviceQueryError, DeviceQuerySettings,
+};
 use oneiron_server::gpu_execution_node::scope_systemd::{control, device_query};
 use oneiron_server::gpu_execution_node::{
     DeviceToolAccount, GpuProbeError, NvidiaSmiQuery, NvidiaSmiRoute, parse_compute_process_lines,
@@ -51,6 +58,17 @@ fn job_account() -> DeviceToolAccount {
     }
 }
 
+/// The handler's settings for `account`, with the query lock in `state_dir`
+/// (a path with no link on the way, as the handler opens it).
+fn settings_in(state_dir: &Path, account: DeviceToolAccount) -> DeviceQuerySettings {
+    DeviceQuerySettings {
+        account,
+        state_dir: state_dir
+            .canonicalize()
+            .expect("the state directory's own path"),
+    }
+}
+
 /// The stand-in `nvidia-smi`s. One directory for every test, written before
 /// any of them starts a process: a script written while another thread
 /// forks can be held open for writing in that child and refuse its own exec
@@ -63,7 +81,15 @@ struct Standins {
     /// Refuses on its output, as NVML may, after a flood of error output
     /// past any pipe's buffer.
     refusing_loudly: PathBuf,
+    /// Answers, and the first time leaves behind a process outside the
+    /// query's process group that keeps the query's descriptors: a query the
+    /// group's kill cannot end, as one wedged in a driver call is. That
+    /// process's id is in [`ESCAPED_PID_FILE`] beside it before it answers.
+    escaping: PathBuf,
 }
+
+/// The file the escaping stand-in writes its left-behind process's id to.
+const ESCAPED_PID_FILE: &str = "escaped.pid";
 
 fn standins() -> &'static Standins {
     static STANDINS: OnceLock<(tempfile::TempDir, Standins)> = OnceLock::new();
@@ -105,10 +131,21 @@ head -c 1048576 /dev/zero | tr '\0' x >&2
 exit 4
 "#
     );
+    let escaping = format!(
+        r#"#!/bin/sh
+pid_file="$(dirname "$0")/{ESCAPED_PID_FILE}"
+if [ ! -e "$pid_file" ]; then
+  setsid sh -c 'echo $$ > "$1.new" && mv "$1.new" "$1" && exec sleep 600' sh "$pid_file" < /dev/null > /dev/null 2>&1 &
+  until [ -s "$pid_file" ]; do :; done
+fi
+echo "{CARD}, NVIDIA GeForce RTX 4090, 24564"
+"#
+    );
     Standins {
         job_account_only: write_script(dir, "nvidia-smi", &job_account_only),
         before_hand_over: write_script(dir, "nvidia-smi-before-hand-over", &before_hand_over),
         refusing_loudly: write_script(dir, "nvidia-smi-refusing-loudly", &refusing_loudly),
+        escaping: write_script(dir, "nvidia-smi-escaping", &escaping),
     }
 }
 
@@ -121,11 +158,12 @@ fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
 
 /// A job control socket at `socket` whose handler serves `connections`
 /// device queries as the root handler does past its caller check: the
-/// request line, the query of `program` as `account`, the reply.
+/// request line, the query of `program` as the settings' account under
+/// their query lock, the reply.
 fn serve_device_queries(
     socket: &Path,
     program: PathBuf,
-    account: DeviceToolAccount,
+    settings: DeviceQuerySettings,
     connections: usize,
 ) -> std::thread::JoinHandle<()> {
     let listener = UnixListener::bind(socket).expect("bind the stand-in control socket");
@@ -137,7 +175,7 @@ fn serve_device_queries(
                 .read_line(&mut line)
                 .expect("the request line");
             let answer = match device_query::parse_request(line.as_bytes()) {
-                Some(Ok(query)) => device_query::answer(query, &program, &account).map(Some),
+                Some(Ok(query)) => device_query::answer(query, &program, &settings).map(Some),
                 Some(Err(why)) => Err(why),
                 None => Err("not a device query".to_owned()),
             };
@@ -154,7 +192,12 @@ fn after_the_hand_over_the_probe_reads_the_cards_through_the_job_control_socket_
     let dir = tempfile::tempdir().expect("tempdir");
     let program = standins().job_account_only.clone();
     let socket = dir.path().join("job-control.sock");
-    let handler = serve_device_queries(&socket, program.clone(), job_account(), 3);
+    let handler = serve_device_queries(
+        &socket,
+        program.clone(),
+        settings_in(dir.path(), job_account()),
+        3,
+    );
     let route = NvidiaSmiRoute::JobControl {
         socket: socket.clone(),
         fallback_program: program.clone(),
@@ -213,12 +256,12 @@ fn a_refused_query_answers_the_drivers_own_words_on_one_bounded_line() {
         other => panic!("the engine's own run is refused, got {other:?}"),
     }
     // On the output, after an error output past any pipe's buffer: the query
-    // is read to its end, not killed at the deadline, and its error carries
-    // a bounded part of each.
+    // is read to its end, not killed at the deadline (that error would say
+    // it did not answer in time, not how it exited), and its error carries a
+    // bounded part of each.
     let loud = NvidiaSmiRoute::Direct {
         program: standins().refusing_loudly.clone(),
     };
-    let started = Instant::now();
     match loud.query(NvidiaSmiQuery::Devices) {
         Err(GpuProbeError::Unavailable { reason }) => {
             assert!(reason.contains("exited with exit status: 4: x"), "{reason}");
@@ -228,11 +271,6 @@ fn a_refused_query_answers_the_drivers_own_words_on_one_bounded_line() {
         }
         other => panic!("a refusal on the output is refused, got {other:?}"),
     }
-    assert!(
-        started.elapsed() < Duration::from_secs(9),
-        "the loud refusal was read to its end, in {:?}",
-        started.elapsed()
-    );
 }
 
 #[test]
@@ -244,7 +282,7 @@ fn a_query_the_card_refuses_reaches_the_probe_as_unavailable_with_the_tools_reas
     let handler = serve_device_queries(
         &socket,
         standins().job_account_only.clone(),
-        not_the_job_account,
+        settings_in(dir.path(), not_the_job_account),
         1,
     );
     // A handler's refusal stays a refusal: the tool run here, which would
@@ -320,6 +358,115 @@ fn a_socket_file_no_handler_listens_on_leaves_the_query_to_the_tool_run_here() {
         }
         other => panic!("both refusals, got {other:?}"),
     }
+}
+
+#[test]
+fn a_socket_this_account_may_not_connect_to_leaves_the_query_to_the_tool_run_here() {
+    if rustix::process::getuid().is_root() {
+        // Root passes any file's mode, so it cannot be denied this way.
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    // A listener this account may not connect to: on the field host, a
+    // security module that lets it write the socket's file but denies the
+    // connection, so the route still takes the socket; here, the file's
+    // mode. Both answer EACCES at the connection, before any request.
+    let socket = dir.path().join("job-control.sock");
+    let _listener = UnixListener::bind(&socket).expect("bind");
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+    let route = NvidiaSmiRoute::JobControl {
+        socket: socket.clone(),
+        fallback_program: standins().before_hand_over.clone(),
+    };
+    let devices = parse_device_lines(
+        &route
+            .query(NvidiaSmiQuery::Devices)
+            .expect("the devices from the tool run here"),
+    )
+    .expect("readable device lines");
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].device_id, CARD);
+    // After the hand-over the tool run here is refused too, and the error
+    // names both.
+    let after = NvidiaSmiRoute::JobControl {
+        socket: socket.clone(),
+        fallback_program: standins().job_account_only.clone(),
+    };
+    match after.query(NvidiaSmiQuery::Devices) {
+        Err(GpuProbeError::Unavailable { reason }) => {
+            assert!(
+                reason.starts_with(&format!(
+                    "this account may not connect to the job control socket at {}: ",
+                    socket.display()
+                )),
+                "{reason}"
+            );
+            assert!(reason.contains("; run here: "), "{reason}");
+            assert!(reason.ends_with(NVML_REFUSAL), "{reason}");
+        }
+        other => panic!("both refusals, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_query_its_kill_cannot_end_holds_the_machines_query_lock_until_it_ends() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("job-control.sock");
+    let settings = settings_in(dir.path(), job_account());
+    let lock_file = settings.state_dir.join(DEVICE_QUERY_LOCK_FILE);
+    let handler = serve_device_queries(&socket, standins().escaping.clone(), settings, 3);
+    let route = NvidiaSmiRoute::JobControl {
+        socket,
+        fallback_program: standins().before_hand_over.clone(),
+    };
+
+    // The first query answers, and a process of it lives on out of the
+    // reach of its group's kill, with the query's descriptors.
+    let devices = parse_device_lines(
+        &route
+            .query(NvidiaSmiQuery::Devices)
+            .expect("the first query answers"),
+    )
+    .expect("readable device lines");
+    assert_eq!(devices[0].device_id, CARD);
+    let escaped: i32 =
+        std::fs::read_to_string(standins().escaping.with_file_name(ESCAPED_PID_FILE))
+            .expect("the left-behind process's id")
+            .trim()
+            .parse()
+            .expect("a process id");
+
+    // While it lives, the next handler refuses and starts no query.
+    match route.query(NvidiaSmiQuery::Devices) {
+        Err(GpuProbeError::Unavailable { reason }) => assert!(
+            reason.starts_with("job control refused the nvidia-devices query: query_stuck"),
+            "{reason}"
+        ),
+        other => panic!("a query while an earlier one lives is refused, got {other:?}"),
+    }
+
+    // Once it ends, the lock is free, and the next query is served.
+    rustix::process::kill_process(
+        rustix::process::Pid::from_raw(escaped).expect("a process id"),
+        rustix::process::Signal::KILL,
+    )
+    .expect("kill the left-behind process");
+    let (freed, free) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let taken = std::fs::File::open(&lock_file).and_then(|file| file.lock());
+        let _ = freed.send(taken.map_err(|error| error.to_string()));
+    });
+    free.recv_timeout(Duration::from_secs(10))
+        .expect("the lock is free once the left-behind process has ended")
+        .expect("the lock");
+    let devices = parse_device_lines(
+        &route
+            .query(NvidiaSmiQuery::Devices)
+            .expect("the query after the earlier one ended is served"),
+    )
+    .expect("readable device lines");
+    assert_eq!(devices[0].device_id, CARD);
+    handler.join().expect("the handler");
 }
 
 #[test]

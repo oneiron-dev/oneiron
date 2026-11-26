@@ -158,30 +158,16 @@ else check compute-contexts PASS "none on $DEVICE"; fi
 if probe=$(card_probe "$DEVICE"); then check probe PASS "$probe"; else check probe FAIL "$probe"; fi
 
 # 6. The engine's GPU probe reads the card through the job control socket, as the job account, while the engine's own
-#    account stays closed to the card (3, with --also-account). One `device-query` request, as the engine sends it.
+#    account stays closed to the card (3, with --also-account). One `device-query` request, as the engine sends it, and
+#    its reply read as the engine reads it: the length frame first, then the card's own UUID field (engine_probe.py,
+#    whose text goes to python3 as an argument, since the engine's account may not read this tree; its own red/green
+#    runs: engine_probe_fixture.sh).
 if [ -n "$ENGINE" ] && [ "$PHASE" = oneiron-only ]; then
   control_socket=${ONEIRON_JOB_CONTROL_SOCKET:-/run/oneiron-job-control.sock}
-  answer=$(runuser -u "$ENGINE" -- python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(20)
-try:
-    s.connect(sys.argv[1])
-    s.sendall(b"device-query nvidia-devices\n")
-    data = b""
-    while True:
-        chunk = s.recv(65536)
-        if not chunk:
-            break
-        data += chunk
-    sys.stdout.write(data.decode("utf-8", "replace"))
-except OSError as e:
-    print("error " + str(e))
-' "$control_socket" 2>&1)
-  head=$(head -1 <<< "$answer")
-  if [[ $head == "ok "* ]] && grep -qF "$DEVICE" <<< "$answer"; then
-    check engine-probe PASS "$ENGINE via $control_socket: $(grep -F "$DEVICE" <<< "$answer" | head -1)"
-  else check engine-probe FAIL "$ENGINE via $control_socket: ${head:-no answer}"; fi
+  answer=$(runuser -u "$ENGINE" -- python3 -c "$(cat "$(dirname "$0")/engine_probe.py")" "$control_socket" "$DEVICE" 2>&1)
+  verdict=$(head -1 <<< "$answer")
+  if [[ $verdict == "PASS "* ]]; then check engine-probe PASS "$ENGINE via $control_socket: ${verdict#PASS }"
+  else check engine-probe FAIL "$ENGINE via $control_socket: ${verdict:-no answer}"; fi
 fi
 
 if [ ${#FAILED[@]} -eq 0 ]; then say "## TEST $TEST PASS phase=$PHASE evidence=$EVIDENCE"; exit 0; fi

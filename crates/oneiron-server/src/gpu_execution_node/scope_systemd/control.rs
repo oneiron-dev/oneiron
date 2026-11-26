@@ -30,8 +30,9 @@
 //!
 //! The fifth, `device-query <word>`, is the engine's GPU probe after the
 //! device hand-over: the handler, given the node file, runs that one query of
-//! a closed list as the job account and answers its output
-//! ([`super::device_query`]; FIX EXEC-NODE-PROBE-AFTER-HANDOVER).
+//! a closed list as the job account and answers its output, one query on the
+//! machine at a time ([`super::device_query`]; FIX
+//! EXEC-NODE-PROBE-AFTER-HANDOVER).
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -89,9 +90,9 @@ pub const CONTROL_ANSWER_WAIT: Duration = Duration::from_secs(25);
 /// Whether a job control socket file is at `path` and this process may
 /// connect to it: it may write to the socket file (the engine's group, or
 /// root). The socket unit removes the file when it stops (`RemoveOnStop=yes`);
-/// a file left behind with no listener is found at the connection, and the
-/// GPU probe then runs its tool itself
-/// ([`super::device_query::DeviceQueryError::NoListener`]).
+/// a file left behind with no listener, or a connection a security module
+/// denies, is found at the connection, and the GPU probe then runs its tool
+/// itself ([`super::device_query::DeviceQueryError::Unusable`]).
 #[must_use]
 pub fn control_socket_usable(path: &Path) -> bool {
     use std::os::unix::fs::FileTypeExt as _;
@@ -327,8 +328,8 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
         let query = query?;
         let node_file = node_file
             .ok_or("device_query_needs_node_file: run `oneiron execution-node install` again")?;
-        let account = device_query::job_account(node_file, engine_uid)?;
-        return device_query::answer_installed(query, &account).map(Some);
+        let settings = device_query::query_settings(node_file, engine_uid)?;
+        return device_query::answer_installed(query, &settings).map(Some);
     }
     let (verb, id) = parse_request(&line)?;
     if let ControlVerb::Renew { cutoff_boot_ns } = verb {
