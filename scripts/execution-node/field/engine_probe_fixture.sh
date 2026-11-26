@@ -20,6 +20,8 @@
 #                    case passes only when the probe reports at least one connect that met the full queue
 #                    (--report-tries), so a probe that starts after the queue has cleared cannot pass it (FIX
 #                    T40-FIXTURE-LISTEN-QUEUE-NO-EAGAIN).
+#   flag-named-socket  check 6 passes the socket and the UUID and no flag: a socket the probe is given as the
+#                    relative path `--report-tries` is still the socket (review r1 of #10557).
 #   unit-separator   Rust's str::trim does not remove U+001C-U+001F, which Python's str.strip() does: a device line
 #                    ending in U+001F is one the probe does not read.
 #   slow-reply       the probe's whole exchange ends 15 s after it starts (GPU_QUERY_TIMEOUT 10 s, ANSWER_MARGIN 5 s).
@@ -82,14 +84,16 @@ EOF
   server=$!
 }
 
-case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>] [<queue full>]
-  local sock=$tmp/$1.sock reply=$tmp/$1.reply out rc got verdict full tries=0 report=()
+# The probe runs in the cases' folder and is given the socket as <socket name> (relative to that folder) when the case
+# names one, else as its whole path.
+case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>] [<queue full>] [<socket name>]
+  local sock=$tmp/${8:-$1.sock} reply=$tmp/$1.reply out rc got verdict full tries=0 report=()
   printf '%b' "$3" > "$reply"
   serve_once "$sock" "$reply" "${5:-0}" "${6:-0}" "${7:-0}"
   until [ -S "$sock" ] || [ "$tries" -ge 200 ]; do sleep 0.05; tries=$((tries + 1)); done
   # A queue-full case asks the probe how many connects met the full queue: a probe that met none proves nothing.
   if [ "${7:-0}" != 0 ]; then report=(--report-tries); fi
-  out=$(python3 "$here/engine_probe.py" ${report[@]+"${report[@]}"} "$sock" "$UUID" 2>&1)
+  out=$(cd "$tmp" && python3 "$here/engine_probe.py" ${report[@]+"${report[@]}"} "${8:-$sock}" "$UUID" 2>&1)
   rc=$?
   kill "$server" 2> /dev/null; wait "$server" 2> /dev/null
   got=$(head -1 <<< "$out")
@@ -142,5 +146,6 @@ case_reply slow-reply FAIL "$(framed "$LINE\\n")" "no whole reply within 15 s" 1
 case_reply near-cutoff PASS "$(framed "$LINE\\n")" "" 14.5 0
 case_reply held-open PASS "$(framed "$LINE\\n")" "" 0 30
 case_reply listen-queue-full PASS "$(framed "$LINE\\n")" "" 0 0 2
+case_reply flag-named-socket PASS "$(framed "$LINE\\n")" "" 0 0 0 --report-tries
 echo "## FIXTURES rc=$WRONG"
 exit "$WRONG"

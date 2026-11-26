@@ -30,7 +30,9 @@ usage: engine_probe.py [--report-tries] <socket> <GPU-uuid>
 Prints one line, `PASS <the card's device line>` or `FAIL <why>`, and exits 0 or 1. With --report-tries
 (engine_probe_fixture.sh's listen-queue-full case; FIX T40-FIXTURE-LISTEN-QUEUE-NO-EAGAIN), a second line
 `full-queue-tries <n>` says how many connects met a full listen queue before one went through (`none` when the
-exchange broke off), so the case proves the probe met the full queue rather than a queue already cleared.
+exchange broke off), so the case proves the probe met the full queue rather than a queue already cleared. The flag
+counts only before two more arguments: check 6 passes exactly two, so a socket path that reads as the flag is still the
+socket (review r1 of #10557; case flag-named-socket).
 """
 
 import re
@@ -222,7 +224,7 @@ def judge(head, body, device):
 
 def main(argv):
     args = argv[1:]
-    report = args[:1] == ["--report-tries"]
+    report = len(args) == 3 and args[0] == "--report-tries"
     if report:
         args = args[1:]
     if len(args) != 2:
