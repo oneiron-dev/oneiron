@@ -516,7 +516,7 @@ impl Vault {
                 row.phase == DispatchPhase::Closed
                     && matches!(row.closed, Some(DispatchClose::NodeRefused { .. }))
             });
-            job.state = if node_refused {
+            job.state = if node_refused && false {
                 GpuJobState::Ended {
                     reason: GpuEndReason::NeverStarted,
                 }
