@@ -5,7 +5,7 @@ if you want it. You make no calls by hand:
 
 | Claude Code event | Hook | What happens |
 |---|---|---|
-| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. The plugin and the snippet below recall nothing at start (`--query ' '`), until start recall has a relevance threshold ([How it works](#how-it-works)). |
+| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. The plugin and the snippet below recall nothing at start (`--query " "`), until start recall has a relevance threshold ([How it works](#how-it-works)). |
 | `UserPromptSubmit` (only if you add it) | `prompt` | A short recall for what you just asked, from the bound vault. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
@@ -59,10 +59,10 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
   directory's.
 - **No recall at start, for now.** Start recall has no relevance threshold
   yet, and lines that miss the session's work are worse than none. So the
-  plugin and the snippet below pass `--query ' '`: a blank query binds the
+  plugin and the snippet below pass `--query " "`: a blank query binds the
   vault, records the session and calls no tool. Claude recalls through the
   MCP tools when the work needs it. To recall at start anyway, drop
-  `--query ' '` (the project's name) or give `--query "<words>"`.
+  `--query " "` (the project's name) or give `--query "<words>"`.
 - **Write-back** needs no credential. `--queue` leaves one file that names the
   session's log in the vault's import queue. A running `serve` imports it
   within seconds. It is the same import as `oneiron import claude-code` with the
@@ -434,7 +434,7 @@ other than the default and may be stopped when a session ends.
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "timeout": 15,
-        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query ' '" } ] }
+        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query \" \"" } ] }
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "timeout": 10,
@@ -519,7 +519,7 @@ What the hooks already imported stays in your vault, like any import.
   lands.
 - `--query "<words>"` on `session-start` recalls those words instead of the
   project's name (on `prompt`, instead of the prompt). A blank one
-  (`--query ' '`, as the plugin passes) recalls nothing.
+  (`--query " "`, as the plugin passes) recalls nothing.
 - `--effort <light|medium|high|xhigh|max>` on `session-start` picks recall's
   effort; it stays `light` unless you set it. Above light the server embeds
   the query first, and a model that is still loading leaves recall on its

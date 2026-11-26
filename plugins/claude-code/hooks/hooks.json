@@ -7,7 +7,7 @@
           {
             "type": "command",
             "timeout": 15,
-            "command": "oneiron hook --host claude-code session-start --credential-file \"${HOME}/.config/oneiron/claude-code-hooks.cred\" --query ' '"
+            "command": "oneiron hook --host claude-code session-start --credential-file \"${HOME}/.config/oneiron/claude-code-hooks.cred\" --query \" \""
           }
         ]
       }
