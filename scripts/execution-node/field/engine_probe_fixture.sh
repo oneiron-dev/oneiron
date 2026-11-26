@@ -84,16 +84,19 @@ EOF
   server=$!
 }
 
-# The probe runs in the cases' folder and is given the socket as <socket name> (relative to that folder) when the case
-# names one, else as its whole path.
+# The probe runs in the folder the fixture was started in and is given the socket's path, as $tmp names it (relative
+# to that folder when TMPDIR is relative). Only a case that names a socket runs the probe in the cases' folder and gives
+# it <socket name>, relative to that folder (review r2 of #10557: changing folder for every case broke a relative TMPDIR).
 case_reply() { # <name> <want PASS|FAIL> <reply, as printf's %b reads it> [<words a FAIL's reason holds>] [<delay>] [<hold>] [<queue full>] [<socket name>]
-  local sock=$tmp/${8:-$1.sock} reply=$tmp/$1.reply out rc got verdict full tries=0 report=()
+  local sock=$tmp/${8:-$1.sock} reply=$tmp/$1.reply out rc got verdict full tries=0 report=() probe_dir=. probe_sock
+  probe_sock=$sock
   printf '%b' "$3" > "$reply"
   serve_once "$sock" "$reply" "${5:-0}" "${6:-0}" "${7:-0}"
   until [ -S "$sock" ] || [ "$tries" -ge 200 ]; do sleep 0.05; tries=$((tries + 1)); done
   # A queue-full case asks the probe how many connects met the full queue: a probe that met none proves nothing.
   if [ "${7:-0}" != 0 ]; then report=(--report-tries); fi
-  out=$(cd "$tmp" && python3 "$here/engine_probe.py" ${report[@]+"${report[@]}"} "${8:-$sock}" "$UUID" 2>&1)
+  if [ -n "${8:-}" ]; then probe_dir=$tmp probe_sock=$8; fi
+  out=$(cd "$probe_dir" && python3 "$here/engine_probe.py" ${report[@]+"${report[@]}"} "$probe_sock" "$UUID" 2>&1)
   rc=$?
   kill "$server" 2> /dev/null; wait "$server" 2> /dev/null
   got=$(head -1 <<< "$out")
