@@ -246,9 +246,11 @@ pub fn is_harness_name(name: &str) -> bool {
 pub enum RecallBarRule {
     /// No bar: every line the recall found.
     Open,
-    /// No line passes. `reason` says why: `owner` (the owner set it), `unmeasured` (no floor
-    /// is measured for the vault's embedding space), `no_query_vector` (the query was not
-    /// embedded), `no_project` (a push for a session with no project).
+    /// No line passes. `reason` says why: `owner` (the owner set it), `unmeasured` (the host
+    /// measured no bar for the vault's embedding space), `other_space` (the owner's floor names
+    /// another space), `declared_space` (the vault's text slot binds a declared space, which no
+    /// bar reads yet), `no_query_vector` (the query was not embedded), `no_project` (a push read
+    /// outside any project), `unreadable` (the owner's row did not read).
     Quiet { reason: String },
     /// A line passes when its text holds a phrase of the query, or one of its rare terms.
     DirectMatch,
