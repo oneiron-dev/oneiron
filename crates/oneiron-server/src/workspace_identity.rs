@@ -46,7 +46,10 @@ impl WorkspaceIdentity {
         let (root, main) = match git_checkout(&folder, deadline) {
             Some(GitCheckout { top, primary }) => {
                 let root = std::fs::canonicalize(&top).unwrap_or(top);
-                (root, primary.and_then(|primary| std::fs::canonicalize(primary).ok()))
+                (
+                    root,
+                    primary.and_then(|primary| std::fs::canonicalize(primary).ok()),
+                )
             }
             None => (folder, None),
         };
