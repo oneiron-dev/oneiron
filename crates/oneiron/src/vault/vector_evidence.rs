@@ -1,12 +1,58 @@
 //! Where a vector hit counts as evidence in the vault's embedding space, as
-//! the host's embedder states it.
+//! the host's embedder states it, or as the owner set it for that space
+//! (`retrieval.vector_evidence`, [`setting_keys::VECTOR_EVIDENCE`]).
+
+pub(crate) mod setting_keys;
 
 use std::collections::BTreeMap;
 use std::sync::PoisonError;
 
+use serde::{Deserialize, Serialize};
+
 use crate::Vault;
 use crate::config::VectorEvidenceFloors;
 use crate::error::Result;
+use crate::setting::SettingValue;
+
+/// The owner's floors for one embedding space, the value of
+/// `retrieval.vector_evidence`: `{floor, strong}`, held to
+/// [`VectorEvidenceFloors::validate`] as a host's floors are, or none, where
+/// the host's floors judge the space.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct OwnerEvidenceFloors(pub(crate) Option<VectorEvidenceFloors>);
+
+impl OwnerEvidenceFloors {
+    /// No floors of the owner's: the host's judge the space. What a space no
+    /// row names reads, and what an unreadable row reads as.
+    pub(crate) fn unset() -> Self {
+        Self(None)
+    }
+}
+
+impl SettingValue for OwnerEvidenceFloors {
+    const CLOSED: bool = true;
+
+    /// Floors outside `0 <= floor <= strong <= 1`, or not numbers, are
+    /// refused, never clamped.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` naming the two floors.
+    fn check(self) -> Result<Self> {
+        if let Some(floors) = &self.0 {
+            floors.validate()?;
+        }
+        Ok(self)
+    }
+}
+
+/// Whether `item` names an embedding space: a model id, `org/name@revision`
+/// ([`crate::store::validate_embedding_model_id`]), as a vault's vectors are
+/// pinned to ([`crate::VaultConfig::embedding_model`]).
+fn is_embedding_space(item: &str) -> bool {
+    crate::store::validate_embedding_model_id(item).is_ok()
+}
 
 /// The floors a context pack's no-match check reads: one pair for every
 /// score, and the pairs a host measured for one kind of item in one
@@ -46,10 +92,12 @@ impl NoMatchFloors {
 }
 
 impl Vault {
-    /// The floors context packs are judged by now: the configured ones
+    /// The host's floors context packs are judged by now: the configured ones
     /// ([`crate::VaultConfig::vector_evidence`]) until the host sets others.
     /// A kind with floors of its own in this vault's space
-    /// ([`Vault::set_vector_evidence_for`]) is judged by those instead.
+    /// ([`Vault::set_vector_evidence_for`]) is judged by those instead, and
+    /// the owner's floors for the space (`retrieval.vector_evidence`), when
+    /// set, judge every kind there in place of both.
     pub fn vector_evidence(&self) -> VectorEvidenceFloors {
         self.vector_evidence
             .read()
@@ -94,12 +142,51 @@ impl Vault {
     }
 
     /// Every floor the no-match check reads, at once. A run reads them
-    /// once, when it starts, and judges, keys and records by that copy.
+    /// once, when it starts, and judges, keys and records by that copy. The
+    /// owner's floors for this vault's space take the place of the host's
+    /// ([`Self::with_owner_floors`]). Not for a caller that holds a read
+    /// transaction: it opens one ([`Self::no_match_floors_in_txn`]).
     pub(crate) fn no_match_floors(&self) -> NoMatchFloors {
+        let host = self.host_no_match_floors();
+        match self.store.env.read_txn() {
+            Ok(txn) => self.with_owner_floors(host, &txn),
+            Err(_) => host,
+        }
+    }
+
+    /// [`Self::no_match_floors`] inside a transaction the caller holds.
+    pub(crate) fn no_match_floors_in_txn(&self, txn: &heed::RoTxn<'_>) -> NoMatchFloors {
+        self.with_owner_floors(self.host_no_match_floors(), txn)
+    }
+
+    /// The floors the host set: its pair, and the pairs it measured for kinds.
+    fn host_no_match_floors(&self) -> NoMatchFloors {
         self.vector_evidence
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// `host`, with the owner's floors for this vault's space
+    /// ([`setting_keys::VECTOR_EVIDENCE`]) in place of its pair and of every
+    /// kind's pair there: the owner's row first, then a host-measured kind
+    /// pair, then the host's pair (Engine ANSWER 27 Nov 01:45). A vault with
+    /// no space, a space no row names, and a row that does not read keep
+    /// `host`.
+    fn with_owner_floors(&self, mut host: NoMatchFloors, txn: &heed::RoTxn<'_>) -> NoMatchFloors {
+        let space = self.evidence_space();
+        if space.is_empty() {
+            return host;
+        }
+        let owner = setting_keys::VECTOR_EVIDENCE
+            .read_in_txn(self, txn, &[], Some(space))
+            .ok()
+            .and_then(|resolved| resolved.value.0);
+        if let Some(floors) = owner {
+            host.pair = floors;
+            host.keyed.remove(space);
+        }
+        host
     }
 
     /// The embedding space this vault's vectors are scored in: the model
