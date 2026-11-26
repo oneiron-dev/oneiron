@@ -4,6 +4,7 @@
 //! recheck, so a card is never offered from an old reading.
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 pub use oneiron::machine_capacity::GpuDevice;
 
 /// The driver's command-line query tool.
-const NVIDIA_SMI: &str = "nvidia-smi";
+pub(crate) const NVIDIA_SMI: &str = "nvidia-smi";
 
 /// The vendor of every GPU [`NVIDIA_SMI`] lists.
 const NVIDIA: &str = "nvidia";
@@ -111,37 +112,149 @@ pub trait GpuDeviceProbe: Send + Sync {
     }
 }
 
-/// The shipped probe: `nvidia-smi`, one query per ask. Each query runs in
-/// its own process group, and its output is read on the asking thread up to
-/// the query's deadline; past it the pipe's read end is closed and the
-/// group killed, so no helper that keeps the pipe open (even one in a
-/// session of its own) holds a thread or a descriptor of this server. While
-/// a killed query of any probe in this process is still unreaped, every
-/// query is refused, so a stuck driver never piles up waiting threads.
+/// The shipped probe: `nvidia-smi`, one query per ask, on this machine's
+/// [`NvidiaSmiRoute`] at that ask. Each query runs in its own process
+/// group, and its output is read on the asking thread up to the query's
+/// deadline; past it the pipe's read end is closed and the group killed, so
+/// no helper that keeps the pipe open (even one in a session of its own)
+/// holds a thread or a descriptor of this server. While a killed query of
+/// any probe in this process is still unreaped, every query is refused, so
+/// a stuck driver never piles up waiting threads. Through the job control
+/// socket the root handler runs the query by these same rules, and this
+/// process waits on the socket no longer than the query's deadline and a
+/// margin.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NvidiaSmiProbe;
 
 impl GpuDeviceProbe for NvidiaSmiProbe {
     fn devices(&self) -> Result<Vec<GpuDevice>, GpuProbeError> {
-        parse_device_lines(&query(&[
-            "--query-gpu=uuid,name,memory.total",
-            "--format=csv,noheader,nounits",
-        ])?)
+        parse_device_lines(&NvidiaSmiRoute::of_this_machine().query(NvidiaSmiQuery::Devices)?)
     }
 
     fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError> {
-        parse_compute_process_lines(&query(&[
-            "--query-compute-apps=gpu_uuid,pid",
-            "--format=csv,noheader,nounits",
-        ])?)
+        parse_compute_process_lines(
+            &NvidiaSmiRoute::of_this_machine().query(NvidiaSmiQuery::ComputeProcesses)?,
+        )
     }
 
     fn samples(&self) -> Result<Vec<DeviceSample>, GpuProbeError> {
-        parse_sample_lines(&query(&[
-            "--query-gpu=uuid,temperature.gpu,power.draw,memory.used",
-            "--format=csv,noheader,nounits",
-        ])?)
+        parse_sample_lines(&NvidiaSmiRoute::of_this_machine().query(NvidiaSmiQuery::Samples)?)
     }
+}
+
+/// One query of [`NVIDIA_SMI`] the probe asks. The list is closed, so root,
+/// which runs a query as the job account for the engine, never runs a
+/// program or an argument the engine chose (FIX
+/// EXEC-NODE-PROBE-AFTER-HANDOVER).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NvidiaSmiQuery {
+    /// Each GPU's UUID, model and memory ([`parse_device_lines`]).
+    Devices,
+    /// Every compute process on every GPU ([`parse_compute_process_lines`]).
+    ComputeProcesses,
+    /// Each GPU's temperature, power draw and memory in use
+    /// ([`parse_sample_lines`]).
+    Samples,
+}
+
+impl NvidiaSmiQuery {
+    /// Every query.
+    pub const ALL: [Self; 3] = [Self::Devices, Self::ComputeProcesses, Self::Samples];
+
+    /// Its word on the job control socket.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Devices => "nvidia-devices",
+            Self::ComputeProcesses => "nvidia-compute-processes",
+            Self::Samples => "nvidia-samples",
+        }
+    }
+
+    /// The query `word` names; `None` for any other word.
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|query| query.word() == word)
+    }
+
+    /// The tool's arguments.
+    #[must_use]
+    pub fn args(self) -> [&'static str; 2] {
+        let fields = match self {
+            Self::Devices => "--query-gpu=uuid,name,memory.total",
+            Self::ComputeProcesses => "--query-compute-apps=gpu_uuid,pid",
+            Self::Samples => "--query-gpu=uuid,temperature.gpu,power.draw,memory.used",
+        };
+        [fields, "--format=csv,noheader,nounits"]
+    }
+}
+
+/// Where the probe's queries run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NvidiaSmiRoute {
+    /// `program`, run by this process as its own account: a machine where
+    /// this process may not use a job control socket, or has none
+    /// (`execution-node install` never ran there).
+    Direct { program: PathBuf },
+    /// Through the job control socket at `socket`: its root handler runs
+    /// each query as the job account. After the device hand-over (runbook
+    /// 1.9 step 3, T40) only the job account's group opens the card's
+    /// files, and the engine's account cannot open them, by design (FIX
+    /// EXEC-NODE-PROBE-AFTER-HANDOVER).
+    JobControl { socket: PathBuf },
+}
+
+impl NvidiaSmiRoute {
+    /// This machine's route now: through the job control socket while it
+    /// listens and this process may connect to it (the engine's account, or
+    /// root), else [`NVIDIA_SMI`] run here.
+    #[must_use]
+    pub fn of_this_machine() -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            use super::scope_systemd::control::{CONTROL_SOCKET_PATH, control_socket_usable};
+            if control_socket_usable(Path::new(CONTROL_SOCKET_PATH)) {
+                return Self::JobControl {
+                    socket: PathBuf::from(CONTROL_SOCKET_PATH),
+                };
+            }
+        }
+        Self::Direct {
+            program: PathBuf::from(NVIDIA_SMI),
+        }
+    }
+
+    /// Runs `query` on this route and answers the tool's output.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError::Unavailable`] when the tool fails, does not answer in
+    /// time, or the job control socket's handler refuses or does not answer.
+    pub fn query(&self, query: NvidiaSmiQuery) -> Result<String, GpuProbeError> {
+        match self {
+            Self::Direct { program } => run_device_tool_as(program, &query.args(), None),
+            #[cfg(target_os = "linux")]
+            Self::JobControl { socket } => {
+                super::scope_systemd::device_query::request(socket, query)
+            }
+            #[cfg(not(target_os = "linux"))]
+            Self::JobControl { .. } => Err(GpuProbeError::Unavailable {
+                reason: "the job control socket is on Linux only".to_owned(),
+            }),
+        }
+    }
+}
+
+/// The account a device tool query runs as when root runs it for the
+/// engine: the job account, never root or the engine's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceToolAccount {
+    /// Its name, the query's `USER` and `LOGNAME`.
+    pub name: String,
+    pub uid: u32,
+    /// Its own group (`install` makes the account with `--user-group`): the
+    /// group the device hand-over opens the card's files to.
+    pub gid: u32,
 }
 
 /// What placement reads about `device`, a GPU the driver listed, in `state`
@@ -293,9 +406,10 @@ pub(super) fn plain_device_id(id: &str) -> Option<String> {
 /// whole process: every probe's queries refuse while there is one.
 static UNREAPED_QUERIES: AtomicUsize = AtomicUsize::new(0);
 
-/// Runs one [`NVIDIA_SMI`] query: [`run_device_tool`].
-fn query(args: &[&str]) -> Result<String, GpuProbeError> {
-    run_device_tool(NVIDIA_SMI, args)
+/// Runs one query of `program`, a device driver's command-line tool, as
+/// this process's own account: [`run_device_tool_as`].
+pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, GpuProbeError> {
+    run_device_tool_as(Path::new(program), args, None)
 }
 
 /// Runs one query of `program`, a device driver's command-line tool, and
@@ -304,8 +418,18 @@ fn query(args: &[&str]) -> Result<String, GpuProbeError> {
 /// never fills the pipe. At the deadline the pipe's read end is closed, the
 /// query is killed with its process group and reaped off the caller's path;
 /// no thread waits on the pipe, whoever holds its write end.
-pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, GpuProbeError> {
+///
+/// With `account` (root only: the job control socket's handler), the query
+/// runs as that account: its uid, its own group, no supplementary group
+/// (std clears them when root sets the uid), and an environment of its own
+/// with nothing of root's.
+pub(crate) fn run_device_tool_as(
+    program: &Path,
+    args: &[&str],
+    account: Option<&DeviceToolAccount>,
+) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
+    let program_name = program.display();
     if UNREAPED_QUERIES.load(Ordering::Acquire) > 0 {
         return Err(unavailable(
             "an earlier device tool query was killed and has not ended yet".to_owned(),
@@ -317,27 +441,46 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    if let Some(account) = account {
+        std::os::unix::process::CommandExt::uid(&mut command, account.uid);
+        std::os::unix::process::CommandExt::gid(&mut command, account.gid);
+        command
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("USER", &account.name)
+            .env("LOGNAME", &account.name)
+            .env("LANG", "C");
+    }
+    #[cfg(not(unix))]
+    if account.is_some() {
+        return Err(unavailable(format!(
+            "{program_name} runs as another account on Unix only"
+        )));
+    }
     // Its own process group, so whatever it starts is killed with it.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command
         .spawn()
-        .map_err(|error| unavailable(format!("{program} did not start: {error}")))?;
+        .map_err(|error| unavailable(format!("{program_name} did not start: {error}")))?;
     let Some(mut stdout) = child.stdout.take() else {
         abandon(child);
-        return Err(unavailable(format!("{program} gave no output pipe")));
+        return Err(unavailable(format!("{program_name} gave no output pipe")));
     };
     #[cfg(unix)]
     if let Err(error) = rustix::io::ioctl_fionbio(&stdout, true) {
         abandon(child);
         return Err(unavailable(format!(
-            "{program}'s output pipe could not be read without blocking: {error}"
+            "{program_name}'s output pipe could not be read without blocking: {error}"
         )));
     }
     #[cfg(not(unix))]
     {
         abandon(child);
-        return Err(unavailable(format!("{program} is queried on Unix only")));
+        return Err(unavailable(format!(
+            "{program_name} is queried on Unix only"
+        )));
     }
     let deadline = Instant::now() + GPU_QUERY_TIMEOUT;
     let mut output = Vec::new();
@@ -361,7 +504,7 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
                 Err(error) => {
                     drop(stdout);
                     abandon(child);
-                    return Err(unavailable(format!("{program}'s output: {error}")));
+                    return Err(unavailable(format!("{program_name}'s output: {error}")));
                 }
             }
         }
@@ -372,7 +515,7 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
                     drop(stdout);
                     abandon(child);
                     return Err(unavailable(format!(
-                        "{program} could not be waited on: {error}"
+                        "{program_name} could not be waited on: {error}"
                     )));
                 }
             }
@@ -386,7 +529,7 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
             drop(stdout);
             abandon(child);
             return Err(unavailable(format!(
-                "{program} did not answer within {} s",
+                "{program_name} did not answer within {} s",
                 GPU_QUERY_TIMEOUT.as_secs()
             )));
         }
@@ -395,9 +538,9 @@ pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, Gp
         }
     };
     let text = String::from_utf8(output)
-        .map_err(|error| unavailable(format!("{program}'s output: {error}")))?;
+        .map_err(|error| unavailable(format!("{program_name}'s output: {error}")))?;
     if !status.success() {
-        return Err(unavailable(format!("{program} exited with {status}")));
+        return Err(unavailable(format!("{program_name} exited with {status}")));
     }
     Ok(text)
 }

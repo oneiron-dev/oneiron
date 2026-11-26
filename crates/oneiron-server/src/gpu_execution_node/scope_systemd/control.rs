@@ -27,14 +27,21 @@
 //! The fourth verb, `renew <id> <cutoff boot ns>`, is a session's renewal
 //! (pass 34, 2.5; row W1): the handler, given the node file, moves that
 //! unit's cutoff forward by root's timer handoff ([`super::renew`]).
+//!
+//! The fifth, `device-query <word>`, is the engine's GPU probe after the
+//! device hand-over: the handler, given the node file, runs that one query of
+//! a closed list as the job account and answers its output
+//! ([`super::device_query`]; FIX EXEC-NODE-PROBE-AFTER-HANDOVER).
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::CHECKPOINT_SIGNALS;
+use super::device_query;
 use super::safe_fs::account;
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
@@ -70,13 +77,24 @@ const CUTOFF_DIGITS_MAX: usize = 20;
 /// The longest reply line the engine reads.
 const REPLY_MAX_BYTES: usize = 1024;
 
-/// How long the handler waits for the whole request line, from its start.
-const REQUEST_WAIT: Duration = Duration::from_secs(5);
+/// How long the handler waits for the whole request line, from its start;
+/// the engine's write of it waits as long.
+pub(super) const REQUEST_WAIT: Duration = Duration::from_secs(5);
 
 /// How long the engine waits for the handler's answer: the handler's own
 /// `systemctl` wait ([`SYSTEMCTL_TIMEOUT`]) and its start, with room, so a
 /// slow but successful start is not reported as no answer (review r4 R4-05).
 pub const CONTROL_ANSWER_WAIT: Duration = Duration::from_secs(25);
+
+/// Whether a job control socket listens at `path` and this process may
+/// connect to it: it may write to the socket file (the engine's group, or
+/// root). The socket unit removes the file when it stops (`RemoveOnStop=yes`).
+#[must_use]
+pub fn control_socket_usable(path: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt as _;
+    std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_socket())
+        && rustix::fs::access(path, rustix::fs::Access::WRITE_OK).is_ok()
+}
 
 /// What the engine may ask for one job unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,17 +268,11 @@ pub fn run(args: &[String]) -> i32 {
         .map(UnixStream::from)
         .and_then(|mut stream| {
             let answer = serve(args, &mut stream);
-            let line = match &answer {
-                Ok(()) => "ok\n".to_owned(),
-                // One line: the engine reads up to the first newline
-                // (review r4 R4-06).
-                Err(why) => format!("refused {}\n", why.replace(['\n', '\r'], " ")),
-            };
-            let _ = stream.write_all(line.as_bytes());
+            let _ = stream.write_all(&render_reply(&answer));
             answer
         });
     match answer {
-        Ok(()) => 0,
+        Ok(_) => 0,
         Err(why) => {
             journal_line!("job-control: refused: {why}");
             1
@@ -268,7 +280,25 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
+/// The handler's reply to one request: `ok\n`; for a device query, `ok <n>\n`
+/// and the query's `n` bytes of output; or `refused <why>\n`, on one line,
+/// since the engine reads up to the first newline (review r4 R4-06).
+#[must_use]
+pub fn render_reply(answer: &Result<Option<Vec<u8>>, String>) -> Vec<u8> {
+    match answer {
+        Ok(None) => b"ok\n".to_vec(),
+        Ok(Some(output)) => {
+            let mut reply = format!("ok {}\n", output.len()).into_bytes();
+            reply.extend_from_slice(output);
+            reply
+        }
+        Err(why) => format!("refused {}\n", why.replace(['\n', '\r'], " ")).into_bytes(),
+    }
+}
+
+/// Serves one connection: the device query's output, `None` for the other
+/// verbs, or the refusal's reason.
+fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, String> {
     let (engine, node_file) = match args {
         [flag, name] if flag == "--engine-account" && plain_account(name) => (name, None),
         [flag, name, file_flag, file]
@@ -290,12 +320,19 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
     }
     let line = read_line(stream, REQUEST_MAX_BYTES, REQUEST_WAIT)
         .map_err(|error| format!("request: {error}"))?;
+    if let Some(query) = device_query::parse_request(&line) {
+        let query = query?;
+        let node_file = node_file
+            .ok_or("device_query_needs_node_file: run `oneiron execution-node install` again")?;
+        let account = device_query::job_account(node_file, engine_uid)?;
+        return device_query::answer_installed(query, &account).map(Some);
+    }
     let (verb, id) = parse_request(&line)?;
     if let ControlVerb::Renew { cutoff_boot_ns } = verb {
         let node_file = node_file.ok_or(
             "renew_needs_node_file: run `oneiron execution-node install` again for sessions",
         )?;
-        return super::renew::renew_cutoff(node_file, engine, &id, cutoff_boot_ns);
+        return super::renew::renew_cutoff(node_file, engine, &id, cutoff_boot_ns).map(|()| None);
     }
     let unit = id.unit_name();
     if matches!(verb, ControlVerb::Signal(_)) {
@@ -309,7 +346,7 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
         .systemctl_args(&unit)
         .ok_or("verb_not_a_systemctl_request")?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(drop)
+    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|_| None)
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel
@@ -346,7 +383,11 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
 /// all within `wait` of the call: the deadline is for the whole line, not
 /// for each read, so a peer that sends a byte at a time cannot hold the
 /// reader past it (review r4 R4-04).
-fn read_line(stream: &mut UnixStream, limit: usize, wait: Duration) -> std::io::Result<Vec<u8>> {
+pub(super) fn read_line(
+    stream: &mut UnixStream,
+    limit: usize,
+    wait: Duration,
+) -> std::io::Result<Vec<u8>> {
     let deadline = Instant::now() + wait;
     let mut line = Vec::new();
     let mut byte = [0_u8; 1];
