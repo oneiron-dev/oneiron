@@ -31,6 +31,12 @@ pub use oneiron_records::authority::slip_pairing::{PairingDescriptor, PairingPri
 #[serde(deny_unknown_fields)]
 pub struct PairingLink {
     pub code: String,
+    /// When the link expires, as a second on the vault's clock (the authority
+    /// plane's, [`crate::Vault::capability_slip_now`]): one pairing code life
+    /// (`pairing.code.ttl_secs`, one hour unless set) after issue, measured on
+    /// that clock. The vault's clock does not advance while the server is
+    /// stopped and resumes from its last saved reading when it starts, so it
+    /// can read behind the host's clock.
     pub expires_at: u64,
     /// The checkpoint pin's challenge and digest, when the vault has an
     /// attested checkpoint (OF-469): the owner delivers them with the code,
