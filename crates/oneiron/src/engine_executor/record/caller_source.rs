@@ -120,7 +120,7 @@ pub(in crate::engine_executor) fn verify_caller_source(
     let text = match storage {
         ExecutorStorage::Canonical(vault) => {
             let _custody = vault.store.gate_custody_read_guard()?;
-            let txn = vault.store.env.read_txn()?;
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
             caller_source_in_txn(vault, &txn, record)?
         }
         // A session on an on-record stretch reads base rows: the same held-occurrence check
