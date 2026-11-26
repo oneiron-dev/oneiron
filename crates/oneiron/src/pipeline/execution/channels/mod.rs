@@ -888,7 +888,22 @@ impl PipelineBuilder<'_> {
 
             // The owner's relevance bar (RECALL-CARRIER-THRESHOLD), on each row's final id:
             // after the fold, before the pack's candidates, budgets and cut, so a row under it
-            // takes no slot and the next moves up.
+            // takes no slot and the next moves up. A push keeps only CLAIMs here, the one kind
+            // with a project stamp, so its rows all hold project membership (REVIEW-10566
+            // round 1); the corpus filter then decides membership, before the cut, so the next
+            // CLAIM moves up.
+            if self.recall_bar_claims_only {
+                let mut kept = Vec::with_capacity(scores.len());
+                for row in scores.drain(..) {
+                    let is_claim = metadata_cache
+                        .get(&self.read, rtxn, &row.id)?
+                        .is_some_and(|meta| meta.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
+                    if is_claim {
+                        kept.push(row);
+                    }
+                }
+                *scores = kept;
+            }
             let bar_similarity = match self.recall_bar.as_ref() {
                 Some(judge) => {
                     let mut hidden_metadata = EntityMetadataCache::default();
