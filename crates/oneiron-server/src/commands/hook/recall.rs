@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use oneiron::memory::RecallSource;
+
 use crate::cli::{HookEffort, HookHost};
 use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 
@@ -50,12 +52,18 @@ pub(super) struct Recall<'a> {
     pub(super) limit: usize,
     pub(super) effort: HookEffort,
     pub(super) deadline: Instant,
+    /// The push these lines are, which the owner's relevance bar for it and this harness judges
+    /// (RECALL-CARRIER-THRESHOLD): only lines that clear it are given, at most 3, only from the
+    /// session's project.
+    pub(super) bar: RecallSource,
 }
 
 impl Recall<'_> {
-    /// `header` and a line per hit, or nothing when recall fails or finds
-    /// nothing.
-    pub(super) fn block(&self, header: &str) -> Vec<String> {
+    /// `header` and a line per hit, or nothing when recall fails or no line clears the owner's
+    /// bar. With nothing above the bar and the owner's `recall.bar.empty_receipt` set for this
+    /// harness, one line: `lead`, then that nothing cleared the bar and the rule it applied
+    /// (RECALL-EMPTY-RECEIPT, the owner's to decide; unset, nothing).
+    pub(super) fn block(&self, header: &str, lead: &str) -> Vec<String> {
         if Instant::now() >= self.deadline {
             return Vec::new();
         }
@@ -83,7 +91,13 @@ impl Recall<'_> {
         }
         let lines = self.shortened(found);
         if lines.is_empty() {
-            return Vec::new();
+            return receipt(&result)
+                .map(|rule| {
+                    vec![format!(
+                        "{lead}: nothing cleared the relevance bar ({rule})."
+                    )]
+                })
+                .unwrap_or_default();
         }
         std::iter::once(header.to_owned()).chain(lines).collect()
     }
@@ -143,13 +157,12 @@ impl Recall<'_> {
         )
     }
 
-    /// `vault.recall` at the effort asked when the server lists it, else
-    /// `memory.query`. Light runs no model and embeds nothing; medium embeds
-    /// the query on the server's embedder, so it finds a paraphrase; high and
-    /// above also rerank, under the server's budget. `memory.query` reads
-    /// lexically, and on the one-space preset (the text kind slot bound to a
-    /// declared space) it also embeds the query through that space's text
-    /// tower.
+    /// `vault.recall` at the effort asked, judged by the owner's relevance bar for this push
+    /// and harness. Light runs no model, but the bar's query still embeds once on the
+    /// server's embedder, since the bar compares cosines; medium also searches by that vector,
+    /// so it finds a paraphrase; high and above also rerank, under the server's budget. A
+    /// server that does not list `vault.recall` is asked nothing: no other tool judges lines by
+    /// the bar.
     fn tool_call(&self, listed: &Value) -> anyhow::Result<(&'static str, Value)> {
         let tools = listed.get("tools").and_then(Value::as_array);
         let tool = |name: &str| {
@@ -158,22 +171,22 @@ impl Recall<'_> {
                 .flatten()
                 .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
         };
-        let (name, tool) = match tool("vault.recall") {
-            Some(tool) => ("vault.recall", tool),
-            None => (
-                "memory.query",
-                tool("memory.query").ok_or_else(|| anyhow::anyhow!("no recall tool"))?,
-            ),
-        };
+        // Only `vault.recall` judges lines by the owner's bar: a server that lists no such tool
+        // is given no push.
+        let (name, tool) = (
+            "vault.recall",
+            tool("vault.recall").ok_or_else(|| anyhow::anyhow!("no vault.recall tool"))?,
+        );
         let version = tool
             .pointer("/inputSchema/properties/schema_version/const")
             .cloned()
             .unwrap_or_else(|| json!("mcp_tool_args.v1"));
-        let arguments = if name == "vault.recall" {
-            json!({"spec": {"query": self.query, "effort": self.effort.as_str(), "limit": self.limit}})
-        } else {
-            json!({"request": {"query": self.query, "limit": self.limit, "view": "summary", "countMode": "none"}})
-        };
+        let arguments = json!({"spec": {
+            "query": self.query,
+            "effort": self.effort.as_str(),
+            "limit": self.limit,
+            "bar": {"source": self.bar.as_str(), "harness": self.host.as_str()},
+        }});
         Ok((
             name,
             json!({
@@ -189,6 +202,51 @@ impl Recall<'_> {
             }),
         ))
     }
+}
+
+/// The rule the owner's bar applied, in words, when the recall in `result` asks a receipt
+/// line for an empty answer (`bar.receipt`); `None` when it asks none.
+fn receipt(result: &Value) -> Option<String> {
+    let pack = result.get("structuredContent").cloned().or_else(|| {
+        result
+            .get("content")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .find_map(|text| serde_json::from_str::<Value>(text).ok())
+    })?;
+    let bar = pack.get("bar")?;
+    if bar.get("receipt") != Some(&Value::Bool(true)) {
+        return None;
+    }
+    let rule = bar.get("rule")?;
+    Some(match rule {
+        Value::String(name) if name == "direct_match" => {
+            "a direct match of the query's words".to_owned()
+        }
+        Value::String(name) if name == "open" => "no bar: nothing matched".to_owned(),
+        _ => match (rule.get("cosine"), rule.get("quiet")) {
+            (Some(cosine), _) => format!(
+                "a cosine of {} in {}",
+                cosine
+                    .get("floor")
+                    .and_then(Value::as_f64)
+                    .unwrap_or_default(),
+                cosine
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the vault's space")
+            ),
+            (None, Some(quiet)) => format!(
+                "quiet: {}",
+                quiet
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("owner")
+            ),
+            (None, None) => rule.to_string(),
+        },
+    })
 }
 
 /// Whether the server at `url` admits `auth` over `oneiron mcp` by

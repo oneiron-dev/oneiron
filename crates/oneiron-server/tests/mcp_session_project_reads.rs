@@ -479,6 +479,58 @@ async fn session_reads() -> TestResult {
     Ok(())
 }
 
+/// RECALL-CARRIER-THRESHOLD over MCP: a `vault.recall` that asks the owner's carrier bar, in a
+/// folder bound to alpha, is judged by alpha's rows. On this vault, which has no embedder, a line
+/// holding every word of the query clears the default bar, and beta's claim lies outside the
+/// session's project. In a folder with no project bound, and with no folder named, the push is
+/// quiet and the pack says why. Red on the base: `spec.bar` is no field of `vault.recall`, so the
+/// call is refused.
+#[test]
+fn a_push_reads_only_the_sessions_project_and_is_quiet_outside_one() -> TestResult {
+    on_engine_stack(push_in_session_project)
+}
+
+async fn push_in_session_project() -> TestResult {
+    let fixture = Fixture::new()?;
+    let reader = &fixture.reader;
+    let tools = fixture.tools(reader).await?;
+    let push = json!({
+        "query": "session project",
+        "effort": "light",
+        "bar": { "source": "carrier", "harness": "claude-code" },
+    });
+    let reply = fixture
+        .call(
+            reader,
+            3,
+            &tools,
+            "vault.recall",
+            push.clone(),
+            Some(BOUND_DIGEST),
+        )
+        .await?;
+    assert!(
+        names(&reply, fixture.in_alpha),
+        "alpha's claim clears the bar: {reply}"
+    );
+    assert!(!names(&reply, fixture.in_beta), "{reply}");
+    assert!(reply.to_string().contains("direct_match"), "{reply}");
+    for (id, folder) in [(4, Some(UNBOUND_DIGEST)), (5, None)] {
+        let reply = fixture
+            .call(reader, id, &tools, "vault.recall", push.clone(), folder)
+            .await?;
+        assert!(
+            !names(&reply, fixture.in_alpha) && !names(&reply, fixture.in_beta),
+            "{reply}"
+        );
+        assert!(
+            reply.to_string().contains(r#""reason":"no_project""#),
+            "the pack says why it is quiet: {reply}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn a_session_naming_another_folder_reads_nothing_its_credential_could_not() -> TestResult {
     on_engine_stack(another_folder)

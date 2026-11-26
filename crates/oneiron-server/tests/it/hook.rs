@@ -530,7 +530,7 @@ fn a_prompt_pinned_to_a_vault_that_does_not_answer_gives_up_after_one_probe() {
 }
 
 #[test]
-fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() {
+fn a_stopped_session_is_queued_then_imported_and_the_next_sessions_hooks_push_only_above_the_bar() {
     let home = Home::new();
     let vault = home.path("vault");
     let config = home.path("oneiron.toml");
@@ -610,17 +610,33 @@ fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() 
     );
     wait_for_empty(&queue, &log_path);
 
-    // 3. A new session in the same project binds it with no `--url` and
-    // recalls what the last one said.
+    // 3. A new session in the same folder binds it with no `--url`. Keyed on nothing but the
+    // folder's name, its start recalls nothing (RECALL-CARRIER-THRESHOLD): no relevance bar
+    // separates true lines from traps on a folder's name. Given the task's words, it asks the
+    // owner's start bar, and in a folder with no project bound nothing clears it.
     let credential_arg = credential.to_str().expect("UTF-8 path");
     let said = home.session_start(&["--credential-file", credential_arg, "--timeout", "60"]);
     assert!(
         said[0].contains(&url),
         "the first line names the vault: {said:?}"
     );
-    assert!(
-        said.iter().any(|line| line.contains("pier nine order")),
-        "the session was recalled: {said:?}"
+    assert_eq!(
+        said.len(),
+        1,
+        "a start keyed on the folder recalls nothing: {said:?}"
+    );
+    let said = home.session_start(&[
+        "--credential-file",
+        credential_arg,
+        "--query",
+        "heron lantern pier nine order",
+        "--timeout",
+        "60",
+    ]);
+    assert_eq!(
+        said.len(),
+        1,
+        "a push outside any project is quiet, and says nothing by default: {said:?}"
     );
 
     // 4. The session goes on; a hand-over with no `--config` queues to the
@@ -649,8 +665,9 @@ fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() 
         &prompt,
     ));
     assert!(
-        said.iter().any(|line| line.contains("rings twice")),
-        "the prompt recalled the new turn: {said:?}"
+        said.is_empty(),
+        "the prompt's lines ride the owner's carrier bar, and outside any project none clears \
+         it: {said:?}"
     );
 
     // 5. A clean stop removes the runtime file.
