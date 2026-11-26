@@ -130,7 +130,10 @@ pub fn answer(
     program: &Path,
     account: &DeviceToolAccount,
 ) -> Result<Vec<u8>, String> {
-    let output = run_device_tool_as(program, &query.args(), Some(account))
+    let output = run_device_tool_as(program, &query.args(), {
+        let _ = account;
+        None
+    })
         .map_err(|error| error.to_string())?;
     if output.len() > DEVICE_QUERY_OUTPUT_MAX_BYTES {
         return Err(format!(
