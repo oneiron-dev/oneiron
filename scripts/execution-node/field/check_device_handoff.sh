@@ -165,9 +165,12 @@ if probe=$(card_probe "$DEVICE"); then check probe PASS "$probe"; else check pro
 if [ -n "$ENGINE" ] && [ "$PHASE" = oneiron-only ]; then
   control_socket=${ONEIRON_JOB_CONTROL_SOCKET:-/run/oneiron-job-control.sock}
   answer=$(runuser -u "$ENGINE" -- python3 -c "$(cat "$(dirname "$0")/engine_probe.py")" "$control_socket" "$DEVICE" 2>&1)
+  probe_rc=$?
   verdict=$(head -1 <<< "$answer")
-  if [[ $verdict == "PASS "* ]]; then check engine-probe PASS "$ENGINE via $control_socket: ${verdict#PASS }"
-  else check engine-probe FAIL "$ENGINE via $control_socket: ${verdict:-no answer}"; fi
+  # A PASS line counts only from a probe that also exited 0.
+  if [ "$probe_rc" -eq 0 ] && [[ $verdict == "PASS "* ]]; then
+    check engine-probe PASS "$ENGINE via $control_socket: ${verdict#PASS }"
+  else check engine-probe FAIL "$ENGINE via $control_socket: exit $probe_rc: ${verdict:-no answer}"; fi
 fi
 
 if [ ${#FAILED[@]} -eq 0 ]; then say "## TEST $TEST PASS phase=$PHASE evidence=$EVIDENCE"; exit 0; fi

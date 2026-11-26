@@ -4,8 +4,14 @@
 //! the job control socket through which the engine's account starts and
 //! stops its instances and nothing else ([`super::control`]; the engine's
 //! account gets no polkit grant), makes the state and payload directories
-//! the engine's, reloads the service manager and starts the socket. It is
-//! idempotent: a second run with the same inputs changes nothing.
+//! the engine's and the device query's lock root's
+//! ([`super::device_query::provision_lock`]), reloads the service manager
+//! and starts the socket. It is idempotent: a second run with the same
+//! inputs changes nothing. Before any change it refuses an engine's
+//! directory that overlaps the lock's, and an oneiron binary beneath it
+//! ([`super::device_query::require_install_paths_apart`]), and any entry
+//! where the version before this one kept its query lock in the state
+//! directory ([`super::device_query::require_no_old_state_dir_lock`]).
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
@@ -14,6 +20,10 @@ use std::path::{Path, PathBuf};
 use super::super::node_settings::ExecutionNodeSettings;
 use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
+use super::device_query::{
+    DEVICE_QUERY_LOCK_DIR, DEVICE_QUERY_LOCK_FILE, provision_lock, require_install_paths_apart,
+    require_no_old_state_dir_lock,
+};
 use super::safe_fs::{
     account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
     require_root_owned,
@@ -98,16 +108,26 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     {
         unit_path_word(path)?;
     }
+    let lock_dir = Path::new(DEVICE_QUERY_LOCK_DIR);
+    require_install_paths_apart(
+        &inputs.state_dir,
+        &inputs.work_dir,
+        &inputs.binary,
+        lock_dir,
+    )?;
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
     if request.dry_run {
         stdout_line!(
-            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}"
+            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}--- {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE}\nroot's empty file, mode 0600, in root's directory, mode 0700\n"
         );
         print_templates(&settings);
         return Ok(());
     }
+    // Before any other change: an entry where the version before this one
+    // kept its query lock means a query of it may still hold that lock.
+    require_no_old_state_dir_lock(&inputs.state_dir)?;
     ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
     ensure_dir(
@@ -117,6 +137,8 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         0o700,
     )?;
     ensure_dir(&inputs.work_dir, engine_uid, engine_gid, 0o755)?;
+    // Before the socket starts: a handler never makes the lock.
+    let lock_changed = provision_lock(lock_dir)?;
     let unit_changed = write_if_changed(Path::new(UNIT_TEMPLATE_PATH), &unit)?;
     let socket_changed = write_if_changed(Path::new(CONTROL_SOCKET_UNIT_PATH), &socket)?;
     let handler_changed = write_if_changed(Path::new(CONTROL_SERVICE_UNIT_PATH), &handler)?;
@@ -138,10 +160,11 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
     stdout_line!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),
         said(socket_changed),
         said(handler_changed),
+        said(lock_changed),
         settings.job_account
     );
     print_templates(&settings);

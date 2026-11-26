@@ -19,10 +19,31 @@
 //! query lock until it ends, so later handlers refuse and start nothing
 //! meanwhile; and a socket this account may not connect to leaves the query
 //! to the tool run here.
+//!
+//! The Engine's review of #10540 after its merge: every handler locks the
+//! one same file, in a directory only root writes, made at install. A
+//! handler refuses an entry at the lock's name that is not that file, and
+//! never opens, removes or makes it again; a lock directory another account
+//! may write, or one reached through a link, is refused too. Here this
+//! process's account stands in for root.
+//!
+//! Review r1 of #10541: the lock install makes is empty with mode 0600
+//! whatever the umask, and a file at its name with another mode or with
+//! content is not it; install refuses an engine's directory that overlaps
+//! the lock's directory.
+//!
+//! Review r2 of #10541 and the Engine's review after it: install refuses any
+//! entry where the version before this one (#10540) kept its lock, and
+//! never opens, locks or removes it; it changes the mode of no lock
+//! directory that was there; and it refuses an oneiron binary beneath that
+//! directory.
 #![cfg(target_os = "linux")]
 
+use std::ffi::CString;
 use std::io::{BufRead as _, BufReader, Write as _};
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -58,15 +79,25 @@ fn job_account() -> DeviceToolAccount {
     }
 }
 
-/// The handler's settings for `account`, with the query lock in `state_dir`
-/// (a path with no link on the way, as the handler opens it).
-fn settings_in(state_dir: &Path, account: DeviceToolAccount) -> DeviceQuerySettings {
-    DeviceQuerySettings {
-        account,
-        state_dir: state_dir
-            .canonicalize()
-            .expect("the state directory's own path"),
-    }
+/// A directory of this process's account's, mode 0700, in `/tmp`, below
+/// directories that are root's: a place the query lock may be in, as root's
+/// directory is on an installed machine.
+fn private_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("oneiron-device-query")
+        .tempdir_in("/tmp")
+        .expect("a directory in /tmp")
+}
+
+/// The handler's settings for `account`, with the machine's query lock made
+/// in `lock_dir` as install makes it (a path with no link on the way, as the
+/// handler opens it).
+fn settings_in(lock_dir: &Path, account: DeviceToolAccount) -> DeviceQuerySettings {
+    let lock_dir = lock_dir
+        .canonicalize()
+        .expect("the lock directory's own path");
+    device_query::provision_lock(&lock_dir).expect("make the query lock as install does");
+    DeviceQuerySettings { account, lock_dir }
 }
 
 /// The stand-in `nvidia-smi`s. One directory for every test, written before
@@ -189,7 +220,7 @@ fn serve_device_queries(
 #[test]
 fn after_the_hand_over_the_probe_reads_the_cards_through_the_job_control_socket_as_the_job_account()
 {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = private_dir();
     let program = standins().job_account_only.clone();
     let socket = dir.path().join("job-control.sock");
     let handler = serve_device_queries(
@@ -275,7 +306,7 @@ fn a_refused_query_answers_the_drivers_own_words_on_one_bounded_line() {
 
 #[test]
 fn a_query_the_card_refuses_reaches_the_probe_as_unavailable_with_the_tools_reason() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = private_dir();
     let socket = dir.path().join("job-control.sock");
     let mut not_the_job_account = job_account();
     not_the_job_account.name = "oneiron".to_owned();
@@ -410,10 +441,10 @@ fn a_socket_this_account_may_not_connect_to_leaves_the_query_to_the_tool_run_her
 
 #[test]
 fn a_query_its_kill_cannot_end_holds_the_machines_query_lock_until_it_ends() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = private_dir();
     let socket = dir.path().join("job-control.sock");
     let settings = settings_in(dir.path(), job_account());
-    let lock_file = settings.state_dir.join(DEVICE_QUERY_LOCK_FILE);
+    let lock_file = settings.lock_dir.join(DEVICE_QUERY_LOCK_FILE);
     let handler = serve_device_queries(&socket, standins().escaping.clone(), settings, 3);
     let route = NvidiaSmiRoute::JobControl {
         socket,
@@ -467,6 +498,478 @@ fn a_query_its_kill_cannot_end_holds_the_machines_query_lock_until_it_ends() {
     .expect("readable device lines");
     assert_eq!(devices[0].device_id, CARD);
     handler.join().expect("the handler");
+}
+
+/// What a test puts at the query lock's name in place of the lock install
+/// makes.
+#[derive(Debug, Clone, Copy)]
+enum LockEntry {
+    Absent,
+    /// A link to a file outside the lock's directory.
+    Link,
+    /// A second name of a file outside the lock's directory.
+    HardLink,
+    Directory,
+    Pipe,
+    /// The lock's own kind of file, empty, but mode 0666.
+    OtherMode,
+    /// The lock's own kind of file, mode 0600, but with a byte in it.
+    WithContent,
+}
+
+impl LockEntry {
+    const ALL: [Self; 7] = [
+        Self::Absent,
+        Self::Link,
+        Self::HardLink,
+        Self::Directory,
+        Self::Pipe,
+        Self::OtherMode,
+        Self::WithContent,
+    ];
+
+    fn make(self, at: &Path, outside: &Path) {
+        match self {
+            Self::Absent => {}
+            Self::Link => std::os::unix::fs::symlink(outside, at).expect("a link"),
+            Self::HardLink => std::fs::hard_link(outside, at).expect("a hard link"),
+            Self::Directory => std::fs::create_dir(at).expect("a directory"),
+            Self::Pipe => {
+                let name = CString::new(at.as_os_str().as_bytes()).expect("a path with no NUL");
+                // SAFETY: name is NUL terminated.
+                let made = unsafe { libc::mkfifo(name.as_ptr(), 0o600) };
+                assert_eq!(made, 0, "mkfifo: {}", std::io::Error::last_os_error());
+            }
+            Self::OtherMode => write_with_mode(at, b"", 0o666),
+            Self::WithContent => write_with_mode(at, b"x", 0o600),
+        }
+    }
+
+    /// Whether the entry at `at` is still the one [`Self::make`] put there.
+    fn is_as_made(self, at: &Path, outside: &Path) -> bool {
+        let found = std::fs::symlink_metadata(at);
+        match (self, found) {
+            (Self::Absent, Err(error)) => error.kind() == std::io::ErrorKind::NotFound,
+            (Self::Link, Ok(meta)) => {
+                meta.file_type().is_symlink()
+                    && std::fs::read_link(at).is_ok_and(|target| target == outside)
+            }
+            (Self::HardLink, Ok(meta)) => meta.is_file() && meta.nlink() == 2,
+            (Self::Directory, Ok(meta)) => meta.is_dir(),
+            (Self::Pipe, Ok(meta)) => meta.file_type().is_fifo(),
+            (Self::OtherMode, Ok(meta)) => {
+                meta.is_file() && meta.mode() & 0o7777 == 0o666 && meta.len() == 0
+            }
+            (Self::WithContent, Ok(meta)) => {
+                meta.is_file() && meta.mode() & 0o7777 == 0o600 && meta.len() == 1
+            }
+            _ => false,
+        }
+    }
+
+    fn remove(self, at: &Path) {
+        match self {
+            Self::Absent => {}
+            Self::Directory => std::fs::remove_dir(at).expect("remove the directory"),
+            Self::Link | Self::HardLink | Self::Pipe | Self::OtherMode | Self::WithContent => {
+                std::fs::remove_file(at).expect("remove the entry");
+            }
+        }
+    }
+}
+
+/// Writes `bytes` to a new file at `at`, then gives it `mode`.
+fn write_with_mode(at: &Path, bytes: &[u8], mode: u32) {
+    std::fs::write(at, bytes).expect("write the entry");
+    std::fs::set_permissions(at, std::fs::Permissions::from_mode(mode)).expect("chmod");
+}
+
+/// The opens of one file, by any of its names: inotify watches the file,
+/// not a name, so an open through a hard link counts too.
+struct OpenWatch {
+    inotify: OwnedFd,
+}
+
+impl OpenWatch {
+    fn new(file: &Path) -> Self {
+        // SAFETY: inotify_init1 has no preconditions.
+        let raw = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+        assert!(
+            raw >= 0,
+            "inotify_init1: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: the kernel just returned this descriptor.
+        let inotify = unsafe { OwnedFd::from_raw_fd(raw) };
+        let name = CString::new(file.as_os_str().as_bytes()).expect("a path with no NUL");
+        // SAFETY: inotify is an inotify descriptor; name is NUL terminated.
+        let watch =
+            unsafe { libc::inotify_add_watch(inotify.as_raw_fd(), name.as_ptr(), libc::IN_OPEN) };
+        assert!(
+            watch >= 0,
+            "inotify_add_watch: {}",
+            std::io::Error::last_os_error()
+        );
+        Self { inotify }
+    }
+
+    /// The file's opens since the last count: a watch on a file gives each
+    /// open one event with no name.
+    fn opens(&self) -> usize {
+        let mut events = [0_u8; 4096];
+        let mut opens = 0;
+        loop {
+            // SAFETY: events is valid for writes of its whole length.
+            let read = unsafe {
+                libc::read(
+                    self.inotify.as_raw_fd(),
+                    events.as_mut_ptr().cast(),
+                    events.len(),
+                )
+            };
+            let Ok(read) = usize::try_from(read) else {
+                break;
+            };
+            if read == 0 {
+                break;
+            }
+            opens += read / std::mem::size_of::<libc::inotify_event>();
+        }
+        opens
+    }
+}
+
+#[test]
+fn a_query_lock_entry_that_is_not_the_lock_install_made_is_refused_never_opened_and_left_as_it_is()
+{
+    let outside_dir = private_dir();
+    let outside = outside_dir
+        .path()
+        .canonicalize()
+        .expect("the outside directory's own path")
+        .join("outside");
+    std::fs::write(&outside, b"outside").expect("write the outside file");
+    let program = standins().before_hand_over.clone();
+    for entry in LockEntry::ALL {
+        let dir = private_dir();
+        let lock_dir = dir
+            .path()
+            .canonicalize()
+            .expect("the lock directory's own path");
+        let lock = lock_dir.join(DEVICE_QUERY_LOCK_FILE);
+        entry.make(&lock, &outside);
+        let settings = DeviceQuerySettings {
+            account: job_account(),
+            lock_dir: lock_dir.clone(),
+        };
+        let watch = OpenWatch::new(&outside);
+        let reason = device_query::answer(NvidiaSmiQuery::Devices, &program, &settings)
+            .expect_err("no query runs without the lock install made");
+        assert!(
+            reason.starts_with(&format!("device_query_lock: {}: ", lock.display())),
+            "{entry:?}: {reason}"
+        );
+        let said = match entry {
+            LockEntry::Absent => "absent; `oneiron execution-node install` makes it",
+            _ => "; refused and left as it is",
+        };
+        assert!(reason.contains(said), "{entry:?}: {reason}");
+        assert_eq!(watch.opens(), 0, "{entry:?}: the outside file was opened");
+        assert!(
+            entry.is_as_made(&lock, &outside),
+            "{entry:?}: the entry changed"
+        );
+        // The watch sees an open.
+        drop(std::fs::File::open(&outside).expect("open the outside file"));
+        assert_eq!(watch.opens(), 1, "{entry:?}: the watch saw no open");
+        assert_eq!(
+            std::fs::read(&outside).expect("read the outside file"),
+            b"outside"
+        );
+
+        // Install refuses the entry too, for its maker to remove; then it
+        // makes the lock, once, and the query runs under it.
+        if !matches!(entry, LockEntry::Absent) {
+            let refused = device_query::provision_lock(&lock_dir)
+                .expect_err("install leaves an entry it did not make");
+            assert!(
+                refused.contains("remove it, then install again"),
+                "{entry:?}: {refused}"
+            );
+            assert!(
+                entry.is_as_made(&lock, &outside),
+                "{entry:?}: install changed it"
+            );
+            entry.remove(&lock);
+        }
+        assert!(device_query::provision_lock(&lock_dir).expect("install makes the lock"));
+        assert!(!device_query::provision_lock(&lock_dir).expect("a second install"));
+        device_query::answer(NvidiaSmiQuery::Devices, &program, &settings)
+            .expect("the query runs under the lock install made");
+    }
+}
+
+#[test]
+fn a_query_lock_directory_another_account_may_write_or_reached_through_a_link_is_refused() {
+    let dir = private_dir();
+    let settings = settings_in(dir.path(), job_account());
+    let lock = settings.lock_dir.join(DEVICE_QUERY_LOCK_FILE);
+    let mode = |path: &Path| {
+        std::fs::metadata(path)
+            .expect("the entry's facts")
+            .permissions()
+            .mode()
+            & 0o7777
+    };
+    // Install's lock: an empty file of its own, mode 0600, in a directory of
+    // its own, mode 0700.
+    assert_eq!(mode(&settings.lock_dir), 0o700);
+    assert_eq!(mode(&lock), 0o600);
+    assert_eq!(std::fs::metadata(&lock).expect("the lock's facts").len(), 0);
+    let program = standins().before_hand_over.clone();
+    let inode = |path: &Path| std::fs::metadata(path).expect("the lock's facts").ino();
+    let lock_inode = inode(&lock);
+    for open_to_others in [0o770, 0o707, 0o1777] {
+        std::fs::set_permissions(
+            &settings.lock_dir,
+            std::fs::Permissions::from_mode(open_to_others),
+        )
+        .expect("chmod");
+        let reason = device_query::answer(NvidiaSmiQuery::Devices, &program, &settings)
+            .expect_err("a lock directory another account may write is refused");
+        assert!(
+            reason.starts_with("device_query_lock: ") && reason.contains("writable by group or"),
+            "mode {open_to_others:o}: {reason}"
+        );
+        // Install changes the mode of no directory that was there: it
+        // refuses and leaves it as it is (review r2 of #10541). Its owner
+        // gives it 0700 back, and the lock stays the same file.
+        let refused = device_query::provision_lock(&settings.lock_dir)
+            .expect_err("install refuses a lock directory another account may write");
+        assert!(refused.contains("move it aside"), "{refused}");
+        assert_eq!(mode(&settings.lock_dir), open_to_others);
+        let own = std::fs::Permissions::from_mode(0o700);
+        std::fs::set_permissions(&settings.lock_dir, own).expect("chmod 0700");
+        let changed = device_query::provision_lock(&settings.lock_dir).expect("install again");
+        assert!(!changed, "install finds its lock as it made it");
+        assert_eq!(inode(&lock), lock_inode);
+        device_query::answer(NvidiaSmiQuery::Devices, &program, &settings)
+            .expect("the query runs once the directory is its owner's alone");
+    }
+    // The handler opens each directory on the way itself, never through a
+    // link.
+    let links = private_dir();
+    let through_link = links
+        .path()
+        .canonicalize()
+        .expect("the links directory's own path")
+        .join("lock-dir");
+    std::os::unix::fs::symlink(&settings.lock_dir, &through_link).expect("a link");
+    let linked = DeviceQuerySettings {
+        account: job_account(),
+        lock_dir: through_link,
+    };
+    let reason = device_query::answer(NvidiaSmiQuery::Devices, &program, &linked)
+        .expect_err("a lock directory reached through a link is refused");
+    assert!(
+        reason.starts_with("device_query_lock: ") && reason.contains("a link"),
+        "{reason}"
+    );
+}
+
+/// Set by [`install_makes_the_query_lock_mode_0600_whatever_the_umask`] for
+/// its child process alone: the lock directory the child makes.
+const UMASK_CHILD_LOCK_DIR: &str = "ONEIRON_TEST_UMASK_0777_LOCK_DIR";
+
+#[test]
+fn install_makes_the_query_lock_mode_0600_whatever_the_umask() {
+    let dir = private_dir();
+    let lock_dir = dir
+        .path()
+        .canonicalize()
+        .expect("the directory's own path")
+        .join("lock");
+    // The umask is the whole process's: the make runs in a child of its own,
+    // this test binary running only the test below.
+    let ran = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "provision_lock_under_umask_0777",
+            "--ignored",
+            "--test-threads",
+            "1",
+        ])
+        .env(UMASK_CHILD_LOCK_DIR, &lock_dir)
+        .output()
+        .expect("run the child");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert!(
+        ran.status.success() && said.contains("1 passed"),
+        "the child: {said}"
+    );
+    let facts = |path: &Path| std::fs::metadata(path).expect("the entry's facts");
+    assert_eq!(facts(&lock_dir).permissions().mode() & 0o7777, 0o700);
+    let lock = facts(&lock_dir.join(DEVICE_QUERY_LOCK_FILE));
+    assert!(lock.is_file());
+    assert_eq!(lock.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(lock.len(), 0);
+}
+
+#[test]
+#[ignore = "the child of install_makes_the_query_lock_mode_0600_whatever_the_umask"]
+fn provision_lock_under_umask_0777() {
+    let Some(lock_dir) = std::env::var_os(UMASK_CHILD_LOCK_DIR) else {
+        return;
+    };
+    // SAFETY: umask has no preconditions.
+    unsafe { libc::umask(0o777) };
+    assert!(
+        device_query::provision_lock(Path::new(&lock_dir)).expect("install under umask 0777"),
+        "install made the lock"
+    );
+}
+
+#[test]
+fn install_refuses_an_engines_directory_that_is_holds_or_lies_beneath_the_query_locks() {
+    let lock_dir = Path::new(device_query::DEVICE_QUERY_LOCK_DIR);
+    let check = |what: &str, dir: &str| {
+        device_query::require_apart_from_lock_dir(what, Path::new(dir), lock_dir)
+    };
+    for refused in [
+        "/var/lib/oneiron-job-control",
+        "/var/lib/oneiron-job-control/state",
+        "/var/lib/oneiron-job-control/./work/payloads",
+        "/var/lib",
+        "/",
+    ] {
+        let reason = check("state directory", refused)
+            .expect_err("an engine's directory that overlaps the lock's is refused");
+        assert!(
+            reason.starts_with(&format!("the state directory {refused} must not be")),
+            "{refused}: {reason}"
+        );
+    }
+    for apart in [
+        "/var/lib/oneiron",
+        "/var/lib/oneiron-job-control-state",
+        "/var/lib/oneiron-job",
+        "/srv/oneiron/state",
+    ] {
+        assert_eq!(check("payload directory", apart), Ok(()), "{apart}");
+    }
+}
+
+#[test]
+fn install_refuses_any_entry_at_the_old_locks_place_and_changes_nothing() {
+    let dir = private_dir();
+    let state_dir = dir
+        .path()
+        .canonicalize()
+        .expect("the state directory's own path");
+    let old = state_dir.join(device_query::STATE_DIR_LOCK_FILE);
+    // Nothing there, or no state directory yet: install goes on.
+    assert_eq!(
+        device_query::require_no_old_state_dir_lock(&state_dir),
+        Ok(())
+    );
+    assert_eq!(
+        device_query::require_no_old_state_dir_lock(&state_dir.join("absent")),
+        Ok(())
+    );
+
+    // Any entry there is refused with the steps by hand, and install opens,
+    // locks and removes none of it.
+    let outside_dir = private_dir();
+    let outside = outside_dir
+        .path()
+        .canonicalize()
+        .expect("the outside directory's own path")
+        .join("outside");
+    std::fs::write(&outside, b"outside").expect("write the outside file");
+    for entry in LockEntry::ALL {
+        if matches!(entry, LockEntry::Absent) {
+            continue;
+        }
+        entry.make(&old, &outside);
+        let watch = OpenWatch::new(&outside);
+        let refused = device_query::require_no_old_state_dir_lock(&state_dir)
+            .expect_err("install refuses an entry at the old lock's place");
+        assert!(
+            refused.starts_with(&format!("{}: ", old.display()))
+                && refused.contains("oneiron-job-control.socket")
+                && refused.contains("then install again"),
+            "{entry:?}: {refused}"
+        );
+        assert_eq!(watch.opens(), 0, "{entry:?}: the outside file was opened");
+        assert!(
+            entry.is_as_made(&old, &outside),
+            "{entry:?}: the entry changed"
+        );
+        entry.remove(&old);
+    }
+
+    // The lock as that version's handler made it, held by a query of it.
+    write_with_mode(&old, b"", 0o600);
+    let inode = std::fs::metadata(&old).expect("the old lock").ino();
+    let query = std::fs::File::open(&old).expect("open the old lock");
+    query.lock().expect("the old query holds the lock");
+    let refused = device_query::require_no_old_state_dir_lock(&state_dir);
+    assert!(refused.is_err(), "the old lock is refused");
+    assert_eq!(
+        std::fs::metadata(&old).expect("the old lock is left").ino(),
+        inode
+    );
+    drop(query);
+    let refused = device_query::require_no_old_state_dir_lock(&state_dir);
+    assert!(refused.is_err(), "the old lock is refused once free, too");
+}
+
+#[test]
+fn install_changes_the_mode_of_no_query_lock_directory_that_was_there() {
+    let parent = private_dir();
+    let lock_dir = parent
+        .path()
+        .canonicalize()
+        .expect("the parent's own path")
+        .join("oneiron-job-control");
+    std::fs::create_dir(&lock_dir).expect("a directory that was there");
+    let open = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(&lock_dir, open).expect("mode 0755");
+    let refused = device_query::provision_lock(&lock_dir)
+        .expect_err("install refuses a lock directory that was there with another mode");
+    assert!(
+        refused.contains("mode 755, not 700") && refused.contains("move it aside"),
+        "{refused}"
+    );
+    let meta = std::fs::metadata(&lock_dir).expect("the directory");
+    assert_eq!(meta.mode() & 0o7777, 0o755, "its mode is left");
+    let lock = lock_dir.join(device_query::DEVICE_QUERY_LOCK_FILE);
+    let made = std::fs::symlink_metadata(&lock).is_ok();
+    assert!(!made, "no lock is made in it");
+}
+
+#[test]
+fn install_refuses_an_oneiron_binary_beneath_the_query_locks_directory() {
+    let lock_dir = Path::new(device_query::DEVICE_QUERY_LOCK_DIR);
+    let check = |binary: &str| {
+        device_query::require_install_paths_apart(
+            Path::new("/var/lib/oneiron/state"),
+            Path::new("/var/lib/oneiron/work"),
+            Path::new(binary),
+            lock_dir,
+        )
+    };
+    let refused = check("/var/lib/oneiron-job-control/oneiron")
+        .expect_err("a binary the job unit runs beneath the lock's directory is refused");
+    assert!(
+        refused.starts_with("the oneiron binary /var/lib/oneiron-job-control/oneiron must not"),
+        "{refused}"
+    );
+    assert_eq!(check("/usr/local/bin/oneiron"), Ok(()));
 }
 
 #[test]

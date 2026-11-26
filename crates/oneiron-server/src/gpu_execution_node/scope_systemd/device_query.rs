@@ -18,9 +18,19 @@
 //! in the kernel) holds the lock until it does end, past the handler that
 //! started it, and every later handler meanwhile refuses with `query_stuck`
 //! and starts no process into the same wedge (review r2 of #10540; FIX
-//! EXEC-NODE-PROBE-STUCK-QUERY-PER-HANDLER). The engine itself holds no
-//! process and waits no longer than its deadline: it connects without
-//! blocking and waits out a full listen queue only until then.
+//! EXEC-NODE-PROBE-STUCK-QUERY-PER-HANDLER). Every handler locks the one
+//! same file: it lives in a directory only root writes
+//! ([`DEVICE_QUERY_LOCK_DIR`]), install makes it before the socket starts
+//! ([`provision_lock`]), and a handler only opens it, never makes, removes
+//! or replaces it (the Engine's extra review of #10540: in the engine's
+//! state directory the engine could swap the name, and a hard link there
+//! made root open a file from elsewhere). A query of the version before
+//! this one locked another file, in the state directory, so install
+//! refuses any entry there and leaves it as it is
+//! ([`require_no_old_state_dir_lock`]; the Engine's review of #10541). The engine
+//! itself holds no process and waits no longer than its deadline: it
+//! connects without blocking and waits out a full listen queue only until
+//! then.
 //!
 //! Where the socket file is there and no handler listens (`ECONNREFUSED`, a
 //! file the socket unit left behind), the file went away (`ENOENT`), or this
@@ -32,8 +42,8 @@
 //!
 //! The root handler takes only a word of [`NvidiaSmiQuery`], a closed list,
 //! so the engine names no program and no argument. It reads the job account
-//! and the state directory from the root-owned node file
-//! ([`query_settings`]) and runs that query of [`NVIDIA_SMI`], from the
+//! from the root-owned node file ([`query_settings`]) and runs that query
+//! of [`NVIDIA_SMI`], from the
 //! fixed tool directories, as the job account ([`run_device_tool_as`]): in
 //! its own process group, within [`GPU_QUERY_TIMEOUT`], the group killed
 //! past it. The engine's account gains no power it lacked, since every job
@@ -48,6 +58,7 @@
 
 use std::fs::File;
 use std::io::{Read as _, Write as _};
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -59,15 +70,31 @@ use super::super::device::{
 use super::super::node_settings::ExecutionNodeSettings;
 use super::control::{REQUEST_WAIT, read_line};
 use super::exec::connect_once;
-use super::safe_fs::{account, borrow, open_dir_path, open_lock_beneath, require_root_owned};
+use super::safe_fs::{
+    account, borrow, facts, facts_beneath, make_dir_beneath, make_lock_beneath, open_dir_beneath,
+    open_dir_path, open_lock_beneath, require_owned_by_root_or, require_root_owned,
+};
 use super::systemd_unit::tool_path;
 
 /// The request's verb.
 pub const DEVICE_QUERY_VERB: &str = "device-query";
 
-/// The machine's query lock's file, beneath the state directory: the one
-/// directory the handler may write ([`super::unit_file::render_control_service`]).
+/// The directory of the machine's query lock: root's, mode 0700, below
+/// directories that are root's too, made by `oneiron execution-node install`
+/// with the lock file in it ([`provision_lock`]), so no other account can
+/// make, replace or link a name there.
+pub const DEVICE_QUERY_LOCK_DIR: &str = "/var/lib/oneiron-job-control";
+
+/// The machine's query lock's file, in [`DEVICE_QUERY_LOCK_DIR`].
 pub const DEVICE_QUERY_LOCK_FILE: &str = "device-query.lock";
+
+/// The query lock's file of the version before this one (#10540), in the
+/// engine's state directory: install refuses any entry there
+/// ([`require_no_old_state_dir_lock`]).
+pub const STATE_DIR_LOCK_FILE: &str = "device-query.lock";
+
+/// The lock directory's mode: its owner's alone.
+const DEVICE_QUERY_LOCK_DIR_MODE: u32 = 0o700;
 
 /// The most output one query answers: a few lines a card in practice.
 pub const DEVICE_QUERY_OUTPUT_MAX_BYTES: usize = 1 << 20;
@@ -126,14 +153,14 @@ pub fn parse_request(line: &[u8]) -> Option<Result<NvidiaSmiQuery, String>> {
 pub struct DeviceQuerySettings {
     /// The account the query runs as: neither root nor the engine's.
     pub account: DeviceToolAccount,
-    /// The engine's state directory, which holds the machine's query lock
-    /// ([`DEVICE_QUERY_LOCK_FILE`]).
-    pub state_dir: PathBuf,
+    /// The directory of the machine's query lock ([`DEVICE_QUERY_LOCK_DIR`]
+    /// on an installed machine).
+    pub lock_dir: PathBuf,
 }
 
-/// The device query's settings, from the root-owned node file: the job
-/// account, neither root nor the engine's account (`engine_uid`), and the
-/// state directory.
+/// The device query's settings: the job account, from the root-owned node
+/// file, neither root nor the engine's account (`engine_uid`), and the
+/// lock's directory, [`DEVICE_QUERY_LOCK_DIR`].
 ///
 /// # Errors
 ///
@@ -154,7 +181,7 @@ pub fn query_settings(node_file: &Path, engine_uid: u32) -> Result<DeviceQuerySe
             uid,
             gid,
         },
-        state_dir: settings.state_dir,
+        lock_dir: PathBuf::from(DEVICE_QUERY_LOCK_DIR),
     })
 }
 
@@ -162,42 +189,221 @@ pub fn query_settings(node_file: &Path, engine_uid: u32) -> Result<DeviceQuerySe
 /// [`DEVICE_QUERY_LOCK_FILE`], taken without waiting. The query's process
 /// gets the lock's descriptor ([`run_device_tool_as`]), and the lock lasts
 /// while any descriptor of it is open, so it lasts as long as the query,
-/// past the handler that took it (review r2 of #10540). The engine's
-/// account owns the state directory and could remove the file; it would
-/// only drop a guard that keeps its own probe's queries from piling up.
+/// past the handler that took it (review r2 of #10540).
+///
+/// Every handler must lock the one same file, so it lives in a directory
+/// only root writes, below directories that are root's too
+/// ([`DEVICE_QUERY_LOCK_DIR`]): no other account can put another file, a
+/// link or a hard link at its name, or move the directory. Install makes
+/// it ([`provision_lock`]); a handler only opens it. An entry there that is
+/// not root's own empty regular file with one name and mode 0600 is refused
+/// as it is: never opened, removed or made again (the Engine's extra review
+/// of #10540; review r1 of #10541).
 #[derive(Debug)]
 pub struct DeviceQueryLock {
     file: File,
 }
 
 impl DeviceQueryLock {
-    /// Takes the lock in `state_dir`, never waiting. The lock file is opened
-    /// beneath the directory, never through a link
-    /// ([`open_lock_beneath`]), and is this process's own.
+    /// Takes the lock in `lock_dir`, never waiting: the directory and every
+    /// one above it this process's account's (root's, on an installed
+    /// machine) or root's and writable by no one else, and the file this
+    /// account's own empty regular file with one name and mode 0600
+    /// ([`open_lock_beneath`]).
     ///
     /// # Errors
     ///
-    /// `query_stuck` while an earlier query holds the lock; else the lock
-    /// file's failure.
-    pub fn take(state_dir: &Path) -> Result<Self, String> {
-        let failed = |error: std::io::Error| {
+    /// `query_stuck` while an earlier query holds the lock; else why the
+    /// directory or the file is refused, or the lock's failure.
+    pub fn take(lock_dir: &Path) -> Result<Self, String> {
+        let failed = |why: &dyn std::fmt::Display| {
             format!(
-                "device_query_lock: {}/{DEVICE_QUERY_LOCK_FILE}: {error}",
-                state_dir.display()
+                "device_query_lock: {}/{DEVICE_QUERY_LOCK_FILE}: {why}",
+                lock_dir.display()
             )
         };
-        let dir = open_dir_path(state_dir).map_err(failed)?;
         let owner = rustix::process::geteuid().as_raw();
-        let file = File::from(
-            open_lock_beneath(borrow(&dir), DEVICE_QUERY_LOCK_FILE, owner).map_err(failed)?,
-        );
+        let dir = open_lock_dir(lock_dir, owner).map_err(|why| failed(&why))?;
+        let file = match open_lock_beneath(borrow(&dir), DEVICE_QUERY_LOCK_FILE, owner) {
+            Ok(fd) => File::from(fd),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(failed(&"absent; `oneiron execution-node install` makes it"));
+            }
+            Err(error) => {
+                return Err(failed(&format_args!("{error}; refused and left as it is")));
+            }
+        };
         match file.try_lock() {
             Ok(()) => Ok(Self { file }),
             Err(std::fs::TryLockError::WouldBlock) => {
                 Err("query_stuck: an earlier device query has not ended".to_owned())
             }
-            Err(std::fs::TryLockError::Error(error)) => Err(failed(error)),
+            Err(std::fs::TryLockError::Error(error)) => Err(failed(&error)),
         }
+    }
+}
+
+/// The lock directory `lock_dir`, open: it and every directory above it
+/// `owner`'s or root's and writable by no one else (a sticky directory
+/// above it excepted), and the directory opened `owner`'s with no group or
+/// other write bit.
+fn open_lock_dir(lock_dir: &Path, owner: u32) -> Result<OwnedFd, String> {
+    require_owned_by_root_or(lock_dir, owner)?;
+    let dir = open_dir_path(lock_dir).map_err(|error| error.to_string())?;
+    let found = facts(borrow(&dir)).map_err(|error| error.to_string())?;
+    if found.uid != owner {
+        return Err(format!(
+            "its directory is uid {}'s, not uid {owner}'s",
+            found.uid
+        ));
+    }
+    // Sticky or not: another account could still put a name there.
+    if found.mode & 0o022 != 0 {
+        return Err(format!(
+            "its directory is writable by group or others (mode {:o})",
+            found.mode
+        ));
+    }
+    Ok(dir)
+}
+
+/// Makes the machine's query lock for [`DeviceQueryLock`], as `oneiron
+/// execution-node install` does before it starts the socket, so the lock is
+/// there before any request: the directory `lock_dir`, this process's
+/// account's with mode 0700, beneath a parent that must be there and be
+/// root's like every directory above it (one there already must be this
+/// account's, and is given mode 0700), and the empty lock file in it, mode
+/// 0600 whatever the umask. With whether this call made or changed
+/// anything. Anything at the lock file's name but this account's own empty
+/// regular file with one name and mode 0600 is refused, as it is, for its
+/// maker to remove.
+///
+/// A directory that was there with another mode is refused and left as it
+/// is: something in it may be another account's to reach, as an oneiron
+/// binary the job account runs (review r2 of #10541).
+///
+/// # Errors
+///
+/// The step that failed or the entry refused, in words.
+pub fn provision_lock(lock_dir: &Path) -> Result<bool, String> {
+    let failed = |why: &dyn std::fmt::Display| {
+        format!("the device query lock in {}: {why}", lock_dir.display())
+    };
+    let (Some(parent), Some(name)) = (lock_dir.parent(), lock_dir.file_name()) else {
+        return Err(failed(&"not a directory below /"));
+    };
+    let owner = rustix::process::geteuid().as_raw();
+    let group = rustix::process::getegid().as_raw();
+    require_owned_by_root_or(parent, owner).map_err(|why| failed(&why))?;
+    let above = open_dir_path(parent).map_err(|error| failed(&error))?;
+    let mut changed = false;
+    let dir = match open_dir_beneath(borrow(&above), name) {
+        Ok(dir) => dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            changed = true;
+            let text = name
+                .to_str()
+                .ok_or_else(|| failed(&"a name that is not UTF-8"))?;
+            make_dir_beneath(
+                borrow(&above),
+                text,
+                DEVICE_QUERY_LOCK_DIR_MODE,
+                (owner, group),
+            )
+            .map_err(|error| failed(&error))?
+        }
+        Err(error) => return Err(failed(&error)),
+    };
+    let found = facts(borrow(&dir)).map_err(|error| failed(&error))?;
+    if found.uid != owner {
+        return Err(failed(&format_args!(
+            "owned by uid {}, not uid {owner}",
+            found.uid
+        )));
+    }
+    if found.mode != DEVICE_QUERY_LOCK_DIR_MODE {
+        return Err(failed(&format_args!(
+            "mode {:o}, not {DEVICE_QUERY_LOCK_DIR_MODE:o}; install changes the mode of no directory that was there: move it aside, then install again",
+            found.mode
+        )));
+    }
+    let made = make_lock_beneath(borrow(&dir), DEVICE_QUERY_LOCK_FILE, owner)
+        .map_err(|error| failed(&format_args!("{error}; remove it, then install again")))?;
+    Ok(changed || made)
+}
+
+/// Refuses an engine's directory `dir` (`what`: its state or payload
+/// directory) that is the query lock's directory `lock_dir`, lies beneath
+/// it, or holds it, as install does before it changes anything (review r1
+/// of #10541): install makes `lock_dir` root's alone, mode 0700, which
+/// would cut the engine off from a directory beneath it, and a lock
+/// directory beneath one of the engine's is one the engine could move.
+/// The paths are compared one component at a time; install opens each
+/// directory on them never through a link.
+///
+/// # Errors
+///
+/// Which directory, and the lock's.
+pub fn require_apart_from_lock_dir(what: &str, dir: &Path, lock_dir: &Path) -> Result<(), String> {
+    if dir.starts_with(lock_dir) || lock_dir.starts_with(dir) {
+        return Err(format!(
+            "the {what} {} must not be, lie beneath or hold the device query lock's directory {}",
+            dir.display(),
+            lock_dir.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses, as install does before it changes anything, the engine's state
+/// and payload directories `state_dir` and `work_dir` when either overlaps
+/// the query lock's directory `lock_dir` ([`require_apart_from_lock_dir`]),
+/// and an oneiron `binary` beneath it: the job unit runs that binary as the
+/// job account, which a directory of root's alone, mode 0700, cuts off
+/// (review r2 of #10541).
+///
+/// # Errors
+///
+/// As [`require_apart_from_lock_dir`], for the first path that overlaps.
+pub fn require_install_paths_apart(
+    state_dir: &Path,
+    work_dir: &Path,
+    binary: &Path,
+    lock_dir: &Path,
+) -> Result<(), String> {
+    require_apart_from_lock_dir("state directory", state_dir, lock_dir)?;
+    require_apart_from_lock_dir("payload directory", work_dir, lock_dir)?;
+    require_apart_from_lock_dir("oneiron binary", binary, lock_dir)
+}
+
+/// Refuses any entry at [`STATE_DIR_LOCK_FILE`] in the engine's state
+/// directory `state_dir`, where the handlers of the version before this one
+/// (#10540) kept their query lock, as install does before it changes
+/// anything (the Engine's review of #10541 at 8f39ebb9). No machine ran
+/// that version, so nothing is expected there; an entry means one may have,
+/// and a query of it that its kill could not end may still hold that lock
+/// while a handler of this version locks another file. Install never
+/// opens, locks or removes the entry, which the engine's account could
+/// swap under it: the refusal names the steps by hand.
+///
+/// # Errors
+///
+/// An entry is there, or the state directory could not be read.
+pub fn require_no_old_state_dir_lock(state_dir: &Path) -> Result<(), String> {
+    let old = state_dir.join(STATE_DIR_LOCK_FILE);
+    let dir = match open_dir_path(state_dir) {
+        Ok(dir) => dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("{}: {error}", old.display())),
+    };
+    match facts_beneath(borrow(&dir), STATE_DIR_LOCK_FILE) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("{}: {error}", old.display())),
+        Ok(_) => Err(format!(
+            "{}: an entry is where the version before this one kept its query lock, so a query of that version may still hold it; install changes nothing while it is there. As root: stop oneiron.service and oneiron-job-control.socket, wait {} s (the handlers' RuntimeMaxSec), check that `systemctl list-units --all 'oneiron-job-control@*'` lists nothing (reboot if one stays), remove the entry, then install again",
+            old.display(),
+            super::unit_file::CONTROL_HANDLER_RUNTIME_MAX_SECS
+        )),
     }
 }
 
@@ -228,7 +434,7 @@ pub fn answer(
     program: &Path,
     settings: &DeviceQuerySettings,
 ) -> Result<Vec<u8>, String> {
-    let lock = DeviceQueryLock::take(&settings.state_dir)?;
+    let lock = DeviceQueryLock::take(&settings.lock_dir)?;
     // The query's process keeps its own copy of the lock's descriptor, so
     // this copy's close at the end of the call frees the lock only once the
     // query has ended too.
