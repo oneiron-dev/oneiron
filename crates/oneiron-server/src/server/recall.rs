@@ -104,7 +104,8 @@ impl SyncServer {
         let rerank = self.door_rerank(effort, actor, class, false)?;
         let media = self.recall_media(&input)?;
         let mut query_memory = self.memory.empty_lease();
-        let embed = self.recall_embed_media(input.effort, media, payer, &mut query_memory);
+        let embed =
+            self.recall_embed_media(embedding_effort(&input), media, payer, &mut query_memory);
         let arrived = Instant::now();
         let (_, budget) = oneiron::memory::resolve_recall_dial(
             input.effort,
@@ -396,6 +397,9 @@ impl SyncServer {
                 .scope
                 .as_ref()
                 .is_none_or(|scope| scope.project_refs.is_empty());
+        // Nor does a recall the owner's relevance bar judges (RECALL-CARRIER-THRESHOLD): a home
+        // request carries no bar, so its lines would arrive unjudged.
+        let local_only = session_narrowed || input.bar.is_some();
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
         let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
@@ -447,7 +451,12 @@ impl SyncServer {
                 };
                 // A door's own recall is the owner's: no run funds it.
                 let mut query_memory = server.memory.empty_lease();
-                let embed = server.recall_embed_media(input.effort, media, None, &mut query_memory);
+                let embed = server.recall_embed_media(
+                    embedding_effort(&input),
+                    media,
+                    None,
+                    &mut query_memory,
+                );
                 match room {
                     Some(room) => memory
                         .for_room_turn(room)?
@@ -492,7 +501,7 @@ impl SyncServer {
             };
             let mut pack = joined.unwrap_or_else(|_| Err(recall_did_not_finish()))?;
             let due = budget.map(|budget| arrived + budget);
-            if !session_narrowed && due.is_none_or(|due| Instant::now() < due) {
+            if !local_only && due.is_none_or(|due| Instant::now() < due) {
                 complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
             }
             Ok(pack)
@@ -773,5 +782,16 @@ pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
             done
         }
         Err(_) => work(),
+    }
+}
+
+/// The effort a recall's query embeds at: its own, except that a recall the owner's relevance
+/// bar judges embeds its query at any effort, light and call included, since the bar compares
+/// cosines (RECALL-CARRIER-THRESHOLD). `None` is medium's embedding, with none of its other
+/// stages: the effort the recall runs at stays its own.
+fn embedding_effort(input: &RecallRequest) -> Option<RecallEffort> {
+    match input.bar {
+        Some(_) => None,
+        None => input.effort,
     }
 }

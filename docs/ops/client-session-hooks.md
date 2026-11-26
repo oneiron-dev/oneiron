@@ -85,9 +85,10 @@ files write `$HOME`, never `${HOME}`: a client reads `${...}` as its own
 placeholder (Cursor fills its plugin variables there), and `$HOME` is left
 to the shell. Add `--url <origin>` to `session-start` to pin a vault, and
 `--config /path/to/oneiron.toml` to each `hand-over` when `serve` reads
-another config and may be stopped when a session ends. To recall at start
-anyway, drop `--query " "` from `session-start` (it then recalls the
-project's name) or give `--query "<words>"`.
+another config and may be stopped when a session ends. To be given lines at
+start, give `--query "<words>"`: only lines that clear your relevance bar come
+(`recall.bar.start`, [claude-code-hooks.md](claude-code-hooks.md#how-it-works)).
+A start with no query recalls nothing.
 
 ## A hosted vault
 

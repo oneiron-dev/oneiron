@@ -64,6 +64,7 @@ fn recall_high_in(
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         },
         |_| Some(vec![1.0, 0.0, 0.0, 0.0]),
         &crate::task_verb::sdk::RecallDoor {

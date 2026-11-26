@@ -273,3 +273,51 @@ pub(super) fn scored_entities(ranked: Vec<(EntityId, f64)>) -> Vec<ScoredEntity>
         })
         .collect()
 }
+
+/// Whether at most `cap` rows hold `term` in any field, as a recall's relevance bar asks of
+/// a query term on a vault with no embedder (RECALL-CARRIER-THRESHOLD): a row `hidden_row`
+/// hides counts in none, as in [`score_query_terms`], so no row the reader may not read
+/// makes a term look common. It stops reading the posting list once the count passes `cap`.
+pub(crate) fn term_rows_at_most(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    term: &str,
+    cap: u32,
+    mut hidden_row: Option<&mut (dyn FnMut(&EntityId) -> Result<bool> + '_)>,
+) -> Result<bool> {
+    let diagnostics = &store.diagnostics().bm25;
+    let Some(dups) = store
+        .text_postings()
+        .get_duplicates(rtxn, super::codec::posting_key(term).as_bytes())?
+    else {
+        return Ok(true);
+    };
+    let mut counted = 0_u32;
+    for item in dups {
+        let (_, dup) = item?;
+        let entry = decode_posting_entry(diagnostics, &dup)?;
+        if let Some(hidden_row) = hidden_row.as_deref_mut()
+            && hidden_row(&entry.id)?
+        {
+            continue;
+        }
+        counted = counted.saturating_add(1);
+        if counted > cap {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether the row `id` holds `term`, exactly as indexed, in any field.
+pub(crate) fn row_holds_term(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    term: &str,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(matches!(
+        super::codec::find_posting_dup(store, rtxn, term, id)?,
+        super::codec::PostingLookup::Found(_)
+    ))
+}

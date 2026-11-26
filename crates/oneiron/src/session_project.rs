@@ -86,7 +86,13 @@ pub const NO_PROJECT_BOUND_AXIS: &str = "no_project_bound";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionProjects {
     /// The folder's project and every PROJECT below it.
-    Bound(Arc<BTreeSet<EntityId>>),
+    Bound {
+        /// The project the owner bound to the folder: the one a project's settings are read
+        /// at for the session (RECALL-CARRIER-THRESHOLD).
+        project: EntityId,
+        /// It and every PROJECT below it.
+        closure: Arc<BTreeSet<EntityId>>,
+    },
     /// No live project is bound to the folder: such a read reads no CLAIM row.
     Unbound,
 }
@@ -96,8 +102,17 @@ impl SessionProjects {
     #[must_use]
     pub fn admits(&self, project: EntityId) -> bool {
         match self {
-            Self::Bound(projects) => projects.contains(&project),
+            Self::Bound { closure, .. } => closure.contains(&project),
             Self::Unbound => false,
+        }
+    }
+
+    /// The project the owner bound to the folder, `None` when none is.
+    #[must_use]
+    pub fn project(&self) -> Option<EntityId> {
+        match self {
+            Self::Bound { project, .. } => Some(*project),
+            Self::Unbound => None,
         }
     }
 
@@ -105,7 +120,7 @@ impl SessionProjects {
     #[must_use]
     pub fn receipt_axis(&self) -> &'static str {
         match self {
-            Self::Bound(_) => SESSION_PROJECT_AXIS,
+            Self::Bound { .. } => SESSION_PROJECT_AXIS,
             Self::Unbound => NO_PROJECT_BOUND_AXIS,
         }
     }
@@ -302,11 +317,14 @@ impl Vault {
     /// Storage errors.
     pub fn session_projects(&self, folder_digests: &[String]) -> Result<SessionProjects> {
         Ok(match self.workspace_project(folder_digests)? {
-            Some(project) => SessionProjects::Bound(Arc::new(
-                crate::memory::project_descendant_closure_of(self, vec![project])?
-                    .into_iter()
-                    .collect(),
-            )),
+            Some(project) => SessionProjects::Bound {
+                project,
+                closure: Arc::new(
+                    crate::memory::project_descendant_closure_of(self, vec![project])?
+                        .into_iter()
+                        .collect(),
+                ),
+            },
             None => SessionProjects::Unbound,
         })
     }

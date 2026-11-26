@@ -631,6 +631,7 @@ impl Vault {
             vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
                 config.vector_evidence,
             )),
+            measured_recall_bar: std::sync::RwLock::new(None),
             config,
             tagging_arm: Default::default(),
             payment_credential_release: Default::default(),
