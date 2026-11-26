@@ -12,7 +12,7 @@ pub(super) fn mcp_setup_help(server: &SyncServer) -> Vec<String> {
     vec![
         "register the tool-first endpoint for one generated tool per verb".to_owned(),
         if server.code_execution_host().is_some() {
-            "execute_code resumes a durable run when called with the same run_ref and task"
+            "execute_code takes a task in words that this vault's model turns into a program; the task is not run as source, and the same run_ref and task resume a durable run"
                 .to_owned()
         } else {
             "execute_code has no verified runtime on this server; direct calls receive code_host_unbound".to_owned()
