@@ -285,7 +285,9 @@ impl Memory<'_> {
         };
         let project = match &scope.scope_project_id {
             Some(reference) => self.resolve_ref(reference)?,
-            None => crate::claim::default_project_id(),
+            None => self
+                .session_placement
+                .unwrap_or_else(crate::claim::default_project_id),
         };
         let relationship = match &scope.scope_relationship_id {
             None | Some(ClaimRelationships::All(AllRelationships::All)) => None,

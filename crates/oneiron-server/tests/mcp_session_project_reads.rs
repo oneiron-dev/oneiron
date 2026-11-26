@@ -6,7 +6,10 @@
 //! that names its projects (`project_refs`) reads those; a folder with no project bound reads
 //! no claim and the receipt says `no_project_bound`; a call that names no folder reads as
 //! before. The folder comes from the client (Engine NOTE 22:5x), so a session that names
-//! another bound folder reads nothing its credential could not read anyway.
+//! another bound folder reads nothing its credential could not read anyway. And a session's
+//! `vault.claims.upsert` that names no project lands in its folder's project (PR 3, row
+//! START-RECALL-WRITES-ROOT-PROJECT); an unbound folder's, and a call naming no folder, keep
+//! the root's default project (Q2 = A).
 //!
 //! Red on the base: the `workspace.project` key, the bind method and the session default do
 //! not exist there, so this file does not build.
@@ -28,7 +31,7 @@ use engine_stack::on_engine_stack;
 use oneiron::authority::{
     ActSurface, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
-use oneiron::claim::base_world_id;
+use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
@@ -53,20 +56,25 @@ const BETA_DIGEST: &str = "b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5
 /// A folder nobody bound.
 const UNBOUND_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-/// A reader's slip and the key its holder proves it with.
+/// A person's slip, the key its holder proves it with, and the person.
 struct Holder {
     slip: CapabilitySlip,
     key: SigningKey,
+    person: EntityId,
 }
 
 /// A served vault whose owner made `alpha` and `beta` under the root, each on a facet of its
 /// own, with one claim in each, and bound `BOUND_DIGEST` to `alpha` and `BETA_DIGEST` to
-/// `beta`; a distinct person's `core:read` slip; and another's narrowed to alpha's facet.
+/// `beta`; a distinct person's `core:read` slip; another's narrowed to alpha's facet; and a
+/// third person's `core:read` and `core:write` slip.
 struct Fixture {
     app: Router,
     vault: Arc<Vault>,
     reader: Holder,
     alpha_reader: Holder,
+    writer: Holder,
+    alpha: EntityId,
+    alpha_facet: EntityId,
     beta: EntityId,
     in_alpha: EntityId,
     in_beta: EntityId,
@@ -117,8 +125,9 @@ impl Fixture {
                 "FIXTURE: the owner binds {label}'s folder"
             );
         }
-        let reader = mint_reader(&vault, &issuer, 0x62, None)?;
-        let alpha_reader = mint_reader(&vault, &issuer, 0x63, Some(alpha_facet))?;
+        let reader = mint_holder(&vault, &issuer, 0x62, &["core:read"], None)?;
+        let alpha_reader = mint_holder(&vault, &issuer, 0x63, &["core:read"], Some(alpha_facet))?;
+        let writer = mint_holder(&vault, &issuer, 0x64, &["core:read", "core:write"], None)?;
         let server = Arc::new(SyncServer::new(
             vault.clone(),
             SyncServerConfig {
@@ -131,6 +140,9 @@ impl Fixture {
             vault,
             reader,
             alpha_reader,
+            writer,
+            alpha,
+            alpha_facet,
             beta,
             in_alpha,
             in_beta,
@@ -316,12 +328,13 @@ fn write_claim(
     Ok(id)
 }
 
-/// A distinct person's `core:read` slip, minted under the vault's issuer as pairing mints one,
+/// A distinct person's slip for `verbs`, minted under the vault's issuer as pairing mints one,
 /// with slip id and key from `seed`, and narrowed to `facet` when given.
-fn mint_reader(
+fn mint_holder(
     vault: &Vault,
     issuer: &HostSlipIssuer,
     seed: u8,
+    verbs: &[&str],
     facet: Option<EntityId>,
 ) -> TestResult<Holder> {
     let person = EntityId::now();
@@ -340,13 +353,14 @@ fn mint_reader(
     claims.binding_key = key.verifying_key().to_bytes();
     claims.actor_class = Some("human".to_owned());
     claims.scope = Scope::top();
-    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["core:read".to_owned()]));
+    claims.scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
     if let Some(facet) = facet {
         claims.scope.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(facet)]));
     }
     Ok(Holder {
         slip: vault.mint_capability_slip(issuer, claims)?,
         key,
+        person,
     })
 }
 
@@ -522,6 +536,65 @@ async fn another_folder() -> TestResult {
     assert!(
         !names(&reply, fixture.in_beta),
         "naming beta reads no claim past the credential: {reply}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_attached_sessions_write_that_names_no_project_lands_in_its_folders_project() -> TestResult {
+    on_engine_stack(session_write)
+}
+
+/// One `vault.claims.upsert` that names no project from the bound folder, one from a folder
+/// nobody bound, and one naming no folder: where each claim is stored.
+async fn session_write() -> TestResult {
+    let fixture = Fixture::new()?;
+    let writer = &fixture.writer;
+    let tools = fixture.tools(writer).await?;
+    let mut stored = Vec::new();
+    for (id, folder) in [
+        (3, Some(BOUND_DIGEST)),
+        (4, Some(UNBOUND_DIGEST)),
+        (5, None),
+    ] {
+        let claim = EntityId::now();
+        let reply = fixture
+            .call(
+                writer,
+                id,
+                &tools,
+                "vault.claims.upsert",
+                json!({
+                    "id": claim.to_hex(),
+                    "predicate": "profile.note",
+                    "subject_ref": writer.person.to_hex(),
+                    "value": "a session write",
+                    "confidence": 1.0,
+                    "source": "user_stated",
+                    "scope": { "scope_facet_id": fixture.alpha_facet.to_hex() },
+                }),
+                folder,
+            )
+            .await?;
+        let body = fixture
+            .vault
+            .get_claim(&claim)?
+            .ok_or_else(|| format!("the claim is stored: {reply}"))?;
+        stored.push(body.scope_project);
+    }
+    assert_eq!(
+        stored[0], fixture.alpha,
+        "the bound folder's write lands in its project"
+    );
+    assert_eq!(
+        stored[1],
+        default_project_id(),
+        "an unbound folder's write keeps the root's default project"
+    );
+    assert_eq!(
+        stored[2],
+        default_project_id(),
+        "a call that names no folder writes as before"
     );
     Ok(())
 }

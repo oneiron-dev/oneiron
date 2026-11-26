@@ -392,8 +392,13 @@ folder Claude Code runs in. Then:
 
 The binding selects; it grants nothing. The folder a tool call names comes from
 the client, so a client that names another folder only changes which of the
-claims its credential reads anyway come first by default. Writes keep their own
-project rules.
+claims its credential reads anyway come first by default.
+
+A claim the session writes (`vault.claims.upsert`, `vault.remember`) that names
+no project lands in the folder's project, so the session reads it back. One
+that names its project (`scope_project_id`) lands there, within what the
+credential may write. In a folder with no project bound, writes keep the root's
+default project, as before. Notes and other rows carry no project yet.
 
 ## 1. Turn on the import queue
 

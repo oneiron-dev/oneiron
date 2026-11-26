@@ -238,12 +238,13 @@ pub(crate) async fn handle_mcp_request(
                     let mut args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                     // A generated verb row that writes nothing reads the session folder's
-                    // project unless its arguments name projects (RECALL-SESSION-PROJECT).
+                    // project unless its arguments name projects; one that writes places a
+                    // claim that names no project there (RECALL-SESSION-PROJECT).
                     let actor = match &args {
                         crate::mcp::McpValidatedToolArgs::Verb(call) => {
                             actor.for_verb_row(call.tool.writes(), &arguments)
                         }
-                        _ => actor.for_verb_row(true, &arguments),
+                        _ => actor.for_non_verb_row(),
                     };
                     // The held content rides the call of the tool it arrived
                     // for, with that call's page argument digest (FIX 22074).

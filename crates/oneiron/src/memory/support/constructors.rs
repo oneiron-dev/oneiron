@@ -58,6 +58,7 @@ impl Vault {
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
             session_projects: None,
+            session_placement: None,
             dispatch_attempt: None,
         }
     }
@@ -121,6 +122,7 @@ impl Vault {
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
             session_projects: None,
+            session_placement: None,
             dispatch_attempt: None,
         }
     }
@@ -184,6 +186,7 @@ impl<'v> Memory<'v> {
                 task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
                 session_projects: self.session_projects.clone(),
+                session_placement: self.session_placement,
                 credential: self.credential,
                 credential_instrument: self.credential_instrument.clone(),
                 attested_owner: self.attested_owner,
