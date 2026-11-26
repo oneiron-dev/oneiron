@@ -2,11 +2,12 @@
 //! sessions read by default, unbinds it, or lists the bindings (RECALL-SESSION-PROJECT; Engine
 //! ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q3 = A, the owner's act only).
 //!
-//! Each subcommand is one `vault.settings.*` call on the `workspace.project` key, sent as
+//! Bind and unbind are the owner's verbs `vault.projects.workspace.bind` and `.unbind`;
+//! bindings is one `vault.settings.list` call on the `workspace.project` key. Each is sent as
 //! `oneiron api call` sends a verb, under the credential that command takes: binding is the
-//! owner's act, so an agent's credential gets a check-in for the owner, never a binding. The
-//! folder's path never leaves this machine: the row is keyed by its workspace id
-//! ([`crate::workspace_identity`]) and labelled with its name.
+//! owner's act, so only the owner's proof binds. The folder's path never leaves this machine:
+//! the request names the folder by its digest ([`crate::workspace_identity`]) and its name, and
+//! the vault keys the digest with its own id.
 
 use std::path::Path;
 use std::time::Instant;
@@ -30,13 +31,16 @@ pub async fn project(args: ProjectArgs) -> anyhow::Result<()> {
         ProjectCommand::Bind { project_ref } => {
             let identity = folder_identity(args.folder.as_deref())?;
             (
-                "vault.settings.set",
+                "vault.projects.workspace.bind",
                 workspace_bind_request(&identity, project_ref)?,
             )
         }
         ProjectCommand::Unbind => {
             let identity = folder_identity(args.folder.as_deref())?;
-            ("vault.settings.set", workspace_unbind_request(&identity))
+            (
+                "vault.projects.workspace.unbind",
+                workspace_unbind_request(&identity),
+            )
         }
         ProjectCommand::Bindings => (
             "vault.settings.list",
@@ -67,8 +71,9 @@ fn folder_identity(folder: Option<&Path>) -> anyhow::Result<WorkspaceIdentity> {
         .with_context(|| format!("{} does not resolve to a folder", folder.display()))
 }
 
-/// The `vault.settings.set` request that binds the folder `identity` names (its own id, never
-/// its main checkout's) to the PROJECT `project_ref`, labelled with the folder's name.
+/// The `vault.projects.workspace.bind` request that binds the folder `identity` names (its own
+/// digest, never its main checkout's) to the PROJECT `project_ref`, labelled with the folder's
+/// name.
 ///
 /// # Errors
 ///
@@ -80,19 +85,14 @@ pub fn workspace_bind_request(
     let project = EntityId::from_hex(project_ref.trim())
         .map_err(|_| anyhow::anyhow!("a project ref is the PROJECT's id, 32 hex"))?;
     Ok(json!({
-        "key": WORKSPACE_PROJECT_KEY,
-        "item": identity.own_id(),
-        "scope": { "kind": "vault" },
-        "value": { "project": project.to_hex(), "label": identity.label },
+        "folder_digest": identity.own_digest(),
+        "project": project.to_hex(),
+        "label": identity.label,
     }))
 }
 
-/// The `vault.settings.set` request that clears the folder `identity` names.
+/// The `vault.projects.workspace.unbind` request that clears the folder `identity` names.
 #[must_use]
 pub fn workspace_unbind_request(identity: &WorkspaceIdentity) -> Value {
-    json!({
-        "key": WORKSPACE_PROJECT_KEY,
-        "item": identity.own_id(),
-        "scope": { "kind": "vault" },
-    })
+    json!({ "folder_digest": identity.own_digest() })
 }

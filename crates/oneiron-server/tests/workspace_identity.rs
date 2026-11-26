@@ -1,7 +1,7 @@
 //! RECALL-SESSION-PROJECT PR 1 (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: the
-//! binding stores a hash plus a label): a folder's workspace identity is its canonical checkout
-//! root's tagged SHA-256, a linked worktree names its main checkout's id second, and the
-//! `oneiron project bind` request carries the id and the folder's name, never its path.
+//! binding stores a hash plus a label): a folder's digest is its canonical checkout root's
+//! tagged SHA-256, a linked worktree names its main checkout's digest second, and the
+//! `oneiron project bind` request carries the digest and the folder's name, never its path.
 //!
 //! Red on the base: `oneiron_server::workspace_identity` and the `oneiron project` requests do
 //! not exist there, so this file does not build.
@@ -12,7 +12,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use oneiron_server::commands::{workspace_bind_request, workspace_unbind_request};
-use oneiron_server::workspace_identity::{WorkspaceIdentity, workspace_id};
+use oneiron_server::workspace_identity::{WorkspaceIdentity, folder_digest};
 
 const PROJECT: &str = "5b0e3f9c2d4a4e1f8a7c6b5d4e3f2a1b";
 
@@ -59,9 +59,9 @@ fn canonical(path: &Path) -> std::path::PathBuf {
 }
 
 #[test]
-fn the_workspace_id_is_the_tagged_sha256_of_the_root_path() {
+fn the_folder_digest_is_the_tagged_sha256_of_the_root_path() {
     assert_eq!(
-        workspace_id(Path::new("/srv/checkouts/alpha")),
+        folder_digest(Path::new("/srv/checkouts/alpha")),
         "cecd80212ccc8285c06b009c54be19cec87d53d6dc2118ed28633a9d7f55df95",
         "sha256(\"oneiron.workspace.v1\\0\" + path), lower-case hex"
     );
@@ -73,7 +73,7 @@ fn a_folder_outside_git_is_its_own_root() {
     let folder = parent.path().join("notes");
     std::fs::create_dir(&folder).expect("folder");
     let identity = WorkspaceIdentity::of_folder(&folder, deadline()).expect("identity");
-    assert_eq!(identity.ids, vec![workspace_id(&canonical(&folder))]);
+    assert_eq!(identity.digests, vec![folder_digest(&canonical(&folder))]);
     assert_eq!(identity.label, "notes");
 }
 
@@ -85,8 +85,8 @@ fn a_subfolder_of_a_checkout_names_the_checkout_root() {
     std::fs::create_dir_all(&sub).expect("subfolder");
     let identity = WorkspaceIdentity::of_folder(&sub, deadline()).expect("identity");
     assert_eq!(
-        identity.ids,
-        vec![workspace_id(&canonical(&repo))],
+        identity.digests,
+        vec![folder_digest(&canonical(&repo))],
         "the main checkout names itself once"
     );
     assert_eq!(identity.label, "alpha");
@@ -110,14 +110,14 @@ fn a_linked_worktree_names_itself_then_its_main_checkout() {
     );
     let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
     assert_eq!(
-        identity.ids,
+        identity.digests,
         vec![
-            workspace_id(&canonical(&worktree)),
-            workspace_id(&canonical(&repo)),
+            folder_digest(&canonical(&worktree)),
+            folder_digest(&canonical(&repo)),
         ]
     );
     assert_eq!(identity.label, "alpha-fork");
-    assert_eq!(identity.own_id(), identity.ids[0]);
+    assert_eq!(identity.own_digest(), identity.digests[0]);
 }
 
 #[cfg(unix)]
@@ -134,7 +134,7 @@ fn a_symlinked_path_names_the_same_checkout() {
 }
 
 #[test]
-fn the_bind_request_carries_the_id_and_name_never_the_path() {
+fn the_bind_request_carries_the_digest_and_name_never_the_path() {
     let parent = tempfile::tempdir().expect("temp folder");
     let repo = repository(parent.path());
     let identity = WorkspaceIdentity::of_folder(&repo, deadline()).expect("identity");
@@ -142,10 +142,9 @@ fn the_bind_request_carries_the_id_and_name_never_the_path() {
     assert_eq!(
         request,
         serde_json::json!({
-            "key": "workspace.project",
-            "item": identity.own_id(),
-            "scope": { "kind": "vault" },
-            "value": { "project": PROJECT, "label": "alpha" },
+            "folder_digest": identity.own_digest(),
+            "project": PROJECT,
+            "label": "alpha",
         })
     );
     let sent = request.to_string();
@@ -153,11 +152,7 @@ fn the_bind_request_carries_the_id_and_name_never_the_path() {
     assert!(!sent.contains(&path), "the request names no path: {sent}");
     assert_eq!(
         workspace_unbind_request(&identity),
-        serde_json::json!({
-            "key": "workspace.project",
-            "item": identity.own_id(),
-            "scope": { "kind": "vault" },
-        })
+        serde_json::json!({ "folder_digest": identity.own_digest() })
     );
 }
 
