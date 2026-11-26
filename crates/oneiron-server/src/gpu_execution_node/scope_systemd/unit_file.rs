@@ -229,7 +229,7 @@ pub fn installed_engine_account(unit_text: &str) -> Option<&str> {
     for line in unit_text.lines() {
         let mut words = line.split_whitespace();
         if words.any(|word| word == "--engine-account") {
-            return words.next().filter(|name| plain_account(name));
+            return None;
         }
     }
     None
