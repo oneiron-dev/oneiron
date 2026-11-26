@@ -370,12 +370,14 @@ checkout's real path and the folder's name, never the path; the vault keys the
 digest with its own id before it stores it, so one folder's ids differ from
 vault to vault. Someone who reads the vault and knows its id can still test a
 guessed path against a stored id: the digest hides the path, it is not a
-secret. Because the vault's own store id keys it, a binding does not follow
-the vault to a restored store or a replica: there the folder reads as unbound
-until you bind it again. The folder
-is the git checkout it sits in, so every subfolder of a repository shares one
-binding; a linked worktree with no binding of its own reads its main
-checkout's. The filesystem root and your home folder are never a workspace.
+secret. A binding belongs to the machine that holds the vault you bound it
+on: another machine of the vault never receives it, and a restore drops it,
+so on a replica, and after a restore, the folder reads as unbound until you
+bind it again. The folder is the git checkout it sits in, so every subfolder
+of a repository shares one binding; a linked worktree with no binding of its
+own reads its main checkout's (a bare repository, or one with a separate git
+directory, has none). The filesystem root and your home folder are never a
+workspace.
 
 The plugin starts `oneiron mcp --workspace .`, so every tool call names the
 folder Claude Code runs in. Then:
