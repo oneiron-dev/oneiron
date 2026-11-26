@@ -102,16 +102,8 @@ impl Memory<'_> {
         messages: &mut [(EntityId, String)],
     ) -> MemoryResult<()> {
         if self.reads_lifted_keys_masked_in_txn(txn)? {
-            let keys = LiftedKeys::of_in_txn(
-                &self.vault.store,
-                txn,
-                messages.iter().map(|(_, text)| text.as_str()),
-            )?;
-            for (_, text) in messages {
-                if let Some(masked) = keys.masked(text) {
-                    *text = masked;
-                }
-            }
+            // The one per-message mask the board's TURN pins use too.
+            LiftedKeys::mask_turn_messages_in_txn(&self.vault.store, txn, messages)?;
         }
         Ok(())
     }
