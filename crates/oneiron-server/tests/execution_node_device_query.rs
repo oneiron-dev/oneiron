@@ -49,6 +49,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use oneiron_server::gpu_execution_node::jobs::JobKeyId;
 use oneiron_server::gpu_execution_node::scope_systemd::device_query::{
     DEVICE_QUERY_LOCK_FILE, DeviceQueryError, DeviceQuerySettings,
 };
@@ -983,11 +984,10 @@ fn install_refuses_an_oneiron_binary_beneath_the_query_locks_directory() {
     assert_eq!(check("/usr/local/bin/oneiron"), Ok(()));
 }
 
-#[test]
-fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadline() {
+/// A full listen queue. Keep both the listener and its queued clients open.
+fn full_queue_listener(dir: &Path) -> (PathBuf, (OwnedFd, Vec<OwnedFd>)) {
     use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
-    let dir = tempfile::tempdir().expect("tempdir");
-    let socket = dir.path().join("job-control.sock");
+    let socket = dir.join("job-control.sock");
     let address = SocketAddrUnix::new(&socket).expect("the socket's address");
     // A listener with no accept backlog that never accepts, its queue full.
     let listener =
@@ -1010,6 +1010,13 @@ fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadli
         }
         assert!(waiting.len() < 64, "the queue never filled");
     }
+    (socket, (listener, waiting))
+}
+
+#[test]
+fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (socket, _guards) = full_queue_listener(dir.path());
     let wait = Duration::from_secs(1);
     let (answered, answer) = std::sync::mpsc::channel();
     let asked = socket.clone();
@@ -1030,7 +1037,33 @@ fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadli
         Ok(other) => panic!("a full queue is no answer in time, got {other:?}"),
         Err(_) => panic!("the probe still waited to connect 5 s past its 1 s deadline"),
     }
-    drop((waiting, listener));
+}
+
+#[test]
+fn a_listener_that_takes_no_connection_holds_a_job_request_no_longer_than_its_deadline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (socket, _guards) = full_queue_listener(dir.path());
+    let wait = Duration::from_secs(1);
+    let (answered, answer) = std::sync::mpsc::channel();
+    let asked = socket.clone();
+    std::thread::spawn(move || {
+        let id = JobKeyId::for_key("k");
+        let _ = answered.send(control::request_at(
+            &asked,
+            control::ControlVerb::Stop,
+            &id,
+            wait,
+        ));
+    });
+    let reason = answer
+        .recv_timeout(wait + Duration::from_secs(5))
+        .expect("the job request still waited to connect 5 s past its 1 s deadline")
+        .expect_err("the listener took no connection");
+    assert!(
+        reason.starts_with(&format!("{}: ", socket.display()))
+            && reason.contains("the handler took no connection in time"),
+        "{reason}"
+    );
 }
 
 #[test]

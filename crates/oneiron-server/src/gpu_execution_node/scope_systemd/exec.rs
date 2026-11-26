@@ -249,9 +249,39 @@ fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
     }
 }
 
+/// How long the clients wait before trying a connection again.
+const CONNECT_RETRY: Duration = Duration::from_millis(20);
+
+/// Connects without blocking, retrying a full listen queue or an interrupted
+/// attempt until `deadline`. The stream is blocking once connected.
+///
+/// # Errors
+///
+/// `TimedOut` if the listener did not take a connection in time, or the
+/// original error if the attempt failed for another reason.
+pub(super) fn connect_by_deadline(
+    address: &rustix::net::SocketAddrUnix,
+    deadline: Instant,
+) -> io::Result<UnixStream> {
+    loop {
+        match connect_once(address) {
+            Err(error) if matches!(error.raw_os_error(), Some(libc::EAGAIN | libc::EINTR)) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("the handler took no connection in time: {error}"),
+                    ));
+                }
+                std::thread::sleep(CONNECT_RETRY.min(left));
+            }
+            result => return result,
+        }
+    }
+}
+
 /// One connection try that does not block, then the connection made
-/// blocking. The engine's device query connects this way too
-/// ([`super::device_query`]).
+/// blocking.
 pub(super) fn connect_once(address: &rustix::net::SocketAddrUnix) -> io::Result<UnixStream> {
     use rustix::net::{AddressFamily, SocketFlags, SocketType};
     let socket = rustix::net::socket_with(

@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::device_query;
+use super::exec::connect_by_deadline;
 use super::safe_fs::account;
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
@@ -78,8 +79,8 @@ const CUTOFF_DIGITS_MAX: usize = 20;
 /// The longest reply line the engine reads.
 const REPLY_MAX_BYTES: usize = 1024;
 
-/// How long the handler waits for the whole request line, from its start;
-/// the engine's write of it waits as long.
+/// How long the handler waits for the whole request line, from its start.
+/// The engine's job control connect and its write of the request wait as long.
 pub(super) const REQUEST_WAIT: Duration = Duration::from_secs(5);
 
 /// How long the engine waits for the handler's answer: the handler's own
@@ -233,16 +234,34 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
     Ok((verb, id))
 }
 
-/// The engine's side: asks the handler for `verb` on the job unit `id` and
-/// waits at most [`CONTROL_ANSWER_WAIT`] for its answer.
+/// The engine's side: makes the connection within `REQUEST_WAIT`, asks the
+/// handler for `verb` on the job unit `id`, then waits at most
+/// [`CONTROL_ANSWER_WAIT`] for its answer.
 ///
 /// # Errors
 ///
-/// The socket is missing or did not answer, or the handler refused (its
-/// reason).
+/// As [`request_at`].
 pub fn request(verb: ControlVerb, id: &JobKeyId) -> Result<(), String> {
-    let fail = |error: std::io::Error| format!("{CONTROL_SOCKET_PATH}: {error}");
-    let mut stream = UnixStream::connect(CONTROL_SOCKET_PATH).map_err(fail)?;
+    request_at(Path::new(CONTROL_SOCKET_PATH), verb, id, REQUEST_WAIT)
+}
+
+/// Asks the handler at `socket` for `verb` on the job unit `id`, allowing
+/// `connect_wait` for the connection.
+///
+/// # Errors
+///
+/// The socket could not be reached or did not answer, or the handler refused
+/// (its reason).
+pub fn request_at(
+    socket: &Path,
+    verb: ControlVerb,
+    id: &JobKeyId,
+    connect_wait: Duration,
+) -> Result<(), String> {
+    let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
+    let deadline = Instant::now() + connect_wait;
+    let address = rustix::net::SocketAddrUnix::new(socket).map_err(|error| fail(error.into()))?;
+    let mut stream = connect_by_deadline(&address, deadline).map_err(fail)?;
     stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
     stream
         .write_all(render_request(verb, id).as_bytes())
