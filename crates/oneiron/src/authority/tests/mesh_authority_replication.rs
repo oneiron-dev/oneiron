@@ -38,6 +38,15 @@
 //! slot behind a keystore that counts each call, on a handle with no keys loaded. Red, one fix
 //! undone at a time on this head: the MACHINE body rule (16 fails, the rest pass), and the slot
 //! read (18 fails, the rest pass).
+//!
+//! MESH-GRANT-TEST10-HOME-CONTROL-RED: test 10 stepped only its test clock's wall, which moves no
+//! lifetime (the authority clock follows a source's monotonic reading, and `ManualClock` gives
+//! none), so its home still proved the grant the test meant to expire; and that grant ended with
+//! its pairing, not before it. The test now moves the authority floor with the wall and ends the
+//! grant half an hour before its pairing. Red, one rule of the grant check undone at a time on
+//! this head: the end judged on the replica's own clock alone (10 fails at "the grant the home
+//! expired admits nothing here", the rest pass), and the start judged on it again (10 fails at
+//! "the grant the home has just minted admits at once", the rest pass).
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -489,30 +498,43 @@ fn a_bare_row_keeps_the_direct_addresses_the_replica_holds() {
 /// presence in the signed fold, and its end comes no later than the newest time a live owner
 /// signed into it. A replica whose clock stood still while the home went on neither keeps a grant
 /// the home expired nor refuses one the home has just minted (review round 2 of #10536, FIX
-/// MESH-GRANT-REPLICA-CLOCK).
+/// MESH-GRANT-REPLICA-CLOCK). The expired grant's pairing still stands, so the replica refuses
+/// that grant for the grant's own end (FIX MESH-GRANT-TEST10-HOME-CONTROL-RED).
 #[test]
 fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
     const MINTED: u64 = 1_790_000_000;
+    // The grant ceiling the owner sets: half the hour that `pair_and_bind`'s pairing runs.
+    const CEILING: u64 = 1800;
+    // The home's time once it has gone on: past the re-minted grant's end, before its pairing's.
+    const LATER: u64 = MINTED + 2700;
     let clock = crate::ports::ManualClock::new(MINTED);
     let mut config = VaultConfig::default();
     config.store_clock = clock.bundle();
     let host = host_with(config);
-    let (expiring, _, expiring_key) = bound_machine(&host, 101);
-    // The owner's grant ceiling drops to an hour, and that machine's grant is minted again under
-    // it: it now ends before the pairing it rides on.
+    let (expiring, expiring_proven, expiring_key) = bound_machine(&host, 101);
+    // The owner's grant ceiling drops to half an hour, and that machine's grant is minted again
+    // under it: it now ends half an hour before the pairing it rides on.
     host.vault
         .set_setting(
             crate::setting::SettingCaller::Owner(&host.owner),
             crate::setting::SetSetting::vault_value(
                 "mesh.grant.max_ttl_secs",
-                serde_json::json!(3600),
+                serde_json::json!(CEILING),
             ),
         )
         .unwrap();
     host.vault
         .set_mesh_alpn_grant(&host.issuer, expiring, expiring_key, GRANTED, true)
         .unwrap();
-    clock.set(MINTED + 7200);
+    // The home's time goes on. Lifetimes run on the vault's authority clock, which a step of a
+    // test clock's wall alone never moves (`ManualClock` gives no monotonic reading), so its
+    // floor is moved with it, as a serving home's clock moves while it runs.
+    clock.set(LATER);
+    host.vault.advance_authority_clock_for_test(LATER).unwrap();
+    assert!(
+        host.vault.capability_slip_now().unwrap() >= LATER,
+        "FIXTURE: the home's clock reads the later time"
+    );
     let (_, fresh, fresh_key) = bound_machine(&host, 103);
     assert_eq!(
         host.vault.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
@@ -525,6 +547,10 @@ fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
     let (_dir, replica) = replica_with(&host, behind);
     let import = replica.import_mesh_authority_rows(served(&host)).unwrap();
     assert_eq!(import.written.len(), 2, "{import:?}");
+    assert!(
+        replica.capability_slip_now().unwrap() < MINTED + CEILING,
+        "FIXTURE: the replica's own clock still reads before the expired grant's end"
+    );
     assert_eq!(
         replica.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
         PeerMachine::Unknown,
@@ -534,6 +560,17 @@ fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
         replica.mesh_peer_machine(fresh_key, GRANTED).unwrap(),
         fresh,
         "the grant the home has just minted admits at once"
+    );
+
+    // The pairing the expired grant rode on still stands on the home at the later time: a grant
+    // minted on it again admits there. The replica refused the expired grant for its own end.
+    host.vault
+        .set_mesh_alpn_grant(&host.issuer, expiring, expiring_key, GRANTED, true)
+        .unwrap();
+    assert_eq!(
+        host.vault.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
+        expiring_proven,
+        "control: the expired grant's pairing still stands on the home"
     );
 }
 
