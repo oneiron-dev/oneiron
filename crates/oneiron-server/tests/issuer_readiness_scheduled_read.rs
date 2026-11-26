@@ -236,8 +236,7 @@ fn a_machine_is_due_the_scheduled_read_a_period_after_its_last_ask() -> TestResu
     let mut config = oneiron::VaultConfig::device();
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
-    let vault = Vault::open(dir.path(), config)
-        .map_err(at("open the vault"))?;
+    let vault = Vault::open(dir.path(), config).map_err(at("open the vault"))?;
     let read = EntityId::now();
     let unanswered = EntityId::now();
     let mut reads = ReadinessReads::default();

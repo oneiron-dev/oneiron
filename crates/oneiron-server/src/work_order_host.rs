@@ -26,8 +26,8 @@ use crate::gpu_execution_node::issuer::{
     JobNodeClient, NodeCallError, VAULT_MACHINE_BACKEND, not_the_issuer,
 };
 use crate::gpu_execution_node::wire::{
-    JOB_ALPN, JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest,
-    LogTailRequest, NodeAnswer,
+    JOB_ALPN, JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, LogTailRequest,
+    NodeAnswer,
 };
 use crate::gpu_host::{GpuHostError, job_admission, job_backend, offer_with_backend};
 use crate::server::SyncServer;
