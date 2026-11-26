@@ -267,7 +267,6 @@ impl GpuAvailability {
             .filter(move |device| {
                 open && device.state == GpuDeviceState::Free
                     && admits_gpu(request, &device.device)
-                    && !self.lists_more_than_once(&device.device.device_id)
             })
             .map(|device| &device.device)
     }
