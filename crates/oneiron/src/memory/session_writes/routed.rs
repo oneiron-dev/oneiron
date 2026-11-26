@@ -265,14 +265,15 @@ impl Memory<'_> {
         }
         // The connector's live ceiling is checked again when the claim stages.
         if let Some(credential) = credential {
-            let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
-            self.clone().with_read_proof(credential).admit_claim_position(
-                &txn,
-                world,
-                facet,
-                project,
-                input.sensitivity,
-            )?;
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            self.clone()
+                .with_read_proof(credential)
+                .admit_claim_position(&txn, world, facet, project, input.sensitivity)?;
         }
         let mut annotations = serde_json::Map::from_iter([
             ("facet".into(), serde_json::Value::String(facet.to_hex())),

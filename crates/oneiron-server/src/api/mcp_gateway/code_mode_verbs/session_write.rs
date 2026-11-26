@@ -43,8 +43,12 @@ pub(super) fn admit(
         .clone()
         .ok_or_else(|| refused(mcp_proof_error()))?;
     let project = if verb == AgentVerb::VaultClaimsUpsert {
-        verbs.actor.session_workspace.as_deref().and_then(|digests| {
-            verbs
+        verbs
+            .actor
+            .session_workspace
+            .as_deref()
+            .and_then(|digests| {
+                verbs
                 .server
                 .vault
                 .workspace_project(digests)
@@ -55,7 +59,7 @@ pub(super) fn admit(
                     );
                     None
                 })
-        })
+            })
     } else {
         None
     };
