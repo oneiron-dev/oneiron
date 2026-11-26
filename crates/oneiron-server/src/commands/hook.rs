@@ -69,13 +69,19 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest first line of a Codex rollout read for its meta, which holds
 /// the session's base instructions: tens of KiB.
 const MAX_ROLLOUT_META_BYTES: u64 = 4 << 20;
-/// What the vault line adds when no project is bound to the session's folder
-/// (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov:
-/// Q2 = A, the bind command in the start hook's vault line; Q3 = A, binding is
-/// the owner's act, so the line names who runs it).
-const UNBOUND_FOLDER: &str = " No project is bound to this folder, so a read that names no \
-                              project reads no claims here; the owner binds one by running \
-                              `oneiron project bind <project-ref>` in this folder.";
+/// What the vault line at `url` adds when no project is bound to the session's
+/// folder (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT,
+/// 26 Nov: Q2 = A, the bind command in the start hook's vault line; Q3 = A,
+/// binding is the owner's act, so the line names who runs it). The command names
+/// the vault by `--base-url`, so it binds the folder on the vault the line names,
+/// whatever `ONEIRON_URL` holds where the owner runs it.
+fn unbound_folder_words(url: &str) -> String {
+    format!(
+        " No project is bound to this folder, so a read that names no project reads no \
+         claims here; the owner binds one by running `oneiron project bind <project-ref> \
+         --base-url {url}` in this folder."
+    )
+}
 
 pub fn hook(args: HookArgs) {
     let host = args.host;
@@ -178,7 +184,7 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     if let (Some(dir), Some(line)) = (folder.as_deref(), said.first_mut())
         && recall::folder_unbound(&oneiron, &url, auth, dir, deadline)
     {
-        line.push_str(UNBOUND_FOLDER);
+        line.push_str(&unbound_folder_words(&url));
     }
     let query = args.query.clone().unwrap_or_else(|| {
         folder

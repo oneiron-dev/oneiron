@@ -388,8 +388,8 @@ folder Claude Code runs in. Then:
   `session_project`.
 - In a folder with no project bound, such a read reads no claim, and its
   receipt names `no_project_bound`: bind one to read the folder's memory. The
-  session-start hook says so in its vault line, with the bind command, and
-  recalls nothing for it: it asks the vault once, through a bridge started for
+  session-start hook says so in its vault line, with the bind command (which
+  names that vault by `--base-url`), and recalls nothing for it: it asks the vault once, through a bridge started for
   the session's folder, whether a project is bound there (`initialize` answers
   `project_bound` under `_meta["oneiron/workspace"]`, naming no project).
 - The hook's own recalls (at start when it has a query, and on each prompt)
