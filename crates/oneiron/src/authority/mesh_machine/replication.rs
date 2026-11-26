@@ -26,7 +26,18 @@
 //! - a binding never moves to another endpoint or machine key;
 //! - an address served bare, without its direct addresses, never takes the
 //!   one this replica holds at that endpoint;
-//! - this install's own MACHINE row stays its own to write.
+//! - this install's own binding lands only when it names this install's
+//!   machine key and the endpoint this install serves under, the key it
+//!   derives from that machine key ([`OwnMeshKeys`]);
+//! - this install's own MACHINE address is written only where this install
+//!   holds none, and a held one is never replaced.
+//!
+//! A replica takes its own binding as it takes any other
+//! (MESH-AUTHORITY-OWN-BINDING, R6 P0, Engine 26 Nov 12:35): it holds no host
+//! issuer to sign one, so a node on it could never prove its own job grant
+//! (`own_grant_ended`). Nothing on a joined replica writes its own MACHINE
+//! address either (device sync sends no MACHINE row), so the served address
+//! fills it when it is absent.
 
 use super::*;
 use crate::ports::{EntityRecord, TombstoneStoreRead};
@@ -82,10 +93,21 @@ pub struct MeshAuthorityImport {
     /// The bindings refused: a row that does not decode or verify here, an
     /// address that is not the one it binds, or a row this replica keeps
     /// instead (another host's, an older or equal revision, a revoked one,
-    /// another endpoint or key, or a MACHINE row it cannot take).
+    /// another endpoint or key, or a MACHINE row it cannot take); and this
+    /// install's own binding when it names another machine key or endpoint
+    /// than this install's own (`OwnMeshKeys`), or this install cannot read
+    /// its own keys.
     pub refused: BTreeSet<EntityId>,
-    /// This install's own MACHINE, left to this install.
-    pub own: BTreeSet<EntityId>,
+}
+
+/// The keys this install's own binding must name: its MACHINE id, its
+/// machine key and the mesh endpoint key it serves under, derived from that
+/// machine key as its transport derives it ([`Vault::mesh_transport_seed`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OwnMeshKeys {
+    machine: EntityId,
+    device_key: [u8; 32],
+    endpoint_key: [u8; 32],
 }
 
 /// The claims of `signed`, the binding row of `machine`, when a live owner
@@ -257,7 +279,9 @@ impl Vault {
     /// Imports the bindings a home served (`rows`, one page): each one a live
     /// owner host of this vault's fold signed, written as signed with its
     /// MACHINE address row, in one write. A row this replica cannot take is
-    /// refused alone; the rest land. Never signs anything.
+    /// refused alone; the rest land. This install's own binding lands the
+    /// same way, when it names this install's own machine key and the
+    /// endpoint it serves under. Never signs anything.
     ///
     /// # Errors
     ///
@@ -268,6 +292,8 @@ impl Vault {
     ) -> Result<MeshAuthorityImport> {
         let mut import = MeshAuthorityImport::default();
         let mut narrowed = false;
+        // Read before the writer opens: the keys load in a read of their own.
+        let own_keys = self.own_mesh_keys();
         let mut txn = self.store.env.write_txn()?;
         let own = crate::identity::read_machine_id_in_txn(self, &txn)?;
         // Nothing an import writes changes the authority log, so one fold
@@ -276,11 +302,20 @@ impl Vault {
         let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
         for row in rows {
             let machine = row.machine;
-            if own == Some(machine) {
-                import.own.insert(machine);
-                continue;
-            }
-            match self.import_mesh_authority_row_in_txn(&mut txn, &fold, row, &mut count)? {
+            let whose = if own == Some(machine) {
+                match own_keys.filter(|keys| keys.machine == machine) {
+                    Some(keys) => Whose::Own(keys),
+                    None => {
+                        import.refused.insert(machine);
+                        continue;
+                    }
+                }
+            } else {
+                Whose::Other
+            };
+            let outcome =
+                self.import_mesh_authority_row_in_txn(&mut txn, &fold, row, whose, &mut count)?;
+            match outcome {
                 RowOutcome::Written { narrowed: withdrew } => {
                     narrowed |= withdrew;
                     import.written.insert(machine);
@@ -301,15 +336,47 @@ impl Vault {
         Ok(import)
     }
 
+    /// This install's [`OwnMeshKeys`], or `None` before it has a machine
+    /// identity. Keys this install cannot read are logged and answer `None`,
+    /// so its own binding is refused and every other row still lands.
+    fn own_mesh_keys(&self) -> Option<OwnMeshKeys> {
+        let read = || -> Result<Option<OwnMeshKeys>> {
+            let Some((machine, seed)) = self.mesh_transport_seed()? else {
+                return Ok(None);
+            };
+            let txn = self.store.env.read_txn()?;
+            let Some(device) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
+                return Ok(None);
+            };
+            Ok(Some(OwnMeshKeys {
+                machine,
+                device_key: device.verifying_key().to_bytes(),
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&seed)
+                    .verifying_key()
+                    .to_bytes(),
+            }))
+        };
+        read().unwrap_or_else(|error| {
+            tracing::warn!(
+                %error,
+                "this install's mesh keys do not read; its own binding is refused"
+            );
+            None
+        })
+    }
+
     /// One served binding into `txn`, as [`Self::import_mesh_authority_rows`]
     /// takes it: verified, at the address it binds, over no binding this
     /// replica keeps instead ([`replaces`]), on a MACHINE row that can take
-    /// it ([`Self::machine_row_takes_in_txn`]).
+    /// it ([`Self::machine_row_takes_in_txn`]). This install's own binding
+    /// (`whose`) must also name its own machine key and endpoint, and keeps
+    /// any mesh address this install holds for itself.
     fn import_mesh_authority_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         row: MeshAuthorityRow,
+        whose: Whose,
         count: &mut ScanCount,
     ) -> Result<RowOutcome> {
         let MeshAuthorityRow {
@@ -328,6 +395,13 @@ impl Vault {
             return Ok(RowOutcome::Refused);
         };
         if address.endpoint_key != served.endpoint_key {
+            return Ok(RowOutcome::Refused);
+        }
+        // This install's own binding names the key this install pairs with and
+        // the endpoint it serves under, or it is not this install's to prove.
+        if let Whose::Own(keys) = whose
+            && (served.device_key != keys.device_key || served.endpoint_key != keys.endpoint_key)
+        {
             return Ok(RowOutcome::Refused);
         }
         // Every direct address and grant is kept (FIX 7921, 7922): measured,
@@ -351,8 +425,9 @@ impl Vault {
         {
             return Ok(RowOutcome::Refused);
         }
+        let keep_held = bare || matches!(whose, Whose::Own(_));
         let Some(address_held) =
-            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, bare, count)?
+            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, keep_held, count)?
         else {
             return Ok(RowOutcome::Refused);
         };
@@ -390,17 +465,19 @@ impl Vault {
     /// `None` when another kind, a deleted or stale holder, a mesh address at
     /// another endpoint, or another MACHINE at this endpoint refuses it, two
     /// MACHINE rows here naming that endpoint included; else whether the row
-    /// keeps what it holds: that envelope already, or, for a `bare` one, a
-    /// mesh address at that endpoint, whose direct addresses may be this
-    /// replica's only route (REVIEW-10536 round 2). An absent row takes it:
-    /// no peer sends a MACHINE row.
+    /// keeps what it holds: that envelope already, or, with `keep_held`, a
+    /// mesh address at that endpoint. A bare row keeps it because its direct
+    /// addresses may be this replica's only route (REVIEW-10536 round 2);
+    /// this install's own row keeps it because it is this install's own to
+    /// write. An absent row, or one with no mesh address, takes it: no peer
+    /// sends a MACHINE row.
     fn machine_row_takes_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
         address: &MeshMachineAddress,
         encoded: &[u8],
-        bare: bool,
+        keep_held: bool,
         count: &mut ScanCount,
     ) -> Result<Option<bool>> {
         let visibility = TombstoneStoreRead::port_deletion_state(&self.store, txn, &machine)?;
@@ -433,7 +510,7 @@ impl Vault {
         }
         Ok(Some(existing.is_some_and(|row| {
             row.body == encoded
-                || (bare
+                || (keep_held
                     && parse_address(&row.body)
                         .is_some_and(|held| held.endpoint_key == address.endpoint_key))
         })))
@@ -462,6 +539,15 @@ fn served_address(
     }))
     .map_err(|_| invalid_authority())?;
     Ok(fits(&bare).then_some((bare, true)))
+}
+
+/// Whose binding one served row is.
+#[derive(Clone, Copy)]
+enum Whose {
+    /// Another machine's.
+    Other,
+    /// This install's own, with the keys it must name.
+    Own(OwnMeshKeys),
 }
 
 /// What one import did with one binding.
