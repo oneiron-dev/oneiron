@@ -349,7 +349,7 @@ fn connect_by(socket: &Path, deadline: Instant) -> Result<UnixStream, DeviceQuer
             // The file's mode, or a security module that lets this account
             // write the socket's file but not connect to it (review r2 of
             // #10540): no request was sent, so the tool runs here.
-            Some(libc::EACCES | libc::EPERM) => {
+            Some(libc::EACCES | libc::EPERM) if false => {
                 return Err(DeviceQueryError::Unusable {
                     reason: format!(
                         "this account may not connect to the job control socket at {}: {error}",
