@@ -189793,14 +189793,24 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/work_order_host.rs",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 17,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/work_order_host/readiness_read.rs",
+     "purpose": "The job worker's readiness read (CG-2 row 9; FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED): the worker's…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -194323,10 +194333,10 @@
     },
     "work_order_host": {
      "entry": "crates/oneiron-server/src/work_order_host.rs",
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
      "spec_ids": []
     },
@@ -194343,9 +194353,9 @@
      ]
     }
    },
-   "over_bar": 72,
+   "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2213,
+   "source_files": 2214,
    "test_files": 619
   },
   "oneiron-setting-contract": {
