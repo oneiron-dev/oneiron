@@ -203,10 +203,14 @@ impl Recall<'_> {
         if let Some(session) = self.session {
             bar["session"] = json!(session);
         }
+        // A push gives CLAIMs only: a CLAIM carries the project it was stamped with, so the
+        // session's project scopes it, while a TURN, MESSAGE or NOTE names no project and
+        // would reach the session from any project (REVIEW-10567 P1 2).
         let arguments = json!({"spec": {
             "query": self.query,
             "effort": self.effort.as_str(),
             "limit": self.limit,
+            "scope": {"kinds": ["CLAIM"]},
             "bar": bar,
         }});
         Ok((
@@ -237,7 +241,12 @@ fn receipt(result: &Value) -> Option<String> {
             .filter_map(|block| block.get("text").and_then(Value::as_str))
             .find_map(|text| serde_json::from_str::<Value>(text).ok())
     })?;
-    let bar = pack.get("bar")?;
+    // The MCP gateway gives the verb's result as `output` beside its tool and actor
+    // (tasks_response.rs); a bare pack names `bar` itself.
+    let bar = pack
+        .get("output")
+        .and_then(|output| output.get("bar"))
+        .or_else(|| pack.get("bar"))?;
     if bar.get("receipt") != Some(&Value::Bool(true)) {
         return None;
     }

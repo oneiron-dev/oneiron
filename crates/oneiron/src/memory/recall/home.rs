@@ -298,10 +298,13 @@ impl HomeRecallAsk {
 /// query, a limit and the recall's resolved scope (worlds, the actor's
 /// default included, projects, facet and kinds) and its `as_of` clock pin,
 /// but no media or room's turn. Those recalls keep their local answer,
-/// marked incomplete.
+/// marked incomplete. A recall that asks the owner's relevance bar is never
+/// eligible until the home can apply the bar: the home's search carries no bar,
+/// so it would fill `residence.hits` with unjudged refs beside a quiet local
+/// answer (RECALL-CARRIER-THRESHOLD review round 1).
 #[cfg(feature = "sync")]
 fn home_answers(request: &crate::memory::RecallRequest, room_turn: bool) -> bool {
-    request.media.is_none() && !room_turn
+    request.media.is_none() && !room_turn && request.bar.is_none()
 }
 
 /// Completes a recall answer on a device known to run Opened with its

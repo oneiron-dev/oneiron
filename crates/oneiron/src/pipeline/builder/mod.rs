@@ -119,6 +119,10 @@ pub struct PipelineBuilder<'a> {
     /// The owner's relevance bar a recall asked (RECALL-CARRIER-THRESHOLD): each row is
     /// judged on its final id, after the fold and before any budget or cut.
     pub(super) recall_bar: Option<crate::memory::recall::bar::BarJudge>,
+    /// A pushed recall keeps only CLAIM candidates: the one kind with a project stamp, so the
+    /// corpus filter's project check decides membership (REVIEW-10566 round 1). Set only with
+    /// a bar on `start` or `carrier`; a recall with no bar never sets it.
+    pub(super) recall_bar_claims_only: bool,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
@@ -214,6 +218,7 @@ impl<'a> PipelineBuilder<'a> {
             temporal_now: None,
             turn_fold: TurnFold::Off,
             recall_bar: None,
+            recall_bar_claims_only: false,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             retrieval_state: None,
@@ -663,6 +668,15 @@ impl<'a> PipelineBuilder<'a> {
     /// (RECALL-CARRIER-THRESHOLD).
     pub(crate) fn recall_bar(mut self, judge: crate::memory::recall::bar::BarJudge) -> Self {
         self.recall_bar = Some(judge);
+        self
+    }
+
+    /// Keeps only CLAIM candidates at the bar's position, before the cut, so the next CLAIM
+    /// moves up (REVIEW-10566 round 1: a push returns only rows with project membership, and
+    /// only a CLAIM carries a project stamp). Set only for a barred `start` or `carrier`;
+    /// `pull` and a recall with no bar never set it.
+    pub(crate) fn recall_bar_claims_only(mut self) -> Self {
+        self.recall_bar_claims_only = true;
         self
     }
 

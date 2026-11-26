@@ -688,6 +688,21 @@ impl Memory<'_> {
             if let Some(judge) = bar.as_ref().and_then(|bar| bar.judge.clone()) {
                 builder = builder.recall_bar(judge);
             }
+            // A push keeps only CLAIMs, whatever `scope.kinds` asks: the one kind with a
+            // project stamp, so every pushed row holds project membership (REVIEW-10566
+            // round 1). `pull` is unchanged.
+            if bar.as_ref().is_some_and(|bar| bar.outcome.source.pushes()) {
+                builder = builder.recall_bar_claims_only();
+            }
+            // A bar quiet for no query vector carries no vector into the pipeline: the
+            // query's, if any, is the wrong width for the vault, and attaching it would
+            // error before the bar quiets the recall (REVIEW-10566 round 1).
+            let attaches_vector = !bar.as_ref().is_some_and(|bar| {
+                matches!(
+                    &bar.outcome.rule,
+                    RecallBarRule::Quiet { reason } if reason.as_str() == "no_query_vector"
+                )
+            });
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing
@@ -717,7 +732,9 @@ impl Memory<'_> {
             if let Some(deadline) = execution.deadline {
                 builder = builder.deadline(deadline);
             }
-            if let Some(vector) = execution.embedding {
+            if let Some(vector) = execution.embedding
+                && attaches_vector
+            {
                 builder = builder.search_vector(vector, limit);
             }
             if effective.requires_rerank()
@@ -787,6 +804,13 @@ impl Memory<'_> {
             // Each reaction claim a line counts is a producer of the pack.
             self.produced_from(counted);
 
+            // A barred recall renders from its admitted items only: no L2 prefix built
+            // before retrieval and no edge neighbours, either of which would bypass the
+            // bar (REVIEW-10566 round 1). The no-bar path is untouched.
+            if bar.is_some() {
+                pack.l2_base = None;
+                pack.neighbors.clear();
+            }
             let rendered = pack_format.map(|fmt| {
                 let config = SerializeConfig {
                     format: fmt,

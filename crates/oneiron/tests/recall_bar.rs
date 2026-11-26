@@ -3,8 +3,8 @@
 //! (adjustable)"; Engine NOTE 27 Nov 03:23): a recall that asks the owner's relevance bar
 //! (`spec.bar`) keeps only lines whose raw cosine to the query, in the vault's embedding space,
 //! clears the owner's floor for that source and harness; a line under the bar takes no slot; a
-//! push answers at most 3 lines, only inside a project, and nothing when nothing clears; each
-//! kept line says its similarity. The floor is `recall.bar.<source>`, per harness (the row's
+//! push answers at most 3 CLAIM lines, only inside a project, and nothing when nothing clears;
+//! each kept line says its similarity. The floor is `recall.bar.<source>`, per harness (the row's
 //! item) and per project (its scope); the default is the bar the host measured for the vault's
 //! space (0.52 for pplx-embed-v1-0.6b on its measured profile), quiet where the host measured
 //! none, and on a vault with no embedder a direct match of a rare query term, or of every term.
@@ -19,16 +19,20 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
+use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{
-    MemoryPack, RecallBarAsk, RecallBarRule, RecallRequest, RecallScope, RecallSource,
+    AllRelationships, ClaimRelationships, ClaimScope, MemoryPack, RecallBarAsk, RecallBarRule,
+    RecallRequest, RecallScope, RecallSource, ScopedClaimInput,
 };
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use oneiron::session_project::WorkspaceBindRequest;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::recall_with_vector;
+use oneiron::workspace_roster::ProjectRecord;
+use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -49,7 +53,7 @@ fn at(cosine: f32) -> [f32; 4] {
     [cosine, (1.0 - cosine * cosine).sqrt(), 0.0, 0.0]
 }
 
-/// A rooted vault, its owner's proof and root PROJECT. The vault drops first.
+/// A rooted vault, its owner's proof and the test's PROJECT. The vault drops first.
 struct Fixture {
     vault: Vault,
     proof: AuthenticatedOwner,
@@ -63,11 +67,25 @@ impl Fixture {
     /// states `measured` as the bar it measured in that space, as an embedder on the measured
     /// profile does when the vault admits it.
     fn open(space: Option<&str>, measured: Option<f32>) -> Self {
+        Self::open_in(space, measured, None)
+    }
+
+    fn open_in(space: Option<&str>, measured: Option<f32>, child: Option<EntityId>) -> Self {
         let dir = tempfile::tempdir().expect("vault directory");
         let mut config = VaultConfig::device();
         config.dimensions = QUERY.len();
         config.embedding_model = space.map(str::to_owned);
         let vault = Vault::open(dir.path(), config).expect("seeded vault");
+        let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+        let root = vault.root_project().expect("the seeded root PROJECT");
+        if let Some(child) = child {
+            // Seed the folder's project before rooting: once the vault is rooted, a new project
+            // would need a signed birth.
+            let record = ProjectRecord::new(child, Some(root), root, owner).expect("child project");
+            vault
+                .put_project(child, &record, vault.now_recorded_at())
+                .expect("seed the child PROJECT");
+        }
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = HostSlipIssuer::from_seed(&[0x5c; HOST_ISSUER_SEED_BYTES])
             .expect("independent host issuer");
@@ -78,11 +96,14 @@ impl Fixture {
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's machine profile");
-        let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+        // This install is not the owner's machine, so it holds the root's key, which proves the
+        // owner's acts, as a serving host holds its own (row CARRIER-OWNER-PROOF;
+        // setting_pack_accept.rs). Without it the owner's set waits for an owner key and is
+        // refused OwnerKeyRequired.
+        vault.hold_checkpoint_root_signer(Arc::new(issuer));
         let proof = vault
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
             .expect("owner proof");
-        let project = vault.root_project().expect("the seeded root PROJECT");
         vault
             .set_measured_recall_bar(measured)
             .expect("the host's measured bar");
@@ -90,7 +111,7 @@ impl Fixture {
             vault,
             proof,
             owner,
-            project,
+            project: child.unwrap_or(root),
             _dir: dir,
         }
     }
@@ -117,6 +138,90 @@ impl Fixture {
         id
     }
 
+    /// A CLAIM in the fixture's project about the owner holding `value`, with `predicate`.
+    fn put_claim(&self, predicate: &str, value: &str) -> EntityId {
+        self.put_claim_in(self.project, predicate, value, None)
+    }
+
+    /// A scoped CLAIM, with `vector` when the vault embeds.
+    fn put_claim_in(
+        &self,
+        project: EntityId,
+        predicate: &str,
+        value: &str,
+        vector: Option<[f32; 4]>,
+    ) -> EntityId {
+        // A distinct facet keeps each seed on its own claim key, even for repeated values.
+        let facet = EntityId::now();
+        let facet_body =
+            rmp_serde::to_vec_named(&json!({ "name": "bar test facet" })).expect("facet body");
+        self.vault
+            .put_entity(
+                &facet,
+                ENTITY_TYPE_FACET,
+                TimeRange {
+                    start: LEARNED_AT,
+                    end: LEARNED_AT,
+                },
+                LEARNED_AT,
+                &facet_body,
+            )
+            .expect("facet row");
+        let id = EntityId::now();
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .claim_upsert_scoped(&ScopedClaimInput {
+                id: Some(id.to_hex()),
+                predicate: predicate.to_owned(),
+                subject_ref: self.owner.to_hex(),
+                value: json!(value),
+                confidence: 1.0,
+                source: "user_stated".to_owned(),
+                scope: ClaimScope {
+                    world_id: base_world_id().to_hex(),
+                    scope_facet_id: facet.to_hex(),
+                    scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                    scope_project_id: project.to_hex(),
+                }
+                .into(),
+                sensitivity: None,
+                evidence_turn_refs: Vec::new(),
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(LEARNED_AT),
+                learned_at: Some(LEARNED_AT),
+                salience: None,
+            })
+            .expect("the owner's claim");
+        if let Some(vector) = vector {
+            self.vault
+                .put_vector(&id, &vector)
+                .expect("the claim vector");
+        }
+        id
+    }
+
+    /// A research NOTE holding `markdown`, published as the idle loop publishes it.
+    fn put_note(&self, markdown: &str) -> EntityId {
+        let actor = WriteActor::new(self.owner, EdgeActorClass::Human);
+        let id = self
+            .vault
+            .create_note("research", markdown, actor)
+            .expect("note");
+        self.vault
+            .set_indexed_idle_delay_ms(0)
+            .expect("idle delay row");
+        let published = self
+            .vault
+            .refresh_staged_indexed_at_idle(u64::MAX)
+            .expect("idle publication");
+        assert!(
+            published.failed.is_empty(),
+            "every staged text publishes: {published:?}"
+        );
+        id
+    }
+
     /// Three lines over 0.52 and two traps under it that repeat the query's words, so they rank
     /// high by words alone: `(passing, traps)`.
     fn seed_lines(&self) -> (BTreeSet<EntityId>, BTreeSet<EntityId>) {
@@ -124,7 +229,9 @@ impl Fixture {
             .into_iter()
             .enumerate()
             .map(|(step, cosine)| {
-                self.put_turn(
+                self.put_claim_in(
+                    self.project,
+                    "profile.note",
                     &format!("granite drafter plan, step {step} of the D1 test"),
                     Some(at(cosine)),
                 )
@@ -133,7 +240,9 @@ impl Fixture {
         let traps = [0.40, 0.10]
             .into_iter()
             .map(|cosine| {
-                self.put_turn(
+                self.put_claim_in(
+                    self.project,
+                    "profile.note",
                     "granite drafter plan: granite drafter plan, the granite drafter plan outline",
                     Some(at(cosine)),
                 )
@@ -157,7 +266,7 @@ impl Fixture {
         );
     }
 
-    /// The owner's recall of [`QUERY_TEXT`] in the root project, asking `bar`.
+    /// The owner's recall of [`QUERY_TEXT`] in the fixture's project, asking `bar`.
     fn recall(
         &self,
         bar: Option<RecallBarAsk>,
@@ -210,7 +319,7 @@ fn ids(pack: &MemoryPack) -> BTreeSet<EntityId> {
             let record = item
                 .record
                 .as_ref()
-                .expect("a recalled TURN names its record");
+                .expect("a recalled item names its record");
             EntityId::from_hex(&record.id).expect("a record id is 32 hex")
         })
         .collect()
@@ -303,7 +412,9 @@ fn a_pull_is_open_by_default_and_a_recall_with_no_bar_is_unchanged() {
 fn at_most_three_lines_are_pushed() {
     let fixture = Fixture::open(Some(PPLX), MEASURED);
     for step in 0..5 {
-        fixture.put_turn(
+        fixture.put_claim_in(
+            fixture.project,
+            "profile.note",
             &format!("granite drafter plan, note {step}"),
             Some(at(0.70)),
         );
@@ -331,8 +442,10 @@ fn a_push_outside_any_project_is_quiet() {
 
 #[test]
 fn the_session_folders_project_scopes_a_push_and_its_rows() {
-    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    let fixture = Fixture::open_in(Some(PPLX), MEASURED, Some(EntityId::now()));
     let (passing, _traps) = fixture.seed_lines();
+    let other_project = fixture.vault.root_project().expect("the root PROJECT");
+    fixture.put_claim_in(other_project, "profile.note", QUERY_TEXT, Some(QUERY));
     fixture
         .vault
         .bind_workspace_as_owner(
@@ -494,14 +607,14 @@ fn the_harness_row_and_the_project_row_decide() {
 fn a_vault_with_no_embedder_passes_a_direct_match() {
     let fixture = Fixture::open(None, None);
     for step in 0..24 {
-        fixture.put_turn(&format!("the weekly plan for item {step}"), None);
+        fixture.put_claim("profile.note", &format!("the weekly plan for item {step}"));
     }
-    let rare = fixture.put_turn("the quillwort plan for the quarter", None);
-    let both = fixture.put_turn("granite drafter results", None);
-    fixture.put_turn("granite countertop order", None);
-    fixture.put_turn("drafter table order", None);
+    let rare = fixture.put_claim("profile.note", "the quillwort plan for the quarter");
+    let both = fixture.put_claim("profile.note", "granite drafter results");
+    fixture.put_claim("profile.note", "granite countertop order");
+    fixture.put_claim("profile.note", "drafter table order");
     for _ in 0..2 {
-        fixture.put_turn("granite drafter", None);
+        fixture.put_claim("profile.note", "granite drafter");
     }
     let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
     let recall = |query: &str| {
@@ -597,5 +710,185 @@ fn the_empty_receipt_is_one_setting_away() {
     assert!(
         !codex.bar.as_ref().expect("the rule").receipt,
         "per harness"
+    );
+}
+
+// REVIEW-10566 round 1: a project named twice is judged by that project's own bar.
+#[test]
+fn a_project_named_twice_is_judged_by_that_projects_own_bar() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    fixture.seed_lines();
+    fixture.owner_sets("recall.bar.pull", SettingScope::Vault, None, json!("open"));
+    fixture.owner_sets(
+        "recall.bar.pull",
+        SettingScope::Project(fixture.project),
+        None,
+        json!("quiet"),
+    );
+    let once = fixture
+        .recall_in(
+            ask(RecallSource::Pull, HARNESS),
+            8,
+            vec![fixture.project.to_hex()],
+            None,
+        )
+        .expect("the recall runs");
+    assert!(
+        once.items.is_empty(),
+        "one ref reads the project's quiet row"
+    );
+    assert_eq!(quiet_reason(&once), Some("owner"));
+    let twice = fixture
+        .recall_in(
+            ask(RecallSource::Pull, HARNESS),
+            8,
+            vec![fixture.project.to_hex(), fixture.project.to_hex()],
+            None,
+        )
+        .expect("the recall runs");
+    assert!(
+        twice.items.is_empty(),
+        "[P, P] reads the same corpus under the project's own bar, not the vault's open row"
+    );
+    assert_eq!(quiet_reason(&twice), Some("owner"));
+}
+
+// REVIEW-10566 round 1: a push keeps CLAIMs only, whatever `scope.kinds` asks.
+#[test]
+fn a_start_push_returns_no_note_even_when_kinds_asks_for_note_and_a_matching_claim_takes_the_slot()
+{
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    fixture.owner_sets("recall.bar.start", SettingScope::Vault, None, json!("open"));
+    let note = fixture.put_note("granite drafter plan: the weekly outline");
+    let claim = fixture.put_claim("profile.note", "granite drafter plan for the quarter");
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let kinds_note = recall_with_vector(
+        &memory,
+        RecallRequest {
+            query: QUERY_TEXT.to_owned(),
+            limit: Some(8),
+            scope: Some(RecallScope {
+                project_refs: vec![fixture.project.to_hex()],
+                kinds: Some(vec!["NOTE".to_owned()]),
+                ..RecallScope::default()
+            }),
+            bar: ask(RecallSource::Start, HARNESS),
+            ..RecallRequest::default()
+        },
+        |_| Some(QUERY.to_vec()),
+    )
+    .expect("the recall runs");
+    assert!(
+        kinds_note.items.is_empty(),
+        "kinds=[NOTE] names no CLAIM, so a push returns nothing"
+    );
+    let pack = recall_with_vector(
+        &memory,
+        RecallRequest {
+            query: QUERY_TEXT.to_owned(),
+            limit: Some(8),
+            scope: Some(RecallScope {
+                project_refs: vec![fixture.project.to_hex()],
+                ..RecallScope::default()
+            }),
+            bar: ask(RecallSource::Start, HARNESS),
+            ..RecallRequest::default()
+        },
+        |_| Some(QUERY.to_vec()),
+    )
+    .expect("the recall runs");
+    let served = ids(&pack);
+    assert!(
+        served.contains(&claim),
+        "the project's matching CLAIM takes the slot: {served:?}"
+    );
+    assert!(!served.contains(&note), "no NOTE is pushed: {served:?}");
+    assert!(
+        pack.items.iter().all(|item| item.kind == "CLAIM"),
+        "a push returns CLAIMs only"
+    );
+}
+
+// REVIEW-10566 round 1: a barred recall renders from its admitted items only.
+#[test]
+fn a_quiet_barred_recall_renders_no_text_from_outside_its_items() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    fixture.put_claim("profile.note", "the owner's favourite colour is chartreuse");
+    fixture.owner_sets(
+        "recall.bar.carrier",
+        SettingScope::Project(fixture.project),
+        None,
+        json!("quiet"),
+    );
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let pack = recall_with_vector(
+        &memory,
+        RecallRequest {
+            query: QUERY_TEXT.to_owned(),
+            limit: Some(8),
+            format: Some("json".to_owned()),
+            scope: Some(RecallScope {
+                project_refs: vec![fixture.project.to_hex()],
+                ..RecallScope::default()
+            }),
+            bar: ask(RecallSource::Carrier, HARNESS),
+            ..RecallRequest::default()
+        },
+        |_| Some(QUERY.to_vec()),
+    )
+    .expect("the recall runs");
+    assert!(pack.items.is_empty());
+    assert_eq!(quiet_reason(&pack), Some("owner"));
+    let rendered = pack.rendered.as_deref().unwrap_or("");
+    assert!(
+        !rendered.contains("chartreuse"),
+        "no L2 prefix leaks into a quiet barred rendering: {rendered}"
+    );
+}
+
+// REVIEW-10566 round 1: a wrong-width query vector quiets instead of erroring.
+#[test]
+fn a_query_vector_of_the_wrong_width_gives_a_quiet_pack_with_reason_no_query_vector_not_an_error() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    fixture.seed_lines();
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let pack = recall_with_vector(
+        &memory,
+        RecallRequest {
+            query: QUERY_TEXT.to_owned(),
+            limit: Some(8),
+            scope: Some(RecallScope {
+                project_refs: vec![fixture.project.to_hex()],
+                ..RecallScope::default()
+            }),
+            bar: ask(RecallSource::Carrier, HARNESS),
+            ..RecallRequest::default()
+        },
+        |_| Some(vec![1.0]),
+    )
+    .expect("a wrong-width vector quiets the barred recall instead of erroring");
+    assert!(pack.items.is_empty());
+    assert_eq!(quiet_reason(&pack), Some("no_query_vector"));
+}
+
+// REVIEW-10566 round 1: an undecodable deciding row reports `unreadable`, not `owner`.
+#[test]
+fn an_undecodable_bar_row_reports_reason_unreadable() {
+    let fixture = Fixture::open(Some(PPLX), MEASURED);
+    fixture.seed_lines();
+    oneiron::test_doors::setting::plant_undecodable_row(
+        &fixture.vault,
+        "recall.bar.carrier",
+        SettingScope::Project(fixture.project),
+    )
+    .expect("a damaged bar row");
+    let pack = fixture
+        .recall(ask(RecallSource::Carrier, HARNESS), 8)
+        .expect("the recall runs");
+    assert!(pack.items.is_empty());
+    assert_eq!(
+        quiet_reason(&pack),
+        Some("unreadable"),
+        "an unreadable deciding row is not the owner's quiet"
     );
 }
