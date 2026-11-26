@@ -272,7 +272,7 @@ pub(crate) fn normalize_project_body(
         }
         // A missing signed birth is retried, but is no bounded dependency
         // hold (review round 2 of #10565): its own kind keeps the breach signal.
-        None => return Err(RecordError::ProjectBirthPending.into()),
+        None => return Err(RecordError::ProjectDependencyPending.into()),
     };
     encode(&body)
 }
