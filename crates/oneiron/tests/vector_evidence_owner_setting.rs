@@ -80,6 +80,11 @@ impl Fixture {
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's machine profile");
+        // This install is not the owner's machine, so it holds the root's key, which proves the
+        // owner's acts, as a serving host holds its own (row CARRIER-OWNER-PROOF;
+        // `setting_pack_accept.rs`). Without it the owner's set waits for an owner key and is
+        // refused `OwnerKeyRequired` (FIX VECTOR-EVIDENCE-OWNER-SETTING-TEST-RED).
+        vault.hold_checkpoint_root_signer(Arc::new(issuer));
         let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
         let proof = vault
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
