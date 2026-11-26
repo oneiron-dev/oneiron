@@ -746,7 +746,8 @@ impl Memory<'_> {
             // Each reaction claim a line counts is a producer of the pack.
             self.produced_from(counted);
 
-            let rendered = pack_format.map(|fmt| {
+            let rendered = if let Some(fmt) = pack_format {
+                self.project_recall_render(&lane, &mut pack)?;
                 let config = SerializeConfig {
                     format: fmt,
                     profile: match effective {
@@ -762,8 +763,10 @@ impl Memory<'_> {
                     max_field_chars: DEFAULT_MAX_FIELD_CHARS,
                     max_item_tokens: 0,
                 };
-                String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
-            });
+                Some(String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned())
+            } else {
+                None
+            };
             let mut items = Vec::new();
             for entity in pack.results.iter().take(limit) {
                 if let Some(fallback) = door_answered() {
