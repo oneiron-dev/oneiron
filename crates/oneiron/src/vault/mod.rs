@@ -34,7 +34,7 @@ mod runtime_handle;
 mod search_retrieval;
 mod tagging_arm;
 mod transactions;
-mod vector_evidence;
+pub(crate) mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
 use crate::config::{VaultConfig, VaultPrivacyConfig};
