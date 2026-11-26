@@ -421,54 +421,10 @@ fn lock_entry_misfit(name: &str, found: &FileFacts, owner: u32) -> io::Error {
 /// Nothing at `name` (`NotFound`), an entry that is not such a file, an
 /// entry that changed between its check and its open, or a failed open.
 pub fn open_lock_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Result<OwnedFd> {
-    open_fitting_beneath(dir, name, owner, lock_entry_fits, lock_entry_misfit)
-}
-
-/// Whether `found` is a regular file of `owner` with one name, whatever its
-/// mode and content.
-fn owned_file_fits(found: &FileFacts, owner: u32) -> bool {
-    found.is_regular && found.uid == owner && found.links == 1
-}
-
-/// Why the entry `found` at `name` is no regular file of `owner` with one
-/// name, in words.
-fn owned_file_misfit(name: &str, found: &FileFacts, owner: u32) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!(
-            "{name} is {} of uid {} with {} name(s), not a regular file of uid {owner} with one name",
-            kind_words(found),
-            found.uid,
-            found.links
-        ),
-    )
-}
-
-/// The file `name` beneath `dir`, open read-only to hold a lock on it, as
-/// [`open_lock_beneath`] opens it, but whatever its mode and content: a
-/// regular file `owner` owns with one name. For the lock of the version
-/// before, whose mode its handler's umask set (review r2 of #10541).
-///
-/// # Errors
-///
-/// As [`open_lock_beneath`].
-pub fn open_owned_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Result<OwnedFd> {
-    open_fitting_beneath(dir, name, owner, owned_file_fits, owned_file_misfit)
-}
-
-/// [`open_lock_beneath`] of an entry `fits` takes, refused as `misfit`
-/// names it.
-fn open_fitting_beneath(
-    dir: BorrowedFd<'_>,
-    name: &str,
-    owner: u32,
-    fits: fn(&FileFacts, u32) -> bool,
-    misfit: fn(&str, &FileFacts, u32) -> io::Error,
-) -> io::Result<OwnedFd> {
     let c = c_name(OsStr::new(name))?;
     let before = facts_beneath(dir, name)?;
-    if !fits(&before, owner) {
-        return Err(misfit(name, &before, owner));
+    if !lock_entry_fits(&before, owner) {
+        return Err(lock_entry_misfit(name, &before, owner));
     }
     // SAFETY: c is NUL terminated; O_NOFOLLOW refuses a link, O_NONBLOCK
     // keeps a pipe from holding the open, and nothing is made.
@@ -480,7 +436,8 @@ fn open_fitting_beneath(
         )
     })?;
     let held = facts(borrow(&fd))?;
-    if (held.device, held.inode) != (before.device, before.inode) || !fits(&held, owner) {
+    if (held.device, held.inode) != (before.device, before.inode) || !lock_entry_fits(&held, owner)
+    {
         return Err(io::Error::other(format!(
             "{name} changed between its check and its open"
         )));

@@ -26,8 +26,8 @@
 //! state directory the engine could swap the name, and a hard link there
 //! made root open a file from elsewhere). A query of the version before
 //! this one locked another file, in the state directory, so install
-//! refuses while one still holds that lock, and retires the file once it
-//! is free ([`retire_state_dir_lock`]; review r1 of #10541). The engine
+//! refuses any entry there and leaves it as it is
+//! ([`require_no_old_state_dir_lock`]; the Engine's review of #10541). The engine
 //! itself holds no process and waits no longer than its deadline: it
 //! connects without blocking and waits out a full listen queue only until
 //! then.
@@ -71,9 +71,8 @@ use super::super::node_settings::ExecutionNodeSettings;
 use super::control::{REQUEST_WAIT, read_line};
 use super::exec::connect_once;
 use super::safe_fs::{
-    account, borrow, facts, make_dir_beneath, make_lock_beneath, open_dir_beneath, open_dir_path,
-    open_lock_beneath, open_owned_beneath, remove_beneath, require_owned_by_root_or,
-    require_root_owned,
+    account, borrow, facts, facts_beneath, make_dir_beneath, make_lock_beneath, open_dir_beneath,
+    open_dir_path, open_lock_beneath, require_owned_by_root_or, require_root_owned,
 };
 use super::systemd_unit::tool_path;
 
@@ -90,7 +89,8 @@ pub const DEVICE_QUERY_LOCK_DIR: &str = "/var/lib/oneiron-job-control";
 pub const DEVICE_QUERY_LOCK_FILE: &str = "device-query.lock";
 
 /// The query lock's file of the version before this one (#10540), in the
-/// engine's state directory: install retires it ([`retire_state_dir_lock`]).
+/// engine's state directory: install refuses any entry there
+/// ([`require_no_old_state_dir_lock`]).
 pub const STATE_DIR_LOCK_FILE: &str = "device-query.lock";
 
 /// The lock directory's mode: its owner's alone.
@@ -376,65 +376,35 @@ pub fn require_install_paths_apart(
     require_apart_from_lock_dir("oneiron binary", binary, lock_dir)
 }
 
-/// Retires the query lock of the version before this one (#10540),
-/// [`STATE_DIR_LOCK_FILE`] in the engine's state directory `state_dir`, as
-/// `oneiron execution-node install` does before it changes anything else;
-/// with whether this call removed it.
-///
-/// A query of that version that still runs (one its kill could not end)
-/// holds that file's lock, while a handler of this version locks another
-/// file ([`DeviceQueryLock`]) and would start a second query into the same
-/// wedge (review r1 of #10541). So while that lock is held, install refuses
-/// and the lock of this version is not made, so no handler of this version
-/// runs a query meanwhile: the old query must end, or the machine reboot.
-/// Once the lock is free, the name is removed while this call holds the
-/// lock. That version's handlers made the file this process's account's
-/// (root's), regular, with one name, in the mode their unit's umask left
-/// (0000 under `UMask=0777`), so such a file is that lock whatever its mode
-/// or content (review r2 of #10541); anything else at the name, or
-/// nothing, is no lock they hold, and is left as it is. Install calls this
-/// only once no handler of either version runs
-/// ([`super::control::require_no_handler_running`]), so no query holds the
-/// lock then; the refusal stays for a holder outside a handler's unit.
-/// The engine could hide the held file under another name, and so start at
-/// most one more query into its own wedge: the lock of this version then
-/// refuses every later one.
+/// Refuses any entry at [`STATE_DIR_LOCK_FILE`] in the engine's state
+/// directory `state_dir`, where the handlers of the version before this one
+/// (#10540) kept their query lock, as install does before it changes
+/// anything (the Engine's review of #10541 at 8f39ebb9). No machine ran
+/// that version, so nothing is expected there; an entry means one may have,
+/// and a query of it that its kill could not end may still hold that lock
+/// while a handler of this version locks another file. Install never
+/// opens, locks or removes the entry, which the engine's account could
+/// swap under it: the refusal names the steps by hand.
 ///
 /// # Errors
 ///
-/// A query of the version before this one still holds the lock, or a step
-/// failed.
-pub fn retire_state_dir_lock(state_dir: &Path) -> Result<bool, String> {
-    let failed = |why: &dyn std::fmt::Display| {
-        format!("{}/{STATE_DIR_LOCK_FILE}: {why}", state_dir.display())
-    };
+/// An entry is there, or the state directory could not be read.
+pub fn require_no_old_state_dir_lock(state_dir: &Path) -> Result<(), String> {
+    let old = state_dir.join(STATE_DIR_LOCK_FILE);
     let dir = match open_dir_path(state_dir) {
         Ok(dir) => dir,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(failed(&error)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("{}: {error}", old.display())),
     };
-    let owner = rustix::process::geteuid().as_raw();
-    let file = match open_owned_beneath(borrow(&dir), STATE_DIR_LOCK_FILE, owner) {
-        Ok(fd) => File::from(fd),
-        Err(error) => {
-            // Nothing there, or no lock that version's handlers made.
-            return match error.kind() {
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData => Ok(false),
-                _ => Err(failed(&error)),
-            };
-        }
-    };
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => {
-            return Err(failed(
-                &"a device query of the version before this one still runs and holds this lock; stop oneiron-job-control.socket, wait until that query ends (reboot if it never does), then install again",
-            ));
-        }
-        Err(std::fs::TryLockError::Error(error)) => return Err(failed(&error)),
+    match facts_beneath(borrow(&dir), STATE_DIR_LOCK_FILE) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("{}: {error}", old.display())),
+        Ok(_) => Err(format!(
+            "{}: an entry is where the version before this one kept its query lock, so a query of that version may still hold it; install changes nothing while it is there. As root: stop oneiron.service and oneiron-job-control.socket, wait {} s (the handlers' RuntimeMaxSec), check that `systemctl list-units --all 'oneiron-job-control@*'` lists nothing (reboot if one stays), remove the entry, then install again",
+            old.display(),
+            super::unit_file::CONTROL_HANDLER_RUNTIME_MAX_SECS
+        )),
     }
-    remove_beneath(borrow(&dir), STATE_DIR_LOCK_FILE).map_err(|error| failed(&error))?;
-    Ok(true)
 }
 
 /// The handler's side on an installed machine: [`answer`] with

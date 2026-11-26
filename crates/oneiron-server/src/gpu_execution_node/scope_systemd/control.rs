@@ -59,9 +59,6 @@ pub const CONTROL_SOCKET_UNIT_PATH: &str = "/etc/systemd/system/oneiron-job-cont
 /// The handler's unit template: one instance per connection (`Accept=yes`).
 pub const CONTROL_SERVICE_UNIT_PATH: &str = "/etc/systemd/system/oneiron-job-control@.service";
 
-/// The name each handler's unit starts with: an instance of [`CONTROL_SERVICE_UNIT_PATH`].
-const CONTROL_SERVICE_INSTANCE_PREFIX: &str = "oneiron-job-control@";
-
 /// The one job mode the handler asks for.
 pub const CONTROL_JOB_MODE: &str = "replace";
 
@@ -416,80 +413,6 @@ pub(super) fn read_line(
         }
     }
     Ok(line)
-}
-
-/// The processes that run in a job control handler's unit, as `proc_root`
-/// (`/proc` on a machine) lists them: each one's pid and command name, by
-/// pid. A handler answers one request in a unit of its own, and a device
-/// query it starts stays in that unit's control group until it ends,
-/// however long its kill takes, so this lists every handler at work and
-/// every query still alive, of this version or the one before (review r2
-/// of #10541). A process that ends while this reads is left out.
-///
-/// # Errors
-///
-/// `proc_root` could not be listed.
-pub fn handler_processes(proc_root: &Path) -> std::io::Result<Vec<(u32, String)>> {
-    let mut found = Vec::new();
-    for entry in std::fs::read_dir(proc_root)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(|text| text.parse::<u32>().ok()) else {
-            continue;
-        };
-        let Ok(groups) = std::fs::read_to_string(entry.path().join("cgroup")) else {
-            continue;
-        };
-        if !groups.lines().any(in_handler_unit) {
-            continue;
-        }
-        let comm = entry.path().join("comm");
-        let command = std::fs::read_to_string(comm).unwrap_or_default();
-        found.push((pid, command.trim_end().to_owned()));
-    }
-    found.sort_unstable();
-    Ok(found)
-}
-
-/// Whether one line of a `/proc/<pid>/cgroup` file (`id:controllers:path`)
-/// puts its process in a job control handler's unit.
-fn in_handler_unit(line: &str) -> bool {
-    let Some(path) = line.splitn(3, ':').nth(2) else {
-        return false;
-    };
-    path.split('/').any(is_handler_unit)
-}
-
-/// Whether one component of a control group's path is a job control
-/// handler's unit.
-fn is_handler_unit(part: &str) -> bool {
-    part.starts_with(CONTROL_SERVICE_INSTANCE_PREFIX) && part.ends_with(".service")
-}
-
-/// Refuses while a job control handler, or a device query one started,
-/// still runs ([`handler_processes`] of `proc_root`), as install does once
-/// it has stopped [`CONTROL_SOCKET_UNIT`] and before it moves the query
-/// lock: a handler of the version before this one that has taken its
-/// connection would start a query on that version's lock while a handler
-/// of this one starts another on the new lock (review r2 of #10541).
-///
-/// # Errors
-///
-/// Each such process, by pid and name, or `proc_root` could not be listed.
-pub fn require_no_handler_running(proc_root: &Path) -> Result<(), String> {
-    let found = handler_processes(proc_root)
-        .map_err(|error| format!("{}: {error}", proc_root.display()))?;
-    if found.is_empty() {
-        return Ok(());
-    }
-    let named: Vec<String> = found
-        .iter()
-        .map(|(pid, name)| format!("{pid} ({name})"))
-        .collect();
-    Err(format!(
-        "a job control handler or a device query it started still runs: {}; {CONTROL_SOCKET_UNIT} is stopped, so none starts: wait until these end (reboot if one never does), then install again",
-        named.join(", ")
-    ))
 }
 
 #[cfg(test)]

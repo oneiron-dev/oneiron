@@ -9,12 +9,9 @@
 //! and starts the socket. It is idempotent: a second run with the same
 //! inputs changes nothing. Before any change it refuses an engine's
 //! directory that overlaps the lock's, and an oneiron binary beneath it
-//! ([`super::device_query::require_install_paths_apart`]). It then stops
-//! the socket and refuses while a handler of either version, or a device
-//! query one started, still runs
-//! ([`super::control::require_no_handler_running`]; review r2 of #10541),
-//! and retires the lock of the version before this one in the state
-//! directory ([`super::device_query::retire_state_dir_lock`]; review r1).
+//! ([`super::device_query::require_install_paths_apart`]), and any entry
+//! where the version before this one kept its query lock in the state
+//! directory ([`super::device_query::require_no_old_state_dir_lock`]).
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
@@ -24,8 +21,8 @@ use super::super::node_settings::ExecutionNodeSettings;
 use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
 use super::device_query::{
-    DEVICE_QUERY_LOCK_DIR, DEVICE_QUERY_LOCK_FILE, STATE_DIR_LOCK_FILE, provision_lock,
-    require_install_paths_apart, retire_state_dir_lock,
+    DEVICE_QUERY_LOCK_DIR, DEVICE_QUERY_LOCK_FILE, provision_lock, require_install_paths_apart,
+    require_no_old_state_dir_lock,
 };
 use super::safe_fs::{
     account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
@@ -128,19 +125,9 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         print_templates(&settings);
         return Ok(());
     }
-    // Before any other change: no handler starts while the lock moves, and
-    // none of either version still runs, nor a query one started; a query
-    // of the version before holds that version's lock, which a handler of
-    // this version does not see (review r2 of #10541).
-    if Path::new(CONTROL_SOCKET_UNIT_PATH).exists() {
-        run_tool(
-            "systemctl",
-            &["stop", CONTROL_SOCKET_UNIT],
-            SYSTEMCTL_TIMEOUT,
-        )?;
-    }
-    super::control::require_no_handler_running(Path::new("/proc"))?;
-    let old_lock_retired = retire_state_dir_lock(&inputs.state_dir)?;
+    // Before any other change: an entry where the version before this one
+    // kept its query lock means a query of it may still hold that lock.
+    require_no_old_state_dir_lock(&inputs.state_dir)?;
     ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
     ensure_dir(
@@ -172,12 +159,6 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         SYSTEMCTL_TIMEOUT,
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
-    if old_lock_retired {
-        stdout_line!(
-            "retired: {}/{STATE_DIR_LOCK_FILE}, the query lock of the version before this one",
-            inputs.state_dir.display()
-        );
-    }
     stdout_line!(
         "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),

@@ -108,26 +108,26 @@ def recv_by(conn, deadline, most):
 
 
 def read_head(conn, deadline):
-    """The first line as control.rs read_line reads it (up to its newline, HEAD_MAX_BYTES or the peer's end), and the
-    bytes read past it."""
+    """The first line as control.rs read_line reads it: one byte at a time, the deadline checked before each read, up
+    to its newline, HEAD_MAX_BYTES or the peer's end. No byte past it is read here (the Engine's review of #10541 at
+    8f39ebb9: one read of the whole frame left the output's deadline unchecked)."""
+    line = b""
+    while len(line) < HEAD_MAX_BYTES:
+        byte = recv_by(conn, deadline, 1)
+        if not byte:
+            break
+        line += byte
+        if byte == b"\n":
+            break
+    return line
+
+
+def read_exactly(conn, deadline, length):
+    """Exactly `length` bytes as device_query.rs read_exactly reads them: the deadline checked before each read, and
+    none for no bytes; whatever follows them, and the peer's end, are not waited for."""
     data = b""
-    while True:
-        newline = data.find(b"\n", 0, HEAD_MAX_BYTES)
-        if newline >= 0:
-            return data[: newline + 1], data[newline + 1 :]
-        if len(data) >= HEAD_MAX_BYTES:
-            return data[:HEAD_MAX_BYTES], data[HEAD_MAX_BYTES:]
-        chunk = recv_by(conn, deadline, 65536)
-        if not chunk:
-            return data, b""
-        data += chunk
-
-
-def read_exactly(conn, deadline, length, data):
-    """Exactly `length` bytes, the first of them in `data`, as device_query.rs read_exactly reads them: whatever
-    follows them, and the peer's end, are not waited for."""
     while len(data) < length:
-        chunk = recv_by(conn, deadline, min(65536, length - len(data)))
+        chunk = recv_by(conn, deadline, length - len(data))
         if not chunk:
             raise EOFError("the output ended after %d of %d bytes" % (len(data), length))
         data += chunk
@@ -163,12 +163,12 @@ def exchange(path):
             raise TimeoutError("no whole reply within %d s" % WAIT_SECS)
         conn.settimeout(min(left, REQUEST_WAIT_SECS))
         conn.sendall(REQUEST)
-        head, rest = read_head(conn, deadline)
+        head = read_head(conn, deadline)
         head = head.decode("utf-8", "replace").rstrip(RUST_WHITESPACE)
         length = rust_u64(head[len("ok ") :]) if head.startswith("ok ") else None
         if length is None or length > OUTPUT_MAX_BYTES:
             return head, None
-        return head, read_exactly(conn, deadline, length, rest)
+        return head, read_exactly(conn, deadline, length)
 
 
 def verdict(path, device):

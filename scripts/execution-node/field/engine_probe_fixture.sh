@@ -18,6 +18,9 @@
 #   unit-separator   Rust's str::trim does not remove U+001C-U+001F, which Python's str.strip() does: a device line
 #                    ending in U+001F is one the probe does not read.
 #   slow-reply       the probe's whole exchange ends 15 s after it starts (GPU_QUERY_TIMEOUT 10 s, ANSWER_MARGIN 5 s).
+#   near-cutoff      a whole frame that arrives 0.5 s before that end: the engine reads the first line a byte at a
+#                    time and then the output, its deadline checked before each read, and so does the probe (the
+#                    Engine's review of #10541 at 8f39ebb9); both read it in time.
 #   duplicate-uuid   slots.rs refuses a reading that lists one UUID twice (repeated_device_id).
 #   held-open        the probe reads the first line and exactly n bytes, and waits neither for more nor for the end.
 set -u
@@ -119,6 +122,7 @@ case_reply memory-many-digits FAIL "$(framed "$UUID, NVIDIA GeForce RTX 4090, $O
 case_reply unit-separator FAIL "$(framed "$LINE\\x1f\\n")" "$UNREAD"
 case_reply duplicate-uuid FAIL "$(framed "$LINE\\n$OTHER, NVIDIA A100, 81920\\n$LINE\\n")" "is listed twice"
 case_reply slow-reply FAIL "$(framed "$LINE\\n")" "no whole reply within 15 s" 16 0
+case_reply near-cutoff PASS "$(framed "$LINE\\n")" "" 14.5 0
 case_reply held-open PASS "$(framed "$LINE\\n")" "" 0 30
 case_reply listen-queue-full PASS "$(framed "$LINE\\n")" "" 0 0 0.3
 echo "## FIXTURES rc=$WRONG"
