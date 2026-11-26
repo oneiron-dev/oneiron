@@ -107793,7 +107793,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AttemptOutcome",
@@ -107805,11 +107805,32 @@
      "purpose": "The loop (pass 34, section 0; Engine ruling EM-22 = A): one pass over the orders, run on the built job…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 3,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/work_order/pass/blocked.rs",
+     "purpose": "What a pass makes of an order no allowed machine fits: the terminal state it takes when it does not wait…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/work_order/pass/order_rows.rs",
+     "purpose": "The stored work orders: every order, one order, and the revision-checked write that every change of an…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -125455,9 +125476,9 @@
     },
     "work_order": {
      "entry": "crates/oneiron/src/work_order/mod.rs",
-     "files": 21,
+     "files": 23,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Work orders (pass 34, `34-compute-general/DESIGN.md` sections 0 and 1; Engine rulings EM-18, EM-19 and EM-22…",
      "spec_ids": []
@@ -125483,9 +125504,9 @@
      "spec_ids": []
     }
    },
-   "over_bar": 277,
+   "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8633,
+   "source_files": 8635,
    "test_files": 2324
   },
   "oneiron-agent-runtime": {
