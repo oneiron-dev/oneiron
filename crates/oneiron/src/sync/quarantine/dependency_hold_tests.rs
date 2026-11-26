@@ -27,6 +27,9 @@ const WINDOW2: &str = "2026-04";
 const BREACH: &str = "forward remat: rm: markers still pending after tombstone pass";
 /// The dependency-hold WARN, prefix-matched.
 const HOLD_WARN: &str = "forward remat: rm: markers still pending: each one waits";
+const DRAIN_BREACH: &str = "rm drain: tombstone purge still failing";
+const DOCTOR_BREACH: &str = "sync doctor: rm: markers pending — hard-deleted";
+const DOCTOR_HOLD: &str = "sync doctor: rm: markers pending: each one waits";
 
 /// Small map_size + tempdir held for the vault's lifetime — macOS LMDB
 /// flake isolation. One vault at a time per test; each case below drops
@@ -156,6 +159,27 @@ fn hold_warns(lines: &[String]) -> Vec<&String> {
                 && line.contains(HOLD_WARN)
                 && line.contains("reason=ProjectDependencyPending")
         })
+        .collect()
+}
+
+fn drain_breach_errors(lines: &[String]) -> Vec<&String> {
+    lines
+        .iter()
+        .filter(|line| line.starts_with("event ERROR") && line.contains(DRAIN_BREACH))
+        .collect()
+}
+
+fn doctor_breach_errors(lines: &[String]) -> Vec<&String> {
+    lines
+        .iter()
+        .filter(|line| line.starts_with("event ERROR") && line.contains(DOCTOR_BREACH))
+        .collect()
+}
+
+fn doctor_hold_warns(lines: &[String]) -> Vec<&String> {
+    lines
+        .iter()
+        .filter(|line| line.starts_with("event WARN") && line.contains(DOCTOR_HOLD))
         .collect()
 }
 
@@ -770,4 +794,141 @@ fn a_held_window_with_no_hold_start_raises_the_breach_signal() {
         None,
         "re-quarantine must not backfill a start"
     );
+}
+
+fn persist_held_window(held: &HeldWindow, materializer: &Arc<Materializer>) {
+    let loaded = crate::sync::window::LoadedWindow::from_doc(
+        held.doc.clone(),
+        held.window_key.clone(),
+        &held.vault,
+        materializer,
+    );
+    loaded.persist_state(&held.vault).unwrap();
+}
+
+fn drain_held_window(
+    held: &HeldWindow,
+    materializer: &Arc<Materializer>,
+) -> (RematDrainReport, Vec<String>) {
+    let capture = LogCapture::default();
+    let report = capture
+        .with_default(|| crate::sync::drain_remat_markers(&held.vault, "test-user", materializer))
+        .unwrap();
+    (report, capture.lines())
+}
+
+#[test]
+fn draining_a_held_window_reports_it_held_and_raises_no_breach_signal() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+    held.forward(&materializer).unwrap();
+    persist_held_window(&held, &materializer);
+
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert_eq!(report.held, vec![WINDOW.to_string()]);
+    assert!(report.still_pending.is_empty());
+    assert!(report.drained.is_empty());
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child),
+        Some(vec![1])
+    );
+    assert_eq!(held.hold_start(), Some(T0));
+    assert_eq!(hold_warns(&lines).len(), 1, "{lines:?}");
+    assert!(drain_breach_errors(&lines).is_empty(), "{lines:?}");
+    assert!(breach_errors(&lines).is_empty(), "{lines:?}");
+}
+
+#[test]
+fn draining_a_held_window_past_the_bound_raises_the_breach_signal() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+    held.forward(&materializer).unwrap();
+    persist_held_window(&held, &materializer);
+    held.clock.set(T0 + DEFAULT_HOLD_MAX_SECS + 1);
+
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
+    assert!(report.held.is_empty());
+    assert_eq!(drain_breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child),
+        Some(vec![1])
+    );
+}
+
+#[test]
+fn draining_a_held_window_beside_a_purge_failure_raises_the_breach_signal() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+
+    let other = EntityId::now();
+    held.vault
+        .put_entity(
+            &other,
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        )
+        .unwrap();
+    map_insert_bytes(&held.doc.get_map("tombstones"), &other.to_hex(), b"1").unwrap();
+    held.doc.commit();
+
+    INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+    held.forward(&materializer).unwrap();
+    assert_eq!(held.hold_start(), Some(T0));
+    assert_eq!(remat_row(&held.vault, WINDOW, &other), Some(vec![1]));
+    assert_eq!(provenance_row(&held.vault, WINDOW, &other), None);
+    persist_held_window(&held, &materializer);
+
+    // The drain retries the tombstone; keep the purge failure pending.
+    INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
+    assert!(report.held.is_empty());
+    assert_eq!(drain_breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(remat_row(&held.vault, WINDOW, &other), Some(vec![1]));
+}
+
+#[test]
+fn the_doctor_lists_a_held_window_apart_and_raises_no_breach_signal() {
+    {
+        let held = held_window();
+        let materializer = Materializer::new();
+        held.forward(&materializer).unwrap();
+
+        let capture = LogCapture::default();
+        let report = capture.with_default(|| sync_doctor(&held.vault)).unwrap();
+        let lines = capture.lines();
+        assert_eq!(report.rm_held_windows, vec![WINDOW.to_string()]);
+        assert!(report.rm_pending_windows.is_empty());
+        assert_eq!(doctor_hold_warns(&lines).len(), 1, "{lines:?}");
+        assert!(doctor_breach_errors(&lines).is_empty(), "{lines:?}");
+
+        held.clock.set(T0 + DEFAULT_HOLD_MAX_SECS + 1);
+        let capture = LogCapture::default();
+        let report = capture.with_default(|| sync_doctor(&held.vault)).unwrap();
+        let lines = capture.lines();
+        assert_eq!(report.rm_pending_windows, vec![WINDOW.to_string()]);
+        assert!(report.rm_held_windows.is_empty());
+        assert_eq!(doctor_breach_errors(&lines).len(), 1, "{lines:?}");
+    }
+
+    let held = held_window();
+    let materializer = Materializer::new();
+    held.forward(&materializer).unwrap();
+    let key = held.hold_start_key();
+    assert!(
+        held.vault
+            .with_write_txn(|txn| Ok(held.vault.store.sync_state.delete(txn, &key)?))
+            .unwrap()
+    );
+
+    let capture = LogCapture::default();
+    let report = capture.with_default(|| sync_doctor(&held.vault)).unwrap();
+    let lines = capture.lines();
+    assert_eq!(report.rm_pending_windows, vec![WINDOW.to_string()]);
+    assert!(report.rm_held_windows.is_empty());
+    assert_eq!(doctor_breach_errors(&lines).len(), 1, "{lines:?}");
 }

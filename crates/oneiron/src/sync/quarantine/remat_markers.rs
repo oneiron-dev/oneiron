@@ -333,9 +333,14 @@ pub struct RematDrainReport {
     /// Windows whose markers ALL cleared (every flagged entity's purge
     /// succeeded).
     pub drained: Vec<String>,
-    /// Windows with at least one marker still set after the pass — a purge
-    /// keeps failing, the flagged entity's tombstone is missing from the
-    /// loaded doc, or a marker row does not parse (fail closed).
+    /// Windows still flagged after the pass whose every surviving marker is a
+    /// bounded project-dependency hold (the forward pass logged its WARN):
+    /// WARN-grade, tried again by the next drain; past
+    /// `sync.remat.dependency_hold_max_secs` such a window moves to `still_pending`.
+    pub held: Vec<String>,
+    /// Windows still flagged after the pass that do not qualify as held.
+    /// A purge may keep failing, the flagged entity's tombstone may be missing
+    /// from the loaded doc, or a marker row may not parse (fail closed).
     /// ERROR-grade: hard-deleted content may still be live locally.
     pub still_pending: Vec<String>,
 }
@@ -344,8 +349,9 @@ pub struct RematDrainReport {
 /// flagged window. Each entity-scoped marker is cleared (inside
 /// `forward_rematerialize`) only when that entity's own purge succeeds —
 /// or, for ONE-1147 batch-failure markers, when its actual healing write
-/// lands; a window with any surviving marker stays flagged and is reported
-/// in `still_pending`.
+/// lands. A window with any surviving marker stays flagged. Windows with only
+/// bounded project-dependency holds after a clean pass are reported in `held`;
+/// other flagged windows are reported in `still_pending`.
 pub fn drain_remat_markers(
     vault: &Arc<Vault>,
     user_id: &str,
@@ -405,16 +411,25 @@ fn drain_remat_windows(
             }
             Err(err) => return Err(err),
         };
-        crate::sync::window::forward_rematerialize(vault, &doc, materializer, &window_key)?;
+        let (_, verdict) = crate::sync::window::forward_rematerialize_classified(
+            vault,
+            &doc,
+            materializer,
+            &window_key,
+        )?;
         let still_flagged = pending_remat_windows(vault)?.contains(&window);
-        if still_flagged {
+        if !still_flagged {
+            report.drained.push(window);
+        } else if verdict == Some(WindowMarkerClass::AllMatch)
+            && classify_window_markers(vault, &window, |_| true)? == WindowMarkerClass::AllMatch
+        {
+            report.held.push(window);
+        } else {
             tracing::error!(
                 window = %window,
                 "rm drain: tombstone purge still failing — hard-deleted content may be live (GDPR SLA breach signal)"
             );
             report.still_pending.push(window);
-        } else {
-            report.drained.push(window);
         }
     }
     Ok(report)
