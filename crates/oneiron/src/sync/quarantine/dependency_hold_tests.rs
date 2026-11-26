@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::habit::TaskRole;
 use crate::ports::ManualClock;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::sync::bridge::{Materializer, format_edge_key};
+use crate::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use crate::sync::loro_support::map_insert_bytes;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::forward_rematerialize;
@@ -28,6 +28,9 @@ const WINDOW2: &str = "2026-04";
 const BREACH: &str = "forward remat: rm: markers still pending after tombstone pass";
 /// The dependency-hold WARN, prefix-matched.
 const HOLD_WARN: &str = "forward remat: rm: markers still pending: each one waits";
+const DRAIN_BREACH: &str = "rm drain: tombstone purge still failing";
+const DOCTOR_BREACH: &str = "sync doctor: rm: markers pending — hard-deleted";
+const DOCTOR_HOLD: &str = "sync doctor: rm: markers pending: each one waits";
 
 /// Small map_size + tempdir held for the vault's lifetime — macOS LMDB
 /// flake isolation. One vault at a time per test; each case below drops
@@ -157,6 +160,27 @@ fn hold_warns(lines: &[String]) -> Vec<&String> {
                 && line.contains(HOLD_WARN)
                 && line.contains("reason=ProjectDependencyPending")
         })
+        .collect()
+}
+
+fn drain_breach_errors(lines: &[String]) -> Vec<&String> {
+    lines
+        .iter()
+        .filter(|line| line.starts_with("event ERROR") && line.contains(DRAIN_BREACH))
+        .collect()
+}
+
+fn doctor_breach_errors(lines: &[String]) -> Vec<&String> {
+    lines
+        .iter()
+        .filter(|line| line.starts_with("event ERROR") && line.contains(DOCTOR_BREACH))
+        .collect()
+}
+
+fn doctor_hold_warns(lines: &[String]) -> Vec<&String> {
+    lines
+        .iter()
+        .filter(|line| line.starts_with("event WARN") && line.contains(DOCTOR_HOLD))
         .collect()
 }
 
@@ -863,5 +887,505 @@ fn a_held_window_with_no_hold_start_raises_the_breach_signal() {
         held.hold_start(),
         None,
         "re-quarantine must not backfill a start"
+    );
+}
+
+fn persist_held_window(held: &HeldWindow, materializer: &Arc<Materializer>) {
+    let loaded = crate::sync::window::LoadedWindow::from_doc(
+        held.doc.clone(),
+        held.window_key.clone(),
+        &held.vault,
+        materializer,
+    );
+    loaded.persist_state(&held.vault).unwrap();
+}
+
+fn drain_held_window(
+    held: &HeldWindow,
+    materializer: &Arc<Materializer>,
+) -> (RematDrainReport, Vec<String>) {
+    let capture = LogCapture::default();
+    let report = capture
+        .with_default(|| crate::sync::drain_remat_markers(&held.vault, "test-user", materializer))
+        .unwrap();
+    (report, capture.lines())
+}
+
+#[test]
+fn draining_a_held_window_reports_it_held_and_raises_no_breach_signal() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+    held.forward(&materializer).unwrap();
+    persist_held_window(&held, &materializer);
+
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert_eq!(report.held, vec![WINDOW.to_string()]);
+    assert!(report.still_pending.is_empty());
+    assert!(report.drained.is_empty());
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child),
+        Some(vec![1])
+    );
+    assert_eq!(held.hold_start(), Some(T0));
+    assert_eq!(hold_warns(&lines).len(), 1, "{lines:?}");
+    assert!(drain_breach_errors(&lines).is_empty(), "{lines:?}");
+    assert!(breach_errors(&lines).is_empty(), "{lines:?}");
+}
+
+#[test]
+fn draining_a_held_window_past_the_bound_raises_the_breach_signal() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+    held.forward(&materializer).unwrap();
+    persist_held_window(&held, &materializer);
+    held.clock.set(T0 + DEFAULT_HOLD_MAX_SECS + 1);
+
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
+    assert!(report.held.is_empty());
+    assert_eq!(drain_breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child),
+        Some(vec![1])
+    );
+}
+
+#[test]
+fn draining_a_held_window_beside_a_purge_failure_raises_the_breach_signal() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+
+    let other = EntityId::now();
+    held.vault
+        .put_entity(
+            &other,
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        )
+        .unwrap();
+    map_insert_bytes(&held.doc.get_map("tombstones"), &other.to_hex(), b"1").unwrap();
+    held.doc.commit();
+
+    INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+    held.forward(&materializer).unwrap();
+    assert_eq!(held.hold_start(), Some(T0));
+    assert_eq!(remat_row(&held.vault, WINDOW, &other), Some(vec![1]));
+    assert_eq!(provenance_row(&held.vault, WINDOW, &other), None);
+    persist_held_window(&held, &materializer);
+
+    // The drain retries the tombstone; keep the purge failure pending.
+    INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
+    assert!(report.held.is_empty());
+    assert_eq!(drain_breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(remat_row(&held.vault, WINDOW, &other), Some(vec![1]));
+}
+
+#[test]
+fn the_doctor_lists_a_held_window_apart_and_raises_no_breach_signal() {
+    {
+        let held = held_window();
+        let materializer = Materializer::new();
+        held.forward(&materializer).unwrap();
+
+        let capture = LogCapture::default();
+        let report = capture.with_default(|| sync_doctor(&held.vault)).unwrap();
+        let lines = capture.lines();
+        assert_eq!(report.rm_held_windows, vec![WINDOW.to_string()]);
+        assert!(report.rm_pending_windows.is_empty());
+        assert_eq!(doctor_hold_warns(&lines).len(), 1, "{lines:?}");
+        assert!(doctor_breach_errors(&lines).is_empty(), "{lines:?}");
+
+        held.clock.set(T0 + DEFAULT_HOLD_MAX_SECS + 1);
+        let capture = LogCapture::default();
+        let report = capture.with_default(|| sync_doctor(&held.vault)).unwrap();
+        let lines = capture.lines();
+        assert_eq!(report.rm_pending_windows, vec![WINDOW.to_string()]);
+        assert!(report.rm_held_windows.is_empty());
+        assert_eq!(doctor_breach_errors(&lines).len(), 1, "{lines:?}");
+    }
+
+    let held = held_window();
+    let materializer = Materializer::new();
+    held.forward(&materializer).unwrap();
+    let key = held.hold_start_key();
+    assert!(
+        held.vault
+            .with_write_txn(|txn| Ok(held.vault.store.sync_state.delete(txn, &key)?))
+            .unwrap()
+    );
+
+    let capture = LogCapture::default();
+    let report = capture.with_default(|| sync_doctor(&held.vault)).unwrap();
+    let lines = capture.lines();
+    assert_eq!(report.rm_pending_windows, vec![WINDOW.to_string()]);
+    assert!(report.rm_held_windows.is_empty());
+    assert_eq!(doctor_breach_errors(&lines).len(), 1, "{lines:?}");
+}
+
+/// The T1 pair's shared setup: project A is stored with its old body,
+/// parented at the vault root, while the window carries a newer body for the
+/// same id whose parent this vault does not hold — with a well-formed
+/// ChildOf edge A -> B (B absent) beside it when asked.
+struct PresentHeldProject {
+    _dir: tempfile::TempDir,
+    vault: Arc<Vault>,
+    id: EntityId,
+    stored: ProjectRecord,
+    target: Option<EntityId>,
+    window_key: WindowKey,
+    doc: LoroDoc,
+}
+
+fn present_held_project(with_child_of: bool) -> PresentHeldProject {
+    let (dir, vault, _clock) = test_vault_with_dir();
+    let root_id = vault.root_project().unwrap();
+    let root = vault.project(root_id).unwrap().unwrap();
+    let leader = EntityId::from_hex(&root.leader).unwrap();
+    let kind = vault.project_type_byte().unwrap();
+    let id = EntityId::now();
+    let old = ProjectRecord::new(id, Some(root_id), root_id, leader).expect("fixture");
+    vault.put_project(id, &old, 1).unwrap();
+    let stored = vault.project(id).unwrap().unwrap();
+    let missing_parent = EntityId::now();
+    let newer = ProjectRecord::new(id, Some(missing_parent), root_id, leader).expect("fixture");
+    let newer_blob = entity_blob(
+        kind,
+        valid_time_range(),
+        LEARNED_AT,
+        &rmp_serde::to_vec_named(&newer).unwrap(),
+    );
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &newer_blob).unwrap();
+    let target = if with_child_of {
+        let target = EntityId::now();
+        let key = format_edge_key(&id, EdgeKind::ChildOf, &target);
+        let value =
+            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, LEARNED_AT, None, None).unwrap();
+        map_insert_bytes(&doc.get_map("edges"), &key, &value).unwrap();
+        Some(target)
+    } else {
+        None
+    };
+    doc.commit();
+    PresentHeldProject {
+        _dir: dir,
+        vault,
+        id,
+        stored,
+        target,
+        window_key,
+        doc,
+    }
+}
+
+/// A present held project with an independent ChildOf wait raises the breach
+/// signal: the edge wait the id still owes vetoes the dependency hold
+/// (review round 2 of #10565).
+#[test]
+fn a_present_held_project_with_an_independent_child_of_wait_raises_the_breach_signal() {
+    let held = present_held_project(true);
+    let materializer = Materializer::new();
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| {
+            forward_rematerialize(&held.vault, &held.doc, &materializer, &held.window_key)
+        })
+        .unwrap();
+    let lines = capture.lines();
+    assert_eq!(
+        held.vault.project(held.id).unwrap(),
+        Some(held.stored.clone()),
+        "the refused newer body leaves the old A in place"
+    );
+    let target = held
+        .target
+        .expect("the ChildOf edge names its absent target");
+    assert!(
+        raw_row(
+            &held.vault,
+            &format!("dc:w:{WINDOW}:{}:{}", held.id.to_hex(), target.to_hex())
+        )
+        .is_some(),
+        "the ChildOf edge to the absent target stays owed"
+    );
+    let rtxn = held.vault.store.env.read_txn().unwrap();
+    assert!(
+        crate::sync::bridge::has_pending_source_in_txn(&held.vault, &rtxn, WINDOW, &held.id)
+            .unwrap(),
+        "the owed ChildOf edge is a pending wait sourced at A"
+    );
+    drop(rtxn);
+    assert_eq!(
+        breach_errors(&lines).len(),
+        1,
+        "the independent ChildOf wait breaches: {lines:?}"
+    );
+    assert!(
+        hold_warns(&lines).is_empty(),
+        "no project-hold WARN beside the edge wait: {lines:?}"
+    );
+    assert_eq!(
+        classify_window_markers(&held.vault, WINDOW, |_| true).unwrap(),
+        WindowMarkerClass::Unclassified,
+        "the edge wait vetoes the hold"
+    );
+    let report = sync_doctor(&held.vault).unwrap();
+    assert_eq!(
+        report.rm_pending_windows,
+        vec![WINDOW.to_string()],
+        "the doctor lists the vetoed window as pending"
+    );
+    assert!(
+        report.rm_held_windows.is_empty(),
+        "the doctor lists no held window beside the edge wait"
+    );
+}
+
+/// The same newer body with no ChildOf edge stays a bounded hold: it warns
+/// and never breaches, proving the veto above comes from the edge wait.
+#[test]
+fn a_present_held_project_without_the_child_of_wait_stays_held() {
+    let held = present_held_project(false);
+    let materializer = Materializer::new();
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| {
+            forward_rematerialize(&held.vault, &held.doc, &materializer, &held.window_key)
+        })
+        .unwrap();
+    let lines = capture.lines();
+    assert_eq!(
+        held.vault.project(held.id).unwrap(),
+        Some(held.stored.clone()),
+        "the refused newer body leaves the old A in place"
+    );
+    assert!(
+        breach_errors(&lines).is_empty(),
+        "the same newer body with no edge wait breaches nothing: {lines:?}"
+    );
+    assert_eq!(
+        hold_warns(&lines).len(),
+        1,
+        "the same newer body with no edge wait warns once: {lines:?}"
+    );
+    assert_eq!(
+        classify_window_markers(&held.vault, WINDOW, |_| true).unwrap(),
+        WindowMarkerClass::AllMatch,
+        "with no edge wait the hold stands"
+    );
+}
+
+/// A new project in an owner-rooted vault that waits for its signed birth
+/// raises the breach signal: the birth wait stamps no hold start and never
+/// matches the hold (review round 2 of #10565).
+#[test]
+fn a_project_waiting_for_its_signed_birth_raises_the_breach_signal() {
+    let (_dir, vault, _clock) = test_vault_with_dir();
+    let _owner = crate::subject_model::tests::authorization::root_host_owner(&vault, 0xA1).unwrap();
+    let root_id = vault.root_project().unwrap();
+    let root = vault.project(root_id).unwrap().unwrap();
+    let leader = EntityId::from_hex(&root.leader).unwrap();
+    let child = EntityId::now();
+    let record = ProjectRecord::new(child, Some(root_id), root_id, leader).expect("fixture");
+    assert!(
+        record.born_from.is_none(),
+        "the fixture names no origin message"
+    );
+    assert!(
+        record.write_proof.is_none(),
+        "the fixture carries no signed spawn"
+    );
+    let child_blob = entity_blob(
+        vault.project_type_byte().unwrap(),
+        valid_time_range(),
+        LEARNED_AT,
+        &rmp_serde::to_vec_named(&record).unwrap(),
+    );
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+    map_insert_bytes(&doc.get_map("entities"), &child.to_hex(), &child_blob).unwrap();
+    doc.commit();
+
+    let materializer = Materializer::new();
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| forward_rematerialize(&vault, &doc, &materializer, &window_key))
+        .unwrap();
+    let lines = capture.lines();
+    assert!(
+        vault.get(&child).unwrap().is_none(),
+        "the birth-waiting child installs nothing"
+    );
+    let records = quarantined_records(&vault).unwrap();
+    assert!(
+        records.iter().any(|(_, record)| {
+            record.window_key == WINDOW
+                && record.container == QuarantineContainer::Entities
+                && record.reason_code == "ProjectBirthPending"
+                && record.crdt_key_hash == xxh3_64(child.to_hex().as_bytes())
+        }),
+        "the birth-waiting child leaves a ProjectBirthPending x: row: {records:?}"
+    );
+    assert_eq!(
+        remat_row(&vault, WINDOW, &child).as_deref(),
+        Some([1u8].as_slice()),
+        "the birth wait keeps its rm: marker"
+    );
+    assert_eq!(
+        provenance_row(&vault, WINDOW, &child).as_deref(),
+        Some([1u8].as_slice()),
+        "the birth wait proves replay origin"
+    );
+    assert_eq!(
+        raw_row(&vault, &format!("rmh:w:{WINDOW}:{}", child.to_hex())),
+        None,
+        "the birth wait stamps no hold start"
+    );
+    assert_eq!(
+        breach_errors(&lines).len(),
+        1,
+        "the birth wait breaches: {lines:?}"
+    );
+    assert!(
+        hold_warns(&lines).is_empty(),
+        "no project-hold WARN for a birth wait: {lines:?}"
+    );
+    let report = sync_doctor(&vault).unwrap();
+    assert_eq!(report.rm_pending_windows, vec![WINDOW.to_string()]);
+    assert!(report.rm_held_windows.is_empty());
+
+    let materializer = Arc::new(Materializer::new());
+    let loaded = crate::sync::window::LoadedWindow::from_doc(
+        doc.clone(),
+        window_key.clone(),
+        &vault,
+        &materializer,
+    );
+    loaded.persist_state(&vault).unwrap();
+    let capture = LogCapture::default();
+    let report = capture
+        .with_default(|| crate::sync::drain_remat_markers(&vault, "test-user", &materializer))
+        .unwrap();
+    assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
+    assert!(report.held.is_empty());
+    assert!(report.drained.is_empty());
+}
+
+/// An edge settled beside a project hold keeps the hold and its start: only
+/// the entity's own settlement discharges them (review round 2 of #10565).
+#[test]
+fn an_edge_settled_beside_a_project_hold_keeps_the_hold_and_its_start() {
+    let held = held_window();
+    let materializer = Arc::new(Materializer::new());
+    // A well-formed DAG Parent edge C -> B with B absent: the coordinator
+    // waits on C's own arrival and owes a pending obligation for C.
+    let missing = EntityId::now();
+    let parent_key = format_edge_key(&held.hold.child, EdgeKind::Parent, &missing);
+    let parent_value =
+        encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, LEARNED_AT, None, None).unwrap();
+    map_insert_bytes(&held.doc.get_map("edges"), &parent_key, &parent_value).unwrap();
+    held.doc.commit();
+    let obligation = format!(
+        "dp:w:{WINDOW}:{}:{}",
+        held.hold.child.to_hex(),
+        missing.to_hex()
+    );
+
+    // Pass 1: the hold stands, and the edge wait is owed beside it.
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| held.forward(&materializer))
+        .unwrap();
+    let lines = capture.lines();
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child).as_deref(),
+        Some([1u8].as_slice()),
+        "pass 1 leaves the held child's rm: marker"
+    );
+    assert_eq!(held.hold_start(), Some(T0), "pass 1 starts the hold at T0");
+    assert!(
+        raw_row(&held.vault, &obligation).is_some(),
+        "pass 1 owes the Parent wait for the held child"
+    );
+    assert_eq!(
+        hold_warns(&lines).len(),
+        1,
+        "pass 1 warns for the hold: {lines:?}"
+    );
+    assert!(
+        breach_errors(&lines).is_empty(),
+        "pass 1 breaches nothing: {lines:?}"
+    );
+
+    // Pass 2: the edge value turns to garbage, so its wait settles while the
+    // entity still waits on its missing parent.
+    map_insert_bytes(&held.doc.get_map("edges"), &parent_key, &[0xffu8]).unwrap();
+    held.doc.commit();
+    held.clock.set(T0 + 5);
+    held.forward(&materializer).unwrap();
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child).as_deref(),
+        Some([1u8].as_slice()),
+        "the settled edge wait keeps the held child's marker"
+    );
+    assert_eq!(
+        held.hold_start(),
+        Some(T0),
+        "the settled edge wait keeps the hold start, stamping no fresh hold"
+    );
+    assert_eq!(
+        raw_row(&held.vault, &obligation),
+        None,
+        "pass 2 settles the Parent wait"
+    );
+    assert!(
+        classify_window_markers(&held.vault, WINDOW, |_| true).unwrap()
+            != WindowMarkerClass::NonePending,
+        "the kept hold still pends the window"
+    );
+    persist_held_window(&held, &materializer);
+    let (report, lines) = drain_held_window(&held, &materializer);
+    assert!(
+        !report.drained.contains(&WINDOW.to_string()),
+        "the kept hold never drains: {report:?}"
+    );
+    assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
+    assert!(report.held.is_empty());
+    assert_eq!(drain_breach_errors(&lines).len(), 1, "{lines:?}");
+    assert_eq!(breach_errors(&lines).len(), 1, "{lines:?}");
+
+    // The parent arrives and the child lands; the entity's own settlement
+    // discharges the hold the edge settlement kept.
+    map_insert_bytes(
+        &held.doc.get_map("entities"),
+        &held.hold.parent.to_hex(),
+        &held.hold.parent_blob,
+    )
+    .unwrap();
+    held.doc.commit();
+    // Traversal order is not ancestry order: the child may be visited before
+    // its newly arrived parent on the first of these passes.
+    held.forward(&materializer).unwrap();
+    held.forward(&materializer).unwrap();
+    assert_eq!(
+        held.vault.project(held.hold.child).unwrap(),
+        Some(held.hold.waiting.clone()),
+        "the released child is written"
+    );
+    assert_eq!(
+        remat_row(&held.vault, WINDOW, &held.hold.child),
+        None,
+        "the healing write clears the rm: marker"
+    );
+    assert_eq!(
+        held.hold_start(),
+        None,
+        "the healing write clears the hold start"
     );
 }
