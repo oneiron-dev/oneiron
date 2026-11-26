@@ -528,6 +528,14 @@ impl Vault {
                 "merge content, baseline, evidence or scan posture moved",
             ));
         }
+        // An owner-pinned team-shape head is replaced only by its owner, through
+        // `vault.task_types.promote` (ARCH-0079 #seed-pin): the submitted
+        // revision stays a proposal, refused before any scoring.
+        if self.owner_pinned_tree_in_txn(txn, &snapshot.base_id)? {
+            return Err(invalid(
+                "an owner-pinned team-shape revision is replaced only through vault.task_types.promote",
+            ));
+        }
         Ok(snapshot)
     }
     fn shared_merge_snapshot(

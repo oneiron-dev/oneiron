@@ -23,6 +23,8 @@ pub use import_receipt::{
     CallerPermissions, HoldsNothing, HubImportReceipt, MarketplaceFit, MarketplaceFitDecision,
     MarketplaceFitEvaluator, RuleSkillFit, SkillFitSetting,
 };
+mod owner_tree_pin;
+pub(crate) use owner_tree_pin::OwnerTreeOrigin;
 mod package_codec;
 mod package_work;
 mod publisher;

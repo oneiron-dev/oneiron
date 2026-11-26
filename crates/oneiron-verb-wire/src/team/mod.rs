@@ -13,6 +13,8 @@ pub use crate::team::doors::TaskTypeNodeSpec;
 pub use crate::team::doors::TaskTypeNodeView;
 pub use crate::team::doors::TaskTypeTreePin;
 pub use crate::team::doors::TaskTypeTreePinReceipt;
+pub use crate::team::doors::TaskTypeTreePromote;
+pub use crate::team::doors::TaskTypeTreePromoteReceipt;
 pub use crate::team::doors::TaskTypeTreeRead;
 pub use crate::team::doors::TaskTypeTreeReadReply;
 pub use crate::team::doors::TaskTypeTreeView;

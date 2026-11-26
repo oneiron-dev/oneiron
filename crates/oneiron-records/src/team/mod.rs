@@ -31,6 +31,8 @@ pub use oneiron_verb_wire::team::doors::TaskTypeNodeSpec;
 pub use oneiron_verb_wire::team::doors::TaskTypeNodeView;
 pub use oneiron_verb_wire::team::doors::TaskTypeTreePin;
 pub use oneiron_verb_wire::team::doors::TaskTypeTreePinReceipt;
+pub use oneiron_verb_wire::team::doors::TaskTypeTreePromote;
+pub use oneiron_verb_wire::team::doors::TaskTypeTreePromoteReceipt;
 pub use oneiron_verb_wire::team::doors::TaskTypeTreeRead;
 pub use oneiron_verb_wire::team::doors::TaskTypeTreeReadReply;
 pub use oneiron_verb_wire::team::doors::TaskTypeTreeView;

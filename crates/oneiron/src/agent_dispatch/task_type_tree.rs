@@ -22,7 +22,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::{SkillLifecycle, SkillRecord, resident_of, skill_loadable};
-use crate::skill_hub::{HubFile, HubPackage};
+use crate::skill_hub::HubPackage;
 use crate::task_type::{
     PlacementDecisions, PlacementRequest, TaskTypeRef, TaskTypeTree, ensure_type_ref,
 };
@@ -32,8 +32,12 @@ use self::validation::validate_tree;
 use super::team_shape::team_shape_root_in_txn;
 use super::widen_record::invalid;
 
+mod package_edit;
+mod promote;
 mod validation;
 
+pub(crate) use self::package_edit::{fork_files, next_version};
+pub(crate) use self::promote::{TreePromoteSource, promote_team_type_tree};
 pub use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 
 /// The tree in force for `project` (`None` is the vault tree).
@@ -387,6 +391,10 @@ pub(crate) fn place_in_tree(
 /// version stays at it. The version is chosen in the write that stores the
 /// tree. Returns the version stored.
 ///
+/// A tree that changes the fork's package moves the fork's skill version and
+/// SKILL.md's `version:` line with it, as every changed skill body does; the
+/// same tree stored again keeps both.
+///
 /// # Errors
 ///
 /// [`crate::error::ArtifactError::InvalidAgentDispatchInput`] for a fork
@@ -412,7 +420,8 @@ pub fn store_team_type_tree(
         if !in_lineage_in_txn(vault, txn, fork, vault_skill)? {
             return Err(invalid("fork is not in the team-shape skill's lineage"));
         }
-        let parent_tree = match vault.get_skill_record_in_txn(txn, &parent)? {
+        let parent_record = vault.get_skill_record_in_txn(txn, &parent)?;
+        let parent_tree = match &parent_record {
             Some(_) => stored_tree_unchecked_in_txn(vault, txn, &parent, &mut Reads::Off)?
                 .unwrap_or_else(TaskTypeTree::seeded),
             None => TaskTypeTree::seeded(),
@@ -453,12 +462,17 @@ pub fn store_team_type_tree(
         }
         let content =
             serde_json::to_vec_pretty(&stored).map_err(|_| invalid("type tree does not encode"))?;
-        let mut files: Vec<HubFile> = package
+        let kept = package
             .files
-            .into_iter()
-            .filter(|file| file.path != TASK_TYPE_TREE_FILE)
-            .collect();
-        files.push(HubFile::new(TASK_TYPE_TREE_FILE, content));
+            .iter()
+            .any(|file| file.path == TASK_TYPE_TREE_FILE && file.content == content);
+        let version = if kept {
+            record.version.clone()
+        } else {
+            let parent_version = parent_record.map_or_else(String::new, |parent| parent.version);
+            next_version(&record.version, &parent_version)
+        };
+        let files = fork_files(&package, &record.skill_id, &version, &content)?;
         vault.write_shared_skill_fork_package_in_txn(
             txn,
             &fork,

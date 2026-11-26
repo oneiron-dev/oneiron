@@ -234,7 +234,8 @@ pub use self::task_type_tree::{
     load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,
 };
 pub(crate) use self::task_type_tree::{
-    load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, team_shape_skill_in_force_in_txn,
+    TreePromoteSource, fork_files, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
+    next_version, promote_team_type_tree, team_shape_skill_in_force_in_txn,
 };
 pub(crate) use self::team_shape::team_shape_root_in_txn;
 pub use self::team_shape::{

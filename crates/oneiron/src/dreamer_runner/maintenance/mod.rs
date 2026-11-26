@@ -80,6 +80,8 @@ pub mod stewardship;
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
+#[cfg(oneiron_test_support)]
+pub(crate) use type_tree_gate::put_revision_in_force_for_test;
 pub(crate) use type_tree_gate::team_shape_tree_judge;
 pub(crate) mod type_tree_prior;
 pub mod type_tree_upkeep;
