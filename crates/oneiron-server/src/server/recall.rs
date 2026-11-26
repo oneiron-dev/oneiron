@@ -383,6 +383,19 @@ impl SyncServer {
         let action = auth
             .and_then(|auth| crate::api::host_action::host_action_of(&self.vault, auth))
             .and_then(Result::ok);
+        // An attached session's recall that names no project reads its folder's project
+        // (RECALL-SESSION-PROJECT), as every handle built from its caller does.
+        let session_workspace = auth
+            .and_then(CoreAuth::session_read_workspace)
+            .map(<[String]>::to_vec);
+        // Such a recall asks no home to complete it: a home request cannot carry the folder's
+        // narrowing yet, so the home would answer with claims outside the folder's project
+        // (review round 1 of #10559). A recall that names its projects carries them, and asks.
+        let session_narrowed = session_workspace.is_some()
+            && input
+                .scope
+                .as_ref()
+                .is_none_or(|scope| scope.project_refs.is_empty());
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
         let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
@@ -417,6 +430,10 @@ impl SyncServer {
                 let memory = reader(&server.vault, actor, class, action.as_ref(), proof.as_ref())
                     .for_destination(&destination)
                     .listing_producers(&listing);
+                let memory = match session_workspace.as_deref() {
+                    Some(folder_digests) => memory.in_session_workspace(folder_digests),
+                    None => memory,
+                };
                 let hyde = server.hyde_host.expander(
                     &memory,
                     effort,
@@ -475,7 +492,7 @@ impl SyncServer {
             };
             let mut pack = joined.unwrap_or_else(|_| Err(recall_did_not_finish()))?;
             let due = budget.map(|budget| arrived + budget);
-            if due.is_none_or(|due| Instant::now() < due) {
+            if !session_narrowed && due.is_none_or(|due| Instant::now() < due) {
                 complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
             }
             Ok(pack)

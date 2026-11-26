@@ -146,11 +146,16 @@ impl Home {
     }
 
     fn session_start(&self, args: &[&str]) -> Vec<String> {
+        self.session_start_in(Path::new("/tmp/heron-lantern"), args)
+    }
+
+    /// A session start whose event names `cwd` as the session's folder.
+    fn session_start_in(&self, cwd: &Path, args: &[&str]) -> Vec<String> {
         let event = json!({
             "hook_event_name": "SessionStart",
             "session_id": "0b5e55e0-2222-4333-8444-a55566667777",
             "source": "startup",
-            "cwd": "/tmp/heron-lantern",
+            "cwd": cwd,
             "transcript_path": "/dev/null",
         });
         lines(&self.hook("session-start", args, &event))
@@ -649,6 +654,66 @@ fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() 
     );
 
     // 5. A clean stop removes the runtime file.
+    let pid = server.0.id();
+    sigterm(pid);
+    home.wait_for_no_runtime_file(pid);
+}
+
+/// RECALL-SESSION-PROJECT (Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q2 = A): in a
+/// folder with no project bound, a read that names no project reads no claims, so the quiet
+/// start's one vault line gives the owner's bind command; a folder the bridge attaches nothing
+/// for (the home directory) gets no such words. Red on the base: the line names no command.
+#[test]
+fn a_session_in_a_folder_with_no_project_bound_is_told_the_bind_command() {
+    let home = Home::new();
+    let vault = home.path("vault");
+    let config = home.path("oneiron.toml");
+    home.init(&vault, &config);
+    let credential = home.credential(&config);
+    let config_arg = config.to_str().expect("UTF-8 path");
+    let log_path = home.path("serve.log");
+    let serve_log = std::fs::File::create(&log_path).expect("server log file");
+    let server = Server(
+        home.oneiron(&["serve", "--host", "127.0.0.1", "--config", config_arg])
+            .stdout(serve_log.try_clone().expect("server log file"))
+            .stderr(serve_log)
+            .spawn()
+            .expect("spawn oneiron serve"),
+    );
+    let registered = home.wait_for_runtime_file(server.0.id(), &log_path);
+    let url = registered["url"].as_str().expect("url").to_owned();
+    let credential_arg = credential.to_str().expect("UTF-8 path");
+    // The plugin's quiet start: it binds the vault and recalls nothing.
+    let quiet = [
+        "--credential-file",
+        credential_arg,
+        "--query",
+        " ",
+        "--timeout",
+        "60",
+    ];
+
+    let folder = home.path("work").join("heron-lantern");
+    std::fs::create_dir_all(&folder).expect("test fixture");
+    let said = home.session_start_in(&folder, &quiet);
+    assert_eq!(said.len(), 1, "one line, no recall: {said:?}");
+    assert!(said[0].contains(&url), "the line names the vault: {said:?}");
+    assert!(
+        said[0].contains("No project is bound to this folder")
+            && said[0].contains(&format!(
+                "`oneiron project bind <project-ref> --base-url {url}`"
+            )),
+        "the vault line gives the bind command, naming its vault (review round 1 of #10559): \
+         {said:?}"
+    );
+
+    let said = home.session_start_in(&home.path("home"), &quiet);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].contains(&url) && !said[0].contains("oneiron project bind"),
+        "the home directory is no workspace, so the line says nothing of a project: {said:?}"
+    );
+
     let pid = server.0.id();
     sigterm(pid);
     home.wait_for_no_runtime_file(pid);

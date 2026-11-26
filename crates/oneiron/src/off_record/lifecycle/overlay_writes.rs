@@ -19,6 +19,7 @@
 
 use crate::batch::BatchOp;
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::code_run::SessionWriteAdmission;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -431,7 +432,8 @@ impl OffRecordSession<'_> {
     /// written through `actor`'s handle under the run's `origin`, on `route`,
     /// the run's captured route, never a fresh one (WILL L11-01, S01-2a).
     /// `reader` is the room's view the run's door opened for its caller,
-    /// when the run binds a door: a claim's subject resolves in it. The
+    /// when the run binds a door: a claim's subject resolves in it. `admission`
+    /// carries the claim's default project and its caller's credential. The
     /// answer stages the write's rows inside a segment its writer opened on
     /// `route`, and gives the verb's answer, encoded. `None` for every other
     /// verb: those forward through the canonical vault, outside the
@@ -444,6 +446,7 @@ impl OffRecordSession<'_> {
         verb: AgentVerb,
         input: &serde_json::Value,
         reader: Option<&SessionReadContext<'_>>,
+        admission: Option<&SessionWriteAdmission>,
     ) -> Option<MemoryResult<SessionWriteStage<'_>>> {
         let memory = self
             .vault
@@ -462,9 +465,15 @@ impl OffRecordSession<'_> {
                     staged(move |wtxn, apply| encoded(&prepared.stage_in_txn(self, wtxn, apply)?))
                 }),
             "vault.claims.upsert" => {
+                let memory = memory.with_session_placement(
+                    admission.and_then(SessionWriteAdmission::claim_project),
+                );
+                let credential = admission.and_then(SessionWriteAdmission::claim_credential);
                 serde_json::from_value::<crate::memory::ScopedClaimInput>(input.clone())
                     .map_err(|_| decode("a claim"))
-                    .and_then(|claim| memory.prepare_claim_in_session(self, route, reader, &claim))
+                    .and_then(|claim| {
+                        memory.prepare_claim_in_session(self, route, reader, &claim, credential)
+                    })
                     .map(|prepared| {
                         staged(move |wtxn, apply| {
                             encoded(&prepared.stage_in_txn(self, wtxn, apply)?)

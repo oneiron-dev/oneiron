@@ -1,6 +1,7 @@
 //! Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time,
-//! and the short block a hook prints from its hits; and the admission check
-//! `oneiron hosted login` makes through the same bridge ([`admits`]).
+//! and the short block a hook prints from its hits; whether the vault binds a
+//! project to the session's folder ([`folder_unbound`]); and the admission
+//! check `oneiron hosted login` makes through the same bridge ([`admits`]).
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::process::CommandExt as _;
@@ -42,6 +43,9 @@ pub(super) struct Recall<'a> {
     pub(super) oneiron: &'a Path,
     pub(super) url: &'a str,
     pub(super) auth: RecallAuth<'a>,
+    /// The session's folder: the bridge names it on the call, so a recall that names no
+    /// project reads the project the owner bound to the folder (RECALL-SESSION-PROJECT).
+    pub(super) workspace: Option<&'a Path>,
     pub(super) query: &'a str,
     pub(super) limit: usize,
     pub(super) effort: HookEffort,
@@ -115,6 +119,7 @@ impl Recall<'_> {
             self.oneiron,
             self.url,
             self.auth,
+            self.workspace,
             self.deadline,
             Stdio::null(),
         )?;
@@ -197,7 +202,7 @@ pub(super) fn admits(
     auth: RecallAuth<'_>,
     deadline: Instant,
 ) -> anyhow::Result<Option<String>> {
-    let mut bridge = Bridge::start(oneiron, url, auth, deadline, Stdio::inherit())?;
+    let mut bridge = Bridge::start(oneiron, url, auth, None, deadline, Stdio::inherit())?;
     let answered = bridge.initialize().map(|result| {
         result
             .get("vault_id")
@@ -206,6 +211,33 @@ pub(super) fn admits(
     });
     bridge.close();
     answered
+}
+
+/// Whether the vault at `url` says, to `auth`, that no project is bound to the session's
+/// `folder` (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, Q2 = A): the
+/// bridge started for the folder names its digests on `initialize`, and the server answers
+/// `project_bound` under `_meta["oneiron/workspace"]`. `false` when it says nothing of it: a
+/// folder the bridge attaches nothing for (the filesystem root, the home directory, a folder
+/// that does not resolve), a server that answers no binding, or no answer by `deadline`.
+pub(super) fn folder_unbound(
+    oneiron: &Path,
+    url: &str,
+    auth: RecallAuth<'_>,
+    folder: &Path,
+    deadline: Instant,
+) -> bool {
+    if Instant::now() >= deadline {
+        return false;
+    }
+    let Ok(mut bridge) = Bridge::start(oneiron, url, auth, Some(folder), deadline, Stdio::null())
+    else {
+        return false;
+    };
+    let answered = bridge.initialize();
+    bridge.close();
+    answered.is_ok_and(|result| {
+        result.pointer("/_meta/oneiron~1workspace/project_bound") == Some(&Value::Bool(false))
+    })
 }
 
 /// A JSON-RPC error answer to one bridge request: the server's refusal, or
@@ -237,17 +269,21 @@ pub(super) struct Bridge {
 }
 
 impl Bridge {
-    /// `oneiron mcp` at `url` as `auth`, its stderr to `stderr`, answering
-    /// until `deadline`.
+    /// `oneiron mcp` at `url` as `auth`, for the session folder `workspace` when one is named
+    /// (`--workspace`), its stderr to `stderr`, answering until `deadline`.
     pub(super) fn start(
         oneiron: &Path,
         url: &str,
         auth: RecallAuth<'_>,
+        workspace: Option<&Path>,
         deadline: Instant,
         stderr: Stdio,
     ) -> anyhow::Result<Self> {
         let mut command = oneiron_spawn::command(oneiron);
         command.args(["mcp", "--url", url, "--surface", "tool-first"]);
+        if let Some(folder) = workspace {
+            command.arg("--workspace").arg(folder);
+        }
         match auth {
             RecallAuth::Slip(credential) => {
                 command.arg("--credential-file").arg(credential);

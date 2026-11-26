@@ -545,6 +545,7 @@ fn connector(
         drain: None,
         forwarded: None,
         client_surface: None,
+        session_workspace: None,
         signing_request_transport: None,
     })
 }

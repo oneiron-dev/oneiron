@@ -179,6 +179,13 @@ impl ScopedRead<'_> {
                 suppressed_count
             },
         };
+        // An attached session's project default names its axis on every receipt, the reason
+        // code an unbound folder's read answers with (RECALL-SESSION-PROJECT, Q2 = A).
+        if let Some(projects) = self.actor_key.session_projects() {
+            receipt
+                .narrowed_axes
+                .push(projects.receipt_axis().to_owned());
+        }
         receipt.record_axes();
         if grant_scope {
             receipt.record_grant_scope();
