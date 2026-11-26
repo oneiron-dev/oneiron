@@ -118,8 +118,9 @@ pub(super) fn admit_group_member_in_txn(
 }
 
 /// Whether `order`, the order a replayed request's intent key made, is the member `request`
-/// asks for, read in `txn`: no member for none; for a join, the same group and index; for a new
-/// group, the group `order` started, at the same index, holding the same cap.
+/// asks for, read in `txn`: no member for none; for a join, the same group and index, of a group
+/// `order` did not start; for a new group, the group `order` started, at the same index, holding
+/// the same cap.
 ///
 /// # Errors
 ///
@@ -137,7 +138,9 @@ pub(super) fn replay_is_same_member_in_txn(
         return Ok(false);
     }
     match *request {
-        GroupRequest::Join { .. } => Ok(true),
+        // The order that started a group stores its own id as the group's: a join of that
+        // group at its index is not the request that made it.
+        GroupRequest::Join { group, .. } => Ok(group != order.id),
         GroupRequest::New { cap, .. } => Ok(WORK_ORDER_GROUPS
             .get(&vault.store, txn, &order.id)?
             .is_some_and(|row| row.cap == cap)),

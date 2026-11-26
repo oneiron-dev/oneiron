@@ -1952,7 +1952,7 @@ mod after_and_caps {
     }
 
     #[test]
-    fn a_replay_under_its_intent_key_that_names_another_group_cap_is_another_request() {
+    fn a_replay_under_its_intent_key_that_changes_its_group_request_is_another_request() {
         let rig = door_rig();
         let mut request = rig.request(None, Some(GroupRequest::New { index: 0, cap: 2 }));
         request.intent_key = Some("q5-group-replay".to_owned());
@@ -1965,6 +1965,10 @@ mod after_and_caps {
         for other in [
             GroupRequest::New { index: 0, cap: 3 },
             GroupRequest::New { index: 1, cap: 2 },
+            GroupRequest::Join {
+                group: first.order.id,
+                index: 0,
+            },
         ] {
             request.group = Some(other);
             let refused = rig
