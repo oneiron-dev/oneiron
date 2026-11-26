@@ -648,13 +648,35 @@ pub struct EntityRead {
     pub narrowing: ReadReceipt,
 }
 
-/// `vault.hydrate` result: every view, with the read's receipt.
+/// Why `vault.hydrate` returned no view for one ref.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum HydrateMissReason {
+    /// No readable view. Absent and withheld records share this reason so
+    /// the miss cannot reveal which records exist.
+    NotFound,
+    /// The ref or its revision suffix failed the syntax check.
+    Malformed,
+}
+
+/// One ref `vault.hydrate` returned no view for, in request order.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct HydrateMiss {
+    /// The exact ref the caller supplied, including any revision suffix.
+    pub reference: String,
+    /// What can be said about the miss without exposing a withheld record.
+    pub reason: HydrateMissReason,
+}
+
+/// `vault.hydrate` result: the found views, the refs it did not find, and
+/// the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityViews {
-    /// Views, in request order.
+    /// Views, in request order; the missing refs are skipped.
     pub value: Vec<EntityView>,
     /// The read's receipt.
     pub narrowing: ReadReceipt,
+    /// The refs with no view, in request order; empty when all resolved.
+    pub missing: Vec<HydrateMiss>,
 }
 
 /// `vault.claims.list` / `vault.claims.history` result, with the read's receipt.

@@ -22,10 +22,11 @@ use std::time::Instant;
 
 use super::asset_resolve::serve_hydrated_views;
 use super::read_lane::ReadTargetSlot;
+use super::reads::{parse_hydrate_refs, read_hydrate_batch};
 use super::support::short_ref_in_txn;
 use super::{
-    EntityView, LexicalHit, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND,
-    Memory, MemoryError, MemoryResult, caps, resolve_entity_ref,
+    EntityView, HydrateResult, LexicalHit, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, caps, resolve_entity_ref,
 };
 
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
@@ -114,8 +115,7 @@ impl<'s> SessionReadContext<'s> {
     ///
     /// # Errors
     ///
-    /// The verb's own refusals: a bad input, a ref that resolves to nothing
-    /// this key reads, a room that flipped or closed.
+    /// The verb's own refusals, or a room that flipped or closed.
     pub(crate) fn answer(
         &self,
         read: SessionRead,
@@ -134,9 +134,9 @@ impl<'s> SessionReadContext<'s> {
             SessionRead::Hydrate => {
                 let input: HydrateRequest = decode(input)?;
                 let memory = memory.with_read_filter(input.filter.as_ref());
-                let read = self.hydrate(&memory, &input.refs)?;
-                let rows = read.value.iter().filter_map(view_id).collect();
-                (encode(&read)?, rows)
+                let hydrated = self.hydrate(&memory, &input.refs)?;
+                let rows = hydrated.read.value.iter().filter_map(view_id).collect();
+                (encode(&hydrated)?, rows)
             }
             SessionRead::RefsResolve => {
                 let input: ResolveRecordRefRequest = decode(input)?;
@@ -245,38 +245,29 @@ impl<'s> SessionReadContext<'s> {
         ))
     }
 
-    /// `vault.hydrate` in the room: every ref resolved and read in one
-    /// snapshot, a ref that reads nothing `NOT_FOUND` under the read's
-    /// receipt, as `Memory::hydrate` answers. A live image ASSET is served in
-    /// its resolved form, as a canonical hydrate serves it (OF-329), each
-    /// form served first kept in the room ([`Self::keep_served_forms`]).
-    fn hydrate(
-        &self,
-        memory: &Memory<'_>,
-        refs: &[String],
-    ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
+    /// `vault.hydrate` in the room: found views and misses under the read's
+    /// receipt. A live image ASSET is served in its resolved form (OF-329),
+    /// each form served first kept in the room ([`Self::keep_served_forms`]).
+    fn hydrate(&self, memory: &Memory<'_>, refs: &[String]) -> MemoryResult<HydrateResult> {
+        let refs = parse_hydrate_refs(refs, true);
         let lane = self.lane(ClaimReadStatus::Recorded, memory.read_filter());
-        let targets = refs
-            .iter()
-            .map(|reference| self.target(reference))
-            .collect::<MemoryResult<Vec<_>>>()?;
-        let ScopedReadResult { value, mut receipt } = memory.read_views(&lane, &targets)?;
-        let mut views = Vec::with_capacity(value.len());
-        for (reference, view) in refs.iter().zip(value) {
-            let Some(view) = view else {
-                return Err(MemoryError::not_found(format!(
-                    "entity {reference:?} does not resolve"
-                ))
-                .with_read_receipt(receipt));
-            };
-            views.push(view);
-        }
-        let forms = serve_hydrated_views(&lane, &targets, &mut views, &mut receipt)?;
+        let (mut result, found_targets) = read_hydrate_batch(
+            refs,
+            |reference, mode| self.target_at(reference, mode),
+            |targets| {
+                Ok(memory
+                    .read_views(&lane, targets)?
+                    .map(|views| views.into_iter().map(Ok).collect()))
+            },
+        )?;
+        let forms = serve_hydrated_views(
+            &lane,
+            &found_targets,
+            &mut result.read.value,
+            &mut result.read.receipt,
+        )?;
         self.keep_served_forms(&lane, &forms)?;
-        Ok(ScopedReadResult {
-            value: views,
-            receipt,
-        })
+        Ok(result)
     }
 
     /// Keeps `forms`, the forms this call's hydrate served on `lane`, in the
@@ -390,11 +381,16 @@ impl<'s> SessionReadContext<'s> {
     fn target(&self, reference: &str) -> MemoryResult<ReadTargetSlot> {
         let (reference, mode) = match reference.rsplit_once('@') {
             Some((reference, revision)) => (
-                reference.trim(),
+                reference,
                 ReadMode::Pinned(RevisionRef::from_hex(revision)?),
             ),
-            None => (reference.trim(), ReadMode::Live),
+            None => (reference, ReadMode::Live),
         };
+        self.target_at(reference, mode)
+    }
+
+    fn target_at(&self, reference: &str, mode: ReadMode) -> MemoryResult<ReadTargetSlot> {
+        let reference = reference.trim();
         if let Some((alias, hash)) = room_short_ref(reference) {
             // A room's alias names its row; a pin of one is checked by the
             // lane's read of that revision on this view, as a pinned id is

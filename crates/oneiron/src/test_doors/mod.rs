@@ -223,6 +223,7 @@ pub mod host_root_row_signature;
 pub mod host_taint_replica;
 pub mod host_write_origin;
 pub mod house_link;
+pub mod hydrate_missing;
 pub mod hydration_decode_guard;
 pub mod identity_ramp;
 pub mod identity_recheck;
