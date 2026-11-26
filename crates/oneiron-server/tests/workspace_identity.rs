@@ -2,6 +2,9 @@
 //! binding stores a hash plus a label): a folder's digest is its canonical checkout root's
 //! tagged SHA-256, a linked worktree names its main checkout's digest second, and the
 //! `oneiron project bind` request carries the digest and the folder's name, never its path.
+//! Review round 1 of #10550: a path that ends in a space is its own checkout; a bare
+//! repository's linked worktree, and one of a repository with a separate git directory, name
+//! only themselves, as git names no checkout for them.
 //!
 //! Red on the base: `oneiron_server::workspace_identity` and the `oneiron project` requests do
 //! not exist there, so this file does not build.
@@ -44,7 +47,12 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// A git repository at `<parent>/alpha` with one commit.
 fn repository(parent: &Path) -> std::path::PathBuf {
-    let repo = parent.join("alpha");
+    repository_named(parent, "alpha")
+}
+
+/// A git repository at `<parent>/<name>` with one commit.
+fn repository_named(parent: &Path, name: &str) -> std::path::PathBuf {
+    let repo = parent.join(name);
     std::fs::create_dir(&repo).expect("repository folder");
     git(&repo, &["init", "--quiet"]);
     git(
@@ -118,6 +126,113 @@ fn a_linked_worktree_names_itself_then_its_main_checkout() {
     );
     assert_eq!(identity.label, "alpha-fork");
     assert_eq!(identity.own_digest(), identity.digests[0]);
+}
+
+#[test]
+fn a_checkout_whose_path_ends_in_a_space_is_its_own() {
+    let parent = tempfile::tempdir().expect("temp folder");
+    let plain = repository_named(parent.path(), "alpha");
+    let spaced = repository_named(parent.path(), "alpha ");
+    let identity = WorkspaceIdentity::of_folder(&spaced, deadline()).expect("identity");
+    assert_eq!(
+        identity.digests,
+        vec![folder_digest(&canonical(&spaced))],
+        "git's path is read whole, its trailing space kept"
+    );
+    assert_ne!(
+        identity.digests,
+        WorkspaceIdentity::of_folder(&plain, deadline())
+            .expect("identity")
+            .digests,
+        "the two checkouts never share a binding"
+    );
+    assert_eq!(identity.label, "alpha ");
+}
+
+#[test]
+fn a_bare_repositorys_linked_worktree_names_only_itself() {
+    let parent = tempfile::tempdir().expect("temp folder");
+    let repo = repository(parent.path());
+    // A bare repository in a folder named `.git`: its parent is no checkout.
+    let holder = parent.path().join("meta");
+    std::fs::create_dir(&holder).expect("folder");
+    let bare = holder.join(".git");
+    git(
+        parent.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            repo.to_str().expect("utf-8 temp path"),
+            bare.to_str().expect("utf-8 temp path"),
+        ],
+    );
+    let worktree = parent.path().join("bare-fork");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "fork",
+            worktree.to_str().expect("utf-8 temp path"),
+        ],
+    );
+    let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
+    assert_eq!(
+        identity.digests,
+        vec![folder_digest(&canonical(&worktree))],
+        "a bare repository has no main checkout"
+    );
+}
+
+#[test]
+fn a_separate_git_dirs_linked_worktree_names_only_itself() {
+    let parent = tempfile::tempdir().expect("temp folder");
+    let checkout = parent.path().join("alpha");
+    let git_dir = parent.path().join("meta").join("alpha.git");
+    std::fs::create_dir(parent.path().join("meta")).expect("folder");
+    git(
+        parent.path(),
+        &[
+            "init",
+            "--quiet",
+            "--separate-git-dir",
+            git_dir.to_str().expect("utf-8 temp path"),
+            checkout.to_str().expect("utf-8 temp path"),
+        ],
+    );
+    git(
+        &checkout,
+        &["commit", "--quiet", "--allow-empty", "-m", "first"],
+    );
+    let worktree = parent.path().join("alpha-fork");
+    git(
+        &checkout,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "fork",
+            worktree.to_str().expect("utf-8 temp path"),
+        ],
+    );
+    // Git names the git directory itself as the primary worktree here, not the checkout: it
+    // holds no `.git`, so it is no main checkout to fall back to.
+    let identity = WorkspaceIdentity::of_folder(&worktree, deadline()).expect("identity");
+    assert_eq!(
+        identity.digests,
+        vec![folder_digest(&canonical(&worktree))]
+    );
+    assert_eq!(
+        WorkspaceIdentity::of_folder(&checkout, deadline())
+            .expect("identity")
+            .digests,
+        vec![folder_digest(&canonical(&checkout))],
+        "the checkout itself names its own root"
+    );
 }
 
 #[cfg(unix)]

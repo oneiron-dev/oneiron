@@ -7,8 +7,11 @@
 //! in lower-case hex. Only the digest leaves this machine: the vault keys it with its own id
 //! into the workspace id its `workspace.project` row is named by, so the vault never receives
 //! the path. A linked worktree also names its main checkout's digest, second: a worktree with
-//! no binding of its own reads its main checkout's. Nothing here is inferred from a folder name,
-//! a branch, a remote or a session id. The label is the root's folder name, for display.
+//! no binding of its own reads its main checkout's. The main checkout is the primary worktree
+//! git names (`git worktree list`): a bare repository has none, and neither has a repository
+//! with a separate git directory, which git names in place of its checkout. Nothing here is
+//! inferred from a folder name, a branch, a remote or a session id. The label is the root's
+//! folder name, for display.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -41,9 +44,9 @@ impl WorkspaceIdentity {
     pub fn of_folder(folder: &Path, deadline: Instant) -> Option<Self> {
         let folder = std::fs::canonicalize(folder).ok()?;
         let (root, main) = match git_checkout(&folder, deadline) {
-            Some(GitCheckout { top, common_dir }) => {
+            Some(GitCheckout { top, primary }) => {
                 let root = std::fs::canonicalize(&top).unwrap_or(top);
-                (root, main_checkout(&common_dir))
+                (root, primary.and_then(|primary| std::fs::canonicalize(primary).ok()))
             }
             None => (folder, None),
         };
@@ -110,56 +113,92 @@ fn home_directory() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Where git places a folder: its working tree's top level and its repository's common
-/// directory, both absolute.
+/// Where git places a folder: its working tree's top level, and its repository's primary
+/// checkout when git names one that is a checkout, both absolute.
 struct GitCheckout {
     top: PathBuf,
-    common_dir: PathBuf,
+    primary: Option<PathBuf>,
 }
 
+/// Each path is read from a git call of its own, as raw bytes with only git's final newline
+/// taken off, so a path that ends in a space, or holds one, is never read as another checkout's.
 fn git_checkout(folder: &Path, deadline: Instant) -> Option<GitCheckout> {
     let deadline = deadline.min(Instant::now() + GIT_TIMEOUT);
+    let top = git_output(
+        folder,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        deadline,
+    )?;
+    let top = path_of(top.strip_suffix(b"\n")?);
+    let primary = git_output(folder, &["worktree", "list", "--porcelain", "-z"], deadline)
+        .and_then(|listed| primary_checkout(&listed));
+    Some(GitCheckout { top, primary })
+}
+
+/// The primary checkout `git worktree list --porcelain -z` names first, when it holds a `.git`.
+/// None for a bare repository (`bare`), and none where git names a separate git directory
+/// itself as the primary: git cannot name that repository's checkout, and the git directory is
+/// none, so such a linked worktree reads only its own binding.
+fn primary_checkout(listed: &[u8]) -> Option<PathBuf> {
+    let mut fields = listed.split(|byte| *byte == 0);
+    let primary = path_of(fields.next()?.strip_prefix(b"worktree ")?);
+    if fields
+        .take_while(|field| !field.is_empty())
+        .any(|field| field == b"bare")
+    {
+        return None;
+    }
+    primary.join(".git").exists().then_some(primary)
+}
+
+/// `git -C <folder> <args>`'s standard output, when git exits 0 by `deadline`. The output is
+/// read beside the wait, so a long one (a repository with many worktrees) never holds git past
+/// the deadline.
+fn git_output(folder: &Path, args: &[&str], deadline: Instant) -> Option<Vec<u8>> {
     if Instant::now() >= deadline {
         return None;
     }
     let mut child = oneiron_spawn::command("git")
         .arg("-C")
         .arg(folder)
-        .args([
-            "rev-parse",
-            "--path-format=absolute",
-            "--show-toplevel",
-            "--git-common-dir",
-        ])
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let Some(status) = wait_until(&mut child, deadline) else {
+    let Some(mut stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
         return None;
     };
-    let mut out = String::new();
-    child.stdout.take()?.read_to_string(&mut out).ok()?;
-    if !status.success() {
+    let read = move || {
+        let mut out = Vec::new();
+        stdout.read_to_end(&mut out).map(|_| out)
+    };
+    let Ok(reader) = crate::engine_thread("git-output".into()).spawn(read) else {
+        let _ = child.kill();
+        let _ = child.wait();
         return None;
+    };
+    let status = wait_until(&mut child, deadline);
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    let mut lines = out.lines().map(str::trim).filter(|line| !line.is_empty());
-    let top = PathBuf::from(lines.next()?);
-    let common_dir = PathBuf::from(lines.next()?);
-    Some(GitCheckout { top, common_dir })
+    let out = reader.join().ok()?.ok()?;
+    status?.success().then_some(out)
 }
 
-/// The main checkout whose repository is `common_dir`: the folder that holds it when it is a
-/// `.git` folder. A bare repository has no main checkout.
-fn main_checkout(common_dir: &Path) -> Option<PathBuf> {
-    let common_dir = std::fs::canonicalize(common_dir).ok()?;
-    if common_dir.file_name()? != ".git" {
-        return None;
-    }
-    common_dir.parent().map(Path::to_path_buf)
+#[cfg(unix)]
+fn path_of(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt as _;
+    PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+#[cfg(not(unix))]
+fn path_of(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
 }
 
 /// Waits for `child` to exit until `deadline`; `None` if it has not.
