@@ -43,12 +43,16 @@ pub(super) type HydrateRef<'r> = (&'r str, Option<(&'r str, crate::vault::ReadMo
 pub(super) fn parse_hydrate_refs(refs: &[String], in_room: bool) -> Vec<HydrateRef<'_>> {
     refs.iter()
         .map(|supplied| {
-            let parsed = entity_read_mode(supplied).ok().filter(|(reference, _)| {
-                let base = reference.trim();
-                EntityId::from_hex(base).is_ok()
-                    || crate::entity_id::parse_short_ref_syntax(base).is_ok()
-                    || (in_room && super::room_short_ref(base).is_some())
-            });
+            // The base is resolved as it was checked: trimmed. The miss
+            // echoes the supplied string whole (REVIEW-10571 P1 2).
+            let parsed = entity_read_mode(supplied)
+                .ok()
+                .map(|(reference, mode)| (reference.trim(), mode))
+                .filter(|(base, _)| {
+                    EntityId::from_hex(base).is_ok()
+                        || crate::entity_id::parse_short_ref_syntax(base).is_ok()
+                        || (in_room && super::room_short_ref(base).is_some())
+                });
             (supplied.as_str(), parsed)
         })
         .collect()

@@ -186,6 +186,32 @@ fn strict_hydrate_still_refuses_the_same_refs_instead_of_returning_partial_views
     );
 }
 
+#[test]
+fn a_pinned_ref_with_one_leading_space_hydrates_to_its_view_and_lists_no_miss() {
+    let f = Fixture::new();
+    let owner = f.owner();
+    let probe = call(&owner, "vault.hydrate", json!({"refs": [f.claim]}));
+    let short = probe["value"][0]["short_ref"]
+        .as_str()
+        .expect("the claim's short ref")
+        .to_owned();
+    let id = EntityId::from_hex(&f.claim).expect("claim id");
+    let revision = f.vault.pin_entity_revision(&id).expect("retained revision");
+    let pinned = format!("{short}@{}", revision.to_hex());
+    let answer = call(
+        &owner,
+        "vault.hydrate",
+        json!({"refs": [format!(" {pinned}")]}),
+    );
+    assert_eq!(
+        answer["value"].as_array().expect("views").len(),
+        1,
+        "{answer}"
+    );
+    assert_eq!(answer["value"][0]["id_hex"], json!(f.claim), "{answer}");
+    assert_eq!(answer["missing"], json!([]), "{answer}");
+}
+
 #[cfg(oneiron_test_support)]
 #[test]
 fn the_room_hydrate_door_lists_the_same_misses_as_the_facade() {

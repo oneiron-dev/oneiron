@@ -110,7 +110,9 @@ pub(crate) fn carrier_releases_for_test(
 /// derived from a row a device-local world keeps now, or naming one, or
 /// naming a short ref that resolves to no row, is refused: a continuation's
 /// caller starts over from page one, and a fresh call is told its result
-/// changed and to call again. The owner's own agent-pack export reads its
+/// changed and to call again. A hydrate answer reads its miss echoes, its
+/// caller's own strings, as no ref and no id (`hydrate_tool_scan`,
+/// REVIEW-10571 P1 1). The owner's own agent-pack export reads its
 /// prose as no ref (`owner_export_scan`, FIX 5522). The owner's own
 /// whole-vault export (`owner_whole_vault_export`, as its route or recorded
 /// call and his fresh proof name it, never its answer) reads its notices'
@@ -167,14 +169,24 @@ fn release_result(
     if !destination.is_off_device() {
         return Ok(result);
     }
-    let scan = owner_export_scan(server, actor, &result, owner_whole_vault_export);
-    let Some(mut named) =
-        crate::device_local::short_refs_named(&server.vault, scan.as_ref().unwrap_or(&result))
-    else {
+    // A hydrate answer's miss echoes are its caller's own strings, so they
+    // read as no ref and no id, for the short-ref scan and the byte scan
+    // alike (REVIEW-10571 P1 1); the found views scan exactly as before.
+    // Every other result scans whole, save the owner's own export prose
+    // (FIX 5522).
+    let hydrate = hydrate_tool_scan(&result);
+    let export = if hydrate.is_none() {
+        owner_export_scan(server, actor, &result, owner_whole_vault_export)
+    } else {
+        None
+    };
+    let scanned = hydrate.as_ref().or(export.as_ref()).unwrap_or(&result);
+    let Some(mut named) = crate::device_local::short_refs_named(&server.vault, scanned) else {
         return Err(refused(ReleaseHold::Placement));
     };
     named.extend_from_slice(rows.unwrap_or(&[]));
-    let bytes = serde_json::to_vec(&result).map_err(|_| refused(ReleaseHold::Placement))?;
+    let bytes = serde_json::to_vec(hydrate.as_ref().unwrap_or(&result))
+        .map_err(|_| refused(ReleaseHold::Placement))?;
     let hold = if owner_whole_vault_export {
         crate::device_local::owner_export_retained_hold(&server.vault, &destination, &named, &bytes)
     } else {
@@ -346,8 +358,9 @@ pub(super) fn mcp_rerelease_refusal(
 /// The rows a code run's verb answers name by short ref inside the JSON
 /// each was recorded as, fresh or replayed; `None` when one names no row.
 /// A step `record` keeps, under its seq, as the owner's own agent-pack
-/// export call reads its prose as no ref (FIX 5522). The rest of its result
-/// is read at [`mcp_release_result`].
+/// export call reads its prose as no ref (FIX 5522), and a hydrate step
+/// reads its miss echoes as no ref (REVIEW-10571 P1 1). The rest of its
+/// result is read at [`mcp_release_result`].
 pub(super) fn mcp_run_named_rows(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -363,12 +376,19 @@ pub(super) fn mcp_run_named_rows(
         let Ok(mut output) = serde_json::from_str::<Value>(output) else {
             continue;
         };
-        let export = step["seq"]
+        let recorded = step["seq"]
             .as_u64()
-            .and_then(|seq| record.bridge_calls.iter().find(|call| call.seq == seq))
-            .is_some_and(recorded_export_call);
+            .and_then(|seq| record.bridge_calls.iter().find(|call| call.seq == seq));
+        let export = recorded.is_some_and(recorded_export_call);
         if export && *owner.get_or_insert_with(|| reads_as_owner(server, actor)) {
             clear_export_text(&mut output);
+        }
+        // A hydrate step's miss echoes are its caller's own strings, as a
+        // hydrate answer's are (REVIEW-10571 P1 1): they read as no ref.
+        if recorded.is_some_and(recorded_hydrate_call)
+            && let Some(cleared) = crate::device_local::hydrate_misses_cleared(&output)
+        {
+            output = cleared;
         }
         rows.extend(crate::device_local::short_refs_named(
             &server.vault,
@@ -418,6 +438,28 @@ fn owner_export_scan(
     Some(scan)
 }
 
+/// The copy of `result` a hydrate answer's release scans read instead
+/// (REVIEW-10571 P1 1): on a `vault.hydrate` call, as the host's envelope
+/// names its tool, the answer with each miss echo cleared
+/// ([`crate::device_local::hydrate_misses_cleared`]), for the short-ref
+/// scan and the byte scan alike. `None` for every other result, scanned
+/// whole as before. The result that leaves stays as it is.
+fn hydrate_tool_scan(result: &Value) -> Option<Value> {
+    let structured = result.get("structuredContent")?;
+    if structured.get("tool").and_then(Value::as_str) != Some(crate::device_local::HYDRATE_VERB) {
+        return None;
+    }
+    let cleared = crate::device_local::hydrate_misses_cleared(structured.get("output")?)?;
+    let mut scan = result.clone();
+    if let Some(output) = scan
+        .get_mut("structuredContent")
+        .and_then(|structured| structured.get_mut("output"))
+    {
+        *output = cleared;
+    }
+    Some(scan)
+}
+
 /// Whether a code run's recorded call is an agent-pack export: its own
 /// request names the verb, never its output's shape.
 fn recorded_export_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
@@ -426,6 +468,17 @@ fn recorded_export_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
     };
     call.effect == oneiron::code_run::SelfEffect::AgentVerb
         && matches!(&call.request, rmpv::Value::Map(entries) if entries.iter().any(names_export))
+}
+
+/// Whether a code run's recorded call is a hydrate: its own request
+/// names the verb, never its output's shape, as [`recorded_export_call`]
+/// does.
+fn recorded_hydrate_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
+    let names_hydrate = |(key, verb): &(rmpv::Value, rmpv::Value)| {
+        key.as_str() == Some("verb") && verb.as_str() == Some(crate::device_local::HYDRATE_VERB)
+    };
+    call.effect == oneiron::code_run::SelfEffect::AgentVerb
+        && matches!(&call.request, rmpv::Value::Map(entries) if entries.iter().any(names_hydrate))
 }
 
 /// Whether `actor` reads as the vault's owner on the credential its request
