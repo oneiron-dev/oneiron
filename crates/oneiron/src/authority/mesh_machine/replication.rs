@@ -26,7 +26,23 @@
 //! - a binding never moves to another endpoint or machine key;
 //! - an address served bare, without its direct addresses, never takes the
 //!   one this replica holds at that endpoint;
-//! - this install's own MACHINE row stays its own to write.
+//! - this install's own binding lands only when it names this install's
+//!   machine key and the endpoint this install serves under, the key it
+//!   derives from that machine key ([`OwnMeshKeys`]); those keys come only
+//!   from the install signer already loaded on this handle, so an import
+//!   reads no keystore slot and never mints or forgets this install's machine
+//!   identity or keys (REVIEW-10537 P1, round 2 P1);
+//! - this install's own MACHINE row is filled only where it is absent or
+//!   holds the empty body its enrolment wrote. Any other body stays as it
+//!   is, and the own binding lands beside it only when that body is a mesh
+//!   address at the endpoint the binding names (REVIEW-10537 round 2 P1).
+//!
+//! A replica takes its own binding as it takes any other
+//! (MESH-AUTHORITY-OWN-BINDING, R6 P0, Engine 26 Nov 12:35): it holds no host
+//! issuer to sign one, so a node on it could never prove its own job grant
+//! (`own_grant_ended`). Nothing on a joined replica writes its own MACHINE
+//! address either (device sync sends no MACHINE row), so the served address
+//! fills it when it is absent.
 
 use super::*;
 use crate::ports::{EntityRecord, TombstoneStoreRead};
@@ -82,10 +98,22 @@ pub struct MeshAuthorityImport {
     /// The bindings refused: a row that does not decode or verify here, an
     /// address that is not the one it binds, or a row this replica keeps
     /// instead (another host's, an older or equal revision, a revoked one,
-    /// another endpoint or key, or a MACHINE row it cannot take).
+    /// another endpoint or key, or a MACHINE row it cannot take); and this
+    /// install's own binding when it names another machine key or endpoint
+    /// than this install's own (`OwnMeshKeys`), when this handle has no
+    /// signing keys loaded for this install, or when this install's MACHINE
+    /// row holds a body of its own that is not a mesh address at that
+    /// endpoint.
     pub refused: BTreeSet<EntityId>,
-    /// This install's own MACHINE, left to this install.
-    pub own: BTreeSet<EntityId>,
+}
+
+/// The keys this install's own binding must name: its machine key and the
+/// mesh endpoint key it serves under, derived from that machine key as its
+/// transport derives it ([`mesh_transport_seed_of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OwnMeshKeys {
+    device_key: [u8; 32],
+    endpoint_key: [u8; 32],
 }
 
 /// The claims of `signed`, the binding row of `machine`, when a live owner
@@ -118,6 +146,21 @@ pub(super) fn verified_mesh_authority(
     host.verify_strict(&transcript(claims)?, &sig)
         .map_err(|_| invalid_authority())?;
     Ok(Some(claims.clone()))
+}
+
+/// The seed of the mesh transport key an install serves under, derived from
+/// its machine key `machine_key` under the transport domain
+/// `oneiron-mesh-transport` derives with (`oneiron/mesh-transport-ed25519/v1`):
+/// the one derivation [`Vault::mesh_transport_seed`] and an import's own keys
+/// ([`OwnMeshKeys`]) share.
+pub(super) fn mesh_transport_seed_of(
+    machine_key: &ed25519_dalek::SigningKey,
+) -> zeroize::Zeroizing<[u8; 32]> {
+    // FIX 6669: derive straight into the guard.
+    crate::world_keys::derive_guarded(
+        "oneiron/mesh-transport-ed25519/v1",
+        &[&machine_key.as_bytes()[..]],
+    )
 }
 
 /// The length of `bytes` bytes in standard base64, as a reply carries them.
@@ -257,7 +300,10 @@ impl Vault {
     /// Imports the bindings a home served (`rows`, one page): each one a live
     /// owner host of this vault's fold signed, written as signed with its
     /// MACHINE address row, in one write. A row this replica cannot take is
-    /// refused alone; the rest land. Never signs anything.
+    /// refused alone; the rest land. This install's own binding lands the
+    /// same way, when it names this install's own machine key and the
+    /// endpoint it serves under. Never signs anything, and never loads, mints
+    /// or forgets this install's keys or machine identity.
     ///
     /// # Errors
     ///
@@ -270,17 +316,31 @@ impl Vault {
         let mut narrowed = false;
         let mut txn = self.store.env.write_txn()?;
         let own = crate::identity::read_machine_id_in_txn(self, &txn)?;
+        // Only for a page that carries this install's own row, and from the
+        // keys loaded on this handle alone: no keystore read.
+        let own_keys = own
+            .filter(|own| rows.iter().any(|row| row.machine == *own))
+            .and_then(|own| self.own_mesh_keys(own));
         // Nothing an import writes changes the authority log, so one fold
         // judges every row.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
         for row in rows {
             let machine = row.machine;
-            if own == Some(machine) {
-                import.own.insert(machine);
-                continue;
-            }
-            match self.import_mesh_authority_row_in_txn(&mut txn, &fold, row, &mut count)? {
+            let whose = if own == Some(machine) {
+                match own_keys {
+                    Some(keys) => Whose::Own(keys),
+                    None => {
+                        import.refused.insert(machine);
+                        continue;
+                    }
+                }
+            } else {
+                Whose::Other
+            };
+            let outcome =
+                self.import_mesh_authority_row_in_txn(&mut txn, &fold, row, whose, &mut count)?;
+            match outcome {
                 RowOutcome::Written { narrowed: withdrew } => {
                     narrowed |= withdrew;
                     import.written.insert(machine);
@@ -301,15 +361,48 @@ impl Vault {
         Ok(import)
     }
 
+    /// The [`OwnMeshKeys`] of `own`, this install's machine, derived from the
+    /// install signer already loaded on this handle
+    /// ([`Vault::loaded_install_signer`]); `None`, logged at debug, when no
+    /// signer for `own` is loaded. A serving replica loads it as its keystore
+    /// installs, before its first sync round: its machine proof to the home
+    /// and its mesh listener's transport key sign with the same keys. No
+    /// keystore slot or key selector is read, so an import never mints a
+    /// machine id, a seed or a sealing key, and never forgets a machine, with
+    /// its pin and its choices (REVIEW-10537 P1, round 2 P1; on mel a new
+    /// machine identity would cut it off from its home again). Without the
+    /// keys its own binding is refused and every other row still lands.
+    fn own_mesh_keys(&self, own: EntityId) -> Option<OwnMeshKeys> {
+        let Some(signer) = self
+            .loaded_install_signer()
+            .filter(|signer| signer.machine == own)
+        else {
+            tracing::debug!(
+                "this install's signing keys are not loaded; its own mesh binding is refused"
+            );
+            return None;
+        };
+        let seed = mesh_transport_seed_of(&signer.machine_key);
+        Some(OwnMeshKeys {
+            device_key: signer.machine_key.verifying_key().to_bytes(),
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&seed)
+                .verifying_key()
+                .to_bytes(),
+        })
+    }
+
     /// One served binding into `txn`, as [`Self::import_mesh_authority_rows`]
     /// takes it: verified, at the address it binds, over no binding this
     /// replica keeps instead ([`replaces`]), on a MACHINE row that can take
-    /// it ([`Self::machine_row_takes_in_txn`]).
+    /// it ([`Self::machine_row_takes_in_txn`]). This install's own binding
+    /// (`whose`) must also name its own machine key and endpoint, and keeps
+    /// any MACHINE body this install holds for itself.
     fn import_mesh_authority_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         row: MeshAuthorityRow,
+        whose: Whose,
         count: &mut ScanCount,
     ) -> Result<RowOutcome> {
         let MeshAuthorityRow {
@@ -328,6 +421,13 @@ impl Vault {
             return Ok(RowOutcome::Refused);
         };
         if address.endpoint_key != served.endpoint_key {
+            return Ok(RowOutcome::Refused);
+        }
+        // This install's own binding names the key this install pairs with and
+        // the endpoint it serves under, or it is not this install's to prove.
+        if let Whose::Own(keys) = whose
+            && (served.device_key != keys.device_key || served.endpoint_key != keys.endpoint_key)
+        {
             return Ok(RowOutcome::Refused);
         }
         // Every direct address and grant is kept (FIX 7921, 7922): measured,
@@ -352,7 +452,7 @@ impl Vault {
             return Ok(RowOutcome::Refused);
         }
         let Some(address_held) =
-            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, bare, count)?
+            self.machine_row_takes_in_txn(txn, machine, &address, &encoded, bare, whose, count)?
         else {
             return Ok(RowOutcome::Refused);
         };
@@ -390,10 +490,18 @@ impl Vault {
     /// `None` when another kind, a deleted or stale holder, a mesh address at
     /// another endpoint, or another MACHINE at this endpoint refuses it, two
     /// MACHINE rows here naming that endpoint included; else whether the row
-    /// keeps what it holds: that envelope already, or, for a `bare` one, a
-    /// mesh address at that endpoint, whose direct addresses may be this
-    /// replica's only route (REVIEW-10536 round 2). An absent row takes it:
-    /// no peer sends a MACHINE row.
+    /// keeps what it holds: that envelope already, or, for a `bare` row or
+    /// this install's own (`whose`), a mesh address at that endpoint. A bare
+    /// row keeps it because its direct addresses may be this replica's only
+    /// route (REVIEW-10536 round 2). Another machine's row with no mesh
+    /// address takes it: no peer sends a MACHINE row. This install's own row
+    /// is this install's own to write: only an absent one, or the empty body
+    /// its enrolment wrote (`EMPTY_MACHINE_BODY`), takes it, and any other
+    /// body refuses it and stays (REVIEW-10537 round 2 P1).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one served row's address, its envelope, whether it came bare, whose row it is, and the import's scan count"
+    )]
     fn machine_row_takes_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -401,6 +509,7 @@ impl Vault {
         address: &MeshMachineAddress,
         encoded: &[u8],
         bare: bool,
+        whose: Whose,
         count: &mut ScanCount,
     ) -> Result<Option<bool>> {
         let visibility = TombstoneStoreRead::port_deletion_state(&self.store, txn, &machine)?;
@@ -431,12 +540,18 @@ impl Vault {
             Err(error) if is_authority_refusal(&error) => return Ok(None),
             Err(error) => return Err(error),
         }
-        Ok(Some(existing.is_some_and(|row| {
-            row.body == encoded
-                || (bare
-                    && parse_address(&row.body)
-                        .is_some_and(|held| held.endpoint_key == address.endpoint_key))
-        })))
+        let Some(existing) = existing else {
+            return Ok(Some(false));
+        };
+        let own = matches!(whose, Whose::Own(_));
+        let held = existing.body == encoded
+            || ((bare || own)
+                && parse_address(&existing.body)
+                    .is_some_and(|held| held.endpoint_key == address.endpoint_key));
+        if own && !held && existing.body != super::super::machine_identity::EMPTY_MACHINE_BODY {
+            return Ok(None);
+        }
+        Ok(Some(held))
     }
 }
 
@@ -462,6 +577,15 @@ fn served_address(
     }))
     .map_err(|_| invalid_authority())?;
     Ok(fits(&bare).then_some((bare, true)))
+}
+
+/// Whose binding one served row is.
+#[derive(Clone, Copy)]
+enum Whose {
+    /// Another machine's.
+    Other,
+    /// This install's own, with the keys it must name.
+    Own(OwnMeshKeys),
 }
 
 /// What one import did with one binding.
