@@ -833,3 +833,28 @@ fn a_capture_whose_source_was_erased_first_keeps_nothing() {
         "the erased turn's words are not stored again"
     );
 }
+
+#[test]
+fn a_case_variant_repeat_of_a_supported_claim_costs_its_arm_precision() {
+    // Arm S gives the exact path /Work and a wrong /work, arm N /Work alone; both judge
+    // orders reject /work. The two share one gold key, yet each emitted candidate counts.
+    let schema = [
+        json!({"subject": "P1", "predicate": "file.path", "value": "/Work", "quote": "/Work"}),
+        json!({"subject": "P1", "predicate": "file.path", "value": "/work", "quote": "/Work"}),
+    ];
+    let shadow =
+        [json!({"subject": "P1", "predicate": "file.path", "value": "/Work", "quote": "/Work"})];
+    let (schema_f1, shadow_f1) = door::f1(
+        &schema,
+        &shadow,
+        8,
+        (&[true, false], &[true]),
+        (&[true], &[true, false]),
+    );
+    let schema_f1 = schema_f1.expect("schema quality");
+    assert!(
+        (schema_f1 - 2.0 / 3.0).abs() < 1e-9,
+        "arm S: precision 1/2, recall 1: F1 2/3, got {schema_f1}"
+    );
+    assert_eq!(shadow_f1, Some(1.0), "arm N gave only the supported claim");
+}

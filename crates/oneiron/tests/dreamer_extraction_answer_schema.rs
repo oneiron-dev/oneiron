@@ -153,6 +153,38 @@ fn schema_valid_256_byte_ascii_query_passes_the_contract_check() {
 }
 
 #[test]
+fn schema_valid_japanese_queries_up_to_255_bytes_pass_the_contract_check() {
+    // REVIEW-10538 round 2: 65 Japanese characters are 195 bytes, past the 64-character
+    // branch yet inside the prompt's 256-byte limit; 85 are 255 bytes.
+    for count in [65, 85] {
+        let query = "あ".repeat(count);
+        assert_eq!(query.len(), count * 3);
+        let mut first = candidate();
+        first["prospective_queries"] = json!([query]);
+        assert_sound(&json!({"candidates": [first]}));
+    }
+}
+
+#[test]
+fn schema_refuses_86_japanese_characters_as_the_contract_check_does() {
+    let mut first = candidate();
+    first["prospective_queries"] = json!(["あ".repeat(86)]);
+    let reply = json!({"candidates": [first]});
+    assert_refused(&reply);
+    assert!(
+        check_reply(&reply.to_string()).is_err(),
+        "258 bytes is past the 256-byte limit"
+    );
+}
+
+#[test]
+fn schema_valid_128_cyrillic_characters_pass_the_contract_check() {
+    let mut first = candidate();
+    first["prospective_queries"] = json!(["д".repeat(128)]);
+    assert_sound(&json!({"candidates": [first]}));
+}
+
+#[test]
 fn schema_refuses_a_query_over_256_bytes() {
     let mut first = candidate();
     first["prospective_queries"] = json!(["q".repeat(257)]);
