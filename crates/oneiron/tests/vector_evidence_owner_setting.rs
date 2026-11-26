@@ -102,8 +102,7 @@ impl Fixture {
     }
 
     fn put_turn(&self, id: EntityId, text: &str, vector: [f32; 4]) {
-        let body = rmp_serde::to_vec_named(&json!({ "content": text }))
-            .expect("turn body");
+        let body = rmp_serde::to_vec_named(&json!({ "content": text })).expect("turn body");
         self.vault
             .batch()
             .put(
