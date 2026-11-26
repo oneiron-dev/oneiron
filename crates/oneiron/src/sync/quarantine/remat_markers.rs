@@ -195,6 +195,25 @@ pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
     Ok(true)
 }
 
+/// [`clear_replay_remat_marker_in_txn`] for an edge wait that settled (its
+/// edge written, ignored or quarantined), except that a marker carrying an
+/// entity's dependency hold start stays, start and all: the edge and the
+/// entity share the marker, and only the entity's own settlement (its healing
+/// write, a terminal refusal or its tombstone's purge) discharges the hold and
+/// its clock (review round 2 of #10565).
+pub(in crate::sync) fn clear_edge_wait_remat_marker_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: &crate::entity_id::EntityId,
+) -> Result<bool> {
+    let key = window_entity_key(window_key, id);
+    if REMAT_DEPENDENCY_HOLD_START.contains(&vault.store, wtxn, &key)? {
+        return Ok(false);
+    }
+    clear_replay_remat_marker_in_txn(vault, wtxn, window_key, id)
+}
+
 /// Lists DISTINCT windows currently flagged needs-rematerialization.
 ///
 /// Fail closed: a row under `rm:` that is missing the entity segment (or
@@ -259,7 +278,8 @@ pub(crate) enum WindowMarkerClass {
 /// Classifies one window's surviving `rm:` markers in one read
 /// transaction: `NonePending` when no row survives, `AllMatch` when every
 /// row is a canonical replay marker with exact provenance whose id the caller
-/// still waits on. A missing or malformed hold start, a start in the future,
+/// still waits on. A present id that still owes an edge wait sourced at it,
+/// a missing or malformed hold start, a start in the future,
 /// or an age over `sync.remat.dependency_hold_max_secs` is a breach
 /// (`Unclassified`), as is any other survivor that does not match.
 /// Raw marker iteration lets malformed rows classify as breaches, not read errors.
@@ -299,6 +319,16 @@ pub(crate) fn classify_window_markers(
             return Ok(WindowMarkerClass::Unclassified);
         }
         if !matches(id) {
+            return Ok(WindowMarkerClass::Unclassified);
+        }
+        // An id this replica already holds (an older revision) that still owes
+        // an edge wait sourced at it waits on more than its own missing
+        // dependency: that wait vetoes the hold (review round 2 of #10565).
+        // While the id itself is absent, every edge sourced at it waits on it
+        // first; a wait that outlasts its landing vetoes from then on.
+        if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &rtxn, &id)?
+            && crate::sync::bridge::has_pending_source_in_txn(vault, &rtxn, window_key, &id)?
+        {
             return Ok(WindowMarkerClass::Unclassified);
         }
         let Some(age) = REMAT_DEPENDENCY_HOLD_START
