@@ -501,7 +501,8 @@ pub enum TokenCommand {
     /// Provision the first owner link while the self-host vault is stopped.
     Bootstrap(Box<TokenBootstrapArgs>),
     /// Create a pairing link on the running server and print it. It lives one pairing code life
-    /// (pairing.code.ttl_secs, one hour unless set) of the server's running time.
+    /// (pairing.code.ttl_secs, one hour unless set) on the vault's clock, which resumes from its
+    /// last saved reading when the server starts.
     Pair(Box<TokenPairArgs>),
     /// Mint a read-only credential for a local agent on the stopped vault.
     Read(Box<TokenReadArgs>),
