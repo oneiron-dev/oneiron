@@ -167,7 +167,7 @@ fn raw_row(vault: &Vault, key: &str) -> Option<Vec<u8>> {
         .sync_state
         .get(&rtxn, key)
         .unwrap()
-        .map(<[u8]>::to_vec)
+        .map(std::borrow::Cow::into_owned)
 }
 
 /// The raw `rm:` row for one window and id, if present.
