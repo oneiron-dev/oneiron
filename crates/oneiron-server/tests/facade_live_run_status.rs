@@ -22,7 +22,46 @@ fn tasks_refuse_preserves_live_run_refusal_status_and_code() {
     run_on_engine_stack("facade-live-run-status", refuse_with_live_run_handles);
 }
 
+/// COORDINATION-06: an agent lands its consult answer or abstention over
+/// HTTP only through its own attached live run, behind the same guard.
+#[test]
+fn tasks_consult_result_preserves_live_run_refusal_status_and_code() {
+    run_on_engine_stack(
+        "facade-live-run-status-consult",
+        consult_with_live_run_handles,
+    );
+}
+
 async fn refuse_with_live_run_handles() {
+    live_run_statuses(
+        "tasks.refuse",
+        json!({
+            "domain": "bond",
+            "reasonRef": "cl_33333333333333333333333333333333"
+        }),
+    )
+    .await;
+}
+
+async fn consult_with_live_run_handles() {
+    live_run_statuses(
+        "tasks.consult.result",
+        json!({
+            "task_ref": "44444444444444444444444444444444",
+            "kind": {
+                "kind": "abstain",
+                "result_ref": "55555555555555555555555555555555",
+                "reason_ref": {"turn": "66666666666666666666666666666666"}
+            },
+            "completed_at": 1
+        }),
+    )
+    .await;
+}
+
+/// Posts `spec` to facade `verb` with a well-formed handle no run holds and
+/// with a malformed one: the live-run guard's status and code come back.
+async fn live_run_statuses(verb: &str, spec: Value) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
@@ -67,7 +106,7 @@ async fn refuse_with_live_run_handles() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let request = Request::post("/v1/core/facade/tasks.refuse")
+        let request = Request::post(format!("/v1/core/facade/{verb}"))
             .header("authorization", format!("Bearer {token}"))
             .header(
                 "x-oneiron-binding",
@@ -77,14 +116,11 @@ async fn refuse_with_live_run_handles() {
             .body(Body::from(
                 json!({
                     "live_run": handle,
-                    "spec": {
-                        "domain": "bond",
-                        "reasonRef": "cl_33333333333333333333333333333333"
-                    }
+                    "spec": spec
                 })
                 .to_string(),
             ))
-            .expect("tasks.refuse request");
+            .expect("facade request");
         let response = app.clone().oneshot(request).await.expect("facade response");
         let status = response.status();
         let bytes = to_bytes(response.into_body(), 16 * 1024)
@@ -94,7 +130,7 @@ async fn refuse_with_live_run_handles() {
         assert_eq!(
             (status, body["error"]["code"].as_str()),
             (expected_status, Some(expected_code)),
-            "handle {handle}: {body}"
+            "{verb} handle {handle}: {body}"
         );
     }
 }
