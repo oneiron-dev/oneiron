@@ -137,6 +137,7 @@ impl HostSelfDispatcher<'_> {
                 return refuse(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: VERB_HOOK_HIDDEN.to_owned(),
+                    reason_codes: Vec::new(),
                 })));
             }
             // A skip or an ask stopped the write before it ran: the receipt
@@ -161,6 +162,7 @@ impl HostSelfDispatcher<'_> {
                 return refuse(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: refused.code,
+                    reason_codes: refused.reason_codes,
                 })));
             }
             None => {
@@ -203,6 +205,7 @@ impl HostSelfDispatcher<'_> {
                     AgentVerbRefusal {
                         hook_notice: None,
                         code: MemoryError::from(refused).code,
+                        reason_codes: Vec::new(),
                     }
                 }))));
             }
@@ -306,5 +309,6 @@ fn session_bound() -> SelfDispatchOutcome {
     answered(Err(AgentVerbRefusal {
         hook_notice: None,
         code: AGENT_VERB_SESSION_BOUND.to_owned(),
+        reason_codes: Vec::new(),
     }))
 }

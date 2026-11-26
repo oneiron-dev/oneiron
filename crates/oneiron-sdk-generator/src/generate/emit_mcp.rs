@@ -190,7 +190,7 @@ pub(crate) fn mcp_input_dispatch(row: &Dict) -> Result<String, GenerateError> {
     let method = method_name(row)?;
     let name = json(name_value);
     let decode = format!(
-        "let input: {} = serde_json::from_value(input).map_err(|_| invalid())?;\n",
+        "let input: {} = serde_json::from_value(input).map_err(|error| McpGatewayError::typed_input_refused(&error))?;\n",
         rust_type(item(row, "input")?)?
     );
     if get_is(row, "context", "board") {
@@ -487,7 +487,7 @@ pub(crate) fn held_content_rows(generator: &Generator) -> Result<String, Generat
         let row = &generator.rows[id];
         let method = method_name(row)?;
         out += &format!(
-            "{} => {{\nlet input: {} = serde_json::from_value(input).map_err(|_| invalid())?;\nlet body = measured()?;\nlet output = oneiron::task_verb::sdk::{method}_file(memory, input, &body).map_err(mcp_facade_error)?;\nmcp_agent_verb_output(output, crate::mcp::McpPageSource::complete(1))\n}}\n",
+            "{} => {{\nlet input: {} = serde_json::from_value(input).map_err(|error| McpGatewayError::typed_input_refused(&error))?;\nlet body = measured()?;\nlet output = oneiron::task_verb::sdk::{method}_file(memory, input, &body).map_err(mcp_facade_error)?;\nmcp_agent_verb_output(output, crate::mcp::McpPageSource::complete(1))\n}}\n",
             json_item_name(row)?,
             rust_type(item(row, "input")?)?
         );
@@ -512,7 +512,7 @@ pub(crate) fn mcp_dispatch(generator: &Generator) -> Result<String, GenerateErro
     for &id in &mcp_rows {
         result += &mcp_argument_projection(&generator.rows[id])?;
     }
-    result += "_ => return Err(invalid()), }\nserde_json::from_value(Value::Object(arguments)).map_err(|_| invalid())\n}\n";
+    result += "_ => return Err(invalid()), }\nserde_json::from_value(Value::Object(arguments)).map_err(|error| McpGatewayError::typed_input_refused(&error))\n}\n";
     result += EXECUTE_AGENT_VERB_INPUT;
     result += INVALID;
     result += VERB_LISTING_HEAD;
@@ -703,7 +703,7 @@ async fn execute_agent_verb_listing(
 
 /// `execute_agent_verb_listing`'s body, up to the task-producer rows its turn test matches.
 const VERB_LISTING_HEAD: &str = "if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
-        return Err(McpGatewayError::new(-32602, \"tool_args_invalid\", format!(\"{tool} input names unknown field `{field}`\")));
+        return Err(McpGatewayError::unknown_input_field(tool, &field));
     }
     if !oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp) {
         return Err(invalid());

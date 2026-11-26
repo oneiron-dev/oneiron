@@ -46,6 +46,7 @@ impl HostSelfDispatcher<'_> {
             answered(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: code.to_owned(),
+                reason_codes: Vec::new(),
             }))
         };
         let (Some(child), Some(spec)) = (self.reader_child(), self.scoped_child_spec()) else {

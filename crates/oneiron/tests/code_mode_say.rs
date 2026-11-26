@@ -86,6 +86,7 @@ impl AgentVerbDoor for EngineDoor {
                 Err(error) => Err(AgentVerbRefusal {
                     code: error.code,
                     hook_notice: None,
+                    reason_codes: Vec::new(),
                 }),
             },
         )

@@ -82,6 +82,7 @@ impl McpCodeModeVerbs {
         let unauthenticated = || AgentVerbRefusal {
             hook_notice: None,
             code: "mcp_auth_required".to_owned(),
+            reason_codes: Vec::new(),
         };
         // A managed vault's attested owner carries no slip: he reads with his
         // own key, held to this request's owner proof, as a direct MCP read
@@ -103,6 +104,7 @@ impl McpCodeModeVerbs {
                         _ => "engine_error",
                     }
                     .to_owned(),
+                    reason_codes: Vec::new(),
                 });
         }
         let proof = self
@@ -126,6 +128,7 @@ impl McpCodeModeVerbs {
                     _ => "engine_error",
                 }
                 .to_owned(),
+                reason_codes: Vec::new(),
             })?
             .map(|reader| reader.at(self.actor.locality()))
             .ok_or_else(unauthenticated)
@@ -187,6 +190,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: "engine_error".to_owned(),
+                reason_codes: Vec::new(),
             }));
         };
         let answer = match executed {
@@ -221,6 +225,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: "mcp_auth_required".to_owned(),
+                reason_codes: Vec::new(),
             }));
         };
         // The run's worker thread drives its own reactor; the answer runs on
@@ -243,6 +248,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         let refusal = |code: &str| AgentVerbRefusal {
             hook_notice: None,
             code: code.to_owned(),
+            reason_codes: Vec::new(),
         };
         Ok(match receiver.recv() {
             Ok(Ok(reply)) => match serde_json::to_value(reply) {
@@ -267,6 +273,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         let refused = |error: McpGatewayError| AgentVerbRefusal {
             hook_notice: None,
             code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
         };
         if let RunCall::Bridge(effect) = call
             && let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect)
@@ -313,6 +320,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             AgentVerbRefusal {
                 hook_notice: None,
                 code: error.kind.to_owned(),
+                reason_codes: error.reason_codes,
             }
         })?;
         Ok(None)
@@ -335,6 +343,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .map_err(|error| AgentVerbRefusal {
                 hook_notice: None,
                 code: error.kind.to_owned(),
+                reason_codes: error.reason_codes,
             })?;
         self.credential_lane()
     }
@@ -367,6 +376,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             |_| AgentVerbRefusal {
                 hook_notice: None,
                 code: "engine_error".to_owned(),
+                reason_codes: Vec::new(),
             },
         )
     }
@@ -402,6 +412,7 @@ pub(super) fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, Ag
                 serde_json::json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)
             }),
             code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
         })),
     }
 }

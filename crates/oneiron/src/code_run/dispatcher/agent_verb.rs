@@ -143,6 +143,7 @@ impl HostSelfDispatcher<'_> {
                 return Ok(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: AGENT_VERB_SESSION_BOUND.to_owned(),
+                    reason_codes: Vec::new(),
                 })));
             }
             return self.dispatch_session_write(call, site);
@@ -151,6 +152,7 @@ impl HostSelfDispatcher<'_> {
             return Ok(answered(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+                reason_codes: Vec::new(),
             })));
         };
         // A write carries the run's TASK creator, so a TASK it creates runs
@@ -271,6 +273,7 @@ impl HostSelfDispatcher<'_> {
                     answered(Err(AgentVerbRefusal {
                         hook_notice: None,
                         code: VERB_HOOK_HIDDEN.to_owned(),
+                        reason_codes: Vec::new(),
                     }))
                 }
                 // A skip or an ask stopped the write before it ran: the receipt
@@ -593,14 +596,14 @@ fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
     if let Some(rejected) = super::gate_rejection(&refused.outcome) {
         return Err(rejected);
     }
-    Ok(SelfDeniedResult {
-        reason_codes: Vec::new(),
-        ..refused
-    })
+    // The refusal keeps the reason codes it was recorded with, so a replay
+    // answers as the live call did (FIX CODE-MODE-DENIAL-REASONS).
+    Ok(refused)
 }
 
-/// A refusal reaches the guest as its stable code alone; the host or prompt
-/// layer words it.
+/// A refusal reaches the guest as its stable code and the reason codes its
+/// door typed (FIX CODE-MODE-DENIAL-REASONS); the host or prompt layer
+/// words them.
 fn answered(
     outcome: std::result::Result<AgentVerbAnswer, AgentVerbRefusal>,
 ) -> SelfDispatchOutcome {
@@ -610,7 +613,7 @@ fn answered(
                 hook_notice: refusal.hook_notice,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code,
-                reason_codes: Vec::new(),
+                reason_codes: refusal.reason_codes,
             })
         },
         SelfDispatchOutcome::AgentVerb,

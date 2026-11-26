@@ -26,6 +26,7 @@ impl HostSelfDispatcher<'_> {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code,
+                reason_codes: Vec::new(),
             }));
         }
         let Some(door) = &self.agent_verbs else {
@@ -170,7 +171,7 @@ impl HostSelfDispatcher<'_> {
                                 hook_notice: None,
                                 effect: call.effect(),
                                 outcome: refusal.code,
-                                reason_codes: Vec::new(),
+                                reason_codes: refusal.reason_codes,
                             }),
                             None,
                         ));

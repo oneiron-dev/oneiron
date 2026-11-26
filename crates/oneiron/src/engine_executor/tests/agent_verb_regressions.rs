@@ -48,6 +48,7 @@ impl TaskCreateDoor {
             return Err(AgentVerbRefusal {
                 code: "mcp_auth_required".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         Ok(())
@@ -64,6 +65,7 @@ impl TaskCreateDoor {
         let refused = || AgentVerbRefusal {
             code: "engine_error".to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         };
         let input: TaskCreateRequest =
             serde_json::from_value(call.input.clone()).map_err(|_| refused())?;
@@ -116,6 +118,7 @@ impl AgentVerbDoor for TaskCreateDoor {
             return Err(AgentVerbRefusal {
                 code: if as_a_gate { "deny" } else { "read_refused" }.to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         self.admits().map(|()| None)
@@ -760,6 +763,7 @@ impl AgentVerbDoor for ClosingDoor {
         Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -771,6 +775,7 @@ impl AgentVerbDoor for ClosingDoor {
             return Err(AgentVerbRefusal {
                 code: "door_closed".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         Ok(None)
@@ -988,6 +993,7 @@ impl AgentVerbDoor for GateWordDoor {
         Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -999,6 +1005,7 @@ impl AgentVerbDoor for GateWordDoor {
             return Err(AgentVerbRefusal {
                 code: "deny".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         Ok(None)

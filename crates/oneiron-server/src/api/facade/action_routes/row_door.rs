@@ -239,6 +239,7 @@ impl FacadeRowDoor {
                 Ok(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code,
+                    reason_codes: Vec::new(),
                 }))
             }
         }
@@ -267,6 +268,7 @@ impl FacadeRowDoor {
         let refused = || AgentVerbRefusal {
             hook_notice: None,
             code: MEMORY_CODE_INTERNAL.to_owned(),
+            reason_codes: Vec::new(),
         };
         let run_writes = run_write_token_of_origin(origin);
         let outer = *self.outer.lock().unwrap_or_else(PoisonError::into_inner);

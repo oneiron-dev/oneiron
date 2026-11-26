@@ -1706,6 +1706,7 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
             let refused = |_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             };
             self.vault
                 .memory(self.actor, EdgeActorClass::Human)
@@ -1844,6 +1845,7 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
             Ok(Err(AgentVerbRefusal {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             }))
         }
 
