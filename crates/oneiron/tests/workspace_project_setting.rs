@@ -490,7 +490,11 @@ fn the_owners_repeated_bind_records_a_change_and_is_checked_again() {
     let id = fixture.workspace_id(MAIN_DIGEST);
     let value = json!({ "project": fixture.root_project.to_hex(), "label": "alpha" });
     let first = fixture
-        .set(SettingCaller::Owner(&fixture.proof), &id, Some(value.clone()))
+        .set(
+            SettingCaller::Owner(&fixture.proof),
+            &id,
+            Some(value.clone()),
+        )
         .expect("the owner binds");
     let again = fixture
         .set(SettingCaller::Owner(&fixture.proof), &id, Some(value))
@@ -509,4 +513,3 @@ fn the_owners_repeated_bind_records_a_change_and_is_checked_again() {
         Some(fixture.root_project)
     );
 }
-

@@ -744,7 +744,9 @@ async fn approved_session_write() -> TestResult {
         .map_err(|error| format!("the owner answers proceed: {error:?}"))?;
     let draining = Arc::clone(vault);
     tokio::task::spawn_blocking(move || draining.drain_verb_asks()).await??;
-    let resumed = vault.get_claim(&claim)?.ok_or("the drain writes the claim")?;
+    let resumed = vault
+        .get_claim(&claim)?
+        .ok_or("the drain writes the claim")?;
     assert_eq!(resumed.scope_project, fixture.alpha);
     Ok(())
 }
@@ -783,7 +785,9 @@ fn a_code_runs_room_claim_that_omits_its_project_lands_in_the_folders_project() 
 async fn room_claim() -> TestResult {
     use oneiron::code_run::SelfDispatchOutcome;
     use oneiron::off_record::OffRecordBackendClass;
-    use oneiron_server::test_doors::mcp_code_mode_verbs::{call_off_record_claim, register_credential};
+    use oneiron_server::test_doors::mcp_code_mode_verbs::{
+        call_off_record_claim, register_credential,
+    };
 
     let fixture = Fixture::new()?;
     let vault = &fixture.vault;
@@ -818,7 +822,9 @@ async fn room_claim() -> TestResult {
         "the write stages off record"
     );
     session.save_artifact_as(&proof, &claim.to_hex())?;
-    let saved = vault.get_claim(&claim)?.ok_or("the owner saves the staged claim")?;
+    let saved = vault
+        .get_claim(&claim)?
+        .ok_or("the owner saves the staged claim")?;
     assert_eq!(saved.scope_project, fixture.alpha);
     session.close()?;
     Ok(())

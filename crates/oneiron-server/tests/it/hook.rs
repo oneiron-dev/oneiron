@@ -700,7 +700,9 @@ fn a_session_in_a_folder_with_no_project_bound_is_told_the_bind_command() {
     assert!(said[0].contains(&url), "the line names the vault: {said:?}");
     assert!(
         said[0].contains("No project is bound to this folder")
-            && said[0].contains(&format!("`oneiron project bind <project-ref> --base-url {url}`")),
+            && said[0].contains(&format!(
+                "`oneiron project bind <project-ref> --base-url {url}`"
+            )),
         "the vault line gives the bind command, naming its vault (review round 1 of #10559): \
          {said:?}"
     );
