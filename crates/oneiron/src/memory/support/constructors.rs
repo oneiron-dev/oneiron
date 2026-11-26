@@ -183,6 +183,7 @@ impl<'v> Memory<'v> {
                 task_host: self.task_host.clone(),
                 task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
+                session_projects: self.session_projects.clone(),
                 credential: self.credential,
                 credential_instrument: self.credential_instrument.clone(),
                 attested_owner: self.attested_owner,
