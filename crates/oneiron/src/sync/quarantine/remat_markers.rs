@@ -208,7 +208,7 @@ pub(in crate::sync) fn clear_edge_wait_remat_marker_in_txn(
     id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
     let key = window_entity_key(window_key, id);
-    if REMAT_DEPENDENCY_HOLD_START.contains(&vault.store, wtxn, &key)? {
+    if false && REMAT_DEPENDENCY_HOLD_START.contains(&vault.store, wtxn, &key)? {
         return Ok(false);
     }
     clear_replay_remat_marker_in_txn(vault, wtxn, window_key, id)
