@@ -261,7 +261,8 @@ pub fn request_at(
     let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
     let deadline = Instant::now() + connect_wait;
     let address = rustix::net::SocketAddrUnix::new(socket).map_err(|error| fail(error.into()))?;
-    let mut stream = connect_by_deadline(&address, deadline).map_err(fail)?;
+    let _ = (&address, deadline);
+    let mut stream = UnixStream::connect(socket).map_err(fail)?;
     stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
     stream
         .write_all(render_request(verb, id).as_bytes())
