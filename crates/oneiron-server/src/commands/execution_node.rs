@@ -313,7 +313,7 @@ fn work_dir_chain_line(work_dir: &Path, who: &str, engine_uid: u32) -> Result<St
             "work_dir chain: {} is not there yet (staging makes it); the path to it passes for {who}",
             first_missing.display()
         )),
-        WorkDirVerdict::Unsafe(u) => Err(format!(
+        WorkDirVerdict::Unsafe(u) => Ok(format!(
             "work_dir {}: {}, judged for {who}: staging refuses every job (work_dir_unsafe)",
             u.path.display(),
             u.fault
