@@ -5,7 +5,7 @@
       {
         "type": "command",
         "timeout": 15,
-        "command": "oneiron hook --host cursor session-start --credential-file \"$HOME/.config/oneiron/cursor-hooks.cred\""
+        "command": "oneiron hook --host cursor session-start --credential-file \"$HOME/.config/oneiron/cursor-hooks.cred\" --query \" \""
       }
     ],
     "preCompact": [
