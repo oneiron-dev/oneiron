@@ -45,8 +45,9 @@ struct RematLedger {
     /// Ids the entity or edge pass refused for good this pass (a terminal
     /// entity refusal, a quarantined or rejected edge sourced at the id).
     /// Unlike `terminal_quarantines`, an edge's moved wait never lands here,
-    /// and settle never drops an id from it: an id here is never read as held
-    /// only by a missing project, whatever else of it waits for one.
+    /// and settle never drops an id from it. An id here is never read as held
+    /// only by a parent project or the message a project was born from that
+    /// this replica does not hold yet.
     refused_otherwise: HashSet<EntityId>,
     /// Delete-protected rows the entity pass admitted: the ingest step already
     /// refused every tombstone naming them, so the tombstone pass records
@@ -61,8 +62,9 @@ struct RematLedger {
 
 impl RematLedger {
     /// Records `id` refused for good this pass: its marker settles as a
-    /// terminal quarantine's, and it is never read as held only by a missing
-    /// project ([`Self::refused_otherwise`]).
+    /// terminal quarantine's. It is never read as held only by a parent project
+    /// or the message a project was born from that this replica does not hold
+    /// yet ([`Self::refused_otherwise`]).
     fn refuse(&mut self, id: EntityId) {
         self.terminal_quarantines.push(id);
         self.refused_otherwise.insert(id);
@@ -960,11 +962,13 @@ fn settle(
         // when a marker row no longer parses. Clearing any of them here
         // would vacuously discharge a GDPR retry — keep them (fail closed)
         // and keep ERROR-grade visibility.
-        // GDPR-SIGNAL-ON-QUARANTINED-WINDOW: all-proven project waits warn only
-        // with a valid start; beyond sync.remat.dependency_hold_max_secs or
-        // without a start, the wait is a breach. An id this pass also refused
-        // for good (`refused_otherwise`) is never held only by its project.
-        let held_by_missing_project = |id: EntityId| {
+        // GDPR-SIGNAL-ON-QUARANTINED-WINDOW: warn only if all surviving markers
+        // have proven replay origin, have valid hold starts, and wait for a parent
+        // project or the message a project was born from that this replica does
+        // not hold yet. The wait is a breach without a start or beyond
+        // sync.remat.dependency_hold_max_secs. An id this pass also refused for
+        // good (`refused_otherwise`) is never held by either dependency alone.
+        let held_by_pending_dependency = |id: EntityId| {
             ledger.pending_entity_dependencies.get(&id)
                 == Some(&ErrorKind::ProjectDependencyPending)
                 && !ledger.refused_otherwise.contains(&id)
@@ -975,7 +979,7 @@ fn settle(
         let class = quarantine::classify_window_markers(
             vault,
             window_key.as_str(),
-            held_by_missing_project,
+            held_by_pending_dependency,
         )?;
         let pass_ran_clean = outcome.purge_failures.is_empty() && !bookkeeping_fell_back;
         ledger.window_markers = Some(match class {
@@ -991,7 +995,7 @@ fn settle(
                 tracing::warn!(
                     window = %window_key,
                     reason = "ProjectDependencyPending",
-                    "forward remat: rm: markers still pending: each one waits for a project this replica does not hold yet; no hard delete is owed for them"
+                    "forward remat: rm: markers still pending: each one waits for a project, or the message a project was born from, that this replica does not hold yet; no hard delete is owed for them"
                 );
             }
             _ => {
