@@ -8,7 +8,7 @@ use super::{RematCtx, RematLedger};
 
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
-use crate::error::Result;
+use crate::error::{ErrorKind, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::secret_custody::moves_custody_floor;
 use crate::sync::ingest::{
@@ -193,8 +193,20 @@ fn ledger_step(ledger: &mut RematLedger, step: EntityStep) {
                 RefusalRetry::Terminal => ledger.terminal_quarantines.push(id),
                 // Still owed: no other outcome at this id in the pass, such as a
                 // refused tombstone naming it, may discharge its marker.
+                // The kind stays ProjectDependencyPending only while every
+                // refusal of the id in the pass had that kind, so a second key
+                // naming the same id never hides another refusal behind it.
                 RefusalRetry::Retry | RefusalRetry::DependencyPending => {
-                    ledger.pending_entity_dependencies.insert(id);
+                    let kind = refusal.err.kind();
+                    ledger
+                        .pending_entity_dependencies
+                        .entry(id)
+                        .and_modify(|held| {
+                            if kind != ErrorKind::ProjectDependencyPending {
+                                *held = kind;
+                            }
+                        })
+                        .or_insert(kind);
                 }
             }
         }
