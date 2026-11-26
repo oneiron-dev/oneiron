@@ -258,6 +258,11 @@ pub enum Command {
     Unlink(Box<UnlinkArgs>),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// Bind the folder this runs in to a PROJECT, unbind it, or list the bindings: the
+    /// project an attached agent session there reads by default. The owner's act, sent over
+    /// `oneiron api`'s transport under the owner's credential; only the folder's workspace id
+    /// and its name leave this machine, never its path.
+    Project(ProjectArgs),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
     /// 2): git calls it; it answers the context the seat host bound.
     CredentialHelper(CredentialHelperArgs),
@@ -770,6 +775,56 @@ pub struct ApiArgs {
     pub command: ApiCommand,
 }
 
+/// `oneiron project`: the owner's binding of a folder to the PROJECT its attached agent
+/// sessions read by default (RECALL-SESSION-PROJECT). Each subcommand is one `vault.settings.*`
+/// call on the `workspace.project` key, as `oneiron api call` sends it.
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+pub struct ProjectArgs {
+    /// Existing Oneiron server root, as `oneiron api` takes it.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
+    pub base_url: String,
+
+    /// Environment variable holding the owner's bearer credential, as `oneiron api` takes it.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Environment variable with the Ed25519 binding seed for a slip bearer.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
+
+    /// Connect to this address for the base URL's host (curl `--resolve`), as `oneiron api`
+    /// takes it.
+    #[arg(long, value_name = "IP")]
+    pub resolve_address: Vec<String>,
+
+    /// Give the request up after this many seconds (curl `--max-time`).
+    #[arg(long, env = "ONEIRON_API_MAX_TIME", value_name = "SECS")]
+    pub max_time: Option<u64>,
+
+    /// The folder to bind or unbind; this process's working directory when absent.
+    #[arg(long, value_name = "DIR")]
+    pub folder: Option<std::path::PathBuf>,
+
+    #[command(subcommand)]
+    pub command: ProjectCommand,
+}
+
+/// What `oneiron project` does with the folder.
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
+pub enum ProjectCommand {
+    /// Bind the folder's checkout to this PROJECT (its id, 32 hex): attached agent sessions
+    /// there read it when they name no project. A linked worktree with no binding of its own
+    /// reads its main checkout's.
+    Bind {
+        /// The PROJECT's id, 32 hex.
+        project_ref: String,
+    },
+    /// Remove the folder's binding: sessions there that name no project read none.
+    Unbind,
+    /// List the vault's folder bindings (each folder by its workspace id and name).
+    Bindings,
+}
+
 /// Four short commands over existing routes plus one escape hatch. `raw` is
 /// what keeps this family from growing into a second hand-maintained route
 /// catalog: anything not shaped below is still one `raw METHOD PATH` away.
@@ -1213,6 +1268,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
             crate::logging::off_runtime("unlink", move || commands::unlink(*args)).await?
         }
         Command::Api(args) => commands::api(args).await,
+        Command::Project(args) => commands::project(args).await,
         // Blocking: one curl call for git, which waits on this process.
         Command::CredentialHelper(args) => commands::credential_helper(args),
         Command::Mcp(args) => commands::mcp(args),

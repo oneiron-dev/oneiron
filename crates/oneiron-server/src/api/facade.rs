@@ -172,6 +172,7 @@ mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).
 mod non_base_world_claim_fraction_doors;
+mod workspace_project_doors;
 mod note_doors;
 mod oauth_authorization_doors;
 mod off_record_doors;
