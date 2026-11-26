@@ -231,7 +231,7 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
     // a file or a folder: neither is the repository's own git directory.
     std::fs::write(git_dir.join(".git"), b"").expect("an empty .git file");
     assert_eq!(
-        WorkspaceIdentity::of_folder(&worktree, deadline())
+        WorkspaceIdentity::of_folder(&worktree)
             .expect("identity")
             .digests,
         vec![folder_digest(&canonical(&worktree))],
@@ -240,7 +240,7 @@ fn a_separate_git_dirs_linked_worktree_names_only_itself() {
     std::fs::remove_file(git_dir.join(".git")).expect("remove the file");
     std::fs::create_dir(git_dir.join(".git")).expect("a .git folder");
     assert_eq!(
-        WorkspaceIdentity::of_folder(&worktree, deadline())
+        WorkspaceIdentity::of_folder(&worktree)
             .expect("identity")
             .digests,
         vec![folder_digest(&canonical(&worktree))],
@@ -323,8 +323,7 @@ fn check_child_identity() {
     ) else {
         return;
     };
-    let identity =
-        WorkspaceIdentity::of_folder(Path::new(&folder), deadline()).expect("identity");
+    let identity = WorkspaceIdentity::of_folder(Path::new(&folder)).expect("identity");
     let digests: Vec<String> = digests.lines().map(str::to_owned).collect();
     assert_eq!(identity.digests, digests);
 }
