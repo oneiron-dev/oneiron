@@ -179269,7 +179269,7 @@
      "purpose": "The issuer's half of the drain guard (pass 33 row R4, 7.9): how each confirmed end and each dispatch the…",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -180207,7 +180207,7 @@
      "path": "src/gpu_host.rs",
      "purpose": "The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -188233,7 +188233,7 @@
      "path": "src/test_doors/gpu_backend.rs",
      "purpose": "Doors for `tests/customer_gpu_job_maximum.rs` (row L10-31) and `tests/customer_cpu_job_seconds.rs` (row…",
      "surface": {
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -189022,7 +189022,7 @@
      "path": "src/test_doors/work_order_host.rs",
      "purpose": "Door for `tests/work_orders.rs` (FIX row WORK-ORDER-NODES-CACHED-OFF-RUNTIME): one call through the node…",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -189792,13 +189792,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/work_order_host.rs",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 20,
       "fn": 2
      }
     },
@@ -191084,6 +191084,14 @@
      "notable": [],
      "path": "tests/issuer_readiness_drain.rs",
      "purpose": "CG-2 row 9 (owner COMPUTE-CG = AA, 25 Nov 22:56): \"A drained machine clears itself once its readiness check…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/issuer_readiness_scheduled_read.rs",
+     "purpose": "CG-2 row 9's scheduled read (owner COMPUTE-CG = AA, 25 Nov 22:56: \"A drained machine clears itself once its…",
      "surface": {}
     },
     {
@@ -194316,7 +194324,7 @@
      "entry": "crates/oneiron-server/src/work_order_host.rs",
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's…",
      "spec_ids": []
@@ -194334,10 +194342,10 @@
      ]
     }
    },
-   "over_bar": 71,
+   "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2213,
-   "test_files": 618
+   "test_files": 619
   },
   "oneiron-setting-contract": {
    "files": [
