@@ -672,14 +672,21 @@ pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
 }
 
 /// Where vector evidence starts in this section's embedding space, as far as
-/// the section says before its provider is admitted: the measured floors of a
-/// shipped local model run as it was measured, otherwise the engine's
-/// default. An endpoint's depend on what its server serves, and are set when
-/// the vault admits it ([`EmbedderSlot::ensure_ready`]).
+/// the section says before its provider is admitted: its model's floors
+/// whatever the provider (EMBEDDER-ENDPOINT-VECTOR-FLOORS), for a local model
+/// run as it was measured and for an endpoint whose queries go unprompted;
+/// otherwise the engine's default. An endpoint's are set again when the vault
+/// admits it, from what its server says it serves
+/// ([`EmbedderSlot::ensure_ready`]).
 pub(crate) fn evidence_floors(config: &EmbedderConfig) -> VectorEvidenceFloors {
     match config.provider {
         EmbedderProvider::Local => local::evidence::pinned_evidence(config).unwrap_or_default(),
-        EmbedderProvider::Endpoint | EmbedderProvider::None => VectorEvidenceFloors::default(),
+        EmbedderProvider::Endpoint => local::evidence::model_floors(
+            &config.model_id,
+            local::evidence::endpoint_queries_unprompted(config),
+        )
+        .unwrap_or_default(),
+        EmbedderProvider::None => VectorEvidenceFloors::default(),
     }
 }
 

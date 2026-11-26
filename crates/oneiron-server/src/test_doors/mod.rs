@@ -34,6 +34,7 @@ pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_path;
 pub mod embedding_line;
+pub mod endpoint_model_floors;
 pub mod fingerprint_keep_lens_callback;
 pub mod gpu_backend;
 pub mod hex_input_policy;

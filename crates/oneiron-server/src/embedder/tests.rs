@@ -964,8 +964,10 @@ const MEASURED: oneiron::config::VectorEvidenceFloors = oneiron::config::VectorE
 /// with binary output, which no one measured, was judged by them while a
 /// local vault on the same settings was not. A vault now takes its floors
 /// when it admits the server, from the model and profile the server names,
-/// by the local provider's rule; a profile it cannot read, or none, keeps the
-/// engine's default.
+/// by the local provider's rule; a profile it cannot read keeps the engine's
+/// default. A server that names none serves its model's space, and takes the
+/// model's floors (EMBEDDER-ENDPOINT-VECTOR-FLOORS: the floors are keyed by
+/// model id whatever the provider).
 #[test]
 fn an_endpoint_takes_measured_floors_only_for_the_profile_they_were_measured_with() {
     let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
@@ -1008,7 +1010,7 @@ fn an_endpoint_takes_measured_floors_only_for_the_profile_they_were_measured_wit
             "{changed}"
         );
     }
-    assert_eq!(floors(Value::Null, &shipped), default, "no profile listed");
+    assert_eq!(floors(Value::Null, &shipped), MEASURED, "no profile listed");
     let prompted = EmbedderConfig {
         query_instruction: Some("Represent this query: ".to_owned()),
         ..shipped

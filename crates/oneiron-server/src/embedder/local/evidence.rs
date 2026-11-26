@@ -2,10 +2,15 @@
 //! its floors hold for.
 //!
 //! A shipped model's floors were measured with its files, its shipped
-//! settings and unprompted queries. They hold for a local section that runs
-//! it so, and for an endpoint whose server names that model loaded and runs it
-//! so ([`super::super::endpoint`]); every other profile keeps the engine's
-//! default.
+//! settings and unprompted queries, and they are keyed by its model id
+//! (`org/name@revision`) whatever the provider (EMBEDDER-ENDPOINT-VECTOR-FLOORS):
+//! a local section and an endpoint that serve that model take them
+//! ([`model_floors`]). They are narrowed only where the run is known to depart
+//! from what was measured: a local section whose settings are not the measured
+//! profile, an endpoint whose server names a profile that is not, or names one
+//! this build cannot read ([`super::super::endpoint`]), and prompted queries
+//! keep the engine's default. An endpoint that names no profile, as every
+//! OpenAI-shaped server does, serves its model's space.
 
 use oneiron::config::VectorEvidenceFloors;
 use serde::{Deserialize, Serialize};
@@ -52,20 +57,29 @@ impl RunProfile {
 }
 
 /// The floors measured for `model_id` (`org/name@revision`), when it is a
-/// shipped model with floors, run with `profile`'s measured settings and
-/// queried unprompted; `None` otherwise.
-pub(crate) fn measured_floors(
-    model_id: &str,
-    profile: &RunProfile,
-    unprompted: bool,
-) -> Option<VectorEvidenceFloors> {
-    if !unprompted || !profile.is_measured() {
+/// shipped model with floors and its queries reach it unprompted; `None`
+/// otherwise. The key is the model, whatever the provider that runs it.
+pub(crate) fn model_floors(model_id: &str, unprompted: bool) -> Option<VectorEvidenceFloors> {
+    if !unprompted {
         return None;
     }
     PINNED_MODELS
         .iter()
         .find(|model| model_id == format!("{}@{}", model.repo, model.revision))
         .and_then(|model| model.evidence)
+}
+
+/// [`model_floors`] for a run whose profile is known: `None` as well when
+/// `profile` is not the one the floors were measured under.
+pub(crate) fn measured_floors(
+    model_id: &str,
+    profile: &RunProfile,
+    unprompted: bool,
+) -> Option<VectorEvidenceFloors> {
+    if !profile.is_measured() {
+        return None;
+    }
+    model_floors(model_id, unprompted)
 }
 
 /// Where vector evidence starts for a local section: its model's measured

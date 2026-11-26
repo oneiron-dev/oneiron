@@ -223,25 +223,24 @@ impl Listing {
         self.transform.as_deref()
     }
 
-    /// Where vector evidence starts in the space this listing serves: a
-    /// shipped model's measured floors when the remote names that model
-    /// loaded and runs it as it was measured ([`RunProfile`]), and the
-    /// vault's queries go unprompted; the engine's default otherwise, and for
-    /// any remote that does not say.
+    /// Where vector evidence starts in the space this listing serves: the
+    /// floors of the model it serves (the one it names loaded, else the
+    /// vault's `model_id`) when the vault's queries go unprompted
+    /// ([`evidence::model_floors`]; EMBEDDER-ENDPOINT-VECTOR-FLOORS). A remote
+    /// that names a run profile is held to it: one that is not the measured
+    /// profile ([`RunProfile`]), or that this build cannot read, keeps the
+    /// engine's default. A remote that names none, as every OpenAI-shaped
+    /// server does, serves its model's space.
     pub(crate) fn evidence(&self, config: &EmbedderConfig) -> VectorEvidenceFloors {
-        let profile = self
-            .profile
-            .clone()
-            .and_then(|profile| serde_json::from_value::<RunProfile>(profile).ok());
-        match (&self.model_id, profile) {
-            (Some(model_id), Some(profile)) => evidence::measured_floors(
-                model_id,
-                &profile,
-                evidence::endpoint_queries_unprompted(config),
-            )
-            .unwrap_or_default(),
-            _ => VectorEvidenceFloors::default(),
-        }
+        let model_id = self.model_id.as_deref().unwrap_or(&config.model_id);
+        let unprompted = evidence::endpoint_queries_unprompted(config);
+        let floors = match &self.profile {
+            None => evidence::model_floors(model_id, unprompted),
+            Some(profile) => serde_json::from_value::<RunProfile>(profile.clone())
+                .ok()
+                .and_then(|profile| evidence::measured_floors(model_id, &profile, unprompted)),
+        };
+        floors.unwrap_or_default()
     }
 
     /// Whether an answer names what this listing did: `embedder serve` names
