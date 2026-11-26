@@ -238,7 +238,8 @@ impl ReadinessReads {
 
     /// Keeps the last ask of `machines` alone: the machines the vault's grants admit now.
     pub fn keep_asked(&mut self, machines: &[EntityId]) {
-        self.asked_at.retain(|machine, _| machines.contains(machine));
+        self.asked_at
+            .retain(|machine, _| machines.contains(machine));
     }
 
     /// Reads `machine`'s readiness fact from one `Node` answer the issuer read at `now_ms`. The
