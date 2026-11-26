@@ -973,6 +973,7 @@ impl Vault {
                     },
                     door: super::credential::VerbAskDoor::Facade { room: None },
                     on_device: false,
+                    session_workspace: None,
                 },
                 work: EntityId::now(),
                 arrival: line.last_arrival,

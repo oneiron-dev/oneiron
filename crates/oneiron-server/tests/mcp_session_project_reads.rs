@@ -73,6 +73,7 @@ struct Holder {
 /// third person's `core:read` and `core:write` slip.
 struct Fixture {
     app: Router,
+    server: Arc<SyncServer>,
     vault: Arc<Vault>,
     reader: Holder,
     alpha_reader: Holder,
@@ -140,7 +141,8 @@ impl Fixture {
             },
         )?);
         Ok(Self {
-            app: build_app(server),
+            app: build_app(Arc::clone(&server)),
+            server,
             vault,
             reader,
             alpha_reader,
@@ -226,36 +228,47 @@ impl Fixture {
         input: Value,
         workspace: Option<&str>,
     ) -> TestResult<Value> {
-        let schema = tools
-            .as_array()
-            .ok_or("tools/list lists tools")?
-            .iter()
-            .find(|listed| listed["name"] == tool)
-            .map(|listed| listed["inputSchema"].clone())
-            .ok_or_else(|| format!("the tool-first endpoint lists {tool}"))?;
-        let field = schema["properties"]["arguments"]["properties"]
-            .as_object()
-            .and_then(|fields| fields.keys().next().cloned())
-            .ok_or_else(|| format!("{tool} names its argument field"))?;
-        let mut params = json!({
-            "name": tool,
-            "arguments": {
-                "schema_version": schema["properties"]["schema_version"]["const"],
-                "consent": {
-                    "policy_ref": "policy:agent-session",
-                    "purpose": "read the session's project",
-                },
-                "arguments": { field: input },
-            },
-        });
-        if let Some(workspace) = workspace {
-            params["_meta"] = json!({ "oneiron/workspace": { "digests": [workspace] } });
-        }
+        let params = tool_call_params(tools, tool, input, workspace)?;
         let (status, reply) = self.rpc(holder, id, "tools/call", params).await?;
         assert_eq!(status, 200, "{reply}");
         assert!(reply.get("error").is_none(), "{tool} answers: {reply}");
         Ok(reply)
     }
+}
+
+/// The schema-versioned arguments for a tool call, before it is sent.
+fn tool_call_params(
+    tools: &Value,
+    tool: &str,
+    input: Value,
+    workspace: Option<&str>,
+) -> TestResult<Value> {
+    let schema = tools
+        .as_array()
+        .ok_or("tools/list lists tools")?
+        .iter()
+        .find(|listed| listed["name"] == tool)
+        .map(|listed| listed["inputSchema"].clone())
+        .ok_or_else(|| format!("the tool-first endpoint lists {tool}"))?;
+    let field = schema["properties"]["arguments"]["properties"]
+        .as_object()
+        .and_then(|fields| fields.keys().next().cloned())
+        .ok_or_else(|| format!("{tool} names its argument field"))?;
+    let mut params = json!({
+        "name": tool,
+        "arguments": {
+            "schema_version": schema["properties"]["schema_version"]["const"],
+            "consent": {
+                "policy_ref": "policy:agent-session",
+                "purpose": "read the session's project",
+            },
+            "arguments": { field: input },
+        },
+    });
+    if let Some(workspace) = workspace {
+        params["_meta"] = json!({ "oneiron/workspace": { "digests": [workspace] } });
+    }
+    Ok(params)
 }
 
 fn facet_named(vault: &Vault, name: &str) -> TestResult<EntityId> {
@@ -642,5 +655,171 @@ async fn initialize_folder() -> TestResult {
              and names no project: {reply}"
         );
     }
+    Ok(())
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[test]
+fn an_approved_mcp_hook_ask_resumes_the_write_in_its_original_project() -> TestResult {
+    on_engine_stack(approved_session_write)
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+async fn approved_session_write() -> TestResult {
+    use oneiron::skill_hub::HubFile;
+    use oneiron::task_verb::{TaskAskHandle, TaskAskOptionId, TaskAskWord};
+    use oneiron_server::test_doors::mcp_code_mode_verbs::install_verb_ask_resume;
+
+    let fixture = Fixture::new()?;
+    let vault = &fixture.vault;
+    vault
+        .install_hook_runtime(Arc::new(SessionWriteAsk::default()))
+        .map_err(|error| format!("install the test hook runtime: {error}"))?;
+    install_verb_ask_resume(&fixture.server);
+    vault.prepare_install_signing()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let disposition = vault.put_pack(
+        &proof,
+        vec![
+            HubFile::new(
+                "PACK.md",
+                "---\nname: example.sessionwrite\ndescription: Ask before a session writes.\nversion: 1.0.0\nkind: capability\nhooks: [\"ask-before-write\"]\n---\nAsk before a session writes.\n",
+            ),
+            HubFile::new(
+                "hooks/ask-before-write/HOOK.md",
+                "---\nname: ask-before-write\nversion: 1.0.0\nverbs: [\"vault.claims.upsert\"]\nphase: pre\noutcomes: [\"ask\"]\n---\nAsk before a claim write.\n",
+            ),
+            HubFile::new(
+                "hooks/ask-before-write/body.js",
+                "return { kind: 'ask', question: 'May this claim be written?' };\n",
+            ),
+        ],
+    )?;
+    assert!(matches!(
+        disposition,
+        oneiron::skill_hub::pack_catalog::PackInstallDisposition::Installed(_)
+    ));
+    let binding = vault
+        .pack_hook_bindings()?
+        .into_iter()
+        .find(|(_, row)| row.pack == "example.sessionwrite" && row.hook == "ask-before-write")
+        .map(|(id, _)| id)
+        .ok_or("the owner binds the asking hook")?;
+
+    let writer = &fixture.writer;
+    let tools = fixture.tools(writer).await?;
+    let claim = EntityId::now();
+    let mut params = tool_call_params(
+        &tools,
+        "vault.claims.upsert",
+        json!({
+            "id": claim.to_hex(),
+            "predicate": "profile.note",
+            "subject_ref": writer.person.to_hex(),
+            "value": "a session write after approval",
+            "confidence": 1.0,
+            "source": "user_stated",
+            "scope": { "scope_facet_id": fixture.alpha_facet.to_hex() },
+        }),
+        Some(BOUND_DIGEST),
+    )?;
+    params["_meta"]["oneiron/invocation"] = json!(EntityId::now().to_hex());
+    let (_, held) = fixture.rpc(writer, 3, "tools/call", params).await?;
+    let hook = held
+        .pointer("/result/structuredContent/hook")
+        .or_else(|| held.pointer("/error/data/hook"))
+        .ok_or_else(|| format!("the pre-hook stops the claim: {held}"))?;
+    let ask = match serde_json::from_value(hook.clone())? {
+        oneiron::runtime_hooks::VerbHookStop::Pending { ask, .. } => EntityId::from_hex(&ask)?,
+        other => return Err(format!("the hook must ask: {other:?}").into()),
+    };
+    assert!(vault.get_claim(&claim)?.is_none());
+
+    let mut word = TaskAskWord::new(binding);
+    word.option = Some(TaskAskOptionId::new("proceed").map_err(|_| "invalid proceed option")?);
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_answer(&TaskAskHandle { group_ref: ask }, &word)
+        .map_err(|error| format!("the owner answers proceed: {error:?}"))?;
+    let draining = Arc::clone(vault);
+    tokio::task::spawn_blocking(move || draining.drain_verb_asks()).await??;
+    let resumed = vault.get_claim(&claim)?.ok_or("the drain writes the claim")?;
+    assert_eq!(resumed.scope_project, fixture.alpha);
+    Ok(())
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[derive(Default)]
+struct SessionWriteAsk(std::sync::atomic::AtomicBool);
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+impl oneiron::runtime_hooks::HookBodyRuntime for SessionWriteAsk {
+    fn run_hook(
+        &self,
+        _body: &str,
+        _input_json: &str,
+        _context: &mut oneiron::runtime_hooks::HookRunContext,
+        _read: &mut dyn FnMut(&str) -> Result<String, String>,
+    ) -> oneiron::Result<oneiron::runtime_hooks::HookBodyRun> {
+        let outcome = if self.0.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            json!({"kind": "nothing"})
+        } else {
+            json!({"kind": "ask", "question": "May this claim be written?"})
+        };
+        Ok(oneiron::runtime_hooks::HookBodyRun {
+            outcome_json: outcome.to_string(),
+            fuel_used: None,
+            host_calls: 1,
+        })
+    }
+}
+
+#[test]
+fn a_code_runs_room_claim_that_omits_its_project_lands_in_the_folders_project() -> TestResult {
+    on_engine_stack(room_claim)
+}
+
+async fn room_claim() -> TestResult {
+    use oneiron::code_run::SelfDispatchOutcome;
+    use oneiron::off_record::OffRecordBackendClass;
+    use oneiron_server::test_doors::mcp_code_mode_verbs::{call_off_record_claim, register_credential};
+
+    let fixture = Fixture::new()?;
+    let vault = &fixture.vault;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let writer = register_credential(&fixture.server, 0x65, &["read", "write"], None).await?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("off-record-session-project", OffRecordBackendClass::Local)?;
+    let claim = EntityId::now();
+    let outcome = call_off_record_claim(
+        &fixture.server,
+        &writer,
+        &session,
+        BOUND_DIGEST,
+        json!({
+            "id": claim.to_hex(),
+            "predicate": "profile.note",
+            "value": "a room claim from a bound folder",
+            "confidence": 1.0,
+            "source": "user_stated",
+            "scope": { "scope_facet_id": fixture.alpha_facet.to_hex() },
+        }),
+    )
+    .await?;
+    assert!(
+        matches!(outcome, SelfDispatchOutcome::AgentVerb(_)),
+        "{outcome:?}"
+    );
+    assert!(
+        vault.get_claim(&claim)?.is_none(),
+        "the write stages off record"
+    );
+    session.save_artifact_as(&proof, &claim.to_hex())?;
+    let saved = vault.get_claim(&claim)?.ok_or("the owner saves the staged claim")?;
+    assert_eq!(saved.scope_project, fixture.alpha);
+    session.close()?;
     Ok(())
 }
