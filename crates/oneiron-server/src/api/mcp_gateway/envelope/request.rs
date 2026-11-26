@@ -76,7 +76,7 @@ pub(crate) async fn handle_mcp_request(
                     .and_then(|params| params.get("protocolVersion"))
                     .and_then(Value::as_str),
             );
-            let result = json!({
+            let mut result = json!({
                 "protocolVersion": protocol_version,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
@@ -90,6 +90,14 @@ pub(crate) async fn handle_mcp_request(
                 "actor": mcp_actor_result(&actor),
                 "vault_id": vault_id,
             });
+            // Whether a project is bound to the folder the bridge names (RECALL-SESSION-PROJECT,
+            // Q2 = A): the start hook's vault line gives the bind command when none is.
+            if let (Some(meta), Some(fields)) = (
+                super::session_workspace::initialize_meta(server, request.params.as_ref()),
+                result.as_object_mut(),
+            ) {
+                fields.insert("_meta".to_owned(), meta);
+            }
             super::device_release::mcp_release_result(server, &actor, &[], false, result, false)
         }
         // Actor-free, but a caller is still REQUIRED, as for every method but

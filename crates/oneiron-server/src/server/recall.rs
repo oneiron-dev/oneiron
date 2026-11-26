@@ -388,6 +388,14 @@ impl SyncServer {
         let session_workspace = auth
             .and_then(CoreAuth::session_read_workspace)
             .map(<[String]>::to_vec);
+        // Such a recall asks no home to complete it: a home request cannot carry the folder's
+        // narrowing yet, so the home would answer with claims outside the folder's project
+        // (review round 1 of #10559). A recall that names its projects carries them, and asks.
+        let session_narrowed = session_workspace.is_some()
+            && input
+                .scope
+                .as_ref()
+                .is_none_or(|scope| scope.project_refs.is_empty());
         let input = RecallRequestInput::new(input, self.memory.empty_lease());
         let detail = recall_effort_name(input.request.effort);
         let producers = Arc::new(ProducerRows::default());
@@ -484,7 +492,7 @@ impl SyncServer {
             };
             let mut pack = joined.unwrap_or_else(|_| Err(recall_did_not_finish()))?;
             let due = budget.map(|budget| arrived + budget);
-            if due.is_none_or(|due| Instant::now() < due) {
+            if !session_narrowed && due.is_none_or(|due| Instant::now() < due) {
                 complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
             }
             Ok(pack)

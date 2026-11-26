@@ -490,7 +490,8 @@ impl Bridge {
         let key = pending_call_key(&message);
         let offered = ClientSession::offered(&message);
         let own = named_invocation(&message);
-        let named = self.client_session.name_on_call(&mut message);
+        let named = self.client_session.name_on_call(&mut message)
+            || self.client_session.name_on_initialize(&mut message);
         // A call naming its own invocation keeps it; one naming none goes
         // under a pending same call's, else a fresh one.
         let added = with_invocation(&mut message, || {
@@ -501,9 +502,25 @@ impl Bridge {
         .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten());
         // What the bridge adds never takes a call past the least body the
         // server reads, which the line is within: such a call goes as the
-        // client wrote it, under only the invocation it named itself.
+        // client wrote it, under only the invocation it named itself. A call
+        // the bridge named its session's folder on is refused instead: sent
+        // without that name it would read with no folder's project (review
+        // round 1 of #10559).
         let (body, sent) = match added {
             Some(body) if body.len() <= MAX_FRAME_BYTES => (body, named_invocation(&message)),
+            Some(_) if named => {
+                let id = message.get("id")?;
+                return Some(Err(rpc_error(
+                    id,
+                    -32600,
+                    "frame_too_large",
+                    &format!(
+                        "with the session's folder named, this message passes {MAX_FRAME_BYTES} \
+                         bytes; it was not sent"
+                    ),
+                    None,
+                )));
+            }
             _ => (line.into_bytes(), own),
         };
         let reply = self.post(body, until, deadline, tool);
