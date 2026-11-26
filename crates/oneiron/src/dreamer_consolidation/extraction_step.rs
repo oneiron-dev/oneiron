@@ -84,6 +84,12 @@ pub(crate) struct PreparedExtractionStep {
 }
 
 impl PreparedExtractionStep {
+    /// Every row the transcript was read from, for the answer-schema capture: the TURN
+    /// rows the call inputs below dedupe.
+    pub(crate) fn capture_sources(&self) -> Vec<EntityId> {
+        self.sources.clone()
+    }
+
     /// What this step's call shows beside its words, as its request names it
     /// and its record keeps it: the row behind each label, the served byte
     /// range of each piece in request order, the sources in id order, each
@@ -599,10 +605,15 @@ pub(crate) async fn execute_bound_step(
     let rules = failure_rules::load(ctx.vault)?;
     let material = render_host_material(loan.material);
     let transcript = format!("{material}{}", prepared.transcript);
+    let answer_schema = {
+        let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::answer_schema::answer_schema_in_force_in_txn(ctx.vault, &txn)?
+    };
     let mut request = ConsolidationExecutor::request_over(
         &loan.call,
         loan.prompt,
         None,
+        answer_schema,
         transcript,
         &prepared.scope,
     )?;
@@ -617,6 +628,16 @@ pub(crate) async fn execute_bound_step(
         .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &loan.call.inference)?
         .into_request();
     bind_reasoning(ctx.vault, loan.call.backend, &mut request)?;
+    if answer_schema {
+        // The nightly check's capture: one row after the request is final, before the call.
+        super::answer_schema::capture::capture_turn_call(
+            ctx.vault,
+            ctx.attempt_id,
+            &request,
+            &prepared.capture_sources(),
+            ctx.now_ms / 1_000,
+        )?;
+    }
     let backend = loan.call.call_backend(Some(prepared.sources.clone()));
     #[cfg(oneiron_test_support)]
     let request_hash = request

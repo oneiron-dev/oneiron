@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// It does not keep a picked model or a first rung on the device. A wrapper
 /// (`HostModels`, `RunBackend`, `MediaRuntime`, the chat `Recorder`) has the
 /// row: its callers hand it messages or an envelope its row names.
-const LADDER_CALLERS: [(&str, &str); 51] = [
+const LADDER_CALLERS: [(&str, &str); 52] = [
     (
         "ai_host/coach_health.rs",
         "none: the drafter's request has a default scope (the floor)",
@@ -55,6 +55,10 @@ const LADDER_CALLERS: [(&str, &str); 51] = [
     (
         "ai_host/dreamer.rs",
         "the engine's envelope, through a run backend: none, readable grants, or the world of the record or branch a pass works on",
+    ),
+    (
+        "ai_host/dreamer/answer_schema_check.rs",
+        "the engine's envelope, replayed exactly on the house rung: a captured extraction call's (its pass's) and the judge turns that name its world, each source row and that world admitted for the rung's own destination at each send",
     ),
     (
         "ai_host/dreamer/free_time.rs",
@@ -228,11 +232,12 @@ const LADDER_CALLERS: [(&str, &str); 51] = [
 /// `anonymous_call`, which hands its caller the bound request and the one
 /// offer to send it to. No other type in this crate defines these names, so a
 /// call is matched on any receiver.
-const OWN_NAMES: [&str; 29] = [
+const OWN_NAMES: [&str; 30] = [
     "anonymous_call",
     "generate_admitted",
     "generate_by",
     "generate_exact",
+    "generate_exact_admitted_within",
     "generate_exact_by",
     "generate_exact_observed_while",
     "generate_exact_recorded_by",

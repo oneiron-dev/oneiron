@@ -101,6 +101,7 @@ impl ConsolidationExecutor<'_> {
             &self.role(DREAMER_EXTRACTION_ROLE),
             &self.decisions.extraction_prompt,
             Some(rule),
+            false,
             format!("{listing}note {id}\n{markdown}"),
             scope,
         )?;

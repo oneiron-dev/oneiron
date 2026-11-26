@@ -342,6 +342,10 @@ pub struct SettingSpec {
     /// (stage 7c-2; DESIGN 1.6, `born`): the door that creates the thing writes it, and a thing
     /// with no row reads the strictest value, never the wider one.
     pub born: Option<Born>,
+    /// An owner's write of the value the owner's own row already holds still records a change
+    /// and runs on_change: on this key the owner's write is itself the act (the answer-schema
+    /// re-arm).
+    pub records_equal_owner_write: bool,
 }
 
 /// Where a `born` key's things take their first row from (DESIGN 1.6, "The project-depth
@@ -376,6 +380,7 @@ impl SettingSpec {
         after_commit: None,
         write_turn: None,
         born: None,
+        records_equal_owner_write: false,
     };
 
     /// Whether a row may sit at `kind`.

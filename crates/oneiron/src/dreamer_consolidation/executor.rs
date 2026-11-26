@@ -592,6 +592,12 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == super::nightly_links::ATTEMPT {
             return build_boxed_future(|| self.run_nightly_links(attempt, ctx)).await;
         }
+        if attempt.status.payload.attempt_type == super::answer_schema::check::ATTEMPT {
+            // The nightly answer-schema check with no house lend: it gates, draws and skips; a
+            // host that lends its house rung runs it instead (ai_host::dreamer).
+            let check = super::answer_schema::check::run_answer_schema_check;
+            return check(&attempt.status, ctx, None).await;
+        }
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         {

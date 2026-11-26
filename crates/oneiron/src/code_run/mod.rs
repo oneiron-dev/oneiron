@@ -80,6 +80,7 @@ pub use self::codec::{
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
 pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_value};
+pub(crate) use self::compaction_fork::source_row_withdrawn_in;
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
