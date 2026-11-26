@@ -179869,9 +179869,9 @@
      "path": "src/gpu_execution_node/scope_systemd/device_query.rs",
      "purpose": "The job control socket's device query (FIX EXEC-NODE-PROBE-AFTER-HANDOVER): the engine reads its GPUs…",
      "surface": {
-      "const": 3,
+      "const": 5,
       "enum": 1,
-      "fn": 8,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -180018,7 +180018,7 @@
      "path": "src/gpu_execution_node/scope_systemd/safe_fs.rs",
      "purpose": "File operations for the unit's root steps in directories another account owns (the engine's state and…",
      "surface": {
-      "fn": 16,
+      "fn": 20,
       "struct": 2
      }
     },
@@ -190637,7 +190637,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/execution_node_device_query.rs",

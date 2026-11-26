@@ -1486,7 +1486,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/scope_systemd/control.rs` | src | m | 1 enum · 8 fn · 6 const · 2 crate-vis | ControlVerb | The job control socket: the engine's account starts and stops job units through a root handler, and holds no… |
 | `src/gpu_execution_node/scope_systemd/cutoff.rs` | src | s | 2 fn · 1 const | — | `oneiron job-cutoff <id>` (root): the command of the cutoff timer the prepare step armed (pass 33, 7.6, "the… |
 | `src/gpu_execution_node/scope_systemd/device_files.rs` | src | s | 2 fn | — | Which device files a leased device is (pass 33, 7.8 "GPU"; pass 34, 2.2: `DeviceAllow` is built from the… |
-| `src/gpu_execution_node/scope_systemd/device_query.rs` | src | m | 2 struct · 1 enum · 8 fn · 3 const | DeviceQueryError, DeviceQueryLock, DeviceQuerySettings | The job control socket's device query (FIX EXEC-NODE-PROBE-AFTER-HANDOVER): the engine reads its GPUs… |
+| `src/gpu_execution_node/scope_systemd/device_query.rs` | src | m | 2 struct · 1 enum · 12 fn · 5 const | DeviceQueryError, DeviceQueryLock, DeviceQuerySettings | The job control socket's device query (FIX EXEC-NODE-PROBE-AFTER-HANDOVER): the engine reads its GPUs… |
 | `src/gpu_execution_node/scope_systemd/ended.rs` | src | m | 1 fn | — | `oneiron job-ended <id>` (root, the unit's `ExecStopPost=+`): runs after every process of the unit is gone… |
 | `src/gpu_execution_node/scope_systemd/exchange.rs` | src | s | 4 fn | — | The per-job directories root makes on the machine's own tree before the job's view is built, and takes away… |
 | `src/gpu_execution_node/scope_systemd/exec.rs` | src | m | 1 fn · 1 crate-vis | — | `oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it applies `exec.json` and nothing else… |
@@ -1498,7 +1498,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/scope_systemd/probe_unit.rs` | src | m | 1 fn | — | The scope half of `oneiron execution-node check` (pass 33, 7.6: "`execution-node check` runs the same checks… |
 | `src/gpu_execution_node/scope_systemd/records.rs` | src | s | 6 struct · 6 fn · 1 const · 1 re-export | CutoffMark, CutoffPlan, ExecFile, PreparedRecord, ScopeRecord, ScopeReport | The files the unit's steps hand each other, besides R3a's `launch.json` and `ended.json`… |
 | `src/gpu_execution_node/scope_systemd/renew.rs` | src | s | 2 fn | — | A session's renewal on the systemd scope (pass 34, 2.5; row W1), as root, through the job control socket's… |
-| `src/gpu_execution_node/scope_systemd/safe_fs.rs` | src | m | 2 struct · 16 fn | AccountEntry, FileFacts | File operations for the unit's root steps in directories another account owns (the engine's state and… |
+| `src/gpu_execution_node/scope_systemd/safe_fs.rs` | src | m | 2 struct · 20 fn | AccountEntry, FileFacts | File operations for the unit's root steps in directories another account owns (the engine's state and… |
 | `src/gpu_execution_node/scope_systemd/step.rs` | src | s | 2 struct · 7 fn · 1 const | StepArgs, StepContext | What every root step of the unit starts from: its instance, the root-owned node file, the two accounts, and… |
 | `src/gpu_execution_node/scope_systemd/systemd_unit.rs` | src | m | 1 struct · 9 fn · 1 const | SystemdJobUnit | R3a's [`JobUnit`] over the system's service manager: the engine's account starts and stops instances of… |
 | `src/gpu_execution_node/scope_systemd/unit_file.rs` | src | m | 1 struct · 8 fn · 1 const | UnitInputs | The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account… |
@@ -2502,7 +2502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/eval_authoring_execute_lapsed_lease.rs` | test | s | — | — | `vault.evals.authoring.execute` on a requested attempt whose host stopped before it settled the lease (FIX… |
 | `tests/eval_authoring_execute_served.rs` | test | s | — | — | `vault.evals.authoring.execute` served over the real facade route (FIX EVAL-AUTHORING-EXECUTE-SERVER-CASE)… |
 | `tests/eval_authoring_execute_unrecorded_end.rs` | test | s | — | — | `vault.evals.authoring.execute` when the writes that end the execution record fail (FIX… |
-| `tests/execution_node_device_query.rs` | test | m | — | — | FIX EXEC-NODE-PROBE-AFTER-HANDOVER (R6's first job, mel, 26 Nov 15:28): after the device hand-over only the… |
+| `tests/execution_node_device_query.rs` | test | L | — | — | FIX EXEC-NODE-PROBE-AFTER-HANDOVER (R6's first job, mel, 26 Nov 15:28): after the device hand-over only the… |
 | `tests/execution_node_gate.rs` | test | m | — | — | The execution node's opt-in and its gate (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T3, T4, T5… |
 | `tests/execution_node_path_measure.rs` | test | s | — | — | The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, "R6 in five… |
 | `tests/execution_node_session_cutoff.rs` | test | s | — | — | Pass 34 row W1 (`34-compute-general/DESIGN.md` 2.5), the systemd scope's half of a session's renewal: the… |
