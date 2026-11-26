@@ -190,7 +190,9 @@ fn ledger_step(ledger: &mut RematLedger, step: EntityStep) {
                 return;
             };
             match refusal.retry {
-                RefusalRetry::Terminal => ledger.terminal_quarantines.push(id),
+                // A refusal for good: whatever else of the id waits for a
+                // project, its surviving marker is not held by that alone.
+                RefusalRetry::Terminal => ledger.refuse(id),
                 // Still owed: no other outcome at this id in the pass, such as a
                 // refused tombstone naming it, may discharge its marker.
                 // The kind stays ProjectDependencyPending only while every

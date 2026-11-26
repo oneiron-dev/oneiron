@@ -3,11 +3,12 @@ use std::sync::Arc;
 use super::*;
 use crate::Vault;
 use crate::config::VaultConfig;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::habit::TaskRole;
 use crate::ports::ManualClock;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::sync::bridge::Materializer;
+use crate::sync::bridge::{Materializer, format_edge_key};
 use crate::sync::loro_support::map_insert_bytes;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::forward_rematerialize;
@@ -321,6 +322,42 @@ fn a_window_held_for_a_missing_project_warns_and_raises_no_breach_signal() {
     assert!(
         pending_remat_windows(&held.vault).unwrap().is_empty(),
         "no window stays flagged after the heal"
+    );
+}
+
+/// A held child that the same pass also refuses for good, here through an
+/// edge sourced at it whose value is not bytes, raises the breach signal: a
+/// refusal of another kind is never hidden behind the project hold (review
+/// round 1 of #10563).
+#[test]
+fn a_held_child_the_pass_also_refuses_for_good_raises_the_breach_signal() {
+    let held = held_window();
+    let other = EntityId::now();
+    let edge_key = format_edge_key(&held.hold.child, EdgeKind::Mentions, &other);
+    held.doc
+        .get_map("edges")
+        .insert(&edge_key, "string-valued-edge")
+        .unwrap();
+    held.doc.commit();
+    let materializer = Materializer::new();
+
+    let capture = LogCapture::default();
+    capture
+        .with_default(|| held.forward(&materializer))
+        .unwrap();
+    let lines = capture.lines();
+    assert_eq!(
+        breach_errors(&lines).len(),
+        1,
+        "the edge refusal of the held child breaches: {lines:?}"
+    );
+    assert!(
+        hold_warns(&lines).is_empty(),
+        "no project-hold WARN for a child also refused for good: {lines:?}"
+    );
+    assert!(
+        remat_row(&held.vault, WINDOW, &held.hold.child).is_some(),
+        "the held child's rm: marker stays pending"
     );
 }
 
