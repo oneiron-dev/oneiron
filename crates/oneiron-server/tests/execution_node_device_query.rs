@@ -779,7 +779,7 @@ fn a_query_lock_directory_another_account_may_write_or_reached_through_a_link_is
 
 /// Set by [`install_makes_the_query_lock_mode_0600_whatever_the_umask`] for
 /// its child process alone: the lock directory the child makes.
-const UMASK_CHILD_LOCK_DIR: &str = "ONEIRON_TEST_UMASK_0777_LOCK_DIR";
+const UMASK_CHILD_LOCK_DIR: &str = "ONEIRON_TEST_UMASK_0277_LOCK_DIR";
 
 #[test]
 fn install_makes_the_query_lock_mode_0600_whatever_the_umask() {
@@ -794,7 +794,7 @@ fn install_makes_the_query_lock_mode_0600_whatever_the_umask() {
     let ran = std::process::Command::new(std::env::current_exe().expect("this test binary"))
         .args([
             "--exact",
-            "provision_lock_under_umask_0777",
+            "provision_lock_under_umask_0277",
             "--ignored",
             "--test-threads",
             "1",
@@ -819,16 +819,21 @@ fn install_makes_the_query_lock_mode_0600_whatever_the_umask() {
     assert_eq!(lock.len(), 0);
 }
 
+/// The umask takes the write bits and every group and other bit, so the
+/// directory is made 0500 and the lock 0400 until install sets their modes.
+/// Not 0777: this account stands in for root, and only root opens the
+/// directory a 0777 umask makes mode 000 before install sets its mode (FIX
+/// EXEC-NODE-QUERY-LOCK-UMASK-TEST-NONROOT).
 #[test]
 #[ignore = "the child of install_makes_the_query_lock_mode_0600_whatever_the_umask"]
-fn provision_lock_under_umask_0777() {
+fn provision_lock_under_umask_0277() {
     let Some(lock_dir) = std::env::var_os(UMASK_CHILD_LOCK_DIR) else {
         return;
     };
     // SAFETY: umask has no preconditions.
-    unsafe { libc::umask(0o777) };
+    unsafe { libc::umask(0o277) };
     assert!(
-        device_query::provision_lock(Path::new(&lock_dir)).expect("install under umask 0777"),
+        device_query::provision_lock(Path::new(&lock_dir)).expect("install under umask 0277"),
         "install made the lock"
     );
 }
