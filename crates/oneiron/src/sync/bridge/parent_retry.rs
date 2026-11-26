@@ -194,7 +194,7 @@ fn settle(
         &source_index[SOURCE_INDEX.len()..].to_string(),
     )?;
     if !has_pending_source_in_txn(vault, txn, window, source)? {
-        quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, source)?;
+        quarantine::clear_edge_wait_remat_marker_in_txn(vault, txn, window, source)?;
     }
     Ok(())
 }
@@ -475,7 +475,7 @@ fn settle_spawned_by(
         .transpose()?
         .is_none()
     {
-        quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, session)?;
+        quarantine::clear_edge_wait_remat_marker_in_txn(vault, txn, window, session)?;
     }
     Ok(())
 }

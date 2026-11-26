@@ -55,6 +55,9 @@ struct RematLedger {
     protected_admissions: HashSet<EntityId>,
     count: u32,
     scope: MarkerScope,
+    /// The window's marker class as the settle judged it (`AllMatch` only for a
+    /// clean pass); `None` before the settle or for a mirror scope.
+    window_markers: Option<quarantine::WindowMarkerClass>,
 }
 
 impl RematLedger {
@@ -91,6 +94,26 @@ pub fn forward_rematerialize(
     window_key: &WindowKey,
 ) -> Result<u32> {
     forward_with_recovery(
+        vault,
+        doc,
+        materializer,
+        window_key,
+        None,
+        MarkerScope::Window,
+    )
+}
+
+/// The drain's form of [`forward_rematerialize`], which also returns how the
+/// settle classed the window's surviving markers.
+pub(in crate::sync) fn forward_rematerialize_classified(
+    vault: &Vault,
+    doc: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+) -> Result<(u32, Option<quarantine::WindowMarkerClass>)> {
+    // The live-window turn, as in forward_with_recovery (L7-45).
+    let _turn = materializer.enter_live_window();
+    forward_pass_classified(
         vault,
         doc,
         materializer,
@@ -159,6 +182,7 @@ pub(crate) fn replay_window_in_edge_order_for_test(
         protected_admissions: HashSet::new(),
         count: 0,
         scope: MarkerScope::Window,
+        window_markers: None,
     };
     let mut plan = entity_pass::plan(&ctx)?;
     let rows = plan.rows();
@@ -232,6 +256,18 @@ fn forward_pass(
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
     scope: MarkerScope,
 ) -> Result<u32> {
+    forward_pass_classified(vault, doc, materializer, window_key, trusted, scope)
+        .map(|(count, _)| count)
+}
+
+fn forward_pass_classified(
+    vault: &Vault,
+    doc: &LoroDoc,
+    materializer: &Materializer,
+    window_key: &WindowKey,
+    trusted: Option<&crate::recovery::CanonicalSnapshot>,
+    scope: MarkerScope,
+) -> Result<(u32, Option<quarantine::WindowMarkerClass>)> {
     // The rows this pass writes came from the doc: the live mirror must not
     // rewrite a carrier with them.
     let _import = crate::sync::manager::import_scope();
@@ -250,7 +286,7 @@ fn forward_pass(
     )?;
     loop {
         if let Some(count) = run.page(vault, doc, window_key, trusted, usize::MAX)? {
-            return Ok(count);
+            return Ok((count, run.ledger.window_markers));
         }
     }
 }
@@ -493,6 +529,7 @@ impl ForwardRun {
             protected_admissions: HashSet::new(),
             count: 0u32,
             scope,
+            window_markers: None,
         };
 
         // OF-013: the withdrawn cutoffs the window carries are staged first, so
@@ -945,6 +982,13 @@ fn settle(
             held_by_pending_dependency,
         )?;
         let pass_ran_clean = outcome.purge_failures.is_empty() && !bookkeeping_fell_back;
+        ledger.window_markers = Some(match class {
+            quarantine::WindowMarkerClass::AllMatch if pass_ran_clean => {
+                quarantine::WindowMarkerClass::AllMatch
+            }
+            quarantine::WindowMarkerClass::AllMatch => quarantine::WindowMarkerClass::Unclassified,
+            other => other,
+        });
         match class {
             quarantine::WindowMarkerClass::NonePending => {}
             quarantine::WindowMarkerClass::AllMatch if pass_ran_clean => {
