@@ -41,6 +41,16 @@ use oneiron::code_run::{
     CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding, SelfCall,
     SelfFixtureEffectCall, SelfReaderSpawnCall,
 };
+#[cfg(oneiron_test_support)]
+use oneiron::engine_executor::BriefBoundary;
+#[cfg(oneiron_test_support)]
+use oneiron::engine_executor::BriefCandidateToken;
+#[cfg(oneiron_test_support)]
+use oneiron::engine_executor::BriefPrefix;
+#[cfg(oneiron_test_support)]
+use oneiron::engine_executor::BriefRecheck;
+#[cfg(oneiron_test_support)]
+use oneiron::engine_executor::SelfBriefPort;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorLimits, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep,
     JsCodeModeStepOutcome, JsCodeModeStream, JsResultCall, JsResultTarget, RunCompaction,
@@ -316,6 +326,88 @@ async fn a_resumed_task_run_past_its_window_ends_with_a_refusal_to_start_again()
     assert!(
         message.contains("start it again with execute"),
         "the refusal names the way on: {message}"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[derive(Default)]
+struct RecordingBrief {
+    installs: AtomicUsize,
+    closes: AtomicUsize,
+}
+
+#[cfg(oneiron_test_support)]
+impl SelfBriefPort for RecordingBrief {
+    fn prepare(&self, _boundary: BriefBoundary) -> oneiron::Result<Option<BriefPrefix>> {
+        Ok(None)
+    }
+
+    fn recheck(&self, _held: &BriefPrefix) -> oneiron::Result<BriefRecheck> {
+        Ok(BriefRecheck::Holds)
+    }
+
+    fn delivered(&self, _token: BriefCandidateToken) {}
+}
+
+#[cfg(oneiron_test_support)]
+impl crate::mcp::McpCodeRunSelfBrief for RecordingBrief {
+    fn install(&self) -> bool {
+        self.installs.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+
+    fn close(&self) {
+        self.closes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Calls the host directly so that gateway cleanup cannot satisfy the close assertion.
+/// The gateway's real verb door is exposed to tests by `oneiron_test_support`.
+#[cfg(oneiron_test_support)]
+#[tokio::test]
+async fn a_task_run_past_its_window_closes_its_self_brief() {
+    use crate::api::McpCodeModeVerbs;
+    use crate::mcp::McpCodeExecutionError;
+    use crate::mcp::McpCodeExecutionRequest;
+    use crate::mcp::McpCodeRunInput;
+    use crate::mcp::McpCodeRunSelfBrief;
+    use crate::mcp::mcp_code_run_id;
+
+    let credential = "lending-window-brief";
+    let run_ref = "lending-window-brief-1";
+    let (provider, _) = lending_provider(Script::WindowExceeded);
+    let (_dir, server) = lending_server(provider, false, credential).await;
+    let actor = mcp_test_context(&server, credential, run_ref).await;
+    let run_id = mcp_code_run_id(run_ref, &actor);
+    let verbs: Arc<dyn oneiron::code_run::AgentVerbDoor> =
+        Arc::new(McpCodeModeVerbs::new(&server, &actor, run_id));
+    let brief = Arc::new(RecordingBrief::default());
+
+    let outcome = server
+        .code_execution_host()
+        .expect("the lending code host is bound")
+        .execute(McpCodeExecutionRequest {
+            vault: Arc::clone(&server.vault),
+            actor: &actor,
+            off_record_session: actor.off_record_session.clone(),
+            run_ref,
+            input: McpCodeRunInput::Task("summarize it"),
+            run_id,
+            verbs,
+            consent_origin: None,
+            brief: Some(Arc::clone(&brief) as Arc<dyn McpCodeRunSelfBrief>),
+        })
+        .await;
+
+    assert!(
+        matches!(&outcome, Err(McpCodeExecutionError::WindowOutgrown)),
+        "expected WindowOutgrown, got {outcome:?}"
+    );
+    assert_eq!(brief.installs.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        brief.closes.load(Ordering::SeqCst),
+        1,
+        "a run that ended with its window outgrown closes its brief"
     );
 }
 
