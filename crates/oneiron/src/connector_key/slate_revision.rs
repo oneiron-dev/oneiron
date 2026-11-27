@@ -326,7 +326,7 @@ impl Vault {
                 },
             });
         }
-        Ok((offers, rows.into_iter().collect()))
+        Ok((offers, Vec::new()))
     }
 
     /// The owner holds a scope revision's offer back, or lets it surface
