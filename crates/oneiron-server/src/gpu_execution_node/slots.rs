@@ -42,6 +42,7 @@
 //! writes no quarantine file.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron::job_workload::HeldDevice;
@@ -210,6 +211,16 @@ impl GpuSlotTable {
         &self.shared.offer
     }
 
+    /// Reads the device IDs another booker withholds now, without probing the driver.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the withheld list cannot be read.
+    #[cfg(unix)]
+    pub(crate) fn booker_withheld(&self) -> Result<BTreeSet<String>, GpuProbeError> {
+        self.shared.withheld()
+    }
+
     /// Each device's temperature, power draw and memory in use now, where
     /// the probe gives them: a reading for the breadcrumb lines (pass 34,
     /// 7.3), not a hold.
@@ -229,9 +240,35 @@ impl GpuSlotTable {
     /// [`GpuProbeError`] when the driver, the withheld list, the drain file
     /// or the disk cannot be read: then nothing is offered.
     pub fn availability(&self, now_ms: u64) -> Result<GpuAvailability, GpuProbeError> {
+        self.availability_on(now_ms, None)
+    }
+
+    /// [`Self::availability`] on the given withheld list: the reading uses
+    /// it in place of the file, so a caller that already sampled the list
+    /// judges the devices on that same sample.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver, the drain file or the disk cannot
+    /// be read: then nothing is offered.
+    pub fn availability_with_withheld(
+        &self,
+        now_ms: u64,
+        withheld: BTreeSet<String>,
+    ) -> Result<GpuAvailability, GpuProbeError> {
+        self.availability_on(now_ms, Some(withheld))
+    }
+
+    /// [`Self::availability`] on `withheld` (`None`: the list is read from
+    /// its file).
+    fn availability_on(
+        &self,
+        now_ms: u64,
+        withheld: Option<BTreeSet<String>>,
+    ) -> Result<GpuAvailability, GpuProbeError> {
         let shared = &self.shared;
         let mut state = shared.lock();
-        let reading = shared.read(&mut state)?;
+        let reading = shared.read_with(&mut state, withheld)?;
         let drained = shared.drained(&state)?;
         let disk = match &shared.disk {
             Some(disk) => Some(
@@ -618,12 +655,25 @@ impl Shared {
     /// list and the GPUs this table owns. A reading that lists one GPU id
     /// twice is refused ([`GpuProbeError::RepeatedDevice`]).
     fn read(&self, state: &mut State) -> Result<Reading, GpuProbeError> {
+        self.read_with(state, None)
+    }
+
+    /// One fresh reading on `withheld` (`None`: the withheld list is read
+    /// from its file).
+    fn read_with(
+        &self,
+        state: &mut State,
+        withheld: Option<BTreeSet<String>>,
+    ) -> Result<Reading, GpuProbeError> {
         let devices = self.probe.devices()?;
         if let Some(device_id) = repeated_device_id(&devices) {
             return Err(GpuProbeError::RepeatedDevice { device_id });
         }
         let processes = self.probe.compute_processes()?;
-        let withheld = self.withheld()?;
+        let withheld = match withheld {
+            Some(withheld) => withheld,
+            None => self.withheld()?,
+        };
         let owned = self.own_offered(state);
         Ok(Reading {
             devices,
@@ -638,10 +688,26 @@ impl Shared {
         let Some(path) = &self.offer.withheld_file else {
             return Ok(BTreeSet::new());
         };
-        let text =
-            std::fs::read_to_string(path).map_err(|error| GpuProbeError::WithheldUnreadable {
-                reason: format!("{}: {error}", path.display()),
-            })?;
+        let unreadable = |error| GpuProbeError::WithheldUnreadable {
+            reason: format!("{}: {error}", path.display()),
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let mut file = options.open(path).map_err(unreadable)?;
+        let metadata = file.metadata().map_err(unreadable)?;
+        if !metadata.file_type().is_file() {
+            return Err(GpuProbeError::WithheldUnreadable {
+                reason: format!("{}: not a regular file", path.display()),
+            });
+        }
+        let mut text = String::new();
+        file.read_to_string(&mut text).map_err(unreadable)?;
         Ok(text
             .lines()
             .map(str::trim)
