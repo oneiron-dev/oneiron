@@ -59,7 +59,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/py/text.rs` | src | m | 19 crate-vis | — | Python's `str` methods with Python's Unicode rules: only the ones the generator calls |
 | `src/py/value.rs` | src | m | 23 crate-vis | — | `Value`: a decoded JSON value with Python's meaning (DESIGN 3) |
 | `src/uniffi_types.rs` | src | XL | 1 struct · 15 crate-vis | — | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… |
-| `src/verb_table.rs` | src | s | 5 crate-vis | — | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order |
+| `src/verb_table.rs` | src | m | 6 crate-vis | — | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order |
+| `src/verb_table/example_call.rs` | src | m | 1 crate-vis | — | Whether an example calls its verb: a token-level parse of the example's JavaScript |
 | `tests/sdk_generated_header_text.rs` | test | s | — | — | FIX-LIST 22920 [SDK-GENERATED-HEADER-TEXT]: every generated SDK output names `crates/oneiron-sdk-generator`… |
 | `tests/sdk_python_keyword_identifiers.rs` | test | s | — | — | FIX-LIST [PY-SDK-GENERATED-KEYWORD-METHOD]: the generated Python facade names no method, property or… |
 | `tests/sdk_typescript_reserved_word_bindings.rs` | test | m | — | — | FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: the generated TypeScript binds no name that is a JavaScript… |
