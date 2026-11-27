@@ -150,7 +150,9 @@ pub fn recall_at_door_seeded(
         None => recall_with_whole_limit(&memory, input, embed, door),
     }?;
     if !push && !pack.narrowing.applied.deny_all {
-        pack.held = memory.own_held_for_recall(&query, &scope)?;
+        // The stale selector the recall applied, under the actor ceiling.
+        let include_stale = pack.narrowing.applied.include_stale;
+        pack.held = memory.own_held_for_recall(&query, &scope, include_stale)?;
     }
     Ok(pack)
 }
