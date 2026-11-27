@@ -1787,7 +1787,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/contribution/source_admission.rs` | src | m | 1 re-export · 17 crate-vis | — | A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's… |
 | `src/code_run/coordination_codec.rs` | src | m | 9 crate-vis | — | Replay encoding for the typed coordination calls |
 | `src/code_run/correction.rs` | src | s | 2 struct · 2 const · 1 re-export · 11 crate-vis | CodeRunCorrection, CodeRunCorrectionCheckpoint | Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413) |
-| `src/code_run/dispatcher/admission.rs` | src | s | 9 crate-vis | — | The admission of the run door and its answered dispatch bracket |
+| `src/code_run/dispatcher/admission.rs` | src | s | 10 crate-vis | — | The admission of the run door and its answered dispatch bracket |
 | `src/code_run/dispatcher/agent_powers.rs` | src | s | 3 crate-vis | — | The grant powers a running agent acts under (SPAWN-KNOB, ARCH-0053:20): which instance's grant decides its… |
 | `src/code_run/dispatcher/agent_verb.rs` | src | m | 1 fn · 1 re-export · 8 crate-vis | — | Code mode's verb-table calls: the run's write origin and the receipt a write keeps |
 | `src/code_run/dispatcher/agent_verb/connector_wait.rs` | src | s | 2 crate-vis | — | A connector call's answer as a run takes it (ONE-2510): one held or retried parks the run on the call's ref |
@@ -9513,6 +9513,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/admin_is_not_deputy.rs` | test | s | — | — | An Admin never gives the Deputy role, to itself or to anyone (Engine ruling C1-DEPUTY-GIVER, 13 Nov 14:39… |
 | `tests/admin_is_not_steward.rs` | test | s | — | — | An Admin never gives the Steward role, to itself or to anyone (lead 10 Nov 06:5x; ARCH-0043's Admin row… |
 | `tests/admin_reads_no_steward_read.rs` | test | s | — | — | Steward is a named grant preset, never a rank, and never reachable through Admin (lead 10 Nov 06:5x… |
+| `tests/admitted_skill_call_outer_door.rs` | test | s | — | — | REVIEW-10594: the admitted outer skill call belongs to the MCP caller, but calls made by its skill are still… |
 | `tests/adopted_fold_gate_signer_cost.rs` | test | m | — | — | FIX [ADOPTED-FOLD-GATE-SIGNER-COST] (Astra seq-floor round 2b F1; Engine RULING SEQ-FLOOR-GATE-COST = A)… |
 | `tests/adopted_fold_request_wait.rs` | test | s | — | — | FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD], #9476 review round 1 (P1): the fold past an adopted image reads… |
 | `tests/adopted_fold_tail_walk_signer_cost.rs` | test | L | — | — | FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST] (found while fixing [ADOPTED-FOLD-GATE-SIGNER-COST]): past the… |

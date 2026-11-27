@@ -20644,7 +20644,7 @@
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -111187,6 +111187,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/admitted_skill_call_outer_door.rs",
+     "purpose": "REVIEW-10594: the admitted outer skill call belongs to the MCP caller, but calls made by its skill are still…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -125815,7 +125823,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8652,
-   "test_files": 2336
+   "test_files": 2337
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -171271,7 +171279,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/dispatch.rs",
      "purpose": "How a code-mode run's agent verbs reach their doors: admitted, executed and answered",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -171681,7 +171689,7 @@
      "path": "src/api/mcp_gateway/skill_execution.rs",
      "purpose": "The original MCP credential context lent to a callable skill's host door",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -171979,7 +171987,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 85
+      "crate-vis": 86
      }
     },
     {
@@ -188875,7 +188883,7 @@
      "purpose": "Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it…",
      "surface": {
       "enum": 1,
-      "fn": 15,
+      "fn": 18,
       "struct": 3
      }
     },
@@ -193079,6 +193087,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/skill_door_caller_author.rs",
+     "purpose": "FIX CODE-MODE-LENDING-W8: a callable skill called over MCP runs its nested calls behind the caller's own…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/skill_judge_goal_privacy.rs",
      "purpose": "FIX 22437 [GOAL-PRIVACY]: a project goal's text never leaves its project's audience through the skill judge",
      "surface": {}
@@ -194873,7 +194889,7 @@
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2226,
-   "test_files": 626
+   "test_files": 627
   },
   "oneiron-setting-contract": {
    "files": [
