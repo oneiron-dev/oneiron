@@ -110,7 +110,7 @@ impl WorkspaceIdentity {
             .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
             .collect();
         // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review: the folder itself goes first.
-        if not_workspaces.contains(&folder) {
+        if false && not_workspaces.contains(&folder) {
             return None;
         }
         let identity = Self::of_folder(&folder)?;
