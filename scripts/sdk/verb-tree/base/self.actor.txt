@@ -1,0 +1,4 @@
+self.actor({})
+  -> { actor_ref, actor_class, person_ref }
+  Who you are, as refs a claim can take as its subject.
+  e.g. const me = await self.actor({})

@@ -5,7 +5,7 @@
 //! TypeScript and Python outputs keep theirs). One text goes to two paths; the revision is its SHA-256, written as a
 //! Rust constant beside it. The text is read back before it is returned: it must declare exactly the code-mode rows.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use indexmap::{IndexMap, IndexSet};
@@ -47,7 +47,7 @@ const COORDINATION: &[&str] = &[];
 /// Each verb carries its row's description as its JSDoc.
 const JSDOC: bool = true;
 /// The interface that holds the `vault` root's members beside its verbs.
-const VAULT_HOST: &str = "VaultHost";
+pub(crate) const VAULT_HOST: &str = "VaultHost";
 /// `VAULT_HOST`'s JSDoc.
 const VAULT_HOST_DOC: &str = "/** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */";
 /// `self.fold`, the one positional verb, and its two spellings. The second is Python's
@@ -236,6 +236,38 @@ impl<'r> Fragment<'r> {
             return Ok("Promise<unknown>".to_owned());
         }
         self.reply(row.get("output"))
+    }
+
+    /// The type inventory the fragment walked (for the verb-tree index's `types`).
+    pub(crate) fn inventory(&self) -> &Inventory {
+        &self.inventory
+    }
+
+    /// A row's input and reply for the verb-tree index: the input's TypeScript without the `Sdk.` prefix, or
+    /// a positional row's first parameter text; the reply without `Sdk.`, `Promise` and `StoredResult`,
+    /// `unknown` when the row names none (or is a coordination row). Per-input replies stay out: the index
+    /// shows the row's own pair.
+    pub(crate) fn index_input_output(
+        &mut self,
+        row: &Dict,
+    ) -> Result<(String, String), GenerateError> {
+        let prefix = format!("{NAMESPACE}.");
+        let name = row_field(row, "name")?;
+        let input = match positional(name)? {
+            Some(spellings) => spellings[0].replace(prefix.as_str(), ""),
+            None => self
+                .ts(row_field(row, "input")?)?
+                .replace(prefix.as_str(), ""),
+        };
+        let output = if coordination(name) {
+            "unknown".to_owned()
+        } else {
+            match row.get("output") {
+                Some(text) if text.truthy() => self.ts(text)?.replace(prefix.as_str(), ""),
+                _ => "unknown".to_owned(),
+            }
+        };
+        Ok((input, output))
     }
 
     /// The row's call signatures, most specific first: one per input field whose presence selects its own reply, then
@@ -628,12 +660,15 @@ pub(crate) fn declared(text: &str) -> Result<IndexSet<String>, GenerateError> {
 /// The fragment at both its paths and its revision constant, in Python's dict order: the files the generator writes
 /// and checks. `type_names` is `TYPE_NAMES`, the parsed type_names.json, which the fragment's `Inventory` reads. The
 /// crate source files that inventory's lookups read are added to `dependencies` (paths from the repository root).
+/// `examples` is verb path to the manifest rows' authored examples: when set, the verb-tree index over the
+/// same fragment is appended last.
 pub(crate) fn catalog_fragment(
     root: &Path,
     rows: &[&Dict],
     header: &str,
     type_names: &Value,
     dependencies: &mut BTreeSet<String>,
+    examples: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<(&'static str, String)>, GenerateError> {
     let mut fragment = Fragment::new(root, rows, type_names)?;
     let text = fragment.text()?;
@@ -663,17 +698,28 @@ pub(crate) fn catalog_fragment(
             differ.join(", ")
         )));
     }
+    let digest = revision(&text);
     let constant = format!(
         "{header}/// The code-mode catalog fragment's revision: `{REVISION_ALGORITHM}:` and the hex\n/// digest of \
          `catalog_fragment.d.ts`, so it changes exactly when that text does.\npub const CATALOG_FRAGMENT_REVISION: \
          &str = {};\n",
-        dumps_str(&revision(&text))
+        dumps_str(&digest)
     );
-    Ok(vec![
+    let mut outputs = vec![
         (FRAGMENT, text.clone()),
         (CODE_MODE, text),
         (REVISION, constant),
-    ])
+    ];
+    if let Some(examples) = examples {
+        outputs.push(crate::verb_tree_index::verb_tree_index(
+            &mut fragment,
+            root,
+            rows,
+            &digest,
+            examples,
+        )?);
+    }
+    Ok(outputs)
 }
 
 #[cfg(test)]
@@ -881,7 +927,7 @@ declare const ünï: {
                 panic!("a list of rows");
             };
             let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
-            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new(), None)
                 .expect_err("a refusal")
                 .to_string();
             assert_eq!(got, expected);
@@ -916,7 +962,7 @@ declare const ünï: {
                 r#"[{{"name": "{name}", "input": "ZzIn", "output": "String"}}]"#
             ));
             let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
-            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new(), None)
                 .expect_err("a refusal")
                 .to_string();
             assert_eq!(got, format!("ValueError: {expected}{refusal}"), "{name}");
@@ -927,7 +973,7 @@ declare const ünï: {
             {"name": "self.zz.export", "input": "ZzIn", "output": "String"}]"#,
         );
         let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
-        let outputs = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+        let outputs = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new(), None)
             .expect("a fragment");
         fs::remove_dir_all(&root).expect("cleanup");
         let text = &outputs[0].1;
@@ -991,6 +1037,7 @@ declare const ünï: {
             "// h\n",
             &Value::Dict(Dict::new()),
             &mut BTreeSet::new(),
+            None,
         )
         .expect("a fragment");
         fs::remove_dir_all(&root).expect("cleanup");
