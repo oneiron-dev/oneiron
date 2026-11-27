@@ -34,6 +34,8 @@ mod pressure;
 #[cfg(feature = "mesh")]
 mod shutdown;
 #[cfg(feature = "mesh")]
+mod sync_grant;
+#[cfg(feature = "mesh")]
 pub(crate) use home_pin::pin_home;
 
 /// Every protocol this engine's mesh listener serves: the one list a
@@ -199,8 +201,8 @@ mod host {
     use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{
-        AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
-        PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
+        AcceptPolicy, MachineGrants, MeshConnection, MeshError, MeshFuture, MeshService,
+        MeshTransport, PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
     use oneiron_organ_host::{
         AskHandlers, MeshCancel, ORGAN_ALPN, OrganRouter, OrganService, VaultOrganNodes,
@@ -213,6 +215,7 @@ mod host {
     use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
+    use super::sync_grant::{SyncGrantWatch, close_on_accept_error};
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -311,12 +314,15 @@ mod host {
         limits: ConnectionLimits,
         server: &Arc<crate::server::SyncServer>,
         stop: &Arc<MeshStop>,
+        grants: &Arc<dyn MachineGrants>,
     ) -> SyncRoute {
         SyncRoute {
             app: app.clone(),
             limits,
             floor: MeshFloor::new(limits.max_connections, Arc::clone(&server.mesh_pressure)),
             stop: Arc::clone(stop),
+            vault: Arc::clone(&server.vault),
+            grants: Arc::clone(grants),
         }
     }
 
@@ -326,6 +332,7 @@ mod host {
         limits: ConnectionLimits,
         server: &Arc<crate::server::SyncServer>,
         stop: &Arc<MeshStop>,
+        grants: &Arc<dyn MachineGrants>,
         node: Option<ServedNode>,
     ) -> MeshRoutes {
         let vault = &server.vault;
@@ -337,7 +344,10 @@ mod host {
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
         let routes = MeshRoutes::default()
-            .route(SYNC_ALPN, Arc::new(sync_route(app, limits, server, stop)))
+            .route(
+                SYNC_ALPN,
+                Arc::new(sync_route(app, limits, server, stop, grants)),
+            )
             .route(
                 ORGAN_ALPN,
                 Arc::new(
@@ -558,11 +568,19 @@ mod host {
             None
         };
         let stopping = Arc::new(MeshStop::new());
+        // The listener's grants: its admission's, and each open sync
+        // connection's while it serves.
+        let grants: Arc<dyn MachineGrants> = Arc::new(PinnedGrants {
+            local: machine,
+            vault: PairedMachineGrants(Arc::clone(&vault)),
+        });
         let routes = Arc::new(match route_set {
-            super::MeshRouteSet::Full => mesh_routes(app, limits, &server, &stopping, node),
+            super::MeshRouteSet::Full => {
+                mesh_routes(app, limits, &server, &stopping, &grants, node)
+            }
             super::MeshRouteSet::SyncOnly => MeshRoutes::default().route(
                 SYNC_ALPN,
-                Arc::new(sync_route(app, limits, &server, &stopping)),
+                Arc::new(sync_route(app, limits, &server, &stopping, &grants)),
             ),
         });
         let policy = AcceptPolicy {
@@ -570,10 +588,7 @@ mod host {
                 local: machine,
                 vault: VaultMachineRoster(Arc::clone(&vault)),
             }),
-            grants: Arc::new(PinnedGrants {
-                local: machine,
-                vault: PairedMachineGrants(Arc::clone(&vault)),
-            }),
+            grants: Arc::clone(&grants),
         };
         let relays =
             private_relay_map(relays).map_err(|_| anyhow::anyhow!("mesh relay URL refused"))?;
@@ -682,12 +697,17 @@ mod host {
     /// listener's connection floor, as a count of their own; past it, a new
     /// stream waits for a place, and the mesh's pressure check is raised
     /// while one does. On the listener's stop it takes no more streams and
-    /// ends with its open ones (OF-237).
+    /// ends with its open ones (OF-237). A connection whose sync grant stops
+    /// holding is closed, every stream with it ([`SyncGrantWatch`]).
     struct SyncRoute {
         app: Router,
         limits: ConnectionLimits,
         floor: Arc<MeshFloor>,
         stop: Arc<MeshStop>,
+        /// Whose credential revocation notices wake each connection's watch.
+        vault: Arc<oneiron::Vault>,
+        /// The listener's own grants, which judge each open connection again.
+        grants: Arc<dyn MachineGrants>,
     }
 
     impl MeshService for SyncRoute {
@@ -701,6 +721,7 @@ mod host {
                 let _open = open;
                 let peer = mesh_peer_address(connection.endpoint_key());
                 let machine = MeshProvedMachine(connection.machine());
+                let mut grant = SyncGrantWatch::new(&self.vault, Arc::clone(&self.grants));
                 let mut streams = JoinSet::new();
                 let ended = loop {
                     // A stream is reaped once it ends.
@@ -708,14 +729,16 @@ mod host {
                     let stream = tokio::select! {
                         biased;
                         () = wound_to(&mut winding, Winding::Closing) => break Ok(()),
+                        () = grant.lapsed(&*connection) => break Ok(()),
                         stream = connection.accept_duplex() => match stream {
                             Ok(stream) => stream,
-                            Err(error) => break Err(error),
+                            Err(error) => break Err(close_on_accept_error(&*connection, error)),
                         },
                     };
                     let place = tokio::select! {
                         biased;
                         () = wound_to(&mut winding, Winding::Closing) => break Ok(()),
+                        () = grant.lapsed(&*connection) => break Ok(()),
                         place = self.floor.place() => match place {
                             Some(place) => place,
                             None => break Err(MeshError::Unavailable),
