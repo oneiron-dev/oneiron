@@ -7,14 +7,14 @@ pub(crate) use self::execute::execute_mcp_task_run_for_test;
 pub(super) use self::execute::resume_mcp_code_run;
 pub(crate) use self::execute::{execute_mcp_execute, execute_mcp_resume};
 // `execute` reaches the gateway's names through this module.
-#[cfg(test)]
-use super::mcp_actor_result;
 use super::{
     McpBoardOmissions, McpBoardState, McpCallContext, McpCarrierPolicy, McpGatewayError,
-    actor_dispatch, code_mode_self_brief, code_mode_verbs, device_release, hex_bytes,
-    mcp_board_frame_error, mcp_board_verb_error, mcp_current_board, mcp_endpoint_result,
-    mcp_engine_error, type_feedback_release,
+    actor_dispatch, code_mode_self_brief, code_mode_verbs, hex_bytes, mcp_board_frame_error,
+    mcp_board_verb_error, mcp_current_board, mcp_endpoint_result, mcp_engine_error,
+    type_feedback_release,
 };
+#[cfg(test)]
+use super::{device_release, mcp_actor_result};
 use crate::mcp::McpResolvedActor;
 #[cfg(test)]
 use crate::mcp::{McpPageBudget, McpRetrievalHealth};
