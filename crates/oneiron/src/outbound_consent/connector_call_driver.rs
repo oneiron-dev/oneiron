@@ -859,12 +859,8 @@ impl Vault {
         if key.protocol_revision.is_none() {
             return Ok(Err(held("connector_protocol_unpinned")));
         }
-        let (mut payload_data_class, destructive_hint, replay) =
+        let (payload_data_class, destructive_hint, replay) =
             self.connector_tool_class(&key, &route, call.tool, rows)?;
-        // FIX CONNECTOR-CALL-VAULT-TEXT-UNCLASSED, the Personal half of FIX 8807.
-        if call.run_served_person_rows {
-            payload_data_class = payload_data_class.max(DataClass::Personal);
-        }
         let arguments: Value = serde_json::from_str(call.arguments)
             .map_err(|_| IntentLedgerError::InvalidRecord("held connector call arguments"))?;
         let context = ScopedMcpCallContext {
