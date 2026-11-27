@@ -3,7 +3,7 @@
 //! T3 a plain erase lists its copies in order; T4 a sealed erase says the free
 //! space stays encrypted; T5 a shared record lists devices and peers; T6
 //! on-device-only settings leave providers out; T7 a held record lists the
-//! hold copy; T8 every bare restore carries the erasure note; T9 an erase that
+//! hold copy; T8 every bare restore carries the erasure note; T13 an erase that
 //! waits on its veto window leaves the disk note out of R, and an applied one
 //! keeps it. Entry asserts compare code AND full text against the ruled
 //! literals. Fixtures copy H4's `rooted`/`artifact`/`two_owners`,
