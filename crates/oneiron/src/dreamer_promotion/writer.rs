@@ -8,6 +8,7 @@
 use super::*;
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
 use crate::error::{ErrorKind, GateError};
+use crate::ports::EntityStoreRead;
 
 /// A gate refusal's outcome and reason codes, as the gate wrote them: static
 /// codes, never the candidate's text (FIX 10355).
@@ -534,11 +535,19 @@ pub(super) fn promote_one_answering(
                     run.now_ms,
                 )
             }
-            None => crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
-                vault,
-                wtxn,
-                &unverified_cited,
-            ),
+            None => {
+                record_note_dependencies_in_txn(
+                    vault,
+                    wtxn,
+                    &candidate.claim_id,
+                    &unverified_cited,
+                )?;
+                crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
+                    vault,
+                    wtxn,
+                    &unverified_cited,
+                )
+            }
         }?;
         if record_output {
             let approval = verify_landed_body(&landed, &probe_body.predicate, source)
@@ -632,6 +641,29 @@ pub(super) fn promote_one_answering(
     // predicate, source, and taint. A failure cannot roll back the committed
     // writes; it rejects the candidate, and the caller must not complete the attempt.
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
+}
+
+/// PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS (path 1): a CLAIM learnt from a
+/// NOTE depends on that NOTE, so the NOTE's erase withdraws it through the
+/// dependent walk. A NOTE keeps its text under no entity document head,
+/// so no typed citation can name it: the edge is recorded here, in the
+/// claim's own write, as the MESSAGE words a verified promotion names are.
+fn record_note_dependencies_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim: &EntityId,
+    cited: &[EntityId],
+) -> Result<()> {
+    for source in cited {
+        let kind = vault
+            .store
+            .port_entity_record(wtxn, source)?
+            .map(|row| row.entity_type);
+        if kind == Some(crate::registry::ENTITY_TYPE_NOTE) {
+            crate::ports::record_derived_edge_in_txn(&vault.store, wtxn, claim, source)?;
+        }
+    }
+    Ok(())
 }
 
 /// What a promoted claim's birth batch indexes under `val`: its index text,

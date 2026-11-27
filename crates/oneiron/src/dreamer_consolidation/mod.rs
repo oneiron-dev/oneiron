@@ -124,6 +124,9 @@ pub(crate) use extracted_people::{
 };
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
+pub(crate) use note_review::forget_note_review_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use note_review::note_review_seen_in_txn;
 pub(crate) use partition::PartitionAudience;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;

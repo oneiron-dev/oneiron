@@ -62,6 +62,7 @@ use crate::model_step_error::DurableStepError;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::vault::ReadMode;
 use crate::{EntityId, Result, Vault};
 use oneiron_contracts::fingerprint::ContentHash;
@@ -532,6 +533,26 @@ impl ConsolidationExecutor<'_> {
         }
         Ok(None)
     }
+}
+
+/// Q2 = a: a NOTE that comes back is reviewed again; the row holds a hash of the erased text.
+pub(crate) fn forget_note_review_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    SEEN.delete(store, txn, id)?;
+    Ok(())
+}
+
+/// Whether the NOTE review has a stored row for this NOTE.
+#[cfg(oneiron_test_support)]
+pub(crate) fn note_review_seen_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(SEEN.get(store, txn, id)?.is_some())
 }
 
 /// The topic `note`'s review record keeps, read in `txn`; `None` when the
