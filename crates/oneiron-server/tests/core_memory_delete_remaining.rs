@@ -9,6 +9,9 @@
 //! - `http_owner_delete_of_a_restricted_record_answers_409_restricted`: the
 //!   owner's `hard_delete` of a restricted record answers 409 with the
 //!   `restricted` state and the ruling's words.
+//! - `facade_owner_delete_of_a_restricted_record_answers_409`: the owner's
+//!   `vault.delete` through the facade answers that refusal 409 with the
+//!   `restricted` code, not a server fault.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
@@ -199,11 +202,30 @@ impl Served {
     /// `slip` posts `POST /v1/core/memory/verbs/{verb}` with `body`: the
     /// status and the answer.
     async fn post(&self, slip: &CapabilitySlip, verb: &str, body: Value) -> (StatusCode, Value) {
+        self.post_to(slip, &format!("/v1/core/memory/verbs/{verb}"), body)
+            .await
+    }
+
+    /// `slip` posts `POST /v1/core/facade/{verb}` with `body`: the status
+    /// and the answer.
+    async fn post_facade(
+        &self,
+        slip: &CapabilitySlip,
+        verb: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        self.post_to(slip, &format!("/v1/core/facade/{verb}"), body)
+            .await
+    }
+
+    /// `slip` posts `POST {uri}` with `body`, proving its holder key: the
+    /// status and the answer.
+    async fn post_to(&self, slip: &CapabilitySlip, uri: &str, body: Value) -> (StatusCode, Value) {
         let binding =
             holder_proof(slip, &holder_key(), self.vault.now_recorded_at()).expect("holder proof");
         let request = Request::builder()
             .method("POST")
-            .uri(format!("/v1/core/memory/verbs/{verb}"))
+            .uri(uri)
             .header(
                 "Authorization",
                 format!("Bearer {}", slip.to_token().expect("token")),
@@ -271,5 +293,28 @@ fn http_owner_delete_of_a_restricted_record_answers_409_restricted() {
             "This record is restricted: you chose to keep it stored and unused in answer to a deletion request. Lift the restriction to delete it.",
             "{body}"
         );
+    });
+}
+
+#[test]
+fn facade_owner_delete_of_a_restricted_record_answers_409() {
+    run_on_engine_stack("facade-owner-delete-restricted", || async {
+        let fx = Served::new();
+        let note = fx.member_note();
+        oneiron::test_doors::campaign_member_index::restrict_record(
+            &fx.vault,
+            EntityId::from_hex(&note).expect("note id"),
+        )
+        .expect("FIXTURE: restrict the note");
+        let owner = fx.owner_credential();
+        let (status, body) = fx
+            .post_facade(
+                &owner,
+                "vault.delete",
+                json!({ "entity_ref": note, "reason": "user_hard_delete" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "restricted", "{body}");
     });
 }

@@ -246,6 +246,9 @@ pub struct SharedActExecuted {
     pub receipt: SharedActExecutionReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<RemovalExportDelivery>,
+    /// What the executed act's delete leaves behind that the person is told: a held erase's receipt list; empty for every other act.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<crate::memory::RemainingNotice>,
 }
 
 impl From<SharedActExecution> for SharedActExecuted {
@@ -253,6 +256,7 @@ impl From<SharedActExecution> for SharedActExecuted {
         Self {
             receipt: execution.receipt,
             delivery: execution.delivery,
+            remaining: Vec::new(),
         }
     }
 }
@@ -455,10 +459,11 @@ fn execute_shared_act_into(
                 .with_host_slip_issuer(issuer),
             _ => memory,
         };
-        memory.execute_completed_entity_erase(executor, &input.act_id)?;
+        let erased = memory.execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {
             receipt: vault.record_erase_completion(executor, &input.act_id)?,
             delivery: None,
+            remaining: erased.remaining,
         });
     }
     let execution = vault.execute_completed_shared_act_with_owner_key_revokes(

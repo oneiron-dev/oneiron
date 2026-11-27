@@ -282,17 +282,14 @@ impl Memory<'_> {
                     .check_after_unshare(self.vault, txn)
                     .map_err(Into::into)
             })
-            .map_err(|error| {
+            .map_err(|error| match options.veto_starter {
                 // The owner, on their own proof, learns `restricted` for a
                 // record they chose to restrict (Q1 = A); any other absence,
                 // and an erase without that proof, passes through.
-                if error.code != MEMORY_CODE_NOT_FOUND || options.veto_starter.is_none() {
-                    return error;
+                Some(starter) => {
+                    self.owner_absence_as_restricted(starter, &preview.entity(), error)
                 }
-                self.vault
-                    .restricted_owner_delete_refusal(&preview.entity())
-                    .map(MemoryError::from)
-                    .unwrap_or(error)
+                None => error,
             })?
         };
         let same_bytes = plan
@@ -391,6 +388,7 @@ impl Memory<'_> {
             return self.erase_completed_marker(owner, act_id);
         }
         self.unshare_and_erase_match(&planned, EraseReason::OwnerErase, Some(owner))
+            .map_err(|error| self.owner_absence_as_restricted(owner, &planned.holder, error))
     }
 
     /// Fulfils a completed owner erase whose record an earlier hard delete
