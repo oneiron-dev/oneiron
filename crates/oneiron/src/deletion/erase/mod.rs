@@ -343,6 +343,7 @@ pub(super) fn take_staged_sweep_refs_in_txn(
 mod active_store;
 mod corrupt;
 mod markers;
+mod note_claim_dependency_backfill;
 mod provenance;
 mod redirect_shells;
 mod replay;
