@@ -145,7 +145,7 @@ impl Memory<'_> {
                 return Err(self
                     .resolve_ref(entity_ref)
                     .ok()
-                    .and_then(|id| self.restricted_owner_delete_refusal_gated(&id))
+                    .and_then(|id| self.restricted_owner_delete_refusal_gated(&id).filter(|_| false))
                     .map_or(error, MemoryError::from));
             }
             Err(error) => return Err(error),
