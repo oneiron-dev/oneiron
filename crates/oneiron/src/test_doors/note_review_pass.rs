@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 use crate::claim::ClaimApprovalStatus;
@@ -216,6 +216,41 @@ pub fn review_notes_once(vault: &Vault, reply: serde_json::Value) -> Result<Vec<
     Ok(landed)
 }
 
+type AfterReplyHook = Box<dyn FnOnce(&Vault) + Send>;
+
+/// Runs one queued NOTE review, invoking `after_reply` once the model reply is accepted.
+/// A delete during `generate` makes the durable step discard the reply instead.
+///
+/// # Errors
+///
+/// The vault's, or an attempt that did not accept its reply or complete.
+pub fn review_notes_once_after_reply(
+    vault: &Vault,
+    reply: serde_json::Value,
+    after_reply: impl FnOnce(&Vault) + Send + 'static,
+) -> Result<Vec<EntityId>> {
+    let slot = super::vault_state::vault_extension::<Mutex<Option<AfterReplyHook>>>(vault);
+    *slot.lock().expect("lock the after-reply hook") = Some(Box::new(after_reply));
+    let reviewed = review_notes_once(vault, reply);
+    let uncalled = slot.lock().expect("lock the after-reply hook").take();
+    let landed = reviewed?;
+    if uncalled.is_some() {
+        return Err(Error::InvalidConfig(
+            "the NOTE review did not accept a reply".into(),
+        ));
+    }
+    Ok(landed)
+}
+
+/// Runs the hook armed for this fixture vault, if any.
+pub(crate) fn run_after_reply_hook(vault: &Vault) {
+    let slot = super::vault_state::vault_extension::<Mutex<Option<AfterReplyHook>>>(vault);
+    let hook = slot.lock().expect("lock the after-reply hook").take();
+    if let Some(hook) = hook {
+        hook(vault);
+    }
+}
+
 /// Whether the Dreamer's review row for `note` is still stored.
 ///
 /// # Errors
@@ -224,4 +259,27 @@ pub fn review_notes_once(vault: &Vault, reply: serde_json::Value) -> Result<Vec<
 pub fn note_review_seen(vault: &Vault, note: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     note_review_seen_in_txn(&vault.store, &txn, &note)
+}
+
+/// Registers the promotion's NOTE dependencies in a grouped write transaction.
+///
+/// # Errors
+///
+/// A NOTE was not live at the write, or the vault could not register the dependency.
+pub fn record_note_dependencies_for_test(
+    vault: &Vault,
+    claim: EntityId,
+    notes: &[EntityId],
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| vault.record_note_dependencies_in_txn(txn, &claim, notes))
+}
+
+/// Whether the dependency walk has a CLAIM-to-NOTE registration.
+///
+/// # Errors
+///
+/// The vault's, including failure to decode the dependency index.
+pub fn note_dependency_exists(vault: &Vault, claim: EntityId, note: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::ports::dependency_sources_in(&vault.store, &txn, &claim)?.contains(&note))
 }
