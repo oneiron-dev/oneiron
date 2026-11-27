@@ -250,6 +250,7 @@ impl Vault {
                     GpuEndReason::Exited => EndKind::Exited { code: 0 },
                     GpuEndReason::AtMaximum | GpuEndReason::TimeLimit => EndKind::TimeLimit,
                     GpuEndReason::Cancelled => EndKind::Stopped,
+                    GpuEndReason::NeverStarted => EndKind::NeverStarted,
                     GpuEndReason::Gone => EndKind::Lost,
                     // The owner wrote the job off (door 10): its end stays unknown.
                     GpuEndReason::Unconfirmed => EndKind::WrittenOff,

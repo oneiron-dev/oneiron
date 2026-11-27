@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use oneiron::memory::RecallSource;
+
 use crate::cli::{HookEffort, HookHost};
 use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 
@@ -50,12 +52,24 @@ pub(super) struct Recall<'a> {
     pub(super) limit: usize,
     pub(super) effort: HookEffort,
     pub(super) deadline: Instant,
+    /// The push these lines are, which the owner's relevance bar for it and this harness judges
+    /// (RECALL-CARRIER-THRESHOLD): only lines that clear it are given, at most 3, only from the
+    /// session's project.
+    pub(super) bar: RecallSource,
+    pub(super) session: Option<&'a str>,
+}
+
+struct Hit {
+    text: String,
+    suffix: String,
 }
 
 impl Recall<'_> {
-    /// `header` and a line per hit, or nothing when recall fails or finds
-    /// nothing.
-    pub(super) fn block(&self, header: &str) -> Vec<String> {
+    /// `header` and a line per hit, or nothing when recall fails or no line clears the owner's
+    /// bar. With nothing above the bar and the owner's `recall.bar.empty_receipt` set for this
+    /// harness, one line: `lead`, then that nothing cleared the bar and the rule it applied
+    /// (RECALL-EMPTY-RECEIPT, the owner's to decide; unset, nothing).
+    pub(super) fn block(&self, header: &str, lead: &str) -> Vec<String> {
         if Instant::now() >= self.deadline {
             return Vec::new();
         }
@@ -83,16 +97,34 @@ impl Recall<'_> {
         }
         let lines = self.shortened(found);
         if lines.is_empty() {
-            return Vec::new();
+            return receipt(&result)
+                .map(|rule| {
+                    vec![format!(
+                        "{lead}: nothing cleared the relevance bar ({rule})."
+                    )]
+                })
+                .unwrap_or_default();
         }
-        std::iter::once(header.to_owned()).chain(lines).collect()
+        let header = if lines.iter().any(|hit| !hit.suffix.is_empty()) {
+            let lead = header.strip_suffix("):").unwrap_or(header);
+            format!("{lead}; the whole record: vault.hydrate with the id):")
+        } else {
+            header.to_owned()
+        };
+        std::iter::once(header)
+            .chain(
+                lines
+                    .into_iter()
+                    .map(|hit| format!("- {}{}", hit.text, hit.suffix)),
+            )
+            .collect()
     }
 
-    /// Whitespace folded, repeats dropped, each hit cut to [`ITEM_CHARS`],
-    /// at most `limit` of them and [`BLOCK_CHARS`] in all.
-    fn shortened(&self, found: Vec<String>) -> Vec<String> {
+    /// Fold whitespace, drop repeats and cut just the text to [`ITEM_CHARS`].
+    /// Keep at most `limit` hits, with their suffixes inside [`BLOCK_CHARS`].
+    fn shortened(&self, found: Vec<Hit>) -> Vec<Hit> {
         let (mut lines, mut seen, mut size) = (Vec::new(), std::collections::HashSet::new(), 0);
-        for text in found {
+        for Hit { text, suffix } in found {
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             if text.is_empty() || !seen.insert(text.clone()) {
                 continue;
@@ -104,11 +136,11 @@ impl Recall<'_> {
             } else {
                 text
             };
-            let chars = text.chars().count();
+            let chars = text.chars().count() + suffix.chars().count();
             if size + chars > BLOCK_CHARS || lines.len() >= self.limit {
                 break;
             }
-            lines.push(format!("- {text}"));
+            lines.push(Hit { text, suffix });
             size += chars;
         }
         lines
@@ -143,13 +175,12 @@ impl Recall<'_> {
         )
     }
 
-    /// `vault.recall` at the effort asked when the server lists it, else
-    /// `memory.query`. Light runs no model and embeds nothing; medium embeds
-    /// the query on the server's embedder, so it finds a paraphrase; high and
-    /// above also rerank, under the server's budget. `memory.query` reads
-    /// lexically, and on the one-space preset (the text kind slot bound to a
-    /// declared space) it also embeds the query through that space's text
-    /// tower.
+    /// `vault.recall` at the effort asked, judged by the owner's relevance bar for this push
+    /// and harness. Light runs no model, but the bar's query still embeds once on the
+    /// server's embedder, since the bar compares cosines; medium also searches by that vector,
+    /// so it finds a paraphrase; high and above also rerank, under the server's budget. A
+    /// server that does not list `vault.recall` is asked nothing: no other tool judges lines by
+    /// the bar.
     fn tool_call(&self, listed: &Value) -> anyhow::Result<(&'static str, Value)> {
         let tools = listed.get("tools").and_then(Value::as_array);
         let tool = |name: &str| {
@@ -158,22 +189,30 @@ impl Recall<'_> {
                 .flatten()
                 .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
         };
-        let (name, tool) = match tool("vault.recall") {
-            Some(tool) => ("vault.recall", tool),
-            None => (
-                "memory.query",
-                tool("memory.query").ok_or_else(|| anyhow::anyhow!("no recall tool"))?,
-            ),
-        };
+        // Only `vault.recall` judges lines by the owner's bar: a server that lists no such tool
+        // is given no push.
+        let (name, tool) = (
+            "vault.recall",
+            tool("vault.recall").ok_or_else(|| anyhow::anyhow!("no vault.recall tool"))?,
+        );
         let version = tool
             .pointer("/inputSchema/properties/schema_version/const")
             .cloned()
             .unwrap_or_else(|| json!("mcp_tool_args.v1"));
-        let arguments = if name == "vault.recall" {
-            json!({"spec": {"query": self.query, "effort": self.effort.as_str(), "limit": self.limit}})
-        } else {
-            json!({"request": {"query": self.query, "limit": self.limit, "view": "summary", "countMode": "none"}})
-        };
+        let mut bar = json!({"source": self.bar.as_str(), "harness": self.host.as_str()});
+        if let Some(session) = self.session {
+            bar["session"] = json!(session);
+        }
+        // A push gives CLAIMs only: a CLAIM carries the project it was stamped with, so the
+        // session's project scopes it, while a TURN, MESSAGE or NOTE names no project and
+        // would reach the session from any project (REVIEW-10567 P1 2).
+        let arguments = json!({"spec": {
+            "query": self.query,
+            "effort": self.effort.as_str(),
+            "limit": self.limit,
+            "scope": {"kinds": ["CLAIM"]},
+            "bar": bar,
+        }});
         Ok((
             name,
             json!({
@@ -189,6 +228,62 @@ impl Recall<'_> {
             }),
         ))
     }
+}
+
+/// The empty receipt's lead for a recall that searched `query`: session-start's lead, reused
+/// by prompt when `--query` was given (REVIEW-10567 round 2 P1 3).
+pub(super) fn query_lead(query: &str) -> String {
+    format!("From your Oneiron vault, for \"{query}\"")
+}
+
+/// The rule the owner's bar applied, in words, when the recall in `result` asks a receipt
+/// line for an empty answer (`bar.receipt`); `None` when it asks none.
+fn receipt(result: &Value) -> Option<String> {
+    let pack = result.get("structuredContent").cloned().or_else(|| {
+        result
+            .get("content")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .find_map(|text| serde_json::from_str::<Value>(text).ok())
+    })?;
+    // The MCP gateway gives the verb's result as `output` beside its tool and actor
+    // (tasks_response.rs); a bare pack names `bar` itself.
+    let bar = pack
+        .get("output")
+        .and_then(|output| output.get("bar"))
+        .or_else(|| pack.get("bar"))?;
+    if bar.get("receipt") != Some(&Value::Bool(true)) {
+        return None;
+    }
+    let rule = bar.get("rule")?;
+    Some(match rule {
+        Value::String(name) if name == "direct_match" => {
+            "a direct match of the query's words".to_owned()
+        }
+        Value::String(name) if name == "open" => "no bar: nothing matched".to_owned(),
+        _ => match (rule.get("cosine"), rule.get("quiet")) {
+            (Some(cosine), _) => format!(
+                "a cosine of {} in {}",
+                cosine
+                    .get("floor")
+                    .and_then(Value::as_f64)
+                    .unwrap_or_default(),
+                cosine
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the vault's space")
+            ),
+            (None, Some(quiet)) => format!(
+                "quiet: {}",
+                quiet
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("owner")
+            ),
+            (None, None) => rule.to_string(),
+        },
+    })
 }
 
 /// Whether the server at `url` admits `auth` over `oneiron mcp` by
@@ -431,8 +526,8 @@ impl Bridge {
     }
 }
 
-/// Every hit's text, in order, from the result's `items` lists.
-fn texts(value: Option<&Value>, found: &mut Vec<String>) {
+/// Every hit, in order, from the result's `items` lists.
+fn texts(value: Option<&Value>, found: &mut Vec<Hit>) {
     match value {
         Some(Value::Object(object)) => {
             if let Some(Value::Array(items)) = object.get("items") {
@@ -452,12 +547,19 @@ fn texts(value: Option<&Value>, found: &mut Vec<String>) {
     }
 }
 
+fn hit_text(item: &Value) -> Option<Hit> {
+    Some(Hit {
+        text: item_text(item)?,
+        suffix: line_suffix(item).unwrap_or_default(),
+    })
+}
+
 /// One hit's words: a recall pack item's `value_text`, after a claim's
 /// predicate; in a query result, a message's `body.content` or a claim's
 /// `body.pred` and `body.val`. A pack item for a record with no words
 /// carries its body as JSON (an actor's name, say); that gives none. A
 /// message's own words are kept even when they read as JSON.
-fn hit_text(item: &Value) -> Option<String> {
+fn item_text(item: &Value) -> Option<String> {
     if let Some(text) = item.get("value_text").and_then(Value::as_str) {
         if let Some(predicate) = item.get("predicate").and_then(Value::as_str) {
             return Some(format!("{predicate}: {text}"));
@@ -480,6 +582,51 @@ fn hit_text(item: &Value) -> Option<String> {
         Some(predicate) => format!("{predicate}: {value}"),
         None => value,
     })
+}
+
+/// The part that identifies the record and its provenance, separate from recalled text.
+fn line_suffix(item: &Value) -> Option<String> {
+    let short = item.get("short_id")?.as_str()?;
+    let reference = match item.get("source_revision_ref").and_then(Value::as_str) {
+        Some(revision) => format!("{short}@{revision}"),
+        None => short.to_owned(),
+    };
+    let source = match item.pointer("/provenance/source").and_then(Value::as_str) {
+        Some("user_stated") => "stated".to_owned(),
+        Some("record") => "note".to_owned(),
+        Some("unattributed") | None => "source unknown".to_owned(),
+        Some(source) => source.replace('_', " "),
+    };
+    let mut parts = vec![reference, source];
+    if let Some(line) = item.get("line_provenance") {
+        let standing = match line.get("approval").and_then(Value::as_str) {
+            Some(standing @ ("auto" | "approved")) => Some(standing),
+            Some("proposed") => Some("held"),
+            _ => None,
+        };
+        if let Some(standing) = standing {
+            parts.push(standing.to_owned());
+        }
+        if let Some(conversations) = line.get("source_conversations").and_then(Value::as_array)
+            && let Some(first) = conversations.first().and_then(Value::as_str)
+        {
+            let additional = conversations.len() - 1;
+            parts.push(if additional == 0 {
+                format!("from {first}")
+            } else {
+                format!("from {first} +{additional}")
+            });
+        }
+        if let Some(learned_at) = line.get("learned_at").and_then(Value::as_u64) {
+            let stamp = crate::owner::stamp::rfc3339_secs(learned_at);
+            if let Some((date, time)) = stamp.split_once('T')
+                && let Some((minute, _)) = time.rsplit_once(':')
+            {
+                parts.push(format!("learned {date} {minute} UTC"));
+            }
+        }
+    }
+    Some(format!(" ({})", parts.join(" · ")))
 }
 
 /// A record's body as JSON, not words to show.

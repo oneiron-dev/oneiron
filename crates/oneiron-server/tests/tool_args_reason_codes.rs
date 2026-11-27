@@ -288,6 +288,110 @@ async fn tool_first_reason_codes() -> TestResult {
         reply["error"]["data"]["field"], "arguments.request",
         "{reply}"
     );
+
+    // A native read's request that decodes but fails the method's own check
+    // is named too, on the field the check names (review round 2 of #10553:
+    // it named none).
+    let reply = fixture
+        .call_tool(
+            &reader,
+            8,
+            "memory.hydrate",
+            &version,
+            json!({ "request": { "ref": "bad" } }),
+        )
+        .await?;
+    assert_eq!(
+        refusal(&reply),
+        (
+            json!("tool_args_invalid"),
+            json!(["args.invalid_field", "args.field.arguments.request.ref"])
+        ),
+        "a native check names the field it refused: {reply}"
+    );
+    assert_eq!(
+        reply["error"]["data"]["field"], "arguments.request.ref",
+        "{reply}"
+    );
+    Ok(())
+}
+
+/// A `tools/call` whose `_meta` names an invocation or a hook ask that is no
+/// such handle, and a transport-only row's input of the wrong type, are
+/// named in reason codes too (review round 2 of #10553: each refused with
+/// none).
+#[test]
+fn call_meta_and_a_transport_row_name_what_was_wrong() -> TestResult {
+    on_engine_stack(call_meta_and_transport_row_reason_codes)
+}
+
+async fn call_meta_and_transport_row_reason_codes() -> TestResult {
+    let fixture = Fixture::new("tool-args-reason-codes-meta")?;
+    let writer = register_credential(&fixture.server, 0x53, &["read", "write"], None).await?;
+    let (status, listed) = fixture.rpc(&writer, 1, "tools/list", json!({})).await?;
+    assert_eq!(status, 200, "{listed}");
+    let version = schema_version(&listed, "vault.get")?;
+    let get_with_meta = |meta: Value| {
+        json!({
+            "name": "vault.get",
+            "_meta": meta,
+            "arguments": {
+                "schema_version": version,
+                "consent": {
+                    "policy_ref": "policy:agent-session",
+                    "purpose": "read one entity",
+                },
+                "arguments": { "spec": { "entity_ref": EntityId::now().to_hex() } },
+            },
+        })
+    };
+    for (id, meta) in [
+        (2, json!({ "oneiron/invocation": "bad" })),
+        (3, json!({ "hook_ask": "bad" })),
+    ] {
+        let (status, reply) = fixture
+            .rpc(&writer, id, "tools/call", get_with_meta(meta))
+            .await?;
+        assert_eq!(status, 200, "a refusal is a 200 JSON-RPC error: {reply}");
+        assert_eq!(
+            refusal(&reply),
+            (
+                json!("tool_args_invalid"),
+                json!(["args.invalid_field", "args.field._meta"])
+            ),
+            "an invalid _meta value is named: {reply}"
+        );
+        assert_eq!(reply["error"]["data"]["field"], "_meta", "{reply}");
+    }
+
+    // The transport-only row decodes its typed input before its input
+    // check, as a generated host door does.
+    let reply = fixture
+        .call_tool(
+            &writer,
+            4,
+            "vault.imports.hook_transcript_part",
+            &version,
+            json!({
+                "spec": {
+                    "upload": "00000000000000000000000000000001",
+                    "offset": 0,
+                    "text": 42,
+                },
+            }),
+        )
+        .await?;
+    assert_eq!(
+        refusal(&reply),
+        (json!("tool_args_invalid"), json!(["args.wrong_type"])),
+        "a transport-only row names a wrong type: {reply}"
+    );
+    assert!(
+        !reply["error"]["data"]["reason_codes"]
+            .to_string()
+            .contains("42"),
+        "no reason code quotes the caller's value: {reply}"
+    );
     Ok(())
 }
 

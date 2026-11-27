@@ -10100,7 +10100,7 @@
      "path": "src/batch/secret_scan/mask/carrier.rs",
      "purpose": "The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -11899,7 +11899,7 @@
      "path": "src/bm25/mod.rs",
      "purpose": "Analyzer-driven fielded inverted index + BM25F scorer",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 2
      }
     },
@@ -11924,13 +11924,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/bm25/scoring.rs",
      "purpose": "Shared BM25F scoring",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -20644,7 +20644,7 @@
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -22213,7 +22213,7 @@
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -22660,7 +22660,7 @@
      "path": "src/code_run/storage/response_owners.rs",
      "purpose": "Whose reply content a code run's replay row holds (FIX 5718, KEY STORE = A): one row per replay record, a…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -22994,7 +22994,7 @@
      "purpose": "Guest-authored calls accepted by a first-party code runtime",
      "surface": {
       "enum": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -28627,7 +28627,7 @@
      "path": "src/context_pack/builder/query.rs",
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 64,
       "struct": 1
      }
@@ -41937,7 +41937,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 12,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -42173,17 +42173,17 @@
      "path": "src/engine_executor/program_entry.rs",
      "purpose": "A turn program's pinned entry (DOOR-141 PR3b, FIX 4382)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/program_entry/injection.rs",
      "purpose": "The calls a resumed pinned entry answers instead of issuing them (DOOR-141 PR3b): each one an earlier entry…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 18
      }
     },
     {
@@ -42195,9 +42195,19 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 31,
-      "fn": 2,
+      "crate-vis": 33,
+      "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/record/caller_source.rs",
+     "purpose": "The caller's own code of a caller-source run, kept as a body the run owns (FIX EXECUTE-CALLER-CODE)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -42217,7 +42227,7 @@
      "path": "src/engine_executor/record/replay_hash.rs",
      "purpose": "The replay identity hashes of a run: the config hash its config marker stores as hex, and each REPL step's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -42237,6 +42247,7 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "The durable code-mode REPL orchestrator",
      "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -42257,7 +42268,7 @@
      "path": "src/engine_executor/repl/persistence.rs",
      "purpose": "Durable REPL record loading, failed-step appends, refused-reply correction records and wait resumption",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -42407,6 +42418,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/source_entry.rs",
+     "purpose": "Model-free entry and replay of the caller's own source (FIX EXECUTE-CALLER-CODE)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -42487,6 +42508,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/engine_executor/tests/caller_source_entry.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/engine_executor/tests/code_check.rs",
      "purpose": "The checked-in `src/task_verb/code-mode.d.ts` is the verb table's rendering of `self.memory`, and the…",
      "surface": {}
@@ -42548,6 +42577,7 @@
      "kind": "src",
      "notable": [
       "CallableProgram",
+      "CallerRunInput",
       "EngineExecutorConfig",
       "EngineExecutorLimits",
       "EngineExecutorOutcome",
@@ -42569,8 +42599,8 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 10,
+      "enum": 4,
+      "fn": 11,
       "re-export": 1,
       "struct": 11,
       "trait": 2
@@ -51038,7 +51068,7 @@
      "purpose": "`vault.imports.hook_transcript` (census L10-17; Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B): one…",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "struct": 6
@@ -59053,7 +59083,8 @@
      "path": "src/memory/lifted_view.rs",
      "purpose": "A lifted carrier's view as the bound actor reads it (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8,
+      "fn": 1
      }
     },
     {
@@ -59214,7 +59245,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 48,
+      "crate-vis": 49,
       "mod": 42,
       "re-export": 75
      }
@@ -59814,6 +59845,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/bar.rs",
+     "purpose": "The owner's relevance bar for the lines a recall pushes into a session (RECALL-CARRIER-THRESHOLD)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/bar/setting_keys.rs",
+     "purpose": "The `recall.bar.*` rows (their value and item domain: the parent module)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -59872,7 +59921,7 @@
      "path": "src/memory/recall/items.rs",
      "purpose": "Projects recall items and render fields for the bound reader",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -59887,7 +59936,7 @@
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "re-export": 6,
       "struct": 3
@@ -59922,6 +59971,16 @@
      "purpose": "The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/paid/scoring.rs",
+     "purpose": "Device-only checks, score completion, and model name validation for paid recall",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68811,7 +68870,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "fn": 46,
       "re-export": 1,
       "struct": 1
@@ -69028,7 +69087,17 @@
      "path": "src/pipeline/execution/channels/text.rs",
      "purpose": "The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/text/truncation.rs",
+     "purpose": "Scope and result limits for widened text searches",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -71209,7 +71278,7 @@
      "path": "src/provenance/conversation_sources.rs",
      "purpose": "The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -79315,7 +79384,7 @@
       "const": 6,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 4
      }
     },
@@ -100239,7 +100308,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 406,
+      "mod": 407,
       "re-export": 3
      }
     },
@@ -100784,6 +100853,16 @@
      "purpose": "Door for `tests/recall_gate_judges_once.rs` (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): counts the full actor…",
      "surface": {
       "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/recall_line_provenance.rs",
+     "purpose": "Fixture writes for the line-provenance recall tests",
+     "surface": {
       "fn": 1
      }
     },
@@ -103538,8 +103617,8 @@
      "path": "src/vault/vector_evidence.rs",
      "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it, or…",
      "surface": {
-      "crate-vis": 10,
-      "fn": 3
+      "crate-vis": 11,
+      "fn": 4
      }
     },
     {
@@ -115277,6 +115356,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/focus_board_masks_lifted_secrets.rs",
+     "purpose": "A focus board's PINNED tier is another view of lifted text, not a way around its handle: a NOTE, a CLAIM…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -119321,6 +119408,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_bar.rs",
+     "purpose": "RECALL-CARRIER-THRESHOLD (owner 26 Nov 18:53 \"Can we just skip the recall if nothing useful?",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -119334,6 +119429,14 @@
      "notable": [],
      "path": "tests/recall_light_render_text.rs",
      "purpose": "E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_line_provenance.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -123898,7 +124001,7 @@
     },
     "engine_executor": {
      "entry": "crates/oneiron/src/engine_executor/mod.rs",
-     "files": 79,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124483,7 +124586,7 @@
     },
     "memory": {
      "entry": "crates/oneiron/src/memory/mod.rs",
-     "files": 422,
+     "files": 425,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124674,7 +124777,7 @@
     },
     "pipeline": {
      "entry": "crates/oneiron/src/pipeline/mod.rs",
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125351,7 +125454,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 419,
+     "files": 420,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125618,8 +125721,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8639,
-   "test_files": 2330
+   "source_files": 8646,
+   "test_files": 2334
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -170885,7 +170988,7 @@
      "path": "src/api/mcp_gateway/actor_dispatch/gates.rs",
      "purpose": "The gates an MCP call passes before it executes: proof, verb, credential, execute_code's session and each…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -171055,7 +171158,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -171069,13 +171172,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/code_mode_verbs/dispatch.rs",
      "purpose": "How a code-mode run's agent verbs reach their doors: admitted, executed and answered",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -171445,7 +171548,7 @@
      "path": "src/api/mcp_gateway/tasks_response.rs",
      "purpose": "Tasks verb and response shaping",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -171466,6 +171569,16 @@
      "purpose": "The MCP door of a transport-only row (`host_door_transport_only`, FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/tool_args_reasons.rs",
+     "purpose": "The stable reason codes of a `tool_args_invalid` refusal (FIX CODE-MODE-DENIAL-REASONS): what was wrong with…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -175961,7 +176074,7 @@
      "path": "src/commands/hook/recall.rs",
      "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -178760,7 +178873,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -178850,7 +178963,7 @@
      "path": "src/embedder/local/evidence.rs",
      "purpose": "Where vector evidence starts in a shipped model's space, and the profile its floors hold for",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -179816,6 +179929,7 @@
       "const": 3,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1,
       "trait": 1
      }
@@ -179831,13 +179945,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "WorkDirAccess",
+      "WorkDirFault",
+      "WorkDirUnsafe",
+      "WorkDirVerdict"
+     ],
      "path": "src/gpu_execution_node/jobs/staging/payload_dir.rs",
      "purpose": "The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -180170,7 +180292,7 @@
      "path": "src/gpu_execution_node/scope_systemd/safe_fs.rs",
      "purpose": "File operations for the unit's root steps in directories another account owns (the engine's state and…",
      "surface": {
-      "fn": 20,
+      "fn": 21,
       "struct": 2
      }
     },
@@ -180213,7 +180335,7 @@
      "purpose": "The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account…",
      "surface": {
       "const": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -188567,12 +188689,14 @@
      "notable": [
       "GuestRefusal",
       "HostVerbRefusal",
+      "ProgramAuthor",
       "TestCredential"
      ],
      "path": "src/test_doors/mcp_code_mode_verbs.rs",
      "purpose": "Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it…",
      "surface": {
-      "fn": 9,
+      "enum": 1,
+      "fn": 15,
       "struct": 3
      }
     },
@@ -190245,6 +190369,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/caller_code_admission.rs",
+     "purpose": "FIX EXECUTE-CALLER-CODE, PR B: a run whose program its caller wrote (the coming MCP `execute`) gets the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -191393,7 +191525,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/hook.rs",
@@ -192990,6 +193122,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/tool_args_reason_codes.rs",
+     "purpose": "FIX CODE-MODE-DENIAL-REASONS: a refused verb call says what was wrong with its arguments in stable reason…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/turn_program_resume_doors.rs",
      "purpose": "Public facade doors for resuming paused turn programs on a copy beside its source",
      "surface": {}
@@ -193620,7 +193760,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 854,
+     "files": 855,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194543,10 +194683,10 @@
      ]
     }
    },
-   "over_bar": 71,
+   "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2218,
-   "test_files": 621
+   "source_files": 2219,
+   "test_files": 623
   },
   "oneiron-setting-contract": {
    "files": [
@@ -207456,6 +207596,7 @@
       "HabitCheckinInput",
       "LexicalHit",
       "LexicalHits",
+      "LineProvenance",
       "MemoryItem",
       "MemoryPack",
       "MemoryProvenance",
@@ -207503,7 +207644,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 14,
-      "struct": 56
+      "struct": 57
      }
     },
     {
@@ -216793,24 +216934,30 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Effort",
+      "LineProvenance",
       "MemoryProvenance",
+      "RecallBarAsk",
+      "RecallBarOutcome",
+      "RecallBarRule",
       "RecallRequest",
       "RecallScope",
+      "RecallSource",
       "RetrievalMeta",
       "ScopeHonesty"
      ],
      "path": "src/memory/recall/mod.rs",
      "purpose": "Moved from `crates/oneiron/src/memory/recall/mod.rs` (lib split W2: wire types below the lib)",
      "surface": {
-      "enum": 1,
-      "fn": 6,
+      "const": 1,
+      "enum": 3,
+      "fn": 9,
       "mod": 3,
       "re-export": 6,
-      "struct": 5
+      "struct": 8
      }
     },
     {

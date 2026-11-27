@@ -12,6 +12,8 @@
 //! ([`super::device_query::require_install_paths_apart`]), and any entry
 //! where the version before this one kept its query lock in the state
 //! directory ([`super::device_query::require_no_old_state_dir_lock`]).
+//! Before any change it also refuses a work directory whose path staging
+//! would refuse ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict`]).
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
@@ -32,6 +34,9 @@ use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
 use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
     unit_path_word,
+};
+use crate::gpu_execution_node::jobs::staging::{
+    WorkDirAccess, WorkDirFault, WorkDirVerdict, work_dir_verdict_for,
 };
 
 /// What `install` is given.
@@ -115,6 +120,19 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         &inputs.binary,
         lock_dir,
     )?;
+    let engine_access = WorkDirAccess {
+        uid: engine_uid,
+        gid: engine_gid,
+        groups: super::safe_fs::account_groups(&request.engine_account, engine_gid).map_err(
+            |error| {
+                format!(
+                    "the groups of the engine account {}: {error}",
+                    request.engine_account
+                )
+            },
+        )?,
+    };
+    require_work_dir_chain(&inputs.work_dir, &request.engine_account, &engine_access)?;
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
@@ -170,6 +188,41 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     print_templates(&settings);
     stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
     Ok(())
+}
+
+/// Refuses a work directory whose path staging would refuse, before any
+/// change: the staging rule
+/// ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict_for`]) for
+/// the engine's account, with the engine's file access, so a directory root
+/// may search but the engine may not is refused here as staging refuses it.
+/// A path that is not there yet passes even where the engine may not make
+/// it, because the root install makes the missing path: [`ensure_dir`] makes
+/// missing parents root's (mode 0755) and the leaf the engine's, which pass.
+fn require_work_dir_chain(
+    work_dir: &Path,
+    engine_account: &str,
+    engine: &WorkDirAccess,
+) -> Result<(), String> {
+    let engine_uid = engine.uid;
+    match work_dir_verdict_for(work_dir, engine)
+        .map_err(|why| format!("work_dir {}: not judged for the engine account {engine_account} (uid {engine_uid}): {why}", work_dir.display()))?
+    {
+        WorkDirVerdict::Passes(_) | WorkDirVerdict::Missing { .. } => Ok(()),
+        WorkDirVerdict::Unsafe(unsafe_) if unsafe_.fault == WorkDirFault::EngineMayNotWrite => {
+            Err(format!(
+                "work_dir {}: {}, judged for the engine account {engine_account} \
+                 (uid {engine_uid}): staging would fail every job (checkout_failed); \
+                 give {engine_account} write access to it, or pick another work_dir",
+                unsafe_.path.display(),
+                unsafe_.fault
+            ))
+        }
+        WorkDirVerdict::Unsafe(unsafe_) => Err(format!(
+            "work_dir {}: {}, judged for the engine account {engine_account} (uid {engine_uid}): staging would refuse every job (work_dir_unsafe); give the path to root or to {engine_account}, or pick another work_dir",
+            unsafe_.path.display(),
+            unsafe_.fault
+        )),
+    }
 }
 
 fn print_templates(settings: &ExecutionNodeSettings) {
@@ -365,5 +418,46 @@ mod tests {
         assert!(existing_job_account_fits(nologin, 1000, 971).is_err());
         assert!(existing_job_account_fits(nologin, 0, 971).is_err());
         assert!(existing_job_account_fits(nologin, 971, 971).is_err());
+    }
+
+    #[test]
+    fn install_refuses_a_work_dir_whose_path_staging_would_refuse() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().canonicalize().expect("resolved temp dir");
+        let open = root.join("open");
+        let work = open.join("work");
+        let ok = root.join("ok");
+        let good = ok.join("work");
+        for (path, mode) in [(&open, 0o777), (&work, 0o755), (&ok, 0o755), (&good, 0o755)] {
+            std::fs::create_dir(path).expect("make test directory");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("test directory mode");
+        }
+        let me = WorkDirAccess::this_process().expect("this process's file access");
+        let why = require_work_dir_chain(&work, "oneiron", &me)
+            .expect_err("the work directory beneath the open ancestor is refused");
+        assert!(why.contains(open.display().to_string().as_str()), "{why}");
+        assert!(why.contains("work_dir_unsafe"), "{why}");
+        assert_eq!(require_work_dir_chain(&good, "oneiron", &me), Ok(()));
+        let missing = ok.join("missing").join("work");
+        assert_eq!(require_work_dir_chain(&missing, "oneiron", &me), Ok(()));
+        if rustix::process::geteuid().as_raw() != 0 {
+            let ro = root.join("ro");
+            std::fs::create_dir(&ro).expect("make test directory");
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555))
+                .expect("test directory mode");
+            let why = require_work_dir_chain(&ro, "oneiron", &me)
+                .expect_err("a work directory the engine may not write in is refused");
+            assert!(why.contains("checkout_failed"), "{why}");
+            assert_eq!(
+                require_work_dir_chain(&ro.join("missing").join("work"), "oneiron", &me),
+                Ok(()),
+                "install makes a missing path even where the engine may not"
+            );
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755))
+                .expect("restore test directory mode");
+        }
     }
 }

@@ -588,6 +588,7 @@ impl PipelineBuilder<'_> {
                     text_exhausted,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
+                    bar_similarity: HashMap::new(),
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
@@ -885,6 +886,51 @@ impl PipelineBuilder<'_> {
             };
             reranked_block.follow_turn_fold(&cited_messages);
 
+            // The owner's relevance bar (RECALL-CARRIER-THRESHOLD) and push exclusions, on each
+            // row's final id: after the fold and admission, before the pack's candidates, budgets
+            // and cut, so a dropped row takes no slot and the next moves up. A push keeps only
+            // CLAIMs here, the one kind with a project stamp, so its rows all hold project
+            // membership (REVIEW-10566 round 1); the corpus filter then decides membership.
+            if self.recall_bar_claims_only {
+                let mut kept = Vec::with_capacity(scores.len());
+                for row in scores.drain(..) {
+                    let is_claim = metadata_cache
+                        .get(&self.read, rtxn, &row.id)?
+                        .is_some_and(|meta| meta.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
+                    if is_claim {
+                        kept.push(row);
+                    }
+                }
+                scores = kept;
+            }
+            let bar_similarity = match self.recall_bar.as_ref() {
+                Some(judge) => {
+                    let mut hidden_metadata = EntityMetadataCache::default();
+                    let mut hidden_row = if judge.is_direct_match() {
+                        self.hidden_row_test(
+                            rtxn,
+                            (
+                                filter_config,
+                                world_authority
+                                    .as_ref()
+                                    .map(|resolved| &resolved.allowed_set),
+                            ),
+                            &mut hidden_metadata,
+                        )?
+                    } else {
+                        None
+                    };
+                    judge.retain_passing(
+                        &mut scores,
+                        self.vault,
+                        &self.read,
+                        rtxn,
+                        hidden_row.as_deref_mut(),
+                    )?
+                }
+                None => HashMap::new(),
+            };
+
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
                 &mut scores,
@@ -1140,6 +1186,7 @@ impl PipelineBuilder<'_> {
                 text_exhausted,
                 scores,
                 cited_messages,
+                bar_similarity,
                 capabilities,
                 pending_vectors,
                 claim_gate,

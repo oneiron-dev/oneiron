@@ -4,6 +4,7 @@
 //! own Grant within the per-job maximum the owner set beside it (RULING
 //! L10-31-STARTER = B), and resumes or cancels only a job it started.
 use crate::gpu_line::{ClaimKey, UnitEndReport, settle_unit_in_txn};
+use crate::job_dispatch::{DispatchClose, DispatchPhase};
 use crate::llm::run_admission::{
     CallOutcome, CheckpointRef, DeclaredMaximum, JobMaximum, MaximumShown, ResumeOffer,
     ResumeRefused, RunAdmission,
@@ -376,8 +377,8 @@ impl Vault {
 
     /// Asks the provider for the chunk's resource under its key, or finds the
     /// one an unanswered create made: a create that did not answer is never
-    /// made again blind (`#gpu-uncertain` 01). A refusal before any resource
-    /// existed bills nothing and holds the job with its reason.
+    /// made again blind (`#gpu-uncertain` 01). A refusal before any resource existed
+    /// bills nothing. A signed node refusal ends the job; any other refusal holds it.
     pub(super) fn create_gpu_chunk(
         &self,
         mut job: GpuJob,
@@ -496,9 +497,10 @@ impl Vault {
         self.load_gpu_job(&job.id)
     }
 
-    /// Holds a job whose chunk never reached its provider. A unit's job ends
-    /// its claim `Released(reason)` in the same write: nothing ran, so the
-    /// claim's draws return, once (design pass 32 r2, 7.3).
+    /// Records a refusal before any resource existed. A signed node refusal ends the job
+    /// as `NeverStarted`; any other refusal holds it. A unit's job ends its claim
+    /// `Released(reason)` in the same write: nothing ran, so the claim's draws return once
+    /// (design pass 32 r2, 7.3).
     fn hold_gpu_job(
         &self,
         mut job: GpuJob,
@@ -508,8 +510,19 @@ impl Vault {
         let refused = UnitEndReport::Refused {
             reason: reason.clone(),
         };
-        job.state = GpuJobState::Held { reason };
-        let held = self.with_write_txn_grouped(|txn| -> crate::Result<bool> {
+        let written = self.with_write_txn_grouped(|txn| -> crate::Result<bool> {
+            let key = &job.chunk_mut()?.idempotency_key;
+            let node_refused = self.job_dispatch_in_txn(txn, key)?.is_some_and(|row| {
+                row.phase == DispatchPhase::Closed
+                    && matches!(row.closed, Some(DispatchClose::NodeRefused { .. }))
+            });
+            job.state = if node_refused {
+                GpuJobState::Ended {
+                    reason: GpuEndReason::NeverStarted,
+                }
+            } else {
+                GpuJobState::Held { reason }
+            };
             if !self.put_gpu_job_in_txn(txn, &mut job, now_ms)? {
                 return Ok(false);
             }
@@ -519,7 +532,7 @@ impl Vault {
             }
             Ok(true)
         })?;
-        if !held {
+        if !written {
             return self.load_gpu_job(&job.id);
         }
         Ok(job)

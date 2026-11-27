@@ -143,7 +143,8 @@ mod read_lane;
 mod read_selection;
 pub(crate) use read_selection::project_descendant_closure_of;
 mod reads;
-mod recall;
+// The catalogue names `recall::bar`'s setting rows by their path (build.rs).
+pub(crate) mod recall;
 pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
@@ -353,10 +354,10 @@ pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
     HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
-    MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
-    RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope, RerankDocument,
-    RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
-    resolve_recall_dial,
+    MemoryProvenance, MemoryStaleStamp, PUSH_LINES, RecallBarAsk, RecallBarOutcome, RecallBarRule,
+    RecallEffort, RecallRerank, RecallRerankHost, RecallResidence, RecallResidenceHit,
+    RecallResidenceSource, RecallScope, RecallSource, RerankDocument, RerankEgress, RerankReport,
+    RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };
 pub(crate) use recall::{ConversationGate, conversation_candidate_admits};
 #[cfg(feature = "sync")]

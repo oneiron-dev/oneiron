@@ -161,6 +161,18 @@ impl HookTranscriptSource {
             Self::HookTranscript => HistorySource::HookTranscript,
         }
     }
+
+    /// The conversation import names for the session id a hook reports.
+    pub(crate) fn session_conversation(harness: &str, session: &str) -> Result<Option<EntityId>> {
+        let (source, native_id) = match harness {
+            "claude-code" => (Self::ClaudeCode, std::borrow::Cow::Borrowed(session)),
+            "codex" => (Self::Codex, std::borrow::Cow::Borrowed(session)),
+            "cursor" => (Self::HookTranscript, format!("cursor:{session}").into()),
+            "copilot" => (Self::HookTranscript, format!("copilot:{session}").into()),
+            _ => return Ok(None),
+        };
+        conversation_id(source.history_source(), &native_id).map(Some)
+    }
 }
 
 /// One subagent log of a session.

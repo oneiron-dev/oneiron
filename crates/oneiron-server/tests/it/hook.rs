@@ -14,6 +14,23 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use oneiron::authority::ActSurface;
+use oneiron::claim::{base_world_id, substrate_facet_id};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::genui::{
+    ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
+    PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
+};
+use oneiron::memory::{
+    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, WitnessTurn,
+};
+use oneiron::session_project::WorkspaceBindRequest;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::store::GateDecisionId;
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron_server::config::KeystoreConfig;
+use oneiron_server::workspace_identity::WorkspaceIdentity;
+
 const SECRET: &str = "hook-check-issuer-key-not-a-bearer";
 const DESCRIPTOR: &str = r#"{"protocol":"oneiron-pairing","slip_version":2,"binding":"ed25519","pairing_endpoint":"/v1/core/pairing/redeem"}"#;
 
@@ -530,7 +547,7 @@ fn a_prompt_pinned_to_a_vault_that_does_not_answer_gives_up_after_one_probe() {
 }
 
 #[test]
-fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() {
+fn a_stopped_session_is_queued_then_imported_and_the_next_sessions_hooks_push_only_above_the_bar() {
     let home = Home::new();
     let vault = home.path("vault");
     let config = home.path("oneiron.toml");
@@ -610,17 +627,33 @@ fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() 
     );
     wait_for_empty(&queue, &log_path);
 
-    // 3. A new session in the same project binds it with no `--url` and
-    // recalls what the last one said.
+    // 3. A new session in the same folder binds it with no `--url`. Keyed on nothing but the
+    // folder's name, its start recalls nothing (RECALL-CARRIER-THRESHOLD): no relevance bar
+    // separates true lines from traps on a folder's name. Given the task's words, it asks the
+    // owner's start bar, and in a folder with no project bound nothing clears it.
     let credential_arg = credential.to_str().expect("UTF-8 path");
     let said = home.session_start(&["--credential-file", credential_arg, "--timeout", "60"]);
     assert!(
         said[0].contains(&url),
         "the first line names the vault: {said:?}"
     );
-    assert!(
-        said.iter().any(|line| line.contains("pier nine order")),
-        "the session was recalled: {said:?}"
+    assert_eq!(
+        said.len(),
+        1,
+        "a start keyed on the folder recalls nothing: {said:?}"
+    );
+    let said = home.session_start(&[
+        "--credential-file",
+        credential_arg,
+        "--query",
+        "heron lantern pier nine order",
+        "--timeout",
+        "60",
+    ]);
+    assert_eq!(
+        said.len(),
+        1,
+        "a push outside any project is quiet, and says nothing by default: {said:?}"
     );
 
     // 4. The session goes on; a hand-over with no `--config` queues to the
@@ -649,8 +682,9 @@ fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() 
         &prompt,
     ));
     assert!(
-        said.iter().any(|line| line.contains("rings twice")),
-        "the prompt recalled the new turn: {said:?}"
+        said.is_empty(),
+        "the prompt's lines ride the owner's carrier bar, and outside any project none clears \
+         it: {said:?}"
     );
 
     // 5. A clean stop removes the runtime file.
@@ -717,6 +751,374 @@ fn a_session_in_a_folder_with_no_project_bound_is_told_the_bind_command() {
     let pid = server.0.id();
     sigterm(pid);
     home.wait_for_no_runtime_file(pid);
+}
+
+/// REVIEW-10567 round 1, `receipt()`: the MCP gateway gives the verb's result as
+/// `structuredContent.output`, so the opted-in empty receipt never printed. A folder bound to a
+/// project, the owner's carrier bar `quiet` and `recall.bar.empty_receipt` set for claude-code:
+/// a prompt prints exactly the receipt line, naming the quiet rule the owner's row set. With the
+/// receipt unset, the same prompt prints nothing. Red on the base: the first prompt prints no
+/// line (the receipt was never read from `output.bar`).
+#[test]
+fn an_owner_who_asks_the_empty_receipt_hears_it_when_nothing_clears_the_bar() {
+    // One vault per receipt setting: owner state is seeded on the stopped vault, and a running
+    // `serve` holds its writer lease.
+    for receipt in [true, false] {
+        let home = Home::new();
+        let vault = home.path("vault");
+        let config = home.path("oneiron.toml");
+        home.init(&vault, &config);
+        let credential = home.credential(&config);
+        let folder = home.path("work").join("heron-lantern");
+        std::fs::create_dir_all(&folder).expect("test fixture");
+        {
+            let seeded = open_stopped(&vault);
+            let (owner, proof) = owner_and_proof(&seeded);
+            let project = mint_project(&seeded, owner, &proof, "hook-test-receipt-card");
+            bind_folder(&seeded, &proof, &folder, project, "heron-lantern");
+            owner_sets_bar(&seeded, &proof, "recall.bar.carrier", json!("quiet"));
+            owner_sets_bar(&seeded, &proof, "recall.bar.empty_receipt", json!(receipt));
+        }
+        let config_arg = config.to_str().expect("UTF-8 path");
+        let log_path = home.path("serve.log");
+        let serve_log = std::fs::File::create(&log_path).expect("server log file");
+        let server = Server(
+            home.oneiron(&["serve", "--host", "127.0.0.1", "--config", config_arg])
+                .stdout(serve_log.try_clone().expect("server log file"))
+                .stderr(serve_log)
+                .spawn()
+                .expect("spawn oneiron serve"),
+        );
+        home.wait_for_runtime_file(server.0.id(), &log_path);
+        let credential_arg = credential.to_str().expect("UTF-8 path");
+        let prompt = json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "0b5e55e0-4444-4555-8666-b77788889999",
+            "cwd": folder,
+            "prompt": "amber jackdaw timetable",
+        });
+        let said = lines(&home.hook(
+            "prompt",
+            &["--credential-file", credential_arg, "--timeout", "60"],
+            &prompt,
+        ));
+        if receipt {
+            assert_eq!(
+                said.len(),
+                1,
+                "the opted-in empty receipt is one line: {said:?}"
+            );
+            assert_eq!(
+                said[0],
+                "From your Oneiron vault, for this prompt: nothing cleared the relevance bar \
+                 (quiet: owner).",
+                "{said:?}"
+            );
+        } else {
+            assert!(
+                said.is_empty(),
+                "with no receipt asked, the prompt says nothing: {said:?}"
+            );
+        }
+        let pid = server.0.id();
+        sigterm(pid);
+        home.wait_for_no_runtime_file(pid);
+    }
+}
+
+/// REVIEW-10567 round 2 P1 3: the prompt's opted-in empty receipt names the effective query
+/// when `--query` was given, with session-start's lead, not "for this prompt". Carrier `quiet`
+/// and `recall.bar.empty_receipt` set for claude-code: `prompt --query "release checklist"` on
+/// an event whose prompt is "summarize today's diff" prints exactly the query-named receipt
+/// line; without the flag the same prompt still prints the "for this prompt" receipt.
+#[test]
+fn a_prompt_with_query_names_that_query_in_its_empty_receipt() {
+    let home = Home::new();
+    let vault = home.path("vault");
+    let config = home.path("oneiron.toml");
+    home.init(&vault, &config);
+    let credential = home.credential(&config);
+    let folder = home.path("work").join("heron-lantern");
+    std::fs::create_dir_all(&folder).expect("test fixture");
+    {
+        let seeded = open_stopped(&vault);
+        let (owner, proof) = owner_and_proof(&seeded);
+        let project = mint_project(&seeded, owner, &proof, "hook-test-receipt-query-card");
+        bind_folder(&seeded, &proof, &folder, project, "heron-lantern");
+        owner_sets_bar(&seeded, &proof, "recall.bar.carrier", json!("quiet"));
+        owner_sets_bar(&seeded, &proof, "recall.bar.empty_receipt", json!(true));
+    }
+    let config_arg = config.to_str().expect("UTF-8 path");
+    let log_path = home.path("serve.log");
+    let serve_log = std::fs::File::create(&log_path).expect("server log file");
+    let server = Server(
+        home.oneiron(&["serve", "--host", "127.0.0.1", "--config", config_arg])
+            .stdout(serve_log.try_clone().expect("server log file"))
+            .stderr(serve_log)
+            .spawn()
+            .expect("spawn oneiron serve"),
+    );
+    home.wait_for_runtime_file(server.0.id(), &log_path);
+    let credential_arg = credential.to_str().expect("UTF-8 path");
+    let prompt = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "0b5e55e0-4444-4555-8666-b77788889999",
+        "cwd": folder,
+        "prompt": "summarize today's diff",
+    });
+    let said = lines(&home.hook(
+        "prompt",
+        &[
+            "--credential-file",
+            credential_arg,
+            "--timeout",
+            "60",
+            "--query",
+            "release checklist",
+        ],
+        &prompt,
+    ));
+    assert_eq!(
+        said.len(),
+        1,
+        "a prompt with --query names that query in its empty receipt: {said:?}"
+    );
+    assert_eq!(
+        said[0],
+        "From your Oneiron vault, for \"release checklist\": nothing cleared the relevance bar \
+         (quiet: owner).",
+        "{said:?}"
+    );
+    let said = lines(&home.hook(
+        "prompt",
+        &["--credential-file", credential_arg, "--timeout", "60"],
+        &prompt,
+    ));
+    assert_eq!(
+        said.len(),
+        1,
+        "with no --query the prompt's own wording stays: {said:?}"
+    );
+    assert_eq!(
+        said[0],
+        "From your Oneiron vault, for this prompt: nothing cleared the relevance bar \
+         (quiet: owner).",
+        "{said:?}"
+    );
+    let pid = server.0.id();
+    sigterm(pid);
+    home.wait_for_no_runtime_file(pid);
+}
+
+/// REVIEW-10567 round 1, `tool_call()`: start and carrier pushes now ask `scope.kinds:
+/// ["CLAIM"]`, so a TURN, MESSAGE or NOTE, which names no project, can no longer reach a
+/// session from another project. A session in beta's folder is stopped and imported with a turn
+/// holding a distinctive phrase; a prompt in alpha's folder whose words match only that turn,
+/// with the owner's carrier bar `open`, prints no recalled line for it — while the CLAIM in
+/// alpha holding the same words IS pushed. Red on the base: the prompt carries the beta turn's
+/// line.
+#[test]
+fn a_push_gives_no_turn_from_another_projects_session() {
+    let home = Home::new();
+    let vault = home.path("vault");
+    let config = home.path("oneiron.toml");
+    home.init(&vault, &config);
+    let projects = home.path("projects");
+    let queue = home.path("queue");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .expect("test fixture");
+    write!(
+        file,
+        "\n[import]\nqueue = true\nqueue_dir = \"{}\"\nclaude_code_root = \"{}\"\n",
+        queue.display(),
+        projects.display()
+    )
+    .expect("test fixture");
+    let credential = home.credential(&config);
+
+    let alpha = home.path("work").join("alpha");
+    let beta = home.path("work").join("beta");
+    std::fs::create_dir_all(&alpha).expect("test fixture");
+    std::fs::create_dir_all(&beta).expect("test fixture");
+    {
+        let seeded = open_stopped(&vault);
+        let (owner, proof) = owner_and_proof(&seeded);
+        let alpha_project = mint_project(&seeded, owner, &proof, "hook-test-alpha-card");
+        let beta_project = mint_project(&seeded, owner, &proof, "hook-test-beta-card");
+        bind_folder(&seeded, &proof, &alpha, alpha_project, "alpha");
+        bind_folder(&seeded, &proof, &beta, beta_project, "beta");
+        owner_sets_bar(&seeded, &proof, "recall.bar.carrier", json!("open"));
+        remember_in(
+            &seeded,
+            owner,
+            &proof,
+            alpha_project,
+            "harbor.timetable",
+            "the amber jackdaw ferry bell keeps pier nine order",
+        );
+    }
+
+    // A session in beta's folder, holding the distinctive phrase, stops while the vault is
+    // down: the session waits in the queue.
+    let session = "0b5e55e0-1111-4222-8333-944455556666";
+    let log = projects
+        .join("-tmp-heron-lantern")
+        .join(format!("{session}.jsonl"));
+    std::fs::create_dir_all(log.parent().expect("log folder")).expect("test fixture");
+    let first = "d1000000-0000-4000-8000-000000000001";
+    let second = "d1000000-0000-4000-8000-000000000002";
+    append_turns(
+        &log,
+        session,
+        &[
+            (
+                first,
+                None,
+                "The amber jackdaw ferry bell rings twice at the slipway.",
+            ),
+            (
+                second,
+                Some(first),
+                "Noted: the amber jackdaw bell rings twice at the slipway.",
+            ),
+        ],
+    );
+    let stop = json!({
+        "hook_event_name": "Stop",
+        "session_id": session,
+        "transcript_path": log,
+        "cwd": beta,
+        "stop_hook_active": false,
+    });
+    let config_arg = config.to_str().expect("UTF-8 path");
+    let output = home.hook("hand-over", &["--config", config_arg], &stop);
+    assert!(output.stdout.is_empty(), "hand-over prints nothing");
+    assert_eq!(
+        std::fs::read_dir(&queue).expect("the queue folder").count(),
+        1,
+        "one queue entry"
+    );
+
+    // `serve` starts and imports the queued session.
+    let log_path = home.path("serve.log");
+    let serve_log = std::fs::File::create(&log_path).expect("server log file");
+    let server = Server(
+        home.oneiron(&["serve", "--host", "127.0.0.1", "--config", config_arg])
+            .stdout(serve_log.try_clone().expect("server log file"))
+            .stderr(serve_log)
+            .spawn()
+            .expect("spawn oneiron serve"),
+    );
+    home.wait_for_runtime_file(server.0.id(), &log_path);
+    wait_for_empty(&queue, &log_path);
+
+    // A prompt in alpha's folder, matching the beta turn's words: the turn stays out, the
+    // alpha CLAIM rides in.
+    let credential_arg = credential.to_str().expect("UTF-8 path");
+    let prompt = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "0b5e55e0-2222-4333-8444-a55566667777",
+        "cwd": alpha,
+        "prompt": "amber jackdaw ferry bell",
+    });
+    let said = lines(&home.hook(
+        "prompt",
+        &["--credential-file", credential_arg, "--timeout", "60"],
+        &prompt,
+    ));
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("From your Oneiron vault, for this prompt (may be dated):"),
+        "the push rides under the prompt's header: {said:?}"
+    );
+    assert!(
+        said.iter().any(|line| line.contains("pier nine order")),
+        "the alpha CLAIM's line IS pushed: {said:?}"
+    );
+    assert!(
+        said.iter().all(|line| !line.contains("slipway")),
+        "no TURN from beta's session reaches alpha's: {said:?}"
+    );
+
+    let pid = server.0.id();
+    sigterm(pid);
+    home.wait_for_no_runtime_file(pid);
+}
+
+#[test]
+fn a_queried_start_in_a_bound_project_names_its_session_and_the_records_it_pushes() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = Home::new();
+    let url = answering_vault();
+    let folder = home.path("project");
+    std::fs::create_dir(&folder).expect("project folder");
+    let bridge = home.path("bridge");
+    let argv = home.path("argv");
+    let call = home.path("call");
+    // Stand in at the MCP boundary to see the request and return a fixed, pinned hit.
+    let script = r#"#!/bin/sh
+printf '%s\n' "$@" > '@ARGV@'
+read -r line
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"_meta":{"oneiron/workspace":{"project_bound":true}}}}'
+read -r line
+read -r line || exit 0
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"vault.recall"}]}}'
+read -r line
+printf '%s\n' "$line" > '@CALL@'
+printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"items":[{"kind":"CLAIM","value_text":"heron lantern plans","predicate":"profile.hobby","short_id":"claim:42","source_revision_ref":"1234567890abcdef1234567890abcdef","provenance":{"source":"user_stated"},"line_provenance":{"approval":"auto","learned_at":1780000000,"source_conversations":["conv:ab","conv:cd"]}}]}}}'
+"#;
+    let script = script
+        .replace("@ARGV@", argv.to_str().expect("UTF-8 path"))
+        .replace("@CALL@", call.to_str().expect("UTF-8 path"));
+    std::fs::write(&bridge, script).expect("write the bridge");
+    std::fs::set_permissions(&bridge, std::fs::Permissions::from_mode(0o700))
+        .expect("make the bridge executable");
+    let credential = home.path("scripted.cred");
+    let said = home.session_start_in(
+        &folder,
+        &[
+            "--url",
+            &url,
+            "--oneiron",
+            bridge.to_str().expect("UTF-8 path"),
+            "--credential-file",
+            credential.to_str().expect("UTF-8 path"),
+            "--query",
+            "heron lantern",
+            "--timeout",
+            "60",
+        ],
+    );
+
+    let argv = std::fs::read_to_string(argv).expect("bridge arguments");
+    let argv: Vec<_> = argv.lines().collect();
+    assert!(
+        argv.windows(2)
+            .any(|args| args == ["--workspace", folder.to_str().expect("UTF-8 path")]),
+        "the bridge names the bound folder: {argv:?}"
+    );
+    let call: Value = serde_json::from_slice(&std::fs::read(call).expect("recall request"))
+        .expect("JSON-RPC call");
+    assert_eq!(
+        call.pointer("/params/arguments/arguments/spec/bar"),
+        Some(&json!({
+            "source": "start",
+            "harness": "claude-code",
+            "session": "0b5e55e0-2222-4333-8444-a55566667777",
+        })),
+    );
+    assert_eq!(said.len(), 3, "{said:?}");
+    assert!(
+        said[1].contains("the whole record: vault.hydrate with the id"),
+        "{said:?}"
+    );
+    assert_eq!(
+        said[2],
+        "- profile.hobby: heron lantern plans (claim:42@1234567890abcdef1234567890abcdef · stated · auto · from conv:ab +1 · learned 2026-05-28 20:26 UTC)"
+    );
 }
 
 #[test]
@@ -787,4 +1189,187 @@ fn wait_for_empty(queue: &Path, log: &Path) {
         );
         std::thread::sleep(Duration::from_millis(250));
     }
+}
+
+/// The stopped vault `path` names, opened as `serve` opens it, with this install's keystore,
+/// so a test seeds owner state (projects, bindings, bars, claims) before `serve` starts. The
+/// vault must be stopped: a running `serve` holds its writer lease. Like `serve`'s boot, the
+/// handle holds the root's key, which proves the owner's acts on a self-host (row
+/// CARRIER-OWNER-PROOF); without it an owner's setting waits for an owner key.
+fn open_stopped(path: &Path) -> Vault {
+    let vault = Vault::open_owned(path, VaultConfig::server()).expect("the stopped vault opens");
+    KeystoreConfig::default().install_on(&vault, path);
+    let issuer = vault
+        .load_host_slip_issuer()
+        .expect("the host issuer the shipped mints rooted");
+    vault.hold_checkpoint_root_signer(std::sync::Arc::new(issuer));
+    vault
+}
+
+/// The vault's owner and the owner's proof. The shipped mints rooted the vault under this
+/// install's own host issuer seed, and their genesis bound the owner, so no hand-signed bind
+/// is needed.
+fn owner_and_proof(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the owner actor");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("the owner proof");
+    (owner, proof)
+}
+
+/// A project the owner's tap bears from `card_id`, the way an owner's tap bears one: a card
+/// minted through the public door over a witnessed source message, signed by the host for the
+/// owner under the loaded issuer. Returns the PROJECT's id.
+fn mint_project(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    card_id: &str,
+) -> EntityId {
+    let issuer = vault
+        .load_host_slip_issuer()
+        .expect("the host issuer the shipped mints rooted");
+    let project_signer = vault
+        .owner_project_signer(&issuer)
+        .expect("the owner project signer");
+    let now = vault.now_recorded_at();
+    let source_message = EntityId::now().to_hex();
+    let staged: WitnessTurn = serde_json::from_value(json!({
+        "conversation_ref": EntityId::now().to_hex(),
+        "occurred_at": now,
+        "messages": [{
+            "id": source_message,
+            "author": "user",
+            "message_type": "text",
+            "content": "Does this sound like a project?",
+            "is_visible": true,
+            "order": 0,
+        }],
+    }))
+    .expect("the card's source message");
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&staged)
+        .expect("the owner stages the card's source message");
+    let leader = EntityId::from_hex(
+        &vault
+            .project(vault.root_project().expect("the root PROJECT"))
+            .expect("the root project reads")
+            .expect("the root project is stored")
+            .leader,
+    )
+    .expect("the root project's leader");
+    let card = ProjectProposalCard::new(
+        card_id,
+        owner.to_hex(),
+        source_message,
+        ProjectGoalDraft {
+            goal: "Seed a project the hook tests bind".to_owned(),
+            why: "The carrier push reads the session folder's project".to_owned(),
+            axes: vec!["coverage".to_owned()],
+        },
+        ProjectProposalPicks {
+            leader_agent_def_ref: leader.to_hex(),
+            board_human_refs: vec![owner.to_hex()],
+            budget_share_bps: 1200,
+            starting_skill_refs: vec![],
+        },
+    )
+    .expect("the seeding card validates");
+    let tap = ConsentActionRequest::new(
+        card.card_id.clone(),
+        PROJECT_PROPOSAL_MINT_ACTION_ID,
+        ConsentActionKind::ProjectMint,
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: owner.to_hex(),
+        },
+        ConsentSurface::Dashboard,
+        now,
+    )
+    .expect("the owner's tap validates");
+    let receipt = vault
+        .mint_project_from_card(&card, &tap, proof, &project_signer)
+        .expect("the owner's card mints the project");
+    EntityId::from_hex(&receipt.project_id).expect("the mint names its project")
+}
+
+/// The owner binds `folder`, which must exist, to `project`, labelled `label`: the PROJECT
+/// its attached sessions read by default.
+fn bind_folder(
+    vault: &Vault,
+    proof: &AuthenticatedOwner,
+    folder: &Path,
+    project: EntityId,
+    label: &str,
+) {
+    let digest = WorkspaceIdentity::of_session_folder(folder)
+        .expect("the folder is a workspace")
+        .own_digest()
+        .to_owned();
+    vault
+        .bind_workspace_as_owner(
+            proof,
+            Some(ActSurface::ThisInstall),
+            WorkspaceBindRequest {
+                folder_digest: digest,
+                project,
+                label: Some(label.to_owned()),
+            },
+        )
+        .expect("the owner binds the folder");
+}
+
+/// The owner sets `key` for harness `claude-code` at the vault: `value` (a `recall.bar.*`
+/// rule, say `"quiet"`, or the empty receipt, `true`).
+fn owner_sets_bar(vault: &Vault, proof: &AuthenticatedOwner, key: &str, value: Value) {
+    let mut change = SetSetting::vault_value(key, value);
+    change.item = Some("claude-code".to_owned());
+    let outcome = vault
+        .set_setting(SettingCaller::Owner(proof), change)
+        .unwrap_or_else(|error| panic!("the owner sets {key}: {error}"));
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's change applies at once: {outcome:?}"
+    );
+}
+
+/// The owner's claim about the owner, stamped with `project`: `predicate` is `value`.
+fn remember_in(
+    vault: &Vault,
+    owner: EntityId,
+    proof: &AuthenticatedOwner,
+    project: EntityId,
+    predicate: &str,
+    value: &str,
+) {
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_owner_authorship(proof)
+        .claim_upsert_scoped(&ScopedClaimInput {
+            id: Some(EntityId::now().to_hex()),
+            predicate: predicate.to_owned(),
+            subject_ref: owner.to_hex(),
+            value: json!(value),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            scope: ClaimScope {
+                world_id: base_world_id().to_hex(),
+                scope_facet_id: substrate_facet_id(owner)
+                    .expect("the owner's substrate facet")
+                    .to_hex(),
+                scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                scope_project_id: project.to_hex(),
+            }
+            .into(),
+            sensitivity: None,
+            evidence_turn_refs: Vec::new(),
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(1),
+            learned_at: Some(1),
+            salience: None,
+        })
+        .expect("the owner's claim lands in the project");
 }

@@ -221,6 +221,20 @@ pub fn installed_runtime_max_secs(unit_text: &str) -> Option<u64> {
         .and_then(|value| value.trim().parse().ok())
 }
 
+/// The engine account an installed template names: the word after
+/// `--engine-account` on the first line holding it, when that word is an
+/// account the unit files may hold ([`plain_account`]).
+#[must_use]
+pub fn installed_engine_account(unit_text: &str) -> Option<&str> {
+    for line in unit_text.lines() {
+        let mut words = line.split_whitespace();
+        if words.any(|word| word == "--engine-account") {
+            return words.next().filter(|name| plain_account(name));
+        }
+    }
+    None
+}
+
 /// A path as one unit-file word: systemd splits these settings on spaces, so
 /// a path with a space or a quote is refused at install instead.
 fn quote_path(path: &Path) -> String {
@@ -319,5 +333,18 @@ mod tests {
             .filter(|line| !line.starts_with("ReadWritePaths="))
             .collect();
         assert!(!control_service_renews(&before_sessions.join("\n")));
+    }
+
+    #[test]
+    fn the_job_units_engine_account_reads_back_from_its_template() {
+        assert_eq!(
+            installed_engine_account(&render_job_unit(&inputs())),
+            Some("oneiron")
+        );
+        assert_eq!(
+            installed_engine_account("[Service]\nRuntimeMaxSec=60\n"),
+            None
+        );
+        assert_eq!(installed_engine_account("--engine-account bad;name"), None);
     }
 }

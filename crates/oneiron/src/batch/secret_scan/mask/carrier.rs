@@ -413,6 +413,21 @@ impl LiftedKeys {
         )
     }
 
+    /// Mask a TURN's readable messages before their stored texts are joined.
+    pub(crate) fn mask_turn_messages_in_txn(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        messages: &mut [(EntityId, String)],
+    ) -> Result<()> {
+        let keys = Self::of_in_txn(store, txn, messages.iter().map(|(_, text)| text.as_str()))?;
+        for (_, text) in messages {
+            if let Some(masked) = keys.masked(text) {
+                *text = masked;
+            }
+        }
+        Ok(())
+    }
+
     /// Each string in `value` masked as [`Self::masked`] masks it; `true`
     /// when one changed.
     pub(crate) fn mask_json(&self, value: &mut serde_json::Value) -> bool {
