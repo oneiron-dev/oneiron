@@ -4,14 +4,26 @@
 //! and CHUNK-STREAM-SELECTOR-AND-WHY-UNBOUNDED (a byte cap on each field): the
 //! chunk request stream decode holds no field past its byte cap and no more of
 //! HAVE and WANT than the object's manifest names. Each hash is checked
-//! against the stored manifest's chunk hashes as it arrives, and the first bad
-//! hash, or the first byte past a field's cap, refuses the request before the
-//! rest of the stream is read. No count refuses an exchange (FIX 8183): one
-//! that names every chunk of any manifest decodes whole.
+//! against the stored manifest's chunk hashes as it arrives; after the first
+//! bad hash none is held, and the request is refused once its stream is read
+//! whole, so a manifest's contents never change how much of a body is read
+//! (REVIEW-10608 P1 1). The first byte past a field's cap refuses the request
+//! at the cap. No count refuses an exchange (FIX 8183): one that names every
+//! chunk of any manifest decodes whole. The manifest is indexed where its row
+//! lies, one entry per distinct hash (REVIEW-10608 P1 2).
 //!
-//! - `a_have_hash_the_manifest_does_not_name_is_refused_as_it_arrives`: red is
-//!   the whole stream read and decoding Ok with the per-hash checks undone.
-//! - `a_want_naming_one_hash_twice_is_refused_as_it_arrives`: red is the same.
+//! - `a_have_hash_the_manifest_does_not_name_is_refused_once_the_stream_is_read`:
+//!   red is decoding Ok with the per-hash checks undone, and, at the round-0
+//!   head c3ef06b4, a refusal before the rest of the stream is read.
+//! - `a_want_naming_one_hash_twice_is_refused_once_the_stream_is_read`: red is
+//!   the same.
+//! - `a_body_cut_before_its_end_is_read_alike_whatever_the_manifest_holds`:
+//!   red at c3ef06b4 is the decode stopping early for an object with no
+//!   manifest and for a hash its manifest lacks, while it reads a named one
+//!   to the cut.
+//! - `a_manifest_naming_one_chunk_many_times_is_indexed_once_where_it_lies` and
+//!   `a_manifest_that_is_not_its_assets_is_refused_where_it_lies`: guards of
+//!   the in-place index against the strict decode.
 //! - `a_want_hash_the_have_names_is_refused`: red is Ok.
 //! - `a_have_naming_one_hash_twice_holds_it_once`: red is a HAVE of every
 //!   copy sent.
@@ -31,6 +43,7 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io::Read;
 
+use oneiron::origin::lfs::{LfsChunkRef, LfsManifest};
 use oneiron::sync::chunks::{
     CHUNK_STREAM_FRAME_BYTES, CHUNK_SYNC_VERSION, ChunkPageCursor, ChunkRead, ChunkSyncRequest,
     MAX_CHUNK_REQUEST_READ_BYTES, MAX_CHUNK_REQUEST_SELECTOR_BYTES, read_chunk_request_stream,
@@ -103,7 +116,7 @@ impl Read for CountedSource<'_> {
 }
 
 #[test]
-fn a_have_hash_the_manifest_does_not_name_is_refused_as_it_arrives() {
+fn a_have_hash_the_manifest_does_not_name_is_refused_once_the_stream_is_read() {
     let held = manifest(4);
     let mut have = vec![hash(1)];
     have.resize(200_001, [0x55; 32]);
@@ -121,14 +134,15 @@ fn a_have_hash_the_manifest_does_not_name_is_refused_as_it_arrives() {
         decoded.is_err(),
         "a HAVE hash the manifest does not name is refused"
     );
-    assert!(
-        source.read < 2 * CHUNK_STREAM_FRAME_BYTES,
-        "the decode stopped at the first hash the manifest does not name"
+    assert_eq!(
+        source.read,
+        stream.len(),
+        "the decode read the whole stream before it refused the request"
     );
 }
 
 #[test]
-fn a_want_naming_one_hash_twice_is_refused_as_it_arrives() {
+fn a_want_naming_one_hash_twice_is_refused_once_the_stream_is_read() {
     let held = manifest(4);
     let mut want = vec![hash(1)];
     want.resize(200_001, hash(1));
@@ -143,9 +157,106 @@ fn a_want_naming_one_hash_twice_is_refused_as_it_arrives() {
     };
     let decoded = read_chunk_request_stream(&mut source, |_oid| Ok(held.clone()));
     assert!(decoded.is_err(), "a WANT naming one hash twice is refused");
+    assert_eq!(
+        source.read,
+        stream.len(),
+        "the decode read the whole stream before it refused the request"
+    );
+}
+
+#[test]
+fn a_body_cut_before_its_end_is_read_alike_whatever_the_manifest_holds() {
+    let mut have = vec![hash(1)];
+    have.resize(200_001, hash(1));
+    let stream = stream_of(&request(have, None));
     assert!(
-        source.read < 2 * CHUNK_STREAM_FRAME_BYTES,
-        "the decode stopped at the first hash the WANT named twice"
+        stream.len() > 16 * CHUNK_STREAM_FRAME_BYTES,
+        "fixture: the HAVE's stream spans more than sixteen frames"
+    );
+    // A body that stops short of its end frame, as one the idle limit ends.
+    let cut = &stream[..stream.len() - 8];
+    let cases: [(&str, Option<BTreeSet<[u8; 32]>>); 3] = [
+        ("a manifest naming the HAVE", Some(manifest(4))),
+        ("a manifest lacking the HAVE's hash", Some(manifest(1))),
+        ("no manifest", None),
+    ];
+    for (case, held) in cases {
+        let mut source = CountedSource {
+            bytes: cut,
+            read: 0,
+        };
+        let decoded = read_chunk_request_stream(&mut source, |_oid| {
+            held.ok_or(oneiron::Error::CorruptedIndex("no manifest"))
+        });
+        assert!(decoded.is_err(), "{case}: a body cut short is no request");
+        assert_eq!(
+            source.read,
+            cut.len(),
+            "{case}: the decode read the body to its cut, as it does for any object"
+        );
+    }
+}
+
+/// The stored bytes, ASSET id and size of a manifest of `chunks`, each a
+/// chunk hash index and its size.
+fn stored_manifest(chunks: &[(u16, u32)]) -> (Vec<u8>, oneiron::EntityId, u64) {
+    let manifest = LfsManifest {
+        size_bytes: chunks.iter().map(|(_, size)| u64::from(*size)).sum(),
+        chunks: chunks
+            .iter()
+            .map(|(index, size)| LfsChunkRef {
+                hash: hash(*index),
+                size: *size,
+            })
+            .collect(),
+    };
+    (
+        manifest.encode().unwrap(),
+        manifest.asset_id().unwrap(),
+        manifest.size_bytes,
+    )
+}
+
+#[test]
+fn a_manifest_naming_one_chunk_many_times_is_indexed_once_where_it_lies() {
+    let mut chunks = vec![(1, 4096); 100_000];
+    chunks.push((2, 17));
+    let (bytes, asset, size) = stored_manifest(&chunks);
+    let distinct = LfsManifest::distinct_chunks_in_place(&bytes, &asset, size)
+        .expect("an authentic manifest is indexed");
+    assert_eq!(
+        distinct,
+        BTreeSet::from([hash(1), hash(2)]),
+        "a chunk named a hundred thousand times is one entry"
+    );
+    let decoded: BTreeSet<[u8; 32]> = LfsManifest::decode(&bytes)
+        .unwrap()
+        .chunks
+        .iter()
+        .map(|chunk| chunk.hash)
+        .collect();
+    assert_eq!(
+        distinct, decoded,
+        "the index holds the strict decode's distinct hashes"
+    );
+}
+
+#[test]
+fn a_manifest_that_is_not_its_assets_is_refused_where_it_lies() {
+    let (bytes, asset, size) = stored_manifest(&[(1, 4096), (2, 17)]);
+    let mut changed = bytes.clone();
+    changed[20] ^= 1;
+    assert!(
+        LfsManifest::distinct_chunks_in_place(&changed, &asset, size).is_err(),
+        "a changed chunk hash no longer matches the ASSET id"
+    );
+    assert!(
+        LfsManifest::distinct_chunks_in_place(&bytes, &asset, size + 1).is_err(),
+        "a size other than the object's is refused"
+    );
+    assert!(
+        LfsManifest::distinct_chunks_in_place(&bytes[..bytes.len() - 1], &asset, size).is_err(),
+        "a manifest cut short is refused"
     );
 }
 

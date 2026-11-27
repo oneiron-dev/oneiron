@@ -69,28 +69,39 @@ pub fn write_chunk_request_stream(request: &ChunkSyncRequest, sink: impl Write) 
 /// CHUNK-STREAM-DECODE-UNBOUNDED-MEMORY; CHUNK-STREAM-MEMORY-BOUND = A).
 ///
 /// Once the request's oid and selector are read, `manifest_chunks` answers
-/// the chunk hashes of that object's stored manifest. Each HAVE and WANT
-/// hash is checked as it arrives: one the manifest does not name, a WANT hash
-/// its WANT already named, or a WANT hash the HAVE names refuses the request
-/// there, before the rest of the stream is read. A HAVE hash its HAVE already
-/// named is held once, since an answer reads the HAVE as a set. A field past
-/// its cap ([`MAX_CHUNK_REQUEST_SELECTOR_BYTES`],
-/// [`MAX_CHUNK_REQUEST_READ_BYTES`], or a fixed field's size) refuses the
-/// request at its cap. No count refuses an exchange (FIX 8183): one that names
-/// every chunk of any manifest decodes whole.
+/// the chunk hashes of that object's stored manifest, or fails for an object
+/// with none. Each HAVE and WANT hash is checked as it arrives, and only a
+/// hash the manifest names is held. A request that fails a manifest check (no
+/// manifest, a hash the manifest does not name, a WANT hash its WANT already
+/// named, or a WANT hash the HAVE names) holds no hash from there on, is read
+/// on to its end frame, and is refused only then. So an absent object, a
+/// withheld one and a hash its manifest lacks take the same read of the
+/// stream, and a body that breaks before its end is a broken body whatever
+/// the manifest holds (REVIEW-10608 P1 1). A HAVE hash its HAVE already named
+/// is held once, since an answer reads the HAVE as a set. A field past its cap
+/// ([`MAX_CHUNK_REQUEST_SELECTOR_BYTES`], [`MAX_CHUNK_REQUEST_READ_BYTES`], or
+/// a fixed field's size) refuses the request at its cap, which no manifest
+/// decides. No count refuses an exchange (FIX 8183): one that names every
+/// chunk of any manifest decodes whole.
 pub fn read_chunk_request_stream(
     source: impl Read,
     manifest_chunks: impl FnOnce(&[u8; 32]) -> Result<BTreeSet<[u8; 32]>>,
 ) -> Result<ChunkSyncRequest> {
     let room = Cell::new(Some(MAX_REQUEST_FIELD_BYTES));
-    read_stream_seeded(
+    let refused = Cell::new(false);
+    let request = read_stream_seeded(
         source,
         &room,
         RequestSeed {
             manifest_chunks,
             room: &room,
+            refused: &refused,
         },
-    )
+    )?;
+    if refused.get() {
+        return Err(invalid());
+    }
+    Ok(request)
 }
 
 /// Writes `response` as the stream an HTTP exchange's reply carries, a frame
@@ -112,6 +123,9 @@ struct RequestSeed<'r, F> {
     manifest_chunks: F,
     /// The bytes the field being read may still take.
     room: &'r Cell<Option<usize>>,
+    /// Whether a manifest check failed: the request is read to its end and
+    /// refused then.
+    refused: &'r Cell<bool>,
 }
 
 impl<'de, F> DeserializeSeed<'de> for RequestSeed<'_, F>
@@ -147,6 +161,7 @@ where
         let Self {
             manifest_chunks,
             room,
+            refused,
         } = self;
         let fixed = MAX_REQUEST_FIELD_BYTES;
         let request = field(&mut seq, room, (0, fixed), PhantomData::<u64>)?;
@@ -157,10 +172,22 @@ where
             (2, MAX_CHUNK_REQUEST_SELECTOR_BYTES),
             PhantomData::<Vec<u8>>,
         )?;
-        let Ok(held) = manifest_chunks(&oid) else {
-            return Err(serde::de::Error::custom("no manifest for the object"));
-        };
-        let (have, named) = field(&mut seq, room, (3, fixed), HaveList { held: &held, room })?;
+        // An object with no manifest is read on like any other and refused
+        // at the end: its HAVE and WANT then hold nothing.
+        let held = manifest_chunks(&oid).unwrap_or_else(|_| {
+            refused.set(true);
+            BTreeSet::new()
+        });
+        let (have, named) = field(
+            &mut seq,
+            room,
+            (3, fixed),
+            HaveList {
+                held: &held,
+                room,
+                refused,
+            },
+        )?;
         let want = field(
             &mut seq,
             room,
@@ -169,6 +196,7 @@ where
                 held: &held,
                 have: &named,
                 room,
+                refused,
             },
         )?;
         let cursor = field(
@@ -219,12 +247,14 @@ fn next_hash<'de, A: SeqAccess<'de>>(
     seq.next_element()
 }
 
-/// A HAVE read hash by hash: one the manifest does not name refuses the
-/// request there, and one the HAVE already named is held once. Its value is
-/// the HAVE in its order and the set of its hashes.
+/// A HAVE read hash by hash: one the manifest does not name fails the
+/// request's manifest check there (`refused`), after which no hash is held,
+/// and one the HAVE already named is held once. Its value is the HAVE in its
+/// order and the set of its hashes.
 struct HaveList<'h> {
     held: &'h BTreeSet<[u8; 32]>,
     room: &'h Cell<Option<usize>>,
+    refused: &'h Cell<bool>,
 }
 
 impl<'de> DeserializeSeed<'de> for HaveList<'_> {
@@ -252,10 +282,14 @@ impl<'de> Visitor<'de> for HaveList<'_> {
         let mut list = Vec::new();
         let mut named = BTreeSet::new();
         while let Some(hash) = next_hash(&mut seq, self.room)? {
+            if self.refused.get() {
+                continue;
+            }
             if !self.held.contains(&hash) {
-                return Err(serde::de::Error::custom(
-                    "a HAVE hash the manifest does not name",
-                ));
+                self.refused.set(true);
+                list = Vec::new();
+                named = BTreeSet::new();
+                continue;
             }
             if named.insert(hash) {
                 list.push(hash);
@@ -270,6 +304,7 @@ struct WantList<'h> {
     held: &'h BTreeSet<[u8; 32]>,
     have: &'h BTreeSet<[u8; 32]>,
     room: &'h Cell<Option<usize>>,
+    refused: &'h Cell<bool>,
 }
 
 impl<'de> DeserializeSeed<'de> for WantList<'_> {
@@ -303,17 +338,20 @@ impl<'de> Visitor<'de> for WantList<'_> {
                 held: self.held,
                 have: self.have,
                 room: self.room,
+                refused: self.refused,
             })
             .map(Some)
     }
 }
 
 /// A WANT's hashes as they arrive: one the manifest does not name, one the
-/// HAVE names, or one the WANT already named refuses the request there.
+/// HAVE names, or one the WANT already named fails the request's manifest
+/// check there (`refused`), after which no hash is held.
 struct WantHashes<'h> {
     held: &'h BTreeSet<[u8; 32]>,
     have: &'h BTreeSet<[u8; 32]>,
     room: &'h Cell<Option<usize>>,
+    refused: &'h Cell<bool>,
 }
 
 impl<'de> Visitor<'de> for WantHashes<'_> {
@@ -330,10 +368,14 @@ impl<'de> Visitor<'de> for WantHashes<'_> {
         let mut list = Vec::new();
         let mut named = BTreeSet::new();
         while let Some(hash) = next_hash(&mut seq, self.room)? {
+            if self.refused.get() {
+                continue;
+            }
             if !self.held.contains(&hash) || self.have.contains(&hash) || !named.insert(hash) {
-                return Err(serde::de::Error::custom(
-                    "a WANT hash the manifest does not name, the HAVE names, or the WANT named",
-                ));
+                self.refused.set(true);
+                list = Vec::new();
+                named = BTreeSet::new();
+                continue;
             }
             list.push(hash);
         }

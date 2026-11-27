@@ -109,17 +109,18 @@ pub fn encode_chunk_request(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
 }
 
 /// The distinct chunk hashes of the stored manifest of the object `oid`
-/// names: what [`read_chunk_request_stream`] checks a request's HAVE and
-/// WANT against as they arrive. An object with no manifest here refuses the
-/// request, as its answer would.
+/// names, read and authenticated in its row where it lies
+/// ([`Vault::lfs_manifest_distinct_chunks`]): what
+/// [`read_chunk_request_stream`] checks a request's HAVE and WANT against as
+/// they arrive. An object with no manifest here refuses the request, as its
+/// answer would.
 pub fn manifest_chunk_hashes(
     vault: &Vault,
     oid: &[u8; 32],
 ) -> Result<std::collections::BTreeSet<[u8; 32]>> {
-    let manifest = vault
-        .lfs_manifest(LfsOid::from_bytes(*oid))?
-        .ok_or_else(invalid)?;
-    Ok(manifest.chunks.iter().map(|chunk| chunk.hash).collect())
+    vault
+        .lfs_manifest_distinct_chunks(LfsOid::from_bytes(*oid))?
+        .ok_or_else(invalid)
 }
 
 /// Handles a request after transport authentication. The selector must name that
