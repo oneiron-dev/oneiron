@@ -249,10 +249,12 @@ impl Memory<'_> {
         };
         // A deterministic id replays only the same belief. A changed belief
         // gets a fresh id and the existing gated supersession path (FIX 8793).
+        // A correction keeps the claim it names as its prior: the row at the
+        // colliding id is an earlier try of that correction, not its target.
         if let Some(existing) = self.vault.get_claim(&id)? {
             if !claim_replay_content_matches(&existing, &write) {
                 write.id = EntityId::now();
-                write.prior = Some(id);
+                write.prior = explicit_prior.or(Some(id));
             } else if write.prior.is_some() && self.vault.machine_history_pinned(&id)? {
                 // A projected signed row cannot be put in place again. Keep
                 // its identity for admission, but propose a fresh replacement.

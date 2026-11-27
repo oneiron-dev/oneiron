@@ -447,6 +447,51 @@ fn a_correction_beside_a_different_head_is_refused() {
 }
 
 #[test]
+fn a_retried_correction_with_a_changed_value_still_closes_the_named_claim() {
+    let f = Fixture::new();
+    let old = f.live_claim();
+    let fixed_id = EntityId::now();
+    let mut first = f.correction(old, "Yuki Tanaka");
+    first.claim.id = Some(fixed_id.to_hex());
+    let first_receipt = f
+        .correct_as(f.agent_a, &first)
+        .expect("A corrects its own claim under a fixed id");
+    assert_eq!(
+        resolve_entity_ref(&f.vault, &first_receipt.claim_short_id).expect("first id"),
+        fixed_id,
+        "the first try keeps the id it asked for"
+    );
+    let mut retry = f.correction(old, "Yuki Sato");
+    retry.claim.id = Some(fixed_id.to_hex());
+    let retry_receipt = f
+        .correct_as(f.agent_a, &retry)
+        .expect("A retries the correction under the same id with a changed value");
+    let retry_id = resolve_entity_ref(&f.vault, &retry_receipt.claim_short_id).expect("retry id");
+    assert_ne!(
+        retry_id, fixed_id,
+        "a changed value under a used id lands under a fresh id"
+    );
+
+    let settled = f.settle(retry_id, ClaimSettleDecision::Approve);
+
+    assert_eq!(
+        settled.verdict,
+        ClaimSettlementVerdict::Landed,
+        "the owner's approval lands the retried correction"
+    );
+    assert_eq!(
+        f.body(old).lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "approving the retried correction closes the claim it names"
+    );
+    assert_eq!(
+        f.body(retry_id).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the approved retry stays active"
+    );
+}
+
+#[test]
 fn the_owners_retract_is_unchanged() {
     let f = Fixture::new();
     let old = f.live_claim();
