@@ -87,8 +87,8 @@ use self::secret_custody::RunSecretCustody;
 use self::site_skills::RunSiteSkills;
 use self::solved_runs::BrowserCapture;
 use super::actor_dispatch::{
-    mcp_caller_code_speech_gate, mcp_host_verb_gate, mcp_run_call_gate, mcp_run_speech_gate,
-    mcp_tool_validation_error, mcp_verb_gate,
+    mcp_browser_guest_gate, mcp_caller_code_speech_gate, mcp_host_verb_gate, mcp_run_call_gate,
+    mcp_run_speech_gate, mcp_tool_validation_error, mcp_verb_gate,
 };
 use super::admission::{
     mcp_admit_bound_tool, mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb,
@@ -172,6 +172,11 @@ pub(crate) struct McpCodeModeVerbs {
 /// its credential holds (FIX EXECUTE-CALLER-CODE); its reason codes name
 /// what the run would have lent.
 pub(crate) const CALLER_CODE_REFUSED: &str = "caller_code_refused";
+
+/// The refusal code of a run's desktop row: no direct door serves the
+/// host's desktop guest, so no connector's run drives it (FIX
+/// CODE-MODE-LENDING-W2).
+pub(crate) const MCP_DESKTOP_REFUSED: &str = "mcp_desktop_refused";
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
 /// give it, and its desktop, when it has a `[desktop]` one. Whichever door

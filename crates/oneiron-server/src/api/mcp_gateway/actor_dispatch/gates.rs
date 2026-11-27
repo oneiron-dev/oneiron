@@ -259,6 +259,17 @@ pub(crate) fn mcp_host_verb_gate(
     mcp_session_operation_gate(server, actor, McpCallEffect::of_host_verb(verb))
 }
 
+/// One browser row of a run, whatever it reads: the live session, then
+/// Write. The row drives the host's browser guest, which a direct call
+/// reaches only through the caller's attached live run, and attaching needs
+/// Write (FIX CODE-MODE-LENDING-W2).
+pub(in crate::api::mcp_gateway) fn mcp_browser_guest_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::Commits)
+}
+
 /// The live session, then one operation's own effect: a read needs only the
 /// session's Read; a write needs the grant `mcp_call_scope` names for it,
 /// over the whole record scope.
