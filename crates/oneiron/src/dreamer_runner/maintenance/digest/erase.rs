@@ -86,8 +86,6 @@ pub(crate) fn erase_sources_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let store = write.store;
-    // Index pre-existing digests once in this transaction, before the lookup.
-    index_stored_digests_once_in_txn(write, txn)?;
     for (_, locator) in CLAIM_DIGESTS.scan_keys(store, txn, id.as_bytes())? {
         scrub_digest_in_txn(write, txn, locator, id)?;
         CLAIM_DIGESTS.delete(store, txn, &(*id, locator))?;
