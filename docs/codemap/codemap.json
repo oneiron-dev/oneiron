@@ -25729,7 +25729,7 @@
      "purpose": "FIX 988 (ARCH-0054 identity drift; ARCH-0072 \"every row that depended on the old issuer\"): one durable…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 6,
       "re-export": 2,
       "struct": 2
@@ -26389,7 +26389,7 @@
      "purpose": "FIX 988: proposed delta slates and the owner's acceptance of them (ARCH-0072 \"a proposed delta slate that…",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "re-export": 2,
       "struct": 2
      }
@@ -100459,7 +100459,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 408,
+      "mod": 409,
       "re-export": 3
      }
     },
@@ -101241,6 +101241,16 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/revision_offers_listed_rows.rs",
+     "purpose": "One held scope exceed's signal, kept as the call driver keeps it, for…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -104896,7 +104906,7 @@
      "purpose": "FIX 988: the owner's doors onto proposed connector slate revisions (ARCH-0072 door 3, and the issuer-change…",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "re-export": 1,
       "struct": 8
      }
@@ -113806,6 +113816,14 @@
      "notable": [],
      "path": "tests/connector_reply_source_rows.rs",
      "purpose": "Census row L5-25 remainder, FIX [RUN-RECEIPT-UNNAMED-TEXT-PROVENANCE] (DEC-0005 world privacy, fix 12): a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/connector_revision_offers_listed_rows.rs",
+     "purpose": "FIX [MCP-READ-REVISION-OFFERS-UNLISTED-ROWS]: `connector_slate_revision_offers_listed` names the rows each…",
      "surface": {}
     },
     {
@@ -125677,7 +125695,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 421,
+     "files": 422,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125944,8 +125962,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8656,
-   "test_files": 2347
+   "source_files": 8657,
+   "test_files": 2348
   },
   "oneiron-agent-runtime": {
    "files": [
