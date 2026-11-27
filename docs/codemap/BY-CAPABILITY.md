@@ -911,7 +911,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question | `crates/oneiron-server/src/decision_graph/mod.rs` | m | ARCH-0076, OF-506, OF-516 |
 | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… | `crates/oneiron-server/src/decision_host/mod.rs` | L | ARCH-0076 |
 | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder | `crates/oneiron-server/src/decision_verdict.rs` | L | ARCH-0076, OF-523 |
-| Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… | `crates/oneiron-server/src/device_local.rs` | s | — |
+| Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… | `crates/oneiron-server/src/device_local.rs` | m | — |
 | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… | `crates/oneiron-server/src/device_sync.rs` | m | ARCH-0023b, OF-575 |
 | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) | `crates/oneiron-server/src/document_memory.rs` | s | — |
 | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… | `crates/oneiron-server/src/embedded.rs` | m | OF-237 |
