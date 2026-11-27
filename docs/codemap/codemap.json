@@ -21057,7 +21057,7 @@
      "path": "src/code_run/dispatcher/summarize.rs",
      "purpose": "`summarize` at the dispatcher (code-mode-summary-sdk-v1): one summary of a run's results, memoised by its…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -42322,7 +42322,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/repl/speech.rs",
@@ -121993,6 +121993,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/summarize_spawn_first.rs",
+     "purpose": "A spawn-off child is denied before the recording host resolves result members or reads and publishes NOTE…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -122294,6 +122302,14 @@
      "notable": [],
      "path": "tests/tournament_winner_restores_archived_person.rs",
      "purpose": "ARCH-0073 §6, \"a re-mention restores the archived record\" (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/trailing_bubble_door_refusal.rs",
+     "purpose": "Optional trailing speech must not turn a completed task into a door refusal",
      "surface": {}
     },
     {
@@ -125831,7 +125847,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8652,
-   "test_files": 2338
+   "test_files": 2340
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -168065,7 +168081,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 40
      }
     },
     {
@@ -169155,7 +169171,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 224
+      "crate-vis": 225
      }
     },
     {
@@ -169276,6 +169292,16 @@
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
       "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_doors/media_line_door.rs",
+     "purpose": "The integration tests' door to the `ai.*` media doors as a code-mode run's verb dispatch reaches them for a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -172005,7 +172031,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 86
+      "crate-vis": 87
      }
     },
     {
@@ -188894,6 +188920,7 @@
      "notable": [
       "GuestRefusal",
       "HostVerbRefusal",
+      "MediaDoorRefusal",
       "ProgramAuthor",
       "TestCredential"
      ],
@@ -188901,8 +188928,8 @@
      "purpose": "Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it…",
      "surface": {
       "enum": 1,
-      "fn": 18,
-      "struct": 3
+      "fn": 19,
+      "struct": 4
      }
     },
     {
@@ -193981,7 +194008,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 863,
+     "files": 864,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194906,7 +194933,7 @@
    },
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2226,
+   "source_files": 2227,
    "test_files": 627
   },
   "oneiron-setting-contract": {
