@@ -2223,7 +2223,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/charter.rs` | src | m | 2 struct · 1 fn · 7 crate-vis | CompiledCharter, ConnectorCharterCompileIssue | Connector charter compilation and stamped charter constraints |
 | `src/connector_key/codec.rs` | src | m | 2 fn · 2 const · 1 crate-vis | — | Connector key body encoding and validation |
 | `src/connector_key/codec/charter.rs` | src | s | 4 crate-vis | — | The GOV-10 charter blocks of a connector key body: the stamped charter and the staged proposal |
-| `src/connector_key/credential_binding.rs` | src | m | 2 struct · 6 fn · 1 const · 2 re-export · 6 crate-vis | ConnectorIssuerDetection, ConnectorIssuerObservation | FIX 988 (ARCH-0054 identity drift; ARCH-0072 "every row that depended on the old issuer"): one durable… |
+| `src/connector_key/credential_binding.rs` | src | m | 2 struct · 6 fn · 1 const · 2 re-export · 7 crate-vis | ConnectorIssuerDetection, ConnectorIssuerObservation | FIX 988 (ARCH-0054 identity drift; ARCH-0072 "every row that depended on the old issuer"): one durable… |
 | `src/connector_key/events.rs` | src | m | 2 struct · 7 fn · 1 const · 1 re-export · 2 crate-vis | ConnectorEventFilter, ConnectorSubscription | Durable, revocable connector-event subscriptions and atomic wake decisions |
 | `src/connector_key/events/paced.rs` | src | s | 1 fn · 3 crate-vis | — | Connector event wakes a full count-bound budget window paces (FIX 8686) |
 | `src/connector_key/events/tests.rs` | test | m | — | — | — |
@@ -2273,7 +2273,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/slate.rs` | src | L | 8 struct · 2 enum · 35 fn · 1 const · 2 re-export · 20 crate-vis | ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateElicitationManifest, SlateHolderNarrow, SlateManifest, SlateOwnerOverride +2 | ARCH-0072 typed per-capability grant slates |
 | `src/connector_key/slate_draft.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings, SlateTrait | ARCH-0072's memory-informed drafter |
 | `src/connector_key/slate_holder.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | ConnectorKeySlateNarrowed | ARCH-0072 self-update on a per-grant key (FIX 987): "Any holder may narrow its own Grant, and the owner… |
-| `src/connector_key/slate_revision.rs` | src | m | 2 struct · 4 fn · 2 re-export · 3 crate-vis | ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer | FIX 988: proposed delta slates and the owner's acceptance of them (ARCH-0072 "a proposed delta slate that… |
+| `src/connector_key/slate_revision.rs` | src | m | 2 struct · 5 fn · 2 re-export · 3 crate-vis | ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer | FIX 988: proposed delta slates and the owner's acceptance of them (ARCH-0072 "a proposed delta slate that… |
 | `src/connector_key/slate_scope_signal.rs` | src | m | 3 struct · 1 enum · 1 fn · 1 const · 1 re-export · 8 crate-vis | ConnectorScopeOutcome, ConnectorScopeOutcomeRecorded, ConnectorScopeRuling, ConnectorSlateScopeSignal | FIX 988 (ARCH-0072 door 3, OF-399): typed scope-exceed evidence |
 | `src/connector_key/slate_setting.rs` | src | s | 2 fn · 5 crate-vis | — | The four capability settings at call time (DEC-0006 §MCP connector permissions) |
 | `src/connector_key/tables.rs` | src | s | — | — | The side tables `connector_key` keeps (core split slice 1): each row declares one, and the crate's build… |
@@ -8622,7 +8622,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 408 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 409 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8695,6 +8695,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/resume_preflight.rs` | src | s | 3 fn · 1 crate-vis | — | Doors for `tests/resume_preflight.rs` (L8-23): restamp the guest boundary a run's pending step parked under… |
 | `src/test_doors/retrieval_policy_default_floor.rs` | src | s | 1 fn | — | The finalized-run writer needed by `tests/retrieval_policy_default_floor.rs` and… |
 | `src/test_doors/reveal_ask_window.rs` | src | s | 1 struct · 2 fn | RevealWindowRun | Drives one secret reveal ask with a set window and the owner's answer |
+| `src/test_doors/revision_offers_listed_rows.rs` | src | s | 1 fn | — | One held scope exceed's signal, kept as the call driver keeps it, for… |
 | `src/test_doors/room_claim_erase.rs` | src | s | 3 fn | — | Doors for `tests/room_home_retry_claim.rs` (HOMERETRY-CLAIM-AUTHOR = B): plant a room claim row and read it… |
 | `src/test_doors/room_facet_limit.rs` | src | s | 1 fn | — | Door for `tests/room_of_unheld_project_reads_bottom.rs` (L7-39 guard): the facets a room limits its reads… |
 | `src/test_doors/room_facet_set.rs` | src | s | 4 fn | — | Door for `tests/room_facet_set.rs` (L7-39 PR 2, the room facet set, and PR 3, its owner verb): the owner's… |
@@ -9019,7 +9020,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/connector_pack.rs` | src | s | 6 struct · 2 re-export | ConnectorPackAcceptRequest, ConnectorPackDelta, ConnectorPackGrants, ConnectorPackPrepareRequest, ConnectorPackUpdateRequest, ConnectorPackView | Typed, source-bound connector-pack admission and delta re-consent |
 | `src/verbs/connector_reply_retry.rs` | src | s | 1 fn · 1 re-export | — | FIX 2405: the owner's retry of one Failed connector reply job (Ambiguous, owner-act Fault) as its queued… |
 | `src/verbs/connector_slate.rs` | src | s | 2 struct · 1 enum · 5 fn · 1 re-export | ConnectorSlateNarrowRequest, ConnectorSlateNarrowView, ConnectorSlateRedraftReply | FIX 987: `vault.connectors.slates.redraft` and `vault.connectors.slates.narrow` (ARCH-0072 "re-draft", and… |
-| `src/verbs/connector_slate_revision.rs` | src | m | 8 struct · 2 enum · 7 fn · 1 re-export | ConnectorCredentialBindingView, ConnectorRevisionSnoozeView, ConnectorScopeOutcomeRequest, ConnectorScopeOutcomeView, ConnectorScopeSignalView, ConnectorSlateRevisionAcceptRequest, ConnectorSlateRevisionAcceptedView, ConnectorSlateRevisionCauseView +2 | FIX 988: the owner's doors onto proposed connector slate revisions (ARCH-0072 door 3, and the issuer-change… |
+| `src/verbs/connector_slate_revision.rs` | src | m | 8 struct · 2 enum · 8 fn · 1 re-export | ConnectorCredentialBindingView, ConnectorRevisionSnoozeView, ConnectorScopeOutcomeRequest, ConnectorScopeOutcomeView, ConnectorScopeSignalView, ConnectorSlateRevisionAcceptRequest, ConnectorSlateRevisionAcceptedView, ConnectorSlateRevisionCauseView +2 | FIX 988: the owner's doors onto proposed connector slate revisions (ARCH-0072 door 3, and the issuer-change… |
 | `src/verbs/connector_source_rows_read.rs` | src | s | 1 fn · 1 re-export | — | `connector.call_source_rows`: one held call's source rows the caller's lane admits, by ref |
 | `src/verbs/connector_witness_read_grant.rs` | src | s | 3 fn · 1 re-export | — | `vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a… |
 | `src/verbs/coreference.rs` | src | s | 3 struct · 6 fn · 1 re-export | CoreferenceLinkReceipt, CoreferenceLinkRequest, CoreferenceShareConsentRequest | Typed cross-vault identity links |
@@ -9837,6 +9838,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/connector_key_suspend_admission.rs` | test | s | — | — | FIX 22392 CONNECTOR-KEY: the one writer of a connector key's suspension admits Active -> Suspended alone |
 | `tests/connector_protocol_narrow_keeps_stamp.rs` | test | m | — | — | Census row L5-15 (Engine ruling L5-15-PROTOCOL-NARROW = A): a catalog connector whose protocol revision… |
 | `tests/connector_reply_source_rows.rs` | test | s | — | — | Census row L5-25 remainder, FIX [RUN-RECEIPT-UNNAMED-TEXT-PROVENANCE] (DEC-0005 world privacy, fix 12): a… |
+| `tests/connector_revision_offers_listed_rows.rs` | test | m | — | — | FIX [MCP-READ-REVISION-OFFERS-UNLISTED-ROWS]: `connector_slate_revision_offers_listed` names the rows each… |
 | `tests/connector_screening_format_pattern.rs` | test | s | — | — | FIX SCREENING-PROFILE-REFUSES-FORMAT-PATTERN: the tool screening that connector register runs on a listed… |
 | `tests/connector_slate_always_allow_drafts.rs` | test | s | — | — | Restriction wave 6, census C46 (Engine RULING RESTRICTION-WAVE-6-CANON-ROWS 16 Nov 03:35, C46 = A): the… |
 | `tests/connector_thread_session.rs` | test | m | — | — | OWN-VOICE-EPOCHS = C, Engine ruling UNBUILT-02-SITTING = A: "A connector thread keeps its own SESSION." |
