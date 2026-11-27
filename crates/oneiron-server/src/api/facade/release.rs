@@ -428,10 +428,16 @@ pub(crate) fn rows_still_admitted(
         }
         let erased =
             oneiron::sync::bridge::local_deletion_is_materialized(vault, row).unwrap_or(false);
+        // A held claim an own held list served its writer fails the
+        // credential's Surfaceable lane; it is judged again as that list
+        // served it, and every other row as before.
         !erased
-            && auth
+            && (auth
                 .can_read_entity_at(vault, row, &destination)
                 .unwrap_or(true)
+                || auth
+                    .reads_own_held_claim_at(vault, row, &destination)
+                    .unwrap_or(false))
     })
 }
 

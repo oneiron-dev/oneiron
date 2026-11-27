@@ -42,9 +42,12 @@ impl Memory<'_> {
     }
 
     /// [`Self::own_held_claims`] whose served view `shown` also accepts. The
-    /// lane admits the candidates uncharged; only the claims returned are
-    /// charged to the caller's read exposure (L8-65) and listed as producers
-    /// of the answer, so a kept reply is checked against each of them.
+    /// lane admits the candidates uncharged, and `shown` tests each one's
+    /// view without its birth ([`Self::claim_view_without_birth`]), whose
+    /// scoped read would charge it; only the claims returned are charged to
+    /// the caller's read exposure (L8-65) and listed as producers of the
+    /// answer, so a kept reply is checked against each of them
+    /// ([`crate::vault::Vault::own_held_claim_readable`]).
     fn own_held_claims_shown(
         &self,
         keep: impl Fn(&EntityId, &ClaimBody) -> bool,
@@ -104,10 +107,10 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let view = self.served_claim_view(&row.id, &body)?;
-            if view.held.is_some() && shown(&view) {
+            let candidate = self.claim_view_without_birth(&row.id, &body)?;
+            if candidate.held.is_some() && shown(&candidate) {
                 served.push(row.id);
-                views.push(view);
+                views.push(self.served_claim_view(&row.id, &body)?);
                 if views.len() == limit {
                     break;
                 }
@@ -122,11 +125,13 @@ impl Memory<'_> {
     /// value holds at least one of `query`'s terms (the text index's
     /// analyzer, over the value text as the index reads a claim's value).
     /// Only the value the view serves is matched, never stored words it
-    /// redacts or masks. At most [`OWN_HELD_SEARCH_LIMIT`]; none for a query
-    /// with no terms.
+    /// redacts or masks. A stale claim only when `include_stale`, the stale
+    /// selector the read beside it applied under the actor ceiling. At most
+    /// [`OWN_HELD_SEARCH_LIMIT`]; none for a query with no terms.
     fn own_held_matching(
         &self,
         query: &str,
+        include_stale: bool,
         keep: impl Fn(&EntityId, &ClaimBody) -> bool,
     ) -> MemoryResult<Vec<ClaimView>> {
         let terms = query_terms(self.vault, query);
@@ -134,7 +139,7 @@ impl Memory<'_> {
             return Ok(Vec::new());
         }
         self.own_held_claims_shown(
-            keep,
+            |id, body| (include_stale || !body.stale) && keep(id, body),
             |view| {
                 let text = match &view.value {
                     serde_json::Value::String(text) => text.clone(),
@@ -155,9 +160,14 @@ impl Memory<'_> {
     }
 
     /// `vault.search.bm25`'s held list: [`Self::own_held_matching`] over
-    /// every held claim of the caller.
-    pub(crate) fn own_held_for_search(&self, query: &str) -> MemoryResult<Vec<ClaimView>> {
-        self.own_held_matching(query, |_, _| true)
+    /// every held claim of the caller, stale ones only when the search's
+    /// applied selector `include_stale` takes them.
+    pub(crate) fn own_held_for_search(
+        &self,
+        query: &str,
+        include_stale: bool,
+    ) -> MemoryResult<Vec<ClaimView>> {
+        self.own_held_matching(query, include_stale, |_, _| true)
     }
 
     /// A recall's held list: [`Self::own_held_matching`] under the recall's
@@ -165,11 +175,13 @@ impl Memory<'_> {
     /// actor's default when none is named), its projects and every project
     /// below them, and its kinds, which must name CLAIM when set. A scope
     /// that selects by conversation, person or facet names nothing this
-    /// list can test a claim against, so it gets none.
+    /// list can test a claim against, so it gets none. Stale claims only
+    /// when the recall's applied selector `include_stale` takes them.
     pub(crate) fn own_held_for_recall(
         &self,
         query: &str,
         scope: &RecallScope,
+        include_stale: bool,
     ) -> MemoryResult<Vec<ClaimView>> {
         let claims_asked = scope.kinds.as_ref().is_none_or(|kinds| {
             kinds
@@ -185,7 +197,7 @@ impl Memory<'_> {
         }
         let worlds = self.recall_worlds(scope)?;
         let projects = self.selected_projects(scope)?;
-        self.own_held_matching(query, |_, body| {
+        self.own_held_matching(query, include_stale, |_, body| {
             worlds
                 .as_ref()
                 .is_none_or(|worlds| worlds.admits(body.world))
@@ -203,5 +215,57 @@ impl Memory<'_> {
             reason_codes: row.reason_codes,
             decision_ref: format!("gate:{}", row.decision_id.to_hex()),
         }))
+    }
+}
+
+impl crate::vault::Vault {
+    /// Whether `id` is the own held claim of `key`'s reader that an own held
+    /// list serves it now: a Proposed, Active claim whose write-envelope
+    /// actor is that reader (no System caller), with its tray row, that the
+    /// key's record lane admits and no world keeps from the key's
+    /// destination, the checks [`Memory::own_held_claims`] served it under.
+    /// A kept reply's producer recheck takes it beside
+    /// [`crate::claim::ScopedRead::is_entity_readable`], whose Surfaceable
+    /// lane refuses every held claim, so a held claim served to its writer
+    /// reads again for that writer alone; every other row is judged as
+    /// before.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or a claim row that does not decode.
+    pub fn own_held_claim_readable(
+        &self,
+        key: crate::claim::ScopedReadActorKey,
+        id: &EntityId,
+    ) -> crate::error::Result<bool> {
+        if key.actor_class() == Some(EdgeActorClass::System.gate_actor_class()) {
+            return Ok(false);
+        }
+        let Ok(reader) = EntityId::from_hex(key.actor_ref()) else {
+            return Ok(false);
+        };
+        {
+            let txn = self.store.env.read_txn()?;
+            if self.entity_type_in_txn(&txn, id)? != Some(ENTITY_TYPE_CLAIM)
+                || self.store.lenient_tray_in_txn(&txn, id)?.is_none()
+            {
+                return Ok(false);
+            }
+            let Some(body) = self.get_claim_in_txn(&txn, id)? else {
+                return Ok(false);
+            };
+            if body.approval != ClaimApprovalStatus::Proposed
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || claim_envelope_actor(&body) != Some(reader)
+            {
+                return Ok(false);
+            }
+        }
+        if self.device_local_keeps_for(id, key.destination())? {
+            return Ok(false);
+        }
+        self.scoped_read(key)
+            .recorded_lane()?
+            .is_entity_readable(id)
     }
 }

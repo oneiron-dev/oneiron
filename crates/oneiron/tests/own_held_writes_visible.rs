@@ -2,6 +2,7 @@
 
 mod common;
 
+use oneiron::memory::{ClaimDemoteActionInput, ClaimDemoteRequest, ReadFilterInput};
 use oneiron::memory::{
     ClaimFilteredListRequest, ClaimFilteredReadRequest, ClaimInput, ClaimListFilter,
     ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict,
@@ -204,6 +205,33 @@ fn recall_in(memory: &Memory<'_>, query: &str, scope: Option<RecallScope>) -> Me
             effort: Some(RecallEffort::Light),
             format: Some("md".to_owned()),
             scope,
+            ..RecallRequest::default()
+        },
+    )
+    .expect("explicit recall verb answers")
+}
+
+fn bm25_with_filter(memory: &Memory<'_>, query: &str, filter: ReadFilterInput) -> Bm25Search {
+    search_bm25(
+        memory,
+        QueryBm25Request {
+            query: query.to_owned(),
+            limit: 10,
+            filter: Some(filter),
+        },
+    )
+    .expect("BM25 verb answers")
+}
+
+fn recall_with_filter(memory: &Memory<'_>, query: &str, filter: ReadFilterInput) -> MemoryPack {
+    recall_unembedded(
+        memory,
+        RecallRequest {
+            query: query.to_owned(),
+            effort: Some(RecallEffort::Light),
+            format: Some("md".to_owned()),
+            scope: None,
+            filter: Some(filter),
             ..RecallRequest::default()
         },
     )
@@ -493,5 +521,319 @@ fn recall_held_list_keeps_the_recall_kinds() {
             .any(|view| view.claim_ref == fixture.claim_ref),
         "a recall of CLAIMs keeps the writer's held claim {}",
         fixture.claim_ref,
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn held_candidates_not_served_are_not_charged_to_read_exposure() {
+    use oneiron::authority::HostSlipIssuer;
+    use oneiron::federation::ScopeAxis;
+    use oneiron::test_doors::read_exposure::exposed_records;
+    use std::collections::BTreeSet;
+    let fixture = Fixture::new();
+    let second_ref = common::entity(0xB6).to_hex();
+    let second_receipt = fixture
+        .writer()
+        .claim_upsert(&held_input(
+            &second_ref,
+            fixture.other,
+            serde_json::json!(NON_MATCH),
+        ))
+        .expect("agent upserts a second held claim holding NON_MATCH");
+    assert!(
+        second_receipt.approval == "proposed",
+        "second remember reports proposed approval for {second_ref}"
+    );
+    let issuer =
+        HostSlipIssuer::from_secret(b"own-held-exposure-test-host").expect("test host issuer");
+    let mut claims = fixture
+        .vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip")
+        .claims;
+    claims.slip_id = [0xC1; 32];
+    claims.holder_ref = fixture.writer.to_hex();
+    claims.actor_class = Some("agent".to_owned());
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    claims.expires_at = claims.issued_at + 600;
+    claims.ttl_secs = 600;
+    let slip = fixture
+        .vault
+        .mint_capability_slip(&issuer, claims)
+        .expect("mint the writer's read slip");
+    let challenge = b"own-held-exposure";
+    let signature = issuer
+        .binding_proof(&slip, challenge)
+        .expect("prove the writer holds its slip");
+    let proof = fixture
+        .vault
+        .verify_capability_slip(&issuer.public_key(), &slip, challenge, &signature)
+        .expect("verify the writer's read slip");
+    assert_eq!(
+        proof.claims().holder_ref,
+        fixture.writer.to_hex(),
+        "the verified slip names the writer {}",
+        fixture.writer.to_hex()
+    );
+    let reader = fixture.writer().with_read_proof(&proof);
+    let answer = bm25(&reader, MARKER);
+    assert!(
+        answer.held.iter().any(|v| v.claim_ref == fixture.claim_ref),
+        "BM25 for MARKER must list held {} in held",
+        fixture.claim_ref
+    );
+    assert!(
+        !answer.held.iter().any(|v| v.claim_ref == second_ref),
+        "BM25 for MARKER must not list NON_MATCH held {second_ref}"
+    );
+    fixture
+        .vault
+        .with_write_txn_grouped(|_| Ok(()))
+        .expect("the vault's next write keeps the served records");
+    let marker_id = EntityId::from_hex(&fixture.claim_ref).expect("fixture MARKER claim id");
+    let second_id = EntityId::from_hex(&second_ref).expect("second NON_MATCH claim id");
+    let exposed = exposed_records(&fixture.vault, &fixture.writer)
+        .expect("read the writer's kept exposure rows");
+    assert!(
+        exposed.contains(&marker_id),
+        "exposure must hold served MARKER {} ({} rows)",
+        fixture.claim_ref,
+        exposed.len()
+    );
+    assert!(
+        !exposed.contains(&second_id),
+        "exposure must not hold unserved NON_MATCH {second_ref}"
+    );
+    let exposure = fixture
+        .vault
+        .actor_read_exposure(&fixture.writer)
+        .expect("read the writer's exposure")
+        .expect("the writer was served a record");
+    assert_eq!(
+        exposure.distinct_records, 1,
+        "one record served, the MARKER claim {}",
+        fixture.claim_ref
+    );
+    let fresh = "freshnomatch4x7q";
+    assert!(
+        bm25(&reader, fresh).held.is_empty(),
+        "BM25 for fresh word {fresh} leaves held empty"
+    );
+    fixture
+        .vault
+        .with_write_txn_grouped(|_| Ok(()))
+        .expect("next write after the fresh query");
+    let exposed =
+        exposed_records(&fixture.vault, &fixture.writer).expect("exposure after the fresh query");
+    assert!(
+        exposed == BTreeSet::from([marker_id]),
+        "fresh query gains neither ({} rows, MARKER {}, NON_MATCH {second_ref})",
+        exposed.len(),
+        fixture.claim_ref
+    );
+}
+
+#[test]
+fn a_held_producer_reads_again_for_its_writer_alone() {
+    let fixture = Fixture::new();
+    let claim = EntityId::from_hex(&fixture.claim_ref).expect("fixture claim id");
+    let writer_key = fixture.writer().read_key().expect("the writer's read key");
+    let readable = fixture
+        .vault
+        .own_held_claim_readable(writer_key.clone(), &claim)
+        .expect("judge the writer's held claim");
+    let surfaceable = fixture
+        .vault
+        .scoped_read(writer_key)
+        .is_entity_readable(&claim)
+        .expect("judge the held claim on the Surfaceable lane");
+    assert!(
+        readable,
+        "own held {} must read again for its writer",
+        fixture.claim_ref
+    );
+    assert!(
+        !surfaceable,
+        "Surfaceable must refuse held {} (the retry bug's cause)",
+        fixture.claim_ref
+    );
+    let other_key = fixture
+        .other()
+        .read_key()
+        .expect("the other agent's read key");
+    let other_readable = fixture
+        .vault
+        .own_held_claim_readable(other_key.clone(), &claim)
+        .expect("judge the held claim for the other agent");
+    let other_surfaceable = fixture
+        .vault
+        .scoped_read(other_key)
+        .is_entity_readable(&claim)
+        .expect("judge the held claim on the other's lane");
+    assert!(
+        !other_readable,
+        "held {} must not read for the other agent",
+        fixture.claim_ref
+    );
+    assert!(
+        !other_surfaceable,
+        "other's Surfaceable must not read held {}",
+        fixture.claim_ref
+    );
+    fixture.approve();
+    let writer_key = fixture
+        .writer()
+        .read_key()
+        .expect("the writer's read key after settle");
+    let settled_own = fixture
+        .vault
+        .own_held_claim_readable(writer_key.clone(), &claim)
+        .expect("judge the settled claim as own held");
+    let settled_plain = fixture
+        .vault
+        .scoped_read(writer_key)
+        .is_entity_readable(&claim)
+        .expect("judge the settled claim on the plain lane");
+    assert!(
+        !settled_own,
+        "settled {} is ordinary, not own held",
+        fixture.claim_ref
+    );
+    assert!(
+        settled_plain,
+        "settled {} must read on the plain lane",
+        fixture.claim_ref
+    );
+}
+
+#[test]
+fn held_lists_keep_the_applied_stale_selector() {
+    let fixture = Fixture::new();
+    let writer = fixture.writer();
+    let demoted = writer
+        .claim_demote(&ClaimDemoteRequest {
+            claim_ref: fixture.claim_ref.clone(),
+            action: ClaimDemoteActionInput::Stale,
+        })
+        .expect("mark the writer's held proposal stale");
+    assert!(
+        demoted.stale,
+        "demoting held {} must mark stale (rung {})",
+        fixture.claim_ref, demoted.rung
+    );
+    let pending = writer.pending_writes(10).expect("read the pending tray");
+    assert!(
+        pending.iter().any(|row| row.claim_ref == fixture.claim_ref),
+        "stale {} keeps its tray row, so still held",
+        fixture.claim_ref
+    );
+    let stale_filter = || ReadFilterInput {
+        include_stale: Some(true),
+        ..Default::default()
+    };
+    let search = bm25_with_filter(&writer, MARKER, stale_filter());
+    assert!(
+        !search.receipt.actor_ceiling.include_stale,
+        "agent ceiling must exclude stale (claim {})",
+        fixture.claim_ref
+    );
+    assert!(
+        !search.receipt.applied.include_stale,
+        "BM25 include_stale=true under ceiling false must apply false (claim {})",
+        fixture.claim_ref
+    );
+    assert!(
+        !search.held.iter().any(|v| v.claim_ref == fixture.claim_ref),
+        "BM25 applied false must not list stale held {}",
+        fixture.claim_ref
+    );
+    let pack = recall_with_filter(&writer, MARKER, stale_filter());
+    assert!(
+        !pack.narrowing.applied.include_stale,
+        "recall include_stale=true under ceiling false must apply false (claim {})",
+        fixture.claim_ref
+    );
+    assert!(
+        !pack.held.iter().any(|v| v.claim_ref == fixture.claim_ref),
+        "recall applied false must not list stale held {}",
+        fixture.claim_ref
+    );
+    {
+        use oneiron::policy_manifest_doors::{
+            PolicyGrantMapEntry, PolicyGrantValue, PolicyManifestPut, PolicyManifestRead,
+            policy_manifests_as_owner, put_policy_manifest_as_owner,
+        };
+        let proof = fixture
+            .vault
+            .authenticate_owner(
+                fixture.owner,
+                "principal:held-stale-true",
+                true,
+                GateDecisionId::now(),
+            )
+            .expect("owner proof for the stale ceiling");
+        let view = policy_manifests_as_owner(
+            &fixture.vault,
+            &proof,
+            &PolicyManifestRead { manifest_ref: None },
+        )
+        .expect("read the policy manifests");
+        let default = view
+            .manifests
+            .iter()
+            .find(|e| e.manifest_ref == view.default_manifest_ref)
+            .expect("default policy manifest");
+        let mut manifest = default.manifest.clone();
+        let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
+        let writer_hex = fixture.writer.to_hex();
+        let mut patched = false;
+        for row in rows.iter_mut() {
+            if row.actor_ref.as_deref() == Some(writer_hex.as_str()) {
+                row.selectors = Some(PolicyGrantValue::Map(vec![PolicyGrantMapEntry {
+                    key: PolicyGrantValue::String("include_stale".to_owned()),
+                    value: PolicyGrantValue::Boolean(true),
+                }]));
+                patched = true;
+            }
+        }
+        assert!(
+            patched,
+            "writer permit row must exist to patch stale true (claim {})",
+            fixture.claim_ref
+        );
+        manifest.scoped_grants = Some(rows);
+        put_policy_manifest_as_owner(
+            &fixture.vault,
+            &proof,
+            PolicyManifestPut {
+                manifest_ref: Some(default.manifest_ref.clone()),
+                expected_body_hash: Some(default.body_hash.clone()),
+                manifest,
+            },
+        )
+        .expect("patch the writer's ceiling to include stale");
+    }
+    let search = bm25_with_filter(&writer, MARKER, stale_filter());
+    assert!(
+        search.receipt.applied.include_stale,
+        "BM25 include_stale=true under ceiling true must apply true (claim {})",
+        fixture.claim_ref
+    );
+    assert!(
+        search.held.iter().any(|v| v.claim_ref == fixture.claim_ref),
+        "BM25 applied true must list stale held {}",
+        fixture.claim_ref
+    );
+    let pack = recall_with_filter(&writer, MARKER, stale_filter());
+    assert!(
+        pack.narrowing.applied.include_stale,
+        "recall include_stale=true under ceiling true must apply true (claim {})",
+        fixture.claim_ref
+    );
+    assert!(
+        pack.held.iter().any(|v| v.claim_ref == fixture.claim_ref),
+        "recall applied true must list stale held {}",
+        fixture.claim_ref
     );
 }

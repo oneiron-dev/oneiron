@@ -67,8 +67,10 @@ impl Bm25Search {
 pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult<Bm25Search> {
     let memory = memory.with_read_filter(input.filter.as_ref());
     let page = memory.query_bm25(&input.query, input.limit)?;
+    // The stale selector the search applied, under the actor ceiling.
+    let include_stale = page.receipt.applied.include_stale;
     let mut answer = Bm25Search::local(memory.vault(), page);
-    answer.held = memory.own_held_for_search(&input.query)?;
+    answer.held = memory.own_held_for_search(&input.query, include_stale)?;
     Ok(answer)
 }
 
