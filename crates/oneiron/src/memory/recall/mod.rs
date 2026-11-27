@@ -80,8 +80,9 @@ pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::recall::{
-    Effort, MemoryProvenance, PUSH_LINES, RecallBarAsk, RecallBarOutcome, RecallBarRule,
-    RecallRequest, RecallScope, RecallSource, RetrievalMeta, ScopeHonesty, is_harness_name,
+    Effort, LineProvenance, MemoryProvenance, PUSH_LINES, RecallBarAsk, RecallBarOutcome,
+    RecallBarRule, RecallRequest, RecallScope, RecallSource, RetrievalMeta, ScopeHonesty,
+    is_harness_name,
 };
 
 /// Kinds that hold no text of their own: conversations and sessions, and the
@@ -136,6 +137,14 @@ pub(crate) fn check_recall_request(
     {
         return Err(MemoryError::bad_request(
             "bar.harness must be 1 to 40 of a-z 0-9 -, starting with a letter",
+        ));
+    }
+    if let Some(session) = execution.bar.and_then(|bar| bar.session.as_deref())
+        && (!(1..=200).contains(&session.len())
+            || !session.bytes().all(|byte| byte.is_ascii_graphic()))
+    {
+        return Err(MemoryError::bad_request(
+            "bar.session must be 1 to 200 printable non-space ASCII characters",
         ));
     }
     Ok(())
@@ -239,6 +248,9 @@ pub struct MemoryItem {
     /// whose bar compares cosines. Never a rank, a blend or a confidence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f32>,
+    /// Extra provenance for a recall that asked for the owner's relevance bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_provenance: Option<LineProvenance>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
@@ -851,12 +863,12 @@ impl Memory<'_> {
                     .cited_messages
                     .get(&entity.id)
                     .map_or(&[][..], Vec::as_slice);
-                if let Some(mut item) = self.memory_item_for(
+                if let Some(mut item) = self.recall_item_for(
                     &lane,
                     &entity.id,
                     selection.facet,
                     mode,
-                    cited,
+                    (cited, execution.bar.is_some()),
                     &mut receipt,
                 )? {
                     item.embedding_matches = status

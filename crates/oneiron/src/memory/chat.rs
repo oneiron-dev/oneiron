@@ -601,6 +601,7 @@ fn document_item(vault: &crate::Vault, view: &EntityView) -> MemoryItem {
         conversation_id: None,
         record: Some(crate::lens::RecordRef::from_view(view)),
         similarity: None,
+        line_provenance: None,
     }
 }
 

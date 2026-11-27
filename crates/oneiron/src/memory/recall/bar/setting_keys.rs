@@ -1,7 +1,7 @@
 //! The `recall.bar.*` rows (their value and item domain: the parent module). They sit in a
 //! file named `setting_keys.rs`, the only name build.rs reads catalogue rows from.
 
-use super::{RecallBar, is_harness_item};
+use super::{ExcludedPredicates, RecallBar, is_harness_item};
 use crate::setting::{ItemDomain, Kind, ScopeKind, SettingSync};
 
 crate::setting::setting_keys! {
@@ -11,8 +11,8 @@ crate::setting::setting_keys! {
     /// (the default): the bar the host measured for the vault's embedding space, which only a
     /// host running that exact model revision on its measured profile states (a cosine of
     /// 0.52 for pplx-embed-v1-0.6b); a direct match on a vault with no embedder; and no line
-    /// anywhere else, such as an endpoint that names no profile. `open`: every line. `quiet`:
-    /// no line. `direct_match`: a line holding a rare term of the query, or every term of it.
+    /// anywhere else, such as an endpoint that names no profile. `open`: no relevance cut.
+    /// `quiet`: no line. `direct_match`: a rare term of the query, or every term of it.
     /// `{"cosine": {"floor", "model"}}`:
     /// a raw cosine of at least `floor` in `model`'s space, and no line in another space. A
     /// line is judged before the result is cut, so one under the bar takes no slot, and a
@@ -23,6 +23,16 @@ crate::setting::setting_keys! {
         kind: Kind::new(RecallBar::measured).strictest(RecallBar::quiet),
         scopes: &[ScopeKind::Vault, ScopeKind::Project],
         item: Some(ItemDomain { name: "harnesses", admits: is_harness_item }),
+        sync: SettingSync::Vault,
+        standing_approval: false,
+    };
+    /// Claim predicates to leave out of pushed recall. An entry matches that predicate and
+    /// its dot-separated descendants. A project's list replaces the vault's; an empty list
+    /// excludes none. Pulls ignore this list. Only the owner sets it.
+    pub(crate) RECALL_BAR_EXCLUDED_PREDICATES: ExcludedPredicates = "recall.bar.excluded_predicates" {
+        kind: Kind::new(ExcludedPredicates::bookkeeping),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        item: None,
         sync: SettingSync::Vault,
         standing_approval: false,
     };

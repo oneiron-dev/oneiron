@@ -90,6 +90,16 @@ start, give `--query "<words>"`: only lines that clear your relevance bar come
 (`recall.bar.start`, [claude-code-hooks.md](claude-code-hooks.md#how-it-works)).
 A start with no query recalls nothing.
 
+**Read the whole record.** Each pushed line ends with its record id (and
+revision if pinned), source, claim standing when present, readable source
+conversation when known, and the learned time in UTC. Pass the id to
+`vault.hydrate` to read the whole record. The session's own imported
+conversation is never pushed. As owner, use `vault.settings.set` with
+`{"key":"recall.bar.excluded_predicates","scope":{"kind":"vault"},"value":[]}`
+to push all predicates that otherwise pass. The default list is
+`skill.hub_provenance`, `skill.scan_verdict` and `machine.capacity`; each
+entry also excludes predicates below it. A project can set its own list.
+
 ## A hosted vault
 
 With a hosted vault selected (`oneiron hosted`), a session that binds it

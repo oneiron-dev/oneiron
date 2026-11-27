@@ -65,10 +65,20 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
   in any other space it gives nothing until you set a floor
   (`{"cosine": {"floor": 0.6, "model": "<org/name@revision>"}}`), and on a
   vault with no embedder it gives a line holding a rare word of the query, or
-  every word of it. `open` gives every line, `quiet` none. Each line kept says
-  its `similarity`. To be told in one line when nothing cleared the bar, set
+  every word of it. `open` skips the relevance cut, `quiet` gives no lines.
+  When the bar compares cosines, the recall reports each line's `similarity`.
+  To be told in one line when nothing cleared the bar, set
   `recall.bar.empty_receipt` to true for the harness; by default the hook says
   nothing.
+- **Read the whole record.** Each pushed line ends with its record id (and
+  revision if pinned), source, claim standing when present, readable source
+  conversation when known, and the learned time in UTC. Pass the id to
+  `vault.hydrate` to read the whole record. The session's own imported
+  conversation is never pushed. As owner, use `vault.settings.set` with
+  `{"key":"recall.bar.excluded_predicates","scope":{"kind":"vault"},"value":[]}`
+  to push all predicates that otherwise pass. The default list is
+  `skill.hub_provenance`, `skill.scan_verdict` and `machine.capacity`; each
+  entry also excludes predicates below it. A project can set its own list.
 - **No recall at start, unless you give the task's words.** A start keyed on
   nothing but the folder's name recalls nothing: on a folder's name no bar
   separates the lines you need from the ones that mislead. The plugin and the

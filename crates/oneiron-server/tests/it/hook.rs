@@ -1048,6 +1048,80 @@ fn a_push_gives_no_turn_from_another_projects_session() {
 }
 
 #[test]
+fn a_queried_start_in_a_bound_project_names_its_session_and_the_records_it_pushes() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = Home::new();
+    let url = answering_vault();
+    let folder = home.path("project");
+    std::fs::create_dir(&folder).expect("project folder");
+    let bridge = home.path("bridge");
+    let argv = home.path("argv");
+    let call = home.path("call");
+    // Stand in at the MCP boundary to see the request and return a fixed, pinned hit.
+    let script = r#"#!/bin/sh
+printf '%s\n' "$@" > '@ARGV@'
+read -r line
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"_meta":{"oneiron/workspace":{"project_bound":true}}}}'
+read -r line
+read -r line || exit 0
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"vault.recall"}]}}'
+read -r line
+printf '%s\n' "$line" > '@CALL@'
+printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"items":[{"kind":"CLAIM","value_text":"heron lantern plans","predicate":"profile.hobby","short_id":"claim:42","source_revision_ref":"1234567890abcdef1234567890abcdef","provenance":{"source":"user_stated"},"line_provenance":{"approval":"auto","learned_at":1780000000,"source_conversations":["conv:ab","conv:cd"]}}]}}}'
+"#;
+    let script = script
+        .replace("@ARGV@", argv.to_str().expect("UTF-8 path"))
+        .replace("@CALL@", call.to_str().expect("UTF-8 path"));
+    std::fs::write(&bridge, script).expect("write the bridge");
+    std::fs::set_permissions(&bridge, std::fs::Permissions::from_mode(0o700))
+        .expect("make the bridge executable");
+    let credential = home.path("scripted.cred");
+    let said = home.session_start_in(
+        &folder,
+        &[
+            "--url",
+            &url,
+            "--oneiron",
+            bridge.to_str().expect("UTF-8 path"),
+            "--credential-file",
+            credential.to_str().expect("UTF-8 path"),
+            "--query",
+            "heron lantern",
+            "--timeout",
+            "60",
+        ],
+    );
+
+    let argv = std::fs::read_to_string(argv).expect("bridge arguments");
+    let argv: Vec<_> = argv.lines().collect();
+    assert!(
+        argv.windows(2)
+            .any(|args| args == ["--workspace", folder.to_str().expect("UTF-8 path")]),
+        "the bridge names the bound folder: {argv:?}"
+    );
+    let call: Value = serde_json::from_slice(&std::fs::read(call).expect("recall request"))
+        .expect("JSON-RPC call");
+    assert_eq!(
+        call.pointer("/params/arguments/arguments/spec/bar"),
+        Some(&json!({
+            "source": "start",
+            "harness": "claude-code",
+            "session": "0b5e55e0-2222-4333-8444-a55566667777",
+        })),
+    );
+    assert_eq!(said.len(), 3, "{said:?}");
+    assert!(
+        said[1].contains("the whole record: vault.hydrate with the id"),
+        "{said:?}"
+    );
+    assert_eq!(
+        said[2],
+        "- profile.hobby: heron lantern plans (claim:42@1234567890abcdef1234567890abcdef · stated · auto · from conv:ab +1 · learned 2026-05-28 20:26 UTC)"
+    );
+}
+
+#[test]
 fn a_mistyped_hook_command_exits_1_so_it_never_blocks_the_host() {
     let home = Home::new();
     let output = home
@@ -1160,10 +1234,7 @@ fn mint_project(
     let project_signer = vault
         .owner_project_signer(&issuer)
         .expect("the owner project signer");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("the clock is set")
-        .as_secs();
+    let now = vault.now_recorded_at();
     let source_message = EntityId::now().to_hex();
     let staged: WitnessTurn = serde_json::from_value(json!({
         "conversation_ref": EntityId::now().to_hex(),

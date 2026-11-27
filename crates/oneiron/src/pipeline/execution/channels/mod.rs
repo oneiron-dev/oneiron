@@ -886,12 +886,11 @@ impl PipelineBuilder<'_> {
             };
             reranked_block.follow_turn_fold(&cited_messages);
 
-            // The owner's relevance bar (RECALL-CARRIER-THRESHOLD), on each row's final id:
-            // after the fold, before the pack's candidates, budgets and cut, so a row under it
-            // takes no slot and the next moves up. A push keeps only CLAIMs here, the one kind
-            // with a project stamp, so its rows all hold project membership (REVIEW-10566
-            // round 1); the corpus filter then decides membership, before the cut, so the next
-            // CLAIM moves up.
+            // The owner's relevance bar (RECALL-CARRIER-THRESHOLD) and push exclusions, on each
+            // row's final id: after the fold and admission, before the pack's candidates, budgets
+            // and cut, so a dropped row takes no slot and the next moves up. A push keeps only
+            // CLAIMs here, the one kind with a project stamp, so its rows all hold project
+            // membership (REVIEW-10566 round 1); the corpus filter then decides membership.
             if self.recall_bar_claims_only {
                 let mut kept = Vec::with_capacity(scores.len());
                 for row in scores.drain(..) {
@@ -907,19 +906,19 @@ impl PipelineBuilder<'_> {
             let bar_similarity = match self.recall_bar.as_ref() {
                 Some(judge) => {
                     let mut hidden_metadata = EntityMetadataCache::default();
-                    let mut hidden_row = match judge {
-                        crate::memory::recall::bar::BarJudge::DirectMatch { .. } => self
-                            .hidden_row_test(
-                                rtxn,
-                                (
-                                    filter_config,
-                                    world_authority
-                                        .as_ref()
-                                        .map(|resolved| &resolved.allowed_set),
-                                ),
-                                &mut hidden_metadata,
-                            )?,
-                        _ => None,
+                    let mut hidden_row = if judge.is_direct_match() {
+                        self.hidden_row_test(
+                            rtxn,
+                            (
+                                filter_config,
+                                world_authority
+                                    .as_ref()
+                                    .map(|resolved| &resolved.allowed_set),
+                            ),
+                            &mut hidden_metadata,
+                        )?
+                    } else {
+                        None
                     };
                     judge.retain_passing(
                         &mut scores,

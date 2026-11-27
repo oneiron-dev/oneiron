@@ -108,7 +108,8 @@ impl Memory<'_> {
         Ok(())
     }
 
-    /// No item or its provenance may be assembled before the actor's scoped read.
+    /// The unadorned item for a rerank document, cited message or operation replay.
+    /// Operation replays cannot carry a bar.
     pub(super) fn memory_item_for(
         &self,
         lane: &ScopedRead<'_>,
@@ -116,6 +117,19 @@ impl Memory<'_> {
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
         cited: &[EntityId],
+        receipt: &mut ScopedReadReceipt,
+    ) -> MemoryResult<Option<MemoryItem>> {
+        self.recall_item_for(lane, id, facet_hint, mode, (cited, false), receipt)
+    }
+
+    /// No item or its provenance may be assembled before the actor's scoped read.
+    pub(super) fn recall_item_for(
+        &self,
+        lane: &ScopedRead<'_>,
+        id: &EntityId,
+        facet_hint: Option<EntityId>,
+        mode: crate::vault::ReadMode,
+        (cited, with_line_provenance): (&[EntityId], bool),
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
         // What the lane admits from is what the item is projected from: a
@@ -325,7 +339,7 @@ impl Memory<'_> {
             } else {
                 super::served_value_json(&body.value)
             };
-            {
+            let line_provenance = {
                 let txn = self
                     .vault
                     .store
@@ -340,7 +354,17 @@ impl Memory<'_> {
                     )?;
                     keys.mask_json(&mut value_json);
                 }
-            }
+                if with_line_provenance {
+                    Some(LineProvenance {
+                        approval: Some(body.approval.as_str().to_owned()),
+                        learned_at: view.learned_at,
+                        source_conversations: lane
+                            .admitted_claim_conversation_refs_in(&txn, id, &body)?,
+                    })
+                } else {
+                    None
+                }
+            };
             Ok(Some(MemoryItem {
                 asset_ref: (entity_type == crate::registry::ENTITY_TYPE_ASSET).then(|| id.to_hex()),
                 embedding_matches: Vec::new(),
@@ -377,6 +401,7 @@ impl Memory<'_> {
                 conversation_id: None,
                 record,
                 similarity: None,
+                line_provenance,
             }))
         } else {
             let value_text = turn_text
@@ -500,6 +525,11 @@ impl Memory<'_> {
                 salience: None,
                 reactions,
                 cited_messages,
+                line_provenance: with_line_provenance.then(|| LineProvenance {
+                    approval: None,
+                    learned_at: view.learned_at,
+                    source_conversations: conversation_id.iter().cloned().collect(),
+                }),
                 conversation_id,
                 record,
                 similarity: None,

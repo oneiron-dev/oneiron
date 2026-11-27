@@ -7,7 +7,7 @@
 //! after the MESSAGE->TURN fold and before any budget or cut, so a line under the bar takes no
 //! slot. The score is the raw cosine of the line's stored vector and the query's in the vault's
 //! embedding space: never a fused, blended or reranked score, and never a confidence. On a
-//! vault with no embedder the rule is a direct match ([`BarJudge::DirectMatch`]). The owner
+//! vault with no embedder the rule is a direct match ([`BarTest::DirectMatch`]). The owner
 //! sets the rule per source (`recall.bar.start`, `recall.bar.carrier`, `recall.bar.pull`), per
 //! harness (the row's item) and per project (the row's scope); see [`setting_keys`].
 
@@ -23,8 +23,10 @@ use super::{RecallBarAsk, RecallBarOutcome, RecallBarRule, RecallSource};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ingest::history::HookTranscriptSource;
+use crate::ports::EntityStoreRead;
 use crate::setting::{SettingScope, SettingSource, SettingValue};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, StoreRead};
 
 /// A query term is distinctive when at most one in this many of the vault's documents hold
 /// it.
@@ -39,7 +41,7 @@ pub(crate) enum RecallBar {
     /// ([`Vault::set_measured_recall_bar`]; 0.52 for pplx-embed-v1-0.6b, RECALL-AB-THRESHOLD-
     /// DATA). On a vault with no embedder, a direct match; quiet in every other case.
     Measured,
-    /// No bar: every line the recall found.
+    /// No relevance cut; push exclusions still apply.
     Open,
     /// No line.
     Quiet,
@@ -94,10 +96,56 @@ fn is_harness_item(item: &str) -> bool {
     super::is_harness_name(item)
 }
 
-/// How a recall's pipeline judges each candidate, resolved once per recall
-/// ([`resolve`]); `None` there is no bar.
+/// A list of predicates or predicate families. The stored and wire value is a plain list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct ExcludedPredicates(Vec<String>);
+
+impl ExcludedPredicates {
+    fn bookkeeping() -> Self {
+        Self(
+            [
+                "skill.hub_provenance",
+                "skill.scan_verdict",
+                "machine.capacity",
+            ]
+            .map(str::to_owned)
+            .into(),
+        )
+    }
+
+    fn matches(&self, predicate: &str) -> bool {
+        self.0.iter().any(|entry| {
+            predicate
+                .strip_prefix(entry.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
+    }
+}
+
+impl SettingValue for ExcludedPredicates {
+    fn check(self) -> Result<Self> {
+        for entry in &self.0 {
+            crate::claim::validate_predicate(entry, true).map_err(|error| {
+                Error::InvalidConfig(format!("recall.bar.excluded_predicates: {error}"))
+            })?;
+        }
+        Ok(self)
+    }
+}
+
+/// How a recall's pipeline judges each final candidate, resolved once per recall.
 #[derive(Debug, Clone)]
-pub(crate) enum BarJudge {
+pub(crate) struct BarJudge {
+    test: BarTest,
+    excluded_predicates: ExcludedPredicates,
+    excluded_conversation: Option<BTreeSet<EntityId>>,
+}
+
+#[derive(Debug, Clone)]
+enum BarTest {
+    /// No relevance cut.
+    Open,
     /// No candidate passes.
     Quiet,
     /// A candidate passes when it holds a distinctive term of `query`, or, for a query of
@@ -124,17 +172,17 @@ pub(crate) struct ResolvedBar {
 /// Quiet, and never wider, when: a push reads outside any project; the row does not read; the
 /// rule compares cosines and the query has no vector, or the vault's vectors are in another
 /// space than the rule's, or in a declared text space (none is measured yet).
-pub(crate) fn resolve(
+fn resolve(
     vault: &Vault,
     txn: &RoTxn<'_>,
     ask: &RecallBarAsk,
     query: &str,
     (project, project_scoped): (Option<EntityId>, bool),
     query_vector: Option<&[f32]>,
-) -> ResolvedBar {
+) -> Result<ResolvedBar> {
     let quiet = |reason: &str| {
         (
-            Some(BarJudge::Quiet),
+            BarTest::Quiet,
             RecallBarRule::Quiet {
                 reason: reason.to_owned(),
             },
@@ -155,10 +203,10 @@ pub(crate) fn resolve(
         .map_or(true, |bindings| bindings.text.is_some());
     let cosine = |floor: f64, model: &str| match query_vector {
         Some(vector) if vector.len() == vault.config.dimensions => (
-            Some(BarJudge::Cosine {
+            BarTest::Cosine {
                 floor,
                 query: vector.to_vec(),
-            }),
+            },
             RecallBarRule::Cosine {
                 floor: floor as f32,
                 model: model.to_owned(),
@@ -166,7 +214,7 @@ pub(crate) fn resolve(
         ),
         _ => quiet("no_query_vector"),
     };
-    let (judge, rule) = if ask.source.pushes() && !project_scoped {
+    let (mut test, mut rule) = if ask.source.pushes() && !project_scoped {
         quiet("no_project")
     } else {
         match key.read_in_txn(vault, txn, &scopes, harness) {
@@ -175,12 +223,12 @@ pub(crate) fn resolve(
                 quiet("unreadable")
             }
             Ok(resolved) => match resolved.value {
-                RecallBar::Open => (None, RecallBarRule::Open),
+                RecallBar::Open => (BarTest::Open, RecallBarRule::Open),
                 RecallBar::Quiet => quiet("owner"),
                 RecallBar::DirectMatch => (
-                    Some(BarJudge::DirectMatch {
+                    BarTest::DirectMatch {
                         query: query.to_owned(),
-                    }),
+                    },
                     RecallBarRule::DirectMatch,
                 ),
                 RecallBar::Cosine { .. } if declared_text_space => quiet("declared_space"),
@@ -188,9 +236,9 @@ pub(crate) fn resolve(
                 RecallBar::Cosine { .. } => quiet("other_space"),
                 RecallBar::Measured if declared_text_space => quiet("declared_space"),
                 RecallBar::Measured if space.is_empty() => (
-                    Some(BarJudge::DirectMatch {
+                    BarTest::DirectMatch {
                         query: query.to_owned(),
-                    }),
+                    },
                     RecallBarRule::DirectMatch,
                 ),
                 RecallBar::Measured => match vault.measured_recall_bar() {
@@ -200,14 +248,34 @@ pub(crate) fn resolve(
             },
         }
     };
-    ResolvedBar {
+    let mut excluded_predicates = ExcludedPredicates(Vec::new());
+    let mut excluded_conversation = None;
+    if ask.source.pushes() && !matches!(test, BarTest::Quiet) {
+        match setting_keys::RECALL_BAR_EXCLUDED_PREDICATES.read_in_txn(vault, txn, &scopes, None) {
+            Ok(resolved) => excluded_predicates = resolved.value,
+            Err(_) => (test, rule) = quiet("unreadable"),
+        }
+        if let (Some(harness), Some(session)) = (harness, ask.session.as_deref()) {
+            excluded_conversation = HookTranscriptSource::session_conversation(harness, session)?
+                .map(|id| BTreeSet::from([id]));
+        }
+    }
+    let judge = (!matches!(test, BarTest::Open)
+        || !excluded_predicates.0.is_empty()
+        || excluded_conversation.is_some())
+    .then_some(BarJudge {
+        test,
+        excluded_predicates,
+        excluded_conversation,
+    });
+    Ok(ResolvedBar {
         judge,
         outcome: RecallBarOutcome {
             source: ask.source,
             rule,
             receipt,
         },
-    }
+    })
 }
 
 impl crate::memory::Memory<'_> {
@@ -296,57 +364,109 @@ impl crate::memory::Memory<'_> {
             }
         };
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        Ok(resolve(self.vault, &txn, ask, query, project, query_vector))
+        Ok(resolve(
+            self.vault,
+            &txn,
+            ask,
+            query,
+            project,
+            query_vector,
+        )?)
     }
 }
 
 impl BarJudge {
-    /// Keeps, in their order, the rows of `scores` that clear the bar, read in `rtxn`, and
-    /// answers each kept row's cosine when the bar compares cosines. `hidden_row` hides a row
-    /// the reader may not read from a term's document count (the text channel's own-row
-    /// test).
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
+    pub(crate) fn is_direct_match(&self) -> bool {
+        matches!(self.test, BarTest::DirectMatch { .. })
+    }
+
+    /// Keeps final ids that clear the relevance test and the push exclusions, in order.
+    /// Returns the raw cosine of each kept row when the bar compares cosines. `hidden_row`
+    /// hides rows the reader may not read from a term's document count.
     pub(crate) fn retain_passing(
         &self,
         scores: &mut Vec<ScoredEntity>,
         vault: &Vault,
-        store: &impl ManifestDbs,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         hidden_row: Option<&mut (dyn FnMut(&EntityId) -> Result<bool> + '_)>,
     ) -> Result<HashMap<EntityId, f32>> {
         let mut similarity = HashMap::new();
-        match self {
-            Self::Quiet => scores.clear(),
-            Self::Cosine { floor, query } => {
-                let mut kept = Vec::with_capacity(scores.len());
-                for row in scores.drain(..) {
+        if matches!(self.test, BarTest::Quiet) {
+            scores.clear();
+            return Ok(similarity);
+        }
+        let (terms, distinctive) = if let BarTest::DirectMatch { query } = &self.test {
+            let terms = query_terms(vault, query);
+            let distinctive = distinctive_terms(store, rtxn, &terms, hidden_row)?;
+            (terms, distinctive)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let mut kept = Vec::with_capacity(scores.len());
+        for row in scores.drain(..) {
+            if self.excludes(vault, store, rtxn, &row.id)? {
+                continue;
+            }
+            match &self.test {
+                BarTest::Cosine { floor, query } => {
                     let Some(vector) = vault.vector_in_txn(store, rtxn, &row.id)? else {
                         continue;
                     };
                     let cosine = oneiron_retrieval::distance::cosine_similarity(query, &vector);
-                    if cosine.is_finite() && f64::from(cosine) >= *floor {
-                        similarity.insert(row.id, cosine);
-                        kept.push(row);
+                    if !cosine.is_finite() || f64::from(cosine) < *floor {
+                        continue;
+                    }
+                    similarity.insert(row.id, cosine);
+                }
+                BarTest::DirectMatch { .. } => {
+                    if !direct_match(store, rtxn, &terms, &distinctive, &row.id)? {
+                        continue;
                     }
                 }
-                *scores = kept;
+                BarTest::Open => {}
+                BarTest::Quiet => unreachable!("quiet cleared the candidates"),
             }
-            Self::DirectMatch { query } => {
-                let terms = query_terms(vault, query);
-                let distinctive = distinctive_terms(store, rtxn, &terms, hidden_row)?;
-                let mut kept = Vec::with_capacity(scores.len());
-                for row in scores.drain(..) {
-                    if direct_match(store, rtxn, &terms, &distinctive, &row.id)? {
-                        kept.push(row);
-                    }
-                }
-                *scores = kept;
-            }
+            kept.push(row);
         }
+        *scores = kept;
         Ok(similarity)
+    }
+
+    /// The pipeline already admitted this final id. Test the stored predicate and
+    /// negate only the conversation membership test, never the admission gate.
+    fn excludes(
+        &self,
+        vault: &Vault,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if !self.excluded_predicates.0.is_empty()
+            && store.port_entity_with_raw(txn, id, |raw| {
+                if raw.first() != Some(&crate::registry::ENTITY_TYPE_CLAIM) {
+                    return Ok(false);
+                }
+                let Some(bytes) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {
+                    return Ok(false);
+                };
+                let body = crate::claim::decode_claim_body(bytes, true)?;
+                Ok(self.excluded_predicates.matches(&body.predicate))
+            })? == Some(true)
+        {
+            return Ok(true);
+        }
+        if self.excluded_conversation.is_some() {
+            return super::conversation_candidate_admits(
+                vault,
+                store,
+                txn,
+                id,
+                &self.excluded_conversation,
+            );
+        }
+        Ok(false)
     }
 }
 
