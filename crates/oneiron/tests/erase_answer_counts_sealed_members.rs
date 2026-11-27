@@ -205,6 +205,8 @@ const STATEMENT_PREDICATE: &str = "profile.statement";
 
 struct Side {
     vault: Vault,
+    /// The owner actor `proof` authenticates.
+    actor: EntityId,
     proof: AuthenticatedOwner,
     issuer: HostSlipIssuer,
     vault_id: AuthorityVaultId,
@@ -247,6 +249,7 @@ fn root(dir: tempfile::TempDir, vault: Vault, seed: u8) -> Side {
         .expect("a rooted vault has an id");
     Side {
         vault,
+        actor: owner,
         proof,
         issuer,
         vault_id,
@@ -688,7 +691,7 @@ fn an_inquiry_only_hold_counts_its_sealed_copy_claim() -> TestResult {
             None,
         )
         .map_err(at("place the inquiry hold"))?;
-    let memory = vault.memory(fixture.company.proof.actor(), EdgeActorClass::Human);
+    let memory = vault.memory(fixture.company.actor, EdgeActorClass::Human);
     let (takes, outcome) = preview_and_erase(&memory, &fixture.company.proof, copies[0].0);
     let preview = remaining_of(&takes);
     let entries: Vec<_> = preview
@@ -756,7 +759,7 @@ fn a_widening_that_adds_an_inquiry_counts_its_copy_claim() -> TestResult {
             vec![LegalHoldTarget::Inquiry(sent.inquiry.id)],
         )
         .map_err(at("widen with the inquiry"))?;
-    let memory = vault.memory(fixture.company.proof.actor(), EdgeActorClass::Human);
+    let memory = vault.memory(fixture.company.actor, EdgeActorClass::Human);
     let (takes, outcome) = preview_and_erase(&memory, &fixture.company.proof, copies[0].0);
     let preview = remaining_of(&takes);
     let entries: Vec<_> = preview
