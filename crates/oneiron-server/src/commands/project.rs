@@ -68,8 +68,8 @@ fn folder_identity(folder: Option<&Path>) -> anyhow::Result<WorkspaceIdentity> {
     };
     WorkspaceIdentity::of_session_folder(&folder).with_context(|| {
         format!(
-            "{} is no workspace: it does not resolve, or its checkout root is the filesystem \
-             root or the home directory",
+            "{} is no workspace: it does not resolve to a directory, or it or its checkout root \
+             is the filesystem root or the home directory",
             folder.display()
         )
     })
