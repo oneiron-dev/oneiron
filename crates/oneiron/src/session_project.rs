@@ -72,17 +72,17 @@ pub const DIGEST_TEXT_LEN: usize = DIGEST_TEXT_PREFIX.len() + 64;
 /// The longest label a binding keeps, in bytes.
 pub const WORKSPACE_LABEL_MAX: usize = 128;
 
-/// The receipt axis a read names when an attached session's project narrowed it: CLAIM rows
-/// stamped outside the session's project were not read.
+/// The receipt axis a read names when an attached session's project narrowed it: CLAIM, NOTE,
+/// MESSAGE and TURN rows placed outside the session's project were not read.
 pub const SESSION_PROJECT_AXIS: &str = "session_project";
 
-/// The receipt axis a read names when its attached session's folder has no project bound: it
-/// read no CLAIM row. The owner binds one with `oneiron project bind <project-ref>` in the
-/// folder; a call that names its projects (`project_refs`) reads those.
+/// The receipt axis when an attached session's folder has no project bound: it read no CLAIM,
+/// NOTE, MESSAGE or TURN row. The owner binds one with `oneiron project bind <project-ref>`
+/// in the folder; a call that names its projects (`project_refs`) reads those.
 pub const NO_PROJECT_BOUND_AXIS: &str = "no_project_bound";
 
-/// What an attached session's folder selects for the reads that name no project: a request,
-/// never authority. Only CLAIM rows carry a project stamp, so only they are narrowed.
+/// A session folder's default when a read names no project: a request, never authority.
+/// Only CLAIM (body project) and NOTE, MESSAGE or TURN (birth stamp) rows are narrowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionProjects {
     /// The folder's project and every PROJECT below it.

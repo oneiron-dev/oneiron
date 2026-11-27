@@ -47,7 +47,9 @@ mod tests;
 pub(crate) use self::birth_placement::{
     BirthPlacement, GuestPlacement, carries_birth_placement, stored_placement_in_txn,
 };
-pub(crate) use self::project_placement::{stamp_note_project, stored_project};
+pub(crate) use self::project_placement::{
+    session_projects_admit_row, stamp_note_project, stored_project,
+};
 #[cfg(feature = "sync")]
 pub(crate) use self::stamping::stamp_carried_placement;
 pub(crate) use self::stamping::{

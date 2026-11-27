@@ -90,8 +90,8 @@ pub struct ScopedReadActorKey {
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::claim::world_access::WorldAuthoritySet>,
     /// The projects an attached session's folder selects for a read that names none
-    /// (RECALL-SESSION-PROJECT): a request, never authority. Every CLAIM row the read serves
-    /// is stamped inside them; see [`Self::within_session_projects`].
+    /// (RECALL-SESSION-PROJECT): a request, never authority. Every CLAIM, NOTE, MESSAGE and TURN
+    /// row the read serves is placed inside them; see [`Self::within_session_projects`].
     pub(super) session_projects: Option<crate::session_project::SessionProjects>,
     /// Where the read's rows go: off this device or not, and each machine a
     /// connection proved beside that (mesh PR2b); see [`Self::at`] and

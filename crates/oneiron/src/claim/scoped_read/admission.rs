@@ -123,10 +123,10 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
-    /// Read only the CLAIM rows `projects` admits: an attached session's default for a read that
-    /// names no project (RECALL-SESSION-PROJECT), for a host that builds this lane from a
-    /// credential rather than a memory handle. It rides the key, so a lane built from it keeps
-    /// it; a request, never authority.
+    /// Read only the CLAIM, NOTE, MESSAGE and TURN rows `projects` admits: the attached
+    /// session's default for a read that names no project (RECALL-SESSION-PROJECT), for a host
+    /// that builds this lane from a credential rather than a memory handle. It rides the key,
+    /// so a lane built from it keeps it; a request, never authority.
     #[must_use]
     pub fn within_session_projects(
         mut self,

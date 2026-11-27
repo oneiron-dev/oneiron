@@ -12,7 +12,7 @@ use super::*;
 /// is not exactly one project, or where a stamp row stands but does not bind
 /// (`stamp_bound_on` false), which is no usable placement.
 pub(crate) fn stored_project(
-    store: &crate::store::Store,
+    store: &(impl ManifestDbs + MachineHistoryScope),
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
@@ -36,6 +36,41 @@ pub(crate) fn stored_project(
         }
         _ => None,
     })
+}
+
+/// Whether the session's projects admit this row: a CLAIM by its body, a NOTE,
+/// MESSAGE or TURN by its placement in the lane's own store, and every other
+/// row always. `stored_project` reads no stamp as the default project and an
+/// unusable stamp as no placement.
+pub(crate) fn session_projects_admit_row(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    projects: &crate::session_project::SessionProjects,
+) -> Result<bool> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    match header.entity_type {
+        crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(body, true)
+            .is_ok_and(|body| projects.admits(body.scope_project))),
+        crate::registry::ENTITY_TYPE_NOTE
+        | crate::registry::ENTITY_TYPE_MESSAGE
+        | crate::registry::ENTITY_TYPE_TURN => {
+            match stored_project(store, txn, id, header.entity_type, body) {
+                Ok(project) => Ok(project.is_some_and(|project| projects.admits(project))),
+                Err(error) => {
+                    tracing::warn!(
+                        error_kind = ?error.kind(),
+                        "a session read refused a row whose placement it could not read: unreadable \
+                         placement is quiet, never a wider read (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT)"
+                    );
+                    Ok(false)
+                }
+            }
+        }
+        _ => Ok(true),
+    }
 }
 
 /// Settle a session-placed NOTE onto its project

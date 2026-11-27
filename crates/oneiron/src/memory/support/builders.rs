@@ -38,8 +38,8 @@ impl Memory<'_> {
     /// This handle for one read of an attached agent session whose folder names
     /// `folder_digests`, its own digest first (RECALL-SESSION-PROJECT; Engine ANSWER
     /// RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, Q2 = A). Every read key it builds then
-    /// reads CLAIM rows stamped inside the folder's bound project, or a project below it, and
-    /// none when no live project is bound; every receipt names the axis. It binds a request,
+    /// reads CLAIM, NOTE, MESSAGE and TURN rows placed in the folder's bound project or a project
+    /// below it, and none if no live project is bound; receipts name the axis. It binds a request,
     /// never authority: the credential still decides what is read. A host binds it only on a
     /// read that names no project; a storage failure binds the unbound default, never a wider
     /// read.
