@@ -60,10 +60,10 @@ pub(crate) async fn vault_connectors_slates_scope_outcome(
     (answer, rows)
 }
 
-/// `vault.connectors.slates.revision_offers`: it lists the key and the
-/// standing grant each listed scope offer's standing check read, and the
-/// catalog key and each dependent key of each listed issuer revision.
-/// Bindings, slates and signals are side tables and list nothing.
+/// `vault.connectors.slates.revision_offers`: it lists the key each listed
+/// scope offer's standing check read, and the catalog key and each
+/// dependent key of each listed issuer revision. Bindings, consent grants,
+/// slates and signals are side tables and list nothing.
 pub(crate) async fn vault_connectors_slates_revision_offers(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

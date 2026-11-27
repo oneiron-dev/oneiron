@@ -249,10 +249,11 @@ impl Vault {
 
     /// [`Self::connector_slate_revision_offers`] beside the rows each
     /// listed offer was read from, in the same one read txn: a scope
-    /// offer lists the connector key and the standing grant its standing
-    /// check read; an issuer revision lists the catalog key and each
-    /// dependent key its dependent rows were read from; sorted and deduped.
-    /// Bindings, slates and signals are side tables and list nothing.
+    /// offer lists the connector key its standing check read; an issuer
+    /// revision lists the catalog key and each dependent key its dependent
+    /// rows were read from; sorted and deduped. Each is an entity row.
+    /// Bindings, consent grants, slates and signals are side tables and
+    /// list nothing.
     pub fn connector_slate_revision_offers_listed(
         &self,
         connector: Option<&str>,
@@ -288,10 +289,13 @@ impl Vault {
                 continue;
             }
             listed.insert(proposal_ref);
-            // The standing check read this signal's key and grant; the
-            // cause carries the same key ref.
+            // The standing check read this signal's key, an entity row the
+            // cause carries too, and its grant, which the consent store
+            // keeps by its bound digest in a side table: no row stands at
+            // the grant's id for a release to judge again, so it lists
+            // nothing (REVIEW-10630). An accept judges the offer's
+            // standing again ([`accept_scope_in_txn`]).
             rows.insert(signal.key_ref);
-            rows.insert(signal.grant_id);
             offers.push(offer_of(proposal_ref, &proposal, signal.connector, cause));
         }
         // An issuer revision lists the catalog key and each dependent key

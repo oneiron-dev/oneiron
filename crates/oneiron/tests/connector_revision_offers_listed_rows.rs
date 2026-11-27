@@ -1,8 +1,10 @@
 //! FIX [MCP-READ-REVISION-OFFERS-UNLISTED-ROWS]: `connector_slate_revision_offers_listed`
-//! names the rows each listed offer was read from. A standing scope offer
-//! lists the connector key and the standing grant its standing check read,
-//! and no slate; an open issuer revision lists the catalog key and each
-//! dependent key, and not its side-table binding or its tool-name
+//! names the rows each listed offer was read from, each an entity row a
+//! release can judge again. A standing scope offer lists the connector key
+//! its standing check read, and not its side-table consent grant or any
+//! slate (REVIEW-10630: a replay judges each listed id as an entity, and a
+//! grant id stands as none); an open issuer revision lists the catalog key
+//! and each dependent key, and not its side-table binding or its tool-name
 //! dependent rows; no waiting revision lists no row.
 //!
 //! The scope fixture earns its offer as
@@ -218,7 +220,7 @@ fn baseline(fixture: &Fixture) -> ConnectorCredentialBinding {
 }
 
 #[test]
-fn standing_scope_offer_lists_its_key_and_grant() {
+fn standing_scope_offer_lists_its_key_and_no_grant() {
     let fixture = fixture();
     let grant = consent_write(&fixture);
     earn_scope_offer(&fixture, &grant);
@@ -244,18 +246,24 @@ fn standing_scope_offer_lists_its_key_and_grant() {
         *key_ref, fixture.key,
         "the scope cause carries the catalog key"
     );
+    for row in &rows {
+        assert!(
+            fixture
+                .vault
+                .get_entity_type(row)
+                .expect("the listed row's type reads")
+                .is_some(),
+            "each listed row is an entity row a release judges again: {row:?}"
+        );
+    }
+    assert!(
+        !rows.contains(&grant),
+        "the consent grant is a side-table record and lists no row: {rows:?}"
+    );
     assert_eq!(
-        rows.len(),
-        2,
-        "a scope offer lists its key and its grant, nothing else: {rows:?}"
-    );
-    assert!(
-        rows.contains(&fixture.key),
-        "the rows hold the key the standing check read: {rows:?}"
-    );
-    assert!(
-        rows.contains(&grant),
-        "the rows hold the standing grant the check read: {rows:?}"
+        rows,
+        vec![fixture.key],
+        "a scope offer lists its key, nothing else"
     );
     assert!(
         rows.windows(2).all(|pair| pair[0] <= pair[1]),
