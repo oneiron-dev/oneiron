@@ -464,8 +464,8 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     }
 
     /// Rechecks a recorded verb's caller-code policy and binding (FIX
-    /// CODE-MODE-LENDING-W11). Host-served browser, desktop and result rows
-    /// also meet their own gate; session-bound rows meet the room's existing
+    /// CODE-MODE-LENDING-W11). Host-served result, browser and desktop rows
+    /// also meet the gates their live call meets; session-bound rows meet the room's existing
     /// admission methods. The input-dependent scope and grade of a generated
     /// row's recorded answer stay at the generic Read check: the original
     /// arguments are not available here.
@@ -480,9 +480,16 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             code: error.kind.to_owned(),
             reason_codes: error.reason_codes,
         };
-        if matches!(verb, AgentVerb::VaultRunsReadResult) || verb.is_browser() {
+        if matches!(verb, AgentVerb::VaultRunsReadResult) {
             return mcp_admit_host_verb(&self.actor, verb)
                 .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
+                .map_err(refused);
+        }
+        // As `call_browser` admits the live row (FIX CODE-MODE-LENDING-W2).
+        if verb.is_browser() {
+            return mcp_admit_host_verb(&self.actor, verb)
+                .and_then(|()| desktop_row_refusal(verb))
+                .and_then(|()| mcp_browser_guest_gate(&self.server, &self.actor))
                 .map_err(refused);
         }
         let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
