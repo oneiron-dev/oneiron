@@ -506,6 +506,7 @@ mod tests {
     fn an_answer_published_after_an_asks_deadline_never_answers_it() {
         // The ask's 2 s ran out; the reader published 10 ms later, before the
         // asker took the lock again (review round 2 of #10610).
+        // testkit-lint: allow(wall-clock) an origin for the instants below; nothing waits on it
         let t0 = Instant::now();
         let mut late = progress(t0, &[1], &[(1, 2_010, "GPU-late")]);
         assert_eq!(
@@ -529,6 +530,7 @@ mod tests {
 
     #[test]
     fn a_later_read_never_replaces_an_answer_a_waiting_ask_can_take() {
+        // testkit-lint: allow(wall-clock) an origin for the instants below; nothing waits on it
         let t0 = Instant::now();
         // Ask 1's read published in time; ask 2's read published after ask
         // 1's deadline, before ask 1 woke.
