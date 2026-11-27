@@ -490,8 +490,8 @@ pub fn evidence_chain_source(
                 let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..];
                 // The stamp is read apart from the role: the classifier
                 // refuses a role it never classes before it reads the stamp.
-                super::watermark::decode_turn_body(body).imported
-                    || super::resources::native_turn_source(vault, body)
+                // Red pin (REVIEW-10624 round 1 proof): the stamp read dropped.
+                super::resources::native_turn_source(vault, body)
                         .is_ok_and(|source| source == ClaimSource::Imported)
             })
         {
