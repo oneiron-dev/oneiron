@@ -781,7 +781,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Moved from `crates/oneiron/src/linkedin_connector/mod.rs` (lib split R1: record types below the lib) | `crates/oneiron-records/src/linkedin_connector/mod.rs` | s | — |
 | Moved from `crates/oneiron/src/linkedin_lead_preload.rs` (lib split R1: record types below the lib) | `crates/oneiron-records/src/linkedin_lead_preload.rs` | s | — |
 | — | `crates/oneiron-records/src/llm/mod.rs` | s | — |
-| — | `crates/oneiron-records/src/memory/mod.rs` | s | — |
+| — | `crates/oneiron-records/src/memory/mod.rs` | m | — |
 | — | `crates/oneiron-records/src/merge_queue/mod.rs` | s | — |
 | — | `crates/oneiron-records/src/note/mod.rs` | s | — |
 | — | `crates/oneiron-records/src/off_record/mod.rs` | s | — |

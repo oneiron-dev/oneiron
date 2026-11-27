@@ -485,7 +485,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/host_doors/vision.rs` | src | s | 2 crate-vis | — | `ai.ask_image`: one question about an image's pixels to the host's Local-vision seat (FIX 679) |
 | `src/api/facade/host_doors/work_orders.rs` | src | m | 7 crate-vis | — | The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
-| `src/api/facade/hosted_import_doors.rs` | src | s | 11 crate-vis | — | The host doors of the hosted import's verbs (ARCH-0027 #hosted-import; substrate behind grants)… |
+| `src/api/facade/hosted_import_doors.rs` | src | m | 11 crate-vis | — | The host doors of the hosted import's verbs (ARCH-0027 #hosted-import; substrate behind grants)… |
 | `src/api/facade/hub_doors.rs` | src | m | 22 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
 | `src/api/facade/identity.rs` | src | m | 15 crate-vis | — | Who a facade call acts as: its actor, its invocation id and the owner's authorship |
@@ -1140,13 +1140,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/execution_node.rs` | src | m | 1 fn | — | `oneiron execution-node`: this machine's execution node, at the box (pass 33, `33-exec-node/DESIGN.md`… |
 | `src/commands/execution_node/measure_path.rs` | src | s | 4 crate-vis | — | `oneiron execution-node measure-path` (pass 33 section 12, R6 step 2): the control round trip and a result… |
 | `src/commands/files.rs` | src | s | 1 fn | — | `oneiron files attach\|rescan\|detach\|list\|files`: the Files world on a stopped vault (FIX 6942) |
-| `src/commands/history_import.rs` | src | L | 8 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
+| `src/commands/history_import.rs` | src | L | 9 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the… |
 | `src/commands/history_import/hosted_import.rs` | src | L | 16 crate-vis | — | The hosted import's job (ARCH-0027 #hosted-import, CROSS-ARCH-0024 #onboarding-import): an export staged… |
 | `src/commands/history_import/notes.rs` | src | m | 2 crate-vis | — | `oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner… |
 | `src/commands/history_import/notes/folder.rs` | src | s | 1 crate-vis | — | `oneiron import folder attach\|rescan\|detach\|list`: a folder of markdown notes and PDFs that stays attached… |
 | `src/commands/history_import/queue.rs` | src | m | 4 crate-vis | — | The import queue |
 | `src/commands/history_import/queue/tests.rs` | test | m | — | — | The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code… |
-| `src/commands/history_import/session_folder.rs` | src | s | 2 crate-vis | — | Name the folder a host session log names as the MCP bridge names an attached session's folder |
+| `src/commands/history_import/session_folder.rs` | src | s | 3 crate-vis | — | Name the folder a host session log names as the MCP bridge names an attached session's folder |
 | `src/commands/history_import/slack.rs` | src | m | 1 crate-vis | — | `oneiron import slack <zip \| folder> --members <map.json>`: a Slack workspace export, imported into a… |
 | `src/commands/hook.rs` | src | m | 1 fn · 2 re-export · 1 crate-vis | — | `oneiron hook --host <host> <event>`: an agent harness's hooks, run by the binary |
 | `src/commands/hook/bind.rs` | src | m | 6 crate-vis | — | Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first… |
@@ -1156,6 +1156,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/hook/continue_command/hosted_hand_over.rs` | src | m | 1 crate-vis | — | The hooks' hand-over of a session's log to the selected hosted vault ([`hand_over_hosted`]): step 3 of… |
 | `src/commands/hook/continue_command/test_support.rs` | src | s | 2 struct · 3 fn · 1 re-export | Script, Scripted | Seams for `tests/continue_command.rs`, reached through `crate::test_doors::continue_command`: the hand-off… |
 | `src/commands/hook/continue_command/transcript.rs` | src | m | 9 crate-vis | — | The session `oneiron continue --cloud` sends: one Claude Code session log and its subagents' logs, each… |
+| `src/commands/hook/continue_command/transcript/tests.rs` | test | s | — | — | The folder a handed-over transcript names (FIX SESSION-PROJECT-HOOK-TRANSCRIPT-PLACEMENT): the sender names… |
 | `src/commands/hook/focus_refresh.rs` | src | s | 1 crate-vis | — | Restore a board after Claude Code compacts a session that already had it |
 | `src/commands/hook/hand_over_ask.rs` | src | s | 4 crate-vis | — | The hand-over sign-in request the hooks file themselves (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; the… |
 | `src/commands/hook/hand_over_queue.rs` | src | s | 10 crate-vis | — | The hand-over queue of an OAuth selection (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; lead ruling B, Sat 21… |
@@ -2496,6 +2497,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/core_batch_hosted_root_unbound_lane.rs` | test | s | — | — | [CORE-BATCH-HOSTED-ROOT-UNBOUND-LANE] (FIX-LIST:26197): the hosted operator's root acts as nobody, so its… |
 | `tests/core_job_read.rs` | test | m | — | — | L10-05: the generic job status and result read, canon's `GET /v1/core/jobs/{job_id}` (0002c §6.1.13) over… |
 | `tests/core_memory_delete_check_in_ref.rs` | test | m | — | — | A waiting delete is finished on the route that asked it (FIX-LIST… |
+| `tests/core_memory_delete_remaining.rs` | test | m | — | — | The HTTP owner delete answers what remains, and `restricted` for a record the owner chose to restrict (FIX… |
 | `tests/core_memory_retract_verb_hook.rs` | test | L | — | — | [CORE-MEMORY-VERB-SKIPS-FACADE-HOOKS] (FIX-LIST 25699): a token that is not owner-grade retracts through the… |
 | `tests/credential_file_network_fs.rs` | test | m | — | — | A credential file on a Linux network file system is judged by the server's own list (FIX… |
 | `tests/customer_cpu_job_seconds.rs` | test | m | — | — | CPU-only units (pass 32 row M3-D; pass 34 9.2, "the first proof that nothing in the rig needs a GPU"): a… |
