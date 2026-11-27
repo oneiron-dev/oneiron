@@ -114,16 +114,6 @@ impl VerbTree {
             .filter(|node| !path.is_empty() && node.outside_grant(options.hidden).is_none())
     }
 
-    /// A path the hidden map takes out (a hidden verb, or a branch with every verb hidden):
-    /// the view leaves it out without naming it, as search and the coarse tree do.
-    fn grant_hidden(&self, path: &str, hidden: &BTreeMap<String, String>) -> bool {
-        hidden.contains_key(path)
-            || (!path.is_empty()
-                && self
-                    .node_at(path)
-                    .is_some_and(|node| node.outside_grant(hidden).is_some()))
-    }
-
     fn full_subtree(
         &self,
         node: &Node,
@@ -153,9 +143,7 @@ impl VerbTree {
                 && self.node_at(path).is_none()
                 && !options.hidden.contains_key(path);
             if node.is_none() && !tree_call {
-                if !self.grant_hidden(path, options.hidden) {
-                    not_shown.push(path.as_str());
-                }
+                not_shown.push(path.as_str());
                 continue;
             }
             if let Some(text) = authored {
@@ -177,7 +165,7 @@ impl VerbTree {
         for path in options.expanded {
             if let Some(node) = self.visible_node(path, options) {
                 expanded.push((path.as_str(), self.expand_node(node, options.hidden)));
-            } else if !self.grant_hidden(path, options.hidden) {
+            } else {
                 not_shown.push(path.as_str());
             }
         }
@@ -206,7 +194,7 @@ impl VerbTree {
                 text.push_str(&dropped.join(", "));
             }
             if !not_shown.is_empty() {
-                text.push_str("\nnot shown (not in the tree): ");
+                text.push_str("\nnot shown (not in the tree or outside this grant): ");
                 text.push_str(&not_shown.join(", "));
             }
             text.push_str(
