@@ -108,7 +108,7 @@ pub struct DependentWalkProgress {
     /// The source whose dependents are withdrawn.
     pub document: EntityId,
     /// The door that started the walk: `soft_erase`, `purge`,
-    /// `changed_docs_source`, `tombstone` or `unmade_epoch`.
+    /// `changed_docs_source`, `tombstone`, `unmade_epoch` or `claim_value_redaction`.
     pub door: &'static str,
     /// Dependents withdrawn so far.
     pub walked: u64,
@@ -129,17 +129,20 @@ pub(crate) enum DependentWalkDoor {
     Tombstone,
     /// An epoch summary rewritten into a body that is no epoch.
     UnmadeEpoch,
+    /// A CLAIM value-field redaction: the CLAIM stays, redacted; what was derived from it withdraws.
+    ClaimValueRedaction,
 }
 
 impl DependentWalkDoor {
     /// Every door, for the check that none refuses for a count.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::SoftErase,
         Self::Purge,
         Self::ChangedDocsSource,
         Self::Tombstone,
         Self::UnmadeEpoch,
+        Self::ClaimValueRedaction,
     ];
 
     const fn tag(self) -> u8 {
@@ -149,6 +152,7 @@ impl DependentWalkDoor {
             Self::ChangedDocsSource => 3,
             Self::Tombstone => 4,
             Self::UnmadeEpoch => 5,
+            Self::ClaimValueRedaction => 6,
         }
     }
 
@@ -159,6 +163,7 @@ impl DependentWalkDoor {
             3 => Self::ChangedDocsSource,
             4 => Self::Tombstone,
             5 => Self::UnmadeEpoch,
+            6 => Self::ClaimValueRedaction,
             _ => return None,
         })
     }
@@ -171,6 +176,7 @@ impl DependentWalkDoor {
             Self::ChangedDocsSource => "changed_docs_source",
             Self::Tombstone => "tombstone",
             Self::UnmadeEpoch => "unmade_epoch",
+            Self::ClaimValueRedaction => "claim_value_redaction",
         }
     }
 }

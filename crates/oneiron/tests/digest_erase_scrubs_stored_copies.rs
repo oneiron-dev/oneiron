@@ -1,6 +1,8 @@
 //! A CLAIM's hard or soft delete removes its proposal and rendered words
 //! from the stored proactivity digest without changing its locator or
 //! losing the other proposals (PROACTIVITY-DIGEST-COPY-ERASURE, disk half).
+//! A value redaction of the proposal removes them too
+//! (CLAIM-REDACTION-SKIPS-DERIVED-COPIES).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test digest_erase_scrubs_stored_copies`.
 #![cfg(oneiron_test_support)]
@@ -15,6 +17,7 @@ use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::claim_value_redaction::redact_claim_value_fields;
 use oneiron::test_doors::curator_finding::emit_retract_finding;
 use oneiron::test_doors::house_link::put_claim_made_by;
 use oneiron::test_doors::proactivity_digest_index;
@@ -310,4 +313,39 @@ fn a_digest_stored_before_the_index_existed_is_scrubbed_by_the_first_erase() -> 
         "the first erase left the stored digests unindexed"
     );
     Ok(())
+}
+
+#[test]
+fn a_redacted_proposal_leaves_the_stored_digest() {
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    let fact = fixture.fact_from_the_mailbox(FACT_VALUE);
+    let proposal = proactivity_digest_index::land_dreamer_proposal(
+        &fixture.vault,
+        fixture.owner,
+        "profile.note",
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("secret_note"),
+                rmpv::Value::from("the lantern key is under the boathouse step"),
+            ),
+            (
+                rmpv::Value::from("public_note"),
+                rmpv::Value::from("likes tea"),
+            ),
+        ]),
+        fact,
+    )
+    .expect("FIXTURE: the Dreamer's proposal with a value map");
+    let before = fixture.assemble_digest();
+    let summary = stored_proposal_summary(&before, proposal).to_owned();
+
+    redact_claim_value_fields(
+        &fixture.vault,
+        proposal,
+        &["secret_note".to_owned()],
+        fixture.owner,
+    )
+    .expect("the owner's courtesy redaction removes the proposal's field");
+
+    assert_stored_proposal_erased(&fixture, &before, proposal, &summary);
 }
