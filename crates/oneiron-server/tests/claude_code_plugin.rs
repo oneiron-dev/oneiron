@@ -162,55 +162,62 @@ fn every_hook_command_parses_with_the_oneiron_cli() {
     let events = hooks["hooks"]
         .as_object()
         .expect("hooks.hooks is an object");
-    // The built lanes (docs/ops/claude-code-hooks.md): the four events and the
-    // `oneiron hook` event each runs. A new event is added here on purpose.
-    let expected = BTreeMap::from([
-        ("PreCompact", "hand-over"),
-        ("SessionEnd", "hand-over"),
-        ("SessionStart", "session-start"),
-        ("Stop", "hand-over"),
+    let expected: BTreeMap<&str, &[(Option<&str>, &str, Option<&str>)]> = BTreeMap::from([
+        (
+            "PostToolUse",
+            &[(Some("*"), "tool-result", Some(HOOKS_CREDENTIAL))][..],
+        ),
+        ("PreCompact", &[(None, "hand-over", None)][..]),
+        ("SessionEnd", &[(None, "hand-over", None)][..]),
+        (
+            "SessionStart",
+            &[
+                (None, "session-start", Some(HOOKS_CREDENTIAL)),
+                (Some("compact"), "focus-refresh", Some(AGENT_CREDENTIAL)),
+            ][..],
+        ),
+        ("Stop", &[(None, "hand-over", None)][..]),
     ]);
     assert_eq!(
         events.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         expected.keys().copied().collect::<BTreeSet<_>>(),
     );
-    for (event, hook_event) in expected {
+    for (event, expected) in expected {
         let groups = events[event].as_array().expect("an event holds a list");
-        let commands: Vec<&Value> = groups
-            .iter()
-            .flat_map(|group| group["hooks"].as_array().expect("a group holds hooks"))
-            .collect();
-        assert_eq!(commands.len(), 1, "{event} runs one oneiron hook");
-        let hook = commands[0];
-        assert_eq!(hook["type"], "command", "{event}");
-        let host_timeout = hook["timeout"]
-            .as_f64()
-            .expect("each hook names its timeout");
-        let argv = shell_words(&expand_home(hook["command"].as_str().expect("a command")));
-        assert_eq!(
-            argv[..5],
-            words(&["oneiron", "hook", "--host", "claude-code", hook_event]),
-            "{event}"
-        );
-        if let Err(error) = parse(&argv) {
-            panic!("{event}: {argv:?} does not parse: {error}");
-        }
-        // The hook gives up before Claude Code would stop it, so it always
-        // exits 0 on its own and never shows as a hook error.
-        let own_timeout = flag_value(&argv, "--timeout")
-            .map_or(HOOK_DEFAULT_TIMEOUT_SECS, |secs| {
-                secs.parse().expect("seconds")
-            });
-        assert!(
-            own_timeout < host_timeout,
-            "{event}: oneiron's {own_timeout} s is not under Claude Code's {host_timeout} s"
-        );
-        let credential = flag_value(&argv, "--credential-file");
-        if hook_event == "session-start" {
-            assert_eq!(credential, Some(HOOKS_CREDENTIAL), "{event}");
-        } else {
-            // A hand-over needs no credential (it writes one queue file).
-            assert_eq!(credential, None, "{event}");
+        assert_eq!(groups.len(), expected.len(), "{event}");
+        for (group, &(matcher, hook_event, credential)) in groups.iter().zip(expected) {
+            assert_eq!(group["matcher"].as_str(), matcher, "{hook_event}");
+            let commands = group["hooks"].as_array().expect("a group holds hooks");
+            assert_eq!(commands.len(), 1, "{hook_event} runs one oneiron hook");
+            let hook = &commands[0];
+            assert_eq!(hook["type"], "command", "{hook_event}");
+            let host_timeout = hook["timeout"]
+                .as_f64()
+                .expect("each hook names its timeout");
+            let argv = shell_words(&expand_home(hook["command"].as_str().expect("a command")));
+            assert_eq!(
+                argv[..5],
+                words(&["oneiron", "hook", "--host", "claude-code", hook_event]),
+                "{hook_event}"
+            );
+            if let Err(error) = parse(&argv) {
+                panic!("{hook_event}: {argv:?} does not parse: {error}");
+            }
+            // The hook gives up before Claude Code would stop it, so it always
+            // exits 0 on its own and never shows as a hook error.
+            let own_timeout = flag_value(&argv, "--timeout")
+                .map_or(HOOK_DEFAULT_TIMEOUT_SECS, |secs| {
+                    secs.parse().expect("seconds")
+                });
+            assert!(
+                own_timeout < host_timeout,
+                "{hook_event}: oneiron's {own_timeout} s is not under Claude Code's {host_timeout} s"
+            );
+            assert_eq!(
+                flag_value(&argv, "--credential-file"),
+                credential,
+                "{hook_event}"
+            );
         }
     }
 
@@ -259,6 +266,7 @@ fn the_mcp_server_is_the_stdio_bridge_with_the_agent_credential() {
     );
     assert_eq!(argv[1], "mcp");
     assert_eq!(flag_value(&argv, "--surface"), Some("tool-first"));
+    assert!(argv.iter().any(|arg| arg == "--carrier-in-content"));
     assert_eq!(
         flag_value(&argv, "--credential-file"),
         Some(AGENT_CREDENTIAL)

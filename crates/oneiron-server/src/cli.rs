@@ -979,6 +979,14 @@ pub struct McpArgs {
     /// filesystem root or the home directory, attaches nothing.
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<PathBuf>,
+
+    /// Fold a board carrier frame a `tools/call` answer carries beside its
+    /// result into the result's own text content, for a client that reads
+    /// `content` alone: one more text block at the end of `content`, then no
+    /// `carrier` key. Any other answer passes unchanged, as does every answer
+    /// without this flag.
+    #[arg(long)]
+    pub carrier_in_content: bool,
 }
 
 /// The connection `oneiron mcp` holds to its server.

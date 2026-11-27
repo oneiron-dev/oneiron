@@ -57,6 +57,7 @@ use crate::cli::{McpArgs, McpSurface, McpTransport};
 
 mod bridge_auth;
 mod call_meta;
+mod carrier_content;
 mod link;
 mod wake;
 
@@ -415,6 +416,9 @@ struct Bridge {
     pending_calls: Mutex<HashMap<CallKey, String>>,
     /// The client capabilities this session negotiated (FIX 7969).
     client_session: ClientSession,
+    /// Fold a `tools/call` answer's board carrier frame into its text
+    /// content (`--carrier-in-content`).
+    carrier_in_content: bool,
 }
 
 impl Bridge {
@@ -453,6 +457,7 @@ impl Bridge {
                     .as_deref()
                     .and_then(crate::workspace_identity::WorkspaceIdentity::of_session_folder),
             ),
+            carrier_in_content: args.carrier_in_content,
         })
     }
 
@@ -488,6 +493,10 @@ impl Bridge {
         let (deadline, tool) = self.deadline_for(&message);
         let until = Instant::now() + deadline;
         let key = pending_call_key(&message);
+        // Whether this request is a `tools/call`: only such an answer may
+        // carry a board frame into its content, and `message` is dropped
+        // before the answer comes back.
+        let tools_call = message.get("method").and_then(Value::as_str) == Some("tools/call");
         let offered = ClientSession::offered(&message);
         let own = named_invocation(&message);
         let named = self.client_session.name_on_call(&mut message)
@@ -528,12 +537,15 @@ impl Bridge {
         drop(message);
         let id = id?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
-            Ok(answer) => {
+            Ok(mut answer) => {
                 if let Some(key) = key {
                     self.note_answer(key, sent.as_deref(), &answer);
                 }
                 if let Some(offered) = offered {
                     self.client_session.note_initialize(offered, &answer);
+                }
+                if self.carrier_in_content {
+                    carrier_content::place_carrier_frame(&mut answer, tools_call);
                 }
                 Ok(answer)
             }

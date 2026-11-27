@@ -1047,6 +1047,411 @@ fn a_push_gives_no_turn_from_another_projects_session() {
     home.wait_for_no_runtime_file(pid);
 }
 
+const TOOL_CLAIM: &str = "Read the timetable: the amber jackdaw ferry bell keeps pier nine order";
+const TOOL_SESSION: &str = "0b5e55e0-5111-4222-8333-944455556666";
+
+struct ToolHookFixture {
+    _server: Server,
+    home: Home,
+    credential: PathBuf,
+    folder: PathBuf,
+    url: String,
+}
+
+impl ToolHookFixture {
+    fn new(bar: &str) -> Self {
+        let home = Home::new();
+        let vault = home.path("vault");
+        let config = home.path("oneiron.toml");
+        home.init(&vault, &config);
+        let credential = home.credential(&config);
+        let folder = home.path("work").join("alpha");
+        std::fs::create_dir_all(&folder).expect("test fixture");
+        {
+            let seeded = open_stopped(&vault);
+            let (owner, proof) = owner_and_proof(&seeded);
+            let project = mint_project(&seeded, owner, &proof, "hook-test-tool-result-card");
+            bind_folder(&seeded, &proof, &folder, project, "alpha");
+            owner_sets_bar(&seeded, &proof, "recall.bar.carrier", json!(bar));
+            remember_in(
+                &seeded,
+                owner,
+                &proof,
+                project,
+                "harbor.timetable",
+                TOOL_CLAIM,
+            );
+        }
+        let log_path = home.path("serve.log");
+        let serve_log = std::fs::File::create(&log_path).expect("server log file");
+        let server = Server(
+            home.oneiron(&["serve", "--host", "127.0.0.1", "--config"])
+                .arg(&config)
+                .stdout(serve_log.try_clone().expect("server log file"))
+                .stderr(serve_log)
+                .spawn()
+                .expect("spawn oneiron serve"),
+        );
+        let registered = home.wait_for_runtime_file(server.0.id(), &log_path);
+        Self {
+            _server: server,
+            home,
+            credential,
+            folder,
+            url: registered["url"].as_str().expect("url").to_owned(),
+        }
+    }
+
+    fn hook(&self, event_name: &str, event: &Value) -> Output {
+        self.home.hook(
+            event_name,
+            &[
+                "--url",
+                &self.url,
+                "--credential-file",
+                self.credential.to_str().expect("UTF-8 path"),
+            ],
+            event,
+        )
+    }
+}
+
+fn tool_read_event(folder: &Path) -> Value {
+    json!({
+        "hook_event_name": "PostToolUse",
+        "session_id": TOOL_SESSION,
+        "cwd": folder,
+        "tool_name": "Read",
+        "tool_input": {"file_path": folder.join("timetable")},
+        "tool_response": {
+            "content": TOOL_CLAIM,
+            "filePath": folder.join("timetable"),
+            "numLines": 42,
+        },
+    })
+}
+
+fn tool_hook_session(home: &Home, session: &str) -> PathBuf {
+    home.run_dir().join("hook-sessions").join(session)
+}
+
+fn board_setup_event(folder: &Path, session: &str, response: Value) -> Value {
+    json!({
+        "hook_event_name": "PostToolUse",
+        "session_id": session,
+        "cwd": folder,
+        "tool_name": "mcp__oneiron__setup_oneiron",
+        "tool_input": {},
+        "tool_response": response,
+    })
+}
+
+fn compact_event(folder: &Path) -> Value {
+    json!({
+        "hook_event_name": "SessionStart",
+        "session_id": TOOL_SESSION,
+        "source": "compact",
+        "cwd": folder,
+    })
+}
+
+#[test]
+fn a_tool_result_above_the_bar_prints_one_post_tool_use_line_naming_the_claim() {
+    use oneiron::ingest::history::carried_headers::{
+        CARRIED_CONTEXT_HEADER, TOOL_RESULT_CONTEXT_LEAD,
+    };
+
+    let fixture = ToolHookFixture::new("direct_match");
+    let said = lines(&fixture.hook("tool-result", &tool_read_event(&fixture.folder)));
+    assert_eq!(said.len(), 1, "one JSON line: {said:?}");
+    let reply: Value = serde_json::from_str(&said[0]).expect("the line is JSON");
+    assert_eq!(reply["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .expect("additionalContext is text");
+    let lead = format!("{CARRIED_CONTEXT_HEADER}\n{TOOL_RESULT_CONTEXT_LEAD} ");
+    assert!(context.starts_with(lead.as_str()), "{context:?}");
+    assert!(context.contains(TOOL_CLAIM), "{context:?}");
+    let shown = tool_hook_session(&fixture.home, TOOL_SESSION).join("carrier-lines");
+    let shown = std::fs::read_to_string(shown).expect("the shown file is written");
+    let keys: Vec<_> = shown.lines().collect();
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert!(context.contains(keys[0]), "{context:?} vs {keys:?}");
+}
+
+#[test]
+fn the_same_tool_result_a_second_time_in_one_session_prints_nothing() {
+    let fixture = ToolHookFixture::new("open");
+    let event = tool_read_event(&fixture.folder);
+    assert_eq!(lines(&fixture.hook("tool-result", &event)).len(), 1);
+    assert!(fixture.hook("tool-result", &event).stdout.is_empty());
+}
+
+#[test]
+fn an_oneiron_tool_result_prints_nothing_and_marks_nothing() {
+    let fixture = ToolHookFixture::new("open");
+    let mut event = tool_read_event(&fixture.folder);
+    event["tool_name"] = json!("mcp__Oneiron__vault.recall");
+    assert!(fixture.hook("tool-result", &event).stdout.is_empty());
+    let folder = tool_hook_session(&fixture.home, TOOL_SESSION);
+    assert!(!folder.join("carrier-lines").exists());
+    assert!(!folder.join("board-keyframe").exists());
+}
+
+#[test]
+fn a_tool_result_below_the_bar_prints_nothing() {
+    let fixture = ToolHookFixture::new("quiet");
+    let event = tool_read_event(&fixture.folder);
+    assert!(fixture.hook("tool-result", &event).stdout.is_empty());
+}
+
+#[test]
+fn a_session_that_already_holds_twelve_shown_keys_prints_nothing() {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let fixture = ToolHookFixture::new("open");
+    let folder = tool_hook_session(&fixture.home, TOOL_SESSION);
+    std::fs::create_dir_all(&folder).expect("the session folder");
+    let shown = folder.join("carrier-lines");
+    let before = (0..12)
+        .map(|n| format!("seed-key-{n:02}\n"))
+        .collect::<String>();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&shown)
+        .and_then(|mut file| file.write_all(before.as_bytes()))
+        .expect("the shown keys");
+    let event = tool_read_event(&fixture.folder);
+    assert!(fixture.hook("tool-result", &event).stdout.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(shown).expect("the shown file"),
+        before
+    );
+}
+
+#[test]
+fn a_setup_oneiron_tool_result_writes_the_board_keyframe_mark_only_on_success() {
+    let home = Home::new();
+    let folder = home.path("work");
+    std::fs::create_dir(&folder).expect("test fixture");
+    let blocks = json!([{"type": "text", "text": "board ready"}]);
+    let structured = json!({"board": {"keyframe": "epoch 1"}});
+    for (n, (response, success)) in [
+        (blocks.clone(), true),
+        (json!(structured.to_string()), true),
+        (json!({"content": blocks, "isError": true}), false),
+        (json!("permission denied"), false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let session = format!("setup-{n}");
+        let event = board_setup_event(&folder, &session, response);
+        assert!(home.hook("tool-result", &[], &event).stdout.is_empty());
+        let mark = tool_hook_session(&home, &session).join("board-keyframe");
+        assert_eq!(mark.exists(), success);
+    }
+}
+
+#[test]
+fn focus_refresh_with_the_mark_prints_the_refreshed_keyframe() {
+    use oneiron::ingest::history::carried_headers::{
+        CARRIED_CONTEXT_HEADER, FOCUS_REFRESH_CONTEXT_LEAD,
+    };
+
+    let fixture = ToolHookFixture::new("open");
+    let setup = setup_board_via_stdio(
+        &fixture.home,
+        &fixture.url,
+        &fixture.credential,
+        &fixture.folder,
+    );
+    assert!(setup.get("error").is_none(), "setup was refused: {setup:?}");
+    let structured = &setup["result"]["structuredContent"];
+    assert!(
+        structured
+            .pointer("/board/keyframe")
+            .is_some_and(Value::is_string)
+    );
+    let event = board_setup_event(&fixture.folder, TOOL_SESSION, json!(structured.to_string()));
+    assert!(
+        fixture
+            .home
+            .hook("tool-result", &[], &event)
+            .stdout
+            .is_empty()
+    );
+
+    let said = lines(&fixture.hook("focus-refresh", &compact_event(&fixture.folder)));
+    assert!(said.len() >= 3, "the headers and keyframe: {said:?}");
+    assert_eq!(said[0], CARRIED_CONTEXT_HEADER);
+    assert_eq!(said[1], FOCUS_REFRESH_CONTEXT_LEAD);
+    assert!(
+        said[2..]
+            .iter()
+            .any(|line| line.contains("<memory surface=\"board\""))
+    );
+}
+
+#[test]
+fn focus_refresh_without_the_mark_prints_nothing() {
+    let fixture = ToolHookFixture::new("open");
+    let event = compact_event(&fixture.folder);
+    assert!(fixture.hook("focus-refresh", &event).stdout.is_empty());
+}
+
+#[test]
+fn a_tool_result_past_its_budget_prints_nothing_and_returns_before_the_hook_timeout() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = Home::new();
+    let url = answering_vault();
+    let stub = home.path("sleeping-oneiron");
+    std::fs::write(&stub, "#!/bin/sh\n: > \"$0.started\"\nexec sleep 10\n")
+        .expect("the sleeping bridge");
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700))
+        .expect("make the bridge executable");
+    let credential = home.path("scripted.cred");
+    let event = tool_read_event(&home.path("home"));
+
+    // testkit-lint: allow(wall-clock) the budget bounds how long Claude Code waits on a child process, in real time
+    let asked = Instant::now();
+    let output = home.hook(
+        "tool-result",
+        &[
+            "--url",
+            &url,
+            "--oneiron",
+            stub.to_str().expect("UTF-8 path"),
+            "--credential-file",
+            credential.to_str().expect("UTF-8 path"),
+            "--timeout",
+            "60",
+        ],
+        &event,
+    );
+    let took = asked.elapsed();
+    assert!(
+        home.path("sleeping-oneiron.started").exists(),
+        "the bridge ran"
+    );
+    assert!(output.stdout.is_empty(), "{:?}", lines(&output));
+    assert!(
+        took < Duration::from_secs(4),
+        "the hook returned in {took:?}"
+    );
+}
+
+/// Sets the board up on `credential` against the server at `url`, through
+/// `oneiron mcp` over stdio as an agent's first call does, and returns the
+/// `setup_oneiron` answer whole.
+fn setup_board_via_stdio(home: &Home, url: &str, credential: &Path, workspace: &Path) -> Value {
+    use std::io::{BufRead as _, BufReader};
+
+    let mut child = Server(
+        home.oneiron(&["mcp", "--url", url, "--surface", "primary"])
+            .arg("--credential-file")
+            .arg(credential)
+            .arg("--workspace")
+            .arg(workspace)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn oneiron mcp"),
+    );
+    let mut stdin = child.0.stdin.take().expect("bridge stdin");
+    let stdout = child.0.stdout.take().expect("bridge stdout");
+    let (send, answers) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if send.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let answer = mcp_bridge_ask(
+        &mut stdin,
+        &answers,
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "hook-test", "version": "1"},
+        }),
+    );
+    assert!(
+        answer.get("error").is_none(),
+        "the bridge is admitted: {answer:?}"
+    );
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    )
+    .expect("write notifications/initialized");
+    let listed = mcp_bridge_ask(&mut stdin, &answers, 2, "tools/list", json!({}));
+    let version = listed
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool.get("name").and_then(Value::as_str) == Some("setup_oneiron"))
+        })
+        .and_then(|tool| {
+            tool.pointer("/inputSchema/properties/schema_version/const")
+                .cloned()
+        })
+        .unwrap_or_else(|| json!("mcp_tool_args.v1"));
+    mcp_bridge_ask(
+        &mut stdin,
+        &answers,
+        3,
+        "tools/call",
+        json!({
+            "name": "setup_oneiron",
+            "arguments": {
+                "schema_version": version,
+                "consent": {
+                    "policy_ref": "policy:claude-code-hooks",
+                    "purpose": "set up the board for the focus-refresh test",
+                },
+            },
+        }),
+    )
+}
+
+/// One JSON-RPC round trip over the bridge's stdio: the answer carrying
+/// `id`, skipping anything else the bridge wrote.
+fn mcp_bridge_ask(
+    stdin: &mut std::process::ChildStdin,
+    answers: &std::sync::mpsc::Receiver<String>,
+    id: u64,
+    method: &str,
+    params: Value,
+) -> Value {
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+    )
+    .expect("write the bridge request");
+    loop {
+        let line = answers
+            .recv_timeout(Duration::from_secs(120))
+            .expect("the bridge answers");
+        let answer: Value = serde_json::from_str(&line).expect("one JSON line");
+        if answer.get("id") == Some(&json!(id)) {
+            return answer;
+        }
+    }
+}
+
 #[test]
 fn a_queried_start_in_a_bound_project_names_its_session_and_the_records_it_pushes() {
     use std::os::unix::fs::PermissionsExt as _;

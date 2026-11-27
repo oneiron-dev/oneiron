@@ -34,6 +34,7 @@
 
 mod bind;
 mod continue_command;
+mod focus_refresh;
 mod hand_over_ask;
 mod hand_over_queue;
 mod hosted_command;
@@ -42,6 +43,7 @@ mod hosted_selection;
 mod hosted_sign_in;
 mod recall;
 mod session_binding;
+mod tool_result;
 
 pub use self::continue_command::continue_work;
 #[cfg(oneiron_test_support)]
@@ -90,6 +92,8 @@ pub fn hook(args: HookArgs) {
     let said = match args.event {
         HookEvent::SessionStart(args) => context_reply(host, &session_start(host, &args)),
         HookEvent::Prompt(args) => context_reply(host, &prompt(host, &args)),
+        HookEvent::ToolResult(args) => tool_result::tool_result(host, &args),
+        HookEvent::FocusRefresh(args) => focus_refresh::focus_refresh(host, &args),
         HookEvent::HandOver(args) => {
             hand_over(host, &args);
             None

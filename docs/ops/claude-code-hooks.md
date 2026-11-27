@@ -1,12 +1,14 @@
 # Claude Code hooks: your vault in every session
 
-Four Claude Code hooks connect a session to your vault, and a fifth is there
+Six Claude Code hooks connect a session to your vault, and another is there
 if you want it. You make no calls by hand:
 
 | Claude Code event | Hook | What happens |
 |---|---|---|
 | `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. Given the task's words (`--query "<words>"`), it is also given the lines that clear your relevance bar, at most 3; keyed on nothing but the folder, it recalls nothing. The plugin and the snippet below pass `--query " "` ([How it works](#how-it-works)). |
 | `UserPromptSubmit` (only if you add it) | `prompt` | The lines for what you just asked that clear your relevance bar, at most 3, from the bound vault. |
+| `PostToolUse` | `tool-result` | After a non-Oneiron tool result, Claude Code gets at most one new line from the vault. |
+| `SessionStart` (after a compaction) | `focus-refresh` | If this session already had a board, Claude Code gets it back. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
 | `SessionEnd` | `hand-over` | A last queue, for a session that ended mid-reply. |
@@ -21,7 +23,7 @@ holds `settings.json` (the snippet to merge) and `check.sh` (the end-to-end
 check).
 
 The Oneiron plugin for Claude Code
-([`plugins/claude-code/`](../../plugins/claude-code/)) carries these four
+([`plugins/claude-code/`](../../plugins/claude-code/)) carries these six
 hooks, the MCP server entry and a skill that tells Claude when to recall and
 save. Install it in Claude Code with `/plugin marketplace add
 oneiron-dev/oneiron`, then `/plugin install oneiron@oneiron`. The plugin mints
@@ -31,6 +33,12 @@ the path the plugin reads, and skip step 3. Remove it with `/plugin uninstall
 oneiron@oneiron` in place of step 1 of [Remove it](#remove-it).
 
 ## How it works
+
+The plugin's `--carrier-in-content` bridge flag lets board updates ride
+Oneiron's own tool results. For every other tool result, `PostToolUse` can
+add one line from your vault, up to 12 per session. It only gives lines
+above your carrier bar and never gives the same line twice. After compaction,
+the board comes back only if that session already had one.
 
 ```
 Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bind a vault (below)
@@ -59,7 +67,7 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
   raw cosine of the line's vector and the query's in your vault's embedding
   space (the server embeds the query once for it, at any effort), never a rank.
   Set the bar per hook with the settings `recall.bar.start` (session start) and
-  `recall.bar.carrier` (each prompt), per harness (the item, `claude-code`) and
+  `recall.bar.carrier` (each prompt or tool result), per harness (the item, `claude-code`) and
   per project (a project's row overrides the vault's). The default, `measured`,
   is a cosine of 0.52 in pplx-embed-v1-0.6b's space, where it was measured;
   in any other space it gives nothing until you set a floor
@@ -496,7 +504,7 @@ Start `serve` again.
 
 ## 3. Merge the settings
 
-Add the four entries in `examples/claude-code-hooks/settings.json` to the
+Add the hook entries in `examples/claude-code-hooks/settings.json` to the
 `"hooks"` object of `~/.claude/settings.json` (every project) or of one
 project's `.claude/settings.json`. Keep your existing entries. Then replace the
 placeholders with full paths. Claude Code does not expand `~` there.
@@ -504,6 +512,8 @@ placeholders with full paths. Claude Code does not expand `~` there.
 - `/path/to/oneiron`: the `oneiron` binary. Hooks run with Claude Code's
   `PATH`, which may not include it.
 - `/path/to/claude-code-hooks.cred`: the file from step 2.
+- `/path/to/claude-code.cred`: the same agent credential you use for your
+  MCP server. Add `--carrier-in-content` to that server's `oneiron mcp` args.
 
 The hooks find the vault themselves ([above](#which-vault-a-session-uses)).
 Add `--url <origin>` to `session-start` to pin one there instead, and
@@ -515,7 +525,13 @@ other than the default and may be stopped when a session ends.
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "timeout": 15,
-        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query \" \"" } ] }
+        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query \" \"" } ] },
+      { "matcher": "compact", "hooks": [ { "type": "command", "timeout": 15,
+        "command": "/path/to/oneiron hook --host claude-code focus-refresh --credential-file /path/to/claude-code.cred" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "timeout": 10,
+        "command": "/path/to/oneiron hook --host claude-code tool-result --credential-file /path/to/claude-code-hooks.cred" } ] }
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "timeout": 10,
@@ -544,16 +560,16 @@ prints nothing when none does.
 
 ### Next to your other hooks
 
-These entries use four events: `SessionStart`, `PreCompact`, `Stop` and
-`SessionEnd`. Claude Code merges hook entries across the user, project and
+These entries use five events: `SessionStart`, `PostToolUse`, `PreCompact`,
+`Stop` and `SessionEnd`. Claude Code merges hook entries across the user, project and
 local settings files and runs every matching hook in parallel. So a hook you
 already have on another event, for example a `PreToolUse` hook on `Agent` or
-`Workflow`, runs exactly as before. If you already have a hook on one of these
-four events, add ours as one more entry in that event's list.
+`Workflow`, runs exactly as before. If you already have a hook for any of
+these events, add ours to that event's list.
 
 ## Remove it
 
-1. Delete the four entries from the settings file.
+1. Delete these hook entries from the settings file.
 2. Revoke the credential, with `serve` stopped:
    `oneiron token revoke --jti <slip_id>`. Then delete the `.cred` file.
 3. Set `queue = false` under `[import]` and restart `serve`. Queued files
@@ -586,6 +602,8 @@ What the hooks already imported stays in your vault, like any import.
   6,000 characters in all, after its one line. Each probe of a vault waits
   at most 2 seconds. `prompt` has the same limits. Claude Code caps a hook's
   added context at 10,000 characters.
+- `tool-result` has 1.5 seconds for binding, recall and picking a line.
+  A smaller `--timeout` takes precedence.
 - `hand-over` takes well under a second: it writes one small file. To a
   hosted vault it sends the whole log, gzip-compressed, in as few calls as
   the sign-in's carrier takes (above), all ending by the same `--timeout`,
