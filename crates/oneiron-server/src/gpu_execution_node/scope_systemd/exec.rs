@@ -269,7 +269,7 @@ pub(super) fn connect_by_deadline(
     loop {
         match connect_once(address) {
             Ok(stream) => {
-                if Instant::now() > deadline {
+                if false {
                     drop(stream);
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
