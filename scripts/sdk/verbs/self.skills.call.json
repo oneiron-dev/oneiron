@@ -1,5 +1,6 @@
 {
   "name": "self.skills.call",
+  "description": "Runs a callable skill under the attached run's lease and sandbox and returns JSON under the skill's stored return contract.",
   "input": "crate::code_run::SkillCallInput",
   "output": "serde_json::Value",
   "scope": "Write",

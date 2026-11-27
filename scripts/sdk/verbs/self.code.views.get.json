@@ -1,5 +1,6 @@
 {
   "name": "self.code.views.get",
+  "description": "Lists the files in the run's work view that its grant still allows it to read.",
   "input": "crate::memory::repo_doors::RepoViewsGetInput",
   "output": "crate::memory::repo_doors::RepoViewsGetOutput",
   "scope": "Read",

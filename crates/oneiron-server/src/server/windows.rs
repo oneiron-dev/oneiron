@@ -153,6 +153,23 @@ impl SyncServer {
         Ok(window)
     }
 
+    /// The live window a fetch answers from (WINDOW-FETCH-NO-CREATE, Engine
+    /// 27 Nov 16:43): the window of a key the root lists, served as
+    /// [`Self::serve_window`] serves it, whose handle keeps it loaded while
+    /// the fetch reads it; `None` for any other key, for which nothing opens,
+    /// snapshots (`d:w:*`), lists or broadcasts a window. A fetch names any
+    /// key it likes, so it never creates a window (FIX
+    /// WINDOW-FETCH-CREATES-NAMED-WINDOW). Only a write creates one.
+    pub(crate) async fn fetch_window(
+        &self,
+        key: &WindowKey,
+    ) -> Result<Option<Arc<LoadedWindow>>, oneiron::Error> {
+        if !read_window_list(&self.root_doc).contains(key) {
+            return Ok(None);
+        }
+        self.serve_window(key).await.map(Some)
+    }
+
     /// [`Self::serve_window`]'s doc, for a test that need not hold the window.
     #[cfg(test)]
     pub(crate) async fn get_or_create_window(

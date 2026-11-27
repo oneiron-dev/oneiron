@@ -1,5 +1,6 @@
 {
   "name": "tasks.refuse",
+  "description": "Records a refusal with a reason for the task bound to the caller's agent run and returns the resulting refusal level.",
   "input": "crate::code_run::TaskRefuseInput",
   "output": "crate::code_run::TaskRefuseOutput",
   "scope": "Write",

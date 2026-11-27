@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::super::{Generator, RowId, SESSION_READS};
+use super::super::{Generator, RowId, SESSION_READS, facade_only_row};
 use super::{FIELD_NAME, GRANT_CLASS, filter, is, item, item_in, keys_are, refuse, same_name};
 use crate::error::GenerateError;
 use crate::py::text::{repr_str_tuple, strip};
@@ -32,6 +32,8 @@ const HOST_FLAGS: &[&str] = &[
 ];
 /// The keys a run row may hold beside its required ones, and the required ones.
 const RUN_OPTIONAL: &[&str] = &[
+    "description",
+    "example",
     "output",
     "outputs_by_input",
     "host",
@@ -42,7 +44,7 @@ const RUN_OPTIONAL: &[&str] = &[
 /// The agent powers a run row may name as its requirement.
 const POWERS: &[&str] = &["spawn", "save_agent"];
 const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect", "act_class"];
-/// A scoped-child row's keys, `description` aside.
+/// A scoped-child row's keys, `description` and `example` aside.
 const SCOPED_CHILD_KEYS: &[&str] = &[
     "name",
     "input",
@@ -272,7 +274,7 @@ fn check_scoped_child(row: &Dict) -> Result<(), GenerateError> {
     let keys: BTreeSet<&str> = row
         .keys()
         .map(String::as_str)
-        .filter(|&key| key != "description")
+        .filter(|&key| !matches!(key, "description" | "example"))
         .collect();
     let bad = !keys_are(&keys, SCOPED_CHILD_KEYS)
         || !item_in(row, "scope", &["Read", "Write"])?
@@ -367,12 +369,14 @@ impl Generator {
         for &id in &self.host_rows {
             host_names.push(item(&self.rows[id], "name")?.clone());
         }
+        // A row served by its HTTP facade door only is no code-mode verb (FIX EXECUTE-CALLER-CODE).
         let mut code_mode = Vec::new();
         for &id in &self.callable_rows {
             let name = item(&self.rows[id], "name")?;
-            if !host_names
-                .iter()
-                .any(|host_name| same_name(name, host_name))
+            if !facade_only_row(&self.rows[id])
+                && !host_names
+                    .iter()
+                    .any(|host_name| same_name(name, host_name))
             {
                 code_mode.push(id);
             }

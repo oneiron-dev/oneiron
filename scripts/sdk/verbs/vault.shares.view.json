@@ -1,5 +1,6 @@
 {
   "name": "vault.shares.view",
+  "description": "Opens one shared brief under the viewer's read scope; when the share does not resolve, the result's value is null with the read's narrowing.",
   "input": "crate::task_verb::sdk::ShareViewRequest",
   "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>",
   "call": "crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)?",

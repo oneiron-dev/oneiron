@@ -1,5 +1,6 @@
 {
   "name": "vault.agents.put",
+  "description": "Creates a reusable agent definition from the running agent's identity, activating it inside the author's authority ceiling or holding a wider request for review.",
   "input": "crate::code_run::AgentPutInput",
   "output": "crate::code_run::AgentPutOutput",
   "scope": "Write",

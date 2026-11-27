@@ -1,5 +1,6 @@
 {
   "name": "self.code.merge_queue.observe",
+  "description": "Reads the merge queue for the run's work, including its head, green revision, whether green moved, and waiting entries.",
   "input": "crate::memory::repo_doors::RepoMergeQueueObserveInput",
   "output": "crate::memory::repo_doors::RepoMergeQueueObserveOutput",
   "scope": "Read",

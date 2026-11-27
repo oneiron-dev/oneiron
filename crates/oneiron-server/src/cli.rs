@@ -1007,9 +1007,9 @@ pub enum McpAuthMode {
 /// The two MCP endpoints a server registers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum McpSurface {
-    /// `/mcp/tool-first`: one tool per exported verb.
+    /// `/mcp/tool-first`: one tool per exported verb, plus `execute` and `resume` on a ready host.
     ToolFirst,
-    /// `/mcp`: the code-mode catalog (`setup_oneiron`, `execute_code`).
+    /// `/mcp`: `setup_oneiron`, plus `execute` and `resume` on a ready host.
     Primary,
 }
 

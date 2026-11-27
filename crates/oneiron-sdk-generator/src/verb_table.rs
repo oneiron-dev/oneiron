@@ -1,6 +1,7 @@
 //! The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read
 //! in file-name order.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,8 @@ use crate::py::json;
 use crate::py::read_text;
 use crate::py::text::{display_os_str, os_str_code_points};
 use crate::py::value::{Dict, Value};
+
+mod example_call;
 
 /// The verb table's directory, from the repository root.
 pub(crate) const VERBS_DIR: &str = "scripts/sdk/verbs";
@@ -71,6 +74,123 @@ fn check_act_class(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
+/// An optional example has one physical line and calls the exact verb path as code: the token stream
+/// holds the path's segments dotted and opening a paren, so a mention inside a string, a template, a comment or a
+/// regex literal is no call, and neither is an example that does not lex.
+fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
+    let Some(example) = row.get("example") else {
+        return Ok(());
+    };
+    let valid = example.as_str().is_some_and(|text| {
+        !text.trim().is_empty()
+            && !text.contains(['\n', '\r'])
+            && example_call::calls_exact_path(text, name).unwrap_or(false)
+    });
+    if !valid {
+        return Err(GenerateError::value(format!(
+            "{name}: an example is one line of code that calls the row's own verb"
+        )));
+    }
+    Ok(())
+}
+
+/// Reads one verb-tree file, identifying it on any read, parse, or shape error.
+fn read_verb_tree_object(path: &Path) -> Result<Dict, GenerateError> {
+    let text = fs::read_to_string(path).map_err(|error| GenerateError::os(&error, path))?;
+    let value = json::loads(&text)
+        .map_err(|error| GenerateError::value(format!("{}: {error}", path.display())))?;
+    match value {
+        Value::Dict(object) => Ok(object),
+        _ => Err(GenerateError::value(format!(
+            "{}: expected a JSON object",
+            path.display()
+        ))),
+    }
+}
+
+/// Checks family lines and vault capability labels against the original verb names.
+pub(crate) fn check_verb_tree<'a>(
+    sdk: &Path,
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), GenerateError> {
+    let mut roots = BTreeSet::new();
+    let mut vault_children = BTreeSet::new();
+    for name in names {
+        if let Some((root, rest)) = name.split_once('.') {
+            roots.insert(root);
+            if root == "vault" {
+                vault_children.insert(rest.split('.').next().unwrap_or_default());
+            }
+        }
+    }
+
+    let tree = sdk.join("verb-tree");
+    let families_path = tree.join("families.json");
+    let families = read_verb_tree_object(&families_path)?;
+    for root in &roots {
+        if !families
+            .get(*root)
+            .and_then(Value::as_str)
+            .is_some_and(|line| {
+                !line.trim().is_empty()
+                    && !line.contains([
+                        '\n', '\r', '\u{B}', '\u{C}', '\u{85}', '\u{2028}', '\u{2029}',
+                    ])
+            })
+        {
+            return Err(GenerateError::value(format!(
+                "{}: root {root:?} needs a non-blank family line of one line",
+                families_path.display()
+            )));
+        }
+    }
+    for root in families.keys() {
+        if !roots.contains(root.as_str()) {
+            return Err(GenerateError::value(format!(
+                "{}: family line {root:?} must name a root with a dotted descendant",
+                families_path.display()
+            )));
+        }
+    }
+
+    let capabilities_path = tree.join("vault_capabilities.json");
+    let capabilities = read_verb_tree_object(&capabilities_path)?;
+    let mut labelled = BTreeSet::new();
+    for (label, members) in &capabilities {
+        let Value::List(members) = members else {
+            return Err(GenerateError::value(format!(
+                "{}: label {label:?} must hold an array of vault child names",
+                capabilities_path.display()
+            )));
+        };
+        for member in members {
+            let Some(child) = member
+                .as_str()
+                .filter(|child| vault_children.contains(*child))
+            else {
+                return Err(GenerateError::value(format!(
+                    "{}: label {label:?} member {} must be a real vault child",
+                    capabilities_path.display(),
+                    member.repr()
+                )));
+            };
+            if !labelled.insert(child) {
+                return Err(GenerateError::value(format!(
+                    "{}: vault child {child:?} must appear exactly once across the labels (repeated in {label:?})",
+                    capabilities_path.display()
+                )));
+            }
+        }
+    }
+    if let Some(child) = vault_children.difference(&labelled).next() {
+        return Err(GenerateError::value(format!(
+            "{}: vault child {child:?} must appear exactly once across the labels (unlabelled)",
+            capabilities_path.display()
+        )));
+    }
+    Ok(())
+}
+
 /// `directory.glob('*.json')`, sorted: every entry whose name ends in `.json` (a dot file, a directory or a broken
 /// link too; reading one then fails as Python's does). pathlib's glob yields nothing for a missing or unreadable
 /// directory and skips an entry it cannot read. `sorted()` of paths in one directory compares their names as Python
@@ -109,6 +229,7 @@ pub(crate) fn load_verbs(directory: &Path) -> Result<Vec<Dict>, GenerateError> {
             return Err(GenerateError::type_error("a verb row is a JSON object"));
         };
         check_act_class(&row)?;
+        check_example(&row, &name)?;
         rows.push(row);
     }
     Ok(rows)
@@ -295,5 +416,304 @@ mod tests {
             )
         );
         fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    fn write_verb_tree(sdk: &Path, families: &str, vault_capabilities: &str) {
+        let tree = sdk.join("verb-tree");
+        fs::create_dir_all(&tree).expect("a verb tree");
+        fs::write(tree.join("families.json"), families).expect("families.json");
+        fs::write(tree.join("vault_capabilities.json"), vault_capabilities)
+            .expect("vault_capabilities.json");
+    }
+
+    fn description_row(label: &str, text: &str) -> Result<(), GenerateError> {
+        use crate::generate::Generator;
+
+        let root = scratch(label);
+        let sdk = root.join("scripts/sdk");
+        let verbs = sdk.join("verbs");
+        fs::create_dir_all(&verbs).expect("a scratch tree");
+        fs::write(sdk.join("type_names.json"), "{}\n").expect("type_names.json");
+        write_verb_tree(&sdk, "{}", "{}");
+        fs::write(verbs.join("zz_fixture.json"), text).expect("a verb file");
+        let result = Generator::rows_only(&root).map(drop);
+        fs::remove_dir_all(&root).expect("cleanup");
+        result
+    }
+
+    #[test]
+    fn rejects_a_row_without_a_description() {
+        let row = r#"{"name":"zz_fixture","input":"In","output":"Out","scope":"Read","act_class":"read","call":"read(memory, &input)?"}"#;
+        let error = description_row("missing-description", row)
+            .expect_err("a row without a description is refused")
+            .to_string();
+        assert!(error.contains("zz_fixture:"), "{error}");
+        assert!(
+            error.contains(
+                "every row has a description: one printable ASCII line ending in a period"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_run_row_description_without_a_call() {
+        let row = r#"{"name":"zz_fixture","description":"Runs a fixture.","input":"In","scope":"Read","act_class":"read","context":"run","effect":"Effect"}"#;
+        description_row("run-description", row)
+            .expect("an effect-backed row can have a description");
+    }
+
+    fn example_row(label: &str, example: &str) -> Result<Vec<Dict>, GenerateError> {
+        example_row_named(label, "vault.recall", example)
+    }
+
+    fn example_row_named(
+        label: &str,
+        name: &str,
+        example: &str,
+    ) -> Result<Vec<Dict>, GenerateError> {
+        let dir = scratch(label);
+        let row = format!(
+            r#"{{"name":"{name}","description":"Recalls memories.","scope":"Read","act_class":"read","example":{example}}}"#
+        );
+        fs::write(dir.join(format!("{name}.json")), row).expect("a verb file");
+        let loaded = load_verbs(&dir);
+        fs::remove_dir_all(&dir).expect("cleanup");
+        loaded
+    }
+
+    fn assert_example_refusal(label: &str, example: &str) {
+        let error = example_row(label, example)
+            .expect_err("the example is refused")
+            .to_string();
+        assert!(error.contains("vault.recall:"), "{error}");
+        assert!(
+            error.contains("an example is one line of code that calls the row's own verb"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_multi_line_example() {
+        for example in [
+            r#""vault.recall({});\nnext()""#,
+            r#""vault.recall({});\rnext()""#,
+        ] {
+            assert_example_refusal("multi-line-example", example);
+        }
+    }
+
+    #[test]
+    fn rejects_an_example_that_calls_another_verb() {
+        for example in [
+            r#""vault.remember({})""#,
+            r#""vault.recall_x({})""#,
+            r#""x.vault.recall({})""#,
+            r#""xvault.recall({})""#,
+            r#""$vault.recall({})""#,
+        ] {
+            assert_example_refusal("wrong-example-verb", example);
+        }
+    }
+
+    #[test]
+    fn rejects_an_example_that_only_names_its_verb() {
+        assert_example_refusal("example-mention", r#""vault.recall""#);
+    }
+
+    #[test]
+    fn rejects_an_example_that_calls_its_verb_only_inside_a_string_or_comment() {
+        for example in [
+            r#""const hint = \"vault.recall({})\";""#,
+            r#""const hint = 'vault.recall({})';""#,
+            r#""const hint = `vault.recall({})`;""#,
+            r#""log(\"see vault.recall({})\")""#,
+            r#""log(\"a \\\" vault.recall({})\")""#,
+            r#""// vault.recall({})""#,
+            r#""/* vault.recall({}) */""#,
+        ] {
+            assert_example_refusal("example-in-string", example);
+        }
+    }
+
+    #[test]
+    fn accepts_an_example_whose_call_takes_string_arguments() {
+        example_row(
+            "example-string-argument",
+            r#""const r = await vault.recall({query: \"vault.recall(x)\", limit: 3})""#,
+        )
+        .expect("a call outside strings is valid whatever its arguments hold");
+    }
+
+    #[test]
+    fn accepts_a_one_line_example_that_calls_its_own_verb() {
+        example_row(
+            "own-example-verb",
+            r#""const result = await vault.recall ({})""#,
+        )
+        .expect("an example calling its own verb is valid");
+    }
+
+    #[test]
+    fn rejects_an_example_whose_verb_mention_is_no_call() {
+        for example in [
+            r#""const hint = /vault.recall()/;""#,
+            r#""const hint = /a[/]vault.recall()/;""#,
+            r#""const t = `vault.recall({})`;""#,
+            r#""x.vault.recall({})""#,
+            r#""myvault.recall({})""#,
+            r#""\"vault.recall({})\"""#,
+            r#""// vault.recall({})""#,
+            r#""const hint = \"vault.recall({});""#,
+        ] {
+            assert_example_refusal("example-no-call", example);
+        }
+    }
+
+    #[test]
+    fn accepts_an_example_with_a_slash_a_division_and_a_keyword() {
+        example_row(
+            "example-slash-in-string",
+            r#""const items = await vault.recall({ query: \"a/b\", limit: 8 }).then(result => \"items\" in result ? result.items : []);""#,
+        )
+        .expect("a slash inside a string is no regex");
+        example_row_named(
+            "example-in-keyword",
+            "vault.remember",
+            r#""if (\"actor_ref\" in me) await vault.remember({ subject_ref: me.person_ref ?? me.actor_ref });""#,
+        )
+        .expect("the `in` keyword and `??` are no call");
+        example_row(
+            "example-division",
+            r#""const n = a / b; await vault.recall({});""#,
+        )
+        .expect("a division is no regex");
+    }
+
+    #[test]
+    fn accepts_every_shipped_example_against_its_own_row() {
+        let verbs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/sdk/verbs");
+        let rows = load_verbs(&verbs).expect("the shipped verb table loads");
+        let mut checked = 0;
+        for row in &rows {
+            let (Some(name), Some(example)) = (
+                row.get("name").and_then(Value::as_str),
+                row.get("example").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            assert_eq!(
+                super::example_call::calls_exact_path(example, name),
+                Ok(true),
+                "{name}"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 8, "eight shipped examples");
+    }
+
+    fn verb_tree_error(label: &str, families: &str, capabilities: &str, names: &[&str]) -> String {
+        let sdk = scratch(label);
+        write_verb_tree(&sdk, families, capabilities);
+        let result = check_verb_tree(&sdk, names.iter().copied());
+        fs::remove_dir_all(&sdk).expect("cleanup");
+        result.expect_err("the verb tree is refused").to_string()
+    }
+
+    #[test]
+    fn rejects_a_root_without_a_family_line() {
+        let error = verb_tree_error("missing-family", "{}", "{}", &["reveal", "reveal.wait"]);
+        assert!(error.contains("families.json"), "{error}");
+        assert!(
+            error.contains(r#"root "reveal" needs a non-blank family line"#),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_family_line_of_more_than_one_line() {
+        for families in [
+            r#"{"vault":"Shared memory.\nMore."}"#,
+            r#"{"vault":"Shared memory.\rMore."}"#,
+            r#"{"vault":"first\u2028second"}"#,
+            r#"{"vault":"first\u2029second"}"#,
+            r#"{"vault":"first\u0085second"}"#,
+        ] {
+            let error = verb_tree_error(
+                "multi-line-family",
+                families,
+                r#"{"Read":["recall"]}"#,
+                &["vault.recall"],
+            );
+            assert!(error.contains("families.json"), "{error}");
+            assert!(
+                error.contains(r#"root "vault" needs a non-blank family line of one line"#),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_family_line_for_no_root() {
+        let error = verb_tree_error("extra-family", r#"{"ask":"Asks."}"#, "{}", &["ask"]);
+        assert!(error.contains("families.json"), "{error}");
+        assert!(
+            error.contains(r#"family line "ask" must name a root with a dotted descendant"#),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_unlabelled_vault_child() {
+        let error = verb_tree_error(
+            "unlabelled-vault-child",
+            r#"{"vault":"Shared memory."}"#,
+            "{}",
+            &["vault.claims.get"],
+        );
+        assert!(error.contains("vault_capabilities.json"), "{error}");
+        assert!(
+            error.contains(
+                r#"vault child "claims" must appear exactly once across the labels (unlabelled)"#
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_vault_child_in_two_labels() {
+        for capabilities in [
+            r#"{"Read":["recall"],"Other":["recall"]}"#,
+            r#"{"Read":["recall","recall"]}"#,
+        ] {
+            let error = verb_tree_error(
+                "repeated-vault-child",
+                r#"{"vault":"Shared memory."}"#,
+                capabilities,
+                &["vault.recall"],
+            );
+            assert!(error.contains("vault_capabilities.json"), "{error}");
+            assert!(
+                error.contains(
+                    r#"vault child "recall" must appear exactly once across the labels (repeated"#
+                ),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_label_member_that_is_no_vault_child() {
+        let error = verb_tree_error(
+            "unknown-vault-child",
+            r#"{"vault":"Shared memory."}"#,
+            r#"{"Read":["recall","invented"]}"#,
+            &["vault.recall"],
+        );
+        assert!(error.contains("vault_capabilities.json"), "{error}");
+        assert!(
+            error.contains("member 'invented' must be a real vault child"),
+            "{error}"
+        );
     }
 }

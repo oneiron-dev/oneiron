@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 use oneiron::{Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::config::SyncServerConfig;
-use oneiron_server::mcp::{MCP_READ_RESULT_TOOL, McpSurfaceMode, try_registered_surface};
+use oneiron_server::mcp::{
+    MCP_EXECUTE_TOOL, MCP_RESUME_TOOL, McpSurfaceMode, try_registered_surface,
+};
 use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::mcp_surface::{served_listing, served_tool_names};
 
@@ -29,7 +31,7 @@ const REPEATED_SURFACE_READS: usize = 4;
 /// 742-815 ms in the E2E build.
 const REPEATED_SURFACE_READS_BOUND: Duration = Duration::from_millis(50);
 
-/// A server with no code host: its surfaces carry no `execute_code` runtime.
+/// A server with no code host: its surfaces carry no `execute` runtime.
 fn server_without_code_host() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
@@ -66,7 +68,7 @@ async fn mcp_surface_reads_after_the_first_do_not_register_again() {
 }
 
 /// The served surface is the process registration, tool for tool and byte
-/// for byte, and without a code host it registers no `read_result`.
+/// for byte, and without a code host it registers neither execution tool.
 #[tokio::test]
 async fn mcp_surface_without_a_code_host_is_the_process_registration() {
     let (_dir, server) = server_without_code_host();
@@ -75,8 +77,8 @@ async fn mcp_surface_without_a_code_host_is_the_process_registration() {
         let served = served_tool_names(&server, mode).expect("the surface registers");
         assert_eq!(served, registered.tool_names(), "{mode:?}");
         assert!(
-            !served.contains(&MCP_READ_RESULT_TOOL),
-            "{mode:?}: read_result is registered only beside a verified code host"
+            !served.contains(&MCP_EXECUTE_TOOL) && !served.contains(&MCP_RESUME_TOOL),
+            "{mode:?}: execute and resume are registered only beside a verified code host"
         );
         let listing = served_listing(&server, mode).expect("the surface registers");
         assert_eq!(&listing, registered.listing(), "{mode:?}");

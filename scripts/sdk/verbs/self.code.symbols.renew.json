@@ -1,5 +1,6 @@
 {
   "name": "self.code.symbols.renew",
+  "description": "Extends the run's own symbol declaration without changing its ID or held state.",
   "input": "crate::memory::repo_doors::RepoSymbolsRenewInput",
   "output": "crate::memory::repo_doors::RepoSymbolsRenewOutput",
   "scope": "Write",

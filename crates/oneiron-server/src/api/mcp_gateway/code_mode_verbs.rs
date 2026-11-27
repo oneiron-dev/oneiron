@@ -55,6 +55,7 @@ mod library;
 mod program_admission;
 mod reader;
 mod receipt_evidence;
+mod run_result;
 mod secret_custody;
 mod session_write;
 mod site_skills;
@@ -86,8 +87,8 @@ use self::secret_custody::RunSecretCustody;
 use self::site_skills::RunSiteSkills;
 use self::solved_runs::BrowserCapture;
 use super::actor_dispatch::{
-    mcp_caller_code_speech_gate, mcp_host_verb_gate, mcp_run_call_gate, mcp_run_speech_gate,
-    mcp_tool_validation_error, mcp_verb_gate,
+    mcp_browser_guest_gate, mcp_caller_code_speech_gate, mcp_host_verb_gate, mcp_run_call_gate,
+    mcp_run_speech_gate, mcp_tool_validation_error, mcp_verb_gate,
 };
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
@@ -135,7 +136,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError};
 use std::time::Instant;
 
-/// The verb door one `execute_code` run binds, under that call's connector.
+/// The verb door one `execute` run binds, under that call's connector.
 pub(crate) struct McpCodeModeVerbs {
     server: Arc<SyncServer>,
     actor: McpCallContext,
@@ -154,7 +155,7 @@ pub(crate) struct McpCodeModeVerbs {
     run_id: oneiron::EntityId,
     /// This run's browser and desktop.
     guests: RunGuests,
-    /// The `execute_code` call's attempt collector, taken where the door is
+    /// The `execute` call's attempt collector, taken where the door is
     /// built: each verb runs on a spawned task, and a live-run hold made
     /// there reaches the call's receipt only through this (FIX 10938).
     collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
@@ -170,6 +171,11 @@ pub(crate) struct McpCodeModeVerbs {
 /// its credential holds (FIX EXECUTE-CALLER-CODE); its reason codes name
 /// what the run would have lent.
 pub(crate) const CALLER_CODE_REFUSED: &str = "caller_code_refused";
+
+/// The refusal code of a run's desktop row: no direct door serves the
+/// host's desktop guest, so no connector's run drives it (FIX
+/// CODE-MODE-LENDING-W2).
+pub(crate) const MCP_DESKTOP_REFUSED: &str = "mcp_desktop_refused";
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
 /// give it, and its desktop, when it has a `[desktop]` one. Whichever door
@@ -197,7 +203,7 @@ pub(crate) struct RunGuests {
 /// One run's browser guest. It starts on the first call that needs it and
 /// is never shared with another run. Its seat is the run's own in the
 /// server's registry (CUA-001), as the desktop's is: the owner can take the
-/// browser over, and the run's next door (an MCP `execute_code` run's next
+/// browser over, and the run's next door (an MCP `execute` run's next
 /// entry) finds the guest, cart and login with it, this one leaves. The
 /// guest ends when the run ends, or once its seat sits idle with no door of
 /// the run bound.
@@ -324,7 +330,7 @@ struct LadderDecider {
 /// Whom a run's routine decisions are asked for.
 #[derive(Clone)]
 pub(crate) enum VerdictAsker {
-    /// The `execute_code` connector: each decision is an `ai.verdict` call by
+    /// The `execute` connector: each decision is an `ai.verdict` call by
     /// that credential, under a fresh invocation. The browser batch it is
     /// bound for carries it, so `ai.verdict` need not be bound itself.
     Connector(McpCallContext),

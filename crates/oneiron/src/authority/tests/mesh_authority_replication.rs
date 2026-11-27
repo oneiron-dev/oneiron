@@ -596,8 +596,9 @@ fn a_binding_of_seventy_thousand_grants_crosses_whole_in_parts() {
 }
 
 /// 20. A row the home signs again between the page that named it and its parts never joins: its
-/// parts carry another length, or other bytes under the length the page named. A reference past
-/// the longest row a machine joins, or to an empty row, never starts a join.
+/// parts carry another length, or other bytes under the length the page named. A part of a
+/// shorter row is refused for its length even where its bytes fit. A reference past the longest
+/// row a machine joins, or to an empty row, never starts a join.
 #[test]
 fn a_row_signed_again_after_its_page_or_past_the_cap_never_joins() {
     let host = host();
@@ -625,6 +626,11 @@ fn a_row_signed_again_after_its_page_or_past_the_cap_never_joins() {
         join.finish().is_some(),
         "control: the row the page named joins"
     );
+    let named_row_part = host.vault.mesh_authority_part(machine, 0).unwrap().unwrap();
+    assert_eq!(
+        named_row_part.total, reference.total,
+        "control: the first part of the row the page named"
+    );
 
     host.vault
         .add_unminted_mesh_grants(&host.issuer, machine, [(b"mesh/later".to_vec(), [9; 32])])
@@ -640,6 +646,18 @@ fn a_row_signed_again_after_its_page_or_past_the_cap_never_joins() {
         total: signed_again.total,
         ..reference.clone()
     };
+    // A part of the shorter row against a reference that names the longer one: its bytes fit
+    // under that length, so only the length the part carries refuses it.
+    assert!(
+        named_row_part.total < named_its_length.total
+            && named_row_part.part.len() as u64 <= named_its_length.total,
+        "control: the shorter row's first part fits under the longer length"
+    );
+    let mut join = MeshAuthorityRowJoin::start(named_its_length.clone()).unwrap();
+    assert!(
+        !join.take(named_row_part),
+        "a part of a shorter row does not continue a longer one"
+    );
     let mut join = MeshAuthorityRowJoin::start(named_its_length).unwrap();
     assert!(join.take(signed_again), "control: the length matches");
     assert!(

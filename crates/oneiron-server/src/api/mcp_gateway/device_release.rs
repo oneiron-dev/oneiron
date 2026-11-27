@@ -163,8 +163,11 @@ fn release_result(
     owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
     // A claimed call keeps the result it is about to judge, for the calls
-    // waiting on it (FIX 7914).
-    super::claimed_release::record(&result, rows);
+    // waiting on it (FIX 7914). The new execute/resume endpoint releases
+    // unrecorded (P1-2): its wire shape is recorded explicitly instead.
+    if super::claimed_release::recording_enabled() {
+        super::claimed_release::record(&result, rows);
+    }
     let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -195,16 +198,11 @@ fn release_result(
     // A code run's hydrate steps, as its record names them, had their miss
     // echoes read as no ref for the run's short-ref rows already
     // (`mcp_run_named_rows`); its byte scan reads the same steps cleared
-    // (REVIEW-10571 P1 3).
-    let run_scan = if result
-        .pointer("/structuredContent/tool")
-        .and_then(Value::as_str)
-        == Some(crate::mcp::MCP_EXECUTE_CODE_TOOL)
-    {
-        RUN_HYDRATE_SCAN.try_with(Arc::clone).ok()
-    } else {
-        None
-    };
+    // (REVIEW-10571 P1 3). The scan serves only the answer it was made from.
+    let run_scan = RUN_HYDRATE_SCAN
+        .try_with(Arc::clone)
+        .ok()
+        .filter(|scan| run_scan_matches(scan, &result));
     let byte_scan = run_scan.as_deref().or(hydrate.as_ref()).unwrap_or(&result);
     let bytes = serde_json::to_vec(byte_scan).map_err(|_| refused(ReleaseHold::Placement))?;
     let hold = if owner_whole_vault_export {
@@ -518,6 +516,20 @@ fn run_hydrate_scan(
     Some(scan)
 }
 
+/// Whether `scan`, the copy [`with_run_hydrate_scan`] lent, was made from
+/// `result`: the same run ref and the same recorded step sequence. An
+/// `execute` or `resume` answer names no tool (EXECUTE-CALLER-CODE PR D), so
+/// its steps, not a tool name, tie the scan to its answer; a task run's
+/// `execute_code` answer matches the same way.
+fn run_scan_matches(scan: &Value, result: &Value) -> bool {
+    fn step_seqs(answer: &Value) -> Option<Vec<Option<&Value>>> {
+        let steps = answer.pointer("/structuredContent/steps")?.as_array()?;
+        Some(steps.iter().map(|step| step.get("seq")).collect())
+    }
+    scan.pointer("/structuredContent/run_ref") == result.pointer("/structuredContent/run_ref")
+        && step_seqs(scan).is_some_and(|seqs| step_seqs(result) == Some(seqs))
+}
+
 fn recorded_step<'a>(
     step: &Value,
     record: &'a oneiron::code_run::CodeRunReplayRecord,
@@ -605,7 +617,7 @@ pub(super) fn mcp_release_listed(
     result: Value,
     owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
-    if rows.is_none() {
+    if rows.is_none() && super::claimed_release::recording_enabled() {
         super::claimed_release::record(&result, None);
     }
     match rows {

@@ -232,7 +232,7 @@ async fn door(
     let verbs = McpCodeModeVerbs::new(server, &context, run);
     Ok(match author {
         ProgramAuthor::Caller => verbs.authored_by_caller(),
-        ProgramAuthor::EngineModel => verbs,
+        ProgramAuthor::EngineModel => verbs.authored_by_engine_model(),
     })
 }
 
@@ -336,6 +336,82 @@ pub async fn admit_run_speech_as(
         .map_err(guest_refusal))
 }
 
+/// The door a callable skill that `credential` calls over MCP on run `run`
+/// runs its nested calls behind (FIX CODE-MODE-LENDING-W8).
+async fn skill_door(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+) -> anyhow::Result<Arc<dyn AgentVerbDoor>> {
+    let context = resolve_context(server, credential).await?;
+    crate::api::skill_door_for_test(server, context, run)
+        .map_err(|error| anyhow::anyhow!("the skill door was not built: {error:?}"))
+}
+
+/// [`call_verb_written_by`] at a callable skill's door ([`skill_door`]).
+///
+/// # Errors
+///
+/// As [`call_verb`], and the skill door not being built.
+pub async fn call_skill_verb(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    verb: &str,
+    input: Value,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let row = verb_row(verb)?;
+    let door = skill_door(server, credential, run).await?;
+    let call = SelfAgentVerbCall { verb: row, input };
+    let origin = host_write_origin(credential.actor)?;
+    let outcome = door
+        .call(&call, &origin, InvocationId::mint())
+        .map_err(|error| {
+            anyhow::anyhow!("the composed call stopped outside a refusal: {error:?}")
+        })?;
+    match outcome {
+        Ok(_) => Ok(Ok(())),
+        Err(refused) => Ok(Err(guest_refusal(refused))),
+    }
+}
+
+/// [`admit_run_effect`] at a callable skill's door ([`skill_door`]).
+///
+/// # Errors
+///
+/// The credential failing to resolve, and the skill door not being built.
+pub async fn admit_skill_run_effect(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    effect: SelfEffect,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let door = skill_door(server, credential, run).await?;
+    Ok(door
+        .admit_run_call(RunCall::Bridge(effect))
+        .map(drop)
+        .map_err(guest_refusal))
+}
+
+/// The outer skill call's admission at a callable skill's door
+/// ([`skill_door`]): `AgentVerbDoor::admit_outer_skill_call`, as the host
+/// projection admits the call its caller made itself (REVIEW-10594).
+///
+/// # Errors
+///
+/// The credential failing to resolve, and the skill door not being built.
+pub async fn admit_outer_skill_call(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let door = skill_door(server, credential, run).await?;
+    Ok(door
+        .admit_outer_skill_call()
+        .map(drop)
+        .map_err(guest_refusal))
+}
+
 fn guest_refusal(refused: oneiron::code_run::AgentVerbRefusal) -> GuestRefusal {
     GuestRefusal {
         code: refused.code,
@@ -362,7 +438,7 @@ pub async fn call_off_record_claim(
     let mut context = resolve_context(server, credential).await?;
     context.session_workspace = Some(vec![folder_digest.to_owned()]);
     let actor = oneiron::WriteActor::new(credential.actor, EdgeActorClass::Human);
-    let verbs = McpCodeModeVerbs::new(server, &context, EntityId::now());
+    let verbs = McpCodeModeVerbs::new(server, &context, EntityId::now()).authored_by_engine_model();
     let dispatcher = HostSelfDispatcher::for_off_record_session(session, actor, "room-claim")?
         .with_agent_verb_door(Arc::new(verbs));
     input["subject_ref"] = Value::String(credential.actor.to_hex());
@@ -454,4 +530,49 @@ pub fn admits_guest(
         hook_notice: refused.hook_notice,
         reason_codes: refused.reason_codes,
     }))
+}
+
+/// One media door's refusal, as the door typed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaDoorRefusal {
+    /// The stable refusal code.
+    pub code: String,
+    /// The door's message.
+    pub message: String,
+    /// The refusal's stable reason codes (`grant_required.ai.<operation>`
+    /// for a Grant read as absent).
+    pub reason_codes: Vec<String>,
+}
+
+/// The `ai.*` media door `verb` (`ai.options`, `ai.image`, `ai.video`,
+/// `ai.video.poll` or `ai.video.cancel`) on `input`, as `credential` calls
+/// it from code-mode run `run` whose program the engine's model wrote:
+/// inside the run's line, which that run's verb dispatch binds (FIX 780).
+/// `Ok` is the door's answer, `Err` its refusal.
+///
+/// # Errors
+///
+/// The credential failing to resolve, or resolving to no auth.
+pub async fn media_call_on_run_line(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    verb: &str,
+    input: Value,
+) -> anyhow::Result<Result<Value, MediaDoorRefusal>> {
+    let context = resolve_context(server, credential).await?;
+    let auth = context
+        .actor
+        .auth
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("the door credential resolved no auth"))?;
+    Ok(
+        crate::api::media_door_on_run_line_for_test(server, auth, run, verb, input)
+            .await
+            .map_err(|refusal| MediaDoorRefusal {
+                code: refusal.code,
+                message: refusal.message,
+                reason_codes: refusal.reason_codes,
+            }),
+    )
 }

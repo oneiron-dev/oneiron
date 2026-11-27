@@ -1,11 +1,11 @@
-//! The automatic re-entry of a served MCP `execute_code` run parked on a
+//! The automatic re-entry of a served MCP `execute` run parked on a
 //! durable wait (FIX 4606).
 //!
 //! An MCP caller holds no parked attempt, so no trap wakes its run when the
 //! wait's reply is delivered: a code consent answer settled and delivered,
 //! and the run still waited for its caller's next call. Now each entry that
 //! parks its run registers an owned continuation here, keyed by the run: the
-//! run's handle, task and wait key, its replay generation, and the admitted
+//! run's handle and wait key, its replay generation, and the admitted
 //! request's whole caller context, which carries its credential, scope,
 //! locality, destination, off-record session and stream connection, beside
 //! the instrument that credential was admitted on and its connector
@@ -17,10 +17,11 @@
 //! own. A caller's own call that registers checks the same at once, so a
 //! reply delivered before the registration waits for no pass. Readiness is
 //! not authority: the caller's kept instrument, its registration and
-//! `execute_code`'s own gate are checked again first, and nothing stands in
+//! `execute`'s own gate are checked again first, and nothing stands in
 //! for the caller. The run then goes through the same admitted execution
 //! helper as the caller's own call, under the host's single flight, run
-//! admission, model seat and spend line, each verb call under its own gate.
+//! admission, and (for task runs) model seat and spend line. Each verb call
+//! meets its own gate.
 //!
 //! Readiness is checked before the run is the re-entry's own, so it is only
 //! a hint. A caller's own call can reach the host's single flight first,
@@ -169,8 +170,6 @@ fn precedes(earlier: &CodeRunReplayGeneration, later: &CodeRunReplayGeneration) 
 struct McpCodeRunContinuation {
     /// The caller's handle onto the run; the run's id derives from it.
     run_ref: String,
-    /// The REPL task the run carries out.
-    task: String,
     /// The wait the run parked on, keyed as its reply is delivered: the
     /// run's id, the wait's id and how often the run resumed from it.
     wait: WaitKey,
@@ -194,7 +193,6 @@ impl McpCodeRunContinuation {
         server: &SyncServer,
         caller: &McpCallContext,
         run_ref: &str,
-        task: &str,
         wait: WaitKey,
         generation: CodeRunReplayGeneration,
     ) -> Self {
@@ -202,7 +200,6 @@ impl McpCodeRunContinuation {
         let owner = auth.and_then(crate::api::scoped_auth::attested_owner_holder);
         Self {
             run_ref: run_ref.to_owned(),
-            task: task.to_owned(),
             wait,
             generation,
             caller: caller.clone(),
@@ -291,11 +288,12 @@ impl McpCodeRunEnd {
         server: &SyncServer,
         caller: &McpCallContext,
         run_ref: &str,
-        task: &str,
         outcome: &Result<EngineExecutorOutcome, McpCodeExecutionError>,
     ) -> Self {
         let outcome = match outcome {
-            Err(McpCodeExecutionError::RunWaitedOut) => return Self::Untouched,
+            Err(McpCodeExecutionError::RunWaitedOut | McpCodeExecutionError::RunRefReused) => {
+                return Self::Untouched;
+            }
             Err(_) => return Self::Unknown,
             Ok(outcome) => outcome,
         };
@@ -305,7 +303,7 @@ impl McpCodeRunEnd {
         Self::Recorded {
             generation,
             continuation: outcome.parked_wait().map(|parked| {
-                McpCodeRunContinuation::new(server, caller, run_ref, task, parked.key, generation)
+                McpCodeRunContinuation::new(server, caller, run_ref, parked.key, generation)
             }),
         }
     }
@@ -393,7 +391,6 @@ impl McpCodeRunEntry {
         mut self,
         caller: &McpCallContext,
         run_ref: &str,
-        task: &str,
         outcome: &Result<EngineExecutorOutcome, McpCodeExecutionError>,
     ) {
         // A re-entry that ran and failed is not made again for its wait in
@@ -408,7 +405,7 @@ impl McpCodeRunEntry {
         {
             self.server.mcp_code_run_continuations.fail(wait);
         }
-        let end = McpCodeRunEnd::of(&self.server, caller, run_ref, task, outcome);
+        let end = McpCodeRunEnd::of(&self.server, caller, run_ref, outcome);
         if let Some(continuation) = self.end(end)
             && self.claimed.is_none()
         {
@@ -553,7 +550,6 @@ async fn reenter(
         &server,
         &continuation.caller,
         &continuation.run_ref,
-        &continuation.task,
         entry,
         McpCodeRunResumeCondition::new(continuation.wait, continuation.generation),
     )
@@ -589,7 +585,7 @@ async fn reenter(
 /// kept instrument verifies again as the same slip at the same ceiling, or
 /// as the same live owner; a connector's registration resolves again at
 /// the ceiling the call was admitted at and still admits its proof; and
-/// `execute_code`'s own gate admits it. Nothing stands in: never the owner,
+/// `execute`'s own gate admits it. Nothing stands in: never the owner,
 /// a wider scope or another actor.
 async fn caller_stands(server: &Arc<SyncServer>, continuation: &McpCodeRunContinuation) -> bool {
     let caller = &continuation.caller;

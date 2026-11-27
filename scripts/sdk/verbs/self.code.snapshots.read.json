@@ -1,5 +1,6 @@
 {
   "name": "self.code.snapshots.read",
+  "description": "Reads one file from the named snapshot's stored blob when the read lane and grant allow it.",
   "input": "crate::memory::repo_doors::RepoSnapshotsReadInput",
   "output": "crate::memory::repo_doors::RepoSnapshotsReadOutput",
   "scope": "Read",

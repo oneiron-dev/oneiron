@@ -38,7 +38,7 @@ pub(crate) fn mcp_tool_validation_error(error: McpToolValidationError) -> McpGat
     }
 }
 
-/// Dispatches one VALIDATED endpoint tool call: setup, execute_code, an
+/// Dispatches one VALIDATED endpoint tool call: setup, execute, resume, an
 /// action, or one generated verb (ONE-1704). Nothing resolves a retired
 /// `oneiron.*` name. `headers` and `connection` are the request's own: an
 /// action's rows run under them.
@@ -67,10 +67,9 @@ pub(crate) async fn execute_mcp_tool(
                 McpCallEffect::Reads,
             )?;
         }
-        // execute_code enters its native session on any tier; each
-        // operation its run makes meets its own gate. A result read takes
-        // the session its run was admitted on.
-        McpValidatedToolArgs::ExecuteCode(_) | McpValidatedToolArgs::ReadResult(_) => {
+        // execute enters its native session, and resume re-enters the run
+        // its handle names; each operation the run makes meets its own gate.
+        McpValidatedToolArgs::Execute(_) | McpValidatedToolArgs::Resume(_) => {
             mcp_execute_code_gate(server, actor)?;
         }
         // A live credential: the action door itself requires its verb's
@@ -91,11 +90,11 @@ pub(crate) async fn execute_mcp_tool(
         McpValidatedToolArgs::Setup(args) => {
             Box::pin(execute_mcp_setup(server, *args, actor)).await
         }
-        McpValidatedToolArgs::ExecuteCode(args) => {
-            Box::pin(execute_mcp_execute_code(server, *args, actor)).await
+        McpValidatedToolArgs::Execute(args) => {
+            Box::pin(execute_mcp_execute(server, actor, &args)).await
         }
-        McpValidatedToolArgs::ReadResult(args) => {
-            Box::pin(execute_mcp_read_result(server, *args, actor)).await
+        McpValidatedToolArgs::Resume(args) => {
+            Box::pin(execute_mcp_resume(server, actor, &args)).await
         }
         McpValidatedToolArgs::InvokeAction(args) => {
             Box::pin(super::actions::execute_mcp_invoke_action(

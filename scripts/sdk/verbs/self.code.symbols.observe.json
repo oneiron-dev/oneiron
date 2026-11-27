@@ -1,5 +1,6 @@
 {
   "name": "self.code.symbols.observe",
+  "description": "Reads the run's current task symbol declaration without changing it: whether its lease is held and, while it is not, the readable tasks blocking it.",
   "input": "crate::memory::repo_doors::RepoSymbolsObserveInput",
   "output": "crate::memory::repo_doors::RepoSymbolsObserveOutput",
   "scope": "Read",

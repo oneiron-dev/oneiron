@@ -17,7 +17,16 @@ use oneiron::context_board::{
 use serde_json::Value;
 use serde_json::json;
 
-/// The closed metadata envelope every actor-derived result carries.
+/// The consent metadata the server stamps on an execute or resume result.
+/// It does not grant consent to a verb.
+pub(crate) const MCP_CODE_RUN_CONSENT_POLICY_REF: &str = "policy:foreign-mcp";
+
+pub(crate) fn is_code_run_result(result: &Value) -> bool {
+    result.pointer("/_meta/policy_ref").and_then(Value::as_str)
+        == Some(MCP_CODE_RUN_CONSENT_POLICY_REF)
+}
+
+/// The closed metadata envelope for the board and generated verb results.
 #[derive(Clone, Debug, PartialEq)]
 pub struct McpResultMetadata {
     pub request_id: String,
@@ -120,7 +129,7 @@ fn read_facet_refs(scope: &McpConnectorScope) -> Option<Vec<String>> {
 ///
 /// A live-run refusal of `invoke_action` (OF-181) carries the suggestion its
 /// HTTP door states, `LiveRunRefusal::suggestion`, alone: each has its own
-/// code, apart from `execute_code`'s refusals (FIX 3456).
+/// code, apart from `execute`'s refusals (FIX 3456).
 #[must_use]
 pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
     let live_run = LiveRunRefusal::from_code(error_code).map(LiveRunRefusal::suggestion);
@@ -181,8 +190,8 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "call setup_oneiron to read the effective scope back",
         ],
         MCP_CODE_HOST_UNBOUND_CODE => &[
-            "this server has no verified execute_code host bound; no run was created",
-            "ask the vault owner to bind McpQuickJsProvider with a backend and budget lease",
+            "this server has no verified execute host bound; no run was created",
+            "ask the vault owner to bind the verified QuickJS component; caller source needs no model",
             "use setup_oneiron and the tool-first verbs while execution is unconfigured",
         ],
         MCP_PAGE_CURSOR_INVALID_CODE => &[
@@ -191,10 +200,10 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
         ],
         "code_run_waited_out" => &[
             "this run waited its whole deadline for a turn, behind its own earlier entry or among the runs ahead of it; no run was started",
-            "retry with the same run_ref; when the runs ahead of it filled the server's code_mode.max_runs row, that row has asked whether everything is okay",
+            "retry execute with the same code and run_ref, or call resume if that run already exists",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
-            "retry with the SAME run_ref to re-enter the durable run",
+            "call resume with the same run_ref to continue an existing run",
             "report the run_ref and request id to the vault owner",
         ],
         // A live-run refusal: its own suggestion alone, below.
@@ -373,6 +382,12 @@ pub(crate) fn mcp_stamp_call_receipt(
     result: &mut Value,
     stamp: &crate::api::call_receipt::CallStamp,
 ) {
+    if is_code_run_result(result) {
+        if let Some(meta) = result["_meta"].as_object_mut() {
+            stamp.stamp_json(meta);
+        }
+        return;
+    }
     let Some(structured) = result.get_mut("structuredContent") else {
         return;
     };

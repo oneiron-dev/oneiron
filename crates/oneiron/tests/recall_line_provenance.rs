@@ -56,6 +56,7 @@ impl Fixture {
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("install profile");
+        vault.hold_checkpoint_root_signer(Arc::new(issuer));
         let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
         let proof = vault
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
@@ -144,7 +145,8 @@ impl Fixture {
         body.scope_project = self.project;
         body.source = Some(ClaimSource::UserStated);
         body.session_tag = Some("private-fixture-tag".to_owned());
-        put_claim(&self.vault, &id, body, evidence, LEARNED_AT).expect("land fixture claim");
+        put_claim(&self.vault, &id, body, evidence, LEARNED_AT, self.owner)
+            .expect("land fixture claim");
         let vector = [cosine, (1.0 - cosine * cosine).sqrt(), 0.0, 0.0];
         self.vault
             .batch()

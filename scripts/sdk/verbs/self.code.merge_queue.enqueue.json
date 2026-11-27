@@ -1,5 +1,6 @@
 {
   "name": "self.code.merge_queue.enqueue",
+  "description": "Queues the run's stored proposals for one work view against its pinned green revision without rebasing them.",
   "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
   "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
   "scope": "Write",

@@ -718,6 +718,22 @@ async fn focus_refresh_masks_a_pack_claim_cell_for_a_non_owner_but_not_for_its_o
         ..Default::default()
     });
     let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    // The board's pinned verb floor is far over the default 1,200-token cap
+    // ([BOARD-KEYFRAME-OVER-BUDGET]), which sheds the pack section before
+    // either cell is compared: the owner's cap leaves room for it.
+    let owner_proof = server
+        .vault
+        .authenticate_owner(
+            owner,
+            "principal:pack-lifted-board-cap",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .set_board_layout_settings(&owner_proof, None, Some(Some(20_000)), None, None, None)
+        .unwrap();
     let reader = seeded_test_entity_id(0x2477_9201);
     let readers = [("pack-lifted-reader", reader), ("pack-lifted-owner", owner)];
     for (credential, actor) in readers {

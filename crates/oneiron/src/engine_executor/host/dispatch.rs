@@ -608,16 +608,18 @@ impl RecordingJsHost<'_, '_> {
             earlier: &self.bridge_calls,
             reply_publisher: None,
         };
+        // The outer call the host projection entered is its caller's own.
+        let outer = self.admitted_skill_seq == Some(seq);
         let lease = match self
             .gated_write
-            .admit_skill_call_for_executor_run(site, call)?
+            .admit_skill_call_for_executor_run(site, call, outer)?
         {
             Ok(lease) => lease,
             Err(refused) => return Ok((refused, None)),
         };
         // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
         // names the skill and the args it runs with.
-        let (skill, mut hooked) = if self.admitted_skill_seq == Some(seq) {
+        let (skill, mut hooked) = if outer {
             (skill, None)
         } else {
             match self.gated_write.enter_verb_hooks(
