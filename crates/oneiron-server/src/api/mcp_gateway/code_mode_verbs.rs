@@ -86,13 +86,15 @@ use self::secret_custody::RunSecretCustody;
 use self::site_skills::RunSiteSkills;
 use self::solved_runs::BrowserCapture;
 use super::actor_dispatch::{
-    mcp_host_verb_gate, mcp_run_call_gate, mcp_run_speech_gate, mcp_tool_validation_error,
-    mcp_verb_gate,
+    mcp_caller_code_speech_gate, mcp_host_verb_gate, mcp_run_call_gate, mcp_run_speech_gate,
+    mcp_tool_validation_error, mcp_verb_gate,
 };
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
 };
-use super::tasks_response::{McpCodeRun, execute_agent_verb_input, mcp_agent_verb_arguments};
+use super::tasks_response::{
+    McpCodeRun, RunAuthor, execute_agent_verb_input, mcp_agent_verb_arguments,
+};
 use super::{
     McpCallContext, McpGatewayError, McpServed, admission, mcp_facade_error, served_rows,
     tasks_response,
@@ -160,7 +162,14 @@ pub(crate) struct McpCodeModeVerbs {
     /// as its collector is: a nested verb's wait in a line shows on that
     /// call's admission receipt, a skill call's among them (FIX 4735).
     observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
+    /// Who wrote the run's program: what the run may lend its calls.
+    author: RunAuthor,
 }
+
+/// The refusal code of a call a caller's own code may not make, whatever
+/// its credential holds (FIX EXECUTE-CALLER-CODE); its reason codes name
+/// what the run would have lent.
+pub(crate) const CALLER_CODE_REFUSED: &str = "caller_code_refused";
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
 /// give it, and its desktop, when it has a `[desktop]` one. Whichever door

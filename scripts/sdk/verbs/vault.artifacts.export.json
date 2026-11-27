@@ -23,5 +23,6 @@
       "ts": "/** One version's export file (base64), with its pinned name and media type. */",
       "py": "One version's export file (base64), with its pinned name and media type."
     }
-  }
+  },
+  "caller_code": "refused"
 }

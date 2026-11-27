@@ -11,5 +11,6 @@
   },
   "section": false,
   "proposes": true,
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

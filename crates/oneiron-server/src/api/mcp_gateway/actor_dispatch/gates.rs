@@ -235,6 +235,17 @@ pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
     mcp_session_operation_gate(server, actor, McpCallEffect::of_run_speech(destination))
 }
 
+/// One speech call of a run whose program its caller wrote (FIX
+/// EXECUTE-CALLER-CODE): the live session, then Write wherever it lands.
+/// No direct call writes a MESSAGE under a Read grant, so the caller's own
+/// code does not either.
+pub(in crate::api::mcp_gateway) fn mcp_caller_code_speech_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::Commits)
+}
+
 /// One row a run's door serves itself, not through a tool: a browser or
 /// desktop row, a session-bound run's room read or write, or a program
 /// admission job's call. The live session, then the row's own effect

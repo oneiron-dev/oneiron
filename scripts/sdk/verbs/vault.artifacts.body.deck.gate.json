@@ -23,5 +23,6 @@
       "ts": "/** The deck export gate for a profile. */",
       "py": "The deck export gate for a profile."
     }
-  }
+  },
+  "caller_code": "refused"
 }

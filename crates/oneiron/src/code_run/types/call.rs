@@ -171,6 +171,30 @@ impl SelfCall {
         }
     }
 
+    /// The run row this call was made through, when its effect is shared by
+    /// several rows (`scripts/sdk/verbs/*.json`: Fold, Team, Leader). A door
+    /// that binds rows by name admits this exact row, since the effect alone
+    /// names the family (FIX EXECUTE-CALLER-CODE). `describe({ fold })` reads
+    /// one fold, as `self.folds` reads them all.
+    #[must_use]
+    pub fn shared_effect_row(&self) -> Option<&'static str> {
+        use crate::compaction::SelfFoldCall;
+        use crate::team::SelfTeamCall;
+        Some(match self {
+            Self::Fold(SelfFoldCall::Mark { .. }) => "self.fold",
+            Self::Fold(SelfFoldCall::Compact { .. }) => "self.compact",
+            Self::Fold(SelfFoldCall::Unfold { .. }) => "self.unfold",
+            Self::Fold(SelfFoldCall::List | SelfFoldCall::Describe { .. }) => "self.folds",
+            Self::Team(SelfTeamCall::Start(_)) => "self.team.start",
+            Self::Team(SelfTeamCall::Record(_)) => "self.team.record",
+            Self::Team(SelfTeamCall::Vote(_)) => "self.team.vote",
+            Self::TeamSubmit(_) => "self.team.submit",
+            Self::Leader(SelfLeaderCall::Advice { .. }) => "self.leader.advice",
+            Self::Leader(SelfLeaderCall::Pattern { .. }) => "self.leader.pattern",
+            _ => return None,
+        })
+    }
+
     /// Whether this call's row output holds a park, so a call answered with
     /// the wait its run parks on answers it as that output,
     /// `TaskAskWait::Park`: the bare `wait` (`scripts/sdk/verbs/wait.json`),

@@ -29,5 +29,6 @@
       "ts": "/** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */",
       "py": "Reads a live body, at its head or an earlier frontier."
     }
-  }
+  },
+  "caller_code": "refused"
 }

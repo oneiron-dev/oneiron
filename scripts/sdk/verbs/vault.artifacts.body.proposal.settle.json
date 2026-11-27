@@ -33,5 +33,6 @@
       "ts": "/** Accepts or rejects an office proposal's reviewed forks. */",
       "py": "Accepts or rejects an office proposal's reviewed forks."
     }
-  }
+  },
+  "caller_code": "refused"
 }

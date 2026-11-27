@@ -14,5 +14,6 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "off_record"
+  "host_door_proof": "off_record",
+  "caller_code": "refused"
 }

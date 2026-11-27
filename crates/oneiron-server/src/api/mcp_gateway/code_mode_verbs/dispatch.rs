@@ -22,7 +22,18 @@ impl McpCodeModeVerbs {
             guests: RunGuests::new(server, run_id),
             collector: crate::api::call_receipt::attempt_collector(),
             observer: crate::api::admission_observer(),
+            author: RunAuthor::EngineModel,
         }
+    }
+
+    /// The door of a run whose program its caller wrote (the MCP `execute`
+    /// tool, FIX EXECUTE-CALLER-CODE): the caller's own per-verb gates and
+    /// nothing the run would lend ([`RunAuthor::Caller`]). Dormant until the
+    /// `execute` tool binds it (PR D); the test door binds it now.
+    #[cfg_attr(not(oneiron_test_support), allow(dead_code))]
+    pub(crate) fn authored_by_caller(mut self) -> Self {
+        self.author = RunAuthor::Caller;
+        self
     }
 
     /// A browser row: this connector's binding, live session and the row's
@@ -146,6 +157,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // next call (FIX 10633): release what that answer kept now, so a
         // read's renderer turn cannot survive into this call.
         self.answer_recorded();
+        if self.author == RunAuthor::Caller
+            && let Some(reason) = caller_code_verb_refusal(call.verb)
+        {
+            return Ok(Err(caller_code_refused(reason)));
+        }
         if call.verb.is_browser() {
             // The run's worker thread holds the call while the guest acts.
             return self.call_browser(call, origin, invocation);
@@ -172,6 +188,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         let run = McpCodeRun {
             origin: origin.clone(),
             run_id: self.run_id,
+            author: self.author,
         };
         // What the answer holds (a deck preview's renderer) comes back with
         // it, kept until the answer is handed to the run (FIX 8238).
@@ -263,6 +280,27 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         })
     }
 
+    /// The exact row a shared-effect call was made through needs its own
+    /// binding on the credential (FIX EXECUTE-CALLER-CODE): a connector
+    /// bound to one of `self.fold`, `self.compact`, `self.unfold` and
+    /// `self.folds` (or one `self.team.*` or `self.leader.*` row) calls that
+    /// row alone, not every row of its effect. A name the run table does not
+    /// hold is refused: it binds nothing.
+    fn admit_run_row(&self, row: &'static str) -> Result<(), AgentVerbRefusal> {
+        let Some(verb) = RunVerb::from_name(row) else {
+            return Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: "mcp_verb_not_bound".to_owned(),
+                reason_codes: Vec::new(),
+            });
+        };
+        mcp_admit_run_verb(&self.actor, verb).map_err(|error| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
+        })
+    }
+
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
     /// session `execute_code` was admitted on, still live, and the grant its
@@ -278,10 +316,23 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             code: error.kind.to_owned(),
             reason_codes: error.reason_codes,
         };
-        if let RunCall::Bridge(effect) = call
-            && let Some(verb) = RunVerb::ALL.iter().find(|verb| verb.effect() == effect)
+        if self.author == RunAuthor::Caller
+            && let RunCall::Bridge(effect) = call
+            && let Some(reason) = caller_code_run_refusal(effect)
         {
-            mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
+            return Err(caller_code_refused(reason));
+        }
+        // A row's own binding: the effect's one row, or, for an effect shared
+        // by several rows (Fold, Team, Leader), one of them. The exact row of
+        // a shared effect is admitted first, by `admit_run_row`.
+        if let RunCall::Bridge(effect) = call {
+            let mut rows = RunVerb::ALL.iter().filter(|verb| verb.effect() == effect);
+            if let Some(first) = rows.next()
+                && mcp_admit_run_verb(&self.actor, *first).is_err()
+                && !rows.any(|verb| mcp_admit_run_verb(&self.actor, *verb).is_ok())
+            {
+                mcp_admit_run_verb(&self.actor, *first).map_err(refused)?;
+            }
         }
         mcp_run_call_gate(&self.server, &self.actor, call).map_err(refused)?;
         // Reading the reason is capture-only; a missing key must not refuse the decline.
@@ -313,18 +364,24 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A run's speech is its own record only where its storage lands it in
     /// the run's own derived conversation; anywhere else it is a room write
-    /// and needs Write (`mcp_run_speech_gate`). It reads nothing.
+    /// and needs Write (`mcp_run_speech_gate`). A caller's own speech is a
+    /// call it chose to make: the row it is made through needs its binding,
+    /// as a direct call's does, and it needs Write wherever it lands (FIX
+    /// EXECUTE-CALLER-CODE). It reads nothing.
     fn admit_run_speech(
         &self,
-        _effect: SelfEffect,
+        effect: SelfEffect,
         destination: oneiron::code_run::RunSpeechDestination,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        mcp_run_speech_gate(&self.server, &self.actor, destination).map_err(|error| {
-            AgentVerbRefusal {
-                hook_notice: None,
-                code: error.kind.to_owned(),
-                reason_codes: error.reason_codes,
-            }
+        let gated = match self.author {
+            RunAuthor::EngineModel => mcp_run_speech_gate(&self.server, &self.actor, destination),
+            RunAuthor::Caller => caller_speech_binding(&self.actor, effect)
+                .and_then(|()| mcp_caller_code_speech_gate(&self.server, &self.actor)),
+        };
+        gated.map_err(|error| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
         })?;
         Ok(None)
     }
@@ -398,6 +455,47 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take(),
         );
+    }
+}
+
+/// The reason a caller's own code may not call `verb`, whatever its
+/// credential holds (FIX EXECUTE-CALLER-CODE): a browser or desktop row
+/// starts the host's guest, which no direct door lends a Read grant (FIX
+/// EXECUTE-SOURCE-BROWSER-PARITY), and a row marked `"caller_code":
+/// "refused"` answers with a credential or a secret value.
+fn caller_code_verb_refusal(verb: AgentVerb) -> Option<&'static str> {
+    if verb.is_browser() {
+        return Some("caller_code.host_guest");
+    }
+    verb.refused_to_caller_code()
+        .then_some("caller_code.credential_answer")
+}
+
+/// The reason a caller's own code may not make a run call with `effect`: a
+/// reader child or a summary job queues model work on the host's meter,
+/// which no direct call reaches; and a run row whose answer can carry a
+/// secret value (the run table holds no `caller_code` key, so the list is
+/// here): a repo snapshot or view read with the original file, a skill call's
+/// or a connector's foreign answer, a leader's advice or pattern.
+fn caller_code_run_refusal(effect: SelfEffect) -> Option<&'static str> {
+    match effect {
+        SelfEffect::ReaderSpawn => Some("caller_code.reader_child"),
+        SelfEffect::Summarize => Some("caller_code.summary_job"),
+        SelfEffect::RepoSnapshotsRead
+        | SelfEffect::RepoViewsRead
+        | SelfEffect::SkillsCall
+        | SelfEffect::ConnectorAnswer
+        | SelfEffect::Leader => Some("caller_code.credential_answer"),
+        _ => None,
+    }
+}
+
+/// A caller's own code's refusal: [`CALLER_CODE_REFUSED`] and the reason.
+fn caller_code_refused(reason: &str) -> AgentVerbRefusal {
+    AgentVerbRefusal {
+        hook_notice: None,
+        code: CALLER_CODE_REFUSED.to_owned(),
+        reason_codes: vec![reason.to_owned()],
     }
 }
 
@@ -485,7 +583,12 @@ pub(super) async fn run_code_mode_verb(
     let mut board_hooks = None;
     let origin = run.origin.clone();
     // A media call spends on the run's own line, as its steps do (FIX 780).
-    let line = media_line(server, tool.name, run.run_id);
+    // A caller's own code spends as its direct call does: through the
+    // owner's door, under the grant that door asks (FIX EXECUTE-CALLER-CODE).
+    let line = match run.author {
+        RunAuthor::EngineModel => media_line(server, tool.name, run.run_id),
+        RunAuthor::Caller => None,
+    };
     // The verb table's fan-out, on the heap (FIX 12072).
     let executed = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
@@ -691,4 +794,18 @@ pub(crate) fn admit_run_call_for_test(
     door.admit_run_call(RunCall::Bridge(effect))
         .map(|key| key.is_some())
         .map_err(|refusal| refusal.code)
+}
+
+/// The binding a caller's own speech needs (FIX EXECUTE-CALLER-CODE): the
+/// effect's own run row when the run table holds one (`self.think.aloud`),
+/// else the public `say` row, which a plain `say(text)` and the run's other
+/// speech (`self.speak`, `self.think`, `self.express`) are made through.
+fn caller_speech_binding(
+    actor: &McpCallContext,
+    effect: SelfEffect,
+) -> Result<(), McpGatewayError> {
+    match RunVerb::ALL.iter().find(|verb| verb.effect() == effect) {
+        Some(verb) => mcp_admit_run_verb(actor, *verb),
+        None => mcp_admit_host_verb(actor, AgentVerb::Say),
+    }
 }
