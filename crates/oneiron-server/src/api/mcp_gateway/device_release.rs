@@ -198,16 +198,11 @@ fn release_result(
     // A code run's hydrate steps, as its record names them, had their miss
     // echoes read as no ref for the run's short-ref rows already
     // (`mcp_run_named_rows`); its byte scan reads the same steps cleared
-    // (REVIEW-10571 P1 3).
-    let run_scan = if result
-        .pointer("/structuredContent/tool")
-        .and_then(Value::as_str)
-        == Some(crate::mcp::MCP_EXECUTE_CODE_TOOL)
-    {
-        RUN_HYDRATE_SCAN.try_with(Arc::clone).ok()
-    } else {
-        None
-    };
+    // (REVIEW-10571 P1 3). The scan serves only the answer it was made from.
+    let run_scan = RUN_HYDRATE_SCAN
+        .try_with(Arc::clone)
+        .ok()
+        .filter(|scan| run_scan_matches(scan, &result));
     let byte_scan = run_scan.as_deref().or(hydrate.as_ref()).unwrap_or(&result);
     let bytes = serde_json::to_vec(byte_scan).map_err(|_| refused(ReleaseHold::Placement))?;
     let hold = if owner_whole_vault_export {
@@ -519,6 +514,20 @@ fn run_hydrate_scan(
     let mut scan = scan?;
     super::type_feedback_release::sync_content(&mut scan);
     Some(scan)
+}
+
+/// Whether `scan`, the copy [`with_run_hydrate_scan`] lent, was made from
+/// `result`: the same run ref and the same recorded step sequence. An
+/// `execute` or `resume` answer names no tool (EXECUTE-CALLER-CODE PR D), so
+/// its steps, not a tool name, tie the scan to its answer; a task run's
+/// `execute_code` answer matches the same way.
+fn run_scan_matches(scan: &Value, result: &Value) -> bool {
+    fn step_seqs(answer: &Value) -> Option<Vec<Option<&Value>>> {
+        let steps = answer.pointer("/structuredContent/steps")?.as_array()?;
+        Some(steps.iter().map(|step| step.get("seq")).collect())
+    }
+    scan.pointer("/structuredContent/run_ref") == result.pointer("/structuredContent/run_ref")
+        && step_seqs(scan).is_some_and(|seqs| step_seqs(result) == Some(seqs))
 }
 
 fn recorded_step<'a>(
