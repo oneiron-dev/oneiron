@@ -6,10 +6,11 @@ use super::keys_classifier::{
     QuarantineRecord, RECENT_REASON_CODES, decode_quarantine_seq, decode_record,
     decode_u64_le_counter,
 };
-use super::remat_markers::pending_remat_windows;
+use super::remat_markers::{WindowMarkerClass, classify_window_markers, pending_remat_windows};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::origin::RepoProjectionHoldCause;
+use crate::sync::types::parse_window_key_str;
 use serde::Serialize;
 
 pub(super) fn allocate_next_quarantine_seq(
@@ -217,13 +218,20 @@ pub struct SyncQuarantineReport {
     /// means a peer sent a frame with more rejectable rows than one pass mints
     /// evidence for — the rejections happened and are accounted here.
     pub batch_drop_count: u64,
-    /// Windows with at least one pending `rm:w:{window}:{entity_hex}`
-    /// marker — needs-rematerialization. Non-empty is an ERROR signal: a
-    /// CRDT-tombstone purge failed, so hard-deleted content may still be
-    /// live in the local active store (GDPR SLA breach signal) until
-    /// [`drain_remat_markers`](crate::sync::drain_remat_markers) succeeds. Unparsable `rm:` rows surface here
-    /// too (fail closed — never dropped).
+    /// Windows with at least one pending marker that is not such a hold.
+    /// Non-empty is an ERROR signal: a CRDT-tombstone purge failed, so
+    /// hard-deleted content may still be live in the local active store
+    /// (GDPR SLA breach signal) until
+    /// [`drain_remat_markers`](crate::sync::drain_remat_markers) succeeds.
+    /// Unparsable `rm:` rows surface here too (fail closed — never dropped).
     pub rm_pending_windows: Vec<String>,
+    /// Windows whose every pending marker is a project-dependency hold inside
+    /// `sync.remat.dependency_hold_max_secs`: canonical `rm:w:{window}:{entity_hex}`
+    /// rows with their replay provenance and hold start. WARN-grade: no hard
+    /// delete is owed for them yet. The doctor runs no pass, so a hold whose
+    /// project or origin message has since arrived stays here until the next
+    /// forward pass settles it or the bound moves it to `rm_pending_windows`.
+    pub rm_held_windows: Vec<String>,
     /// Retained hash-only held-edit evidence ordered by stored seq: the
     /// `x:` rows with `QuarantineContainer::Entities` and a
     /// `RepoProjectionHoldCause::SealedFileEdited` /
@@ -234,8 +242,8 @@ pub struct SyncQuarantineReport {
 }
 
 /// Builds the sync doctor report: quarantine count, most-recent reason
-/// codes, eviction count, pending `rm:` windows, and retained held-edit
-/// evidence.
+/// codes, eviction count, pending and held `rm:` windows, and retained
+/// held-edit evidence.
 pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
     let records = quarantined_records(vault)?;
     let quarantine_count = records.len();
@@ -269,19 +277,41 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         .unwrap_or(0);
     drop(rtxn);
 
-    let rm_pending_windows = pending_remat_windows(vault)?;
+    let mut rm_pending_windows = Vec::new();
+    let mut rm_held_windows = Vec::new();
+    for window in pending_remat_windows(vault)? {
+        if parse_window_key_str(&window).is_none() {
+            rm_pending_windows.push(window);
+            continue;
+        }
+        match classify_window_markers(vault, &window, |_| true)? {
+            // A replay settled the window after the list read: nothing is
+            // pending there now (review round 1 of #10565).
+            WindowMarkerClass::NonePending => {}
+            WindowMarkerClass::AllMatch => rm_held_windows.push(window),
+            WindowMarkerClass::Unclassified => rm_pending_windows.push(window),
+        }
+    }
     let report = SyncQuarantineReport {
         quarantine_count,
         recent_reason_codes,
         eviction_count,
         batch_drop_count,
         rm_pending_windows,
+        rm_held_windows,
         held_edits,
     };
     if !report.rm_pending_windows.is_empty() {
         tracing::error!(
             windows = ?report.rm_pending_windows,
             "sync doctor: rm: markers pending — hard-deleted content may still be live locally (GDPR SLA breach signal)"
+        );
+    }
+    if !report.rm_held_windows.is_empty() {
+        tracing::warn!(
+            windows = ?report.rm_held_windows,
+            reason = "ProjectDependencyPending",
+            "sync doctor: rm: markers pending: each one waits for a project, or the message a project was born from, that this replica does not hold yet; no hard delete is owed for them"
         );
     }
     Ok(report)

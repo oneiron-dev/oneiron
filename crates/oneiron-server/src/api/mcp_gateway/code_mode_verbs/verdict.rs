@@ -37,9 +37,12 @@ impl LadderDecider {
         let origin = self.origin.clone();
         match self.asker.clone() {
             VerdictAsker::Connector(actor) => {
+                // A browser guest serves task runs alone: a caller's own code
+                // is refused every browser row (FIX EXECUTE-SOURCE-BROWSER-PARITY).
                 let run = McpCodeRun {
                     origin,
                     run_id: self.run_id,
+                    author: RunAuthor::EngineModel,
                 };
                 // The verdict's waits show on the serving call's admission
                 // receipt (FIX 4735).

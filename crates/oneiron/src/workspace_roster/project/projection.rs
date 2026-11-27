@@ -270,7 +270,9 @@ pub(crate) fn normalize_project_body(
         None if body.write_proof.is_some() => {
             crate::gate::project_depth::canonical_birth(id)?.depth
         }
-        None => return Err(RecordError::ProjectDependencyPending.into()),
+        // A missing signed birth is retried, but is no bounded dependency
+        // hold (review round 2 of #10565): its own kind keeps the breach signal.
+        None => return Err(RecordError::ProjectBirthPending.into()),
     };
     encode(&body)
 }

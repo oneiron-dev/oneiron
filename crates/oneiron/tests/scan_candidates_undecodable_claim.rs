@@ -351,6 +351,7 @@ impl oneiron::code_run::AgentVerbDoor for SearchOnlyReader {
             _ => Err(oneiron::code_run::AgentVerbRefusal {
                 code: "fixture_search_only".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             }),
         }
     }

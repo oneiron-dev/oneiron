@@ -13,5 +13,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

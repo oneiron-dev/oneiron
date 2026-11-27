@@ -198,6 +198,9 @@ pub enum GpuEndReason {
     /// The backend ended the job at its maximum seconds, with or without a checkpoint (pass 33,
     /// 8.6): never a natural exit, and never `AtMaximum`, whose stop offers a resume.
     TimeLimit,
+    /// The chunk's machine never started it: it refused the key at submit or at launch, or
+    /// withdrew it (its node part says which). Nothing ran and nothing was billed.
+    NeverStarted,
 }
 
 /// Where a job stands.

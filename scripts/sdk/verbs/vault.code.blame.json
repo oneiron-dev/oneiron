@@ -23,5 +23,6 @@
       "ts": "/** Every unit of one tested code file state, blamed by the operations that wrote it. */",
       "py": "Every unit of one tested code file state, blamed by the operations that wrote it."
     }
-  }
+  },
+  "caller_code": "refused"
 }

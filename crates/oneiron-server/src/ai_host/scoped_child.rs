@@ -54,12 +54,14 @@ impl ScopedChildDoor {
             Ok(Err(code)) => Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: code.to_owned(),
+                reason_codes: Vec::new(),
             }),
             Err(error) => {
                 tracing::warn!(%error, task = %self.job.task.to_hex(), "a scoped child's authority was not read");
                 Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: "engine_error".to_owned(),
+                    reason_codes: Vec::new(),
                 })
             }
         }
@@ -78,6 +80,7 @@ impl AgentVerbDoor for ScopedChildDoor {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: SCOPED_CHILD_PORT_NOT_LENT.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -100,6 +103,7 @@ impl AgentVerbDoor for ScopedChildDoor {
             _ => Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
+                reason_codes: Vec::new(),
             }),
         }
     }

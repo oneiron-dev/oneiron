@@ -121,6 +121,10 @@ pub struct AgentVerbRefusal {
     pub code: String,
     /// A supplied host-side hook notice; the guest still sees only the code.
     pub hook_notice: Option<serde_json::Value>,
+    /// The refusal's stable reason codes, as the door that refused typed
+    /// them (FIX CODE-MODE-DENIAL-REASONS): they reach the run's denied
+    /// result beside the code. Empty when the door named none.
+    pub reason_codes: Vec<String>,
 }
 
 /// A verb-table row's refusal as its own route worded it (OF-181): the code,
@@ -208,6 +212,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: REVEAL_REPLAY_UNSERVED.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -222,6 +227,16 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Admits the one run row a bridge call was made through when its effect
+    /// is shared by several rows (`SelfCall::shared_effect_row`: Fold, Team,
+    /// Leader), before [`Self::admit_run_call`] admits the effect. A door that
+    /// binds rows by name checks this exact row, as the effect alone names
+    /// the whole family (FIX EXECUTE-CALLER-CODE). A door that binds no rows
+    /// by name admits every row.
+    fn admit_run_row(&self, _row: &'static str) -> std::result::Result<(), AgentVerbRefusal> {
+        Ok(())
+    }
 
     /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
     /// `Express`, its trailing bubble included) with `destination`, where
@@ -266,6 +281,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
     }
 
@@ -284,6 +300,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
     }
 
@@ -359,6 +376,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 }

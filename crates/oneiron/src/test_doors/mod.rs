@@ -325,6 +325,7 @@ pub mod re_root_stale_sweep;
 pub mod read_exposure;
 pub mod read_lineage_floor;
 pub mod recall_gate_judgements;
+pub mod recall_line_provenance;
 pub mod recovery_box_kit_only_fact;
 pub mod recovery_preset_between;
 pub mod remote_task_cancel;

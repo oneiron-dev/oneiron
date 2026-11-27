@@ -101,6 +101,7 @@ impl OffRecordRunDoor {
         .map_err(|refused| AgentVerbRefusal {
             hook_notice: None,
             code: refused.code,
+            reason_codes: refused.reason_codes,
         })
     }
 }
@@ -129,6 +130,7 @@ fn api_refusal(refused: &ApiError) -> AgentVerbRefusal {
     AgentVerbRefusal {
         hook_notice: None,
         code: refused.code().as_str().to_owned(),
+        reason_codes: Vec::new(),
     }
 }
 
@@ -142,6 +144,7 @@ impl AgentVerbDoor for OffRecordRunDoor {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 

@@ -16,5 +16,6 @@
     "request": true
   },
   "mcp_scope": "filtered",
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

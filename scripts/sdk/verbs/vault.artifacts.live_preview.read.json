@@ -14,5 +14,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_caller": true
+  "host_door_caller": true,
+  "caller_code": "refused"
 }

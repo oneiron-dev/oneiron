@@ -29,5 +29,6 @@
       "ts": "/** Exact prefix search, ordered lexically and paginated after filtering. */",
       "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
     }
-  }
+  },
+  "caller_code": "refused"
 }

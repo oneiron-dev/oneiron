@@ -148,6 +148,7 @@ impl super::RunGuests {
             return Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: "browser_pack_not_installed".to_owned(),
+                reason_codes: Vec::new(),
             });
         }
         // The browser guest runs only once its setup connection is checked.
@@ -159,6 +160,7 @@ impl super::RunGuests {
             return Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: "browser_connection_unchecked".to_owned(),
+                reason_codes: Vec::new(),
             });
         }
         Ok(())

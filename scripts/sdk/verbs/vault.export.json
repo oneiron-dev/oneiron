@@ -26,5 +26,6 @@
       "ts": "/** Exports the whole vault as one archive (ZIP, base64 in `archive`); owner only; includes custody secrets. Load a ZIP with `oneiron import archive` while the vault is stopped; no served import verb exists. `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
       "py": "Exports the whole vault as one archive (ZIP, base64 in `archive`); owner only; includes custody secrets. Load a ZIP with `oneiron import archive` while the vault is stopped; no served import verb exists. `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
     }
-  }
+  },
+  "caller_code": "refused"
 }

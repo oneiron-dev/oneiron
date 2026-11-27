@@ -23,5 +23,6 @@
       "ts": "/** Exact actor-owned worldless key lookup, never recall. */",
       "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
     }
-  }
+  },
+  "caller_code": "refused"
 }

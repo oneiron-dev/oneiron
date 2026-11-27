@@ -22,7 +22,8 @@ pub(crate) fn mcp_tool_validation_error(error: McpToolValidationError) -> McpGat
             -32602,
             "tool_args_invalid",
             format!("{tool} arguments could not be decoded: {message}"),
-        ),
+        )
+        .with_decode_reason(&message),
         McpToolValidationError::Field {
             tool,
             field,
@@ -32,6 +33,7 @@ pub(crate) fn mcp_tool_validation_error(error: McpToolValidationError) -> McpGat
             "tool_args_invalid",
             format!("{tool}.{field}: {message}"),
         )
+        .with_field_check_reason(field, &message)
         .with_field(field),
     }
 }

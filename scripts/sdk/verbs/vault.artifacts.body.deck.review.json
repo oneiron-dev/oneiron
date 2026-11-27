@@ -30,5 +30,6 @@
       "ts": "/** A deck fork's merge preflight against the live head. */",
       "py": "A deck fork's merge preflight against the live head."
     }
-  }
+  },
+  "caller_code": "refused"
 }

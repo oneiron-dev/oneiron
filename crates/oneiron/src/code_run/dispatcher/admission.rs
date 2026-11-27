@@ -5,6 +5,25 @@
 use super::*;
 
 impl HostSelfDispatcher<'_> {
+    /// [`Self::admit_run_call`] for `call`'s effect, after the bound door
+    /// admits the exact run row `call` was made through when its effect is
+    /// shared by several rows (FIX EXECUTE-CALLER-CODE).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit_run_call`].
+    pub(crate) fn admit_self_call(
+        &self,
+        call: &SelfCall,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        if let (Some(row), Some(door)) = (call.shared_effect_row(), &self.agent_verbs)
+            && let Err(refusal) = door.admit_run_row(row)
+        {
+            return Ok(Err(refusal));
+        }
+        self.admit_run_call(RunCall::Bridge(call.effect()))
+    }
+
     /// Asks the bound door to admit one call the run serves itself. A run
     /// whose host binds no door admits it as its own.
     ///
@@ -26,6 +45,7 @@ impl HostSelfDispatcher<'_> {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code,
+                reason_codes: Vec::new(),
             }));
         }
         let Some(door) = &self.agent_verbs else {
@@ -39,7 +59,7 @@ impl HostSelfDispatcher<'_> {
             RunCall::Bridge(_) | RunCall::RecordedOutput => door.admit_run_call(call),
         };
         if let Err(refusal) = &admitted
-            && let Some(rejected) = gate_rejection(&refusal.code)
+            && let Some(rejected) = gate_rejection(&refusal.code, &refusal.reason_codes)
         {
             return Err(rejected);
         }
@@ -162,7 +182,7 @@ impl HostSelfDispatcher<'_> {
             let read_as = if matches!(call, SelfCall::AgentVerb(_)) {
                 None
             } else {
-                match self.admit_run_call(RunCall::Bridge(call.effect()))? {
+                match self.admit_self_call(&call)? {
                     Ok(read_as) => read_as,
                     Err(refusal) => {
                         return Ok((
@@ -170,7 +190,7 @@ impl HostSelfDispatcher<'_> {
                                 hook_notice: None,
                                 effect: call.effect(),
                                 outcome: refusal.code,
-                                reason_codes: Vec::new(),
+                                reason_codes: refusal.reason_codes,
                             }),
                             None,
                         ));
@@ -196,12 +216,19 @@ pub(super) fn admit_recorded_answer(
 }
 
 /// The gate rejection a door's refusal is when it is spelled as a gate's
-/// outcome word, as `admit_run_call` says.
-pub(super) fn gate_rejection(code: &str) -> Option<crate::Error> {
+/// outcome word, as `admit_run_call` says. It keeps each of the door's
+/// `reason_codes` that is a gate's own stable code, so the guest learns why
+/// the gate refused (FIX CODE-MODE-DENIAL-REASONS); a gate rejection holds
+/// only those static codes, and any other code the door gave is not a gate's.
+pub(super) fn gate_rejection(code: &str, reason_codes: &[String]) -> Option<crate::Error> {
     crate::error::GateDenialOutcome::parse(code).map(|outcome| {
         crate::Error::Gate(crate::error::GateError::GateWriteRejected {
             outcome: outcome.as_str(),
-            reason_codes: Vec::new(),
+            reason_codes: reason_codes
+                .iter()
+                .filter_map(|reason| crate::error::GateDenialReason::from_code(reason))
+                .map(crate::error::GateDenialReason::as_str)
+                .collect(),
         })
     })
 }

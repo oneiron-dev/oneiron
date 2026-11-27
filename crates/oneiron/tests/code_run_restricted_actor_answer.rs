@@ -97,6 +97,7 @@ impl TierDoor {
         AgentVerbRefusal {
             code: code.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }
     }
 }

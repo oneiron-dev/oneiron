@@ -190,9 +190,16 @@ pub enum RecordError {
     InvalidProjectBody(&'static str),
     #[error("invalid project home room: {0}")]
     InvalidProjectRoomBody(&'static str),
-    /// A project parent or the signer of its depth fact has not materialized yet.
+    /// A project parent, or the message a project was born from or a piece of
+    /// its origin thread, has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
+    /// A new project in an owner-rooted vault whose signed birth (its
+    /// POLICY_MANIFEST depth fact) has not materialized yet. Retried like
+    /// [`Self::ProjectDependencyPending`], but a replay marker that waits on it
+    /// is no bounded dependency hold: it keeps the GDPR breach signal.
+    #[error("project birth is not materialized")]
+    ProjectBirthPending,
     /// A different body at a held project revision's content-derived id.
     #[error("project revision {} is held with another body", id.to_hex())]
     ProjectRevisionCollision { id: EntityId },
@@ -599,6 +606,7 @@ impl RecordError {
             Self::InvalidProjectBody(_) => ErrorKind::InvalidProjectBody,
             Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
+            Self::ProjectBirthPending => ErrorKind::ProjectBirthPending,
             Self::ProjectRevisionCollision { .. } => ErrorKind::ProjectRevisionCollision,
             Self::ProjectRevisionWrite => ErrorKind::ProjectRevisionWrite,
             Self::IdentityUnsettled { .. } => ErrorKind::IdentityUnsettled,

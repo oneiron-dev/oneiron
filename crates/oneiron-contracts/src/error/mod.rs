@@ -415,6 +415,7 @@ pub enum ErrorKind {
     InvalidProjectBody,
     InvalidProjectRoomBody,
     ProjectDependencyPending,
+    ProjectBirthPending,
     ProjectRevisionCollision,
     ProjectRevisionWrite,
     IdentityUnsettled,

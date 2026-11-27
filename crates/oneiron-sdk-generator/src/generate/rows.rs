@@ -135,6 +135,12 @@ fn fullmatch(pattern: &Regex, value: &Value) -> Result<bool, GenerateError> {
 
 /// The row's MCP scope and fields, after their defaults.
 fn check_mcp(row: &Dict) -> Result<(), GenerateError> {
+    if row
+        .get("caller_code")
+        .is_some_and(|value| !value.is_str("refused"))
+    {
+        return Err(refuse(row, "caller_code is \"refused\" when present"));
+    }
     let scope = item(row, "mcp_scope")?;
     scope.check_hashable("a set element")?;
     if !MCP_SCOPES.iter().any(|known| scope.is_str(known)) {
