@@ -1146,6 +1146,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/history_import/notes/folder.rs` | src | s | 1 crate-vis | — | `oneiron import folder attach\|rescan\|detach\|list`: a folder of markdown notes and PDFs that stays attached… |
 | `src/commands/history_import/queue.rs` | src | m | 4 crate-vis | — | The import queue |
 | `src/commands/history_import/queue/tests.rs` | test | m | — | — | The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code… |
+| `src/commands/history_import/session_folder.rs` | src | s | 2 crate-vis | — | Name the folder a host session log names as the MCP bridge names an attached session's folder |
 | `src/commands/history_import/slack.rs` | src | m | 1 crate-vis | — | `oneiron import slack <zip \| folder> --members <map.json>`: a Slack workspace export, imported into a… |
 | `src/commands/hook.rs` | src | m | 1 fn · 2 re-export · 1 crate-vis | — | `oneiron hook --host <host> <event>`: an agent harness's hooks, run by the binary |
 | `src/commands/hook/bind.rs` | src | m | 6 crate-vis | — | Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first… |
@@ -2420,7 +2421,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `src/work_order_host.rs` | src | m | 2 fn · 17 crate-vis | — | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… |
 | `src/work_order_host/readiness_read.rs` | src | s | 7 crate-vis | — | The job worker's readiness read (CG-2 row 9; FIX CG2-ROW9-UNDEMANDED-MACHINES-UNOBSERVED): the worker's… |
-| `src/workspace_identity.rs` | src | s | 1 struct · 4 fn · 1 const | WorkspaceIdentity | A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov… |
+| `src/workspace_identity.rs` | src | m | 1 struct · 4 fn · 1 const | WorkspaceIdentity | A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov… |
 | `src/xlsx_recalc.rs` | src | m | 1 crate-vis | — | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… |
 | `tests/action_table_unkept_replies.rs` | test | s | — | — | The app's action table offers no verb-table row whose answer an invocation never keeps (FIX… |
 | `tests/admitted_skill_call_large_view_spill.rs` | test | m | — | — | [ADMITTED-SKILL-CALL-LARGE-POST-VIEW-SPILL] (FIX-LIST 29927): an admitted `self.skills.call` whose post-hook… |

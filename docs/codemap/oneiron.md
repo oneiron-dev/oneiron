@@ -4366,7 +4366,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/history/hook_transcript.rs` | src | m | 6 struct · 2 enum · 3 fn · 3 const · 3 crate-vis | HistoryImportCaller, HookSubagentTranscript, HookTranscriptConversation, HookTranscriptImportRequest, HookTranscriptImportView, HookTranscriptPartRequest, HookTranscriptPartView, HookTranscriptSource | `vault.imports.hook_transcript` (census L10-17; Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B): one… |
 | `src/ingest/history/hosted.rs` | src | m | 10 struct · 3 enum · 18 fn · 1 const · 1 crate-vis | HostedImportCanceller, HostedImportEmbeddings, HostedImportId, HostedImportJob, HostedImportParse, HostedImportResumed, HostedImportReview, HostedImportSearchable +5 | A hosted import (ARCH-0027 #hosted-import): an export staged inside the vault's own data directory, landed… |
 | `src/ingest/history/hosted_verbs.rs` | src | s | 2 struct · 5 fn | HostedImportCancel, HostedImportLookup | The hosted import's verbs (ARCH-0027 #hosted-import; the Engine's rulings of 13 Nov 07:14, substrate behind… |
-| `src/ingest/history/land.rs` | src | m | 3 fn · 1 re-export · 8 crate-vis | — | Landing a decoded conversation as an imported transcript (ARCH-0027) |
+| `src/ingest/history/land.rs` | src | m | 4 fn · 1 re-export · 8 crate-vis | — | Landing a decoded conversation as an imported transcript (ARCH-0027) |
 | `src/ingest/history/land/message.rs` | src | s | 2 crate-vis | — | The MESSAGE and CONVERSATION bodies an import writes: each message's text under its provenance, and the… |
 | `src/ingest/history/land/report.rs` | src | s | 1 struct · 1 crate-vis | HistoryImportReport | One conversation's import report: what landed, what was skipped, refused or left pending, and who reads a… |
 | `src/ingest/history/land/tests.rs` | test | m | — | — | ARCH-0027: an imported coding session keeps the folder it ran in and when it started, and importing its log… |
@@ -10767,6 +10767,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/serving_egress_credentials.rs` | test | m | — | — | Admitted agent egresses release typed Nulled bodies while the owner keeps encoded carriers and graph source… |
 | `tests/serving_scoped_credentials.rs` | test | m | — | — | Serving keeps the owner's current view while an admitted agent receives the scoped export's typed Nulled… |
 | `tests/session_facet_hint_kind_narrowed.rs` | test | s | — | — | A search that asks for CLAIMs alone and names a session facet finds the claims in that facet, for the owner… |
+| `tests/session_project_history_import.rs` | test | m | — | — | SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D, the host-import side: an import through… |
 | `tests/session_project_note_message_writes.rs` | test | m | — | — | SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR A, the write side: a handle bound to an attached session's folder… |
 | `tests/session_project_reads.rs` | test | m | — | — | RECALL-SESSION-PROJECT PR 2 (rows RECALL-SESSION-PROJECT and RECALL-SESSION-PROJECT-ALL-READS; Engine ANSWER… |
 | `tests/session_project_writes.rs` | test | m | — | — | RECALL-SESSION-PROJECT PR 3, the write default (row START-RECALL-WRITES-ROOT-PROJECT; Engine ANSWER… |
