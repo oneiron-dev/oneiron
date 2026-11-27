@@ -3,15 +3,19 @@
 //! Both delete doors (`deletion::derived_rows`) drop those copies in the
 //! erase's own transaction via `maintenance::erase_source_copies_in_txn`.
 //! A rewritten digest keeps its locator and gets a new content hash.
+//! The scrub re-admits through the delete's custody context and revokes
+//! digest-origin custody whose handles no longer appear in the digest.
 //! A withdrawal is not an erase; D1 hides the withdrawn item in the view.
 //! The first erase indexes every digest stored before the membership table
 //! existed, once per vault, before its lookup. The pass and its marker are
 //! written in that erase's transaction. A row that does not decode or
-//! verify is deleted whole.
+//! verify is deleted whole. A malformed key is deleted by its exact raw key.
 
 use std::collections::BTreeSet;
 
 use super::{DIGEST, ProactivityDigest, view};
+use crate::batch::secret_scan::side_row_origin;
+use crate::secret_custody::{self, CustodyWrite};
 use crate::side_table::{self, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result};
@@ -42,7 +46,11 @@ pub(super) fn index_digest_claims_in_txn(
     Ok(())
 }
 
-fn index_stored_digests_once_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+fn index_stored_digests_once_in_txn(
+    write: &CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let store = write.store;
     if CLAIM_DIGESTS_INDEXED.contains(store, txn, &())? {
         return Ok(());
     }
@@ -51,10 +59,14 @@ fn index_stored_digests_once_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) ->
         .collect::<Result<Vec<_>>>()?;
     for (key, bytes) in rows {
         let Ok(locator) = <[u8; 32]>::try_from(key.as_slice()) else {
-            // A key of the wrong length cannot come from a typed put.
+            let mut full_key = DIGEST.decl().prefix.to_vec();
+            full_key.extend_from_slice(&key);
+            DIGEST.delete_raw(store, txn, &full_key)?;
+            let origin = digest_origin(&full_key)?;
+            secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
             continue;
         };
-        if let Some(digest) = verify_digest_or_delete_in_txn(store, txn, locator, &bytes)? {
+        if let Some(digest) = verify_digest_or_delete_in_txn(write, txn, locator, &bytes)? {
             index_digest_claims_in_txn(store, txn, &digest)?;
         }
     }
@@ -64,14 +76,15 @@ fn index_stored_digests_once_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>) ->
 /// Drops the erased CLAIM's copies and its index rows. A no-op for an id
 /// no digest copied.
 pub(crate) fn erase_sources_in_txn(
-    store: &Store,
+    write: &CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     // Index pre-existing digests once in this transaction, before the lookup.
-    index_stored_digests_once_in_txn(store, txn)?;
+    index_stored_digests_once_in_txn(write, txn)?;
     for (_, locator) in CLAIM_DIGESTS.scan_keys(store, txn, id.as_bytes())? {
-        scrub_digest_in_txn(store, txn, locator, id)?;
+        scrub_digest_in_txn(write, txn, locator, id)?;
         CLAIM_DIGESTS.delete(store, txn, &(*id, locator))?;
     }
     Ok(())
@@ -80,15 +93,16 @@ pub(crate) fn erase_sources_in_txn(
 /// Removes the CLAIM from one stored digest and renders it again. A row
 /// that does not verify goes whole; a missing row needs no scrub.
 fn scrub_digest_in_txn(
-    store: &Store,
+    write: &CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     locator: [u8; 32],
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let Some(bytes) = DIGEST.get_bytes(store, txn, &locator)? else {
         return Ok(());
     };
-    let Some(mut digest) = verify_digest_or_delete_in_txn(store, txn, locator, &bytes)? else {
+    let Some(mut digest) = verify_digest_or_delete_in_txn(write, txn, locator, &bytes)? else {
         return Ok(());
     };
     let mut removed = false;
@@ -103,26 +117,36 @@ fn scrub_digest_in_txn(
     }
     let rendered = view::render(&digest, &digest.groups);
     digest.rendered = rendered;
-    DIGEST.admit(store, txn, &locator, &mut digest)?;
+    DIGEST.admit(write, txn, &locator, &mut digest)?;
     digest.content_hash = view::content_hash(&digest)?;
-    DIGEST.put(store, txn, &locator, &digest)
+    let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
+    let kept = DIGEST.encode_value(&digest)?;
+    secret_custody::revoke_unreferenced_side_row_custody_in_txn(write, txn, &origin, &kept)?;
+    DIGEST.put(write, txn, &locator, &digest)
 }
 
 /// Decodes one stored digest and checks its locator and content hash, deleting it on failure.
 fn verify_digest_or_delete_in_txn(
-    store: &Store,
+    write: &CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     locator: [u8; 32],
     bytes: &[u8],
 ) -> Result<Option<ProactivityDigest>> {
+    let store = write.store;
     let digest = DIGEST.decode_value(bytes).ok().filter(|digest| {
         digest.id == locator
             && view::content_hash(digest).is_ok_and(|hash| hash == digest.content_hash)
     });
     if digest.is_none() {
         DIGEST.delete(store, txn, &locator)?;
+        let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
+        secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
     }
     Ok(digest)
+}
+
+fn digest_origin(full_key: &[u8]) -> Result<EntityId> {
+    side_row_origin(&format!("side:{}", DIGEST.decl().name), full_key)
 }
 
 /// Leaves the stored digests with no membership index or backfill marker, as before D2.
