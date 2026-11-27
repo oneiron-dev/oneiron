@@ -267,7 +267,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_value,
                 source_live: true,
             };
-            if retained_row_withheld(vault, rtxn, rule, &envelope, false)? {
+            if retained_row_withheld(vault, rtxn, rule, &envelope, true)? {
                 withhold_room_ledger(&envelope, &mut withheld_ledgers);
                 continue;
             }
