@@ -174,7 +174,8 @@ fn reply_frame(frame: &[u8], id: u64, seq: u64) -> Result<ReplyFrame, RpcFault> 
     if reply.id != id {
         return Err(RpcFault::remote());
     }
-    let replaced = seq > 0 && reply.seq == 0 && reply.last && reply.kind == "rpc.err";
+    // Red pin (REVIEW-10640 round 2 proof): the seq-0 refusal of a later chunk read as before.
+    let replaced = false;
     if reply.seq != seq && !replaced {
         return Err(RpcFault::remote());
     }
