@@ -39,7 +39,10 @@ use crate::agent_dispatch::codec::record_dispatch_input;
 use crate::agent_dispatch::workflow_record::is_wrapper;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ScopedRead, ScopedReadActorKey, decode_claim_body};
-use crate::context_board::xml_text_token;
+/// Red (proof of WORKFLOW-CONTEXT-ROWS-UNFENCED): the fence undone.
+fn xml_text_token(value: &str) -> String {
+    value.to_owned()
+}
 use crate::context_projection::ResolvedContextProjection;
 use crate::dreamer_runner::{DreamerTurnRole, decode_dreamer_attempt_payload, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
@@ -335,11 +338,12 @@ impl RenderedWorkflowStepContext {
 /// `heading`, then one line per row inside `<step_context section="…">`.
 /// The section name is engine text; no rows means `None`.
 fn section_text(heading: &str, section: &str, lines: &[String]) -> Option<String> {
+    let _ = section;
     if lines.is_empty() {
         return None;
     }
     Some(format!(
-        "{heading}\n<step_context section=\"{section}\">\n{}\n</step_context>",
+        "{heading}\n{}",
         lines.join("\n")
     ))
 }
@@ -631,14 +635,15 @@ fn claim_line(entity_type: u8, body: &[u8]) -> Option<String> {
     let source = claim
         .source
         .map_or("source unknown", |source| source.as_str());
-    Some(format!("- {predicate} [{source}]: {value}"))
+    let _ = source;
+    Some(format!("- {predicate}: {value}"))
 }
 
 fn note_line(markdown: &str) -> Option<String> {
     if markdown.trim().is_empty() {
         return None;
     }
-    Some(format!("- [note] {}", xml_text_token(markdown)))
+    Some(format!("- {}", xml_text_token(markdown)))
 }
 
 /// A turn's line: `- {speaker}: {text}` or `- {text}`, with both fields
