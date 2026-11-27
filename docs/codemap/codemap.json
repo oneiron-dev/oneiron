@@ -105748,7 +105748,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 9,
-      "mod": 1,
+      "mod": 2,
       "re-export": 154,
       "struct": 9
      }
@@ -106744,6 +106744,90 @@
       "enum": 3,
       "fn": 9,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/tree/index.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoteKindLine",
+      "RenderedView",
+      "TreeRefusal",
+      "TreeRefusalCode",
+      "VerbTree",
+      "ViewOptions"
+     ],
+     "path": "src/verbs/tree/mod.rs",
+     "purpose": "A read-only view of the code-mode verb tree, from the base kit to on-demand types",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 10,
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/tree/render.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/tree/search.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/tree/setting_values.rs",
+     "purpose": "The value types of the `code_mode.view.*` keys: the verb-tree view's base list, expansion list and token…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnedViewOptions"
+     ],
+     "path": "src/verbs/tree/vault_view.rs",
+     "purpose": "The vault's verb-tree view inputs: the `code_mode.view.*` settings in force and the NOTE kinds the view…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/tree/view.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -122861,6 +122945,30 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_tree_view.rs",
+     "purpose": "Verb-tree view integration tests (PR 3b-1, step 5a)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_tree_view_base_shapes.rs",
+     "purpose": "Authored reply shapes in the shipped verb-tree base",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_tree_view_grant_hiding.rs",
+     "purpose": "Grant hiding in the shipped verb tree",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -125858,8 +125966,8 @@
     },
     "verbs": {
      "entry": "crates/oneiron/src/verbs/mod.rs",
-     "files": 170,
-     "impl_vault": false,
+     "files": 177,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
@@ -125962,8 +126070,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8657,
-   "test_files": 2348
+   "source_files": 8664,
+   "test_files": 2351
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -163174,7 +163282,7 @@
      "path": "src/catalog_fragment.rs",
      "purpose": "The code-mode catalog fragment and its revision (ONE-2510 S2)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -163648,6 +163756,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verb_tree_index.rs",
+     "purpose": "The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -163755,11 +163873,20 @@
      "layout": "file+dir",
      "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order",
      "spec_ids": []
+    },
+    "verb_tree_index": {
+     "entry": "crates/oneiron-sdk-generator/src/verb_tree_index.rs",
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault…",
+     "spec_ids": []
     }
    },
    "over_bar": 7,
    "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
-   "source_files": 45,
+   "source_files": 46,
    "test_files": 8
   },
   "oneiron-seal": {
