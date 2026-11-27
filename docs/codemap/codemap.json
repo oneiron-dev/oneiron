@@ -171081,7 +171081,7 @@
      "path": "src/api/mcp_gateway/actor_dispatch/gates.rs",
      "purpose": "The gates an MCP call passes before it executes: proof, verb, credential, a code run's session and each…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -171251,7 +171251,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {

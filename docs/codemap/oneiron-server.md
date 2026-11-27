@@ -656,7 +656,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | s | 4 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/actor_dispatch/auth.rs` | src | m | 13 crate-vis | — | Who an MCP call acts as: its actor, resolved from its credential, proof headers and placement |
 | `src/api/mcp_gateway/actor_dispatch/execute.rs` | src | s | 3 crate-vis | — | How an admitted MCP tool call executes: its params, its validation and its dispatch |
-| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | m | 15 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, a code run's session and each… |
+| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | m | 16 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, a code run's session and each… |
 | `src/api/mcp_gateway/admission.rs` | src | m | 14 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/admission_intent.rs` | src | s | 4 crate-vis | — | The durable admission receipt (ARCH-0044 C5) of a generated verb an MCP `tools/call` runs under the… |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 10 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
@@ -673,7 +673,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/client_surface.rs` | src | s | 5 crate-vis | — | The generated-UI surface profile a caller declares over MCP (FIX 7969; ARCH-0048 G3) |
 | `src/api/mcp_gateway/clock_repair_call.rs` | src | s | 2 crate-vis | — | An MCP `tools/call` of the owner's authority clock repair whose caller the repair's own writer judges (FIX… |
 | `src/api/mcp_gateway/code_mode_self_brief.rs` | src | m | 2 crate-vis | — | A code-mode durable run's self-brief port (FIX 17594, delivery slice D5), the code-mode twin of a pumped… |
-| `src/api/mcp_gateway/code_mode_verbs.rs` | src | m | 10 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
+| `src/api/mcp_gateway/code_mode_verbs.rs` | src | m | 11 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 8 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/dispatch.rs` | src | m | 10 crate-vis | — | How a code-mode run's agent verbs reach their doors: admitted, executed and answered |
 | `src/api/mcp_gateway/code_mode_verbs/dispatch/caller_code.rs` | src | s | 4 crate-vis | — | What a caller's own code may not call, whatever its credential holds (FIX EXECUTE-CALLER-CODE), and the… |
