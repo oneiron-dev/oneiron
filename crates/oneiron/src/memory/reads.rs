@@ -1,7 +1,7 @@
 //! Entity/claim read surface plus BM25 and neighbor queries.
 //! Split from the flat `facade.rs`; surface re-exported by [`super`].
 
-use super::read_lane::{ReadTargetSlot, fold_receipt};
+use super::read_lane::{NamedView, ReadTargetSlot, fold_receipt};
 use super::recall::*;
 use super::structural::*;
 use super::support::*;
@@ -35,6 +35,91 @@ mod receipt_page;
 
 pub use receipt_page::VaultReceiptsPage;
 pub(crate) use receipt_page::{ReceiptReader, receipts_page_for};
+
+pub(super) type HydrateRef<'r> = (&'r str, Option<(&'r str, crate::vault::ReadMode)>);
+
+/// Parses the refs without consulting the vault or the room. A room accepts
+/// its own alias grammar in addition to vault refs.
+pub(super) fn parse_hydrate_refs(refs: &[String], in_room: bool) -> Vec<HydrateRef<'_>> {
+    refs.iter()
+        .map(|supplied| {
+            // The base is resolved as it was checked: trimmed. The miss
+            // echoes the supplied string whole (REVIEW-10571 P1 2).
+            let parsed = entity_read_mode(supplied)
+                .ok()
+                .map(|(reference, mode)| (reference.trim(), mode))
+                .filter(|(base, _)| {
+                    EntityId::from_hex(base).is_ok()
+                        || crate::entity_id::parse_short_ref_syntax(base).is_ok()
+                        || (in_room && super::room_short_ref(base).is_some())
+                });
+            (supplied.as_str(), parsed)
+        })
+        .collect()
+}
+
+/// Reads the well-formed refs and keeps found targets paired with their
+/// views for asset serving. Both the views and misses keep request order.
+pub(super) fn read_hydrate_batch(
+    refs: Vec<HydrateRef<'_>>,
+    mut resolve: impl FnMut(&str, crate::vault::ReadMode) -> MemoryResult<ReadTargetSlot>,
+    read: impl FnOnce(&[ReadTargetSlot]) -> MemoryResult<ScopedReadResult<Vec<NamedView>>>,
+) -> MemoryResult<(HydrateResult, Vec<ReadTargetSlot>)> {
+    let targets = refs
+        .iter()
+        .filter_map(|(_, parsed)| *parsed)
+        .map(|(reference, mode)| resolve(reference, mode))
+        .collect::<MemoryResult<Vec<_>>>()?;
+    let ScopedReadResult { value, receipt } = read(&targets)?;
+    let mut views = Vec::with_capacity(value.len());
+    let mut found_targets = Vec::with_capacity(value.len());
+    let mut missing = Vec::new();
+    let mut slots = targets.into_iter().zip(value);
+    for (reference, parsed) in refs {
+        let reason = if parsed.is_some() {
+            let Some((target, view)) = slots.next() else {
+                // The lane answers one slot per target it was given.
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "the hydrate read answered fewer slots than its refs".to_owned(),
+                    &[],
+                )
+                .with_read_receipt(receipt));
+            };
+            match view {
+                Ok(Some(view)) => {
+                    found_targets.push(target);
+                    views.push(view);
+                    continue;
+                }
+                Ok(None) => HydrateMissReason::NotFound,
+                Err(refusal) => {
+                    let error = MemoryError::from(refusal);
+                    if error.code != MEMORY_CODE_NOT_FOUND {
+                        return Err(error.with_read_receipt(receipt));
+                    }
+                    HydrateMissReason::NotFound
+                }
+            }
+        } else {
+            HydrateMissReason::Malformed
+        };
+        missing.push(HydrateMiss {
+            reference: reference.to_owned(),
+            reason,
+        });
+    }
+    Ok((
+        HydrateResult {
+            read: ScopedReadResult {
+                value: views,
+                receipt,
+            },
+            missing,
+        },
+        found_targets,
+    ))
+}
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -260,6 +345,27 @@ impl Memory<'_> {
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         self.hydrated(&lane, refs, &targets, "does not resolve", whole_body)
+    }
+
+    /// Reads `vault.hydrate`: returns found views and lists the unresolved
+    /// refs. A missing or withheld record has the same `not_found` reason.
+    pub fn hydrate_found(&self, refs: &[String]) -> MemoryResult<HydrateResult> {
+        let refs = parse_hydrate_refs(refs, false);
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
+        let (mut result, found_targets) = read_hydrate_batch(
+            refs,
+            |reference, mode| self.read_target(reference, mode),
+            |targets| self.read_named_views(&lane, targets),
+        )?;
+        self.serve_hydrated_assets(
+            &lane,
+            &found_targets,
+            &mut result.read.value,
+            &mut result.read.receipt,
+        )?;
+        Ok(result)
     }
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that

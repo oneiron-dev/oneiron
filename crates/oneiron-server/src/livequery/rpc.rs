@@ -282,7 +282,9 @@ fn replayed(outcome: InvocationOutcome) -> Answer {
 /// context the socket took. Beside the result come the rows it carries, for
 /// the send door to judge again (DEC-0005): those its reads listed, and
 /// those its input and its result name by ref. `None` when one of them is
-/// unknown, so the result does not leave this device.
+/// unknown, so the result does not leave this device. A hydrate call's
+/// supplied refs and miss echoes are its caller's own strings, so they
+/// read as no ref (REVIEW-10571 P1 1).
 async fn run(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -290,13 +292,28 @@ async fn run(
     method: &str,
     params: Value,
 ) -> Answer {
+    let hydrate = method == crate::device_local::HYDRATE_VERB;
+    let params_scan = hydrate
+        .then(|| crate::device_local::hydrate_input_refs_cleared(&params))
+        .flatten();
     let mut input_rows = Vec::new();
-    let input_named = named_rows(server.vault(), &params, &mut input_rows);
+    let input_named = named_rows(
+        server.vault(),
+        params_scan.as_ref().unwrap_or(&params),
+        &mut input_rows,
+    );
     let call = context.facade_call(auth);
     let output = crate::api::facade_call_verb(server, &call, method, Ok(params)).await?;
+    let output_scan = hydrate
+        .then(|| crate::device_local::hydrate_misses_cleared(&output.value))
+        .flatten();
     let rows = output.rows.and_then(|mut rows| {
         input_named?;
-        named_rows(server.vault(), &output.value, &mut rows)?;
+        named_rows(
+            server.vault(),
+            output_scan.as_ref().unwrap_or(&output.value),
+            &mut rows,
+        )?;
         rows.append(&mut input_rows);
         Some(rows)
     });
