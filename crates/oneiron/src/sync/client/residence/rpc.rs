@@ -10,6 +10,7 @@ use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
@@ -591,15 +592,11 @@ impl ResidenceRpc {
                     .map_err(|_| RpcFault::remote())?
                 {
                     Some(Ok(Message::Binary(frame))) => frame,
-                    Some(Err(WsError::Io(error)))
-                        if error.kind() == std::io::ErrorKind::TimedOut =>
-                    {
-                        return Err(RpcFault::remote());
-                    }
-                    None | Some(Ok(Message::Close(_)) | Err(_)) => {
+                    None | Some(Ok(Message::Close(_))) => return Ok(CallReply::Interrupted),
+                    Some(Err(error)) if socket_ended(&error) => {
                         return Ok(CallReply::Interrupted);
                     }
-                    Some(Ok(_)) => return Err(RpcFault::remote()),
+                    Some(Ok(_) | Err(_)) => return Err(RpcFault::remote()),
                 };
                 // FIX 6458: an unbound lane passes over the sync frames the
                 // home opens each socket with; a bound lane takes none.
@@ -657,4 +654,81 @@ impl ResidenceRpc {
 
 pub(super) fn refused() -> TransportError {
     TransportError::InvalidPayload("opened-item RPC unavailable")
+}
+
+/// Whether a read error is the socket ending: a closed connection, a reset
+/// without the closing handshake, or a cut stream. A frame the home sent
+/// that does not decode (a codec frame comes back as `Io(InvalidData)`, one
+/// over the cap as `Capacity`), a protocol fault and a read that timed out
+/// are not, so they are never read as a withdrawn answer.
+fn socket_ended(error: &WsError) -> bool {
+    match error {
+        WsError::ConnectionClosed
+        | WsError::AlreadyClosed
+        | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => true,
+        WsError::Io(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::NotConnected
+        ),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod socket_end_tests {
+    use futures_util::{FutureExt, StreamExt};
+    use tokio_tungstenite::tungstenite::error::{CapacityError, ProtocolError};
+    use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+
+    use super::socket_ended;
+    use crate::sync::transport::{TAG_CODEC, WireSocket};
+
+    /// A codec frame under an id this side does not know fails the read while
+    /// the socket stays open: the home's malformed reply, not an ended socket.
+    #[test]
+    fn an_undecodable_codec_frame_is_not_a_socket_end() {
+        let frame = Message::Binary(vec![TAG_CODEC, 0xEE, 1, 2, 3].into());
+        let mut socket =
+            WireSocket::to_our_server(futures_util::stream::iter([Ok::<_, WsError>(frame)]), 1024);
+        let error = socket
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("the frame is read at once")
+            .expect_err("an unknown codec fails the read");
+        assert!(
+            matches!(&error, WsError::Io(io) if io.kind() == std::io::ErrorKind::InvalidData),
+            "{error:?}"
+        );
+        assert!(!socket_ended(&error), "{error:?}");
+    }
+
+    #[test]
+    fn only_a_closed_or_cut_connection_is_a_socket_end() {
+        for ended in [
+            WsError::ConnectionClosed,
+            WsError::AlreadyClosed,
+            WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake),
+            WsError::Io(std::io::ErrorKind::ConnectionReset.into()),
+            WsError::Io(std::io::ErrorKind::UnexpectedEof.into()),
+        ] {
+            assert!(socket_ended(&ended), "{ended:?}");
+        }
+        for open in [
+            WsError::Io(std::io::ErrorKind::InvalidData.into()),
+            WsError::Io(std::io::ErrorKind::TimedOut.into()),
+            WsError::Capacity(CapacityError::MessageTooLong {
+                size: 2,
+                max_size: 1,
+            }),
+            WsError::Protocol(ProtocolError::NonZeroReservedBits),
+            WsError::Utf8,
+        ] {
+            assert!(!socket_ended(&open), "{open:?}");
+        }
+    }
 }
