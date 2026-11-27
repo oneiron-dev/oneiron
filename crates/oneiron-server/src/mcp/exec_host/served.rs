@@ -290,7 +290,7 @@ impl McpEngineNativeCodeHost {
                 };
                 let ended = match &outcome {
                     Ok(outcome) => matches!(outcome.status, EngineExecutorStatus::Complete),
-                    Err(error) => error.ends_run(),
+                    Err(_) => false,
                 };
                 // The run's brief closes as the run completes, here and
                 // not with its waiter, so a caller who hung up cannot
