@@ -23,6 +23,7 @@ use super::{
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::serialize::{ExportBodyFile, null_document_tree_row};
 use crate::side_table::{CodecName, Named, SideKey, SideTable};
@@ -98,7 +99,7 @@ pub(crate) fn retained_side_row_key(row: &ArchiveRetainedSideRow) -> [u8; 32] {
 }
 
 /// The inert retained rows, keyed by [`retained_side_row_key`].
-const RETAINED_SIDE_ROWS: SideTable<[u8; 32], ArchiveRetainedSideRow, Named> =
+pub(super) const RETAINED_SIDE_ROWS: SideTable<[u8; 32], ArchiveRetainedSideRow, Named> =
     SideTable::new(&crate::side_table::ARCHIVE_RETAINED_SIDE_ROW);
 
 /// Whether one stored retained row reads back through its table: it decodes as the [`Named`]
@@ -141,7 +142,15 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
 /// keeps it out (off the record, use-limited by a customer hold that refused its privacy erase,
 /// or held back here, or its words came from such a row), or it is an epoch summary one of whose
 /// transitive sources the door keeps out, or whose epoch does not resolve (FIX 1496 S5).
+/// A record hard-deleted here (its dt: marker stands) is kept out too, so a copy stored before
+/// its delete, or imported after it, is not carried (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
 fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if vault
+        .store
+        .port_deletion_marked(rtxn, DeletionMarker::HardDelete, id)?
+    {
+        return Ok(true);
+    }
     if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
         return Ok(true);
     }

@@ -138,6 +138,10 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 11965: the stamp tokens the record's document names.
     |write, txn, id| crate::provenance::erase_actor_stamp_uses_in_txn(write.store, txn, id),
+    // HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD: inert archive copies of rows about it.
+    |write, txn, id| {
+        crate::batch::export::archive_retained_record_erase::erase_retained_side_rows_of_record_in_txn(write.store, txn, id)
+    },
     #[cfg(feature = "sync")]
     |write, txn, id| erase_carried_born_with_in_txn(write.store, txn, id),
     // FIX 12113: which machine wrote a MESSAGE row: a digest of its bytes.
