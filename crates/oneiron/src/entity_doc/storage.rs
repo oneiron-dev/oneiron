@@ -685,9 +685,6 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
     super::forks::erase_forks(store, txn, entity)?;
     let entity_prefix = format!("{}:", entity.to_hex());
     super::pins::ENTITY_DOC_PIN.delete_from(store, txn, entity_prefix.as_bytes())?;
-    // The receipts are keyed by the entity, as a recovery rebuild drops them.
-    super::forks::ENTITY_DOC_RECEIPT.delete_from(store, txn, entity_prefix.as_bytes())?;
-    super::pins::ENTITY_DOC_PURGE_RECEIPT.delete_from(store, txn, entity_prefix.as_bytes())?;
     // An erased reply no longer floors the history of what it quoted (FIX 3463).
     for key in super::pins::ENTITY_DOC_PIN.scan_keys(store, txn, &[])? {
         if key.1.0 == *entity {
