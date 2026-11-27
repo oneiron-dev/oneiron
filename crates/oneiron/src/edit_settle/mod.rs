@@ -155,7 +155,7 @@ pub(crate) fn purge_artifact_retention_in_txn(
     stranded::purge_artifact_in_txn(store, txn, artifact_id)?;
     organ_wait::purge_artifact_in_txn(store, txn, artifact_id)?;
     discarded_words::discard_settle_payload_in_txn(store, txn, artifact_id)?;
-    crate::anchored_annotation::discard_snapshot_payload_in_txn(store, txn, artifact_id)
+    Ok(())
 }
 
 #[cfg(test)]
