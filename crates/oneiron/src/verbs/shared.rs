@@ -459,11 +459,11 @@ fn execute_shared_act_into(
                 .with_host_slip_issuer(issuer),
             _ => memory,
         };
-        let erased = memory.execute_completed_entity_erase(executor, &input.act_id)?;
+        memory.execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {
             receipt: vault.record_erase_completion(executor, &input.act_id)?,
             delivery: None,
-            remaining: erased.remaining,
+            remaining: Vec::new(),
         });
     }
     let execution = vault.execute_completed_shared_act_with_owner_key_revokes(
