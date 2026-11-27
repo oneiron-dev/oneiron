@@ -47,8 +47,12 @@ impl McpCodeModeVerbs {
         self
     }
 
-    /// A browser row: this connector's binding, live session and the row's
-    /// own grant at each call, then the run's guest.
+    /// A browser row: this connector's binding, then its live session and
+    /// Write at each call, whatever the row reads, then the run's guest. The
+    /// guest is the host's: a direct call reaches the browser only through
+    /// the caller's attached live run, which needs Write, and no direct door
+    /// serves the desktop, so a desktop row is refused
+    /// ([`MCP_DESKTOP_REFUSED`], FIX CODE-MODE-LENDING-W2).
     pub(super) fn call_browser(
         &self,
         call: &SelfAgentVerbCall,
@@ -56,7 +60,8 @@ impl McpCodeModeVerbs {
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
-            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, call.verb))
+            .and_then(|()| desktop_row_refusal(call.verb))
+            .and_then(|()| mcp_browser_guest_gate(&self.server, &self.actor))
         {
             return refused(error);
         }
@@ -475,6 +480,23 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 .take(),
         );
     }
+}
+
+/// A run's desktop row is refused: no direct door serves the host's desktop
+/// guest (FIX CODE-MODE-LENDING-W2).
+fn desktop_row_refusal(verb: AgentVerb) -> Result<(), McpGatewayError> {
+    if !verb.as_str().starts_with("self.desktop.") {
+        return Ok(());
+    }
+    Err(McpGatewayError::new(
+        -32020,
+        MCP_DESKTOP_REFUSED,
+        format!(
+            "{} drives the host's desktop, which no direct call reaches, so a connector's run \
+             does not either",
+            verb.as_str()
+        ),
+    ))
 }
 
 /// A refused call as the run takes it: a verb hook's stop as the typed stop,
