@@ -503,7 +503,7 @@ fn withdraw_derived_copies_in_txn(
         id,
         crate::ports::DependentWalkDoor::ClaimValueRedaction,
     )?;
-    crate::dreamer_runner::maintenance::digest::erase_sources_in_txn(&write, txn, id)
+    Ok(())
 }
 
 fn check_family(body: &crate::claim::ClaimBody) -> Result<()> {
