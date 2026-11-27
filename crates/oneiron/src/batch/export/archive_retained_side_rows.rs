@@ -208,7 +208,7 @@ fn retained_row_withheld(
     // imported after it; a live row keeps its policy
     // (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
     for id in judged_records(&envelope.source_table, inert, &records) {
-        if (inert && hard_deleted(vault, rtxn, id)?) || export_keeps_record_out(vault, rtxn, id)? {
+        if export_keeps_record_out(vault, rtxn, id)? {
             return Ok(true);
         }
     }
