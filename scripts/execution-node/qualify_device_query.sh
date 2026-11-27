@@ -20,6 +20,15 @@ device_query_pid() {
   printf '%s\n' "$pid"
 }
 
+# The job writes the pid file, so root never signals the PID it names. The PID must be a
+# process of the job account, and the signal is sent with the job's own rights.
+device_query_kill_job_pid() {
+  local pid="$1" uid
+  uid=$(awk '$1 == "Uid:" { print $2 }' "/proc/$pid/status" 2> /dev/null)
+  [ -n "$job_uid" ] && [ "$uid" = "$job_uid" ] || { echo "PID $pid is not a process of the job account (uid ${uid:-none})"; return 1; }
+  runuser -u "$JOB" -- bash -c 'kill -KILL "$1"' bash "$pid"
+}
+
 device_query_pid_gone() {
   local pid="$1" i
   for ((i = 0; i < 100; i++)); do
@@ -33,7 +42,7 @@ device_query_cleanup() {
   local rc="$1" failed=0 pid
   if [ "$pid_checked_gone" = 0 ] && [ -n "$fixture" ] && [ -s "$fixture/pid" ]; then
     if pid=$(device_query_pid) && [ -e "/proc/$pid" ]; then
-      kill -KILL "$pid" 2>/dev/null || :
+      device_query_kill_job_pid "$pid" > /dev/null 2>&1 || :
       device_query_pid_gone "$pid" || failed=1
     fi
   fi
@@ -50,8 +59,8 @@ device_query_cleanup() {
     [ -z "$tool_dir" ] || rm -rf -- "$tool_dir" || failed=1
   fi
   [ -z "$peer_created" ] || userdel "$peer_created" || failed=1
-  [ -z "$fixture" ] || rm -rf -- "$fixture" || failed=1
-  [ -z "$state_mode" ] || chmod "$state_mode" "$STATE" || failed=1
+  [ -z "$fixture" ] || as_engine rm -rf -- "$fixture" || failed=1
+  [ -z "$state_mode" ] || as_engine chmod "$state_mode" "$STATE" || failed=1
   [ -z "$scratch" ] || rm -rf -- "$scratch" || failed=1
   if [ "$failed" = 1 ]; then
     printf '%s\n' 'fixture cleanup failed'
@@ -72,9 +81,11 @@ device_query_case() {
     job_uid=$(id -u "$JOB") && job_gid=$(id -g "$JOB") || { echo 'cannot read the job uid and gid'; exit 1; }
     # PrivateTmp is not shared with the handler. Its only configured ReadWritePaths is $STATE;
     # install gives that directory mode 0700, so let the job traverse it only for this case.
-    state_mode=$(stat -c %a "$STATE") && fixture=$(mktemp -d "$STATE/.device-query-qual.XXXXXX") &&
-      chown "$JOB" "$fixture" && chmod 0711 "$fixture" && chmod go+x "$STATE" &&
-      : > "$fixture/runs" && chmod 0666 "$fixture/runs" || { echo 'cannot set up the state fixture'; exit 1; }
+    # The engine owns $STATE and could swap any path in it, so root changes no owner or mode
+    # there: the engine makes the fixture and its counter, and only then lets the job in.
+    state_mode=$(stat -c %a "$STATE") && fixture=$(as_engine mktemp -d "$STATE/.device-query-qual.XXXXXX") &&
+      as_engine bash -c ': > "$1/runs" && chmod 0666 "$1/runs" && chmod 0733 "$1" && chmod go+x "$2"' bash "$fixture" "$STATE" ||
+      { echo 'cannot set up the state fixture'; exit 1; }
     # /usr/bin is the first fixed tool directory. Move the original on the same filesystem,
     # so writing the stand-in never follows a symlink or changes the original inode.
     tool_dir=$(mktemp -d "${DEVICE_QUERY_TOOL%/*}/.device-query-qual.XXXXXX") || { echo 'cannot make a tool backup directory'; exit 1; }
@@ -201,7 +212,7 @@ device_query_check_held_lock() {
   pid=$(device_query_pid) && kill -0 "$pid" 2>/dev/null || { echo 'request 1 left no live descendant'; return 1; }
   device_query_request 15 as_engine || :
   device_query_reply_is 'refused query_stuck: an earlier device query has not ended' || { device_query_bad_reply 'request 2 was not refused with query_stuck'; return 1; }
-  kill -KILL "$pid" && device_query_pid_gone "$pid" || { echo "descendant $pid did not die within 10 s"; return 1; }
+  device_query_kill_job_pid "$pid" && device_query_pid_gone "$pid" || { echo "descendant $pid was not killed or did not die within 10 s"; return 1; }
   pid_checked_gone=1
   device_query_request 15 as_engine || :
   device_query_reply_has_card || { device_query_bad_reply 'request 3 did not return the card after the descendant died'; return 1; }
