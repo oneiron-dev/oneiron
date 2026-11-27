@@ -440,6 +440,7 @@ pub mod work_order;
 #[cfg(feature = "sync")]
 pub mod work_talk_replay;
 pub mod workaround_skills;
+pub mod workflow_context_rows;
 pub mod workspace_onboarding_halt;
 pub mod workspace_token;
 pub mod world_access;
