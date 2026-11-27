@@ -121,7 +121,7 @@ impl ReadProgress {
     /// an ask made later takes only a read that starts after it.
     fn prune(&mut self) {
         let waiting = &self.waiting;
-        let mut after = 0;
+        let mut after: u64 = 0;
         self.answers.retain(|published| {
             let first = after.saturating_add(1);
             let kept = first <= published.serving
