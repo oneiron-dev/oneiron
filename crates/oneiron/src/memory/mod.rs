@@ -134,6 +134,7 @@ mod note_tombstone;
 mod notes;
 pub mod origin_doors;
 mod outbound;
+mod own_held;
 mod owner_door;
 mod presented_credential;
 mod proactivity_digest;
@@ -347,6 +348,7 @@ pub use outbound::{
     OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
+pub use reads::HeldMark;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };

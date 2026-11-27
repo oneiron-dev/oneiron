@@ -472,7 +472,7 @@ impl BarJudge {
 
 /// The query's terms as the text index analyzes a query, each once, without the final token's
 /// prefix completions: a direct match is of the words asked.
-fn query_terms(vault: &Vault, query: &str) -> Vec<String> {
+pub(crate) fn query_terms(vault: &Vault, query: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     vault.analyzer.analyze(
         query,

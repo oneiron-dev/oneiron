@@ -131,10 +131,16 @@ pub fn recall_at_door_seeded(
             "a recall under an operation id takes no bar",
         ));
     }
+    // The caller's own held claims that match the query, under the recall's
+    // own selection, go beside the pack, never into its items, render or kept
+    // answer, and never on a push (AGENT-TRIAL-OWN-HELD-WRITES-HIDDEN).
+    let push = input.bar.as_ref().is_some_and(|bar| bar.source.pushes());
+    let query = input.query.clone();
+    let scope = input.scope.clone().unwrap_or_default();
     // Under a caller's operation id the first answer is kept by identity and
     // each later call of the same request replays it under the current read
     // (RESEARCH-0363 p5); see `crate::memory::recall_replay`.
-    match input.operation_id.clone() {
+    let mut pack = match input.operation_id.clone() {
         Some(operation) => crate::memory::recall_replay::recall_under_operation(
             &memory,
             &operation,
@@ -142,7 +148,13 @@ pub fn recall_at_door_seeded(
             |input| recall_with_whole_limit(&memory, input, embed, door),
         ),
         None => recall_with_whole_limit(&memory, input, embed, door),
+    }?;
+    if !push && !pack.narrowing.applied.deny_all {
+        // The stale selector the recall applied, under the actor ceiling.
+        let include_stale = pack.narrowing.applied.include_stale;
+        pack.held = memory.own_held_for_recall(&query, &scope, include_stale)?;
     }
+    Ok(pack)
 }
 
 /// [`recall_at_door`] for the whole requested limit.
