@@ -174,9 +174,9 @@ impl Vault {
         })
     }
 
-    /// Resolves a short reference against its pin rather than its current
-    /// one-byte content hash. The full revision binds identity and bytes, so
-    /// a collision in the presentation hash cannot silently pick a revision.
+    /// Resolves a hex id or a short reference against its pin. The full
+    /// revision binds identity and bytes, so a collision in a short ref's
+    /// presentation hash cannot silently pick a revision.
     pub fn resolve_pinned_entity_reference(
         &self,
         reference: &str,
@@ -228,8 +228,8 @@ fn resolve_reference(
     else {
         return Ok(None);
     };
-    if reference == id.to_hex() {
-        return Ok(Some(id));
+    if let Ok(parsed) = EntityId::from_hex(reference) {
+        return Ok((parsed == id).then_some(id));
     }
     let Ok((short, hash)) = crate::entity_id::parse_short_ref_syntax(reference) else {
         return Ok(None);

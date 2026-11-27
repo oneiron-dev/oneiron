@@ -160,6 +160,10 @@ pub(crate) struct RpcReply {
     /// A forwarded search's reply to a caller off the carrying device
     /// (FIX 11991): its send judges the rows for an unknown destination too.
     off_carrier: bool,
+    /// A hydrate reply whose rows hold every whole id its body names outside
+    /// its miss echoes ([`Self::with_hydrate_body_rows`]): its send judges
+    /// those rows and scans no byte of its frames.
+    body_named: bool,
 }
 
 impl RpcReply {
@@ -270,6 +274,7 @@ impl RpcReply {
             frames,
             rows,
             off_carrier: false,
+            body_named: false,
         })
     }
 
@@ -319,6 +324,7 @@ impl RpcReply {
             frames,
             rows,
             off_carrier: false,
+            body_named: false,
         })
     }
 
@@ -330,6 +336,8 @@ impl RpcReply {
         };
         let incarnation = if self.off_carrier {
             routing::OFF_CARRIER_RPC_INCARNATION
+        } else if self.body_named {
+            routing::BODY_NAMED_RPC_INCARNATION
         } else {
             0
         };
@@ -345,6 +353,37 @@ impl RpcReply {
         self.off_carrier = off_carrier;
         self
     }
+
+    /// This reply with `body` added to its rows, the whole ids a hydrate
+    /// answer's body names outside its miss echoes ([`hydrate_body_rows`]),
+    /// so its send judges them in place of a byte scan of its frames
+    /// (REVIEW-10571 P1 2). A refusal, a result whose rows are unknown and
+    /// any other answer (`None`) keep their send as before.
+    fn with_hydrate_body_rows(mut self, body: Option<Vec<oneiron::EntityId>>) -> Self {
+        if let (Some(body), Some(Some(rows))) = (body, self.rows.as_mut()) {
+            rows.extend(body);
+            self.body_named = true;
+        }
+        self
+    }
+}
+
+/// The whole ids a `vault.hydrate` answer `result` names in the bytes its
+/// reply packs, with each miss echo cleared first: an echo is its caller's
+/// own string, read as no ref when the call judged its rows ([`rpc`]'s
+/// `run`), so a device-local row's id echoed in a miss reads as an unused
+/// id's does. `None` for any other answer, or one that lists no miss by ref.
+fn hydrate_body_rows(
+    method: &str,
+    result: &Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+) -> Option<Vec<oneiron::EntityId>> {
+    if method != crate::device_local::HYDRATE_VERB {
+        return None;
+    }
+    let (value, _) = result.as_ref().ok()?;
+    let scan = crate::device_local::hydrate_misses_cleared(value)?;
+    let bytes = rmp_serde::to_vec_named(&scan).ok()?;
+    Some(crate::device_local::named_rows(&bytes))
 }
 
 impl RpcReply {
@@ -556,7 +595,9 @@ pub(crate) async fn rpc_reply(
         // OF-063: judged on arrival and again before the receipt is written, so
         // a session closed mid-call keeps its call's exception.
         call.anonymous = room_note || context.anonymous(server, auth);
+        let body = hydrate_body_rows(&request.method, &result);
         RpcReply::answer(server, auth, call, request.request_id, result)
+            .map(|reply| reply.with_hydrate_body_rows(body))
     })
     .await
 }

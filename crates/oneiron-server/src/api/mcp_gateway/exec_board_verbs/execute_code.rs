@@ -159,7 +159,9 @@ pub(crate) async fn execute_mcp_execute_code(
     super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
     #[cfg(test)]
     super::device_release::release_hook::run(server);
-    type_feedback_release::release_run_answer(server, actor, named, held, result)
+    super::device_release::with_run_hydrate_scan(actor, record, result, |result| {
+        type_feedback_release::release_run_answer(server, actor, named, held, result)
+    })
 }
 
 /// One entry of a durable run: its id, the verb door it ran behind and
