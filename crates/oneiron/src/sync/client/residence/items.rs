@@ -16,7 +16,13 @@ use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::{self, TransportError};
 use crate::sync::types::WindowKey;
 
-use super::rpc::{ResidenceRpc, refused, residence_budgets};
+use super::rpc::{ResidenceRpc, TouchFault, refused, residence_budgets};
+
+/// The touch attempts one open makes: the first, and at most two more, each
+/// on a fresh socket, after the home withdrew its answer. A withdrawn answer
+/// is asked again "under the grant as it is then" (SELECTOR-RELEASE-POINT =
+/// B; the oneiron-server `selector_release` module doc).
+const MAX_TOUCH_ATTEMPTS: usize = 3;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,7 +68,7 @@ async fn touch_item_bytes(
     name: &str,
     item: TouchItemReply,
     limit: Option<u64>,
-) -> Result<Vec<u8>, TransportError> {
+) -> Result<Vec<u8>, TouchFault> {
     let decode = |encoded: &str| {
         base64::engine::general_purpose::STANDARD
             .decode(encoded)
@@ -76,7 +82,7 @@ async fn touch_item_bytes(
         } => {
             let bytes = decode(&inline)?;
             if limit.is_some_and(|limit| bytes.len() as u64 > limit) {
-                return Err(refused());
+                return Err(refused().into());
             }
             return Ok(bytes);
         }
@@ -85,10 +91,10 @@ async fn touch_item_bytes(
             hash: Some(hash),
             total: Some(total),
         } => (hash, total),
-        _ => return Err(refused()),
+        _ => return Err(refused().into()),
     };
     if limit.is_some_and(|limit| total > limit) {
-        return Err(refused());
+        return Err(refused().into());
     }
     let digest = <[u8; 32]>::try_from(decode(&hash)?.as_slice()).map_err(|_| refused())?;
     let mut bytes = Vec::new();
@@ -98,7 +104,7 @@ async fn touch_item_bytes(
         params["hash"] = json!(hash);
         params["offset"] = json!(bytes.len());
         let reply: TouchPartReply =
-            serde_json::from_value(rpc.request("residence.touch.part", params).await?)
+            serde_json::from_value(rpc.request_touch("residence.touch.part", params).await?)
                 .map_err(|_| refused())?;
         let part = decode(&reply.part)?;
         if reply.total != total
@@ -106,12 +112,12 @@ async fn touch_item_bytes(
             || part.len() > RESIDENCE_PAGE_REPLY_BYTES
             || part.len() as u64 > total - bytes.len() as u64
         {
-            return Err(refused());
+            return Err(refused().into());
         }
         bytes.extend_from_slice(&part);
     }
     if *blake3::hash(&bytes).as_bytes() != digest {
-        return Err(refused());
+        return Err(refused().into());
     }
     Ok(bytes)
 }
@@ -186,43 +192,60 @@ impl SyncClient {
             .ok_or_else(refused)?;
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::home_offline());
-        };
-        // A home that may not read the window's world is not told its name,
-        // the selector or the item (FIX 922 item 11): the touch is refused,
-        // this machine's own policy, never a storage fault (FIX 22217).
-        if !self.config.member_lane && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::world_unreadable_by_home());
-        }
-        let touch = json!({
-            "window": window.as_str(), "selector": selector, "entityId": item.to_hex()
-        });
-        let reply: TouchReply =
-            serde_json::from_value(rpc.request("residence.touch", touch.clone()).await?)
+        let mut attempt = 1;
+        let (content_world, cache_worlds, blob, document) = loop {
+            let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await?
+            else {
+                return Err(TransportError::home_offline());
+            };
+            // A home that may not read the window's world is not told its name,
+            // the selector or the item (FIX 922 item 11): the touch is refused,
+            // this machine's own policy, never a storage fault (FIX 22217).
+            if !self.config.member_lane && !home_reads_window(&self.vault, rpc.home, window) {
+                return Err(TransportError::world_unreadable_by_home());
+            }
+            let touch = json!({
+                "window": window.as_str(), "selector": selector, "entityId": item.to_hex()
+            });
+            let result = async {
+                let reply: TouchReply = serde_json::from_value(
+                    rpc.request_touch("residence.touch", touch.clone()).await?,
+                )
                 .map_err(|_| refused())?;
-        if reply.entity_id != item.to_hex() || reply.window != window.as_str() {
-            return Err(refused());
-        }
-        let content_world = reply.content_world;
-        // A row or document past what one reply holds comes in parts (FIX
-        // 12116), and a row past one frame, such as an authority entry, is
-        // taken whole (FIX 8246).
-        // The row keeps the remote-read ceiling. The logical document is
-        // fetched whole over the same bounded parts, not one wire frame.
-        let blob = touch_item_bytes(
-            &mut rpc,
-            &touch,
-            "blob",
-            reply.blob,
-            Some(crate::memory::caps::MAX_REMOTE_RESPONSE_BYTES as u64),
-        )
-        .await?;
-        let document = touch_item_bytes(&mut rpc, &touch, "document", reply.document, None).await?;
+                if reply.entity_id != item.to_hex() || reply.window != window.as_str() {
+                    return Err(refused().into());
+                }
+                // A row or document past what one reply holds comes in parts (FIX
+                // 12116), and a row past one frame, such as an authority entry, is
+                // taken whole (FIX 8246).
+                // The row keeps the remote-read ceiling. The logical document is
+                // fetched whole over the same bounded parts, not one wire frame.
+                let blob = touch_item_bytes(
+                    &mut rpc,
+                    &touch,
+                    "blob",
+                    reply.blob,
+                    Some(crate::memory::caps::MAX_REMOTE_RESPONSE_BYTES as u64),
+                )
+                .await?;
+                let document =
+                    touch_item_bytes(&mut rpc, &touch, "document", reply.document, None).await?;
+                Ok::<_, TouchFault>((reply.content_world, reply.cache_worlds, blob, document))
+            }
+            .await;
+            match result {
+                Ok(reply) => break reply,
+                Err(TouchFault::Withdrawn) if attempt < MAX_TOUCH_ATTEMPTS => attempt += 1,
+                // A home that withdrew every attempt's answer is one this
+                // machine cannot read from now, as a home it cannot reach:
+                // the caller may retry, and is never told its request was bad.
+                Err(TouchFault::Withdrawn) => return Err(TransportError::home_offline()),
+                Err(TouchFault::Other(error)) => return Err(error),
+            }
+        };
         // Provenance is optional and never changes whether the working read
         // is admitted. A part re-read must still match both original hashes.
-        let cache_worlds = reply
-            .cache_worlds
+        let cache_worlds = cache_worlds
             .and_then(|value| {
                 serde_json::from_value::<crate::sync::residence::CachedItemWorlds>(value).ok()
             })

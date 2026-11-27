@@ -9,9 +9,9 @@ use std::time::Duration;
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
 use super::super::endpoint::ResidenceEndpoint;
 use super::super::types::SyncClientConfig;
@@ -95,6 +95,52 @@ impl std::io::Read for RpcChunks {
 pub(super) struct HomeRefused {
     /// The code the home gave.
     pub(super) code: Option<String>,
+}
+
+impl HomeRefused {
+    fn request_error(&self) -> TransportError {
+        if self.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
+            TransportError::IndexRevisionChanged
+        } else {
+            TransportError::InvalidPayload("home refused residence RPC")
+        }
+    }
+}
+
+/// What [`ResidenceRpc::call_inner`] read back for a sent request.
+enum CallReply {
+    /// The home's answer or its refusal.
+    Answer(Result<Value, HomeRefused>),
+    /// The socket ended after the request was sent and before the whole
+    /// answer came. A deadline that ran out is not this.
+    Interrupted,
+}
+
+impl CallReply {
+    /// The reply as every caller but a touch reads it: an ended socket is
+    /// the home's fault, as before (FIX 22179).
+    fn into_call(self) -> Result<Result<Value, HomeRefused>, RpcFault> {
+        match self {
+            Self::Answer(answer) => Ok(answer),
+            Self::Interrupted => Err(RpcFault::remote()),
+        }
+    }
+}
+
+/// Why a touch read failed. [`Self::Withdrawn`]: the home withdrew its
+/// answer, as a RESULT_CHANGED refusal or, judged at a later frame, by
+/// closing the socket before the answer completed (SELECTOR-RELEASE-POINT =
+/// B). [`Self::Other`]: every other failure, with the error
+/// [`ResidenceRpc::request`] gives for it.
+pub(super) enum TouchFault {
+    Withdrawn,
+    Other(TransportError),
+}
+
+impl From<TransportError> for TouchFault {
+    fn from(error: TransportError) -> Self {
+        Self::Other(error)
+    }
 }
 
 /// Why a residence RPC failed, by the side the fault is on (FIX 22179),
@@ -413,15 +459,31 @@ impl ResidenceRpc {
     ) -> Result<Value, RpcFault> {
         self.call_inner(method, params, None)
             .await?
-            .map_err(|refusal| {
-                RpcFault::Remote(
-                    if refusal.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
-                        TransportError::IndexRevisionChanged
-                    } else {
-                        TransportError::InvalidPayload("home refused residence RPC")
-                    },
-                )
-            })
+            .into_call()?
+            .map_err(|refusal| RpcFault::Remote(refusal.request_error()))
+    }
+
+    /// [`Self::request`], with an answer the home withdrew told apart
+    /// ([`TouchFault::Withdrawn`]), so the touch can ask again.
+    pub(super) async fn request_touch(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, TouchFault> {
+        match self
+            .call_inner(method, params, None)
+            .await
+            .map_err(RpcFault::into_error)?
+        {
+            CallReply::Answer(Ok(reply)) => Ok(reply),
+            CallReply::Answer(Err(refusal))
+                if refusal.code.as_deref() == Some("RESULT_CHANGED") =>
+            {
+                Err(TouchFault::Withdrawn)
+            }
+            CallReply::Answer(Err(refusal)) => Err(TouchFault::Other(refusal.request_error())),
+            CallReply::Interrupted => Err(TouchFault::Withdrawn),
+        }
     }
 
     /// [`Self::request`], with the home's refusal kept apart from a call that
@@ -433,6 +495,7 @@ impl ResidenceRpc {
     ) -> Result<Result<Value, HomeRefused>, TransportError> {
         self.call_inner(method, params, None)
             .await
+            .and_then(CallReply::into_call)
             .map_err(RpcFault::into_error)
     }
 
@@ -447,6 +510,7 @@ impl ResidenceRpc {
     ) -> Result<Value, TransportError> {
         self.call_inner(method, params, Some((vault, machine)))
             .await
+            .and_then(CallReply::into_call)
             .map_err(RpcFault::into_error)?
             .map_err(|_| TransportError::InvalidPayload("admitting machine refused bearer RPC"))
     }
@@ -459,7 +523,7 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
         machine: Option<(&crate::Vault, crate::EntityId)>,
-    ) -> Result<Result<Value, HomeRefused>, RpcFault> {
+    ) -> Result<CallReply, RpcFault> {
         let id = self.next_id;
         self.next_id = self
             .next_id
@@ -522,13 +586,20 @@ impl ResidenceRpc {
                 if tokio::time::Instant::now() >= deadline {
                     return Err(RpcFault::remote());
                 }
-                let msg = tokio::time::timeout_at(deadline, self.socket.next())
+                let frame = match tokio::time::timeout_at(deadline, self.socket.next())
                     .await
                     .map_err(|_| RpcFault::remote())?
-                    .ok_or_else(RpcFault::remote)?
-                    .map_err(|_| RpcFault::remote())?;
-                let Message::Binary(frame) = msg else {
-                    return Err(RpcFault::remote());
+                {
+                    Some(Ok(Message::Binary(frame))) => frame,
+                    Some(Err(WsError::Io(error)))
+                        if error.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        return Err(RpcFault::remote());
+                    }
+                    None | Some(Ok(Message::Close(_)) | Err(_)) => {
+                        return Ok(CallReply::Interrupted);
+                    }
+                    Some(Ok(_)) => return Err(RpcFault::remote()),
                 };
                 // FIX 6458: an unbound lane passes over the sync frames the
                 // home opens each socket with; a bound lane takes none.
@@ -557,9 +628,9 @@ impl ResidenceRpc {
                         .find(|(key, _)| key.as_str() == Some("code"))
                         .and_then(|(_, value)| value.as_str())
                 });
-                return Ok(Err(HomeRefused {
+                return Ok(CallReply::Answer(Err(HomeRefused {
                     code: code.map(str::to_owned),
-                }));
+                })));
             }
             if reply.kind != "rpc.res" {
                 return Err(RpcFault::remote());
@@ -576,7 +647,7 @@ impl ResidenceRpc {
             chunks.push(chunk);
             if reply.last {
                 return rmp_serde::from_read(RpcChunks::new(chunks))
-                    .map(Ok)
+                    .map(|reply| CallReply::Answer(Ok(reply)))
                     .map_err(|_| RpcFault::remote());
             }
         }
