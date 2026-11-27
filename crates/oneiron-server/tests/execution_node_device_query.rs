@@ -568,10 +568,8 @@ sleep 30
             other => other.expect("check whether the background sleep exists"),
         }
         // testkit-lint: allow(wall-clock) the same process-exit deadline
-        assert!(
-            Instant::now() < deadline,
-            "the background sleep still exists"
-        );
+        let within_deadline = Instant::now() < deadline;
+        assert!(within_deadline, "the background sleep still exists");
         // testkit-lint: allow(sleep) poll for adoption and exit of a real child
         std::thread::sleep(Duration::from_millis(10));
     }
