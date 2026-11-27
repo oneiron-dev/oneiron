@@ -75,7 +75,11 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("CONSENT_APPROVE_ONCE_MARKER", NoRecord),
     ("CONSENT_STANDING_GRANT", NoRecord),
     ("CONSENT_WIDEN_PROPOSAL", NoRecord),
-    ("CONVERSATION_MEMBERSHIP_ROW", ID_AND_U64),
+    // The room, then the PERSON, actor and handoff entities its value names.
+    (
+        "CONVERSATION_MEMBERSHIP_ROW",
+        KeyAndValue(membership_row_records),
+    ),
     ("CONVERSATION_MEMBERSHIP_SEQ", ONE_ID),
     // The room, then the grantee PERSON.
     (
@@ -304,6 +308,18 @@ fn lane_intent_records(value: &[u8]) -> Option<Vec<EntityId>> {
 /// The voice subject a stored render decision is about.
 fn render_consent_records(value: &[u8]) -> Option<Vec<EntityId>> {
     crate::voice_identity::ref_bank::render_consent_subject(value).map(|subject| vec![subject])
+}
+
+/// The room a membership ledger row's key names, then the entities its value names
+/// (`conversation::membership_row_named_entities`); `None` for a key that is not a room and
+/// ordinal, or a value that does not read as a row (REVIEW-10618 P1-2).
+fn membership_row_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    if key.len() != 24 {
+        return None;
+    }
+    let mut records = vec![raw_id_at(key, 0)?];
+    records.extend(crate::conversation::membership_row_named_entities(value)?);
+    Some(records)
 }
 
 /// Whether `left` and `right` are the same name, for the compile-time check.
