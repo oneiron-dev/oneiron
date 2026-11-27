@@ -166,9 +166,7 @@ impl VerbTree {
                 && self.node_at(path).is_none()
                 && !options.hidden.contains_key(path);
             if node.is_none() && !tree_call {
-                if !self.grant_hidden(path, options.hidden) {
-                    not_shown.push(path.as_str());
-                }
+                not_shown.push(path.as_str());
                 continue;
             }
             if let Some(text) = authored.filter(|_| !options.hidden.contains_key(path)) {
@@ -196,7 +194,7 @@ impl VerbTree {
                     path.as_str(),
                     self.without_hidden_paths(&block, options.hidden),
                 ));
-            } else if !self.grant_hidden(path, options.hidden) {
+            } else {
                 not_shown.push(path.as_str());
             }
         }
@@ -233,7 +231,7 @@ impl VerbTree {
                 }
             }
             if !not_shown.is_empty() {
-                text.push_str("\nnot shown (not in the tree): ");
+                text.push_str("\nnot shown (not in the tree or outside this grant): ");
                 text.push_str(&not_shown.join(", "));
             }
             text.push_str(
