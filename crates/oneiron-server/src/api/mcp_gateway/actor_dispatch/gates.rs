@@ -213,6 +213,14 @@ pub(in crate::api::mcp_gateway) fn mcp_execute_code_gate(
     )
 }
 
+/// The refusal a connector's run meets when it sets a world's privacy
+/// (CODE-MODE-LENDING-WORLD-PRIVACY = A): a world's privacy is set by its
+/// holder directly, not by a connector's run, for both run authors (caller
+/// code and engine model), until a direct row exists. Native agent runs keep
+/// the act: the engine's own dispatcher
+/// (`crates/oneiron/src/code_run/dispatcher/world_privacy_set.rs`) is unchanged.
+pub(crate) const MCP_WORLD_PRIVACY_REFUSED: &str = "mcp_world_privacy_refused";
+
 /// One call a run serves itself (`RunCall`): the live session, then what
 /// the call does (`McpCallEffect::of_run_call`). A read needs the session's
 /// Read alone; every write takes effect at once, so it needs Write.
@@ -221,6 +229,18 @@ pub(in crate::api::mcp_gateway) fn mcp_run_call_gate(
     actor: &McpCallContext,
     call: oneiron::code_run::RunCall,
 ) -> Result<(), McpGatewayError> {
+    if matches!(
+        call,
+        oneiron::code_run::RunCall::Bridge(oneiron::code_run::SelfEffect::WorldPrivacySet)
+    ) {
+        let mut refused = McpGatewayError::new(
+            -32020,
+            MCP_WORLD_PRIVACY_REFUSED,
+            "a world's privacy is set by its holder directly, not by a connector's run",
+        );
+        refused.reason_codes = vec!["world_privacy.set_by_holder_directly".to_owned()];
+        return Err(refused);
+    }
     mcp_session_operation_gate(server, actor, McpCallEffect::of_run_call(call))
 }
 
