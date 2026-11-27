@@ -346,6 +346,46 @@ impl Vault {
         workspace_project_in_txn(self, &txn, folder_digests)
     }
 
+    /// Whether `proof`, the credential `actor` presented (`None`: none), admits placing
+    /// `actor`'s records under `project` (PR A Q2, SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT): with
+    /// no credential, only in process (`transport` false); else the slip must be live, held by
+    /// `actor`, bounded by no record or channel, grant a write, and have an audience that covers
+    /// `project`. Both a session-folder write's writer and a hook transcript's hand-over judge
+    /// placement by it.
+    pub(crate) fn credential_admits_project_placement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        proof: Option<&crate::authority::VerifiedSlip>,
+        transport: bool,
+        project: EntityId,
+    ) -> MemoryResult<bool> {
+        let Some(proof) = proof else {
+            return if transport { Ok(false) } else { Ok(true) };
+        };
+        if proof.claims().holder_ref != actor.to_hex()
+            || !proof.claims().records.is_empty()
+            || !proof.claims().channels.is_empty()
+            || !self.capability_slip_is_live_in_txn(txn, proof)?
+        {
+            return Ok(false);
+        }
+        if !["core:write", "write", "core:propose"]
+            .into_iter()
+            .any(|verb| proof.allows_verb(verb))
+        {
+            return Ok(false);
+        }
+        if !proof
+            .scope()
+            .audience
+            .contains(&crate::federation::ScopeId(project))
+        {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
     /// The owner binds the folder `request.folder_digest` names to `request.project`: the
     /// owner's change of the folder's `workspace.project` row, under the owner's proof, recorded
     /// as every owner setting change is, with `surface` as where the owner said so. The project

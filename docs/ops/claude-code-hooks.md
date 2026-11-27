@@ -53,6 +53,10 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron mcp ──▶ the hosted vault: vault.imports.hook_transcript
 ```
 
+As with a local import, a session handed over to a hosted vault lands in the project its
+folder is bound to there; an agent needs a credential that covers that project or the
+hand-over is refused.
+
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
   credential. It calls `vault.recall` at the `light` effort (no model call)
   unless you set `--effort`; `medium` also searches by the query's vector, so
