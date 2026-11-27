@@ -179549,7 +179549,7 @@
       "const": 2,
       "crate-vis": 4,
       "enum": 3,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 4,
       "trait": 1

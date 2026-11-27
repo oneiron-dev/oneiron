@@ -42,6 +42,10 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>, Arc<ManualClock>) {
     let clock = ManualClock::new(T0);
     cfg.store_clock = clock.bundle();
     let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
+    // A receiver loads its install signer at boot (serve's keystore
+    // install); every hard purge signs its deletion receipt with it.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault, clock)
 }
 
@@ -602,7 +606,7 @@ fn a_purge_failure_beside_a_project_hold_still_raises_the_breach_signal() {
         "the clean retry still warns for the hold: {lines:?}"
     );
     assert!(
-        held.vault.get_raw(&other).unwrap().is_none(),
+        stored_entity_row(&held.vault, &other).is_none(),
         "the retry purges the hard-deleted body"
     );
     assert!(
