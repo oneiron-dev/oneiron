@@ -63,7 +63,7 @@ use crate::registry::ENTITY_TYPE_NOTE;
 use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::vault::ReadMode;
+use crate::vault::{ReadMode, live_entity_row_in_txn};
 use crate::{EntityId, Result, Vault};
 use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::ScopeResource;
@@ -386,6 +386,8 @@ impl ConsolidationExecutor<'_> {
             Ok(reply) => reply,
             Err(error) => return Ok(Some(charges.park_on_error(&error))),
         };
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::note_review_pass::run_after_reply_hook(ctx.vault);
         let importance = reply.importance;
         // The reply's labels read through the request's own map; each
         // declared person binds once, before any candidate names it.
@@ -495,6 +497,13 @@ impl ConsolidationExecutor<'_> {
             now: ctx.now_ms / 1_000,
         };
         let declared = match ctx.vault.with_write_txn_grouped(|txn| {
+            // A delete committed while the model was answering; its eraser already removed SEEN.
+            if live_entity_row_in_txn(&ctx.vault.store, txn, &note.id)?.live_type()
+                != Some(ENTITY_TYPE_NOTE)
+            {
+                unpin_note_listing_in_txn(ctx.vault, txn, run.attempt_id, note.id)?;
+                return Ok(false);
+            }
             // The topic the NOTE's last review kept, when this review moves
             // it to another or to none: that group is declared again
             // without it (FIX 7459).
