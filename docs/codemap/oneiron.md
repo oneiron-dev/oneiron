@@ -244,6 +244,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/reanchor.rs` | src | m | 2 fn · 5 crate-vis | — | Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn) |
 | `src/anchored_annotation/reanchor/effect_lowering.rs` | src | s | — | — | Lowering of edit-manifest anchor effects onto the replay's reanchor ops |
 | `src/anchored_annotation/recovery.rs` | src | L | 2 struct · 4 fn · 13 crate-vis | ReattachOffer, UnattachedThread | Lost-anchor recovery (OF-368, owner ruling 2026-10-17) |
+| `src/anchored_annotation/recovery/artifact_delete_tests.rs` | test | s | — | — | Artifact hard-delete clears Unattached snapshots but keeps the rows (FIX… |
 | `src/anchored_annotation/recovery/code.rs` | src | m | 4 crate-vis | — | Reattach offers and one-click reattach on a code artifact (FIX 7905) |
 | `src/anchored_annotation/recovery/scoped.rs` | src | m | 4 fn | — | The Unattached list and its reattach offers for a narrowed reader (FIX 8063): every thread, snapshot, held… |
 | `src/anchored_annotation/recovery/stories.rs` | src | s | 3 crate-vis | — | Version re-anchoring inside the exact native story a locator names |
@@ -3486,6 +3487,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/slides_review/verify.rs` | src | s | 6 crate-vis | — | Verification of retained slide judgment rows |
 | `src/edit_roundtrip/tables.rs` | src | s | — | — | The side tables `edit_roundtrip` keeps (core split slice 1): each row declares one, and the crate's build… |
 | `src/edit_roundtrip/tests.rs` | test | XL | — | — | ARTL-3 pipeline tests |
+| `src/edit_settle/artifact_delete_tests.rs` | test | s | — | — | Artifact hard-delete empties settlement words but keeps the records (FIX… |
 | `src/edit_settle/carry.rs` | src | L | 2 struct · 3 enum · 3 fn · 10 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
 | `src/edit_settle/carry/live.rs` | src | m | 14 crate-vis | — | The live-body half of a held answer proposal's split (FIX 2115) |
 | `src/edit_settle/carry/sheet_keep.rs` | src | s | 3 crate-vis | — | Source revisions that bind a sheet answer split to its settlement transaction |

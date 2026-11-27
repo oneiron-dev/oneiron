@@ -2702,6 +2702,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/anchored_annotation/recovery/artifact_delete_tests.rs",
+     "purpose": "Artifact hard-delete clears Unattached snapshots but keeps the rows (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -40860,6 +40868,14 @@
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
      "purpose": "ARTL-3 pipeline tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_settle/artifact_delete_tests.rs",
+     "purpose": "Artifact hard-delete empties settlement words but keeps the records (FIX…",
      "surface": {}
     },
     {
@@ -123391,7 +123407,7 @@
     },
     "anchored_annotation": {
      "entry": "crates/oneiron/src/anchored_annotation/mod.rs",
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124166,7 +124182,7 @@
     },
     "edit_settle": {
      "entry": "crates/oneiron/src/edit_settle/mod.rs",
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125911,7 +125927,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8655,
-   "test_files": 2344
+   "test_files": 2346
   },
   "oneiron-agent-runtime": {
    "files": [
