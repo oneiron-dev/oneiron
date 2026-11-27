@@ -221,6 +221,10 @@ pub(crate) use self::facade::{
     ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
+// The integration tests' door to the media doors on a code-mode run's line
+// (FIX CODE-MODE-LENDING-W1).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade::media_door_on_run_line_for_test;
 // STEP-PARK-BOOT-RESUME: the owner's model steps parked before a restart
 // resume when serve starts.
 pub(crate) use self::facade::resume_parked_model_steps;

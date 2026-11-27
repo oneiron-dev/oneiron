@@ -18,6 +18,10 @@
 //! - A credential bound to one row of the Fold effect admits that row alone
 //!   (`admit_run_row`), and the effect itself when any of its rows is bound:
 //!   before, only the effect's first row (`self.compact`) was checked.
+//! - The engine's program calls the `ai.*` media doors on its run's line,
+//!   and the line only pays: a credential no Grant names the operation is
+//!   refused as its direct call is, naming the Grant (FIX
+//!   CODE-MODE-LENDING-W1; `media_call_on_run_line`).
 //!
 //! The door is driven through `test_doors::mcp_code_mode_verbs`, as the run's
 //! guest drives it: no QuickJS host, model or guest starts. Each test runs on
@@ -42,7 +46,7 @@ use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::mcp_code_mode_verbs::{
     ProgramAuthor, admit_own_run_speech, admit_run_effect, admit_run_row, admit_run_speech_as,
-    call_verb_written_by, register_credential,
+    call_verb_written_by, media_call_on_run_line, register_credential,
 };
 use serde_json::json;
 
@@ -393,6 +397,59 @@ async fn shared_effect_row_binding() -> TestResult {
         .await
         .expect("the admission runs")
         .expect("a credential bound to one Fold row admits the effect");
+    }
+    Ok(())
+}
+
+/// The engine's program calls the `ai.*` media doors on its run's line, and
+/// the line only pays (FIX CODE-MODE-LENDING-W1): a credential no Grant
+/// names `ai.image` or `ai.video` is refused there as its direct call is,
+/// naming the Grant it needs, at the call, the poll and the cancel. Red with
+/// the media fix undone (the door is new, so main has no test target): the
+/// line answered before the Grant check, so each call went on to the
+/// fixture's absent model, and the poll and the cancel to the run's own
+/// jobs, and none named the Grant.
+#[test]
+fn engine_program_media_on_its_line_needs_the_grant() -> TestResult {
+    on_engine_stack(engine_program_media)
+}
+
+async fn engine_program_media() -> TestResult {
+    let fixture = fixture("engine-program-media");
+    let writer = register_credential(&fixture.server, 0xC8, &["read", "write"], None)
+        .await
+        .expect("a write credential registers");
+    let run = EntityId::now();
+    for (verb, input, grant) in [
+        (
+            "ai.image",
+            json!({"prompt": "a heron lantern by the north gate"}),
+            "grant_required.ai.image",
+        ),
+        (
+            "ai.video",
+            json!({"prompt": "the north gate at dusk"}),
+            "grant_required.ai.video",
+        ),
+        (
+            "ai.video.poll",
+            json!({"job": "media-line-job"}),
+            "grant_required.ai.video",
+        ),
+        (
+            "ai.video.cancel",
+            json!({"job": "media-line-job"}),
+            "grant_required.ai.video",
+        ),
+    ] {
+        let refused = media_call_on_run_line(&fixture.server, &writer, run, verb, input)
+            .await
+            .expect("the door call runs")
+            .expect_err("a credential no Grant names is refused on the line");
+        assert!(
+            refused.reason_codes.iter().any(|code| code == grant),
+            "{verb} names the Grant it needs: {refused:?}"
+        );
     }
     Ok(())
 }
