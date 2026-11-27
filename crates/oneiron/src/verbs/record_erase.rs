@@ -208,11 +208,7 @@ fn remaining_for_erase(
         code: remaining_claims::REMAINING_BACKUPS_BEFORE_ERASE.to_owned(),
         text: remaining_claims::REMAINING_BACKUPS_BEFORE_ERASE_TEXT.to_owned(),
     });
-    let disk_text = if vault.vault_pages_sealed() {
-        remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_SEALED_TEXT
-    } else {
-        remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_PLAIN_TEXT
-    };
+    let disk_text = remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_PLAIN_TEXT;
     remaining.push(RemainingNotice {
         code: remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN.to_owned(),
         text: disk_text.to_owned(),
