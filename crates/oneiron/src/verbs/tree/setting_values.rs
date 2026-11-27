@@ -41,7 +41,7 @@ impl SettingValue for ViewPaths {
 /// Whether `path` is a dotted lowercase path: one or more parts of
 /// `[a-z][a-z0-9_]*` joined by dots. A branch (`tasks`) is one part; the tree
 /// itself is not consulted.
-fn check_view_path(path: &str) -> Result<(), &'static str> {
+fn check_view_path(path: &str) -> std::result::Result<(), &'static str> {
     if path.is_empty() {
         return Err("a view path is not empty");
     }
