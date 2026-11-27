@@ -533,6 +533,14 @@ fn deny_connect_with_eperm() {
     assert_eq!(installed, 0, "seccomp: {}", std::io::Error::last_os_error());
 }
 
+/// Off x86-64 there is no filter to make `connect` answer EPERM (the one
+/// above checks the x86-64 audit arch), so the run lists this case as
+/// ignored, with that reason.
+#[cfg(not(target_arch = "x86_64"))]
+#[test]
+#[ignore = "the seccomp filter that makes connect answer EPERM is written for x86-64 only"]
+fn a_socket_whose_connect_answers_eperm_leaves_the_query_to_the_tool_run_here() {}
+
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn a_socket_whose_connect_answers_eperm_leaves_the_query_to_the_tool_run_here() {
