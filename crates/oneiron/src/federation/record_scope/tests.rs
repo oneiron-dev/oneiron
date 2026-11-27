@@ -421,3 +421,71 @@ fn an_unstamped_row_reads_as_default_and_an_unusable_stamp_as_none() {
         "a NOTE whose present stamp does not bind reads as no placement"
     );
 }
+
+#[test]
+fn session_projects_admit_row_refuses_an_unusable_placement_and_a_root_row_when_bound() {
+    use crate::session_project::SessionProjects;
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let bare = born_note(&vault, "a NOTE whose stamp is retired");
+    let loose = born_note(&vault, "a NOTE whose stamp does not bind");
+    vault
+        .with_write_txn(|txn| {
+            retire_stamp(&vault.store, txn, bare)?;
+            let stranger = EntityId::now();
+            SCOPE_RECORD.put(
+                &vault.store,
+                txn,
+                &loose,
+                &Stamp {
+                    version: 2,
+                    kind: ENTITY_TYPE_NOTE,
+                    birth_facet: *stranger.as_bytes(),
+                    scope: default_stamp(ENTITY_TYPE_NOTE, stranger),
+                },
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+    let bare_raw = vault.get_raw(&bare).unwrap().expect("the unstamped NOTE");
+    let loose_raw = vault.get_raw(&loose).unwrap().expect("the bad-stamp NOTE");
+    let txn = vault.store.env.read_txn().unwrap();
+    let bound = |project| SessionProjects::Bound {
+        project,
+        closure: BTreeSet::from([project]).into(),
+    };
+    let other = bound(EntityId::now());
+    let root = bound(crate::claim::default_project_id());
+    let admits = |id, raw: &[u8], projects: &SessionProjects| {
+        session_projects_admit_row(&vault.store, &txn, id, raw, projects, false)
+            .expect("the session admission decision")
+    };
+
+    assert!(
+        !admits(loose, &loose_raw, &root),
+        "a NOTE whose stamp does not bind must not be read even if the closure admits root"
+    );
+    assert!(
+        !admits(bare, &bare_raw, &other),
+        "an unstamped NOTE must not be read if the closure excludes root"
+    );
+    assert!(
+        admits(bare, &bare_raw, &root),
+        "an unstamped NOTE must be read if the closure admits root"
+    );
+    assert!(
+        !admits(bare, &bare_raw, &SessionProjects::Unbound),
+        "an unbound session must not read the unstamped NOTE"
+    );
+    assert!(
+        !admits(loose, &loose_raw, &SessionProjects::Unbound),
+        "an unbound session must not read the NOTE whose stamp does not bind"
+    );
+    assert!(
+        !session_projects_admit_row(&vault.store, &txn, bare, &bare_raw, &other, true)
+            .expect("the room lane's session admission decision"),
+        "a room history lane still judges a NOTE by its placement (PLACEMENT-B-ROOM-ROWS = B)"
+    );
+}

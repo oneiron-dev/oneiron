@@ -440,18 +440,25 @@ folder Claude Code runs in. Then:
 - A read that names its projects (`project_refs` on `vault.recall`,
   `vault.claims.list_filtered`, `vault.claims.read_filtered`) reads those,
   within what the credential reads anyway.
-- Only claims carry a project. Notes, messages and every other row read as
-  before.
+- Claims, notes, messages and turns carry a project. The notes and turns a
+  session writes, including turns imported from its session log, carry the
+  folder's bound project. Rows written with no folder, or before session
+  placement, carry the root project, which a bound session does not read.
+  Room speech is the exception: a room's history shows its members' messages
+  and turns whatever project they carry, since they were posted to every
+  member; claims in a room still follow the folder. Conversations and other
+  rows read as before.
 
 The binding selects; it grants nothing. The folder a tool call names comes from
 the client, so a client that names another folder only changes which of the
-claims its credential reads anyway come first by default.
+rows its credential reads anyway come first by default.
 
 A claim the session writes (`vault.claims.upsert`, `vault.remember`) that names
 no project lands in the folder's project, so the session reads it back. One
 that names its project (`scope_project_id`) lands there, within what the
 credential may write. In a folder with no project bound, writes keep the root's
-default project, as before. Notes and other rows carry no project yet.
+default project, as before. Notes and turns the session writes land in the
+folder's project the same way.
 
 ## 1. Turn on the import queue
 

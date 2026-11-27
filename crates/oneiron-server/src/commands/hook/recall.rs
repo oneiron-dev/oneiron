@@ -242,9 +242,9 @@ impl Recall<'_> {
         if let Some(session) = self.session {
             bar["session"] = json!(session);
         }
-        // A push gives CLAIMs only: a CLAIM carries the project it was stamped with, so the
-        // session's project scopes it, while a TURN, MESSAGE or NOTE names no project and
-        // would reach the session from any project (REVIEW-10567 P1 2).
+        // A push gives CLAIMs only (REVIEW-10567 P1 2). TURN, MESSAGE and NOTE carry projects
+        // too, but the Engine ruled CLAIM-only (Q7 PUSH-KINDS = a). The recall bar was measured
+        // on CLAIMs; only the owner can reopen other kinds.
         let arguments = json!({"spec": {
             "query": self.query,
             "effort": self.effort.as_str(),
