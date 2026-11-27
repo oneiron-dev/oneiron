@@ -4,10 +4,13 @@
 //! TURN's import stamp, while `turn_trust_class` also reads its role, so an
 //! unstamped Counterparty TURN classed `Generated` on the meet path and
 //! `Imported` on the extraction path. Now both read `Imported`; every other
-//! TURN classes as before.
+//! TURN classes as before, and a stamped TURN stays `Imported` whatever its
+//! role (review round 1: the classifier refuses a role it never classes
+//! before it reads the stamp).
 //!
-//! Red: the meet path's stamp-only read restored (the Counterparty case reads
-//! `Generated`).
+//! Reds: the meet path's stamp-only read restored (the Counterparty case
+//! reads `Generated`); the stamp read dropped from the meet path (the stamped
+//! System case reads `Generated`).
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test dreamer_counterparty_turn_evidence_class`.
 #![cfg(oneiron_test_support)]
@@ -108,5 +111,23 @@ fn a_turn_whose_role_is_never_classed_keeps_the_dreamer_floor() {
         meet(&vault, said),
         ClaimSource::Generated,
         "a role turn_trust_class never classes contributes the floor, as before"
+    );
+}
+
+#[test]
+fn a_stamped_turn_whose_role_is_never_classed_stays_imported() {
+    let (_dir, vault) = open_vault();
+    let said = turn(
+        &vault,
+        &[
+            ("speaker", "system"),
+            ("text", "be brief"),
+            (IMPORT_STAMP_KEY, "archive"),
+        ],
+    );
+    assert_eq!(
+        meet(&vault, said),
+        ClaimSource::Imported,
+        "an imported transcript's TURN classes Imported even in a role turn_trust_class never classes"
     );
 }
