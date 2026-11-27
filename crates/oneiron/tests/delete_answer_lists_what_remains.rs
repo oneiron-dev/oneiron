@@ -41,6 +41,7 @@ use oneiron::memory::{
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::store::ports::ManualClock;
 use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::verbs::{
@@ -432,5 +433,130 @@ fn owner_erase_receipt_lists_the_history_sweep() {
             ),
         ],
         "{outcome:?}"
+    );
+}
+
+const T0: u64 = 1_800_000_000;
+
+/// A rooted vault on a manual clock with two live Owners who accepted, so
+/// an owner erase waits on its veto window: the tempdir, the vault, the
+/// clock, the embedded owner and their proof.
+fn two_owners() -> (
+    tempfile::TempDir,
+    Vault,
+    Arc<ManualClock>,
+    EntityId,
+    AuthenticatedOwner,
+) {
+    let clock = ManualClock::new(T0);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("vault on its manual clock");
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    let owner_proof = proof(&vault, owner);
+    let second = EntityId::now();
+    person(&vault, second);
+    let member = |member_ref| InitialSharedMember {
+        member_ref,
+        role: Some(Role::Owner),
+    };
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[member(owner), member(second)],
+            1,
+        )
+        .expect("a shared vault with two Owners");
+    accept(&vault, second, Role::Owner);
+    (dir, vault, clock, owner, owner_proof)
+}
+
+#[test]
+fn a_foreign_proof_delete_of_a_restricted_record_answers_not_found() {
+    let dir_a = tempfile::tempdir().expect("tempdir");
+    let (vault_a, _owner_a, _proof_a, _issuer_a) = rooted(&dir_a);
+    let dir_b = tempfile::tempdir().expect("tempdir");
+    let (_vault_b, _owner_b, proof_b, _issuer_b) = rooted(&dir_b);
+    let record = EntityId::now();
+    person(&vault_a, record);
+    restrict_record(&vault_a, record).expect("FIXTURE: restrict the record");
+    let error = vault_a
+        .delete_entity_with_reason_as_owner(
+            &proof_b,
+            &record,
+            oneiron::deletion::DeleteReason::UserHardDelete,
+        )
+        .expect_err("a foreign proof's delete of a restricted record is refused");
+    assert!(
+        matches!(error, oneiron::Error::EntityNotFound),
+        "a foreign proof keeps absence, not restricted: {error:?}"
+    );
+}
+
+#[test]
+fn a_held_erase_of_a_record_restricted_in_its_window_answers_restricted() {
+    let (_dir, vault, clock, owner, owner_proof) = two_owners();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let record = artifact(&memory);
+    let outcome = erase(&memory, &owner_proof, record);
+    let act_id = outcome
+        .first_act
+        .clone()
+        .unwrap_or_else(|| panic!("two Owners: the erase waits on its act: {outcome:?}"));
+    restrict_record(&vault, record).expect("FIXTURE: restrict the record in its window");
+    let act = vault
+        .pending_authority_act(&act_id)
+        .expect("read the act")
+        .expect("the act is stored");
+    clock.set(act.deadline + 1);
+    let error = memory
+        .execute_completed_entity_erase(&owner_proof, &act_id)
+        .expect_err("a held erase of a restricted record is refused");
+    assert_eq!(error.code, "restricted", "{error:?}");
+}
+
+#[test]
+fn a_served_held_erase_lists_the_history_sweep() {
+    let (_dir, vault, clock, owner, owner_proof) = two_owners();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let record = artifact(&memory);
+    let outcome = erase(&memory, &owner_proof, record);
+    let act_id = outcome
+        .first_act
+        .clone()
+        .unwrap_or_else(|| panic!("two Owners: the erase waits on its act: {outcome:?}"));
+    let act = vault
+        .pending_authority_act(&act_id)
+        .expect("read the act")
+        .expect("the act is stored");
+    clock.set(act.deadline + 1);
+    let executed = oneiron::verbs::execute_shared_act(
+        &vault,
+        &owner_proof,
+        None,
+        oneiron::verbs::SharedActExecuteRequest {
+            act_id,
+            owner_key_revokes: Vec::new(),
+        },
+    )
+    .expect("the served held erase runs");
+    let sweep = executed
+        .remaining
+        .iter()
+        .find(|entry| entry.code == "history_sweep")
+        .unwrap_or_else(|| panic!("the served erase lists the history sweep: {executed:?}"));
+    assert_eq!(
+        sweep.text,
+        "Removed now. Older copies in this vault's sync history are cleared by a background sweep, and the receipt shows when that is done.",
+        "{executed:?}"
     );
 }
