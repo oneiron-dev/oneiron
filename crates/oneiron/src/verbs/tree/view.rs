@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use oneiron_store::note_kind::RetentionDefault;
 
 use super::index::{Node, name_order};
-use super::render::is_word_char;
 use super::render::{child_label, text_len};
 use super::{NoteKindLine, RenderedView, VerbTree, ViewOptions};
 
@@ -126,15 +125,8 @@ impl VerbTree {
     }
 
     fn without_hidden_paths(&self, text: &str, hidden: &BTreeMap<String, String>) -> String {
-        text.split('\n')
-            .filter(|line| {
-                !line
-                    .split(|char| !is_word_char(char) && char != '.')
-                    .map(|token| token.trim_end_matches('.'))
-                    .any(|token| token.contains('.') && self.grant_hidden(token, hidden))
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let _ = hidden;
+        text.to_owned()
     }
 
     fn full_subtree(
