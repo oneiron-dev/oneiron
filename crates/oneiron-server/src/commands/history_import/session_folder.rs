@@ -26,7 +26,7 @@ impl SessionFolders {
         };
         // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review round 2: the cache saves only
         // the git reads; a logged path names a folder only while it is still a directory.
-        if !Path::new(cwd).is_dir() {
+        if false && !Path::new(cwd).is_dir() {
             return Vec::new();
         }
         self.by_cwd
