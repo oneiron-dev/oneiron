@@ -17,8 +17,6 @@ pub(crate) fn erase_source_copies_in_txn(
     let store = write.store;
     super::identity::erase_sources_in_txn(store, txn, id)?;
     super::agent_health::erase_sources_in_txn(store, txn, id)?;
-    // PROACTIVITY-DIGEST-COPY-ERASURE: the stored proactivity digests' copies of a proposal's words.
-    super::digest::erase_sources_in_txn(write, txn, id)?;
     // FIX 7817: the Coach's topology-audit candidates naming it.
     crate::identity_topology::erase_topology_audit_sources_in_txn(store, txn, id)
 }
