@@ -3,7 +3,9 @@
 //! configured root; direct imports read the owner's selected path. Both
 //! read on this machine, so the log's `cwd` names a folder on this machine.
 //! A folder that cannot be identified quietly lands at the default project;
-//! resolving its identity never widens which logs the import reads.
+//! resolving its identity never widens which logs the import reads. Only an
+//! absolute `cwd` names a folder: a relative one would resolve against the
+//! importer's own working directory, which is not the session's.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,13 +26,20 @@ impl SessionFolders {
         };
         self.by_cwd
             .entry(cwd.clone())
-            .or_insert_with(|| {
-                WorkspaceIdentity::of_session_folder(Path::new(cwd))
-                    .map(|identity| identity.digests)
-                    .unwrap_or_default()
-            })
+            .or_insert_with(|| logged_folder_digests(Path::new(cwd)))
             .clone()
     }
+}
+
+/// The folder digests of a log's `cwd`, as an attached session's folder is named.
+fn logged_folder_digests(cwd: &Path) -> Vec<String> {
+    // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review: a relative cwd names no folder.
+    if !cwd.is_absolute() {
+        return Vec::new();
+    }
+    WorkspaceIdentity::of_session_folder(cwd)
+        .map(|identity| identity.digests)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -70,6 +79,34 @@ mod tests {
         assert!(
             folders.digests_of(&conversation(Some(&missing))).is_empty(),
             "a missing cwd should have no folder digests"
+        );
+    }
+
+    #[test]
+    fn a_log_whose_cwd_is_relative_has_no_folder_digests() {
+        // "." names this test's own working directory: a directory, neither home nor root.
+        assert!(
+            WorkspaceIdentity::of_session_folder(Path::new(".")).is_some(),
+            "the importer's own working directory should have a session identity"
+        );
+        let mut folders = SessionFolders::default();
+        assert!(
+            folders
+                .digests_of(&conversation(Some(Path::new("."))))
+                .is_empty(),
+            "a relative cwd should have no folder digests"
+        );
+    }
+
+    #[test]
+    fn a_log_whose_cwd_is_a_regular_file_has_no_folder_digests() {
+        let dir = tempfile::tempdir().expect("create the session folder test directory");
+        let file = dir.path().join("work");
+        std::fs::write(&file, b"not a folder").expect("write a regular file at the logged path");
+        let mut folders = SessionFolders::default();
+        assert!(
+            folders.digests_of(&conversation(Some(&file))).is_empty(),
+            "a cwd that names a regular file should have no folder digests"
         );
     }
 
