@@ -195,7 +195,10 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
                 let at = time_field(&value, "timestamp");
                 rollout.line(kind, payload, line, at);
             }
-            _ if legacy_meta => rollout.meta(&value, line, None),
+            _ if legacy_meta => {
+                rollout.meta(&value, line, None);
+                rollout.cwd = None;
+            }
             _ if value.get("record_type").is_some() => rollout.skipped.other += 1,
             _ => rollout.response_item(&value, line, None),
         }
