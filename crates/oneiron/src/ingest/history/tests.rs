@@ -2,6 +2,8 @@
 //! whose words they are, when the vault learned them, what trust the Dreamer
 //! gives them, and that an import cannot be made to read as live speech.
 
+mod placed_blocks;
+
 use super::ledger;
 use super::{HistoryConversation, HistoryMessage, HistoryRole, HistorySource, HistoryThreadKind};
 use crate::claim::ClaimSource;
@@ -971,6 +973,221 @@ fn a_claude_code_prompt_read_before_its_queued_copy_was_logged_lands_once() {
         "the attachment is the queued prompt already imported"
     );
     assert_eq!(vault.history_import_ledger_len(SOURCE).expect("ledger"), 4);
+}
+
+#[test]
+fn a_claude_code_import_strips_carried_blocks_and_keeps_own_words() {
+    use serde_json::{Value, json};
+
+    use super::carried_headers::{
+        BOARD_CARRIER_PREFIX, CARRIED_CONTEXT_HEADER, FOCUS_REFRESH_CONTEXT_LEAD,
+        TOOL_RESULT_CONTEXT_LEAD,
+    };
+
+    let session = "6f4e9d10-3333-4444-8555-966677778889";
+    let line = |n: u8, kind: &str, key: &str, content: Value| {
+        let parent = (n > 1).then(|| format!("f1000000-0000-4000-8000-{:012}", n - 1));
+        let mut value = json!({
+            "type": kind,
+            "uuid": format!("f1000000-0000-4000-8000-{n:012}"),
+            "parentUuid": parent,
+            "isSidechain": false,
+            "userType": "external",
+            "sessionId": session,
+            "timestamp": format!("2026-11-27T10:00:{n:02}.000Z"),
+        });
+        value[key] = content;
+        value.to_string()
+    };
+    let board = format!("{BOARD_CARRIER_PREFIX}7):\nRecalled board line");
+    let recall =
+        format!("{CARRIED_CONTEXT_HEADER}\n{TOOL_RESULT_CONTEXT_LEAD} Recalled claim line");
+    let refresh =
+        format!("{CARRIED_CONTEXT_HEADER}\n{FOCUS_REFRESH_CONTEXT_LEAD}\nRefreshed board line");
+    let typed = format!("I quoted the heading:\n{CARRIED_CONTEXT_HEADER}\nThese are my words.");
+    let attachments = |event: &str, name: &str, tool: &str, text: &str| {
+        json!({
+            "type": "hook_additional_context",
+            "content": [text],
+            "hookName": name,
+            "hookEvent": event,
+            "toolUseID": tool,
+        })
+    };
+    let owned = [
+        line(
+            1,
+            "user",
+            "message",
+            json!({"role": "user", "content": typed.as_str()}),
+        ),
+        line(
+            2,
+            "assistant",
+            "message",
+            json!({
+                "role": "assistant", "model": "claude-sonnet-4-5", "content": [
+                    {"type": "tool_use", "id": "toolu_01", "name": "mcp__oneiron__vault.recall", "input": {}}
+                ],
+            }),
+        ),
+        line(
+            3,
+            "user",
+            "message",
+            json!({
+                "role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_01", "content": [
+                        {"type": "text", "text": "Nested tool output is counted, not landed."},
+                        {"type": "text", "text": board},
+                    ]},
+                    {"type": "text", "text": "Own text before."},
+                    {"type": "text", "text": board},
+                    {"type": "text", "text": recall},
+                    {"type": "text", "text": "Own text after."},
+                ],
+            }),
+        ),
+        line(
+            4,
+            "attachment",
+            "attachment",
+            attachments("PostToolUse", "PostToolUse:Write", "toolu_02", &recall),
+        ),
+        line(
+            5,
+            "attachment",
+            "attachment",
+            attachments("SessionStart", "SessionStart", "SessionStart", &refresh),
+        ),
+        // An older host's form of hook context: a meta turn (REVIEW-10587
+        // round 2 P1 4: the host's mark, not the header, drops it).
+        {
+            let mut meta: Value = serde_json::from_str(&line(
+                6,
+                "user",
+                "message",
+                json!({"role": "user", "content": refresh}),
+            ))
+            .expect("a JSON line");
+            meta["isMeta"] = json!(true);
+            meta.to_string()
+        },
+        line(
+            7,
+            "assistant",
+            "message",
+            json!({
+                "role": "assistant", "model": "claude-sonnet-4-5", "content": "Schedule updated.",
+            }),
+        ),
+    ];
+    let lines = owned.each_ref().map(String::as_str);
+    let conversations = decode_log(SOURCE, session, &lines);
+    assert_eq!(conversations.len(), 1);
+    let messages: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .map(|message| (message.role, message.text.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            (HistoryRole::User, typed.as_str()),
+            (HistoryRole::User, "Own text before.\n\nOwn text after."),
+            (HistoryRole::Assistant, "Schedule updated."),
+        ]
+    );
+    assert_eq!(conversations[0].skipped.tool_results, 1);
+    assert_eq!(conversations[0].skipped.injected, 4);
+    let (_dir, vault, owner) = vault_and_owner();
+    assert_eq!(
+        import_all(&vault, &owner, SOURCE, &conversations),
+        (3, 0, 0)
+    );
+}
+
+/// A person who pastes a carried header as the first line of their own turn
+/// keeps the turn: a typed message, a typed text block and a queued prompt
+/// each land whole (REVIEW-10587 round 2 P1 4).
+#[test]
+fn a_claude_code_turn_the_person_typed_lands_whole_when_it_starts_with_a_carried_header() {
+    use serde_json::{Value, json};
+
+    use super::carried_headers::{BOARD_CARRIER_PREFIX, CARRIED_CONTEXT_HEADER};
+
+    let session = "6f4e9d10-3333-4444-8555-96667777888a";
+    let line = |n: u8, kind: &str, key: &str, content: Value| {
+        let parent = (n > 1).then(|| format!("f2000000-0000-4000-8000-{:012}", n - 1));
+        let mut value = json!({
+            "type": kind,
+            "uuid": format!("f2000000-0000-4000-8000-{n:012}"),
+            "parentUuid": parent,
+            "isSidechain": false,
+            "userType": "external",
+            "sessionId": session,
+            "timestamp": format!("2026-11-27T11:00:{n:02}.000Z"),
+        });
+        value[key] = content;
+        value.to_string()
+    };
+    let reply = |n: u8, text: &str| {
+        line(
+            n,
+            "assistant",
+            "message",
+            json!({"role": "assistant", "model": "claude-sonnet-4-5", "content": text}),
+        )
+    };
+    let pasted_board = format!("{BOARD_CARRIER_PREFIX}7):\nWhy does this board show two tasks?");
+    let pasted_header = format!("{CARRIED_CONTEXT_HEADER}\nIs this line from my vault?");
+    let queued = format!("{BOARD_CARRIER_PREFIX}8):\nAnd this one, queued?");
+    let owned = [
+        line(
+            1,
+            "user",
+            "message",
+            json!({"role": "user", "content": pasted_board.as_str()}),
+        ),
+        reply(2, "It shows the open ones."),
+        line(
+            3,
+            "user",
+            "message",
+            json!({"role": "user", "content": [{"type": "text", "text": pasted_header.as_str()}]}),
+        ),
+        reply(4, "Yes, it is."),
+        line(
+            5,
+            "attachment",
+            "attachment",
+            json!({
+                "type": "queued_command",
+                "prompt": queued.as_str(),
+                "commandMode": "prompt",
+                "origin": {"kind": "human"},
+            }),
+        ),
+    ];
+    let lines = owned.each_ref().map(String::as_str);
+    let conversations = decode_log(SOURCE, session, &lines);
+    assert_eq!(conversations.len(), 1);
+    let messages: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .map(|message| (message.role, message.text.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            (HistoryRole::User, pasted_board.as_str()),
+            (HistoryRole::Assistant, "It shows the open ones."),
+            (HistoryRole::User, pasted_header.as_str()),
+            (HistoryRole::Assistant, "Yes, it is."),
+            (HistoryRole::User, queued.as_str()),
+        ]
+    );
+    assert_eq!(conversations[0].skipped.injected, 0);
 }
 
 /// One ChatGPT conversation with the given mapping nodes `(id, parent, role,

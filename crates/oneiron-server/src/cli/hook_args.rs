@@ -65,6 +65,11 @@ pub enum HookEvent {
     /// Recall a short block for the prompt (`UserPromptSubmit`; off unless
     /// the hook is set up). Never starts a server.
     Prompt(HookRecallArgs),
+    /// Recall one line for a Claude Code tool result (`PostToolUse`).
+    ToolResult(HookRecallArgs),
+    /// Refresh a board after Claude Code compacts the session (`SessionStart`).
+    /// Use the MCP server's credential file; never fall back to another one.
+    FocusRefresh(HookRecallArgs),
     /// Queue the session's log for the running `serve` to import
     /// (`PreCompact`, `Stop`, `SessionEnd`), by the import that reads the
     /// host's logs.

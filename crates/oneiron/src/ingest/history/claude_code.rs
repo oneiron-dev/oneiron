@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 
 use serde_json::Value;
 
+use super::carried_headers;
 use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
     DELEGATING_AGENT, HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips,
@@ -408,23 +409,42 @@ fn foreign_origin(origin: Option<&Value>) -> bool {
     origin.is_some_and(|origin| str_field(origin, "kind") != Some("human"))
 }
 
-/// Text blocks of a content value; tool results and attachments are counted.
-fn user_text(content: Option<&Value>, skipped: &mut HistorySkips) -> String {
+/// Text blocks of a content value; tool results and attachments are counted. With
+/// `host_written` (the host wrote the message: it carries a tool result), whole placed
+/// blocks are dropped, keeping other blocks; the flag tells whether any was. Only the
+/// exact placed shape drops; a header-first block with other words lands. Text a person
+/// typed is never dropped for its words: a header is no proof the host wrote it
+/// (REVIEW-10587 round 2 P1 4). The host marks what it adds to a typed turn itself
+/// (`isMeta`, an attachment line, a wrapper tag), and those never reach here.
+fn user_text(
+    content: Option<&Value>,
+    host_written: bool,
+    skipped: &mut HistorySkips,
+) -> (String, bool) {
     match content {
-        Some(Value::String(text)) => text.trim().to_owned(),
+        Some(Value::String(text)) => (text.trim().to_owned(), false),
         Some(Value::Array(blocks)) => {
             let mut texts = Vec::new();
+            let mut stripped = false;
             for block in blocks {
                 match str_field(block, "type") {
-                    Some("text") => texts.extend(str_field(block, "text")),
+                    Some("text") => {
+                        if let Some(text) = str_field(block, "text") {
+                            if host_written && carried_headers::is_placed_block(text) {
+                                stripped = true;
+                            } else {
+                                texts.push(text);
+                            }
+                        }
+                    }
                     Some("tool_result") => skipped.tool_results += 1,
                     Some("image" | "document") => skipped.attachments += 1,
                     _ => skipped.other += 1,
                 }
             }
-            join_texts(&texts)
+            (join_texts(&texts), stripped)
         }
-        _ => String::new(),
+        _ => (String::new(), false),
     }
 }
 
@@ -442,9 +462,12 @@ fn user_line(thread: &mut Thread, value: &Value, fallback_id: &str, said_by: Opt
             .iter()
             .any(|block| str_field(block, "type") == Some("tool_result"))
     });
-    let text = user_text(content, thread.skipped());
+    let (text, stripped) = user_text(content, carried_result, thread.skipped());
+    if stripped {
+        thread.skipped().injected += 1;
+    }
     if text.is_empty() {
-        if !carried_result {
+        if !stripped && !carried_result {
             thread.skipped().empty += 1;
         }
         return;
@@ -453,7 +476,9 @@ fn user_line(thread: &mut Thread, value: &Value, fallback_id: &str, said_by: Opt
         match typed_command(&text) {
             Some(command) => command,
             None => {
-                thread.skipped().injected += 1;
+                if !stripped {
+                    thread.skipped().injected += 1;
+                }
                 return;
             }
         }
@@ -523,7 +548,8 @@ fn attachment_line(
         thread.skipped().injected += 1;
         return;
     }
-    let text = user_text(attachment.get("prompt"), thread.skipped());
+    // The person typed the queued prompt: nothing in it is dropped for its words.
+    let (text, _) = user_text(attachment.get("prompt"), false, thread.skipped());
     if text.is_empty() || injected(&text) {
         thread.skipped().injected += 1;
         return;
