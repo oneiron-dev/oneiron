@@ -715,6 +715,12 @@ name = "core_memory_delete_check_in_ref"
 path = "tests/core_memory_delete_check_in_ref.rs"
 required-features = ["oneiron/test-support"]
 
+# The owner delete answer's remainders and its restricted refusal root on a `MemoryKeystore` too.
+[[test]]
+name = "core_memory_delete_remaining"
+path = "tests/core_memory_delete_remaining.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record room door promise tests serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "vault_off_record_rooms_doors"
