@@ -1508,7 +1508,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/scope_systemd/unit_file.rs` | src | m | 1 struct · 9 fn · 1 const | UnitInputs | The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account… |
 | `src/gpu_execution_node/selection.rs` | src | s | 3 struct · 2 enum · 1 trait · 3 fn | GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement, LocalGpuSlotPeer | A read that picks a machine's GPU for a GPU job, before its quote |
 | `src/gpu_execution_node/service.rs` | src | s | 2 struct · 4 fn · 2 const | JobService, JobStatusService | The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on… |
-| `src/gpu_execution_node/slots.rs` | src | m | 1 struct · 14 fn · 2 re-export | GpuSlotTable | This machine's GPU slots: one job per offered GPU, beside the machine's memory floor |
+| `src/gpu_execution_node/slots.rs` | src | m | 1 struct · 15 fn · 2 re-export · 1 crate-vis | GpuSlotTable | This machine's GPU slots: one job per offered GPU, beside the machine's memory floor |
 | `src/gpu_execution_node/slots/drain.rs` | src | s | 3 fn · 2 crate-vis | — | The drain guard: once `drain_after_failures` jobs in a row finish failed, or at its node's word, the machine… |
 | `src/gpu_execution_node/slots/lease.rs` | src | s | 1 struct · 5 fn | GpuSlotLease | The node takes a device lease inside its launch commit and immediately confirms launch |
 | `src/gpu_execution_node/slots/ownership.rs` | src | s | 5 crate-vis | — | Which Oneiron server of this machine owns each offered GPU: a lock file per GPU in `owner_lock_dir`, held… |
@@ -2296,7 +2296,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/node_jobs/devices.rs` | src | m | 1 struct · 17 fn | ScriptedDevices | The scripted GPU slot table: its devices, their leases, quarantines and drains, a device probe a test can… |
 | `src/test_doors/node_jobs/mod.rs` | src | s | 2 struct · 9 fn · 3 re-export | ScriptedNode, ScriptedNodeClock | Scripted parts for the node's job service (pass 33, `33-exec-node/DESIGN.md` section 11: the journal's tests… |
 | `src/test_doors/node_jobs/parts.rs` | src | m | 5 struct · 28 fn | ScriptedAdmission, ScriptedAuthority, ScriptedFloor, ScriptedSigner, ScriptedStager | The scripted admission, memory floor, signer, authority and stager |
-| `src/test_doors/node_jobs/units.rs` | src | m | 1 struct · 1 enum · 18 fn | ScriptedJobUnits, ScriptedStart | The scripted service manager: the job units it starts and ends as a test tells it, and the end step that… |
+| `src/test_doors/node_jobs/units.rs` | src | m | 1 struct · 1 enum · 20 fn | ScriptedJobUnits, ScriptedStart | The scripted service manager: the job units it starts and ends as a test tells it, and the end step that… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
 | `src/test_doors/one_click_wire_counter.rs` | src | s | 1 fn | — | Door for `tests/campaign_one_click_unsubscribe.rs`: runs a closure while the wire window's counter lock is… |
 | `src/test_doors/openapi_document.rs` | src | s | 2 fn | — | Door for `tests/openapi_document_reuse.rs` and `tests/openapi_document_precompute.rs`: how many times this… |
@@ -2655,7 +2655,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/node_job_status.rs` | test | L | — | — | Pass 33 row R4, the node's half (`33-exec-node/DESIGN.md` 7.1, 7.6 step 5, 7.9; tests T27-T33d): the node… |
 | `tests/node_job_tail.rs` | test | m | — | — | Pass 34 row Q3, the node's half (`34-compute-general/DESIGN.md` 7.2 and section 10): `Tail` on… |
 | `tests/node_machine_policy.rs` | test | L | — | — | Row P0 (pass 34, `34-compute-general/DESIGN.md` sections 2.4 and 10; EM-17 = A): the owner's machine policy… |
-| `tests/node_readiness.rs` | test | m | — | — | Pass 34 row Q4 (`34-compute-general/DESIGN.md` sections 1.2, 2.4 and 7.3; the tests of section 10): the… |
+| `tests/node_readiness.rs` | test | L | — | — | Pass 34 row Q4 (`34-compute-general/DESIGN.md` sections 1.2, 2.4 and 7.3; the tests of section 10): the… |
 | `tests/note_session_bind_reply.rs` | test | s | — | — | A sync client that carries a NOTE session accepts the home's `auth.bind` reply (FIX-LIST… |
 | `tests/notification_recipient_reads.rs` | test | s | — | — | FIX RECIPIENT-NOTICE-READ-BY-ANY-READER (Engine TASK 21 Nov 06:27, the non-owner half): a NOTIFICATION… |
 | `tests/oauth_git_audience_served.rs` | test | m | — | — | The vault's second OAuth audience, `{origin}/git` (lead ruling CONTINUE-PUSH-NON-SLIP-SELECTION = B, Sat 21… |

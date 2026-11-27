@@ -180416,7 +180416,8 @@
      "path": "src/gpu_execution_node/slots.rs",
      "purpose": "This machine's GPU slots: one job per offered GPU, beside the machine's memory floor",
      "surface": {
-      "fn": 14,
+      "crate-vis": 1,
+      "fn": 15,
       "re-export": 2,
       "struct": 1
      }
@@ -188905,7 +188906,7 @@
      "purpose": "The scripted service manager: the job units it starts and ends as a test tells it, and the end step that…",
      "surface": {
       "enum": 1,
-      "fn": 18,
+      "fn": 20,
       "struct": 1
      }
     },
@@ -192152,7 +192153,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/node_readiness.rs",
