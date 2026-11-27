@@ -671,7 +671,7 @@ impl Shared {
         }
         let processes = self.probe.compute_processes()?;
         let withheld = match withheld {
-            Some(withheld) => withheld,
+            Some(_) => self.withheld()?,
             None => self.withheld()?,
         };
         let owned = self.own_offered(state);
