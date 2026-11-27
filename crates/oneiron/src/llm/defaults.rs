@@ -49,6 +49,35 @@ pub(super) fn read_stored_defaults(
     Ok(Some(table))
 }
 
+/// Whether this vault's settings let a model call leave the device: an erase then
+/// says provider copies are out of its reach (H5, F10). Shipped defaults route
+/// consolidation to the owner's server, so they do.
+pub(crate) fn vault_allows_provider_model_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool> {
+    let on_device = super::ModelLocality::OnDevice;
+    let table = read_effective_defaults(&vault.store, txn)?;
+    let table = table.table();
+    if table.purposes.values().any(|row| row.locality != on_device)
+        || table.voice.values().any(|row| row.locality != on_device)
+        || table.self_compaction.locality != on_device
+        || table.extraction_max_locality != on_device
+    {
+        return Ok(true);
+    }
+    let Some(manifest) = super::manifest::read_manifest(&vault.store, txn)? else {
+        return Ok(false);
+    };
+    let routes = super::manifest::read_routes(vault, txn, &manifest)?;
+    for slot in manifest.routes.keys() {
+        if super::manifest::effective_route(&manifest, &routes, *slot)? != on_device {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Vault {
     /// Replace all defaults atomically. An absent row is an invalid policy,
     /// not permission to fall through to an unrelated global tier.

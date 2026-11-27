@@ -139,7 +139,7 @@ fn error_json_carries_every_field_of_the_engine_error() {
         "resets_at": [100, 200],
         "reason_codes": ["gate.rooms.upkeep.test"],
         "legal_hold": {
-            "state": "retained_for_law",
+            "state": "use_restricted",
             "bound": {
                 "kind": "law",
                 "order_ref": "order",

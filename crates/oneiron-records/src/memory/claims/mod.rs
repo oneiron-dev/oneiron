@@ -45,6 +45,113 @@ impl DeleteRequestState {
 /// and its unheld bytes (ASTRA-R2-002).
 pub const DELETE_RECEIPT_VERSION_RELEASE: &str = "blob_version_release";
 
+/// One thing a delete or erase leaves behind that the person is told
+/// (FIX HARD-DELETE-ANSWER-SILENT-ON-OWED-SWEEP).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemainingNotice {
+    /// The remainder's code (`history_sweep`).
+    pub code: String,
+    /// The remainder's words, as the answer shows them.
+    pub text: String,
+}
+
+/// [`RemainingNotice::code`] of a history sweep the delete queued.
+pub const REMAINING_HISTORY_SWEEP: &str = "history_sweep";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_HISTORY_SWEEP`].
+pub const REMAINING_HISTORY_SWEEP_TEXT: &str = "Removed now. Older copies in this vault's sync history are cleared by a background sweep, and the receipt shows when that is done.";
+
+/// [`RemainingNotice::code`] of old backups a delete leaves (D, when the delete's reason keeps backups).
+pub const REMAINING_BACKUPS_BEFORE_DELETE: &str = "backups_before_delete";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_BACKUPS_BEFORE_DELETE`] (D, when the delete's reason keeps backups).
+pub const REMAINING_BACKUPS_BEFORE_DELETE_TEXT: &str =
+    "Backups made before this delete still hold it, and restoring one brings it back.";
+
+/// [`RemainingNotice::code`] of old backups an erase leaves (P and R, always).
+pub const REMAINING_BACKUPS_BEFORE_ERASE: &str = "backups_before_erase";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_BACKUPS_BEFORE_ERASE`] (P and R, always).
+pub const REMAINING_BACKUPS_BEFORE_ERASE_TEXT: &str = "Backups made before this erase may still hold parts of it, and restoring one can bring those parts back.";
+
+/// [`RemainingNotice::code`] of disk space freed, not overwritten (P and R, always; plain or sealed text).
+pub const REMAINING_DISK_NOT_OVERWRITTEN: &str = "disk_not_overwritten";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_DISK_NOT_OVERWRITTEN`] (P and R on a plain vault, always).
+pub const REMAINING_DISK_NOT_OVERWRITTEN_PLAIN_TEXT: &str = "The disk space and files it used are freed, not overwritten. Someone who copies this vault's files before that space is reused could still read it.";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_DISK_NOT_OVERWRITTEN`] (P and R on a sealed vault, always).
+pub const REMAINING_DISK_NOT_OVERWRITTEN_SEALED_TEXT: &str = "The disk space it used is freed, not overwritten, and stays encrypted with this vault's key until it is reused.";
+
+/// [`RemainingNotice::code`] of body files still in use after the collect pass (D and R's first, when files are left).
+pub const REMAINING_FILES_STILL_IN_USE: &str = "files_still_in_use";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_FILES_STILL_IN_USE`] for `n` files left (D and R's first, when files are left).
+#[must_use]
+pub fn files_still_in_use_text(n: usize) -> String {
+    format!("{n} of its files are still in use and will be removed later.")
+}
+
+/// [`RemainingNotice::code`] of exports an erase does not reach (P and R, always).
+pub const REMAINING_EXPORTS_BEFORE_ERASE: &str = "exports_before_erase";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_EXPORTS_BEFORE_ERASE`] (P and R, always).
+pub const REMAINING_EXPORTS_BEFORE_ERASE_TEXT: &str =
+    "Exports made before this erase still hold it. This erase does not reach them.";
+
+/// [`RemainingNotice::code`] of devices and peers an erase reaches only later (P and R, when the vault syncs or the record was shared).
+pub const REMAINING_DEVICES_AND_PEERS: &str = "devices_and_peers";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_DEVICES_AND_PEERS`] (P and R, when the vault syncs or the record was shared).
+pub const REMAINING_DEVICES_AND_PEERS_TEXT: &str = "Your other devices remove it when they next sync. A device that stays offline keeps it until then. People it was shared with are asked to delete their copy, and may not.";
+
+/// [`RemainingNotice::code`] of provider copies an erase cannot call back (P and R, when the vault's settings allow a provider model).
+pub const REMAINING_MODEL_PROVIDERS: &str = "model_providers";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_MODEL_PROVIDERS`] (P and R, when the vault's settings allow a provider model).
+pub const REMAINING_MODEL_PROVIDERS_TEXT: &str = "Anything already sent to an AI model provider stays with that provider under its own retention. Oneiron cannot call it back.";
+
+/// [`RemainingNotice::code`] of a legal hold's sealed copy an erase leaves (P and R, when a hold covers the record).
+pub const REMAINING_LEGAL_HOLD_COPY: &str = "legal_hold_copy";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_LEGAL_HOLD_COPY`] (P and R, when a hold covers the record).
+pub const REMAINING_LEGAL_HOLD_COPY_TEXT: &str = "A legal hold keeps a sealed copy of this record outside your vault until the hold is lifted. This erase does not remove that copy.";
+
+/// The [`DeleteReceipt::remaining`] of a delete that queued `sweep_key`: the
+/// history-sweep entry when a sweep was queued, then the old-backups entry
+/// when `backups_hold_it`, then the still-in-use-files entry when `files_left`
+/// is nonzero. The receipt writer returns an empty key when no sweep was
+/// queued, and callers wrap it in `Some`, so only a non-empty key counts.
+#[must_use]
+pub fn remaining_after_delete(
+    sweep_key: Option<&[u8]>,
+    backups_hold_it: bool,
+    files_left: usize,
+) -> Vec<RemainingNotice> {
+    let mut remaining = Vec::new();
+    if let Some(key) = sweep_key {
+        if !key.is_empty() {
+            remaining.push(RemainingNotice {
+                code: REMAINING_HISTORY_SWEEP.to_owned(),
+                text: REMAINING_HISTORY_SWEEP_TEXT.to_owned(),
+            });
+        }
+    }
+    if backups_hold_it {
+        remaining.push(RemainingNotice {
+            code: REMAINING_BACKUPS_BEFORE_DELETE.to_owned(),
+            text: REMAINING_BACKUPS_BEFORE_DELETE_TEXT.to_owned(),
+        });
+    }
+    if files_left > 0 {
+        remaining.push(RemainingNotice {
+            code: REMAINING_FILES_STILL_IN_USE.to_owned(),
+            text: files_still_in_use_text(files_left),
+        });
+    }
+    remaining
+}
+
 /// Receipt for one safe delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteReceipt {
@@ -66,6 +173,10 @@ pub struct DeleteReceipt {
     /// runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<oneiron_verb_wire::check_in::CheckInDecision>,
+    /// What the delete leaves behind that the person is told, one entry per
+    /// remainder (FIX HARD-DELETE-ANSWER-SILENT-ON-OWED-SWEEP).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<RemainingNotice>,
 }
 
 /// One pending gated write awaiting consent.

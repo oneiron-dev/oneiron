@@ -540,7 +540,9 @@ impl Vault {
     /// Records the retained payload retirement of an already hard-deleted
     /// record under a completed owner act. The caller claims that act with
     /// this same request and receipt in this writer; no new tombstone or
-    /// claim about the earlier deletion's request is made.
+    /// claim about the earlier deletion's request is made. Returns the
+    /// receipt with the history-sweep key this write queued, which the
+    /// owner's answer lists as what remains.
     pub(crate) fn record_completed_owner_payload_erase_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -548,10 +550,10 @@ impl Vault {
         actor_principal: EntityId,
         request_id: [u8; 16],
         requested_at: u64,
-    ) -> Result<EntityId> {
+    ) -> Result<(EntityId, Vec<u8>)> {
         let receipt_id = self.store.clock.entity_id()?;
         let now = self.store.clock.now_recorded_at();
-        self.write_redaction_receipt_and_sweep_in_txn(
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             wtxn,
             &receipt_id,
             RedactionReceiptInput {
@@ -567,7 +569,7 @@ impl Vault {
             },
             HardEraseSweepExtras::default(),
         )?;
-        Ok(receipt_id)
+        Ok((receipt_id, sweep_key))
     }
 
     /// Records the privacy erase of the thread audience edit `edit` in the
@@ -637,6 +639,7 @@ impl Vault {
             sweep_key: Some(sweep_key),
             turn_program_details: Vec::new(),
             version_release: false,
+            released_file_digests: Vec::new(),
         })
     }
 }

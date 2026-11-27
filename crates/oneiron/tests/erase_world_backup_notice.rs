@@ -4,8 +4,8 @@
 //! `vault.records.erase_confirm` (`vault.owner_confirm.preview`, the confirm
 //! screen) and `vault.records.erase_confirm` itself (the receipt) carry "the
 //! world is erased now, and old backups keep only an unreadable copy of it
-//! until they expire", with the days within which they expire. Every other
-//! record's preview keeps the fields it had before.
+//! until they expire", with the days within which they expire. A plain
+//! claim preview lists what remains but has no world backup notice.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test erase_world_backup_notice`.
 
@@ -29,12 +29,13 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const NOTICE: &str = "This world is erased now. Old backups keep only an unreadable copy of it \
                       until they expire, within 90 days.";
 
-/// The fields a preview of any record but a world carries, as before L6-36
-/// (less `preview_digest`, which the shared confirm replaced in L8-49).
-const PLAIN_PREVIEW_FIELDS: [&str; 6] = [
+/// The fields an ordinary claim's preview carries, including `remaining`
+/// but no `legal_copies_kept` because this claim is not held.
+const PLAIN_PREVIEW_FIELDS: [&str; 7] = [
     "held_bytes",
     "lfs_chunks",
     "record",
+    "remaining",
     "remote_copies_may_remain",
     "same_bytes",
     "shared_with",
@@ -177,7 +178,7 @@ fn a_claim_erase_preview_keeps_its_fields() -> TestResult {
     fields.sort_unstable();
     assert_eq!(
         fields, PLAIN_PREVIEW_FIELDS,
-        "a claim's erase preview carries no backup notice: {shown}"
+        "a claim's erase preview carries no world backup notice: {shown}"
     );
     Ok(())
 }

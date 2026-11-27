@@ -252,6 +252,12 @@ pub(crate) struct CoreMemoryVerbDeleteOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     check_in: Option<Value>,
+    /// What the delete leaves behind that the person is told (FIX
+    /// HARD-DELETE-ANSWER-SILENT-ON-OWED-SWEEP): one `{code, text}` row per
+    /// remainder. Absent when the delete leaves nothing to tell.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    remaining: Vec<oneiron::memory::RemainingNotice>,
 }
 
 /// Typed operation family selected by a named memory verb.
@@ -539,9 +545,9 @@ pub(crate) async fn core_memory_verb(
                 };
                 #[cfg(oneiron_test_support)]
                 crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
-                let outcome = server
+                let (outcome, remaining) = server
                     .vault
-                    .delete_entity_with_reason_as_owner(&owner, &id, reason)
+                    .delete_entity_as_owner_with_remaining(&owner, &id, reason)
                     .map_err(failed)?;
                 let delete = serde_json::json!(CoreMemoryVerbDeleteOutcome {
                     existed: Some(outcome.existed),
@@ -560,6 +566,7 @@ pub(crate) async fn core_memory_verb(
                             .to_owned()
                     ),
                     check_in: None,
+                    remaining,
                 });
                 (Some(id.to_hex()), delete)
             } else {
