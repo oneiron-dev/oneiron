@@ -316,7 +316,8 @@ pub fn run(args: &[String]) -> i32 {
 /// failed.
 pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std::io::Result<()> {
     let deadline = Instant::now() + wait;
-    stream.set_nonblocking(true)?;
+    stream.set_nonblocking(false)?;
+    stream.set_write_timeout(Some(wait))?;
     let mut written = 0;
     let mut result: std::io::Result<()> = Ok(());
     while written < reply.len() {
