@@ -183,4 +183,25 @@ impl Memory<'_> {
         }
         Ok(())
     }
+
+    /// The standing head on a correction's key, for its head check: the prior
+    /// [`Self::find_prior_claim`] names for `input` on its resolved subject,
+    /// world and relationship, excluding `exclude`.
+    pub(in crate::memory) fn correction_head_for(
+        &self,
+        input: &ClaimInput,
+        subject: EntityId,
+        world: Option<EntityId>,
+        relationship: crate::claim::RelationshipScope,
+        exclude: &EntityId,
+        beside_stated: bool,
+    ) -> MemoryResult<Option<EntityId>> {
+        let key = MemoryKey {
+            subject,
+            input,
+            world,
+            relationship,
+        };
+        self.find_prior_claim(&key, exclude, beside_stated)
+    }
 }

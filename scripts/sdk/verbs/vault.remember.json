@@ -1,6 +1,6 @@
 {
   "name": "vault.remember",
-  "description": "Commits one claim through the gate, the same as vault.claims.upsert.",
+  "description": "Commits one claim through the gate, the same as vault.claims.upsert. To correct a claim you wrote, use vault.claims.correct.",
   "refs": [
     "/subject_ref",
     "/world_ref",

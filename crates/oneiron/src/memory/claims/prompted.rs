@@ -30,6 +30,7 @@ impl Memory<'_> {
             || {},
             &|_: &heed::RoTxn<'_>| Ok(()),
             birth.as_ref(),
+            None,
         )
     }
 

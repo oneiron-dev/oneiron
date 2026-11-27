@@ -762,6 +762,7 @@ fn propose_claim(
         claim_short_id: id.to_hex(),
         approval: "proposed".into(),
         reason_codes: Vec::new(),
+        note: None,
         superseded_short_id: None,
         receipt_ref: format!("gate:{}", decision.decision_id.to_hex()),
         claim: None,

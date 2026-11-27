@@ -50,6 +50,7 @@ impl Memory<'_> {
                 .map(|(old_id, short)| short.unwrap_or_else(|| old_id.to_hex())),
             receipt_ref,
             reason_codes,
+            note: None,
         })
     }
 

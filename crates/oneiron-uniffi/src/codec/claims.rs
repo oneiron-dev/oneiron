@@ -26,6 +26,7 @@ impl Lift<oneiron::memory::ClaimView> for crate::WireClaimView {
             claim,
             // Not mirrored to the SDKs yet (FIX OWN-HELD-SDK-MIRRORS).
             held: _,
+            pending_correction: _,
         } = view;
         let (value, scope) = lift_json(value, scope)?;
         Ok(Self {

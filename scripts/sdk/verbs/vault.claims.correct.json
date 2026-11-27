@@ -1,0 +1,24 @@
+{
+  "name": "vault.claims.correct",
+  "description": "Commits one claim that corrects a claim you wrote: the new claim waits for the owner, and the old one closes when the owner approves it.",
+  "refs": [
+    "/corrects",
+    "/claim/subject_ref",
+    "/claim/world_ref",
+    "/claim/relationship_ref/*"
+  ],
+  "input": "crate::memory::ClaimCorrectionInput",
+  "output": "crate::memory::CommitReceipt",
+  "call": "memory.claim_correct(&input)?",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "validate": "crate::memory::caps::check_claim_input(&input.claim)?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "proposes": true
+}

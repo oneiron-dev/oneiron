@@ -233,6 +233,7 @@ pub use claims::{
     MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason,
     SafeDeleteReason, SettleWarning, SettleWarningCode,
 };
+pub use claims::ClaimCorrectionInput;
 pub use conflict_settle::{
     DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
     read_dreamer_candidate_decisions_as,
@@ -349,6 +350,7 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::HeldMark;
+pub use reads::PendingCorrection;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };

@@ -177,6 +177,9 @@ pub struct ClaimView {
     /// The pending consent and its reasons, when this proposal is held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held: Option<HeldMark>,
+    /// The pending correction waiting on this claim, when one is parked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_correction: Option<PendingCorrection>,
 }
 
 /// The tray entry holding a proposed claim for consent.
@@ -184,6 +187,15 @@ pub struct ClaimView {
 pub struct HeldMark {
     /// Why the claim is held.
     pub reason_codes: Vec<String>,
+    /// The tray entry's `gate:<decision hex>` reference.
+    pub decision_ref: String,
+}
+
+/// A parked correction waiting on an old claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PendingCorrection {
+    /// 32-hex id of the new claim.
+    pub claim_ref: String,
     /// The tray entry's `gate:<decision hex>` reference.
     pub decision_ref: String,
 }
@@ -902,6 +914,7 @@ impl Memory<'_> {
             } else {
                 None
             },
+            pending_correction: None,
         })
     }
 

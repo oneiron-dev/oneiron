@@ -254,6 +254,7 @@ impl Memory<'_> {
                 )?;
             views.extend(held);
         }
+        self.fill_pending_corrections(&mut views)?;
         Ok(ScopedReadResult {
             value: views,
             receipt,
@@ -292,7 +293,7 @@ impl Memory<'_> {
             },
             None => None,
         };
-        let view = match view {
+        let mut view = match view {
             Some(view) => Some(view),
             None => self
                 .with_read_filter(request.filter.as_ref())
@@ -303,9 +304,82 @@ impl Memory<'_> {
                 .into_iter()
                 .next(),
         };
+        if let Some(view) = view.as_mut() {
+            self.fill_pending_corrections(std::slice::from_mut(view))?;
+        }
         Ok(ScopedReadResult {
             value: view,
             receipt,
         })
+    }
+
+    /// The parked corrections by the old claim they close: old id to the new
+    /// claim id and its tray decision ref, newest tray entry first.
+    fn pending_corrections_map(
+        &self,
+    ) -> MemoryResult<
+        std::collections::HashMap<crate::entity_id::EntityId, (crate::entity_id::EntityId, String)>,
+    > {
+        let mut map = std::collections::HashMap::new();
+        let store = &self.vault.store;
+        let txn = store.env.read_txn().map_err(Error::from)?;
+        for record in store.newest_pending_gate_consents_in_txn(&txn, 2048)? {
+            let new_id = match crate::entity_id::EntityId::from_bytes(record.claim_id) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let Some(old) = self
+                .vault
+                .pending_claim_supersession_in_txn(&txn, &new_id)?
+            else {
+                continue;
+            };
+            map.entry(old).or_insert_with(|| {
+                (
+                    new_id,
+                    format!("gate:{}", record.decision_id.to_hex()),
+                )
+            });
+        }
+        Ok(map)
+    }
+
+    /// Marks the views a parked correction waits on, when the caller's Recorded
+    /// lane admits the new claim.
+    fn fill_pending_corrections(&self, views: &mut [ClaimView]) -> MemoryResult<()> {
+        if views.is_empty() {
+            return Ok(());
+        }
+        let map = self.pending_corrections_map()?;
+        if map.is_empty() {
+            return Ok(());
+        }
+        let mut new_ids: Vec<crate::entity_id::EntityId> =
+            map.values().map(|(new_id, _)| *new_id).collect();
+        new_ids.sort();
+        new_ids.dedup();
+        let reads: Vec<_> = new_ids.iter().copied().map(PointRead::id).collect();
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let admitted = lane.read(&reads, None)?;
+        let mut live = std::collections::HashSet::new();
+        for row in admitted.value.into_iter().flatten() {
+            if row.body.is_some() {
+                live.insert(row.id);
+            }
+        }
+        for view in views.iter_mut() {
+            let Ok(old) = crate::entity_id::EntityId::from_hex(&view.claim_ref) else {
+                continue;
+            };
+            if let Some((new_id, decision_ref)) = map.get(&old) {
+                if live.contains(new_id) {
+                    view.pending_correction = Some(PendingCorrection {
+                        claim_ref: new_id.to_hex(),
+                        decision_ref: decision_ref.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
