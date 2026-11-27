@@ -1,61 +1,63 @@
-//! Every raw access to the code-run replay table (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT). The table holds one row per run
-//! today, the record's canonical encoding, so each function here reads or writes that row as it stands.
+//! Every raw access to the code-run replay tables (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT). One head row per run holds the record's scalar fields, its four counts and its generation; one item row per family element holds that element's bytes as they sit inside the whole encoding. The whole encoding stays the canonical form; every read joins head and items, and every custody, digest and pin reads the joined bytes.
 
-use super::super::codec::{decode_code_run_replay_generation, decode_code_run_replay_held};
-use super::super::replay::{CodeRunReplayGeneration, CodeRunReplayHeld, CodeRunReplayRecord};
+use std::borrow::Cow;
+
+use super::super::codec::{
+    ReplayFamily, ReplayHead, decode_binding, decode_bridge_call, decode_code_run_replay_record,
+    decode_raw_output, decode_step_checkpoint, encode_code_run_bridge_call_bytes,
+    encode_code_run_replay_item, encode_code_run_replay_record, join_canonical, split_canonical,
+    validate_bridge_call, validate_code_run_replay_record, validate_raw_output,
+};
+use super::super::replay::{
+    CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
+    held_row_stands_for,
+};
+use super::super::wait_rows::{keep_wait_rows, wait_rows};
 use crate::side_table::{
-    self, CodecError, Erased, ErasedForm, Raw, RawValue, SideKey, SideTable, SideTableDbs,
+    self, CodecError, Erased, Raw, RawValue, SideKey, SideTable, SideTableDbs,
 };
 use crate::store::{ResponseFamily, ResponseRead};
-use crate::{EntityId, Result};
+use crate::{EntityId, Error, Result};
 
+mod append;
 mod fenced;
+mod image;
+mod items;
 
-pub(crate) use self::fenced::{
-    AdmittedFencedReplay, ErasedFormProjection, admit_fenced, put_fenced,
+pub(crate) use self::append::put_append;
+pub(crate) use self::fenced::{ErasedFormProjection, admit_fenced, put_fenced};
+pub(crate) use self::image::{
+    canonical_bytes_at, image_value, put_canonical_bytes_at, split_image_rows,
+};
+pub(crate) use self::items::admit_lifted_item;
+use self::items::{
+    ReplayItem, ReplayItemKey, decode_call_item, delete_stale_items, encode_call_item,
+    family_items, item_value, put_admitted_item, put_raw_item,
 };
 
-/// The replay record of one run, keyed by run id. Only this module's functions and three session-overlay
+/// The replay head of one run, keyed by run id. Only this module's functions and three session-overlay
 /// sites take the table itself: `routing/replay.rs` (the routed compare-and-put), `read_worlds.rs` and
 /// `reader_jobs.rs` (overlay reads).
-pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
+pub(super) const HEADS: SideTable<EntityId, ReplayHead, Raw> =
     SideTable::new(&side_table::CODE_RUN_REPLAY);
 
-/// A replay record in the selective form a spawn target's erase leaves it:
-/// written as encoded, past the side-row wall, as an erase's own write is.
-struct SpawnErased(CodeRunReplayRecord);
-
-impl RawValue for SpawnErased {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        self.0.to_raw()
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        CodeRunReplayRecord::from_raw(bytes).map(Self)
-    }
-}
-
-/// The selective form is already the erase's: erasing it again changes
-/// nothing.
-impl ErasedForm for SpawnErased {
-    fn into_erased(self) -> Result<Self> {
-        Ok(self)
-    }
-}
-
-/// The replay rows, as a spawn target's erase writes them back.
-const SPAWN_ERASED: SideTable<EntityId, SpawnErased, Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
+/// One replay item, keyed by run, family and index.
+pub(super) const ITEMS: SideTable<ReplayItemKey, ReplayItem, Raw> =
+    SideTable::new(&side_table::CODE_RUN_REPLAY_ITEM);
 
 #[cfg(oneiron_test_support)]
 thread_local! {
     static WRITTEN_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// Adds `len` to this thread's written replay bytes; nothing outside test support.
 #[cfg(oneiron_test_support)]
 fn note_written(len: usize) {
     WRITTEN_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(len as u64)));
 }
+
+#[cfg(not(oneiron_test_support))]
+fn note_written(_len: usize) {}
 
 /// This thread's total written replay bytes.
 #[cfg(oneiron_test_support)]
@@ -63,17 +65,139 @@ pub(crate) fn written_bytes() -> u64 {
     WRITTEN_BYTES.with(|bytes| bytes.get())
 }
 
+/// A codec error as the seam reports it: a value error as itself, a row shape as its table's.
+fn seam_error(decl: &'static crate::side_table::SideTableDecl, error: CodecError) -> Error {
+    match error {
+        CodecError::Value(error) => error,
+        CodecError::Row(problem) => decl.row_error(problem),
+    }
+}
+
+/// How the side-row wall reads a call item as it is written (FIX FENCE-ERASED-FORM-THROUGH-WALL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallWall {
+    /// Every byte of it, as [`put`] writes a record.
+    Whole,
+    /// All but the erase's fixed words in each part it holds in its erased form, as
+    /// [`put_fenced`] writes a record.
+    Fenced,
+}
+
+/// Writes `head` raw at `run`, past the wall: the caller admitted it already, or it is an erase's own write.
+fn put_raw_head(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    run: &EntityId,
+    head: &ReplayHead,
+) -> Result<Vec<u8>> {
+    let bytes = HEADS.encode_value(head)?;
+    let full = HEADS.key_bytes(run);
+    dbs.side_vault_meta().put(wtxn, &full, &bytes)?;
+    note_written(bytes.len());
+    Ok(full)
+}
+
+/// The whole bytes for a decoded `head`: its four families' items joined under its shell.
+fn assemble(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+    head: &ReplayHead,
+) -> Result<Vec<u8>> {
+    let bridge_calls = family_items(dbs, txn, run, ReplayFamily::BridgeCalls, head.counts[0])?;
+    let step_checkpoints =
+        family_items(dbs, txn, run, ReplayFamily::StepCheckpoints, head.counts[1])?;
+    let outputs = family_items(dbs, txn, run, ReplayFamily::Outputs, head.counts[2])?;
+    let bindings = family_items(dbs, txn, run, ReplayFamily::Bindings, head.counts[3])?;
+    join_canonical(
+        &head.shell,
+        [&bridge_calls, &step_checkpoints, &outputs, &bindings],
+    )
+    .map_err(|error| seam_error(HEADS.decl(), error))
+}
+
+/// The run's canonical whole bytes: joined for a head, as stored for a marker, if present.
+fn joined_bytes(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let Some(head_bytes) = HEADS.get_bytes(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    match HEADS.decode_value(&head_bytes) {
+        Ok(head) => Ok(Some(assemble(dbs, txn, run, &head)?)),
+        Err(_) => Ok(Some(head_bytes)),
+    }
+}
+
+/// Every item of `record` through the wall under its head's origin, each call item as `wall`
+/// reads it, stale items past its counts deleted; every full item key written or deleted. The
+/// caller validated `record` already.
+fn write_items(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    run: &EntityId,
+    record: &CodeRunReplayRecord,
+    wall: CallWall,
+) -> Result<Vec<Vec<u8>>> {
+    let head_key = HEADS.key_bytes(run);
+    let mut keys = Vec::new();
+    for family in ReplayFamily::ALL {
+        let count = match family {
+            ReplayFamily::BridgeCalls => record.bridge_calls.len(),
+            ReplayFamily::StepCheckpoints => record.step_checkpoints.len(),
+            ReplayFamily::Outputs => record.outputs.len(),
+            ReplayFamily::Bindings => record.bindings.len(),
+        };
+        for index in 0..count {
+            let bytes = encode_code_run_replay_item(record, family, index)
+                .map_err(|error| seam_error(HEADS.decl(), error))?;
+            let Ok(uindex) = u64::try_from(index) else {
+                return Err(Error::ArithmeticOverflow("code-run replay item index"));
+            };
+            let key = ReplayItemKey {
+                run: *run,
+                family,
+                index: uindex,
+            };
+            let written = match (family, record.bridge_calls.get(index)) {
+                (ReplayFamily::BridgeCalls, Some(call)) => {
+                    fenced::put_call_item(dbs, wtxn, &head_key, &key, call, &bytes, wall)?
+                }
+                _ => put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?,
+            };
+            keys.push(written);
+        }
+    }
+    let counts = [
+        u64::try_from(record.bridge_calls.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run bridge call count"))?,
+        u64::try_from(record.step_checkpoints.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run step checkpoint count"))?,
+        u64::try_from(record.outputs.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run output count"))?,
+        u64::try_from(record.bindings.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run binding count"))?,
+    ];
+    keys.extend(delete_stale_items(dbs, wtxn, run, counts)?);
+    Ok(keys)
+}
+
 /// Reads `run`'s replay record, if present.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors, and a row that does not decode.
 pub(crate) fn get(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<CodeRunReplayRecord>> {
-    REPLAY_RECORDS.get(dbs, txn, run)
+    let Some(bytes) = joined_bytes(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    decode(&bytes).map(Some)
 }
 
 /// Reads `run`'s replay record, treating a row that does not decode as absent.
@@ -86,7 +210,10 @@ pub(crate) fn get_lenient(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<CodeRunReplayRecord>> {
-    REPLAY_RECORDS.get_lenient(dbs, txn, run)
+    let Some(bytes) = joined_bytes(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    Ok(decode(&bytes).ok())
 }
 
 /// Whether `run` has a replay row.
@@ -99,26 +226,23 @@ pub(crate) fn contains(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<bool> {
-    REPLAY_RECORDS.contains(dbs, txn, run)
+    HEADS.contains(dbs, txn, run)
 }
 
-/// What a guarded append reads from `run`'s stored row: its generation and the calls it keeps.
+/// `run`'s replay head, if present: `None` for no row and for a marker.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn held(
+pub(crate) fn head(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
-) -> Result<Option<CodeRunReplayHeld>> {
-    REPLAY_RECORDS
-        .get_borrowed(dbs, txn, run)?
-        .map(|bytes| decode_code_run_replay_held(&bytes))
-        .transpose()
+) -> Result<Option<ReplayHead>> {
+    HEADS.get_lenient(dbs, txn, run)
 }
 
-/// The generation of `run`'s stored replay row, decoded from its bytes in place.
+/// The generation of `run`'s stored replay row, from its head.
 ///
 /// # Errors
 ///
@@ -128,14 +252,31 @@ pub(crate) fn generation(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<CodeRunReplayGeneration>> {
-    REPLAY_RECORDS
-        .get_borrowed(dbs, txn, run)?
-        .as_deref()
-        .map(decode_code_run_replay_generation)
-        .transpose()
+    Ok(head(dbs, txn, run)?.map(|head| head.generation()))
 }
 
-/// The length of `run`'s stored replay row, if present.
+/// `run`'s stored bridge calls as the side-row wall stored them, read from its head and its call
+/// items alone: `None` for no row and for a marker.
+///
+/// # Errors
+///
+/// Storage errors, and a call item that does not decode.
+pub(crate) fn stored_bridge_calls(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<Vec<CodeRunBridgeCall>>> {
+    let Some(head) = head(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    family_items(dbs, txn, run, ReplayFamily::BridgeCalls, head.counts[0])?
+        .iter()
+        .map(|bytes| decode_call_item(bytes))
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+/// The length of `run`'s canonical replay bytes, if present.
 ///
 /// # Errors
 ///
@@ -145,10 +286,7 @@ pub(crate) fn stored_len(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<usize>> {
-    Ok(REPLAY_RECORDS
-        .get_borrowed(dbs, txn, run)?
-        .as_deref()
-        .map(<[u8]>::len))
+    Ok(joined_bytes(dbs, txn, run)?.map(|bytes| bytes.len()))
 }
 
 /// Reads `run`'s replay record, answering `ResponseErased` for a retired marker before any decode.
@@ -161,12 +299,18 @@ pub(crate) fn present(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<CodeRunReplayRecord>> {
-    let Some(raw) = REPLAY_RECORDS.get_borrowed(dbs, txn, run)? else {
+    let Some(raw) = HEADS.get_borrowed(dbs, txn, run)? else {
         return Ok(None);
     };
-    let key = REPLAY_RECORDS.key_bytes(run);
+    let key = HEADS.key_bytes(run);
     let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
-    REPLAY_RECORDS.decode_value(raw).map(Some)
+    match HEADS.decode_value(raw) {
+        Ok(head) => {
+            let whole = assemble(dbs, txn, run, &head)?;
+            decode(&whole).map(Some)
+        }
+        Err(_) => decode(raw).map(Some),
+    }
 }
 
 /// The run's whole-record bytes as stored, if present.
@@ -180,55 +324,96 @@ pub(crate) fn canonical_bytes(
     txn: &heed::RoTxn<'_>,
     run: &EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    REPLAY_RECORDS.get_bytes(dbs, txn, run)
+    joined_bytes(dbs, txn, run)
 }
 
-/// The replay row's bytes at the full row key `key`, if present.
+/// The item rows of `run`, in every family.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn canonical_bytes_at(
+#[cfg(oneiron_test_support)]
+pub(crate) fn item_count(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
-    key: &[u8],
-) -> Result<Option<Vec<u8>>> {
-    Ok(dbs
-        .side_vault_meta()
-        .get(txn, key)?
-        .map(|bytes| bytes.into_owned()))
+    run: &EntityId,
+) -> Result<u64> {
+    let mut count = 0_u64;
+    for row in ITEMS.iter_raw_from(dbs, txn, &ReplayItemKey::run_prefix(run))? {
+        row?;
+        count = count.saturating_add(1);
+    }
+    Ok(count)
 }
 
-/// Writes `bytes` at the full replay row key `key`, past the wall as stored.
+/// How many of `run`'s item rows the historical lift sweep walks as authored rows and admits
+/// through the run's head origin, each read back as given (a row with no hit).
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn put_canonical_bytes_at(
+#[cfg(oneiron_test_support)]
+pub(crate) fn lift_routed_items(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-    bytes: &[u8],
-) -> Result<()> {
-    #[cfg(oneiron_test_support)]
-    note_written(bytes.len());
-    dbs.side_vault_meta().put(wtxn, key, bytes)
+    run: &EntityId,
+) -> Result<u64> {
+    let mut rows = Vec::new();
+    for row in ITEMS.iter_raw_from(dbs, wtxn, &ReplayItemKey::run_prefix(run))? {
+        let (suffix, bytes) = row?;
+        let mut key = ITEMS.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        rows.push((key, bytes));
+    }
+    let mut routed = 0_u64;
+    for (key, bytes) in rows {
+        let walked = side_table::authored_vault_meta().any(|decl| key.starts_with(decl.prefix));
+        if walked && matches!(admit_lifted_item(dbs, wtxn, &key, &bytes), Some(Ok(None))) {
+            routed = routed.saturating_add(1);
+        }
+    }
+    Ok(routed)
 }
 
-/// Whether `key` is a replay row key.
+/// Whether `key` is a replay head key.
 pub(crate) fn is_row_key(key: &[u8]) -> bool {
-    key.starts_with(REPLAY_RECORDS.decl().prefix)
+    key.starts_with(HEADS.decl().prefix)
+}
+
+/// Whether `key` is a replay item key.
+pub(crate) fn is_item_key(key: &[u8]) -> bool {
+    key.starts_with(ITEMS.decl().prefix)
 }
 
 /// The run id of the full replay row key `key`, if it names one.
 pub(super) fn run_id_of_key(key: &[u8]) -> Option<EntityId> {
-    key.strip_prefix(REPLAY_RECORDS.decl().prefix)
+    key.strip_prefix(HEADS.decl().prefix)
         .and_then(<EntityId as SideKey>::decode_key)
 }
 
-/// The full stored key of `run`'s replay row.
-pub(crate) fn key_bytes(run: &EntityId) -> Vec<u8> {
-    REPLAY_RECORDS.key_bytes(run)
+/// The head key plus every item key for `record`'s counts, in family and index order.
+pub(crate) fn row_keys(record: &CodeRunReplayRecord) -> Vec<Vec<u8>> {
+    let mut keys = Vec::new();
+    keys.push(HEADS.key_bytes(&record.run_id));
+    for family in ReplayFamily::ALL {
+        let count = match family {
+            ReplayFamily::BridgeCalls => record.bridge_calls.len(),
+            ReplayFamily::StepCheckpoints => record.step_checkpoints.len(),
+            ReplayFamily::Outputs => record.outputs.len(),
+            ReplayFamily::Bindings => record.bindings.len(),
+        };
+        for index in 0..count {
+            let Ok(uindex) = u64::try_from(index) else {
+                continue;
+            };
+            keys.push(ITEMS.key_bytes(&ReplayItemKey {
+                run: record.run_id,
+                family,
+                index: uindex,
+            }));
+        }
+    }
+    keys
 }
 
 /// Decodes a replay record from its canonical bytes.
@@ -237,7 +422,7 @@ pub(crate) fn key_bytes(run: &EntityId) -> Vec<u8> {
 ///
 /// A row that does not decode.
 pub(crate) fn decode(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
-    REPLAY_RECORDS.decode_value(bytes)
+    decode_code_run_replay_record(bytes)
 }
 
 /// Encodes a replay record to its canonical bytes.
@@ -246,7 +431,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
 ///
 /// A record that does not encode.
 pub(crate) fn encode(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
-    REPLAY_RECORDS.encode_value(record)
+    encode_code_run_replay_record(record)
 }
 
 /// Every replay row in key order.
@@ -258,7 +443,14 @@ pub(crate) fn scan(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(EntityId, CodeRunReplayRecord)>> {
-    REPLAY_RECORDS.scan(dbs, txn)
+    let mut out = Vec::new();
+    for run in HEADS.scan_keys(dbs, txn, &[])? {
+        let Some(record) = get(dbs, txn, &run)? else {
+            continue;
+        };
+        out.push((run, record));
+    }
+    Ok(out)
 }
 
 /// The run ids of every replay row, without decoding values.
@@ -268,23 +460,35 @@ pub(crate) fn scan(
 /// Storage errors.
 #[cfg(test)]
 pub(crate) fn run_ids(dbs: &impl SideTableDbs, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
-    REPLAY_RECORDS.scan_keys(dbs, txn, &[])
+    HEADS.scan_keys(dbs, txn, &[])
 }
 
-/// The replay rows under `key_prefix` undecoded, in key order.
+/// The replay rows under `key_prefix` undecoded, in key order: head keys with joined bytes, markers as stored.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(crate) fn iter_canonical_from<'txn>(
-    dbs: &impl SideTableDbs,
+    dbs: &'txn impl SideTableDbs,
     txn: &'txn heed::RoTxn<'_>,
     key_prefix: &[u8],
 ) -> Result<impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + 'txn> {
-    REPLAY_RECORDS.iter_raw_from(dbs, txn, key_prefix)
+    // One run joined at a time, as the sweeps read them: never every run's record at once.
+    Ok(HEADS.iter_raw_from(dbs, txn, key_prefix)?.map(move |row| {
+        let (suffix, head_bytes) = row?;
+        let Ok(head) = HEADS.decode_value(&head_bytes) else {
+            return Ok((suffix, head_bytes));
+        };
+        let Some(run) = <EntityId as SideKey>::decode_key(&suffix) else {
+            return Err(Error::CorruptedIndex("code-run replay head key"));
+        };
+        let whole = assemble(dbs, txn, &run, &head)?;
+        Ok((suffix, whole))
+    }))
 }
 
-/// Persists `record` as `run`'s replay row, through the wall.
+/// Persists `record` as `run`'s replay rows, with the side-row wall reading every byte: its head
+/// plus every item, stale items past its counts deleted. Every full key written or deleted.
 ///
 /// # Errors
 ///
@@ -294,10 +498,24 @@ pub(crate) fn put(
     wtxn: &mut heed::RwTxn<'_>,
     run: &EntityId,
     record: &CodeRunReplayRecord,
-) -> Result<()> {
-    #[cfg(oneiron_test_support)]
-    note_written(REPLAY_RECORDS.encode_value(record)?.len());
-    REPLAY_RECORDS.put(dbs, wtxn, run, record)
+) -> Result<Vec<Vec<u8>>> {
+    put_record(dbs, wtxn, run, record, CallWall::Whole)
+}
+
+/// [`put`], with each call item as `wall` reads it.
+fn put_record(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    run: &EntityId,
+    record: &CodeRunReplayRecord,
+    wall: CallWall,
+) -> Result<Vec<Vec<u8>>> {
+    encode(record)?;
+    let head = ReplayHead::of(record)?;
+    note_written(HEADS.put_as_stored(dbs, wtxn, run, &head)?.len());
+    let mut keys = vec![HEADS.key_bytes(run)];
+    keys.extend(write_items(dbs, wtxn, run, record, wall)?);
+    Ok(keys)
 }
 
 /// Reads `record` as the wall will store it, before the writer derives anything from it.
@@ -311,7 +529,19 @@ pub(crate) fn admit(
     run: &EntityId,
     record: &mut CodeRunReplayRecord,
 ) -> Result<()> {
-    REPLAY_RECORDS.admit(dbs, wtxn, run, record)
+    let bytes = encode(record)?;
+    let head_key = HEADS.key_bytes(run);
+    if let Some(masked) = crate::batch::secret_scan::admit_side_row(
+        dbs,
+        wtxn,
+        &side_table::CODE_RUN_REPLAY,
+        &head_key,
+        &bytes,
+        |masked| crate::side_table::decodes::<CodeRunReplayRecord, Raw>(masked),
+    )? {
+        *record = decode(&masked)?;
+    }
+    Ok(())
 }
 
 /// Writes `record`'s erased form at `run`, past the wall.
@@ -325,7 +555,47 @@ pub(crate) fn put_erased(
     run: &EntityId,
     record: Erased<CodeRunReplayRecord>,
 ) -> Result<()> {
-    REPLAY_RECORDS.put_erased(dbs, wtxn, run, record)
+    let record = record.into_inner();
+    encode(&record)?;
+    let head = ReplayHead::of(&record)?;
+    put_raw_head(dbs, wtxn, run, &head)?;
+    for family in ReplayFamily::ALL {
+        let count = match family {
+            ReplayFamily::BridgeCalls => record.bridge_calls.len(),
+            ReplayFamily::StepCheckpoints => record.step_checkpoints.len(),
+            ReplayFamily::Outputs => record.outputs.len(),
+            ReplayFamily::Bindings => record.bindings.len(),
+        };
+        for index in 0..count {
+            let bytes = encode_code_run_replay_item(&record, family, index)
+                .map_err(|error| seam_error(HEADS.decl(), error))?;
+            let Ok(uindex) = u64::try_from(index) else {
+                return Err(Error::ArithmeticOverflow("code-run replay item index"));
+            };
+            put_raw_item(
+                dbs,
+                wtxn,
+                &ReplayItemKey {
+                    run: *run,
+                    family,
+                    index: uindex,
+                },
+                &bytes,
+            )?;
+        }
+    }
+    let counts = [
+        u64::try_from(record.bridge_calls.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run bridge call count"))?,
+        u64::try_from(record.step_checkpoints.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run step checkpoint count"))?,
+        u64::try_from(record.outputs.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run output count"))?,
+        u64::try_from(record.bindings.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run binding count"))?,
+    ];
+    delete_stale_items(dbs, wtxn, run, counts)?;
+    Ok(())
 }
 
 /// Writes a record already in its selective erased form, past the wall with no further erase transform.
@@ -339,10 +609,49 @@ pub(crate) fn put_erased_unchanged(
     run: &EntityId,
     record: CodeRunReplayRecord,
 ) -> Result<()> {
-    SPAWN_ERASED.put_erased(dbs, wtxn, run, Erased::of(SpawnErased(record))?)
+    encode(&record)?;
+    let head = ReplayHead::of(&record)?;
+    put_raw_head(dbs, wtxn, run, &head)?;
+    for family in ReplayFamily::ALL {
+        let count = match family {
+            ReplayFamily::BridgeCalls => record.bridge_calls.len(),
+            ReplayFamily::StepCheckpoints => record.step_checkpoints.len(),
+            ReplayFamily::Outputs => record.outputs.len(),
+            ReplayFamily::Bindings => record.bindings.len(),
+        };
+        for index in 0..count {
+            let bytes = encode_code_run_replay_item(&record, family, index)
+                .map_err(|error| seam_error(HEADS.decl(), error))?;
+            let Ok(uindex) = u64::try_from(index) else {
+                return Err(Error::ArithmeticOverflow("code-run replay item index"));
+            };
+            put_raw_item(
+                dbs,
+                wtxn,
+                &ReplayItemKey {
+                    run: *run,
+                    family,
+                    index: uindex,
+                },
+                &bytes,
+            )?;
+        }
+    }
+    let counts = [
+        u64::try_from(record.bridge_calls.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run bridge call count"))?,
+        u64::try_from(record.step_checkpoints.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run step checkpoint count"))?,
+        u64::try_from(record.outputs.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run output count"))?,
+        u64::try_from(record.bindings.len())
+            .map_err(|_| Error::ArithmeticOverflow("code-run binding count"))?,
+    ];
+    delete_stale_items(dbs, wtxn, run, counts)?;
+    Ok(())
 }
 
-/// Writes the erased-unreadable mark over `run`'s row, past the wall.
+/// Writes the erased-unreadable mark over `run`'s row, past the wall, with every item row deleted.
 ///
 /// # Errors
 ///
@@ -352,10 +661,12 @@ pub(crate) fn put_erased_unreadable(
     wtxn: &mut heed::RwTxn<'_>,
     run: &EntityId,
 ) -> Result<()> {
-    REPLAY_RECORDS.put_erased_unreadable(dbs, wtxn, run)
+    HEADS.put_erased_unreadable(dbs, wtxn, run)?;
+    delete_stale_items(dbs, wtxn, run, [0, 0, 0, 0])?;
+    Ok(())
 }
 
-/// Deletes `run`'s replay row; `true` when a row was present.
+/// Deletes `run`'s replay rows; `true` when a row was present.
 ///
 /// # Errors
 ///
@@ -366,5 +677,7 @@ pub(crate) fn delete(
     wtxn: &mut heed::RwTxn<'_>,
     run: &EntityId,
 ) -> Result<bool> {
-    REPLAY_RECORDS.delete(dbs, wtxn, run)
+    let head = HEADS.delete(dbs, wtxn, run)?;
+    let items = !delete_stale_items(dbs, wtxn, run, [0, 0, 0, 0])?.is_empty();
+    Ok(head || items)
 }

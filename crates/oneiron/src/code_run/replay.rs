@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use crate::{EntityId, Error, Result};
@@ -170,6 +170,64 @@ impl VerbRowsCache {
     }
 }
 
+/// The prefix calls an in-loop mutation touched, never part of the replay codec or ABI.
+/// A clone copies the set; equality ignores it, as the rows are pure functions of the calls.
+pub(crate) struct ChangedCalls(Mutex<BTreeSet<u64>>);
+
+impl ChangedCalls {
+    /// Whether `index` was touched.
+    pub(crate) fn contains(&self, index: u64) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(&index)
+    }
+
+    /// Marks `index` touched.
+    fn insert(&self, index: u64) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(index);
+    }
+}
+
+impl Clone for ChangedCalls {
+    fn clone(&self) -> Self {
+        let copied = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        Self(Mutex::new(copied))
+    }
+}
+
+impl PartialEq for ChangedCalls {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for ChangedCalls {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let indexes = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .copied()
+            .collect::<Vec<u64>>();
+        f.debug_tuple("ChangedCalls").field(&indexes).finish()
+    }
+}
+
+impl Default for ChangedCalls {
+    fn default() -> Self {
+        Self(Mutex::new(BTreeSet::new()))
+    }
+}
+
 #[derive(Debug)]
 struct IncrementalRows {
     decoded: usize,
@@ -231,7 +289,10 @@ fn cached_rows(
 /// The compare reads no custody values (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
 /// row only that read would meet keeps the live call, which the side-row wall
 /// admits again at this put.
-fn held_row_stands_for(call: &CodeRunBridgeCall, kept: &CodeRunBridgeCall) -> Result<bool> {
+pub(in crate::code_run) fn held_row_stands_for(
+    call: &CodeRunBridgeCall,
+    kept: &CodeRunBridgeCall,
+) -> Result<bool> {
     if spawn_replay::replay_request_match(call.effect, &kept.request, &call.request, None)?.is_hit()
     {
         return Ok(true);
@@ -272,6 +333,9 @@ pub struct CodeRunReplayRecord {
     /// Decoded row memos, never part of the replay codec or ABI (FIX 837).
     /// Any future in-place prefix outcome rewrite must invalidate them.
     pub(crate) verb_rows_cache: VerbRowsCache,
+    /// The prefix calls an in-loop mutation touched, never part of the replay codec or ABI.
+    /// An append rewrites those items; every other stored prefix item stays as the wall admitted it.
+    pub(crate) changed_calls: ChangedCalls,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -331,11 +395,8 @@ pub struct CodeRunReplayGeneration {
     pub pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN],
 }
 
-/// What a guarded append reads from the stored row it replaces (FIX 16):
-/// the row's generation, and the run, birth world and bridge calls
-/// [`CodeRunReplayRecord::over_held`] keeps. It is decoded from the stored
-/// bytes in place; the row's outputs, bindings and earlier checkpoints are
-/// never decoded.
+/// What a shell walk reads: the run, birth world and generation it reports.
+/// The bridge calls stay empty; a shell's counts are zero and are ignored.
 #[derive(Debug)]
 pub(crate) struct CodeRunReplayHeld {
     pub(crate) run_id: EntityId,
@@ -345,7 +406,7 @@ pub(crate) struct CodeRunReplayHeld {
 }
 
 impl CodeRunReplayGeneration {
-    fn for_record(record: &CodeRunReplayRecord) -> Result<Self> {
+    pub(crate) fn for_record(record: &CodeRunReplayRecord) -> Result<Self> {
         Ok(Self {
             bridge_call_count: u64::try_from(record.bridge_calls.len())
                 .map_err(|_| Error::ArithmeticOverflow("code-run bridge call count"))?,
@@ -435,6 +496,7 @@ impl CodeRunReplayRecord {
             callable_rows: Some(Vec::new()),
             pending_step: None,
             verb_rows_cache: VerbRowsCache::default(),
+            changed_calls: ChangedCalls::default(),
         }
     }
 
@@ -446,46 +508,6 @@ impl CodeRunReplayRecord {
     /// Returns the current replay-row generation fingerprint.
     pub fn generation(&self) -> Result<CodeRunReplayGeneration> {
         CodeRunReplayGeneration::for_record(self)
-    }
-
-    /// This record with each bridge call `held` already stores in its place,
-    /// as the side-row wall admitted it (OF-067). An append rewrites the whole
-    /// row, so a call an earlier append stored keeps its handles and the wall
-    /// mints only for the calls this append adds.
-    ///
-    /// A resumed step that runs a changed call live at its recorded seq (a pure
-    /// change or an owner's refire, L8-23) puts another call at the same seq,
-    /// effect and stamps: the held row stands in its place only when replay
-    /// would meet the live request with it (`held_row_stands_for`). Otherwise
-    /// the live row stays, so the record keeps the call that ran, not the one
-    /// it replaced.
-    ///
-    /// # Errors
-    ///
-    /// A request the side-row wall cannot compare.
-    pub(crate) fn over_held(&self, held: Option<&CodeRunReplayHeld>) -> Result<Cow<'_, Self>> {
-        let Some(held) = held.filter(|held| held.run_id == self.run_id) else {
-            return Ok(Cow::Borrowed(self));
-        };
-        let mut record = self.clone();
-        record.birth_world = held.birth_world.or(record.birth_world);
-        for (call, kept) in record.bridge_calls.iter_mut().zip(&held.bridge_calls) {
-            if call.seq == kept.seq
-                && call.effect == kept.effect
-                && call.started_at_ms == kept.started_at_ms
-                && call.finished_at_ms == kept.finished_at_ms
-                && held_row_stands_for(call, kept)?
-            {
-                // A parked call keeps the rows its delivered reply listed
-                // (FIX 5455), which the held copy has not kept yet.
-                let delivered = super::wait_rows::wait_rows(&call.outcome);
-                call.clone_from(kept);
-                if let Some(rows) = delivered {
-                    super::wait_rows::keep_wait_rows(&mut call.outcome, &rows);
-                }
-            }
-        }
-        Ok(Cow::Owned(record))
     }
 
     /// Unions newly witnessed callable/result rows into the record. Unknown
@@ -522,6 +544,13 @@ impl CodeRunReplayRecord {
     /// only in-loop prefix mutation; every replacement starts cold instead.
     pub(crate) fn invalidate_verb_rows(&self) {
         self.verb_rows_cache.invalidate();
+    }
+
+    /// Marks prefix call `index` touched by an in-loop mutation, invalidating the row memos.
+    /// An append rewrites that stored item; every other stored prefix item stays as admitted.
+    pub(crate) fn note_changed_call(&self, index: u64) {
+        self.changed_calls.insert(index);
+        self.invalidate_verb_rows();
     }
 }
 

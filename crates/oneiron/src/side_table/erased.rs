@@ -38,6 +38,11 @@ impl<V: ErasedForm> Erased<V> {
     pub(crate) fn of(value: V) -> Result<Self> {
         value.into_erased().map(Self)
     }
+
+    /// The erased value.
+    pub(crate) fn into_inner(self) -> V {
+        self.0
+    }
 }
 
 /// What an erase writes over a row that no longer decodes (FIX 6533): none
@@ -95,15 +100,6 @@ impl Erased<crate::code_run::CodeRunReplayRecord> {
             }
         }
         Self(record)
-    }
-
-    /// A fenced replay record (FIX FENCE-ERASED-FORM-THROUGH-WALL): the wall
-    /// admitted all of it but the erase's fixed words in each part it holds
-    /// in its erased form, which are as the record held them.
-    pub(crate) fn code_run_fenced(
-        admitted: crate::code_run::replay_rows::AdmittedFencedReplay,
-    ) -> Self {
-        Self(admitted.into_record())
     }
 
     /// Takes the named fold answers from the stored replay record (FIX

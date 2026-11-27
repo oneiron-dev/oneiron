@@ -18,7 +18,7 @@ use super::super::records::{
     FinishedOutput, MODEL_HEAL_COUNTS, next_additive_heal_count, replay_generation_matches,
     replay_generation_of, stored_replay_generation,
 };
-use super::super::replay_rows::{self, REPLAY_RECORDS};
+use super::super::replay_rows::{self, HEADS};
 use super::super::response_erase::fence_replay_in_txn;
 use super::super::response_owners::stamp_response_owner_in_txn;
 use super::*;
@@ -92,12 +92,12 @@ impl SessionBinding<'_> {
                 .session
                 .side_table_compare_and_put_with_counter_routed_and(
                     &self.route,
-                    &REPLAY_RECORDS,
+                    &HEADS,
                     &record.run_id,
                     |txn, write| {
                         let fenced =
                             fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
-                        replay_rows::put_fenced(&write, txn, &fenced)
+                        replay_rows::put_fenced(&write, txn, &fenced).map(drop)
                     },
                     |stored| replay_generation_matches(replay_generation_of(stored)?, expected),
                     &MODEL_HEAL_COUNTS,
@@ -166,7 +166,7 @@ impl SessionBinding<'_> {
                         RoutedDbs::Base(vault) => {
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
                             refuse_room_bound_record(&record)?;
-                            replay_rows::put_fenced(vault, wtxn, &record)
+                            replay_rows::put_fenced(vault, wtxn, &record).map(drop)
                         }
                         RoutedDbs::Session(_) => {
                             let record = fence_overlay_replay_in_txn(
@@ -175,7 +175,7 @@ impl SessionBinding<'_> {
                                 Cow::Borrowed(overlay_record),
                                 Some((run, actor)),
                             )?;
-                            replay_rows::put_fenced(&write, wtxn, &record)
+                            replay_rows::put_fenced(&write, wtxn, &record).map(drop)
                         }
                     }
                 })
@@ -196,9 +196,9 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         self.session
             .routed_reader_txn(&self.route, |txn, read, write| {
-                put_base_replay_in_txn(txn, read, write, record, expected, None, prepare)?;
-                let mut keys = also(txn, read, write)?;
-                keys.push(replay_rows::key_bytes(&record.run_id));
+                let mut keys =
+                    put_base_replay_in_txn(txn, read, write, record, expected, None, prepare)?;
+                keys.extend(also(txn, read, write)?);
                 Ok(((), keys))
             })
     }
@@ -212,7 +212,7 @@ fn put_base_replay_in_txn(
     expected: Option<CodeRunReplayGeneration>,
     healed_model: Option<&ModelId>,
     prepare: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<()>,
-) -> Result<()> {
+) -> Result<Vec<Vec<u8>>> {
     let stored = stored_replay_generation(&read, &*txn, &record.run_id)?;
     replay_generation_matches(stored, expected)?;
     let RoutedDbs::Base(vault) = write else {
@@ -223,14 +223,14 @@ fn put_base_replay_in_txn(
     prepare(txn, read, write)?;
     let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
     refuse_room_bound_record(&record)?;
-    replay_rows::put_fenced(vault, txn, &record)?;
+    let keys = replay_rows::put_fenced(vault, txn, &record)?;
     if let Some(model) = healed_model {
         let key = model.as_str().to_owned();
         let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
         let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
         MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
     }
-    Ok(())
+    Ok(keys)
 }
 
 /// Refuses `record`, about to land in base on an on-record stretch, when its
@@ -245,7 +245,7 @@ fn put_base_replay_in_txn(
 /// that a save of the room keeps only the secrets its saved talk names
 /// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19; REVIEW-10041).
 fn refuse_room_bound_record(record: &CodeRunReplayRecord) -> Result<()> {
-    let encoded = zeroize::Zeroizing::new(REPLAY_RECORDS.encode_value(record)?);
+    let encoded = zeroize::Zeroizing::new(replay_rows::encode(record)?);
     if crate::session_overlay::holds_room_secret_handle(&encoded) {
         return Err(crate::Error::OffRecord(
             OffRecordError::OffRecordRoomSecretsUnsaved {
