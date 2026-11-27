@@ -35,13 +35,6 @@ fn retained_side_row_keys_of_record_in_txn(
             continue;
         };
         let Some(ids) = rule.records(&envelope.source_key, &envelope.source_value) else {
-            if super::archive_retained_room_ledgers::retained_row_room(
-                &envelope.source_table,
-                &envelope.source_key,
-            ) == Some(*id)
-            {
-                erase.push(typed);
-            }
             continue;
         };
         if ids.contains(id) {
