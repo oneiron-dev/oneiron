@@ -297,15 +297,7 @@ impl VerbTree {
 
     pub(super) fn verb_full(&self, path: &str, row: &VerbRow) -> String {
         let parameters = input_parameters(&row.input);
-        let stored_result = if row.output == "unknown" {
-            ""
-        } else {
-            " | StoredResult"
-        };
-        let mut lines = vec![format!(
-            "{path}{parameters}: Promise<{}{stored_result}>",
-            row.output
-        )];
+        let mut lines = vec![format!("{path}{parameters}: Promise<{}>", row.output)];
         let description = if row.description.is_empty() {
             NO_DESCRIPTION
         } else {
