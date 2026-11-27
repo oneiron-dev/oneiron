@@ -112,27 +112,107 @@ impl HomeRefused {
 enum CallReply {
     /// The home's answer or its refusal.
     Answer(Result<Value, HomeRefused>),
+    /// The home's refusal after part of its answer had come: its one frame,
+    /// numbered 0 and last, in place of a later chunk and the rest of the
+    /// answer (the live-query lane's refusal, SELECTOR-RELEASE-POINT = B).
+    Replaced(HomeRefused),
     /// The socket ended after the request was sent and before the whole
     /// answer came. A deadline that ran out is not this.
     Interrupted,
 }
 
 impl CallReply {
-    /// The reply as every caller but a touch reads it: an ended socket is
-    /// the home's fault, as before (FIX 22179).
+    /// The reply as every caller but a touch reads it: an ended socket, and
+    /// an answer the home replaced part-way, are the home's fault, as before
+    /// (FIX 22179).
     fn into_call(self) -> Result<Result<Value, HomeRefused>, RpcFault> {
         match self {
             Self::Answer(answer) => Ok(answer),
-            Self::Interrupted => Err(RpcFault::remote()),
+            Self::Replaced(_) | Self::Interrupted => Err(RpcFault::remote()),
+        }
+    }
+
+    /// The reply as a touch reads it: a RESULT_CHANGED refusal, in place of
+    /// the answer or of its rest, and an ended socket are an answer the home
+    /// withdrew. Any other refusal of the rest fails as every caller reads it.
+    fn into_touch(self) -> Result<Value, TouchFault> {
+        match self {
+            Self::Answer(Ok(reply)) => Ok(reply),
+            Self::Answer(Err(refusal)) | Self::Replaced(refusal)
+                if refusal.code.as_deref() == Some("RESULT_CHANGED") =>
+            {
+                Err(TouchFault::Withdrawn)
+            }
+            Self::Answer(Err(refusal)) => Err(TouchFault::Other(refusal.request_error())),
+            Self::Replaced(_) => Err(TouchFault::Other(refused())),
+            Self::Interrupted => Err(TouchFault::Withdrawn),
         }
     }
 }
 
+/// What one reply frame says of call `id`, read where its chunk `seq` is due.
+enum ReplyFrame {
+    /// The answer's chunk `seq`; `last` when the answer ends with it.
+    Chunk { bytes: Vec<u8>, last: bool },
+    /// The home's refusal in place of the answer.
+    Refused(HomeRefused),
+    /// The home's refusal in place of the rest of an answer it had begun
+    /// ([`CallReply::Replaced`]).
+    Replaced(HomeRefused),
+}
+
+/// Reads one reply frame of call `id` where its chunk `seq` is due. Every
+/// frame must be chunk `seq` of call `id`, but for the home's refusal of the
+/// rest of an answer: the live-query lane numbers each refusal 0 and last,
+/// in place of whichever chunk was due.
+fn reply_frame(frame: &[u8], id: u64, seq: u64) -> Result<ReplyFrame, RpcFault> {
+    if frame.first() != Some(&TAG_RPC) {
+        return Err(RpcFault::remote());
+    }
+    let reply: ReplyEnvelope =
+        rmp_serde::from_slice(&frame[1..]).map_err(|_| RpcFault::remote())?;
+    if reply.id != id {
+        return Err(RpcFault::remote());
+    }
+    let replaced = seq > 0 && reply.seq == 0 && reply.last && reply.kind == "rpc.err";
+    if reply.seq != seq && !replaced {
+        return Err(RpcFault::remote());
+    }
+    if reply.kind == "rpc.err" {
+        let code = reply.payload.as_map().and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("code"))
+                .and_then(|(_, value)| value.as_str())
+        });
+        let refusal = HomeRefused {
+            code: code.map(str::to_owned),
+        };
+        return Ok(if replaced {
+            ReplyFrame::Replaced(refusal)
+        } else {
+            ReplyFrame::Refused(refusal)
+        });
+    }
+    if reply.kind != "rpc.res" {
+        return Err(RpcFault::remote());
+    }
+    let bytes = match reply.payload {
+        rmpv::Value::Binary(bytes) => bytes,
+        rmpv::Value::String(text) => text.into_bytes(),
+        _ => return Err(RpcFault::remote()),
+    };
+    Ok(ReplyFrame::Chunk {
+        bytes,
+        last: reply.last,
+    })
+}
+
 /// Why a touch read failed. [`Self::Withdrawn`]: the home withdrew its
-/// answer, as a RESULT_CHANGED refusal or, judged at a later frame, by
-/// closing the socket before the answer completed (SELECTOR-RELEASE-POINT =
-/// B). [`Self::Other`]: every other failure, with the error
-/// [`ResidenceRpc::request`] gives for it.
+/// answer, as a RESULT_CHANGED refusal (in place of the answer or of its
+/// rest) or, judged at a later frame, by closing the socket before the answer
+/// completed (SELECTOR-RELEASE-POINT = B). [`Self::Other`]: every other
+/// failure, with the error [`ResidenceRpc::request`] gives for it.
 pub(super) enum TouchFault {
     Withdrawn,
     Other(TransportError),
@@ -471,20 +551,10 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
     ) -> Result<Value, TouchFault> {
-        match self
-            .call_inner(method, params, None)
+        self.call_inner(method, params, None)
             .await
             .map_err(RpcFault::into_error)?
-        {
-            CallReply::Answer(Ok(reply)) => Ok(reply),
-            CallReply::Answer(Err(refusal))
-                if refusal.code.as_deref() == Some("RESULT_CHANGED") =>
-            {
-                Err(TouchFault::Withdrawn)
-            }
-            CallReply::Answer(Err(refusal)) => Err(TouchFault::Other(refusal.request_error())),
-            CallReply::Interrupted => Err(TouchFault::Withdrawn),
-        }
+            .into_touch()
     }
 
     /// [`Self::request`], with the home's refusal kept apart from a call that
@@ -610,39 +680,17 @@ impl ResidenceRpc {
                     break frame;
                 }
             };
-            if frame.first() != Some(&TAG_RPC) {
-                return Err(RpcFault::remote());
-            }
-            let reply: ReplyEnvelope =
-                rmp_serde::from_slice(&frame[1..]).map_err(|_| RpcFault::remote())?;
-            if reply.id != id || reply.seq != seq {
-                return Err(RpcFault::remote());
-            }
-            if reply.kind == "rpc.err" {
-                let code = reply.payload.as_map().and_then(|fields| {
-                    fields
-                        .iter()
-                        .find(|(key, _)| key.as_str() == Some("code"))
-                        .and_then(|(_, value)| value.as_str())
-                });
-                return Ok(CallReply::Answer(Err(HomeRefused {
-                    code: code.map(str::to_owned),
-                })));
-            }
-            if reply.kind != "rpc.res" {
-                return Err(RpcFault::remote());
-            }
-            let chunk = match reply.payload {
-                rmpv::Value::Binary(bytes) => bytes,
-                rmpv::Value::String(text) => text.into_bytes(),
-                _ => return Err(RpcFault::remote()),
+            let (chunk, last) = match reply_frame(&frame, id, seq)? {
+                ReplyFrame::Chunk { bytes, last } => (bytes, last),
+                ReplyFrame::Refused(refusal) => return Ok(CallReply::Answer(Err(refusal))),
+                ReplyFrame::Replaced(refusal) => return Ok(CallReply::Replaced(refusal)),
             };
             if received.saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
                 return Err(RpcFault::remote());
             }
             received += chunk.len();
             chunks.push(chunk);
-            if reply.last {
+            if last {
                 return rmp_serde::from_read(RpcChunks::new(chunks))
                     .map(|reply| CallReply::Answer(Ok(reply)))
                     .map_err(|_| RpcFault::remote());
@@ -677,6 +725,9 @@ fn socket_ended(error: &WsError) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod reply_frame_tests;
 
 #[cfg(test)]
 mod socket_end_tests {
