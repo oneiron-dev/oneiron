@@ -24,8 +24,7 @@ impl Lift<oneiron::memory::ClaimView> for crate::WireClaimView {
             salience,
             stale,
             claim,
-            // Not mirrored to the SDKs yet (FIX OWN-HELD-SDK-MIRRORS).
-            held: _,
+            held,
         } = view;
         let (value, scope) = lift_json(value, scope)?;
         Ok(Self {
@@ -49,6 +48,7 @@ impl Lift<oneiron::memory::ClaimView> for crate::WireClaimView {
             salience: lift_record("claim review:salience", &salience)?,
             stale,
             claim: lift_record("claim review:claim", &claim)?,
+            held: lift_record("claim review:held", &held)?,
         })
     }
 }
