@@ -505,7 +505,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 format!("{name} is not a verb in the SDK verb table"),
             )));
         };
-        mcp_admit_bound_tool(&self.actor, tool.name).map_err(refused)
+        admission::mcp_admit_bound_tool(&self.actor, tool.name).map_err(refused)
     }
 
     /// A room write a session-bound run stages (WILL L11-01, S01-2a) meets
