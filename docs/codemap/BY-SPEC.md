@@ -461,6 +461,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/leave.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/reply_setting.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/setting_answer.rs` | m |
+| ARCH-0043 | `crates/oneiron/src/dreamer_consolidation/turn_text/writers.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/federation/connect_grant.rs` | m |
 | ARCH-0043 | `crates/oneiron/src/federation/delete_authority.rs` | L |
 | ARCH-0043 | `crates/oneiron/src/federation/foreign_world.rs` | s |

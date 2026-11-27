@@ -33869,7 +33869,7 @@
      "path": "src/dreamer_consolidation/resources/slices.rs",
      "purpose": "Read-only extraction children attenuated from one prepared branch",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -34710,7 +34710,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -34741,6 +34741,16 @@
      "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/turn_text/writers.rs",
+     "purpose": "Whom the extraction transcript labels beside a person TURN's role: an imported turn's source speaker (FIX…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -80544,6 +80554,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/side_table/tests/residue.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill/call.rs",
@@ -98983,12 +99001,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "RoomSliceCall"
+      "RoomSliceCall",
+      "TurnWriter"
      ],
      "path": "src/test_doors/dreamer_extraction_room.rs",
      "purpose": "Door for `tests/dreamer_extraction_room.rs` (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): one real…",
      "surface": {
-      "fn": 4,
+      "enum": 1,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -114629,6 +114649,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_native_turn_writer_label.rs",
+     "purpose": "FIX DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED (ARCH-0043:37): a native person TURN shows its writer's PERSON…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -124315,7 +124343,7 @@
     },
     "dreamer_consolidation": {
      "entry": "crates/oneiron/src/dreamer_consolidation/mod.rs",
-     "files": 214,
+     "files": 215,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125640,7 +125668,7 @@
     },
     "side_table": {
      "entry": "crates/oneiron/src/side_table/mod.rs",
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -126164,8 +126192,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8667,
-   "test_files": 2359
+   "source_files": 8668,
+   "test_files": 2361
   },
   "oneiron-agent-runtime": {
    "files": [
