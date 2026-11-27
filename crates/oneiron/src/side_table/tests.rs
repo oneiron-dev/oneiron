@@ -3,6 +3,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::off_record::OffRecordBackendClass;
+mod residue;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
