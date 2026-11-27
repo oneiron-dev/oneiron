@@ -445,7 +445,11 @@ pub(super) fn load_terminal_status(
     else {
         return Ok(None);
     };
-    let status = load_terminal_marker(storage, record, &output.path)?.into_executor_status()?;
+    let stored = load_terminal_marker(storage, record, &output.path)?;
+    if matches!(stored, StoredTerminalStatus::WindowOutgrown) {
+        return Ok(None);
+    }
+    let status = stored.into_executor_status()?;
     if let EngineExecutorStatus::Waiting(wait) = &status
         && let Some(seq) = terminal_output_seq(&output.path)
         && has_output(record, &resumed_output_path(seq, wait.wait_id))
