@@ -8,8 +8,8 @@ use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::claim::ClaimReadStatus;
 use crate::code_run::storage::{ExecutorStorage, NewReaderJob, SpawnAdmission};
 use crate::code_run::types::{
-    RunCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult,
+    RunCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason,
+    SelfEffect, SelfFailedResult,
 };
 use crate::code_run::{
     ReaderActor, ReaderJob, ReaderJobKind, ReaderJobState, ReaderRoute, SelfSummarizeCall,
@@ -94,6 +94,16 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// The caller's receipted spawn refusal, before any summary member is read.
+    pub(crate) fn summarize_spawn_refusal(
+        &self,
+        call: &SelfSummarizeCall,
+    ) -> Result<Option<SelfDeniedResult>> {
+        Ok(self
+            .check_spawn_powers(SelfEffect::Summarize, None, &summarize_power_request(call))?
+            .err())
+    }
+
     /// `summarize`: the members the host bound, in order, by the call's
     /// recipe. A memo hit answers the summary's card. Otherwise the run's
     /// summary job over them is queued (or found), under the seat a spawn
@@ -116,9 +126,7 @@ impl HostSelfDispatcher<'_> {
         // reader job of the run, so the caller's `spawn` decides first, as
         // at `self.spawn`, before any seat, member or memo is read. The job
         // is still born with no powers of its own: it spawns nothing.
-        if let Err(denied) =
-            self.check_spawn_powers(SelfEffect::Summarize, None, &summarize_power_request(&call))?
-        {
+        if let Some(denied) = self.summarize_spawn_refusal(&call)? {
             return Ok(SelfDispatchOutcome::Denied(denied));
         }
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
