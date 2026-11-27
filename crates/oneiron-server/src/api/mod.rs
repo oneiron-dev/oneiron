@@ -294,6 +294,9 @@ pub(crate) use self::mcp_gateway::mcp_refusal_for_test;
 // The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::admit_run_call_for_test;
+// The integration tests' door to a callable skill's MCP door (FIX CODE-MODE-LENDING-W8).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::skill_execution::skill_door_for_test;
 // The signing session door's read of what a signing router holds (L3-22).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::esign::{SigningRegistry, public_routes_with_registry};
