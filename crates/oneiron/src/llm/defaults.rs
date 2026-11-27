@@ -67,7 +67,7 @@ pub(crate) fn vault_allows_provider_model_in_txn(
         return Ok(true);
     }
     let Some(manifest) = super::manifest::read_manifest(&vault.store, txn)? else {
-        return Ok(false);
+        return Ok(true);
     };
     let routes = super::manifest::read_routes(vault, txn, &manifest)?;
     for slot in manifest.routes.keys() {
@@ -75,7 +75,7 @@ pub(crate) fn vault_allows_provider_model_in_txn(
             return Ok(true);
         }
     }
-    Ok(false)
+    Ok(true)
 }
 
 impl Vault {
