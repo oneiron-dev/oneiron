@@ -23,7 +23,8 @@
 //!   to the cut.
 //! - `a_manifest_naming_one_chunk_many_times_is_indexed_once_where_it_lies` and
 //!   `a_manifest_that_is_not_its_assets_is_refused_where_it_lies`: guards of
-//!   the in-place index against the strict decode.
+//!   the in-place index (`manifest_distinct_chunks_in_place`) against the
+//!   strict decode.
 //! - `a_want_hash_the_have_names_is_refused`: red is Ok.
 //! - `a_have_naming_one_hash_twice_holds_it_once`: red is a HAVE of every
 //!   copy sent.
@@ -46,8 +47,8 @@ use std::io::Read;
 use oneiron::origin::lfs::{LfsChunkRef, LfsManifest};
 use oneiron::sync::chunks::{
     CHUNK_STREAM_FRAME_BYTES, CHUNK_SYNC_VERSION, ChunkPageCursor, ChunkRead, ChunkSyncRequest,
-    MAX_CHUNK_REQUEST_READ_BYTES, MAX_CHUNK_REQUEST_SELECTOR_BYTES, read_chunk_request_stream,
-    write_chunk_request_stream,
+    MAX_CHUNK_REQUEST_READ_BYTES, MAX_CHUNK_REQUEST_SELECTOR_BYTES,
+    manifest_distinct_chunks_in_place, read_chunk_request_stream, write_chunk_request_stream,
 };
 
 /// A chunk hash naming `index`: its big-endian bytes, then zeros.
@@ -222,7 +223,7 @@ fn a_manifest_naming_one_chunk_many_times_is_indexed_once_where_it_lies() {
     let mut chunks = vec![(1, 4096); 100_000];
     chunks.push((2, 17));
     let (bytes, asset, size) = stored_manifest(&chunks);
-    let distinct = LfsManifest::distinct_chunks_in_place(&bytes, &asset, size)
+    let distinct = manifest_distinct_chunks_in_place(&bytes, &asset, size)
         .expect("an authentic manifest is indexed");
     assert_eq!(
         distinct,
@@ -247,15 +248,15 @@ fn a_manifest_that_is_not_its_assets_is_refused_where_it_lies() {
     let mut changed = bytes.clone();
     changed[20] ^= 1;
     assert!(
-        LfsManifest::distinct_chunks_in_place(&changed, &asset, size).is_err(),
+        manifest_distinct_chunks_in_place(&changed, &asset, size).is_err(),
         "a changed chunk hash no longer matches the ASSET id"
     );
     assert!(
-        LfsManifest::distinct_chunks_in_place(&bytes, &asset, size + 1).is_err(),
+        manifest_distinct_chunks_in_place(&bytes, &asset, size + 1).is_err(),
         "a size other than the object's is refused"
     );
     assert!(
-        LfsManifest::distinct_chunks_in_place(&bytes[..bytes.len() - 1], &asset, size).is_err(),
+        manifest_distinct_chunks_in_place(&bytes[..bytes.len() - 1], &asset, size).is_err(),
         "a manifest cut short is refused"
     );
 }

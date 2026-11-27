@@ -104,52 +104,6 @@ impl LfsManifest {
         }
         Ok(())
     }
-
-    /// The distinct chunk hashes of the manifest stored as `bytes`, checked
-    /// where they lie as [`Self::decode`] and [`Self::asset_id`] check them:
-    /// the header, the length, each chunk's size and their sum, the bytes'
-    /// BLAKE3 against the ASSET id `asset_id`, and the size against
-    /// `size_bytes`, the object's. The ordered chunk list is never built and
-    /// the bytes are never copied, so a manifest naming one chunk a million
-    /// times holds one hash here (REVIEW-10608 P1 2).
-    pub fn distinct_chunks_in_place(
-        bytes: &[u8],
-        asset_id: &EntityId,
-        size_bytes: u64,
-    ) -> Result<std::collections::BTreeSet<[u8; 32]>> {
-        let corrupt = || Error::CorruptedIndex("lfs manifest");
-        if bytes.len() < 20 || &bytes[..8] != MANIFEST_MAGIC {
-            return Err(corrupt());
-        }
-        let declared = u64::from_le_bytes(bytes[8..16].try_into().expect("length checked"));
-        let count = u32::from_le_bytes(bytes[16..20].try_into().expect("length checked")) as usize;
-        if count.checked_mul(36).and_then(|n| n.checked_add(20)) != Some(bytes.len()) {
-            return Err(corrupt());
-        }
-        // Strict decoding makes the stored bytes the canonical encoding, so
-        // their BLAKE3 is the manifest's hash.
-        let id = crate::store::code_snapshot::entity_id_from_hash_material(
-            VAULT_LFS_ASSET_ID_DOMAIN,
-            &[blake3::hash(bytes).as_bytes()],
-        )?;
-        if id != *asset_id || declared != size_bytes {
-            return Err(Error::CorruptedIndex("lfs manifest digest"));
-        }
-        let mut sum = 0u64;
-        let mut hashes = std::collections::BTreeSet::new();
-        for entry in bytes[20..].chunks_exact(36) {
-            let size = u32::from_le_bytes(entry[32..].try_into().expect("entry length"));
-            if size == 0 || size as usize > LFS_CHUNK_MAX {
-                return Err(corrupt());
-            }
-            sum = sum.checked_add(u64::from(size)).ok_or_else(corrupt)?;
-            hashes.insert(<[u8; 32]>::try_from(&entry[..32]).expect("entry length"));
-        }
-        if sum != declared {
-            return Err(corrupt());
-        }
-        Ok(hashes)
-    }
 }
 
 impl Vault {
@@ -178,38 +132,6 @@ impl Vault {
             return Err(Error::CorruptedIndex("lfs manifest digest"));
         }
         Ok(Some(manifest))
-    }
-
-    /// The distinct chunk hashes of a live object's manifest, read and
-    /// authenticated in its stored row where it lies
-    /// ([`LfsManifest::distinct_chunks_in_place`]), with
-    /// [`Self::lfs_manifest`]'s checks: the row is never copied and its
-    /// chunk list never built (REVIEW-10608 P1 2). `None` when no live
-    /// object has the id.
-    pub fn lfs_manifest_distinct_chunks(
-        &self,
-        oid: super::LfsOid,
-    ) -> Result<Option<std::collections::BTreeSet<[u8; 32]>>> {
-        use crate::ports::EntityStoreRead as _;
-        let Some(object) = self.lfs_object(oid)? else {
-            return Ok(None);
-        };
-        let txn = self.store.env.read_txn()?;
-        self.store
-            .port_entity_with_raw(&txn, &object.asset_id, |raw| {
-                let header = EntityMetadataHeader::parse(raw)
-                    .ok_or(Error::CorruptedIndex("lfs asset header"))?;
-                if header.entity_type != ENTITY_TYPE_ASSET {
-                    return Err(Error::CorruptedIndex("lfs asset type"));
-                }
-                LfsManifest::distinct_chunks_in_place(
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                    &object.asset_id,
-                    object.size_bytes,
-                )
-            })?
-            .ok_or(Error::CorruptedIndex("missing lfs asset"))
-            .map(Some)
     }
 
     /// Reads one verified chunk belonging to this live object, never an arbitrary vault hash.
