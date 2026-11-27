@@ -30,6 +30,7 @@ pub(crate) use self::reply_assertions::{
     reply_assertions_opaque_owners, reply_assertions_owners, reply_assertions_scan,
     reply_assertions_stub,
 };
+pub(crate) use self::types::ProjectPlacementSource;
 pub use self::types::{
     WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };

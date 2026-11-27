@@ -35,6 +35,7 @@ mod identity_event;
 pub(crate) mod note_world;
 #[cfg(feature = "sync")]
 pub(crate) mod origin_positions;
+mod project_placement;
 mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;
@@ -46,6 +47,7 @@ mod tests;
 pub(crate) use self::birth_placement::{
     BirthPlacement, GuestPlacement, carries_birth_placement, stored_placement_in_txn,
 };
+pub(crate) use self::project_placement::{stamp_note_project, stored_project};
 #[cfg(feature = "sync")]
 pub(crate) use self::stamping::stamp_carried_placement;
 pub(crate) use self::stamping::{
