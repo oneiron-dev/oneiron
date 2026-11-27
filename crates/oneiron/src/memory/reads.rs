@@ -174,6 +174,18 @@ pub struct ClaimView {
     /// this read already admitted: labelled with its served value.
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
+    /// The pending consent and its reasons, when this proposal is held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldMark>,
+}
+
+/// The tray entry holding a proposed claim for consent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeldMark {
+    /// Why the claim is held.
+    pub reason_codes: Vec<String>,
+    /// The tray entry's `gate:<decision hex>` reference.
+    pub decision_ref: String,
 }
 
 #[doc(hidden)]
@@ -885,6 +897,11 @@ impl Memory<'_> {
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
+            held: if body.approval == ClaimApprovalStatus::Proposed {
+                self.held_mark(id)?
+            } else {
+                None
+            },
         })
     }
 

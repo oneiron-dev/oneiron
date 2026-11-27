@@ -283,6 +283,9 @@ impl MemoryItem {
 pub struct MemoryPack {
     /// Ranked items.
     pub items: Vec<MemoryItem>,
+    /// The caller's matching claims held for consent, separate from ranked items.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<ClaimView>,
     /// What the scope excluded.
     pub scope_honesty: ScopeHonesty,
     /// Retrieval accounting.
@@ -319,6 +322,7 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
     let quality = RetrievalQuality::Passthrough;
     let mut pack = MemoryPack {
         items: Vec::new(),
+        held: Vec::new(),
         scope_honesty: ScopeHonesty {
             out_of_scope_worlds: Vec::new(),
             census_capped: true,
@@ -507,6 +511,7 @@ impl Memory<'_> {
         if receipt.applied.deny_all {
             let mut pack = MemoryPack {
                 items: Vec::new(),
+                held: Vec::new(),
                 scope_honesty: ScopeHonesty::default(),
                 retrieval_meta: RetrievalMeta {
                     sparse: Some(true),
@@ -895,6 +900,7 @@ impl Memory<'_> {
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         let mut pack = MemoryPack {
+            held: Vec::new(),
             scope_honesty: ScopeHonesty::default(),
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,

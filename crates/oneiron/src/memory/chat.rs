@@ -423,6 +423,7 @@ impl Memory<'_> {
         Ok((
             MemoryPack {
                 items,
+                held: Vec::new(),
                 scope_honesty: ScopeHonesty::default(),
                 retrieval_meta: RetrievalMeta {
                     sparse: None,
