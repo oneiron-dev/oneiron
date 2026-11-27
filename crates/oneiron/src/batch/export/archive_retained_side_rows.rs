@@ -15,6 +15,7 @@ use super::archive_retained_room_ledgers::{
     note_ledger_envelope, retained_row_room, withhold_room_ledger,
 };
 use super::archive_retained_subjects::{RetainedSubjectRule, retained_subject_rule};
+use super::archive_retained_subjects::{hard_deleted, judged_records};
 use super::archive_side_dispositions::{omitted_decls, retained_decl, retained_decls};
 use super::{
     ArchiveSideFamily, ArchiveSideRow, ImportOmissionReason, RetainedSideImportSummary,
@@ -98,7 +99,7 @@ pub(crate) fn retained_side_row_key(row: &ArchiveRetainedSideRow) -> [u8; 32] {
 }
 
 /// The inert retained rows, keyed by [`retained_side_row_key`].
-const RETAINED_SIDE_ROWS: SideTable<[u8; 32], ArchiveRetainedSideRow, Named> =
+pub(super) const RETAINED_SIDE_ROWS: SideTable<[u8; 32], ArchiveRetainedSideRow, Named> =
     SideTable::new(&crate::side_table::ARCHIVE_RETAINED_SIDE_ROW);
 
 /// Whether one stored retained row reads back through its table: it decodes as the [`Named`]
@@ -188,6 +189,7 @@ fn retained_row_withheld(
     rtxn: &RoTxn<'_>,
     rule: Option<RetainedSubjectRule>,
     envelope: &ArchiveRetainedSideRow,
+    inert: bool,
 ) -> Result<bool> {
     if envelope.source_table == crate::side_table::GPU_LINE_PERIOD.name
         && crate::gpu_line::period_row_seals_seed(
@@ -202,8 +204,11 @@ fn retained_row_withheld(
     else {
         return Ok(true);
     };
-    for id in &records {
-        if export_keeps_record_out(vault, rtxn, id)? {
+    // An inert copy about a record hard-deleted here stays out, stored before the delete or
+    // imported after it; a live row keeps its policy
+    // (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
+    for id in judged_records(&envelope.source_table, inert, &records) {
+        if (inert && hard_deleted(vault, rtxn, id)?) || export_keeps_record_out(vault, rtxn, id)? {
             return Ok(true);
         }
     }
@@ -262,7 +267,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_value,
                 source_live: true,
             };
-            if retained_row_withheld(vault, rtxn, rule, &envelope)? {
+            if retained_row_withheld(vault, rtxn, rule, &envelope, false)? {
                 withhold_room_ledger(&envelope, &mut withheld_ledgers);
                 continue;
             }
@@ -296,7 +301,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
         }
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
         let rule = retained_subject_rule(&envelope.source_table);
-        if retained_row_withheld(vault, rtxn, rule, &envelope)? {
+        if retained_row_withheld(vault, rtxn, rule, &envelope, true)? {
             withhold_room_ledger(&envelope, &mut withheld_ledgers);
             continue;
         }
