@@ -45,6 +45,7 @@ use oneiron_model::llm::{Scope, ScopeResource};
 mod attribution;
 pub(super) mod compaction_span;
 pub(super) mod projection;
+pub(crate) mod writers;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::attribution::attribution_hash_for_test;
 

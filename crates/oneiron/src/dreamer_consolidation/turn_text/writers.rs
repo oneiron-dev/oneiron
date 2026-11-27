@@ -1,0 +1,94 @@
+//! Whom the extraction transcript labels beside a person TURN's role:
+//! an imported turn's source speaker (FIX 15412) or a native person turn's
+//! writers (FIX DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED; ARCH-0043:37).
+//! In a shared vault this includes every native person turn; in a personal
+//! vault it includes only those its owner did not write alone.
+
+use super::TurnText;
+use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
+use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
+use crate::{EntityId, Result, Vault};
+
+impl TurnText {
+    /// The writers of the projected MESSAGEs, distinct, in layout order;
+    /// none for inline text. Read only for a TURN with no import stamp. An
+    /// imported row's edge names its source speaker instead.
+    pub(crate) fn native_writers(&self) -> Vec<EntityId> {
+        let mut writers = Vec::new();
+        let Some(pins) = &self.messages else {
+            return writers;
+        };
+        for (id, _, _) in &self.layout {
+            if let Some(pin) = pins.iter().find(|pin| pin.id == *id) {
+                for &author in &pin.authors {
+                    if !writers.contains(&author) {
+                        writers.push(author);
+                    }
+                }
+            }
+        }
+        writers
+    }
+}
+
+/// The labelling rule of one extraction call, read once per call.
+pub(crate) struct TurnSpeakers {
+    /// Whether the vault is shared: its shared-vault creation row exists
+    /// (the row the owner census keys on), whatever preset it runs under.
+    shared: bool,
+}
+
+impl TurnSpeakers {
+    /// Reads the rule in `txn`.
+    pub(crate) fn read_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        Ok(Self {
+            shared: vault.shared_vault_creation_in_txn(txn)?.is_some(),
+        })
+    }
+
+    /// The PERSONs one TURN's line names beside its role: an imported
+    /// turn's source speaker; otherwise, for a native user turn, its
+    /// writers, unless the vault is personal and its live owner wrote the
+    /// turn alone. An agent's, a counterparty's or a system turn names none.
+    pub(crate) fn people_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        speaker: Option<&str>,
+        imported: bool,
+        text: Option<&TurnText>,
+    ) -> Result<Vec<EntityId>> {
+        let Some(text) = text else {
+            return Ok(Vec::new());
+        };
+        if let Some(person) = text.source_speaker() {
+            return Ok(vec![person]);
+        }
+        if imported {
+            return Ok(Vec::new());
+        }
+        if !matches!(
+            dreamer_turn_role(speaker, &vault.config.assistant_display_names),
+            DreamerTurnRole::User
+        ) {
+            return Ok(Vec::new());
+        }
+        let writers = text.native_writers();
+        if !self.shared
+            && let [writer] = writers.as_slice()
+            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, writer)?
+        {
+            return Ok(Vec::new());
+        }
+        Ok(writers)
+    }
+}
+
+/// The call labels of `people`, each after a space, in order: an already
+/// listed PERSON keeps its label, a new one takes the next.
+pub(crate) fn speaker_labels(labels: &mut CallLabelMap, people: &[EntityId]) -> String {
+    people
+        .iter()
+        .map(|person| format!(" {}", labels.assign(LabelKind::Entity, *person)))
+        .collect()
+}

@@ -4,6 +4,7 @@ use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::extraction_step::render_host_material;
 use crate::dreamer_consolidation::sieve_ports::SliceCall;
+use crate::dreamer_consolidation::turn_text::writers::{TurnSpeakers, speaker_labels};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
@@ -153,6 +154,25 @@ impl BranchResources<'_> {
             );
             groups.entry(key).or_default().push((*id, facts));
         }
+        let speakers: BTreeMap<EntityId, Vec<EntityId>> = {
+            let vault = self.read.vault();
+            let txn = vault.store.env.read_txn()?;
+            let rule = TurnSpeakers::read_in(vault, &txn)?;
+            let mut speakers = BTreeMap::new();
+            for (id, facts) in groups.values().flatten() {
+                let people = rule.people_in(
+                    vault,
+                    &txn,
+                    facts.speaker.as_deref(),
+                    facts.imported,
+                    self.texts.get(id),
+                )?;
+                if !people.is_empty() {
+                    speakers.insert(*id, people);
+                }
+            }
+            speakers
+        };
         // The material the wake's admitted `host.wake` hooks added leads
         // every slice's input (FIX 10665): context for the call, never a
         // turn, so no label names it and nothing cites it. The material does
@@ -244,17 +264,16 @@ impl BranchResources<'_> {
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
-                        // The PERSON an imported turn's source names as its
-                        // speaker shows by its label beside the role (FIX
-                        // 15412); the role, the words and their offsets
-                        // stay as they are, and a turn that names no one
-                        // reads as before.
-                        let speaker = match self.texts.get(id).and_then(TurnText::source_speaker) {
-                            Some(person) => {
-                                format!(" {}", labels.assign(LabelKind::Entity, person))
-                            }
-                            None => String::new(),
-                        };
+                        // Label the PERSON an imported turn's source names
+                        // (FIX 15412), or the writers of a native person turn:
+                        // every such turn in a shared vault, each one its owner
+                        // did not write alone in a personal vault (FIX
+                        // DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED). The role,
+                        // the words and their offsets stay as they are.
+                        let speaker = speaker_labels(
+                            &mut labels,
+                            speakers.get(id).map_or(&[][..], Vec::as_slice),
+                        );
                         transcript.push_str(&format!(
                             "[{turn} {}{speaker}] {}\n",
                             facts.speaker.as_deref().unwrap_or("unknown"),
@@ -349,7 +368,8 @@ impl BranchResources<'_> {
 
 /// What a turn's line adds to a call's transcript beside its words and its
 /// speaker, at most: its label and brackets, the label of the person an
-/// imported turn names, and the header of a conversation it opens.
+/// imported turn names or of a native person turn's writer, and the header
+/// of a conversation it opens.
 const TURN_LINE_FRAME_BYTES: usize = 48;
 
 /// The bytes a turn's line may add to a call's transcript.
