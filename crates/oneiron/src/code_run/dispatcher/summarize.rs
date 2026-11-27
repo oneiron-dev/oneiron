@@ -112,6 +112,15 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // SPAWN-KNOB (FIX CODE-MODE-LENDING-W5): a summary is made by a
+        // reader job of the run, so the caller's `spawn` decides first, as
+        // at `self.spawn`, before any seat, member or memo is read. The job
+        // is still born with no powers of its own: it spawns nothing.
+        if let Err(denied) =
+            self.check_spawn_powers(SelfEffect::Summarize, None, &summarize_power_request(&call))?
+        {
+            return Ok(SelfDispatchOutcome::Denied(denied));
+        }
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
             return Ok(failed("summarize_unbound"));
         };
@@ -212,6 +221,14 @@ impl HostSelfDispatcher<'_> {
         self.storage
             .summary_output_card(found.owner, &found.path, &found.handle, task)
     }
+}
+
+/// The canonical request a summarize's power refusal is receipted with: the
+/// results and then the NOTEs the call names, in order, one per line.
+fn summarize_power_request(call: &SelfSummarizeCall) -> Vec<u8> {
+    let mut named = call.members();
+    named.extend(call.note_refs.iter().flatten().map(String::as_str));
+    named.join("\n").into_bytes()
 }
 
 /// A summary job's `{task, state}`, and why it settled short.
