@@ -18228,7 +18228,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 9
      }
     },
@@ -22245,6 +22245,16 @@
      "notable": [],
      "path": "src/code_run/storage/read_worlds/origins.rs",
      "purpose": "The origins one run's results carry to another run (FIX 7084): the worlds of the run's read-world ledger and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/read_worlds/person_rows.rs",
+     "purpose": "The code-run read ledger's minimum outbound classification",
      "surface": {
       "crate-vis": 1
      }
@@ -30604,7 +30614,7 @@
      "path": "src/deletion/delete/facade.rs",
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -44736,7 +44746,7 @@
      "path": "src/federation/record_scope/project_placement.rs",
      "purpose": "Project placement of NOTE, MESSAGE and TURN rows: the one reader of a row's project and the NOTE settle door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -51228,7 +51238,7 @@
      "path": "src/ingest/history/land.rs",
      "purpose": "Landing a decoded conversation as an imported transcript (ARCH-0027)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4,
       "re-export": 1
      }
@@ -58100,7 +58110,7 @@
       "const": 1,
       "crate-vis": 6,
       "enum": 1,
-      "re-export": 5,
+      "re-export": 9,
       "struct": 3
      }
     },
@@ -58816,7 +58826,7 @@
      "path": "src/memory/entity_delete.rs",
      "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation, and the delete a non-owner's role or…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -67773,7 +67783,7 @@
      "path": "src/outbound_consent/connector_call_code.rs",
      "purpose": "A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
      }
     },
@@ -79522,7 +79532,7 @@
      "purpose": "The PROJECT an attached agent session's folder selects (rows RECALL-SESSION-PROJECT and…",
      "surface": {
       "const": 6,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 15,
       "struct": 4
@@ -98573,6 +98583,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/connector_call_read_rows.rs",
+     "purpose": "Doors for `tests/connector_call_read_rows_personal.rs` (FIX CONNECTOR-CALL-VAULT-TEXT-UNCLASSED): seed a…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/connector_key_suspend.rs",
      "purpose": "Door for `tests/connector_key_suspend_admission.rs` (FIX 22392): the shared suspend writer, as a budget…",
      "surface": {
@@ -100459,7 +100479,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 409,
+      "mod": 410,
       "re-export": 3
      }
     },
@@ -113874,6 +113894,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/connector_call_read_rows_personal.rs",
+     "purpose": "A connector call from a code run that was served vault rows freezes at least Personal (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/connector_issuer_detection.rs",
      "purpose": "L5-11 (ARCH-0072 #drift, #living; ARCH-0054 #auth): the engine's own detection of a credential issuer change",
      "surface": {}
@@ -114228,6 +114256,14 @@
      "notable": [],
      "path": "tests/delegation_expiry_wall_clock.rs",
      "purpose": "A delegation's end is wall time (census L7-18)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/delete_answer_lists_what_remains.rs",
+     "purpose": "The delete answer lists what remains, and the owner learns \"restricted\" (FIX…",
      "surface": {}
     },
     {
@@ -121412,6 +121448,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/session_project_hook_transcript.rs",
+     "purpose": "FIX SESSION-PROJECT-HOOK-TRANSCRIPT-PLACEMENT, the hand-over side: a hook transcript naming its session's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_project_note_message_reads.rs",
+     "purpose": "SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR B, the read side: a key with a session default (an attached…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/session_project_note_message_writes.rs",
      "purpose": "SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR A, the write side: a handle bound to an attached session's folder…",
      "surface": {}
@@ -123867,7 +123919,7 @@
     },
     "code_run": {
      "entry": "crates/oneiron/src/code_run/mod.rs",
-     "files": 280,
+     "files": 281,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125811,7 +125863,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 422,
+     "files": 423,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126078,8 +126130,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8664,
-   "test_files": 2352
+   "source_files": 8666,
+   "test_files": 2356
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -135691,7 +135743,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -135710,7 +135762,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 27,
+      "const": 28,
       "enum": 2,
       "fn": 7,
       "re-export": 1,
@@ -155639,16 +155691,17 @@
      "notable": [
       "DeleteReceipt",
       "DeleteRequestState",
-      "PendingWrite"
+      "PendingWrite",
+      "RemainingNotice"
      ],
      "path": "src/memory/claims/mod.rs",
      "purpose": "Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib)",
      "surface": {
-      "const": 1,
+      "const": 3,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "re-export": 12,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -155852,14 +155905,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/mod.rs",
      "purpose": "—",
      "surface": {
       "mod": 24,
-      "re-export": 273
+      "re-export": 278
      }
     },
     {
@@ -161204,7 +161257,7 @@
      "entry": "crates/oneiron-records/src/memory/mod.rs",
      "files": 39,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—",
      "spec_ids": []
@@ -169666,7 +169719,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/hosted_import_doors.rs",
@@ -176343,7 +176396,7 @@
      "path": "src/commands/history_import.rs",
      "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -176401,7 +176454,7 @@
      "path": "src/commands/history_import/session_folder.rs",
      "purpose": "Name the folder a host session log names as the MCP bridge names an attached session's folder",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -176502,6 +176555,14 @@
      "surface": {
       "crate-vis": 9
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/hook/continue_command/transcript/tests.rs",
+     "purpose": "The folder a handed-over transcript names (FIX SESSION-PROJECT-HOOK-TRANSCRIPT-PLACEMENT): the sender names…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -191256,6 +191317,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/core_memory_delete_remaining.rs",
+     "purpose": "The HTTP owner delete answers what remains, and `restricted` for a record the owner chose to restrict (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -194489,7 +194558,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 105,
+     "files": 106,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -195285,7 +195354,7 @@
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2232,
-   "test_files": 633
+   "test_files": 635
   },
   "oneiron-setting-contract": {
    "files": [
@@ -208222,6 +208291,7 @@
       "RecallScope",
       "RecordRefusal",
       "RefusalReason",
+      "RemainingNotice",
       "RerankReport",
       "RerankSkip",
       "RetrievalDegradation",
@@ -208245,7 +208315,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 15,
-      "struct": 58
+      "struct": 59
      }
     },
     {
@@ -208304,7 +208374,7 @@
      "surface": {
       "const": 1,
       "fn": 13,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
      }
     },

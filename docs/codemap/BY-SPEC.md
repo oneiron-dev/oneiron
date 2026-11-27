@@ -241,7 +241,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0027 | `crates/oneiron-mail-pack/src/mail_pack/mod.rs` | s |
 | ARCH-0027 | `crates/oneiron-mesh-transport/src/files_search.rs` | s |
 | ARCH-0027 | `crates/oneiron-server/src/api/facade/files_doors/ask.rs` | s |
-| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | s |
+| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/api/owner_routes/hosted_import_routes.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import.rs` | L |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import/hosted_import.rs` | L |
