@@ -180108,7 +180108,7 @@
       "const": 6,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -180176,7 +180176,7 @@
      "path": "src/gpu_execution_node/scope_systemd/exec.rs",
      "purpose": "`oneiron job-exec <id>` (the job account, the unit's `ExecStart=`): it applies `exec.json` and nothing else…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
