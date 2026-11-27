@@ -430,7 +430,7 @@ impl NodeJobs {
             let first = readiness.results.len().saturating_sub(kept);
             readiness.results.drain(..first);
             book.record.mark = Some(ClockMark::of(now));
-            book.checked_offer = Some(offer);
+            let _ = offer;
             self.shared.readiness.persist(&book.record);
             check_incident(&before, &book.record.readiness)
         };
