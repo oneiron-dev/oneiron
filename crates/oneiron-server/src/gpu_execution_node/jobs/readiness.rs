@@ -166,14 +166,19 @@ struct ReadinessBook {
     record: ReadinessRecord,
     /// This tracks the last checked offer and does not survive a restart.
     checked_offer: Option<OfferMark>,
+    opened_at_ms: u64,
 }
 
 impl ReadinessBook {
     fn due(&self, now_ms: u64, every_secs: u64, offer: &OfferMark) -> bool {
-        self.checked_offer.as_ref() != Some(offer)
-            || self.record.readiness.checked_at_ms.is_none_or(|since| {
-                now_ms >= since.saturating_add(every_secs.saturating_mul(1_000))
-            })
+        self.checked_offer.as_ref().is_some_and(|checked| checked != offer)
+            || now_ms
+                >= self
+                    .record
+                    .readiness
+                    .checked_at_ms
+                    .unwrap_or(self.opened_at_ms)
+                    .saturating_add(every_secs.saturating_mul(1_000))
     }
 }
 
@@ -218,6 +223,7 @@ impl NodeReadinessShared {
             book: Mutex::new(ReadinessBook {
                 record,
                 checked_offer: None,
+                opened_at_ms: now.wall_ms,
             }),
             checking: Mutex::new(()),
             incidents: Mutex::new(IncidentLog::open(state_dir)),
